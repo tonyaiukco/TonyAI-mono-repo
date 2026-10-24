@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -20,6 +20,8 @@ import {
 import { Lock, LockOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { appendById, isStaleCursor } from '@/lib/cursor-pages';
+import { LoadMoreButton } from '@/components/ui/load-more-button';
 import { DEFAULT_REPORTING_YEAR, PERIOD_VALUES, REPORTING_YEARS } from '@/lib/types';
 import type { PeriodLockDTO, ReportingPeriod, SubsidiaryDTO } from '@/lib/types';
 
@@ -44,24 +46,55 @@ export function PeriodLocksDrawer({
   canManage,
   onClose,
 }: PeriodLocksDrawerProps) {
+  // The loaded pages of this subsidiary's locks, newest first (LP4-05 PR C).
   const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [year, setYear] = useState<number>(DEFAULT_REPORTING_YEAR);
   const [period, setPeriod] = useState<ReportingPeriod>('quarterly');
   const [periodValue, setPeriodValue] = useState('Q1');
 
+  // The drawer outlives the subsidiary it shows: a page that answers after it
+  // was closed, or reopened for another subsidiary, must never land — its rows
+  // carry Unlock buttons (qa-auditor P3-2).
+  const loadSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++loadSeq.current;
+    setLocks([]);
+    setNextCursor(null);
     if (!subsidiary) return;
     setLoading(true);
     try {
-      setLocks(await api.listPeriodLocks({ subsidiaryId: subsidiary.id }));
+      const page = await api.listPeriodLockPage({ subsidiaryId: subsidiary.id });
+      if (mine !== loadSeq.current) return;
+      setLocks(page.items);
+      setNextCursor(page.nextCursor);
     } catch (e) {
-      toast.error((e as Error).message);
+      if (mine === loadSeq.current) toast.error((e as Error).message);
     } finally {
-      setLoading(false);
+      if (mine === loadSeq.current) setLoading(false);
     }
   }, [subsidiary]);
+
+  async function loadMore() {
+    if (!subsidiary || !nextCursor) return;
+    const mine = loadSeq.current;
+    setLoadingMore(true);
+    try {
+      const page = await api.listPeriodLockPage({ subsidiaryId: subsidiary.id, cursor: nextCursor });
+      if (mine !== loadSeq.current) return;
+      setLocks((list) => appendById(list, page.items));
+      setNextCursor(page.nextCursor);
+    } catch (e) {
+      if (mine !== loadSeq.current) return;
+      toast.error((e as Error).message);
+      if (isStaleCursor(e)) void refresh();
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     void refresh();
@@ -147,6 +180,13 @@ export function PeriodLocksDrawer({
                       )}
                     </div>
                   ))}
+                  <LoadMoreButton
+                    hasMore={nextCursor !== null}
+                    loading={loadingMore}
+                    onClick={() => void loadMore()}
+                    label="Load more locks"
+                    testId="period-locks-load-more"
+                  />
                 </div>
               )}
 

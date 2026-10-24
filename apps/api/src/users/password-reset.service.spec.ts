@@ -1,14 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeLimits } from '../common/runtime-limits';
-import { PasswordResetService, readResetPerIpLimit, RESET_QUEUE_MAX, RESET_WORKERS } from './password-reset.service';
+import { LIMIT_DEFAULTS, readRuntimeConfig } from '../common/runtime-config';
+import { PasswordResetService, RESET_QUEUE_MAX, RESET_WORKERS } from './password-reset.service';
 
-describe('readResetPerIpLimit (decision S6)', () => {
-  it('defaults to 5 a minute and refuses anything but a whole number in range', () => {
-    expect(readResetPerIpLimit({} as NodeJS.ProcessEnv)).toBe(5);
-    expect(readResetPerIpLimit({ AUTH_EMAIL_PER_IP_PER_MINUTE: '20' } as NodeJS.ProcessEnv)).toBe(20);
-    for (const bad of ['0', '-1', '1.5', 'many', '10001']) {
-      expect(() => readResetPerIpLimit({ AUTH_EMAIL_PER_IP_PER_MINUTE: bad } as NodeJS.ProcessEnv)).toThrow();
+describe('the reset quota is a runtime limit (decision S6, folded into LIMIT_DEFAULTS by LP4-05 PR C)', () => {
+  it('defaults to 5 a minute, reads an override and refuses anything but a positive whole number', () => {
+    expect(LIMIT_DEFAULTS.AUTH_EMAIL_PER_IP_PER_MINUTE).toBe(5);
+    expect(readRuntimeConfig({ AUTH_EMAIL_PER_IP_PER_MINUTE: '20' } as NodeJS.ProcessEnv).AUTH_EMAIL_PER_IP_PER_MINUTE).toBe(20);
+    // An empty value is no longer "the default": like every runtime limit, it stops the start.
+    // 10,000 is the ceiling it had before the move: past it the quota would be switched off, not tuned.
+    expect(readRuntimeConfig({ AUTH_EMAIL_PER_IP_PER_MINUTE: '10000' } as NodeJS.ProcessEnv).AUTH_EMAIL_PER_IP_PER_MINUTE).toBe(10_000);
+    for (const bad of ['', '0', '-1', '1.5', 'many', '05', '10001']) {
+      expect(() => readRuntimeConfig({ AUTH_EMAIL_PER_IP_PER_MINUTE: bad } as NodeJS.ProcessEnv)).toThrow();
     }
+  });
+
+  it('takes its quota from the injected limits, not the environment at construction', async () => {
+    const limits = { config: { AUTH_EMAIL_PER_IP_PER_MINUTE: 7 }, quota: vi.fn(async () => { throw new Error('stop'); }) };
+    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, limits as never);
+    await expect(service.request('203.0.113.7', 'a@b.test')).rejects.toThrow('stop');
+    expect(limits.quota).toHaveBeenCalledWith('auth-email:ip:203.0.113.7', 7);
   });
 });
 
@@ -19,8 +30,7 @@ describe('PasswordResetService.request — the answer leaves before the work', (
     const order: string[] = [];
     const limits = new RuntimeLimits();
     const quota = vi.spyOn(limits, 'quota');
-    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, { get: () => limits } as never);
-    service.onModuleInit();
+    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, limits as never);
     vi.spyOn(service, 'run').mockImplementation(async () => { order.push('run'); return 'skipped'; });
     await service.request('203.0.113.7', 'a@b.test');
     order.push('returned');
@@ -33,9 +43,8 @@ describe('PasswordResetService.request — the answer leaves before the work', (
   });
 
   it('refuses past the quota without queueing anything', async () => {
-    const limits = { quota: vi.fn(async () => { throw Object.assign(new Error('429'), { status: 429 }); }), acquire: vi.fn() };
-    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, { get: () => limits } as never);
-    service.onModuleInit();
+    const limits = { config: { AUTH_EMAIL_PER_IP_PER_MINUTE: 5 }, quota: vi.fn(async () => { throw Object.assign(new Error('429'), { status: 429 }); }), acquire: vi.fn() };
+    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, limits as never);
     const run = vi.spyOn(service, 'run');
     await expect(service.request('203.0.113.7', 'a@b.test')).rejects.toMatchObject({ status: 429 });
     expect(limits.acquire).not.toHaveBeenCalled();
@@ -75,9 +84,8 @@ describe('PasswordResetService — capacity is not an oracle', () => {
     };
     const service = new PasswordResetService(
       prisma as never, { recoveryToken: async () => 'token' } as never, mail as never,
-      { recordSystem: async () => undefined } as never, { get: () => limits } as never,
+      { recordSystem: async () => undefined } as never, limits as never,
     );
-    service.onModuleInit();
     const status = async (ip: string, email: string) => service.request(ip, email).then(() => 202, (e: { getStatus(): number }) => e.getStatus());
     try {
       for (let i = 0; i < RESET_WORKERS + 25; i++) {
@@ -119,8 +127,7 @@ describe('PasswordResetService — capacity is not an oracle', () => {
           },
         },
       };
-      const service = new PasswordResetService(prisma as never, {} as never, { config: {} } as never, {} as never, { get: () => limits } as never);
-      service.onModuleInit();
+      const service = new PasswordResetService(prisma as never, {} as never, { config: {} } as never, {} as never, limits as never);
       for (let i = 0; i < RESET_WORKERS; i++) {
         await service.request(`203.0.113.${i + 1}`, `bg${i}@x.test`);
         await immediate();
@@ -137,8 +144,7 @@ describe('PasswordResetService — capacity is not an oracle', () => {
 
   it('a shutdown drops what is still queued and starts no worker for it', async () => {
     const limits = new RuntimeLimits();
-    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, { get: () => limits } as never);
-    service.onModuleInit();
+    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, limits as never);
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
     const run = vi.spyOn(service, 'run').mockImplementation(async () => { await held; return 'skipped'; });
@@ -157,8 +163,7 @@ describe('PasswordResetService — capacity is not an oracle', () => {
 
   it('a full queue drops the request — still 202, and nothing runs for it', async () => {
     const limits = new RuntimeLimits();
-    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, { get: () => limits } as never);
-    service.onModuleInit();
+    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, limits as never);
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
     const run = vi.spyOn(service, 'run').mockImplementation(async () => { await held; return 'skipped'; });

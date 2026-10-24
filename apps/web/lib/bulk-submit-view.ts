@@ -6,13 +6,12 @@ import {
   mayAuthorRecords,
 } from '@/lib/types';
 import type {
-  ActivityRecordDTO,
+  ActivityRecordPageItemDTO,
   AuthUser,
   BulkSubmitIssue,
   BulkSubmitIssueCode,
   BulkSubmitReportDTO,
   BulkUploadAcceptedRow,
-  PeriodLockDTO,
 } from '@/lib/types';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
@@ -246,15 +245,14 @@ export function submitErrorMessage(error: unknown): string {
 /**
  * The fields of a record this module reads.
  *
- * `Pick` of the contract, not a hand-written shape. Restating them widened
- * `status`, `category` and `reportingPeriod` to `string` — and
- * `isPeriodLockedFor` compares `reportingPeriod` across two of these types, so
- * two independently-widened `string`s would keep comparing green if the unions
- * ever diverged. A period-lock mirror that fails OPEN is the one failure mode
- * worth a type for.
+ * `Pick` of the contract, not a hand-written shape: restating them widened
+ * `status`, `category` and `reportingPeriod` to `string`. `periodLocked` is the
+ * page item's (LP4-05 PR C): the server's answer for the record's own period,
+ * read with the page — never inferred from a page of locks, whose absence
+ * proves nothing.
  */
 export type SubmittableRow = Pick<
-  ActivityRecordDTO,
+  ActivityRecordPageItemDTO,
   | 'id'
   | 'status'
   | 'category'
@@ -264,38 +262,11 @@ export type SubmittableRow = Pick<
   | 'reportingYear'
   | 'reportingPeriod'
   | 'periodValue'
+  | 'periodLocked'
 >;
 
 /** Who is asking. `null` while `api.me()` is still in flight. */
 export type SubmittingUser = Pick<AuthUser, 'id' | 'role'>;
-
-/** The fields of a period lock this module reads. */
-export type LockedPeriod = Pick<
-  PeriodLockDTO,
-  'subsidiaryId' | 'reportingYear' | 'reportingPeriod' | 'periodValue'
->;
-
-/** Is this record's own reporting period closed? */
-export function isPeriodLockedFor(
-  row: Pick<
-    SubmittableRow,
-    'subsidiaryId' | 'reportingYear' | 'reportingPeriod' | 'periodValue'
-  >,
-  locks: LockedPeriod[],
-): boolean {
-  return locks.some(
-    (l) =>
-      // `subsidiaryId` included even though every caller today fetches the
-      // locks and the records for the same subsidiary. Without it the
-      // comparison is one shared list away from under-blocking, and
-      // under-blocking here means offering a checkbox that returns
-      // `period_locked`.
-      l.subsidiaryId === row.subsidiaryId &&
-      l.reportingYear === row.reportingYear &&
-      l.reportingPeriod === row.reportingPeriod &&
-      l.periodValue === row.periodValue,
-  );
-}
 
 /** Only the author may submit, including when the caller is a super_admin. */
 export function authoredBy(row: SubmittableRow, user: SubmittingUser): boolean {
@@ -324,7 +295,6 @@ export function authoredBy(row: SubmittableRow, user: SubmittingUser): boolean {
 export function submitBlockReason(
   row: SubmittableRow,
   user: SubmittingUser,
-  locks: LockedPeriod[],
 ): string | null {
   // First, as the server does — and it refuses the WHOLE request, not the
   // record, so without this a demoted seat gets a live button and one 403 for
@@ -339,7 +309,7 @@ export function submitBlockReason(
       : `Already ${row.status.replace(/_/g, ' ')}.`;
   }
   if (!authoredBy(row, user)) return 'Entered by someone else.';
-  if (isPeriodLockedFor(row, locks)) {
+  if (row.periodLocked) {
     return `${row.periodValue} ${row.reportingYear} is locked.`;
   }
   if (needsEvidenceBeforeSubmit(row)) return 'Needs an evidence file.';
@@ -365,7 +335,6 @@ export interface DraftSelection {
 export function selectableDrafts(
   rows: SubmittableRow[],
   user: SubmittingUser | null,
-  locks: LockedPeriod[],
 ): DraftSelection {
   // No user, no checkboxes. `loadRecord` is deliberately permissive while
   // `api.me()` is in flight — it would rather open a record than block one —
@@ -376,7 +345,7 @@ export function selectableDrafts(
   const selectableIds: string[] = [];
   const reasonById: Record<string, string> = {};
   for (const row of rows) {
-    const reason = submitBlockReason(row, user, locks);
+    const reason = submitBlockReason(row, user);
     if (reason === null) {
       selectableIds.push(row.id);
     } else if (isSubmittable(row.status)) {

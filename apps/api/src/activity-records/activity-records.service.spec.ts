@@ -9,7 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
-import { isCalculated, PENDING_REVIEW_STATUSES,
+import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
   CATEGORY_SCOPE_MAP,
   CATEGORIES,
   needsEvidenceBeforeSubmit,
@@ -45,7 +45,7 @@ import {
   FactorLibraryConflictError,
   NoEmissionFactorError,
 } from '../calculations/errors';
-import { ResourceNotFoundError } from '../common/api-error';
+import { QueryTooBroadError, ResourceNotFoundError } from '../common/api-error';
 import type { RequestUser } from '../auth/auth.types';
 
 import { AuditService } from '../audit/audit.service';
@@ -79,6 +79,8 @@ function createPrismaMock() {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
+      aggregate: vi.fn().mockResolvedValue({ _max: { reportingYear: null } }),
     },
     // Default: the record's subsidiary resolves, so K11's recompute at submit
     // and approve (LP4-02 B2) reaches the engine stub. Tests about a missing
@@ -96,6 +98,7 @@ function createPrismaMock() {
     periodLock: {
       // Default: period open (no lock row), so existing tests pass unchanged.
       findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     auditLog: {
       create: vi.fn(),
@@ -342,43 +345,166 @@ describe('ActivityRecordsService — tenant scoping', () => {
     ({ prisma, service } = build());
   });
 
-  it('list scopes to accessibleSubsidiaryIds when no filter given', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([]);
-    await service.list(dataEntry(), {});
+  it('a page scopes to accessibleSubsidiaryIds when no filter is given, and fetches one row more than it returns', async () => {
+    await service.listPage(dataEntry(), {});
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ subsidiaryId: { in: ['sub-1'] } }),
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: DEFAULT_PAGE_LIMIT + 1,
       }),
     );
   });
 
-  it('list returns [] for a subsidiaryId outside the accessible set (no DB hit)', async () => {
-    const result = await service.list(dataEntry(), { subsidiaryId: 'sub-2' });
-    expect(result).toEqual([]);
+  it('a subsidiaryId outside the accessible set is an empty, final page (no DB hit)', async () => {
+    const result = await service.listPage(dataEntry(), { subsidiaryId: 'sub-2', limit: 5 });
+    expect(result).toEqual({ items: [], limit: 5, nextCursor: null });
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
 
-  it('list filters on a SET of statuses (the reviewer queue)', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([]);
-    await service.list(superAdmin(), {
-      status: [...PENDING_REVIEW_STATUSES],
-    });
+  it('a page filters on a SET of statuses (the reviewer queue), in the queue order', async () => {
+    await service.listPage(superAdmin(), { status: [...PENDING_REVIEW_STATUSES], sort: 'review_queue' });
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          status: { in: ['submitted', 'under_review'] },
-        }),
+        where: expect.objectContaining({ status: { in: ['submitted', 'under_review'] } }),
+        orderBy: [{ submittedAt: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
       }),
     );
   });
 
-  it('list omits the status filter entirely when none is given', async () => {
+  it('omits every absent filter entirely', async () => {
     // Not `{ in: [] }` — Prisma reads an empty `in` as "match nothing", so a
     // careless refactor here would silently empty every unfiltered list.
-    prisma.activityRecord.findMany.mockResolvedValue([]);
-    await service.list(superAdmin(), {});
+    await service.listPage(superAdmin(), {});
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
-    expect(where.status).toBeUndefined();
+    expect(Object.keys(where)).toEqual(['subsidiaryId']);
+  });
+
+  it('applies the added filters: company-level, scope, canonical period value and a literal search', async () => {
+    await service.listPage(superAdmin(), {
+      locationId: null, scope: 2, period: 'monthly', periodValue: 'JANUARY', search: '50%_off\\',
+    });
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ locationId: null, scope: 2, reportingPeriod: 'monthly', periodValue: 'January' });
+    const literal = { contains: '50\\%\\_off\\\\', mode: 'insensitive' };
+    expect(where.OR).toEqual([
+      { category: literal },
+      { periodValue: literal },
+      { varianceReason: literal },
+      { subsidiary: { tradingName: literal } },
+      { subsidiary: { OR: [{ tradingName: null }, { tradingName: '' }], legalName: literal } },
+    ]);
+  });
+
+  it('continues after the cursor\'s sort key, inside the same scope, and marks each row\'s lock', async () => {
+    const t = new Date('2026-03-01T10:00:00.000Z');
+    const rows = ['00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001']
+      .map((id, i) => ({ ...makeRecord({ id, createdAt: t, periodValue: i === 0 ? 'January' : 'February' }), _count: { evidenceLinks: 0 } }));
+    prisma.activityRecord.findMany.mockResolvedValueOnce(rows);
+    prisma.periodLock.findMany.mockResolvedValueOnce([
+      { subsidiaryId: 'sub-1', reportingYear: rows[0].reportingYear, reportingPeriod: rows[0].reportingPeriod, periodValue: 'January' },
+    ]);
+    const first = await service.listPage(dataEntry(), { limit: 2 });
+    expect(first.items.map((r) => [r.id, r.periodLocked])).toEqual([[rows[0].id, true], [rows[1].id, false]]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    // The lock lookup asked about the PAGE's periods only, never the extra row's.
+    expect(prisma.periodLock.findMany.mock.calls[0][0].where.OR).toHaveLength(2);
+
+    prisma.activityRecord.findMany.mockResolvedValueOnce([]);
+    await service.listPage(dataEntry(), { limit: 2, cursor: first.nextCursor! });
+    expect(prisma.activityRecord.findMany.mock.calls[1][0].where).toEqual({
+      AND: [
+        { subsidiaryId: { in: ['sub-1'] } },
+        { OR: [{ createdAt: { lt: t } }, { createdAt: t, id: { lt: rows[1].id } }] },
+      ],
+    });
+  });
+
+  it('refuses a cursor of another filter or sort, even where the caller sees nothing', async () => {
+    prisma.activityRecord.findMany.mockResolvedValueOnce(
+      [1, 2].map((n) => ({ ...makeRecord({ id: `00000000-0000-4000-8000-00000000000${n}` }), _count: { evidenceLinks: 0 } })),
+    );
+    const { nextCursor } = await service.listPage(dataEntry(), { limit: 1, year: 2026 });
+    const refused = expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) });
+    await expect(service.listPage(dataEntry(), { limit: 1, year: 2025, cursor: nextCursor! })).rejects.toThrow(refused);
+    await expect(service.listPage(dataEntry(), { limit: 1, year: 2026, sort: 'review_queue', cursor: nextCursor! })).rejects.toThrow(refused);
+    await expect(service.listPage(dataEntry(), { limit: 1, year: 2025, subsidiaryId: 'sub-2', cursor: nextCursor! })).rejects.toThrow(refused);
+    // The same request's cursor is accepted, whatever the caller's access now is.
+    await expect(service.listPage(dataEntry({ accessibleSubsidiaryIds: [] }), { limit: 1, year: 2026, cursor: nextCursor! }))
+      .resolves.toEqual({ items: [], limit: 1, nextCursor: null });
+  });
+
+  describe('a cursor is bound to every filter and to the sort (qa-auditor P2-1)', () => {
+    const at = new Date('2026-03-01T10:00:00.000Z');
+    const twoRows = () =>
+      [1, 2].map((n) => ({ ...makeRecord({ id: `00000000-0000-4000-8000-00000000000${n}`, createdAt: at }), _count: { evidenceLinks: 0 } }));
+    const base = {
+      subsidiaryId: 'sub-1', year: 2026, period: 'monthly' as const, periodValue: 'January', category: CATEGORIES[0],
+      status: ['draft' as const], locationId: null, scope: 2 as const, search: 'abc',
+    };
+    const refused = expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) });
+    const mint = async () => {
+      prisma.activityRecord.findMany.mockResolvedValueOnce(twoRows());
+      const { nextCursor } = await service.listPage(dataEntry(), { ...base, limit: 1 });
+      expect(nextCursor).toEqual(expect.any(String));
+      return nextCursor!;
+    };
+
+    it.each([
+      ['subsidiaryId', { subsidiaryId: undefined }],
+      ['year', { year: 2025 }],
+      ['period', { period: 'quarterly' as const, periodValue: 'Q1' }],
+      ['periodValue', { periodValue: 'February' }],
+      ['category', { category: CATEGORIES[1] }],
+      ['status', { status: ['submitted' as const] }],
+      ['locationId: company-level against every site', { locationId: undefined }],
+      ['locationId: company-level against one site', { locationId: '00000000-0000-4000-8000-0000000000aa' }],
+      ['scope', { scope: 1 as const }],
+      ['search', { search: 'abd' }],
+      ['sort', { sort: 'review_queue' as const }],
+    ])('another %s is refused', async (_label, change) => {
+      const cursor = await mint();
+      await expect(service.listPage(dataEntry(), { ...base, ...change, limit: 1, cursor })).rejects.toThrow(refused);
+    });
+
+    it('another spelling of the same request binds alike — the status set in any order, the period value in any case', async () => {
+      const cursor = await mint();
+      await expect(
+        service.listPage(dataEntry(), { ...base, status: ['draft', 'draft'], periodValue: 'JANUARY', limit: 1, cursor }),
+      ).resolves.toMatchObject({ limit: 1 });
+    });
+  });
+
+  it('metadata counts the whole filtered set inside the access, up to the work budget', async () => {
+    prisma.activityRecord.count.mockResolvedValueOnce(42);
+    prisma.activityRecord.aggregate.mockResolvedValueOnce({ _max: { reportingYear: 2026 } });
+    await expect(service.metadata(dataEntry(), { status: ['draft'] })).resolves.toEqual({ total: 42, latestReportingYear: 2026 });
+    expect(prisma.activityRecord.count).toHaveBeenCalledWith({
+      where: { subsidiaryId: { in: ['sub-1'] }, status: { in: ['draft'] } },
+      take: 100_001,
+    });
+  });
+
+  it('exactly a page of rows is the last page; exactly the budget is counted (boundaries)', async () => {
+    prisma.activityRecord.findMany.mockResolvedValueOnce(
+      [1, 2].map((n) => ({ ...makeRecord({ id: `00000000-0000-4000-8000-00000000000${n}` }), _count: { evidenceLinks: 0 } })),
+    );
+    expect((await service.listPage(dataEntry(), { limit: 2 })).nextCursor).toBeNull();
+    prisma.activityRecord.count.mockResolvedValueOnce(100_000);
+    await expect(service.metadata(superAdmin(), {})).resolves.toMatchObject({ total: 100_000 });
+  });
+
+  it('metadata over the budget is query_too_broad, with no partial count', async () => {
+    prisma.activityRecord.count.mockResolvedValueOnce(100_001);
+    await expect(service.metadata(superAdmin(), {})).rejects.toBeInstanceOf(QueryTooBroadError);
+    expect(prisma.activityRecord.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('metadata of an inaccessible or empty set is zero and no year, before any budget', async () => {
+    await expect(service.metadata(dataEntry(), { subsidiaryId: 'sub-2' })).resolves.toEqual({ total: 0, latestReportingYear: null });
+    expect(prisma.activityRecord.count).not.toHaveBeenCalled();
+    await expect(service.metadata(dataEntry(), {})).resolves.toEqual({ total: 0, latestReportingYear: null });
+    expect(prisma.activityRecord.aggregate).not.toHaveBeenCalled();
   });
 
   it('get treats an out-of-scope record as NotFound', async () => {
@@ -2718,7 +2844,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     ]);
 
     // A consultant, so neither actor is the caller and both need looking up.
-    const rows = await service.list(consultant(), {});
+    const rows = (await service.listPage(consultant(), {})).items;
 
     expect(rows.map((r) => r.createdByName)).toEqual(['Entry User', 'Entry User']);
     expect(rows.map((r) => r.reviewedByName)).toEqual(['Admin User', 'Admin User']);

@@ -1,5 +1,4 @@
-import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
+import { Injectable, Logger } from '@nestjs/common';
 import { DEFAULT_LOCALE, isLocale } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { normaliseEmail } from '../auth/access-admin.service';
@@ -14,20 +13,6 @@ export const RESET_COOLDOWN_SECONDS = 300;
 export const RESET_WORKERS = 4;
 /** Requests one API instance holds waiting for a worker; past it they are dropped. */
 export const RESET_QUEUE_MAX = 1_000;
-
-/**
- * Requests per minute one client address may make (decision S6). Read here
- * rather than in `LIMIT_DEFAULTS`, which is LP4-05's — PR C may fold it in.
- */
-export function readResetPerIpLimit(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.AUTH_EMAIL_PER_IP_PER_MINUTE;
-  if (raw === undefined || raw === '') return 5;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 10_000) {
-    throw new Error('AUTH_EMAIL_PER_IP_PER_MINUTE must be an integer between 1 and 10000');
-  }
-  return value;
-}
 
 /**
  * The public "forgot password" endpoint's work (K5, D16). The response is the
@@ -47,30 +32,25 @@ export function readResetPerIpLimit(env: NodeJS.ProcessEnv = process.env): numbe
  * shutdown waits for it; queued ones are dropped once it starts.
  */
 @Injectable()
-export class PasswordResetService implements OnModuleInit {
+export class PasswordResetService {
   private readonly logger = new Logger(PasswordResetService.name);
-  private readonly perIpPerMinute = readResetPerIpLimit();
-  private limits!: RuntimeLimits;
   private readonly queue: string[] = [];
   private workers = 0;
 
+  /** `limits` is the application's one `RuntimeLimits` (RuntimeLimitsModule), whose
+   *  quota maps and shutdown settling every request shares — never a second copy. */
   constructor(
     private readonly prisma: PrismaService,
     private readonly authAdmin: AuthAdminService,
     private readonly mail: MailService,
     private readonly audit: AuditService,
-    private readonly moduleRef: ModuleRef,
+    private readonly limits: RuntimeLimits,
   ) {}
-
-  /** The application's one `RuntimeLimits` (the root module's), whose quota
-   *  maps and shutdown settling every request shares — never a second copy. */
-  onModuleInit(): void {
-    this.limits = this.moduleRef.get(RuntimeLimits, { strict: false });
-  }
 
   /** Admits the request (429 past the per-client-address quota) and queues it. */
   async request(clientIp: string, email: string): Promise<void> {
-    await this.limits.quota(`auth-email:ip:${clientIp}`, this.perIpPerMinute);
+    // Requests per minute one client address may make (decision S6; LIMIT_DEFAULTS since LP4-05 PR C).
+    await this.limits.quota(`auth-email:ip:${clientIp}`, this.limits.config.AUTH_EMAIL_PER_IP_PER_MINUTE);
     if (this.queue.length >= RESET_QUEUE_MAX) {
       // Still a 202: whether the queue is full depends on the accounts ahead.
       this.logger.warn('Password reset dropped: the queue is full');

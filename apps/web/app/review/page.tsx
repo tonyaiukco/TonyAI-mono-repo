@@ -2,12 +2,10 @@
 
 import { canApproveRecord } from "@/lib/record-lifecycle-view";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
   FileText,
   LogOut,
   Paperclip,
@@ -18,6 +16,7 @@ import { Sidebar } from "@/components/dashboard/sidebar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -50,12 +49,14 @@ import {
   PENDING_REVIEW_STATUSES,
   unitSymbol,
   type ActivityRecordDTO,
+  type ActivityRecordPageFilters,
   type EvidenceDTO,
   type SubsidiaryDTO,
 } from "@/lib/types";
+import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { entityLabel } from "@/lib/void-view";
-import { sharedWithNote } from "@/lib/evidence-view";
-import { byLongestWait, waitingLabel } from "@/lib/review-view";
+import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
+import { waitingLabel } from "@/lib/review-view";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
   formatTCo2e,
@@ -65,7 +66,6 @@ import {
 } from "@/lib/calculation-display";
 import { cn } from "@/lib/utils";
 
-const PAGE_SIZE = 25;
 const ANY = "__any__";
 
 /** Same palette as the emissions History tab — a record must not change colour
@@ -92,13 +92,30 @@ export default function ReviewPage() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const [rows, setRows] = useState<ActivityRecordDTO[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // The whole queue's size from GET /activity-records/metadata, never the
+  // loaded rows' count; null while unknown or refused as query_too_broad.
+  const [total, setTotal] = useState<number | null>(null);
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
   const [loading, setLoading] = useState(true);
-  const [offset, setOffset] = useState(0);
+  // The selection on screen could not be read: said so, never "nothing waiting".
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [subsidiaryId, setSubsidiaryId] = useState<string>(ANY);
   const [selected, setSelected] = useState<ActivityRecordDTO | null>(null);
   const [evidence, setEvidence] = useState<EvidenceDTO[] | null>(null);
+  const [evidenceCursor, setEvidenceCursor] = useState<string | null>(null);
   const [evidenceError, setEvidenceError] = useState(false);
+  // Every load and "load more" carries the sequence it started under; one that
+  // returns after a newer load (a filter change, a refresh) is dropped.
+  const loadSeq = useRef(0);
+  // The filters the rows on screen — and so `nextCursor` — belong to. A "load
+  // more" continues THAT chain, never the selection picked since (Codex P2-1).
+  const chainFilters = useRef<ActivityRecordPageFilters | null>(null);
+  const selectedId = useRef<string | null>(null);
+  useEffect(() => {
+    selectedId.current = selected?.id ?? null;
+  }, [selected]);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -111,36 +128,92 @@ export default function ReviewPage() {
   const canReview = user?.role === "super_admin" || user?.role === "consultant";
   const canApprove = canApproveRecord(user, selected);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /** The queue's filters: the pending statuses, and the subsidiary picked. */
+  const queueFilters = useCallback(
+    (): ActivityRecordPageFilters => ({
+      status: [...PENDING_REVIEW_STATUSES],
+      ...(subsidiaryId === ANY ? {} : { subsidiaryId }),
+    }),
+    [subsidiaryId],
+  );
+
+  /**
+   * The first page of the queue and its size. A refresh, a filter change and a
+   * decision each start the cursor chain again (LP4-05's contract).
+   *
+   * Longest wait first, from the API (`review_queue`: submittedAt ASC, nulls
+   * last, id): a queue sorted newest-first buries the record that has waited
+   * longest, which is the one most likely to hold up a period close. Sorted on
+   * the field the Waiting column MEASURES.
+   */
+  const load = useCallback(async (options: { quiet?: boolean } = {}) => {
+    const seq = ++loadSeq.current;
+    // A refresh after a decision keeps the table on screen while it reloads.
+    if (!options.quiet) setLoading(true);
+    const filters = queueFilters();
     try {
-      const [records, subs] = await Promise.all([
-        api.listActivityRecords({ status: PENDING_REVIEW_STATUSES }),
+      const [page, subs, meta] = await Promise.all([
+        api.listActivityRecordPage({ ...filters, sort: "review_queue" }),
         api.listSubsidiaries(),
+        // Any refusal of the count (422 query_too_broad, a quota, an outage) shows
+        // it as unknown; the list itself still loads (K7).
+        api.activityRecordMetadata(filters).catch(() => null),
       ]);
-      // Longest wait first: a review queue sorted newest-first buries the
-      // record that has waited longest, which is the one most likely to hold
-      // up a period close. The API returns newest-first for every other screen.
-      //
-      // Sorted on the field the Waiting column MEASURES. It sorted on
-      // `createdAt` while the column counted from there too; once the column
-      // moved, the two disagreed and the row order — which is what a reviewer
-      // acts on — kept the old misstatement.
-      setRows([...records].sort(byLongestWait));
+      if (seq !== loadSeq.current) return;
+      chainFilters.current = filters;
+      setLoadFailed(false);
+      setRows(page.items);
+      setNextCursor(page.nextCursor);
+      setTotal(meta?.total ?? null);
       setSubsidiaries(subs);
     } catch (e) {
+      if (seq !== loadSeq.current) return;
+      // Never the previous selection's records and count under the new
+      // selector: they are actionable, and they are not what it names (Codex P2-1).
+      chainFilters.current = null;
+      setLoadFailed(true);
+      setRows([]);
+      setNextCursor(null);
+      setTotal(null);
       if (e instanceof ApiError && e.status === 401) {
         toast.error("Your session has expired — please sign in again.");
       } else {
         toast.error((e as Error).message);
       }
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  }, []);
+  }, [queueFilters]);
+
+  async function loadMore() {
+    const filters = chainFilters.current;
+    if (!nextCursor || !filters) return;
+    const seq = loadSeq.current;
+    setLoadingMore(true);
+    try {
+      const page = await api.listActivityRecordPage({ ...filters, sort: "review_queue", cursor: nextCursor });
+      if (seq !== loadSeq.current) return;
+      setRows((prev) => appendById(prev, page.items));
+      setNextCursor(page.nextCursor);
+    } catch (e) {
+      if (seq !== loadSeq.current) return;
+      toast.error((e as Error).message);
+      // A cursor refused after a deployment: start the queue again.
+      if (isStaleCursor(e)) void loadRef.current();
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     void load();
+  }, [load]);
+  // The loader of the selection on screen NOW. A decision that settles after
+  // the reviewer picked another subsidiary refreshes that one, never the
+  // selection it started under (Codex P2-2).
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
   }, [load]);
 
   // The store is in-memory, so a hard load has no user until this runs — and
@@ -157,11 +230,15 @@ export default function ReviewPage() {
   useEffect(() => {
     if (!selected) return;
     setEvidence(null);
+    setEvidenceCursor(null);
     setEvidenceError(false);
     let cancelled = false;
-    api
-      .listEvidence(selected.id)
-      .then((files) => !cancelled && setEvidence(files))
+    readEvidencePage(selected.id)
+      .then((page) => {
+        if (cancelled) return;
+        setEvidence(page.items);
+        setEvidenceCursor(page.nextCursor);
+      })
       // NOT `[]`. A 403, a 500 or a dropped connection rendered identically to
       // "this record genuinely has no evidence" — on the one screen where
       // someone decides whether to accept a figure into the inventory, that is
@@ -171,6 +248,37 @@ export default function ReviewPage() {
       cancelled = true;
     };
   }, [selected]);
+
+  async function loadMoreEvidence() {
+    if (!selected || !evidenceCursor) return;
+    const recordId = selected.id;
+    try {
+      const page = await readEvidencePage(recordId, evidenceCursor);
+      // The sheet may have moved to another record while this page loaded.
+      if (selectedId.current !== recordId) return;
+      setEvidence((prev) => appendById(prev ?? [], page.items));
+      setEvidenceCursor(page.nextCursor);
+    } catch (e) {
+      if (selectedId.current !== recordId) return;
+      toast.error((e as Error).message);
+      if (!isStaleCursor(e)) return;
+      // A cursor refused after a deployment: the files start again from their
+      // first page, for the record still open (Codex P2-3).
+      try {
+        const first = await readEvidencePage(recordId);
+        if (selectedId.current !== recordId) return;
+        setEvidenceError(false);
+        setEvidence(first.items);
+        setEvidenceCursor(first.nextCursor);
+      } catch {
+        if (selectedId.current !== recordId) return;
+        // The error state's Retry reloads the record; no stale cursor is left
+        // behind a second "load more" (Codex P3 on the re-check).
+        setEvidenceCursor(null);
+        setEvidenceError(true);
+      }
+    }
+  }
 
   async function handleLogout() {
     await getSupabaseBrowserClient().auth.signOut();
@@ -219,8 +327,15 @@ export default function ReviewPage() {
           ? prev.map((r) => (r.id === updated.id ? updated : r))
           : prev.filter((r) => r.id !== updated.id),
       );
-      setSelected(stillPending ? updated : null);
-      if (!stillPending) setReason("");
+      // Only while the sheet still shows this record: one the reviewer closed,
+      // or moved on from, is not reopened by a late answer (Codex P2-2).
+      if (selectedId.current === record.id) {
+        setSelected(stillPending ? updated : null);
+        if (!stillPending) setReason("");
+      }
+      // The queue moved: its size and its first page are read again — for the
+      // selection on screen now — and the cursor chain starts over.
+      void loadRef.current({ quiet: true });
       toast.success(
         verb === "review"
           ? "Taken into review"
@@ -234,26 +349,12 @@ export default function ReviewPage() {
       // reviewer clicking a row that can no longer move.
       toast.error((e as Error).message);
       if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
-        void load();
+        void loadRef.current();
       }
     } finally {
       setBusy(false);
     }
   }
-
-  const filtered =
-    subsidiaryId === ANY
-      ? rows
-      : rows.filter((r) => r.subsidiaryId === subsidiaryId);
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  // Clamped: deciding the last record on a page shrinks the list under the
-  // current offset, and the slice then came back empty — so the queue announced
-  // "Nothing is waiting for review" while the header still counted 25 waiting.
-  // On a screen whose whole purpose is that nothing gets lost, that state is
-  // worse than a wrong page number.
-  const safeOffset = Math.min(offset, (pages - 1) * PAGE_SIZE);
-  const visible = filtered.slice(safeOffset, safeOffset + PAGE_SIZE);
-  const page = Math.floor(safeOffset / PAGE_SIZE) + 1;
 
   const subsidiaryName = (id: string) =>
     subsidiaries.find((s) => s.id === id)?.legalName ?? id;
@@ -310,10 +411,7 @@ export default function ReviewPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <Select
                   value={subsidiaryId}
-                  onValueChange={(v) => {
-                    setSubsidiaryId(v);
-                    setOffset(0);
-                  }}
+                  onValueChange={(v) => setSubsidiaryId(v)}
                 >
                   <SelectTrigger className="w-[260px]">
                     <SelectValue placeholder="All subsidiaries" />
@@ -327,8 +425,8 @@ export default function ReviewPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <span className="text-sm text-muted-foreground ml-auto">
-                  {filtered.length} awaiting review
+                <span className="text-sm text-muted-foreground ml-auto" data-testid="review-queue-total">
+                  {total === null ? "—" : total} awaiting review
                 </span>
               </div>
 
@@ -358,7 +456,20 @@ export default function ReviewPage() {
                             </TableCell>
                           </TableRow>
                         ))
-                      ) : visible.length === 0 ? (
+                      ) : loadFailed ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={8}
+                            className="text-center py-8 text-muted-foreground"
+                            data-testid="review-queue-failed"
+                          >
+                            The queue for this selection could not be loaded.{" "}
+                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => void load()}>
+                              Retry
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ) : rows.length === 0 ? (
                         <TableRow>
                           <TableCell
                             colSpan={8}
@@ -371,7 +482,7 @@ export default function ReviewPage() {
                           </TableCell>
                         </TableRow>
                       ) : (
-                        visible.map((row) => (
+                        rows.map((row) => (
                           <TableRow
                             key={row.id}
                             className="cursor-pointer"
@@ -465,27 +576,18 @@ export default function ReviewPage() {
               </Card>
 
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Page {page} of {pages}
+                <span className="text-sm text-muted-foreground" data-testid="review-queue-shown">
+                  {loading || rows.length === 0
+                    ? ""
+                    : `Showing ${rows.length}${total === null ? "" : ` of ${total}`} — the longest wait first`}
                 </span>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={safeOffset === 0 || loading}
-                    onClick={() => setOffset(Math.max(0, safeOffset - PAGE_SIZE))}
-                  >
-                    <ChevronLeft className="h-4 w-4" /> Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={safeOffset + PAGE_SIZE >= filtered.length || loading}
-                    onClick={() => setOffset(safeOffset + PAGE_SIZE)}
-                  >
-                    Next <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
+                <LoadMoreButton
+                  hasMore={nextCursor !== null && !loading}
+                  loading={loadingMore}
+                  onClick={() => void loadMore()}
+                  label="Load more"
+                  testId="review-queue-load-more"
+                />
               </div>
             </>
           )}
@@ -705,6 +807,13 @@ export default function ReviewPage() {
                     })}
                   </ul>
                 )}
+                <LoadMoreButton
+                  hasMore={evidence !== null && evidenceCursor !== null && !evidenceError}
+                  loading={false}
+                  onClick={() => void loadMoreEvidence()}
+                  label="Load more files"
+                  testId="review-evidence-load-more"
+                />
               </div>
 
               <div className="space-y-2 border-t pt-4">

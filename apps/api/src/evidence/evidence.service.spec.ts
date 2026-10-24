@@ -3,12 +3,14 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import type { EvidenceLinkRefusedDTO } from '@tonyai/shared-types';
 import { EvidenceService } from './evidence.service';
+import { QueryTooBroadError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
 import type { StorageIntentsService } from '../storage/storage-intents.service';
@@ -243,13 +245,19 @@ describe('EvidenceService', () => {
       prisma.activityRecord.findUnique.mockResolvedValue(mine);
       prisma.evidence.findMany.mockResolvedValue([makeEvidence([mine, other])]);
 
-      const list = await service.list(dataEntry(), 'rec-1');
+      const page = await service.listPage(dataEntry(), 'rec-1', {});
+      const list = page.items;
 
       expect(prisma.evidence.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { links: { some: { activityRecordId: 'rec-1' } } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 51,
         }),
       );
+      // Each file's linked records are read to one past the cap, never cut at it.
+      expect(prisma.evidence.findMany.mock.calls[0][0].include.links.take).toBe(1001);
+      expect(page).toMatchObject({ limit: 50, nextCursor: null });
       expect(list).toHaveLength(1);
       expect(list[0]).not.toHaveProperty('storagePath'); // never leak the object key
       expect(list[0].subsidiaryId).toBe('sub-1');
@@ -268,7 +276,7 @@ describe('EvidenceService', () => {
       prisma.activityRecord.findUnique.mockResolvedValue(
         makeRecord({ id: 'rec-x', subsidiaryId: 'sub-999' }),
       );
-      await expect(service.list(dataEntry(), 'rec-x')).rejects.toBeInstanceOf(
+      await expect(service.listPage(dataEntry(), 'rec-x', {})).rejects.toBeInstanceOf(
         NotFoundException,
       );
       expect(prisma.evidence.findMany).not.toHaveBeenCalled();
@@ -280,8 +288,55 @@ describe('EvidenceService', () => {
       const file = makeEvidence([mine]);
       file.links[0].activityRecord.location = { name: 'Izmir Plant' } as never;
       prisma.evidence.findMany.mockResolvedValue([file]);
-      const [dto] = await service.list(dataEntry(), 'rec-1');
+      const [dto] = (await service.listPage(dataEntry(), 'rec-1', {})).items;
       expect(dto.linkedRecords[0].locationName).toBe('Izmir Plant');
+    });
+
+    it('refuses a file backing more records than the cap as an integrity failure, never a shortened list', async () => {
+      const mine = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(mine);
+      const file = makeEvidence([mine]);
+      file.links = Array.from({ length: 1001 }, () => file.links[0]);
+      prisma.evidence.findMany.mockResolvedValue([file]);
+      await expect(service.listPage(dataEntry(), 'rec-1', {})).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+
+    it('refuses a page whose files together back more records than the link budget, whole', async () => {
+      const mine = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(mine);
+      const file = makeEvidence([mine]);
+      file.links = Array.from({ length: 1000 }, () => file.links[0]);
+      // 11 files × 1,000 links: each within its own cap, 11,000 past the page's 10,000.
+      prisma.evidence.findMany.mockResolvedValue(Array.from({ length: 11 }, (_, i) => ({ ...file, id: `ev-${i}` })));
+      await expect(service.listPage(dataEntry(), 'rec-1', {})).rejects.toBeInstanceOf(QueryTooBroadError);
+    });
+
+    it('an evidence cursor is bound to its record, whatever the spelling of the path (qa-auditor P2-1)', async () => {
+      const mine = makeRecord({ id: 'aaaaaaaa-0000-4000-8000-000000000001' });
+      prisma.activityRecord.findUnique.mockResolvedValue(mine);
+      prisma.evidence.findMany.mockResolvedValueOnce(
+        [1, 2].map((n) => ({ ...makeEvidence([mine]), id: `00000000-0000-4000-8000-00000000000${n}` })),
+      );
+      const { nextCursor } = await service.listPage(dataEntry(), mine.id, { limit: 1 });
+      const refused = expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) });
+      await expect(service.listPage(dataEntry(), 'aaaaaaaa-0000-4000-8000-000000000002', { limit: 1, cursor: nextCursor! })).rejects.toThrow(refused);
+      prisma.evidence.findMany.mockResolvedValueOnce([]);
+      await expect(service.listPage(dataEntry(), mine.id.toUpperCase(), { limit: 1, cursor: nextCursor! })).resolves.toMatchObject({ items: [] });
+    });
+
+    it('counts only the page against the link budget, never the probe row past it', async () => {
+      const mine = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(mine);
+      const file = makeEvidence([mine]);
+      file.links = Array.from({ length: 1000 }, () => file.links[0]);
+      // limit 10 → 11 rows fetched: the page holds exactly 10,000 links (the budget), the probe row 1,000 more.
+      prisma.evidence.findMany.mockResolvedValue(Array.from({ length: 11 }, (_, i) => ({ ...file, id: `00000000-0000-4000-8000-0000000000${10 + i}` })));
+      await expect(service.listPage(dataEntry(), 'rec-1', { limit: 10 })).resolves.toMatchObject({ limit: 10 });
+    });
+
+    it('refuses a malformed cursor before reading the record', async () => {
+      await expect(service.listPage(dataEntry(), 'rec-1', { cursor: 'nope' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.activityRecord.findUnique).not.toHaveBeenCalled();
     });
   });
 

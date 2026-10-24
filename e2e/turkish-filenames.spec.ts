@@ -49,7 +49,7 @@ test('a Turkish filename survives the upload byte for byte', async ({ request })
     const listed = await (
       await request.get(`${API_BASE}/activity-records/${rec.id}/evidence`, { headers: bearer(token) })
     ).json();
-    expect(listed[0].fileName).toBe(TURKISH_NAME);
+    expect(listed.items[0].fileName).toBe(TURKISH_NAME);
 
     // The download must land under the user's name, not the sanitised key.
     const signed = await (

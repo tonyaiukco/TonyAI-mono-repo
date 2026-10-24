@@ -94,7 +94,7 @@ test('deleting one evidence file leaves the record and its other files alone', a
     });
   }
 
-  const list = await (await request.get(`${API_BASE}/activity-records/${rec.id}/evidence`, { headers: bearer(token) })).json();
+  const { items: list } = await (await request.get(`${API_BASE}/activity-records/${rec.id}/evidence`, { headers: bearer(token) })).json();
   const drop = list.find((e: { fileName: string }) => e.fileName === 'drop.pdf');
   const before = await storagePathsOf(request, rec.id);
   expect(before).toHaveLength(2);
@@ -160,7 +160,7 @@ test('a file shared by two records survives the first record and goes with its l
   // Deleting one record keeps the file the other still holds.
   expect((await request.delete(`${API_BASE}/activity-records/${first.id}`, { headers: bearer(token) })).status()).toBe(200);
   expect(await objectExists(request, path), 'the other record still holds this file').toBe(true);
-  const left = await (await request.get(`${API_BASE}/activity-records/${second.id}/evidence`, { headers: bearer(token) })).json();
+  const { items: left } = await (await request.get(`${API_BASE}/activity-records/${second.id}/evidence`, { headers: bearer(token) })).json();
   expect(left.map((e: { id: string }) => e.id)).toEqual([file.id]);
 
   // Taking it off its last record deletes it — in storage, not just in the table.

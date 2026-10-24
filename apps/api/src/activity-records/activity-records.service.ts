@@ -5,7 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { ResourceNotFoundError } from '../common/api-error';
+import { QueryTooBroadError, ResourceNotFoundError } from '../common/api-error';
 import {
   ActivityRecordStatus,
   Prisma,
@@ -40,8 +40,12 @@ import {
   isEvidenceRequired,
   needsEvidenceBeforeSubmit,
   type ActivityCalculationSnapshot,
+  DEFAULT_ACTIVITY_RECORD_SORT,
   type ActivityRecordDTO,
+  type ActivityRecordListMetadataDTO,
+  type ActivityRecordPageItemDTO,
   type AuditAction,
+  type CursorPage,
   type Category,
   type ReportingPeriod,
   mayAuthorRecords,
@@ -73,7 +77,21 @@ import {
 } from './lifecycle-lock';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
-import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
+import {
+  ActivityRecordFiltersQueryDto,
+  ActivityRecordPageQueryDto,
+} from './dto/activity-record-page-query.dto';
+import { closedRecordIds } from './closed-periods';
+import { normaliseRecordFilters, RECORD_SORTS, recordFilterWhere } from './record-page';
+import {
+  cursorBinding,
+  decodeCursor,
+  keysetOrderBy,
+  keysetWhere,
+  pageLimit,
+  toCursorPage,
+} from '../common/keyset-cursor';
+import { readRuntimeConfig } from '../common/runtime-config';
 
 /**
  * A record in a typed category (Fuel, Mobile Combustion, Refrigerants) names
@@ -320,6 +338,8 @@ type ActivityRecordAuditSnapshot = Omit<ActivityRecordDTO, ResolvedRecordFields>
 @Injectable()
 export class ActivityRecordsService {
   private readonly logger = new Logger(ActivityRecordsService.name);
+
+  private readonly limits = readRuntimeConfig();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -750,6 +770,11 @@ export class ActivityRecordsService {
     if (!params.subsidiaryId) {
       throw new Error('anomaly baseline requires a subsidiary scope');
     }
+    // Bounded by the data model, not by a page (LP4-05 PR C): one live record
+    // per entity, category, activity type and period (the reporting-entity
+    // unique index), at most 12 periods a year and reporting years 2000–2100,
+    // so at most 1,212 rows — read as the four columns the rule needs, never
+    // the records' free-form input.
     const rows = await client.activityRecord.findMany({
       where: {
         subsidiaryId: params.subsidiaryId,
@@ -760,6 +785,7 @@ export class ActivityRecordsService {
         status: { in: BASELINE_STATUSES },
         ...(params.excludeId ? { id: { not: params.excludeId } } : {}),
       },
+      select: { reportingYear: true, reportingPeriod: true, periodValue: true, calculation: true },
     });
 
     const currentKey =
@@ -786,40 +812,67 @@ export class ActivityRecordsService {
     return computeAnomalyVerdict(params.currentTCo2e, orderedPriors);
   }
 
-  async list(
+  /**
+   * One page of the caller's records (LP4-05 PR C, `CursorPage`): the filters
+   * AND-combined inside the caller's CURRENT access, which every page
+   * re-applies — the cursor carries only the last row's sort key and a digest
+   * of the request it belongs to, so it never authorises a read.
+   */
+  async listPage(
     user: RequestUser,
-    query: ListActivityRecordsQueryDto,
-  ): Promise<ActivityRecordDTO[]> {
-    // Tenant scope: intersect any requested subsidiaryId with the accessible set.
-    let subsidiaryFilter: Prisma.StringFilter | string;
-    if (query.subsidiaryId) {
-      if (!user.accessibleSubsidiaryIds.includes(query.subsidiaryId)) {
-        return []; // requested a subsidiary the caller cannot see -> empty
-      }
-      subsidiaryFilter = query.subsidiaryId;
-    } else {
-      subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
-    }
+    query: ActivityRecordPageQueryDto,
+  ): Promise<CursorPage<ActivityRecordPageItemDTO>> {
+    const limit = pageLimit(query.limit);
+    const sort = RECORD_SORTS[query.sort ?? DEFAULT_ACTIVITY_RECORD_SORT];
+    const filters = normaliseRecordFilters(query);
+    const binding = cursorBinding(sort, filters);
+    // Decoded before the scope is known, so a cursor's acceptance depends only
+    // on the cursor and the request — never on what the caller may see.
+    const after = query.cursor !== undefined ? decodeCursor(sort, binding, query.cursor) : null;
+    const where = recordFilterWhere(user, filters);
+    if (!where) return { items: [], limit, nextCursor: null };
 
     const rows = await this.prisma.activityRecord.findMany({
-      where: {
-        subsidiaryId: subsidiaryFilter,
-        reportingYear: query.year,
-        reportingPeriod: query.period,
-        category: query.category,
-        status: query.status ? { in: query.status } : undefined,
-      },
-      orderBy: { createdAt: 'desc' },
+      where: after ? { AND: [where, keysetWhere(sort, after) as Prisma.ActivityRecordWhereInput] } : where,
+      orderBy: keysetOrderBy(sort) as Prisma.ActivityRecordOrderByWithRelationInput[],
+      take: limit + 1,
       include: {
         _count: { select: { evidenceLinks: true } },
         location: { select: { name: true } },
       },
     });
-    // One query for the whole page over all THREE actor columns at once, never
-    // one per row: `created_by`, `reviewed_by` and `voided_by` have no FK to
-    // `profiles`, so there is no `include` that could do this.
-    const actors = await this.actorsFor(user, rows);
-    return rows.map((r) => this.toDTO(r, r._count.evidenceLinks, actors));
+    const page = rows.slice(0, limit);
+    // One query each for the page's lock flags and its actors, never one per row.
+    const locked = await closedRecordIds(this.prisma, page);
+    const actors = await this.actorsFor(user, page);
+    return toCursorPage(
+      rows,
+      limit,
+      sort,
+      binding,
+      (r) => sort.keys.map((k) => r[k.field as 'createdAt' | 'submittedAt' | 'id']),
+      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors), periodLocked: locked.has(r.id) }),
+    );
+  }
+
+  /**
+   * The size and newest year of the whole filtered set, never of one page.
+   * Counting stops at the work budget: a set larger than it is 422
+   * `query_too_broad` with no partial count — computed only inside the
+   * caller's access, where an inaccessible filter is an empty set.
+   */
+  async metadata(
+    user: RequestUser,
+    query: ActivityRecordFiltersQueryDto,
+  ): Promise<ActivityRecordListMetadataDTO> {
+    const where = recordFilterWhere(user, normaliseRecordFilters(query));
+    if (!where) return { total: 0, latestReportingYear: null };
+    const budget = this.limits.ACTIVITY_RECORD_METADATA_MAX_ROWS;
+    const total = await this.prisma.activityRecord.count({ where, take: budget + 1 });
+    if (total > budget) throw new QueryTooBroadError();
+    if (total === 0) return { total: 0, latestReportingYear: null };
+    const latest = await this.prisma.activityRecord.aggregate({ where, _max: { reportingYear: true } });
+    return { total, latestReportingYear: latest._max.reportingYear };
   }
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {

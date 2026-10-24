@@ -1,25 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { decodeUsersCursor, encodeUsersCursor, toUserSummary } from './users-query.service';
+import { cursorBinding, decodeCursor, encodeCursor } from '../common/keyset-cursor';
+import { toUserSummary, USERS_SORT } from './users-query.service';
 
-describe('the users cursor (LP4-05 contract)', () => {
+describe('the users cursor (LP4-05 contract, the shared keyset helper)', () => {
+  const binding = cursorBinding(USERS_SORT, {});
+
   it('round-trips the sort key and carries no address, name or tenant', () => {
-    const key = { createdAt: new Date('2026-10-10T10:00:00.123Z'), id: randomUUID() };
-    const raw = encodeUsersCursor(key);
-    expect(decodeUsersCursor(raw)).toEqual(key);
-    expect(Buffer.from(raw, 'base64url').toString()).toBe(JSON.stringify({ v: 1, k: 'users', t: key.createdAt.toISOString(), i: key.id }));
+    const key = [new Date('2026-10-10T10:00:00.123Z'), randomUUID()] as const;
+    const raw = encodeCursor(USERS_SORT, binding, key);
+    expect(decodeCursor(USERS_SORT, binding, raw)).toEqual([...key]);
+    expect(JSON.parse(Buffer.from(raw, 'base64url').toString())).toEqual({
+      v: 2, k: 'users', b: binding, s: [key[0].toISOString(), key[1]],
+    });
   });
 
-  it.each([
-    ['garbage', 'not-a-cursor'],
-    ['another endpoint’s cursor', Buffer.from(JSON.stringify({ v: 1, k: 'records', t: '2026-10-10T10:00:00.000Z', i: randomUUID() })).toString('base64url')],
-    ['another version', Buffer.from(JSON.stringify({ v: 2, k: 'users', t: '2026-10-10T10:00:00.000Z', i: randomUUID() })).toString('base64url')],
-    ['an id that is not one', Buffer.from(JSON.stringify({ v: 1, k: 'users', t: '2026-10-10T10:00:00.000Z', i: "1' OR 1=1" })).toString('base64url')],
-    ['a time that is not canonical', Buffer.from(JSON.stringify({ v: 1, k: 'users', t: '2026-10-10', i: randomUUID() })).toString('base64url')],
-    ['an over-long value', 'a'.repeat(2049)],
-    ['an empty value', ''],
-  ])('refuses %s as validation_failed', (_label, raw) => {
-    expect(() => decodeUsersCursor(raw)).toThrow(expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) }));
+  it('refuses a version-1 cursor of the list before PR C', () => {
+    const v1 = Buffer.from(JSON.stringify({ v: 1, k: 'users', t: '2026-10-10T10:00:00.000Z', i: randomUUID() })).toString('base64url');
+    expect(() => decodeCursor(USERS_SORT, binding, v1)).toThrow(
+      expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) }),
+    );
   });
 });
 

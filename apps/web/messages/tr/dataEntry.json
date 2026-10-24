@@ -101,5 +101,10 @@
       "withdrawn": "Geri çekilmiş"
     }
   },
-  "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı."
+  "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",
+  "selectAllLoaded": "Yüklenen {count} kaydın tümünü seç",
+  "selectAllLoadedName": "Yüklenen {count} kaydın tümünü seç: yüklenen kayıtlar arasında girdiğiniz ve gönderebileceğiniz her taslak",
+  "previousShown": "{total} kayıttan {shown} tanesi gösteriliyor. Seçimler yalnızca burada yüklenen kayıtlara uygulanır.",
+  "previousShownLoaded": "Yüklenen {shown} kayıt gösteriliyor. Seçimler yalnızca burada yüklenen kayıtlara uygulanır.",
+  "previousLoadMore": "Daha fazla yükle"
 }

@@ -81,7 +81,7 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 | Targets & intensity (WP5) — reduction targets with live progress + per-year intensity denominators | ✅ |
 | Reports (WP6) — audit-ready PDF (Puppeteer) + Excel/CSV export, year+subsidiary scoped (FR §5.3 partial), audited generation | ✅ |
 | Audit-trail viewer (WP7) — read-only `/audit`, tenant-scoped and paginated, showing each actor's role **as recorded at the time** | ✅ |
-| Review queue (WP7) — `/review` turns the submit → review → approve/reject API into a screen: evidence and factor provenance in the detail sheet, rejection reason returned to the submitter | ✅ |
+| Review queue (WP7) — `/review` turns the submit → review → approve/reject API into a screen: evidence and factor provenance in the detail sheet, rejection reason returned to the submitter; server-ordered by longest wait and paged, its count the whole queue's (LP4-05 PR C) | ✅ |
 | Subsidiary control panel at `/subsidiaries/[id]` (WP16) — detail, reporting contact, locations managed in place, and a dependents card that explains a refused delete in the API's own words. The geography change is confirmed and states what does **not** move (committed records keep their factor snapshot) | ✅ |
 | TR/EN foundation and stable error codes (LP3-01) — `use-intl` catalogues, the user's language saved to the profile, locale-aware numeric input on Data Entry, a `code` on every API error — see [Localisation and error codes](#localisation-and-error-codes); the remaining screens are LP4-04 | ✅ foundation |
 | Onboarding and the user lifecycle (LP4-01) — the operator CLI provisions an organisation and its first administrator (`pnpm onboarding`, D18) and offboards one (K6); a `super_admin` invites, re-sends, changes roles and subsidiary access and disables/enables accounts at `/users`; invitation and password-reset emails in TR/EN sent by the API (mailpit locally); a disabled account is refused on its next request (D19). See [Account lifecycle](#account-lifecycle-lp4-01) | ✅ local; staging email waits on LP2-04 |
@@ -618,14 +618,14 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `GET` | `/health/synthetic` | Authenticated dependency readiness | any |
 | `GET` | `/me` | Current user + role + `accessibleSubsidiaryIds` + UI `language` (`en`/`tr`) | any |
 | `PATCH` | `/me/preferences` | Set the caller's own UI language (`{ language: "en" \| "tr" }`); audited; answers the updated user | any |
-| `GET` | `/users` | The organisation's members, newest first (`CursorPage<UserSummaryDTO>`: role, status `active`/`invited`/`disabled`, grants, the invitation's delivery state, a pending Auth step) | super_admin |
+| `GET` | `/users` | The organisation's members, newest first (`CursorPage<UserSummaryDTO>`, the shared keyset cursor of [Bounded access](#bounded-access-contract-lp4-05): role, status `active`/`invited`/`disabled`, grants, the invitation's delivery state, a pending Auth step) | super_admin |
 | `POST` | `/users/invitations` | Invite an account (`InviteUserRequest`: email, name, role, the email's language, data_entry grants) — 201 with the member; its `invitation` says whether the email went out. `email_unavailable` for an address with an account anywhere (D17) | super_admin |
 | `POST` | `/users/:id/invitation/resend` | Re-send a not-yet-accepted invitation with a fresh link (the previous one stops working); `invitation_closed` once accepted, `user_disabled` while disabled | super_admin |
 | `PATCH` | `/users/:id/role` | Change a member's role (`own_account_forbidden` for one's own); a data_entry user leaving the role loses its grants, each audited | super_admin |
 | `PUT` | `/users/:id/access` | Replace a data_entry user's subsidiary grants with exactly the set given (`access_role_mismatch` for another role) | super_admin |
 | `POST` | `/users/:id/disable` · `/users/:id/enable` | Disable (refused from the next request, banned in Auth with every session revoked, an open invitation revoked) or re-enable an account (the person then chooses a new password); never one's own | super_admin |
 | `POST` | `/invitations/accept` | The invitee, signed in by the emailed link: marks their invitation accepted (204; a no-op otherwise) | any |
-| `POST` | `/auth/password-reset` | "Forgot password": `{ email }` → **202 with no body for every address**, the work done after the response; one link per address per 5 minutes, in the account's language; 429 past `AUTH_EMAIL_PER_IP_PER_MINUTE` | public |
+| `POST` | `/auth/password-reset` | "Forgot password": `{ email }` → **202 with no body for every address**, the work done after the response; one link per address per 5 minutes, in the account's language; 429 past `AUTH_EMAIL_PER_IP_PER_MINUTE` (a [runtime limit](#bounded-access-contract-lp4-05) since LP4-05 PR C) | public |
 | `GET` | `/subsidiaries` | List (tenant‑scoped). Includes the reporting contact (`designatedPerson` / `contactEmail` / `contactPhone`), which is **deliberately visible to every role in the tenant** — see `permissions_and_roles.md` §6.4 for the decision and its consequences | any |
 | `GET` | `/subsidiaries/:id` | Get one (404 if outside access set) | any |
 | `GET` | `/subsidiaries/:id/summary` | Counts of everything hanging off it (locations, records split into approved/locked · awaiting review · draft/rejected, period locks, targets, denominators), plus `hasBlockingDependents` and `blockers[]` — the delete guard's own sentences, so a UI never restates them. Exists so a caller can show "36 records" without downloading 36 records, and can see **why** a delete would be refused without attempting it | any |
@@ -640,7 +640,8 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `GET` | `/kpi` | Dashboard summary (subsidiary totals + geography breakdown + operational location count) | any |
 | `POST` | `/calculations/preview` | Live emissions preview: normalises the unit, applies the matching factor, returns `tCo2e` + factor snapshot. `category` and `geographyCode` must be vocabulary values and `unit` is length‑capped, so a preview refuses what a save would | any |
 | `GET` | `/factors` | List emission factors (optional `?category=&geographyCode=&year=`) | any |
-| `GET` | `/activity-records` | List (tenant‑scoped; filters `?subsidiaryId=&year=&period=&category=&status=`). `status` takes one value or a comma‑separated set (`submitted,under_review`), which is how the review queue is fetched in a single call | any |
+| `GET` | `/activity-records` | One `CursorPage<ActivityRecordPageItemDTO>` (tenant‑scoped; default 50, max 100; `?limit=&cursor=&sort=newest\|review_queue` and the filters `subsidiaryId, year, period, periodValue, category, status, locationId` (`none` = company-level), `scope, search`). `status` takes one value or a comma‑separated set (`submitted,under_review`) — with `sort=review_queue` (submittedAt ASC NULLS LAST, id) that is the review queue. Each item's `periodLocked` is its own period's lock. See [Bounded access](#bounded-access-contract-lp4-05) | any |
+| `GET` | `/activity-records/metadata` | `{ total, latestReportingYear }` of the whole filtered set (the same filters, no page keys); 422 `query_too_broad` past `ACTIVITY_RECORD_METADATA_MAX_ROWS` | any |
 | `GET` | `/activity-records/:id` | Get one (404 if outside access set) | any |
 | `POST` | `/activity-records` | Create (status `draft`; optional `locationId` targets a location; stores an immutable calc snapshot) | `data_entry` / `super_admin` |
 | `PATCH` | `/activity-records/:id` | Update (only while `draft`/`rejected`; recomputes the snapshot; author‑or‑`super_admin`) | `data_entry` / `super_admin` |
@@ -655,21 +656,21 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `GET` | `/emissions/summary` | Tenant‑scoped analytics aggregation from committed records: scope totals, category & subsidiary breakdown, monthly/quarterly/yearly trends (filters `?subsidiaryId=&year=&scope=&category=`) | any |
 | `GET` | `/emissions/completeness` | Which `(location, month)` invoice slots are open for one subsidiary and year (`?subsidiaryId=&year=`, both required). Enumerates the complement of the same slot set the matrix cell counts, so the drill-down cannot disagree with the cell that opened it. Each slot also says whether its invoice is still awaiting review, so a screen can show "keyed in" and "approved" as the different claims they are. Also names the months already recorded at whole-company level — those close no site slot, and entering them again per site would count the month twice | any |
 | `GET` | `/emissions/tracking-matrix` | Subsidiary × category completeness matrix (FR §2: missing/incomplete/complete) with committed tCO₂e per cell (filters `?year=&subsidiaryId=`). A cell's `tCo2e` is `null` when nothing in it produced a figure — never a stand-in `0`. On a **`location`-measured** subsidiary the three invoice-tracked categories carry a `coverage` object instead of a yes/no verdict (see below). Every cell also carries `awaitingReviewRecords` — committed records nobody has accepted yet, which is what holds a cell short of green and what a screen prints to explain the amber. It counts RECORDS; `coverage.awaitingReviewSlots` counts SLOTS, and the two are not comparable | any |
-| `GET` | `/activity-records/:id/evidence` | List the files linked to a record, each with **every record it backs** (`linkedRecords`) | any |
+| `GET` | `/activity-records/:id/evidence` | One `CursorPage<EvidenceDTO>` of the files linked to a record, newest first, each with **every record it backs** (`linkedRecords`, complete up to `EVIDENCE_MAX_LINKED_RECORDS`; a stored overflow is a 500, never a shortened list) | any |
 | `POST` | `/activity-records/:id/evidence` | Upload evidence for one record (multipart `file`; PDF/JPG/PNG/XLSX/CSV, ≤10 MB) — author‑or‑`super_admin`, record editable (draft/rejected), period open | `data_entry` / `super_admin` |
 | `POST` | `/evidence` | Upload **one file for several records** of one subsidiary (multipart `file` + `recordIds`, a JSON array, ≤1,000). All or nothing: one record that cannot take it refuses the upload, naming every refused record; a record out of reach reads as not found | `data_entry` / `super_admin` |
 | `DELETE` | `/activity-records/:id/evidence/:evidenceId` | Take a file off one record (that record must be editable). The file stays on its other records; taking its **last** link deletes it | `data_entry` / `super_admin` |
 | `GET` | `/evidence/:id/url` | Short‑lived signed download URL for a private file (scoped by the file's subsidiary) | any |
 | `DELETE` | `/evidence/:id` | Delete a file from every record it backs — only while **each** of them is editable; a shared file backing a record that can no longer change is a 409. API-only: the web removes a file from one record with the detach route above | `data_entry` / `super_admin` |
-| `GET` | `/period-locks` | List locked periods (tenant‑scoped; filters `?subsidiaryId=&year=`) | any |
+| `GET` | `/period-locks` | One `CursorPage` of locked periods, newest first (tenant‑scoped; `?subsidiaryId=&year=&period=&periodValue=`; the exact four address one lock) | any |
 | `POST` | `/period-locks` | Close a reporting period (blocked while records await review, or while a rejected record waits for its author — D03) | `super_admin` |
 | `DELETE` | `/period-locks/:id` | Reopen a period (locked records revert to `approved`) | `super_admin` |
-| `GET` | `/targets` | List reduction targets (tenant‑scoped) | any |
-| `GET` | `/targets/progress` | Live progress vs committed emissions (`null` = no post‑baseline data) | any |
+| `GET` | `/targets` | One `CursorPage` of reduction targets (tenant‑scoped; `?subsidiaryId=`; targetYear ASC, createdAt DESC, id DESC) | any |
+| `GET` | `/targets/progress` | Live progress vs committed emissions for `?targetIds=` (1–100 comma-separated ids, none twice; request order; a missing or another tenant's id omitted alike; `null` = no post‑baseline data). Each target's year is bounded by `REPORT_RECORD_LIMIT` (422 `query_too_broad`) | any |
 | `POST` `PATCH` `DELETE` | `/targets`(`/:id`) | Manage a reduction target | `super_admin` |
-| `GET` | `/denominators` | List intensity denominators (tenant‑scoped; `?year=`) | any |
+| `GET` | `/denominators` | One `CursorPage` of intensity denominators (tenant‑scoped; `?subsidiaryId=&year=`; year DESC, metric ASC, id ASC) | any |
 | `POST` `PATCH` `DELETE` | `/denominators`(`/:id`) | Manage an intensity denominator | `super_admin` |
-| `GET` | `/intensity` | Emissions per configured denominator, per metric (`?year=`) | any |
+| `GET` | `/intensity` | Emissions per configured denominator, per metric (`?year=`) — one summary per subsidiary, each bounded by `REPORT_RECORD_LIMIT` (422 `query_too_broad`, never a partial figure), as is `GET /intensity/context` | any |
 | `GET` | `/reports/meta` | Report completeness/status for a year (badge + data warning) | any |
 | `GET` | `/reports/pdf` | Branded audit‑ready PDF (Puppeteer; methodology + evidence appendices). Every export answers `HEAD` 405 (LP3-02 (15)) | all except `data_entry` |
 | `GET` | `/reports/excel` | Excel export: Summary / Raw Activity Data / Withdrawn Records / Factors Used sheets | all except `data_entry` |
@@ -940,14 +941,21 @@ an inaccessible selection, Data Entry's refused year and the Turkish copy; D06 u
 clock is a unit test (a faked browser clock makes every Supabase session look
 expired).
 
-### Bounded access contract (LP4-05 PR A)
+### Bounded access contract (LP4-05)
 
-**Contract published; runtime activation is pending PR B/C.** This change adds
-shared types, client methods and error vocabulary without changing an existing
-endpoint's response or enforcing new limits. The legacy array clients remain
-active until PR C. Do not wire the new methods to screens before its API lands.
-The contract PR merges alone and first; each implementation rebases on that
-integrated commit. No migration or new dependency is part of this contract.
+**Live since PR C.** PR A (#157) published the shared types, client methods and
+error vocabulary; PR B (#160) the runtime limits; PR C activates every route
+below as one deliberate breaking change. The array clients (`listActivityRecords`,
+`listEvidence`, `listPeriodLocks`, `listTargets`, `targetProgress`,
+`listDenominators`) are deleted, and every screen reads pages: the review queue
+(server-ordered `review_queue`, its count from metadata), Emissions History
+(the bar's filters, the tab's category and the search applied by the server),
+Data Entry's Previous submissions (page-local selections, labelled "loaded" in
+both locales; a deep link resolved by narrow server filters; each row's
+`periodLocked` instead of a page of locks), the evidence vault and review sheet,
+targets (progress only for each page's ids), denominators and the period-lock
+drawer — each with **Load more**, none draining the list. Keyset indexes:
+migration `20261023120000_lp4_05_keyset_indexes`.
 
 `CursorPage<T>` is `{ items, limit, nextCursor }`, with a default limit of **50**,
 maximum **100**, and `null` as the end cursor. A cursor is opaque and at most
@@ -960,7 +968,7 @@ or ordering answer **400 `validation_failed`**. There is no silent clamp or
 restart at page one. Page clients reject old array responses and oversized or
 non-progressing envelopes; they never fetch all remaining pages automatically.
 
-| Future bounded route | New client method / contract | Ordering or scope |
+| Bounded route | Client method / contract | Ordering or scope |
 |---|---|---|
 | `GET /activity-records` | `listActivityRecordPage(ActivityRecordPageParams)` → `CursorPage<ActivityRecordPageItemDTO>` | `newest` (default): `createdAt DESC, id DESC`; `review_queue`: `submittedAt ASC NULLS LAST, id ASC`. The latter does not implicitly change the status filter. |
 | `GET /activity-records/metadata` | `activityRecordMetadata(ActivityRecordPageFilters)` → `{ total, latestReportingYear }` | Full tenant-scoped filtered set, independently of any page; null year if empty. Omit the year filter when asking for the newest available year. Register before the dynamic `/:id` route. |
@@ -999,9 +1007,36 @@ filter changes, local mutations and a stale cursor's `validation_failed` after
 deployment reset the cursor chain. A short nonempty page may carry a continuation;
 only `nextCursor: null` ends traversal. Previous submissions
 and bulk/evidence selections must be page-local and labelled in both locales;
-deep links use narrow server filters, not a search of the first page. PR C
-releases API and web together and documents reload/rollback for old open tabs;
-no compatibility shim may pretend the first page is the complete history.
+deep links use narrow server filters, not a search of the first page.
+No compatibility shim may pretend the first page is the complete history.
+
+**The cursor (`apps/api/src/common/keyset-cursor.ts`).** One helper for every
+page route, the users list's included: base64url JSON `{ v, k, b, s }` — version
+2, the endpoint, a truncated SHA-256 digest binding it to the sort and the normalised
+filters, and the last row's sort-key tuple. It is not signed and needs no
+secret: every page re-applies the caller's current access, so a forged or
+another tenant's cursor names a position inside the caller's own rows and
+nothing more (`tenant-isolation.int.spec.ts`, "pages and cursors"). Anything
+this module did not write for the request — another endpoint, sort (its name
+or its key columns) or filter, a non-canonical base64url spelling, a value the
+column cannot hold (an extended-year date, an integer past int4, a key outside
+the vocabulary), a NULL outside the NULLS LAST column — is 400
+`validation_failed`, never a database 500. Each key column declares its kind; `timestamp3` is exact
+only for a `TIMESTAMP(3)` column, which `keyset-columns.int.spec.ts` pins for
+every column every sort names. Search escapes `%`, `_` and `\` itself: Prisma
+6.19's `contains` passes them through as pattern syntax (measured); a control
+character in it is 400. Request logs keep `search` and `cursor` by name only —
+the cursor's filter digest is unkeyed, so a logged one would test guesses at the
+search. Case folding is the database's ILIKE, not Turkish: `İ`/`ı` do not fold
+to `i`/`I` (Open questions).
+
+**Release and rollback (PR C).** Deploy the API and the web app together: an
+old tab's array client receives an envelope and fails visibly (its next action
+errors), and a reload loads the new client. Rolling back means rolling back
+both, plus the migration's indexes if wanted (they are additive; leaving them
+is harmless). Cursors from before the deploy — the users list's version 1 —
+answer 400 once, and every paged screen then starts its list again from the
+first page.
 
 **Reserved refusals and partial outcomes.** PR B/C use **422
 `query_too_broad`** for a read/export exceeding its complete-output or work
@@ -1075,9 +1110,11 @@ in `infra/config/runtime-limits.json`. Configuration changes require a restart.
 | `IMPORT_CONCURRENCY`, `IMPORT_PARSE_TIMEOUT_MS` | 1 / 5,000 | Import work after body reception; parsing checkpoints |
 | `BULK_DEADLINE_MS` | 60,000 | Deadline for starting additional batch rows |
 | `REPORT_CONCURRENCY`, `PDF_TIMEOUT_MS` | 1 / 30,000 | Export admission before assembly; PDF renderer |
-| `REPORT_RECORD_LIMIT` | 5,000 | Committed plus withdrawn export rows |
+| `REPORT_RECORD_LIMIT` | 5,000 | Committed plus withdrawn export rows; also each subsidiary-year an intensity or target-progress read sums (LP4-05 PR C) |
 | `REPORT_EVIDENCE_LINK_LIMIT`, `REPORT_MAX_BYTES` | 10,000 / 20,971,520 | Export evidence links and source/output bytes |
 | `DB_CONNECTION_LIMIT`, `DB_POOL_TIMEOUT_SECONDS` | 5 / 5 | Prisma connection pool and acquisition wait |
+| `ACTIVITY_RECORD_METADATA_MAX_ROWS` | 100,000 | Rows `GET /activity-records/metadata` counts before 422 `query_too_broad` (LP4-05 PR C) |
+| `AUTH_EMAIL_PER_IP_PER_MINUTE` | 5 | Password-reset requests per client address, at most 10,000 (LP4-01 S6; registered here since LP4-05 PR C, so an empty value now fails startup like the others) |
 
 Slow body reception uses the per-IP cap and, for multipart, the global and
 verified-user upload slots. HTTP work, mutation, import and export slots are
@@ -1153,22 +1190,20 @@ The API image retains compiled runtime/CLI code, generated Prisma and production
 dependencies; its default base remains the ECR Public mirror (CI explicitly
 selects the official Docker Hub Node image after registry login).
 
-PR C still owns paginated reads/consumers, bounded history/anomaly/target paths
-and broader aggregate evidence payload protection. PR B's evidence-link budget
-is specific to export assembly. Neither runtime guard tests nor image smoke
-establish production throughput, tenant isolation in PostgreSQL, or cloud
-acceptance. Those claims require their respective live checks and LP5-03.
-
-PR C changes period-lock history from `reportingYear DESC, createdAt DESC` to
-`createdAt DESC, id DESC`, and evidence history from ascending to descending
-creation order. Its keyset indexes need a separately granted migration slot;
-the no-migration claim applies only to PR A. Further implementation gates:
-bound evidence's aggregate nested payload, redact free-text query strings from
-request logs before enabling search, expose `Retry-After` through CORS (the client
-already retains exposed values), validate target-progress request ids and batch
-its queries (the client already rejects extraneous, duplicate or unordered response ids), and
-cover every legacy list call in e2e fixtures. Deadline finalization must write
-the batch audit row after settled work, including the `failed` closing path.
+PR C bounded the reads: every history list is a `CursorPage` (above); target
+progress reads only the ids it is given, batched (one latest-year query, one
+summary per subsidiary, year and scope, each within `REPORT_RECORD_LIMIT`);
+intensity sums one bounded summary per subsidiary; an evidence page refuses
+(422) a nested payload past `REPORT_EVIDENCE_LINK_LIMIT` links; the anomaly
+baseline reads four columns of a pool the reporting-entity unique index bounds
+at 1,212 rows; a record search and its cursor reach the request log as
+`[redacted]` (`Retry-After` was already exposed through CORS). Period-lock history moved from
+`reportingYear DESC, createdAt DESC` to `createdAt DESC, id DESC`, evidence from
+ascending to descending creation order. Still open: an import whose role
+backstop closes its batch `failed` writes no batch audit row (Open questions).
+Neither the runtime guards nor the indexes establish production throughput,
+tenant isolation in PostgreSQL or cloud acceptance; those claims require their
+own live checks and LP5-03.
 
 
 ## Inventory coverage and report datasets (LP3-04 contract)
@@ -1808,7 +1843,7 @@ The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundarie
 ## Testing
 
 - **Unit (Vitest, DB‑free):** **4,301 tests across 146 files** — **2,937 across 107 files** in `apps/api`, **349** in `packages/shared-types`, **163** in `packages/db` and **852 across 28 files** in `apps/web`, measured with `turbo --force` on 2026-10-22 (`isCalculated()` is the predicate every total, export cell and screen branches on, and mutating it used to stay green across the whole API suite; the completeness view module is the other, since the sentences it builds are the whole of what a data-entry user is told about whether their year is finished), covering the calculation engine, tenant scoping, RBAC, lifecycle gates, delete guards, targets/intensity math, report assembly, DTO validation, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. The mock hands `$transaction` callbacks a **separate client with its own spies**, so "this write happened inside the transaction" is an assertion that can actually fail. Run `pnpm test`.
-- **E2E (Playwright):** **124 tests across 30 specs** (`playwright test --list`, 2026-10-22) against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, the review queue and audit trail, locations + the subsidiary control panel + the nested create, evidence retention (including one file shared by two records surviving the first and going with its last link), Turkish filenames, grid regions, targets, the two canonical-on-write rules (a period is one period whatever the caller capitalises; the stored unit is the vocabulary's spelling while the calculation snapshot keeps the entered one), the bulk importer's server-side 2 MiB cap (a 413 the browser's own preflight can never produce), reports (including a figure withdrawn through the API coming back out of the export with its reason), and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
+- **E2E (Playwright):** **140 tests across 32 specs** (`playwright test --list`, 2026-10-24) against the real UI + API + Supabase — bounded reads (each page route's cursor walk and refusals, target progress by ids, the review queue's and History's whole-set counts, Load more, and the review queue under delayed and failing answers), the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, the review queue and audit trail, locations + the subsidiary control panel + the nested create, evidence retention (including one file shared by two records surviving the first and going with its last link), Turkish filenames, grid regions, targets, the two canonical-on-write rules (a period is one period whatever the caller capitalises; the stored unit is the vocabulary's spelling while the calculation snapshot keeps the entered one), the bulk importer's server-side 2 MiB cap (a 413 the browser's own preflight can never produce), reports (including a figure withdrawn through the API coming back out of the export with its reason), and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
 
   Five of those specs are **WP8's bulk-upload layer**. Four are its **structural half** — the claims the unit suite is structurally unable to reach, each of which survived a mutation there: the multipart **field name** (closed over inside a generated interceptor class, and the browser can only ever send `file`), `defParamCharset` on a Turkish filename **into the report and the append‑only audit row**, the DTO↔route binding for bulk submit (without it the id cap and the UUID shape are both unenforced), the **N+1 audit rows** an import writes, tenant isolation asserted **on the database row** rather than on the response, the throttle **keyed per user** (its default tracker is the socket address, which behind a proxy is one bucket for the whole product), and — for the first time — the panel's confirm dialog, its double‑click window and the two‑files‑in‑flight race, none of which had ever run in a browser. The fifth, `drafts-bulk-submit.spec.ts`, covers the checkbox list on Previous submissions — that a rule the unit suite proved actually reaches the screen as a checkbox, that ticking it reaches the endpoint, and that a refusal arrives as a sentence rather than as a missing control with no explanation. `drafts-bulk-submit-evidence.spec.ts` adds the path none of those five reach, on an evidence‑required category: a Fuel draft whose invoice is attached through the Evidence vault gains its checkbox in place — no reload, no refetch, and only on that row — and then really sends. `bulk-upload-xlsx.spec.ts` puts an XLSX through the whole stack, which no other spec did: a workbook saved by a spreadsheet writer dry-runs row for row; a workbook built to kill the old exceljs loader (a dropdown over the whole sheet, a merge to its last cell, a defined name over all of it and a column span past XFD) is answered, and the API is still there to answer the next request; and a merged import cell and a zip bomb are refused in words.
 

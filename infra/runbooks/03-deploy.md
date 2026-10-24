@@ -596,9 +596,10 @@ this foundation's exact web origin, never a separately supplied redirect).
 `secure=false` uses **mandatory STARTTLS** off loopback; `secure=true` uses implicit
 TLS (normally port 465). Never disable certificate validation or point cloud SMTP
 at loopback. The API's `readMailConfig` requires `SMTP_HOST`, `MAIL_FROM`, `APP_URL`
-together and pairs the username/password. The optional per-IP quota is unchanged:
-`AUTH_EMAIL_PER_IP_PER_MINUTE` stays at the API default; this manifest exposes no
-override pending LP4-05 PR C's registered limits contract.
+together and pairs the username/password. The per-IP reset quota,
+`AUTH_EMAIL_PER_IP_PER_MINUTE` (default 5), is a registered runtime limit since
+LP4-05 PR C (`infra/config/runtime-limits.json`): a release overrides it like any
+other limit, and an empty or non-positive value stops the API at start.
 
 **Production (LP2-04):** the same release contract supports
 `foundation.environment=production`, with the production subscription/resource

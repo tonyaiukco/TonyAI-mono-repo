@@ -7,7 +7,9 @@ import {
 import { ActivityRecordStatus, Prisma, type Target } from '@tonyai/db';
 import { COUNTED_STATUSES as SHARED_COUNTED_STATUSES } from '@tonyai/shared-types';
 import type {
+  CursorPage,
   EmissionsScope,
+  EmissionsSummary,
   TargetBasis,
   TargetDTO,
   TargetProgressDTO,
@@ -19,6 +21,30 @@ import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import { CreateTargetDto } from './dto/create-target.dto';
 import { UpdateTargetDto } from './dto/update-target.dto';
+import { TargetPageQueryDto, TargetProgressQueryDto } from './dto/target-page-query.dto';
+import {
+  cursorBinding,
+  decodeCursor,
+  keysetOrderBy,
+  keysetWhere,
+  pageLimit,
+  toCursorPage,
+  type KeysetSort,
+} from '../common/keyset-cursor';
+import { scopedSubsidiaryIds } from '../common/page-filters';
+import { readRuntimeConfig } from '../common/runtime-config';
+
+/** GET /targets: by target year, then newest first, the id breaking ties. */
+export const TARGET_SORT: KeysetSort = {
+  endpoint: 'targets',
+  table: 'targets',
+  name: 'default',
+  keys: [
+    { field: 'targetYear', kind: 'int', direction: 'asc' },
+    { field: 'createdAt', kind: 'timestamp3', direction: 'desc' },
+    { field: 'id', kind: 'uuid', direction: 'desc' },
+  ],
+};
 
 // Statuses that count as "committed" emissions (mirrors EmissionsService).
 // The SAME list the dashboard counts, not a second copy of it. This was a
@@ -37,6 +63,8 @@ const SCOPE_TO_NUMBER: Record<EmissionsScope, number | undefined> = {
 
 @Injectable()
 export class TargetsService {
+  private readonly limits = readRuntimeConfig();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly emissions: EmissionsService,
@@ -87,19 +115,20 @@ export class TargetsService {
     }
   }
 
-  async list(user: RequestUser, subsidiaryId?: string): Promise<TargetDTO[]> {
-    let subsidiaryFilter: Prisma.StringFilter | string;
-    if (subsidiaryId) {
-      if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) return [];
-      subsidiaryFilter = subsidiaryId;
-    } else {
-      subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
-    }
+  /** One `CursorPage` of the caller's targets, inside their current access. */
+  async listPage(user: RequestUser, query: TargetPageQueryDto): Promise<CursorPage<TargetDTO>> {
+    const limit = pageLimit(query.limit);
+    const binding = cursorBinding(TARGET_SORT, { subsidiaryId: query.subsidiaryId });
+    const after = query.cursor !== undefined ? decodeCursor(TARGET_SORT, binding, query.cursor) : null;
+    const subsidiaryIds = scopedSubsidiaryIds(user, query.subsidiaryId);
+    if (subsidiaryIds.length === 0) return { items: [], limit, nextCursor: null };
+    const where: Prisma.TargetWhereInput = { subsidiaryId: { in: subsidiaryIds } };
     const rows = await this.prisma.target.findMany({
-      where: { subsidiaryId: subsidiaryFilter },
-      orderBy: [{ targetYear: 'asc' }, { createdAt: 'desc' }],
+      where: after ? { AND: [where, keysetWhere(TARGET_SORT, after) as Prisma.TargetWhereInput] } : where,
+      orderBy: keysetOrderBy(TARGET_SORT) as Prisma.TargetOrderByWithRelationInput[],
+      take: limit + 1,
     });
-    return rows.map((t) => this.toDTO(t));
+    return toCursorPage(rows, limit, TARGET_SORT, binding, (t) => [t.targetYear, t.createdAt, t.id], (t) => this.toDTO(t));
   }
 
   async create(user: RequestUser, dto: CreateTargetDto): Promise<TargetDTO> {
@@ -209,13 +238,56 @@ export class TargetsService {
     return { id, deleted: true };
   }
 
-  /** Live progress for the caller's accessible targets (or one subsidiary). */
-  async progress(
-    user: RequestUser,
-    subsidiaryId?: string,
-  ): Promise<TargetProgressDTO[]> {
-    const targets = await this.list(user, subsidiaryId);
-    return Promise.all(targets.map((t) => this.progressForTarget(user, t)));
+  /**
+   * Live progress for an explicit set of targets — never every target: one
+   * page of ids, answered in request order, a missing id and another tenant's
+   * omitted alike. Batched: one query for every target's latest committed year
+   * (per subsidiary and scope), and one bounded summary per distinct
+   * subsidiary, year and scope — computed one at a time, so a page of a
+   * hundred holds one pooled connection, not a hundred.
+   */
+  async progress(user: RequestUser, query: TargetProgressQueryDto): Promise<TargetProgressDTO[]> {
+    if (user.accessibleSubsidiaryIds.length === 0) return [];
+    const rows = await this.prisma.target.findMany({
+      where: { id: { in: query.targetIds }, subsidiaryId: { in: [...user.accessibleSubsidiaryIds] } },
+    });
+    if (rows.length === 0) return [];
+    const years = await this.prisma.activityRecord.groupBy({
+      by: ['subsidiaryId', 'scope'],
+      where: { subsidiaryId: { in: [...new Set(rows.map((t) => t.subsidiaryId))] }, status: { in: COMMITTED_STATUSES } },
+      _max: { reportingYear: true },
+    });
+    // The latest committed year of a subsidiary's records in one scope, or in
+    // every scope for an 'all' target.
+    const latestYear = (subsidiaryId: string, scope: number | undefined): number | null =>
+      years
+        .filter((g) => g.subsidiaryId === subsidiaryId && (scope === undefined || g.scope === scope))
+        .reduce<number | null>((max, g) => {
+          const year = g._max.reportingYear;
+          return year !== null && (max === null || year > max) ? year : max;
+        }, null);
+    const summaries = new Map<string, EmissionsSummary>();
+    const summaryOf = async (subsidiaryId: string, year: number, scope: number | undefined) => {
+      const key = `${subsidiaryId}|${year}|${scope ?? 'all'}`;
+      let summary = summaries.get(key);
+      if (!summary) {
+        // Bounded like a report's: a year past the budget is 422
+        // query_too_broad for the whole answer, never a figure from part of it.
+        summary = await this.emissions.summary(user, { subsidiaryId, year, scope }, this.limits.REPORT_RECORD_LIMIT);
+        summaries.set(key, summary);
+      }
+      return summary;
+    };
+    const byId = new Map(rows.map((t) => [t.id, t]));
+    const progress: TargetProgressDTO[] = [];
+    for (const id of query.targetIds) {
+      const target = byId.get(id);
+      if (!target) continue;
+      const dto = this.toDTO(target);
+      const scope = SCOPE_TO_NUMBER[dto.scope];
+      progress.push(await this.progressForTarget(dto, latestYear(dto.subsidiaryId, scope), (year) => summaryOf(dto.subsidiaryId, year, scope)));
+    }
+    return progress;
   }
 
   /**
@@ -226,23 +298,18 @@ export class TargetsService {
    * reference (actualReduction / neededReduction), clamped 0-100.
    */
   private async progressForTarget(
-    user: RequestUser,
     t: TargetDTO,
+    latestCommittedYear: number | null,
+    summaryFor: (year: number) => Promise<EmissionsSummary>,
   ): Promise<TargetProgressDTO> {
-    // Pick the current year from records IN THE TARGET'S SCOPE (Prisma treats
-    // `undefined` as no filter, so an 'all' target is unaffected). Without this a
-    // scoped target could resolve to a year that only has other-scope data and
-    // then report a fabricated 0 tCO₂e / 100% "on track" — a placeholder value.
-    const latest = await this.prisma.activityRecord.findFirst({
-      where: {
-        subsidiaryId: t.subsidiaryId,
-        reportingYear: { gt: t.baselineYear },
-        scope: SCOPE_TO_NUMBER[t.scope],
-        status: { in: COMMITTED_STATUSES },
-      },
-      orderBy: { reportingYear: 'desc' },
-      select: { reportingYear: true },
-    });
+    // The current year comes from records IN THE TARGET'S SCOPE (an 'all'
+    // target reads every scope). Without that a scoped target could resolve to
+    // a year that only has other-scope data and then report a fabricated
+    // 0 tCO₂e / 100% "on track" — a placeholder value. The latest committed
+    // year after the baseline is the latest committed year, when that is
+    // after the baseline at all.
+    const latest =
+      latestCommittedYear !== null && latestCommittedYear > t.baselineYear ? { reportingYear: latestCommittedYear } : null;
     if (!latest) {
       return {
         targetId: t.id,
@@ -253,11 +320,7 @@ export class TargetsService {
       };
     }
 
-    const summary = await this.emissions.summary(user, {
-      subsidiaryId: t.subsidiaryId,
-      year: latest.reportingYear,
-      scope: SCOPE_TO_NUMBER[t.scope],
-    });
+    const summary = await summaryFor(latest.reportingYear);
 
     // The scope filter above answers "are there records in this scope?", which
     // stopped being the same question as "is there anything to compare?" once a

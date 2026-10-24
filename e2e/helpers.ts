@@ -244,20 +244,42 @@ export async function findRecordId(
     locationId?: string | null;
   },
 ): Promise<string> {
-  const res = await request.get(`${API_BASE}/activity-records?subsidiaryId=${q.subsidiaryId}`, {
-    headers: bearer(token),
+  // Narrowed by the server (LP4-05 PR C), never searched for in a first page;
+  // newest first, as the list always was.
+  const search = new URLSearchParams({
+    subsidiaryId: q.subsidiaryId,
+    category: q.category,
+    period: q.reportingPeriod ?? E2E_PERIOD,
+    periodValue: q.periodValue,
+    locationId: q.locationId ?? 'none',
+    limit: '1',
   });
+  const res = await request.get(`${API_BASE}/activity-records?${search}`, { headers: bearer(token) });
   if (!res.ok()) throw new Error(`list failed: ${res.status()} ${await res.text()}`);
-  const list = (await res.json()) as Array<Record<string, string | null>>;
-  const rec = list.find(
-    (r) =>
-      r.category === q.category &&
-      r.periodValue === q.periodValue &&
-      r.reportingPeriod === (q.reportingPeriod ?? E2E_PERIOD) &&
-      (r.locationId ?? null) === (q.locationId ?? null),
-  );
+  const page = (await res.json()) as { items: Array<Record<string, string | null>> };
+  const rec = page.items.find((r) => r.periodValue === q.periodValue);
   if (!rec) throw new Error(`record not found: ${q.subsidiaryId} ${q.category} ${q.periodValue}`);
   return rec.id as string;
+}
+
+/**
+ * Every row of a `CursorPage` route, read page by page (LP4-05 PR C). A test's
+ * assertion helper — the app's screens never drain a list; they show the pages
+ * they have loaded.
+ */
+export async function listAllPages<T>(request: APIRequestContext, token: string, path: string): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+  for (let pages = 0; pages < 1_000; pages++) {
+    const query = new URLSearchParams({ limit: '100', ...(cursor ? { cursor } : {}) });
+    const res = await request.get(`${API_BASE}${path}${path.includes('?') ? '&' : '?'}${query}`, { headers: bearer(token) });
+    expect(res.ok(), `GET ${path}: ${res.status()} ${await res.text()}`).toBe(true);
+    const page = (await res.json()) as { items: T[]; nextCursor: string | null };
+    items.push(...page.items);
+    cursor = page.nextCursor;
+    if (cursor === null) return items;
+  }
+  throw new Error(`GET ${path}: the traversal did not end`);
 }
 
 /** Approve a submitted record (super_admin only, and never the record's creator — D01). */

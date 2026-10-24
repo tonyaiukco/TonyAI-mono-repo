@@ -7,6 +7,7 @@ import {
 import { Prisma, type SubsidiaryDenominator } from '@tonyai/db';
 import { GROUP_INTENSITY_METRICS } from '@tonyai/shared-types';
 import type {
+  CursorPage,
   ReportingContext,
   ReportingIntensityResponse,
   ReportingIntensityData,
@@ -21,12 +22,38 @@ import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import { CreateDenominatorDto } from './dto/create-denominator.dto';
 import { UpdateDenominatorDto } from './dto/update-denominator.dto';
+import { DenominatorPageQueryDto } from './dto/denominator-page-query.dto';
+import {
+  cursorBinding,
+  decodeCursor,
+  keysetOrderBy,
+  keysetWhere,
+  pageLimit,
+  toCursorPage,
+  type KeysetSort,
+} from '../common/keyset-cursor';
+import { scopedSubsidiaryIds } from '../common/page-filters';
+import { readRuntimeConfig } from '../common/runtime-config';
+
+/** GET /denominators: newest year first, then by metric code, the id breaking ties. */
+export const DENOMINATOR_SORT: KeysetSort = {
+  endpoint: 'denominators',
+  table: 'subsidiary_denominators',
+  name: 'default',
+  keys: [
+    { field: 'year', kind: 'int', direction: 'desc' },
+    { field: 'metric', kind: 'text', direction: 'asc' },
+    { field: 'id', kind: 'uuid', direction: 'asc' },
+  ],
+};
 
 const hasSelectedSubsidiary = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
 @Injectable()
 export class IntensityService {
+  private readonly limits = readRuntimeConfig();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly emissions: EmissionsService,
@@ -64,18 +91,26 @@ export class IntensityService {
 
   // --- Denominator CRUD -----------------------------------------------------
 
-  async listDenominators(
+  /** One `CursorPage` of denominators, inside the caller's current access. */
+  async listDenominatorPage(
     user: RequestUser,
-    subsidiaryId?: string,
-    year?: number,
-  ): Promise<DenominatorDTO[]> {
-    const ids = this.scopeIds(user, subsidiaryId);
-    if (ids.length === 0) return [];
+    query: DenominatorPageQueryDto,
+  ): Promise<CursorPage<DenominatorDTO>> {
+    const limit = pageLimit(query.limit);
+    const binding = cursorBinding(DENOMINATOR_SORT, { subsidiaryId: query.subsidiaryId, year: query.year });
+    const after = query.cursor !== undefined ? decodeCursor(DENOMINATOR_SORT, binding, query.cursor) : null;
+    const ids = scopedSubsidiaryIds(user, query.subsidiaryId);
+    if (ids.length === 0) return { items: [], limit, nextCursor: null };
+    const where: Prisma.SubsidiaryDenominatorWhereInput = {
+      subsidiaryId: { in: ids },
+      ...(query.year !== undefined ? { year: query.year } : {}),
+    };
     const rows = await this.prisma.subsidiaryDenominator.findMany({
-      where: { subsidiaryId: { in: ids }, year },
-      orderBy: [{ year: 'desc' }, { metric: 'asc' }],
+      where: after ? { AND: [where, keysetWhere(DENOMINATOR_SORT, after) as Prisma.SubsidiaryDenominatorWhereInput] } : where,
+      orderBy: keysetOrderBy(DENOMINATOR_SORT) as Prisma.SubsidiaryDenominatorOrderByWithRelationInput[],
+      take: limit + 1,
     });
-    return rows.map((d) => this.toDTO(d));
+    return toCursorPage(rows, limit, DENOMINATOR_SORT, binding, (d) => [d.year, d.metric, d.id], (d) => this.toDTO(d));
   }
 
   async createDenominator(
@@ -260,16 +295,26 @@ export class IntensityService {
       byMetricUnit.set(key, e);
     }
 
+    // One summary per subsidiary, however many metrics it has a denominator
+    // for, each bounded like a report's (LP4-05 PR C): a subsidiary-year past
+    // REPORT_RECORD_LIMIT is 422 query_too_broad for the whole answer, never an
+    // intensity computed from part of its records.
+    const summaries = new Map<string, Awaited<ReturnType<EmissionsService['summary']>>>();
+    const summaryOf = async (sid: string) => {
+      let summary = summaries.get(sid);
+      if (!summary) {
+        summary = await this.emissions.summary(user, { ...context, subsidiaryId: sid }, this.limits.REPORT_RECORD_LIMIT);
+        summaries.set(sid, summary);
+      }
+      return summary;
+    };
     const metrics: ReportingIntensityMetric[] = [];
     for (const e of byMetricUnit.values()) {
       // Emissions numerator: only the subsidiaries that have this denominator.
       let emissionsTotal = 0;
       let uncalculatedRecordCount = 0;
       for (const sid of e.subIds) {
-        const summary = await this.emissions.summary(user, {
-          ...context,
-          subsidiaryId: sid,
-        });
+        const summary = await summaryOf(sid);
         emissionsTotal += summary.totals.total;
         uncalculatedRecordCount += summary.uncalculatedRecordCount;
       }

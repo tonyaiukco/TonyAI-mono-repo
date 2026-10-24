@@ -5,7 +5,6 @@ import type {
   AuditLogDTO,
   AuthUser,
   ListAuditParams,
-  ListActivityRecordsParams,
   ActivityRecordPageParams,
   ActivityRecordPageFilters,
   ActivityRecordPageItemDTO,
@@ -117,7 +116,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Serialize LP4-05's additive contracts without broadening a query: null site
+/** Serialize LP4-05's page contracts without broadening a query: null site
  * means company-level, an empty cursor/targetIds is sent for the API to refuse,
  * and only the documented empty status set means no filter. */
 const PAGE_KEYS = ["limit", "cursor"] as const satisfies readonly (keyof CursorPageParams)[];
@@ -155,9 +154,10 @@ function boundedQuery(params: object, keys: readonly string[]): string {
   return query ? `?${query}` : "";
 }
 
-/** PR A publishes unused methods; PR C changes their routes to one page shape.
- * Calling one against the old API fails explicitly instead of accepting an
- * unbounded array. This checks the envelope, not each domain DTO. */
+/** Every bounded route answers one page shape (LP4-05 PR C). A response that
+ * is not one — an old API's array, an oversized or non-progressing page —
+ * fails explicitly instead of passing for complete history. This checks the
+ * envelope, not each domain DTO. */
 async function apiCursorPage<T>(path: string, params: CursorPageParams, keys: readonly string[] = PAGE_KEYS): Promise<CursorPage<T>> {
   const result = await apiFetch<unknown>(`${path}${boundedQuery(params, keys)}`);
   if (!isCursorPage(result) || result.limit !== (params.limit ?? DEFAULT_PAGE_LIMIT) ||
@@ -453,28 +453,10 @@ export const api = {
     }),
 
   // --- Activity records ---
-  /** @deprecated PR C migrates every active consumer to listActivityRecordPage.
-   * Retained only so the standalone contract PR works with the current API. */
-  listActivityRecords: (params: ListActivityRecordsParams = {}) => {
-    const search = new URLSearchParams();
-    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
-    if (params.year !== undefined) search.set("year", String(params.year));
-    if (params.period) search.set("period", params.period);
-    if (params.category) search.set("category", params.category);
-    // A set becomes the comma-separated form the API's DTO parses back.
-    // `?.length`, not truthiness: `[]` is truthy and would serialise to
-    // `status=`, which the DTO deliberately rejects — an unchecked "filter by
-    // status" checkbox group would 400 instead of returning everything.
-    if (params.status?.length) search.set("status", params.status.join(","));
-    const qs = search.toString();
-    return apiFetch<ActivityRecordDTO[]>(
-      `/activity-records${qs ? `?${qs}` : ""}`,
-    );
-  },
-  /** Requires LP4-05 PR C's API. Never automatically drains later pages. */
+  /** One page of records (LP4-05 PR C). Never automatically drains later pages. */
   listActivityRecordPage: (params: ActivityRecordPageParams = {}) =>
     apiCursorPage<ActivityRecordPageItemDTO>("/activity-records", params, ACTIVITY_PAGE_KEYS),
-  /** The same scoped filters as the list, without cursor/order. Requires PR C. */
+  /** The same scoped filters as the list, without cursor/order: the whole filtered set's size and newest year. */
   activityRecordMetadata: (params: ActivityRecordPageFilters = {}) =>
     apiFetch<ActivityRecordListMetadataDTO>(`/activity-records/metadata${boundedQuery(params, ACTIVITY_FILTER_KEYS)}`),
   getActivityRecord: (id: string) =>
@@ -522,9 +504,7 @@ export const api = {
     }),
 
   // --- Evidence (a file backs one or more records of one subsidiary) ---
-  listEvidence: (recordId: string) =>
-    apiFetch<EvidenceDTO[]>(`/activity-records/${recordId}/evidence`),
-  /** Requires PR C. Files ordered by createdAt DESC, id DESC. Each file's
+  /** Files ordered by createdAt DESC, id DESC. Each file's
    * linkedRecords remains complete and bounded by EVIDENCE_MAX_LINKED_RECORDS;
    * a violated stored bound is refused, never silently truncated. */
   listEvidencePage: (recordId: string, params: CursorPageParams = {}) =>
@@ -576,14 +556,8 @@ export const api = {
     const qs = search.toString();
     return apiFetch<Paginated<AuditLogDTO>>(`/audit${qs ? `?${qs}` : ""}`);
   },
-  listPeriodLocks: (params: { subsidiaryId?: string; year?: number } = {}) => {
-    const search = new URLSearchParams();
-    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
-    if (params.year !== undefined) search.set("year", String(params.year));
-    const qs = search.toString();
-    return apiFetch<PeriodLockDTO[]>(`/period-locks${qs ? `?${qs}` : ""}`);
-  },
-  /** Requires PR C. Absence from a general page never proves unlocked state. */
+  /** Absence from a general page never proves unlocked state; only the exact
+   * subsidiary/year/period/periodValue query (or a record's `periodLocked`) does. */
   listPeriodLockPage: (params: PeriodLockPageParams = {}) =>
     apiCursorPage<PeriodLockDTO>("/period-locks", params, PERIOD_LOCK_PAGE_KEYS),
   lockPeriod: (body: CreatePeriodLockInput) =>
@@ -597,16 +571,9 @@ export const api = {
     }),
 
   // --- Targets & intensity (WP5) ---
-  listTargets: (params: { subsidiaryId?: string } = {}) => {
-    const search = new URLSearchParams();
-    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
-    const qs = search.toString();
-    return apiFetch<TargetDTO[]>(`/targets${qs ? `?${qs}` : ""}`);
-  },
-  /** Requires PR C. */
   listTargetPage: (params: TargetPageParams = {}) =>
     apiCursorPage<TargetDTO>("/targets", params, TARGET_PAGE_KEYS),
-  /** Requires PR C. Fetch progress only for the ids on the visible target page. */
+  /** Progress only for the ids on the visible target page (1–100, request order). */
   targetPageProgress: async (params: TargetProgressParams) => {
     const result = await apiFetch<unknown>(`/targets/progress${boundedQuery(params, TARGET_PROGRESS_KEYS)}`);
     const requestedIds = params.targetIds.map((id) => id.toLowerCase());
@@ -622,12 +589,6 @@ export const api = {
     }
     return result as TargetProgressDTO[];
   },
-  targetProgress: (params: { subsidiaryId?: string } = {}) => {
-    const search = new URLSearchParams();
-    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
-    const qs = search.toString();
-    return apiFetch<TargetProgressDTO[]>(`/targets/progress${qs ? `?${qs}` : ""}`);
-  },
   createTarget: (body: CreateTargetInput) =>
     apiFetch<TargetDTO>("/targets", { method: "POST", body: JSON.stringify(body) }),
   updateTarget: (id: string, body: UpdateTargetInput) =>
@@ -638,14 +599,6 @@ export const api = {
   deleteTarget: (id: string) =>
     apiFetch<{ id: string; deleted: true }>(`/targets/${id}`, { method: "DELETE" }),
 
-  listDenominators: (params: { subsidiaryId?: string; year?: number } = {}) => {
-    const search = new URLSearchParams();
-    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
-    if (params.year !== undefined) search.set("year", String(params.year));
-    const qs = search.toString();
-    return apiFetch<DenominatorDTO[]>(`/denominators${qs ? `?${qs}` : ""}`);
-  },
-  /** Requires PR C. */
   listDenominatorPage: (params: DenominatorPageParams = {}) =>
     apiCursorPage<DenominatorDTO>("/denominators", params, DENOMINATOR_PAGE_KEYS),
   createDenominator: (body: CreateDenominatorInput) =>

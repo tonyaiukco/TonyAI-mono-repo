@@ -215,7 +215,7 @@ test('a location holding a record blocks only through that record', async ({ req
   expect(still.status(), 'the location must survive the refused delete').toBe(200);
 
   // Clear only the record, and the delete goes through with the location swept.
-  const records = await (await request.get(
+  const { items: records } = await (await request.get(
     `${API_BASE}/activity-records?subsidiaryId=${sub.id}`, { headers: bearer(token) },
   )).json();
   await request.delete(`${API_BASE}/activity-records/${records[0].id}`, { headers: bearer(token) });

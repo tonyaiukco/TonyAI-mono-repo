@@ -22,6 +22,12 @@ const auditMock = () => audit as unknown as AuditService;
 
 const now = new Date('2026-01-01T00:00:00.000Z');
 
+const IDS = { targetIds: ['tgt-1'] };
+
+/** The batched latest-year query's answer: one subsidiary's latest committed year per scope. */
+const latestYears = (rows: { scope: number; year: number; subsidiaryId?: string }[]) =>
+  rows.map((r) => ({ subsidiaryId: r.subsidiaryId ?? 'sub-1', scope: r.scope, _max: { reportingYear: r.year } }));
+
 function makeTarget(overrides: Record<string, unknown> = {}) {
   return {
     id: 'tgt-1',
@@ -53,7 +59,8 @@ function createPrismaMock() {
     },
     activityRecord: {
       // Default: no post-baseline committed year → progress n/a.
-      findFirst: vi.fn().mockResolvedValue(null),
+      // Default: no committed year anywhere.
+      groupBy: vi.fn().mockResolvedValue([]),
     },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
@@ -112,36 +119,75 @@ describe('TargetsService', () => {
     // would have a target reporting progress against a different number from
     // the dashboard showing that progress, with no test failing.
     prisma.target.findMany.mockResolvedValue([makeTarget()]);
-    prisma.activityRecord.findFirst.mockResolvedValue(null);
+    await service.progress(admin, IDS);
 
-    await service.progress(admin);
-
-    const where = prisma.activityRecord.findFirst.mock.calls[0][0].where;
+    const where = prisma.activityRecord.groupBy.mock.calls[0][0].where;
     expect(where.status).toEqual({ in: [...COUNTED_STATUSES] });
     // ...and a withdrawn figure is not one of them.
     expect(where.status.in).not.toContain('voided');
   });
 
-  it('list is tenant-scoped to the accessible subsidiaries', async () => {
+  it('a page is tenant-scoped, by target year then newest, and fetches one row more', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget()]);
-    await service.list(admin);
-    expect(prisma.target.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
-      }),
-    );
+    await service.listPage(admin, {});
+    expect(prisma.target.findMany).toHaveBeenCalledWith({
+      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+      orderBy: [{ targetYear: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }],
+      take: 51,
+    });
   });
 
-  it('list returns [] for a requested subsidiary the caller cannot see', async () => {
-    const rows = await service.list(admin, 'sub-999');
-    expect(rows).toEqual([]);
+  it('a page for a requested subsidiary the caller cannot see is empty, without a query', async () => {
+    const page = await service.listPage(admin, { subsidiaryId: 'sub-999' });
+    expect(page).toEqual({ items: [], limit: 50, nextCursor: null });
     expect(prisma.target.findMany).not.toHaveBeenCalled();
   });
 
   it('derives reductionPercent in the DTO', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget()]); // 1600 -> 900
-    const [dto] = await service.list(admin);
+    const [dto] = (await service.listPage(admin, {})).items;
     expect(dto.reductionPercent).toBeCloseTo(43.75, 2);
+  });
+
+  it('progress reads only the requested ids inside the access, answering in request order and omitting the rest alike', async () => {
+    const a = '00000000-0000-4000-8000-00000000000a';
+    const b = '00000000-0000-4000-8000-00000000000b';
+    const missing = '00000000-0000-4000-8000-00000000000c';
+    prisma.target.findMany.mockResolvedValue([makeTarget({ id: a }), makeTarget({ id: b })]);
+        const rows = await service.progress(admin, { targetIds: [b, missing, a] });
+    expect(prisma.target.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [b, missing, a] }, subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+    });
+    expect(rows.map((r) => r.targetId)).toEqual([b, a]);
+  });
+
+  it('a target cursor is bound to its subsidiary filter (qa-auditor P2-1)', async () => {
+    prisma.target.findMany.mockResolvedValueOnce([1, 2].map((n) => makeTarget({ id: `00000000-0000-4000-8000-00000000000${n}` })));
+    const { nextCursor } = await service.listPage(admin, { subsidiaryId: 'sub-1', limit: 1 });
+    await expect(service.listPage(admin, { limit: 1, cursor: nextCursor! })).rejects.toThrow(
+      expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) }),
+    );
+  });
+
+  it('progress keeps one summary per scope: two targets of one subsidiary and year never share a figure (qa-auditor P2-2)', async () => {
+    const ids = ['00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000b'];
+    prisma.target.findMany.mockResolvedValue([
+      makeTarget({ id: ids[0], scope: 'scope1', baselineTCo2e: 1000, targetTCo2e: 500 }),
+      makeTarget({ id: ids[1], scope: 'scope2', baselineTCo2e: 1000, targetTCo2e: 500 }),
+    ]);
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2025 }, { scope: 2, year: 2025 }]));
+    emissions.summary.mockImplementation(async (_u: unknown, q: { scope?: number }) => ({
+      totals: { total: q.scope === 1 ? 900 : 600 },
+      calculatedRecordCount: 1,
+    }));
+    const rows = await service.progress(admin, { targetIds: ids });
+    expect(emissions.summary.mock.calls.map(([, q]) => (q as { scope?: number }).scope)).toEqual([1, 2]);
+    expect(rows.map((r) => r.currentTCo2e)).toEqual([900, 600]);
+  });
+
+  it('progress for a caller with no access reads nothing', async () => {
+    expect(await service.progress({ ...admin, accessibleSubsidiaryIds: [] }, IDS)).toEqual([]);
+    expect(prisma.target.findMany).not.toHaveBeenCalled();
   });
 
   it('create is forbidden for non-super_admin (and writes nothing)', async () => {
@@ -198,8 +244,7 @@ describe('TargetsService', () => {
 
   it('progress is n/a when no committed year exists after the baseline', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget()]);
-    prisma.activityRecord.findFirst.mockResolvedValue(null);
-    const [p] = await service.progress(admin);
+        const [p] = await service.progress(admin, IDS);
     expect(p.currentTCo2e).toBeNull();
     expect(p.progressPercent).toBeNull();
     expect(p.status).toBeNull();
@@ -208,9 +253,9 @@ describe('TargetsService', () => {
 
   it('progress computes at_risk from committed emissions after the baseline', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ baselineTCo2e: 900, targetTCo2e: 350 })]);
-    prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2024 });
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }]));
     emissions.summary.mockResolvedValue({ totals: { total: 582 }, calculatedRecordCount: 3 });
-    const [p] = await service.progress(admin);
+    const [p] = await service.progress(admin, IDS);
     // (900-582)/(900-350)*100 = 57.8% → at_risk
     expect(p.currentYear).toBe(2024);
     expect(p.progressPercent).toBeCloseTo(57.8, 1);
@@ -219,9 +264,9 @@ describe('TargetsService', () => {
 
   it('progress clamps to 100 and reports on_track when already past target', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ baselineTCo2e: 5000, targetTCo2e: 2000 })]);
-    prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2024 });
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }]));
     emissions.summary.mockResolvedValue({ totals: { total: 1000 }, calculatedRecordCount: 3 });
-    const [p] = await service.progress(admin);
+    const [p] = await service.progress(admin, IDS);
     expect(p.progressPercent).toBe(100);
     expect(p.status).toBe('on_track');
   });
@@ -234,7 +279,7 @@ describe('TargetsService', () => {
     // this scope" — the guard the year lookup relies on — while contributing
     // nothing to the total. Before WP17 no scope-3 record could exist at all,
     // which is why that guard was sufficient.
-    prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2026 });
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 3, year: 2026 }]));
     emissions.summary.mockResolvedValue({
       totals: { total: 0 },
       recordCount: 1,
@@ -242,7 +287,7 @@ describe('TargetsService', () => {
       uncalculatedRecordCount: 1,
     });
 
-    const [p] = await service.progress(admin);
+    const [p] = await service.progress(admin, IDS);
 
     // Without the second guard this reports 0 tCO₂e against a 900 baseline:
     // 100% complete, "on_track", from a single water bill.
@@ -254,23 +299,48 @@ describe('TargetsService', () => {
 
   it('progress filters the current-year lookup by the target scope (no fabricated zero)', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ scope: 'scope1' })]);
-    prisma.activityRecord.findFirst.mockResolvedValue(null); // no scope-1 data after baseline
-    const [p] = await service.progress(admin);
+    // Only scope-2 data after the baseline: a scope-1 target has nothing to compare.
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 2, year: 2026 }]));
+    const [p] = await service.progress(admin, IDS);
     expect(p.progressPercent).toBeNull();
-    expect(prisma.activityRecord.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ scope: 1 }) }),
+    expect(prisma.activityRecord.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ by: ['subsidiaryId', 'scope'], where: expect.objectContaining({ subsidiaryId: { in: ['sub-1'] } }) }),
     );
     expect(emissions.summary).not.toHaveBeenCalled();
   });
 
+  it('progress takes the latest committed year only when it is after the baseline', async () => {
+    prisma.target.findMany.mockResolvedValue([makeTarget({ baselineYear: 2024 })]);
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }, { scope: 2, year: 2023 }]));
+    const [p] = await service.progress(admin, IDS);
+    expect(p.currentTCo2e).toBeNull();
+    expect(emissions.summary).not.toHaveBeenCalled();
+  });
+
+  it('progress batches: one latest-year query and one summary per distinct subsidiary, year and scope', async () => {
+    const ids = ['00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000b', '00000000-0000-4000-8000-00000000000c'];
+    prisma.target.findMany.mockResolvedValue([
+      makeTarget({ id: ids[0] }),
+      makeTarget({ id: ids[1] }), // same subsidiary and scope: the same summary
+      makeTarget({ id: ids[2], subsidiaryId: 'sub-2' }),
+    ]);
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }, { scope: 1, year: 2025, subsidiaryId: 'sub-2' }]));
+    emissions.summary.mockResolvedValue({ totals: { total: 100 }, calculatedRecordCount: 3 });
+    const rows = await service.progress(admin, { targetIds: ids });
+    expect(rows.map((r) => [r.targetId, r.currentYear])).toEqual([[ids[0], 2024], [ids[1], 2024], [ids[2], 2025]]);
+    expect(prisma.activityRecord.groupBy).toHaveBeenCalledTimes(1);
+    expect(emissions.summary).toHaveBeenCalledTimes(2);
+  });
+
   it('progress passes the target scope through to the summary query', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ scope: 'scope1' })]);
-    prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2024 });
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }]));
     emissions.summary.mockResolvedValue({ totals: { total: 100 }, calculatedRecordCount: 3 });
-    await service.progress(admin);
+    await service.progress(admin, IDS);
     expect(emissions.summary).toHaveBeenCalledWith(
       admin,
       expect.objectContaining({ subsidiaryId: 'sub-1', year: 2024, scope: 1 }),
+      5_000, // bounded like a report's (LP4-05 PR C)
     );
   });
 });

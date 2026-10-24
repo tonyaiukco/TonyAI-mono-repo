@@ -9,7 +9,7 @@ import {
 import type { ArgumentsHost, CallHandler, ExecutionContext } from '@nestjs/common';
 import { of, throwError, lastValueFrom } from 'rxjs';
 import { JsonLogger } from './json-logger';
-import { LoggingInterceptor } from './logging.interceptor';
+import { loggablePath, LoggingInterceptor } from './logging.interceptor';
 import { HttpExceptionFilter } from './http-exception.filter';
 import { RequestContextMiddleware } from './request-context.middleware';
 import { currentRequestContext } from './request-context';
@@ -122,6 +122,28 @@ describe('LoggingInterceptor', () => {
       userId: 'user-1',
     });
     expect(typeof events[0].fields.durationMs).toBe('number');
+  });
+
+  it('logs a record search by its parameter, never its words (LP4-05 PR C)', async () => {
+    const { logger, events } = createLogger();
+    const ctx = createContext(
+      { method: 'GET', originalUrl: '/api/v1/activity-records?year=2026&search=Ay%C5%9Fe%20Y%C4%B1lmaz&search=x&limit=5' },
+      { statusCode: 200 },
+    );
+    await lastValueFrom(new LoggingInterceptor(logger).intercept(ctx, handler()));
+    expect(events[0].fields.path).toBe('/api/v1/activity-records?year=2026&search=%5Bredacted%5D&limit=5');
+    expect(JSON.stringify(events)).not.toMatch(/Ay|Y%C4%B1lmaz|Yılmaz/);
+  });
+
+  it('logs a cursor by its parameter too — its filter digest would test guesses at the search', () => {
+    expect(loggablePath('/api/v1/activity-records?year=2026&search=x&cursor=eyJ2Ijoy')).toBe(
+      '/api/v1/activity-records?year=2026&search=%5Bredacted%5D&cursor=%5Bredacted%5D',
+    );
+  });
+
+  it('leaves a path without free text exactly as it came', () => {
+    expect(loggablePath('/api/v1/activity-records?year=2026&limit=5')).toBe('/api/v1/activity-records?year=2026&limit=5');
+    expect(loggablePath('/api/v1/subsidiaries')).toBe('/api/v1/subsidiaries');
   });
 
   it('does not log health checks (they fire every 30s per container)', async () => {

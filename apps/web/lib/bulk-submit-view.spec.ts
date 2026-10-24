@@ -17,7 +17,6 @@ import {
   liveSelection,
   eligibleForSubmit,
   failuresToShow,
-  isPeriodLockedFor,
   MAX_FAILURES_SHOWN,
   needsEvidenceBeforeSubmit,
   selectableDrafts,
@@ -33,7 +32,6 @@ import {
   toggleSelected,
 } from '@/lib/bulk-submit-view';
 import type {
-  LockedPeriod,
   SubmittableRow,
   SubmittingUser,
 } from '@/lib/bulk-submit-view';
@@ -336,17 +334,10 @@ function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
     reportingYear: 2026,
     reportingPeriod: 'quarterly',
     periodValue: 'Q1',
+    periodLocked: false,
     ...over,
   };
 }
-
-const lock = (over: Partial<LockedPeriod> = {}): LockedPeriod => ({
-  subsidiaryId: 'sub-1',
-  reportingYear: 2026,
-  reportingPeriod: 'quarterly',
-  periodValue: 'Q1',
-  ...over,
-});
 
 describe('needsEvidenceBeforeSubmit', () => {
   it('is category AND file count, not category alone', () => {
@@ -380,23 +371,9 @@ describe('needsEvidenceBeforeSubmit', () => {
   });
 });
 
-describe('isPeriodLockedFor', () => {
-  it('matches on the whole tuple, not on the period value alone', () => {
-    const row = draft();
-    expect(isPeriodLockedFor(row, [lock()])).toBe(true);
-    expect(isPeriodLockedFor(row, [lock({ reportingYear: 2025 })])).toBe(false);
-    expect(isPeriodLockedFor(row, [lock({ reportingPeriod: 'monthly' })])).toBe(false);
-    expect(isPeriodLockedFor(row, [lock({ periodValue: 'Q2' })])).toBe(false);
-    // The dimension a hand-written shape had dropped: a lock on ANOTHER
-    // subsidiary's identical period must not block this one.
-    expect(isPeriodLockedFor(row, [lock({ subsidiaryId: 'sub-2' })])).toBe(false);
-    expect(isPeriodLockedFor(row, [])).toBe(false);
-  });
-});
-
 describe('submitBlockReason', () => {
   it('offers a checkbox when every gate passes', () => {
-    expect(submitBlockReason(draft(), ME, [])).toBeNull();
+    expect(submitBlockReason(draft(), ME)).toBeNull();
   });
 
   it('refuses a REJECTED record, and says why rather than echoing the status', () => {
@@ -404,57 +381,57 @@ describe('submitBlockReason', () => {
     // affordance treats it as editable, so reaching for the wrong predicate
     // offers a checkbox the server answers with `not_submittable`. If this ever
     // returns null, the contract has been widened by accident.
-    const reason = submitBlockReason(draft({ status: 'rejected' }), ME, []);
+    const reason = submitBlockReason(draft({ status: 'rejected' }), ME);
     expect(reason).toMatch(/open it on its own/i);
     expect(reason).not.toMatch(/Already rejected/);
   });
 
   it('echoes the status for a record that has already moved on', () => {
-    expect(submitBlockReason(draft({ status: 'submitted' }), ME, [])).toBe(
+    expect(submitBlockReason(draft({ status: 'submitted' }), ME)).toBe(
       'Already submitted.',
     );
-    expect(submitBlockReason(draft({ status: 'under_review' }), ME, [])).toBe(
+    expect(submitBlockReason(draft({ status: 'under_review' }), ME)).toBe(
       'Already under review.',
     );
   });
 
   it("refuses someone else's record for every role", () => {
     const theirs = draft({ createdBy: 'user-them' });
-    expect(submitBlockReason(theirs, { ...ME, role: 'super_admin' }, [])).toBe('Entered by someone else.');
-    expect(submitBlockReason(theirs, ME, [])).toBe('Entered by someone else.');
+    expect(submitBlockReason(theirs, { ...ME, role: 'super_admin' })).toBe('Entered by someone else.');
+    expect(submitBlockReason(theirs, ME)).toBe('Entered by someone else.');
     // The other two are refused earlier, by the role gate — which is itself the
     // point: no role can submit a colleague's record.
     for (const role of ['consultant', 'executive_viewer'] as const) {
-      expect(submitBlockReason(theirs, { ...ME, role }, [])).not.toBeNull();
-      expect(submitBlockReason(theirs, { ...ME, role }, [])).not.toBe(null);
+      expect(submitBlockReason(theirs, { ...ME, role })).not.toBeNull();
+      expect(submitBlockReason(theirs, { ...ME, role })).not.toBe(null);
     }
   });
 
   it('refuses a closed period, naming it', () => {
-    expect(submitBlockReason(draft(), ME, [lock()])).toBe('Q1 2026 is locked.');
+    expect(submitBlockReason(draft({ periodLocked: true }), ME)).toBe('Q1 2026 is locked.');
   });
 
   it('refuses an evidence-required record with no file, and allows one with a file', () => {
     const needs = draft({ category: 'Electricity' });
-    expect(submitBlockReason(needs, ME, [])).toBe('Needs an evidence file.');
-    expect(submitBlockReason({ ...needs, evidenceCount: 1 }, ME, [])).toBeNull();
+    expect(submitBlockReason(needs, ME)).toBe('Needs an evidence file.');
+    expect(submitBlockReason({ ...needs, evidenceCount: 1 }, ME)).toBeNull();
   });
 
   it('keeps the server\'s ORDER when two gates fail at once', () => {
     // Each branch was tested alone, so every reordering of them survived: no
     // fixture failed two at the same time. The order is not cosmetic — it
     // decides which sentence the user reads, and therefore what they try next.
-    const theirsAndLocked = draft({ createdBy: 'user-them' });
-    expect(submitBlockReason(theirsAndLocked, ME, [lock()])).toBe(
+    const theirsAndLocked = draft({ createdBy: 'user-them', periodLocked: true });
+    expect(submitBlockReason(theirsAndLocked, ME)).toBe(
       'Entered by someone else.',
     );
-    const lockedAndNeedsFile = draft({ category: 'Electricity' });
-    expect(submitBlockReason(lockedAndNeedsFile, ME, [lock()])).toBe(
+    const lockedAndNeedsFile = draft({ category: 'Electricity', periodLocked: true });
+    expect(submitBlockReason(lockedAndNeedsFile, ME)).toBe(
       'Q1 2026 is locked.',
     );
     // And the role gate outranks all three.
     expect(
-      submitBlockReason(theirsAndLocked, { ...ME, role: 'consultant' }, [lock()]),
+      submitBlockReason(theirsAndLocked, { ...ME, role: 'consultant' }),
     ).toBe('Your role cannot submit records.');
   });
 
@@ -463,7 +440,7 @@ describe('submitBlockReason', () => {
     // the sentence the user must see — otherwise the screen blames the wrong
     // thing and the user goes looking for a colleague who cannot help.
     const row = draft({ status: 'approved', createdBy: 'user-them' });
-    expect(submitBlockReason(row, ME, [])).toBe('Already approved.');
+    expect(submitBlockReason(row, ME)).toBe('Already approved.');
   });
 
   it('refuses a role that may not author records at all, before anything else', () => {
@@ -473,13 +450,13 @@ describe('submitBlockReason', () => {
     // checks it: a consultant looking at their own old draft gets THIS, not
     // "Entered by someone else."
     const mine = draft({ createdBy: 'user-me' });
-    expect(submitBlockReason(mine, { ...ME, role: 'consultant' }, [])).toBe(
+    expect(submitBlockReason(mine, { ...ME, role: 'consultant' })).toBe(
       'Your role cannot submit records.',
     );
-    expect(submitBlockReason(mine, { ...ME, role: 'executive_viewer' }, [])).toBe(
+    expect(submitBlockReason(mine, { ...ME, role: 'executive_viewer' })).toBe(
       'Your role cannot submit records.',
     );
-    expect(submitBlockReason(mine, ME, [])).toBeNull();
+    expect(submitBlockReason(mine, ME)).toBeNull();
   });
 
   it('never lets an anomaly flag decide anything', () => {
@@ -487,7 +464,7 @@ describe('submitBlockReason', () => {
     // and a batch shifts its own baseline. A client gate here would hide
     // submittable records AND still let the refusal through.
     const row = { ...draft(), anomalyFlag: true } as unknown as SubmittableRow;
-    expect(submitBlockReason(row, ME, [])).toBeNull();
+    expect(submitBlockReason(row, ME)).toBeNull();
   });
 });
 
@@ -502,7 +479,6 @@ describe('selectableDrafts', () => {
         draft({ id: 'needs-file', category: 'Electricity' }),
       ],
       ME,
-      [],
     );
 
     expect(selectableIds).toEqual(['ok']);
@@ -515,22 +491,17 @@ describe('selectableDrafts', () => {
   });
 
   it('selects nothing while the user is unknown', () => {
-    expect(selectableDrafts([draft()], null, [])).toEqual({
+    expect(selectableDrafts([draft()], null)).toEqual({
       selectableIds: [],
       reasonById: {},
     });
   });
 
-  it('carries the locks through — the composition, not just the branch', () => {
-    // The mutation this exists for: `submitBlockReason(row, user, [])` inside
-    // this function, or `locks={locks}` dropped from the JSX. Every other test
-    // here passes an empty lock list, so both were invisible — and the result
-    // is a checkbox on a draft in a closed period, which comes back
-    // `period_locked` for the whole batch the user ticked around it.
-    const rows = [draft({ id: 'open' }), draft({ id: 'closed', periodValue: 'Q4' })];
-    const { selectableIds, reasonById } = selectableDrafts(rows, ME, [
-      lock({ periodValue: 'Q4' }),
-    ]);
+  it('carries each row\'s lock through — the composition, not just the branch', () => {
+    // A checkbox on a draft in a closed period comes back `period_locked` for
+    // the whole batch the user ticked around it.
+    const rows = [draft({ id: 'open' }), draft({ id: 'closed', periodValue: 'Q4', periodLocked: true })];
+    const { selectableIds, reasonById } = selectableDrafts(rows, ME);
     expect(selectableIds).toEqual(['open']);
     expect(reasonById.closed).toBe('Q4 2026 is locked.');
   });
@@ -545,7 +516,6 @@ describe('selectableDrafts', () => {
         draft({ id: 'needs-file', category: 'Electricity' }),
       ],
       ME,
-      [],
     );
     expect(reasonById.theirs).toBe('Entered by someone else.');
     expect(reasonById['needs-file']).toBe('Needs an evidence file.');
@@ -556,7 +526,6 @@ describe('selectableDrafts', () => {
     const { selectableIds } = selectableDrafts(
       [draft({ id: 'c' }), draft({ id: 'a' }), draft({ id: 'b' })],
       ME,
-      [],
     );
     expect(selectableIds).toEqual(['c', 'a', 'b']);
   });
@@ -629,7 +598,7 @@ describe('authorship has no submission exemption', () => {
     const result = selectableDrafts([
       draft({ id: 'mine', createdBy: user.id }),
       draft({ id: 'theirs', createdBy: 'user-other' }),
-    ], user, []);
+    ], user);
     expect(result.selectableIds).toEqual(['mine']);
     expect(result.reasonById.theirs).toBe('Entered by someone else.');
   });

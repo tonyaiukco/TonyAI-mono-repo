@@ -83,7 +83,7 @@ import {
   unitsForCategory,
   UNSPECIFIED_ACTIVITY_TYPE,
 } from "@/lib/types";
-import { isPeriodLockedFor } from "@/lib/bulk-submit-view";
+import { appendById } from "@/lib/cursor-pages";
 import {
   NOT_CALCULATED_LABEL,
   NO_FACTOR_LABEL,
@@ -91,9 +91,10 @@ import {
 import type {
   ActivityCalculationSnapshot,
   ActivityRecordDTO,
+  ActivityRecordPageFilters,
+  ActivityRecordPageItemDTO,
   Category,
   LocationDTO,
-  PeriodLockDTO,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -208,9 +209,17 @@ function DataEntryPageInner() {
   const anomalyFlag = verdict.anomalyFlag;
   const [varianceReason, setVarianceReason] = useState("");
 
-  // Records + saving
-  const [records, setRecords] = useState<ActivityRecordDTO[]>([]);
+  // Records + saving. The subsidiary's loaded pages (LP4-05 PR C), newest
+  // first; each row says whether its own period is locked.
+  const [records, setRecords] = useState<ActivityRecordPageItemDTO[]>([]);
+  const [recordsCursor, setRecordsCursor] = useState<string | null>(null);
+  const [recordsTotal, setRecordsTotal] = useState<number | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordsLoadingMore, setRecordsLoadingMore] = useState(false);
+  // A slower answer for an earlier subsidiary must not land over a newer one.
+  const recordsSeq = useRef(0);
+  // The subsidiary whose records the list shows (set as a switch starts its load).
+  const shownSubsidiary = useRef("");
   // Which subsidiary the rows in `records` actually belong to. `records.length`
   // cannot answer that: an empty list means both "not fetched yet" and "fetched,
   // none exist", and the deep-link effect below has to tell those apart.
@@ -220,7 +229,6 @@ function DataEntryPageInner() {
   const [coverageKey, setCoverageKey] = useState(0);
   // Bumped after an import, so Recent imports shows the new batch.
   const [importsKey, setImportsKey] = useState(0);
-  const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
   // The reporting entity the loaded record belongs to. Kept so that moving the
   // form off that tuple can stop targeting it — see the effect below.
   const [editingTuple, setEditingTuple] = useState<{
@@ -231,6 +239,8 @@ function DataEntryPageInner() {
     locationId: string;
     /** The opened record's own activity type, null when it names none. */
     activityType: string | null;
+    /** Whether the opened record's own snapshot carries a figure. */
+    calculated: boolean;
   } | null>(null);
   // What the deep link asked for, kept so the records effect below can act on it
   // once they arrive. A ref, not state: it must fire exactly once, and it is not
@@ -281,15 +291,15 @@ function DataEntryPageInner() {
   const movingTo = useMemo(() => {
     // The open record's OWN snapshot decides whether a factor is being
     // recalculated — not its category, which only says one is permitted to be
-    // absent. `records` is the list this page already holds.
-    const open = editingId ? records.find((r) => r.id === editingId) : undefined;
+    // absent. Kept with the opened record, not looked up in the loaded pages:
+    // a record opened by a deep link or from a later page need not be in them.
     return describeMove(
       editingId ? editingTuple : null,
       { locationId },
       new Map(availableLocations.map((l) => [l.id, l.name])),
-      open ? isCalculated(open.calculation) : true,
+      editingTuple?.calculated ?? true,
     );
-  }, [editingId, editingTuple, locationId, availableLocations, records]);
+  }, [editingId, editingTuple, locationId, availableLocations]);
 
   // Sent as a JSON number (D15). Zero and below are not activity: the form has
   // always asked for a value above zero. Above ACTIVITY_VALUE_MAX it is refused
@@ -350,24 +360,39 @@ function DataEntryPageInner() {
     [editingId],
   );
 
+  /**
+   * The subsidiary's first page and its record count — after every write, which
+   * starts the cursor chain over (LP4-05's contract). A locked period refuses
+   * every write, so each row carries `periodLocked`: without it the form would
+   * open a record it cannot save, and the failure would surface only after the
+   * user had typed.
+   */
   const refreshRecords = useCallback(async (subId: string) => {
+    // A refresh asked for by a write that settled after the user picked another
+    // subsidiary is for a list no longer on screen: it never replaces the
+    // current one (the review queue's Codex P2-2, the same race here).
+    if (subId !== shownSubsidiary.current) return;
+    const mine = ++recordsSeq.current;
     if (!subId) {
       setRecords([]);
-      setLocks([]);
+      setRecordsCursor(null);
+      setRecordsTotal(null);
       setRecordsFetchedFor(null);
       return;
     }
     setRecordsLoading(true);
     try {
-      const [list, lockList] = await Promise.all([
-        api.listActivityRecords({ subsidiaryId: subId }),
-        // Locks are fetched with the records because a locked period refuses
-        // every write: without them the form happily opens a record it cannot
-        // save, and the failure only surfaces after the user has typed.
-        api.listPeriodLocks({ subsidiaryId: subId }),
+      const filters: ActivityRecordPageFilters = { subsidiaryId: subId };
+      const [page, meta] = await Promise.all([
+        api.listActivityRecordPage(filters),
+        // Any refusal of the count (422 query_too_broad, a quota, an outage) shows
+        // it as unknown; the list itself still loads (K7).
+        api.activityRecordMetadata(filters).catch(() => null),
       ]);
-      setRecords(list);
-      setLocks(lockList);
+      if (mine !== recordsSeq.current) return;
+      setRecords(page.items);
+      setRecordsCursor(page.nextCursor);
+      setRecordsTotal(meta?.total ?? null);
       setRecordsFetchedFor(subId);
       // Every write path already funnels through here, so the collection-status
       // panel refetches with the record list rather than needing its own hook on
@@ -375,18 +400,39 @@ function DataEntryPageInner() {
       // the one moment a user looks straight at it for confirmation.
       setCoverageKey((n) => n + 1);
     } catch (e) {
+      if (mine !== recordsSeq.current) return;
       // Cleared, not kept. Leaving the previous subsidiary's rows on screen
       // under the new subsidiary's header is bad enough while they are only
       // openable; with checkboxes beside them it is an irreversible action
       // offered against records the screen no longer claims to be showing.
       setRecords([]);
-      setLocks([]);
+      setRecordsCursor(null);
+      setRecordsTotal(null);
       setRecordsFetchedFor(null);
       toast.error((e as Error).message);
     } finally {
-      setRecordsLoading(false);
+      if (mine === recordsSeq.current) setRecordsLoading(false);
     }
   }, []);
+
+  async function loadMoreRecords() {
+    if (!subsidiaryId || !recordsCursor) return;
+    const mine = recordsSeq.current;
+    setRecordsLoadingMore(true);
+    try {
+      const page = await api.listActivityRecordPage({ subsidiaryId, cursor: recordsCursor });
+      if (mine !== recordsSeq.current) return;
+      setRecords((rows) => appendById(rows, page.items));
+      setRecordsCursor(page.nextCursor);
+    } catch (e) {
+      if (mine !== recordsSeq.current) return;
+      toast.error((e as Error).message);
+      // A cursor refused after a deployment: start the list again.
+      if (e instanceof ApiError && e.status === 400) void refreshRecords(subsidiaryId);
+    } finally {
+      setRecordsLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     api
@@ -502,6 +548,7 @@ function DataEntryPageInner() {
   }, []);
 
   useEffect(() => {
+    shownSubsidiary.current = subsidiaryId;
     void refreshRecords(subsidiaryId);
   }, [subsidiaryId, refreshRecords]);
 
@@ -522,33 +569,43 @@ function DataEntryPageInner() {
     if (recordsLoading || !subsidiaryId || recordsFetchedFor !== subsidiaryId) return;
     deepLinkHandled.current = true;
 
-    // Compared case-insensitively, like the coverage rule: the grid keys slots
-    // on a normalised month while this matched exactly, so a record stored as
-    // "july" left the slot looking open AND gave a blank form on the click —
-    // two rows for one month.
-    //
-    // Narrowed by whatever the link actually named. A grid slot names all four,
-    // so "several records exist" — the answer a matrix cell has to settle for —
-    // stops being the outcome for the one caller that knows precisely which
-    // record it means.
-    const matches = records.filter(
-      (r) =>
-        r.category === wanted.category &&
-        r.reportingYear === wanted.year &&
-        (wanted.locationId === undefined || r.locationId === wanted.locationId) &&
-        (wanted.period === undefined || r.reportingPeriod === wanted.period) &&
-        (wanted.periodValue === undefined ||
-          r.periodValue.trim().toLowerCase() === wanted.periodValue.toLowerCase()),
-    );
-    if (matches.length === 1) {
-      loadRecord(matches[0]);
-    } else if (matches.length > 1) {
-      toast.info(
-        `${matches.length} ${wanted.category} records exist for ${wanted.year}. Pick one from Previous submissions, or enter another period.`,
-      );
-    }
+    // Asked of the server with exactly what the link named, never searched for
+    // in the first page of the list (LP4-05's contract): the period value is
+    // already canonical, so the coverage rule's case-insensitive match holds.
+    // A grid slot names all four, so "several records exist" — the answer a
+    // matrix cell has to settle for — stops being the outcome for the one
+    // caller that knows precisely which record it means.
+    const filters: ActivityRecordPageFilters = {
+      subsidiaryId,
+      category: wanted.category as Category,
+      year: wanted.year,
+      ...(wanted.locationId !== undefined ? { locationId: wanted.locationId } : {}),
+      ...(wanted.period !== undefined ? { period: wanted.period } : {}),
+      ...(wanted.period !== undefined && wanted.periodValue !== undefined ? { periodValue: wanted.periodValue } : {}),
+    };
+    // The subsidiary's list as it was when the link was resolved: a switch (or a
+    // refresh) before the answer makes it another subsidiary's, never opened.
+    const seq = recordsSeq.current;
+    void (async () => {
+      try {
+        const page = await api.listActivityRecordPage({ ...filters, limit: 2 });
+        if (seq !== recordsSeq.current) return;
+        if (page.items.length === 1 && page.nextCursor === null) {
+          loadRecord(page.items[0]);
+        } else if (page.items.length > 1) {
+          const meta = await api.activityRecordMetadata(filters).catch(() => null);
+          toast.info(
+            meta
+              ? `${meta.total} ${wanted.category} records exist for ${wanted.year}. Pick one from Previous submissions, or enter another period.`
+              : `Several ${wanted.category} records exist for ${wanted.year}. Pick one from Previous submissions, or enter another period.`,
+          );
+        }
+      } catch (e) {
+        toast.error((e as Error).message);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, recordsLoading, recordsFetchedFor, subsidiaryId]);
+  }, [recordsLoading, recordsFetchedFor, subsidiaryId]);
 
   // --- Live preview (debounced) --------------------------------------------
 
@@ -624,7 +681,7 @@ function DataEntryPageInner() {
    * so anything else is shown, not opened — offering a form that the API will
    * refuse to save is worse than saying why.
    */
-  function loadRecord(rec: ActivityRecordDTO) {
+  function loadRecord(rec: ActivityRecordPageItemDTO) {
     if (rec.status !== "draft" && rec.status !== "rejected") {
       toast.info(
         `This record is ${rec.status.replace(/_/g, " ")} and can no longer be edited.`,
@@ -642,7 +699,7 @@ function DataEntryPageInner() {
     // A period lock only flips `approved → locked`, so a draft inside a locked
     // period keeps its status and would sail past the check above. Every write
     // to it is refused with a 409.
-    if (isPeriodLockedFor(rec, locks)) {
+    if (rec.periodLocked) {
       toast.info(
         `${rec.periodValue} ${rec.reportingYear} is locked — a super_admin must unlock it before this record can change.`,
       );
@@ -738,6 +795,7 @@ function DataEntryPageInner() {
       locationId: rec.locationId ?? "",
       // Not part of "moved off": changing the fuel edits the record in place.
       activityType: rec.activityType ?? null,
+      calculated: isCalculated(rec.calculation),
     };
   }
 
@@ -1455,9 +1513,12 @@ function DataEntryPageInner() {
                 key={subsidiaryId}
                 records={records}
                 loading={recordsLoading}
+                total={recordsTotal}
+                hasMore={recordsCursor !== null}
+                loadingMore={recordsLoadingMore}
+                onLoadMore={() => void loadMoreRecords()}
                 onOpen={loadRecord}
                 user={user}
-                locks={locks}
                 onSubmitted={() => void refreshRecords(subsidiaryId)}
                 onEvidenceAttached={() => {
                   void refreshRecords(subsidiaryId);

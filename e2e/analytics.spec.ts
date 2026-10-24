@@ -106,7 +106,7 @@ test('a cell reopens the single record that already exists there', async ({
     { headers: bearer(token) },
   );
   expect(
-    (await existing.json()).length,
+    ((await existing.json()) as { items: unknown[] }).items.length,
     'expected exactly one Trading/Fuel/2026 record — clear stray rows for this tuple',
   ).toBe(1);
 
@@ -128,7 +128,8 @@ test('a cell with several records that year guesses nothing', async ({ page }) =
   await page.waitForURL(/\/data-entry\?/);
 
   await expect(
-    page.getByText(/Electricity records exist for 2026/),
+    // A number, from the metadata count — "Several …" is the fallback when that count is refused.
+    page.getByText(/\b\d+ Electricity records exist for 2026/),
   ).toBeVisible();
   await expect(page.getByText(/Editing draft/)).toHaveCount(0);
 });

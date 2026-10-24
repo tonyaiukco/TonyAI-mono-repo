@@ -231,9 +231,11 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
     });
     await expect(mineBox).not.toBeChecked();
     // Its spoken name starts with the text written beside it (WCAG 2.5.3): a
-    // voice-control user says "Select all 2" and has to be understood.
+    // voice-control user says "Select all 2 loaded" and has to be understood.
+    // "Loaded": it selects the pages on screen, never the subsidiary's whole
+    // history (LP4-05 PR C).
     await expect(page.locator('[data-testid="drafts-select-all"]')).toHaveAccessibleName(
-      /^Select all \d+: every draft you entered and can send$/,
+      /^Select all \d+ loaded: every draft you entered and can send, among the records loaded$/,
     );
     await page.locator('[data-testid="drafts-select-all"]').click();
     await expect(mineBox).toBeChecked();

@@ -4,7 +4,6 @@ import {
   Delete,
   Get,
   Param,
-  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -14,20 +13,17 @@ import type { RequestUser } from '../auth/auth.types';
 import { IntensityService } from './intensity.service';
 import { CreateDenominatorDto } from './dto/create-denominator.dto';
 import { UpdateDenominatorDto } from './dto/update-denominator.dto';
+import { DenominatorPageQueryDto } from './dto/denominator-page-query.dto';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('denominators')
 export class DenominatorsController {
   constructor(private readonly service: IntensityService) {}
 
-  /** List intensity denominators (tenant-scoped; optional subsidiary/year). */
+  /** One `CursorPage` of intensity denominators (tenant-scoped; LP4-05 PR C). */
   @Get()
-  list(
-    @CurrentUser() user: RequestUser,
-    @Query('subsidiaryId') subsidiaryId?: string,
-    @Query('year', new ParseIntPipe({ optional: true })) year?: number,
-  ) {
-    return this.service.listDenominators(user, subsidiaryId, year);
+  list(@CurrentUser() user: RequestUser, @Query() query: DenominatorPageQueryDto) {
+    return this.service.listDenominatorPage(user, query);
   }
 
   /** Configure a denominator — super_admin only, audited. */

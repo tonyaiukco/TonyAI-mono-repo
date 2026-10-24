@@ -12,6 +12,7 @@ import {
   deleteRecordsAsService,
   findRecordId,
   getAccessToken,
+  listAllPages,
   lockPeriod,
 } from './helpers';
 
@@ -86,12 +87,11 @@ test('a period is one period, whatever the caller capitalises', async ({ request
   );
 
   // And the ledger holds one row for that period, not two.
-  const list = await request.get(
-    `${API_BASE}/activity-records?subsidiaryId=${SUB.logistics}`,
-    { headers: bearer(token) },
+  const rows = await listAllPages<Record<string, string | null>>(
+    request,
+    token,
+    `/activity-records?subsidiaryId=${SUB.logistics}`,
   );
-  expect(list.ok()).toBe(true);
-  const rows = (await list.json()) as Array<Record<string, string | null>>;
   const forThisPeriod = rows.filter(
     (r) =>
       r.category === 'Natural Gas' &&

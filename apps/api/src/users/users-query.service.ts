@@ -1,16 +1,22 @@
-import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@tonyai/db';
 import {
   DEFAULT_LOCALE,
-  DEFAULT_PAGE_LIMIT,
   isLocale,
-  MAX_CURSOR_LENGTH,
   type CursorPage,
   type InvitationStateDTO,
   type UserSummaryDTO,
 } from '@tonyai/shared-types';
-import { errorBody, ResourceNotFoundError } from '../common/api-error';
-import { UUID_SHAPE } from '../common/parse-uuid-param.pipe';
+import { ResourceNotFoundError } from '../common/api-error';
+import {
+  cursorBinding,
+  decodeCursor,
+  keysetOrderBy,
+  keysetWhere,
+  pageLimit,
+  toCursorPage,
+  type KeysetSort,
+} from '../common/keyset-cursor';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -72,42 +78,16 @@ export function toUserSummary(row: SummaryRow): UserSummaryDTO {
   };
 }
 
-/** The key a page continues after: the last row's sort key, newest first. */
-interface UsersCursor {
-  createdAt: Date;
-  id: string;
-}
-
-const CURSOR_VERSION = 1;
-const CURSOR_KIND = 'users';
-
-/**
- * Opaque, versioned and bound to this endpoint and its one sort (LP4-05's
- * `CursorPage` contract): it carries the sort-key tuple — a timestamp and an
- * id — and neither a tenant nor an address, so no personal data reaches a URL.
- */
-export function encodeUsersCursor(cursor: UsersCursor): string {
-  return Buffer.from(
-    JSON.stringify({ v: CURSOR_VERSION, k: CURSOR_KIND, t: cursor.createdAt.toISOString(), i: cursor.id }),
-  ).toString('base64url');
-}
-
-export function decodeUsersCursor(raw: string): UsersCursor {
-  const refuse = () => new BadRequestException(errorBody('validation_failed', ['cursor is invalid']));
-  if (!raw || raw.length > MAX_CURSOR_LENGTH) throw refuse();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
-  } catch {
-    throw refuse();
-  }
-  const c = parsed as { v?: unknown; k?: unknown; t?: unknown; i?: unknown } | null;
-  if (!c || typeof c !== 'object' || c.v !== CURSOR_VERSION || c.k !== CURSOR_KIND) throw refuse();
-  if (typeof c.i !== 'string' || !UUID_SHAPE.test(c.i) || typeof c.t !== 'string') throw refuse();
-  const createdAt = new Date(c.t);
-  if (Number.isNaN(createdAt.getTime()) || createdAt.toISOString() !== c.t) throw refuse();
-  return { createdAt, id: c.i.toLowerCase() };
-}
+/** Newest first; `(created_at, id)` are both millisecond-exact (`TIMESTAMP(3)`, uuid). */
+export const USERS_SORT: KeysetSort = {
+  endpoint: 'users',
+  table: 'profiles',
+  name: 'newest',
+  keys: [
+    { field: 'createdAt', kind: 'timestamp3', direction: 'desc' },
+    { field: 'id', kind: 'uuid', direction: 'desc' },
+  ],
+};
 
 /** Reading users is the tenant administrator's, like changing them. */
 function adminOrganisation(actor: RequestUser): string {
@@ -124,26 +104,18 @@ export class UsersQueryService {
   /** The caller's organisation's members, newest first. */
   async list(actor: RequestUser, params: { limit?: number; cursor?: string }): Promise<CursorPage<UserSummaryDTO>> {
     const organisationId = adminOrganisation(actor);
-    const limit = params.limit ?? DEFAULT_PAGE_LIMIT;
-    const after = params.cursor !== undefined ? decodeUsersCursor(params.cursor) : null;
+    const limit = pageLimit(params.limit);
+    // The list has no filters, so the binding is the endpoint and sort alone.
+    const binding = cursorBinding(USERS_SORT, {});
+    const after = params.cursor !== undefined ? decodeCursor(USERS_SORT, binding, params.cursor) : null;
+    const where: Prisma.ProfileWhereInput = { organisationId };
     const rows = await this.prisma.profile.findMany({
-      where: {
-        organisationId,
-        ...(after
-          ? { OR: [{ createdAt: { lt: after.createdAt } }, { createdAt: after.createdAt, id: { lt: after.id } }] }
-          : {}),
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      where: after ? { AND: [where, keysetWhere(USERS_SORT, after) as Prisma.ProfileWhereInput] } : where,
+      orderBy: keysetOrderBy(USERS_SORT) as Prisma.ProfileOrderByWithRelationInput[],
       take: limit + 1,
       select: SUMMARY_SELECT,
     });
-    const page = rows.slice(0, limit);
-    const last = page[page.length - 1];
-    return {
-      items: page.map(toUserSummary),
-      limit,
-      nextCursor: rows.length > limit && last ? encodeUsersCursor({ createdAt: last.createdAt, id: last.id }) : null,
-    };
+    return toCursorPage(rows, limit, USERS_SORT, binding, (r) => [r.createdAt, r.id], toUserSummary);
   }
 
   /** One member of the caller's organisation; another tenant's id is 404. */

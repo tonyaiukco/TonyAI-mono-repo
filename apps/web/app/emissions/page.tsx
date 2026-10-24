@@ -65,7 +65,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
-import { CATEGORIES, isCalculated, unitSymbol } from '@/lib/types';
+import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, isCalculated, unitSymbol } from '@/lib/types';
 import { NOT_CALCULATED_LABEL, NO_FACTOR_LABEL } from '@/lib/calculation-display';
 import {
   VOID_REASON_MAX_LENGTH,
@@ -78,6 +78,7 @@ import {
 import { recordActorLabel } from '@/lib/record-actor';
 import type {
   ActivityRecordDTO,
+  ActivityRecordPageFilters,
   ActivityRecordStatus,
   DataViewMode,
   EmissionsSummary,
@@ -86,6 +87,8 @@ import type {
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { TargetsPanel } from '@/components/emissions/targets-panel';
+import { LoadMoreButton } from '@/components/ui/load-more-button';
+import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { IntensityPanel } from '@/components/emissions/intensity-panel';
 
 // Scope colours (aligned with the rest of the design system).
@@ -201,8 +204,21 @@ function EmissionsAnalysisPageInner() {
   const [trendSummary, setTrendSummary] = useState<EmissionsSummary | null>(null);
   const [trendLoading, setTrendLoading] = useState(true);
 
+  // The ledger's loaded pages (LP4-05 PR C): filtered by the server, newest
+  // first; its size is the filtered set's, from GET /activity-records/metadata.
   const [records, setRecords] = useState<ActivityRecordDTO[]>([]);
+  const [recordsCursor, setRecordsCursor] = useState<string | null>(null);
+  const [recordsTotal, setRecordsTotal] = useState<number | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(true);
+  const [recordsLoadingMore, setRecordsLoadingMore] = useState(false);
+  // Bumped to read the first page again (a stale cursor's 400).
+  const [recordsReload, setRecordsReload] = useState(0);
+  // The search box's text, sent once typing pauses rather than per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
   const [subsidiariesLoaded, setSubsidiariesLoaded] = useState(false);
 
@@ -269,14 +285,24 @@ function EmissionsAnalysisPageInner() {
     }
   }, [hasContext, selectedSubsidiaryId]);
 
-  /** The selected year's ledger. A subsidiary the caller cannot see answers empty. */
-  const fetchRecords = useCallback(
-    () =>
-      selectedYear === undefined
-        ? Promise.resolve<ActivityRecordDTO[]>([])
-        : api.listActivityRecords({ year: selectedYear, subsidiaryId: selectedSubsidiaryId }),
-    [selectedYear, selectedSubsidiaryId],
-  );
+  /**
+   * The ledger's filters: the bar's year, subsidiary, scope and category, the
+   * tab's own category and the search — all applied by the server, so a page
+   * is a page of the filtered set. null when the two category filters name
+   * different categories: nothing can match both, and no request is made.
+   */
+  const recordFilters = useMemo((): ActivityRecordPageFilters | null => {
+    if (selectedYear === undefined) return null;
+    const categories = [...new Set([categoryFilter, historyCategory].filter((c) => c !== 'all'))];
+    if (categories.length > 1) return null;
+    return {
+      year: selectedYear,
+      ...(selectedSubsidiaryId ? { subsidiaryId: selectedSubsidiaryId } : {}),
+      ...(scopeNum !== undefined ? { scope: scopeNum as 1 | 2 | 3 } : {}),
+      ...(categories[0] ? { category: categories[0] as ActivityRecordPageFilters['category'] } : {}),
+      ...(debouncedSearch ? { search: debouncedSearch } : {}),
+    };
+  }, [selectedYear, selectedSubsidiaryId, scopeNum, categoryFilter, historyCategory, debouncedSearch]);
 
   // Identity + subsidiaries (names, the selection's labels).
   useEffect(() => {
@@ -291,24 +317,60 @@ function EmissionsAnalysisPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The ledger — again whenever the year or subsidiary changes.
+  // The ledger's first page and its size — again whenever a filter changes,
+  // which starts the cursor chain over.
   useEffect(() => {
     if (selectedYear === undefined) return;
     const mine = ++recordsSeq.current;
+    if (recordFilters === null) {
+      setRecords([]);
+      setRecordsCursor(null);
+      setRecordsTotal(0);
+      setRecordsLoading(false);
+      return;
+    }
     setRecordsLoading(true);
-    fetchRecords()
-      .then((recs) => {
-        if (mine === recordsSeq.current) setRecords(recs);
+    Promise.all([
+      api.listActivityRecordPage(recordFilters),
+      // Any refusal of the count (422 query_too_broad, a quota, an outage) shows
+      // it as unknown; the list itself still loads (K7).
+      api.activityRecordMetadata(recordFilters).catch(() => null),
+    ])
+      .then(([page, meta]) => {
+        if (mine !== recordsSeq.current) return;
+        setRecords(page.items);
+        setRecordsCursor(page.nextCursor);
+        setRecordsTotal(meta?.total ?? null);
       })
       .catch((e) => {
         if (mine !== recordsSeq.current) return;
         setRecords([]);
+        setRecordsCursor(null);
+        setRecordsTotal(null);
         toast.error(errMessage(e));
       })
       .finally(() => {
         if (mine === recordsSeq.current) setRecordsLoading(false);
       });
-  }, [fetchRecords, selectedYear]);
+  }, [recordFilters, selectedYear, recordsReload]);
+
+  async function loadMoreRecords() {
+    if (!recordFilters || !recordsCursor) return;
+    const mine = recordsSeq.current;
+    setRecordsLoadingMore(true);
+    try {
+      const page = await api.listActivityRecordPage({ ...recordFilters, cursor: recordsCursor });
+      if (mine !== recordsSeq.current) return;
+      setRecords((prev) => appendById(prev, page.items));
+      setRecordsCursor(page.nextCursor);
+    } catch (e) {
+      if (mine !== recordsSeq.current) return;
+      toast.error(errMessage(e));
+      if (isStaleCursor(e)) setRecordsReload((n) => n + 1);
+    } finally {
+      setRecordsLoadingMore(false);
+    }
+  }
 
   // Aggregates — again whenever the selection changes.
   useEffect(() => {
@@ -408,11 +470,18 @@ function EmissionsAnalysisPageInner() {
       // that had in fact just been withdrawn.
       let settled = false;
       try {
-        // The record's own ledger decides what is said; it replaces the list
-        // only while that ledger is still the one on screen.
-        const fresh = await fetchRecords();
-        if (contextKeyRef.current === startKey) setRecords(fresh);
-        const current = fresh.find((r) => r.id === record.id) ?? null;
+        // The record itself decides what is said (one read, not the ledger):
+        // its fresh copy replaces the row only while that ledger is still the
+        // one on screen; a record that is gone (404) leaves it.
+        const current = await api.getActivityRecord(record.id).catch((err: unknown) => {
+          if (err instanceof ApiError && err.status === 404) return null;
+          throw err;
+        });
+        if (contextKeyRef.current === startKey) {
+          setRecords((prev) =>
+            current ? prev.map((r) => (r.id === current.id ? current : r)) : prev.filter((r) => r.id !== record.id),
+          );
+        }
         setSelectedRecord(current);
         if (current?.status === 'voided') {
           toast.success(voidSuccessMessage(current));
@@ -519,26 +588,6 @@ function EmissionsAnalysisPageInner() {
     if (first === 0) return 0;
     return ((last - first) / first) * 100;
   }, [currentTrendData]);
-
-  // History ledger — client-side filtered by scope/category/search.
-  const filteredRecords = useMemo(() => {
-    return records.filter((record) => {
-      if (scopeNum !== undefined && record.scope !== scopeNum) return false;
-      if (categoryFilter !== 'all' && record.category !== categoryFilter) return false;
-      if (historyCategory !== 'all' && record.category !== historyCategory) return false;
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const subName = (nameById.get(record.subsidiaryId) ?? '').toLowerCase();
-        return (
-          subName.includes(q) ||
-          record.category.toLowerCase().includes(q) ||
-          record.periodValue.toLowerCase().includes(q) ||
-          (record.varianceReason?.toLowerCase().includes(q) ?? false)
-        );
-      }
-      return true;
-    });
-  }, [records, scopeNum, categoryFilter, historyCategory, searchQuery, nameById]);
 
   const unitLabel = 'tCO₂e';
 
@@ -964,6 +1013,7 @@ function EmissionsAnalysisPageInner() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search by subsidiary, category, period, or note..."
+                    maxLength={ACTIVITY_RECORD_SEARCH_MAX_LENGTH}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-10 bg-card border-border"
@@ -1008,14 +1058,14 @@ function EmissionsAnalysisPageInner() {
                             </TableCell>
                           </TableRow>
                         ))
-                      ) : filteredRecords.length === 0 ? (
+                      ) : records.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                             No activity records found. Start by adding data in the Data Entry tab.
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredRecords.map((record) => (
+                        records.map((record) => (
                           <TableRow
                             key={record.id}
                             className="cursor-pointer hover:bg-muted/50"
@@ -1078,6 +1128,20 @@ function EmissionsAnalysisPageInner() {
                   </Table>
                 </CardContent>
               </Card>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground" data-testid="history-shown">
+                  {recordsLoading
+                    ? ''
+                    : `Showing ${records.length}${recordsTotal === null ? '' : ` of ${recordsTotal}`} records, newest first`}
+                </span>
+                <LoadMoreButton
+                  hasMore={recordsCursor !== null && !recordsLoading}
+                  loading={recordsLoadingMore}
+                  onClick={() => void loadMoreRecords()}
+                  label="Load more"
+                  testId="history-load-more"
+                />
+              </div>
             </TabsContent>
 
             {/* Targets Tab — live reduction targets + progress (WP5) */}
