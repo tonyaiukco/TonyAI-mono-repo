@@ -77,7 +77,7 @@ describe('strictNumber', () => {
 });
 
 describe('isCommaFigure', () => {
-  it.each(['1,5', '1.234,5', '1,200', '-1,5', ' 1,5 ', '1,234,567.8'])('%s is a comma figure', (raw) => {
+  it.each(['1,5', '1.234,5', '1,200', '-1,5', ' 1,5 ', '1,234,567.8', ',5', '1,', '1,,5'])('%s is a comma figure', (raw) => {
     expect(isCommaFigure(raw)).toBe(true);
   });
 

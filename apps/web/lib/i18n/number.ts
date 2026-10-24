@@ -166,10 +166,12 @@ export function formatNumber(value: number, locale: Locale, options: Intl.Number
 /**
  * A quantity as the server read it (a bulk preview's amount, D15): grouped in
  * `locale`, every digit kept — Intl rounds to three places by default, which
- * would show a file's `1.2345` as the 1.235 nobody wrote.
+ * would show a file's `1.2345` as the 1.235 nobody wrote. 20, not more:
+ * browsers before Intl.NumberFormat v3 (Firefox ESR 115) throw a RangeError
+ * above it, and 20 places hold every activity value down to 1e-20.
  */
 export function formatReadAmount(value: number, locale: Locale): string {
-  return formatNumber(value, locale, { maximumFractionDigits: 100 });
+  return formatNumber(value, locale, { maximumFractionDigits: 20 });
 }
 
 /** The range a field accepts, on top of the grammar. */

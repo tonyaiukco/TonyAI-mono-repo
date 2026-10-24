@@ -3035,6 +3035,36 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
   });
 
+  it.each([
+    ['a CSV cell', 'csv'],
+    ['an XLSX text cell', 'xlsx-text'],
+    ['an XLSX numeric cell', 'xlsx-number'],
+  ])('reports every digit of %s, on the dry run and the apply', async (_, kind) => {
+    // 15 significant digits: a rounding to 7 or to 3 places must fail here.
+    for (const options of [DRY, NOTHING]) {
+      const { service } = build();
+      const file =
+        kind === 'csv' ? csvWith('1234.56789012345')
+        : await xlsxFile(kind === 'xlsx-text' ? '1234.56789012345' : 1234.56789012345);
+      const report = await service.import(dataEntry(), file, options);
+      expect(report.accepted[0].activityValue).toBe(1234.56789012345);
+    }
+  });
+
+  it('never imports an unquoted comma figure — the CSV splits it into two cells, and the row is refused', async () => {
+    // A hand-typed `…,1,5,kWh,`: the comma is the CSV's own separator. Safe
+    // today because the shifted cells fail; pinned so no lenient parser joins
+    // them back into a number.
+    const { records, service } = build();
+    const line = [SUB_1, '', '2024', 'monthly', 'January', 'Electricity', '', '1', '5', 'kWh'].join(',');
+
+    const report = await service.import(dataEntry(), csvFile([line]), NOTHING);
+
+    expect(report.accepted).toEqual([]);
+    expect(report.errors).toHaveLength(1);
+    expect(records.create).not.toHaveBeenCalled();
+  });
+
   it('takes a numeric XLSX cell as the number it holds', async () => {
     const { service } = build();
 

@@ -328,6 +328,7 @@ describe("formatReadAmount — a bulk preview's amount (D15)", () => {
     [0.1 + 0.2, "0,30000000000000004", "0.30000000000000004"],
     [1e12, "1.000.000.000.000", "1,000,000,000,000"],
     [1e-7, "0,0000001", "0.0000001"],
+    [1234.56789012345, "1.234,56789012345", "1,234.56789012345"],
   ])("%s reads as %s in Turkish and %s in English, every digit kept", (value, tr, en) => {
     expect(formatReadAmount(value, "tr")).toBe(tr);
     expect(formatReadAmount(value, "en")).toBe(en);
