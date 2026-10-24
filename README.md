@@ -541,6 +541,28 @@ status/object reads; lazy object fetching is disabled. Index or HEAD gitlinks
 are refused before status can enter a child repository.
 Collection remains evidence for
 semantic review, not native installation qualification or bootstrap approval.
+
+The draft `infra/scripts/r3_access_repair.py` recovery primitive is independently
+scoped from collection. Synthetic tests exercise a bounded append to an existing
+verified `authorized_keys` inode, preservation of its bytes and permissions, and
+private before-state evidence. It refuses an already present key, including a
+restricted entry or an equivalent RSA encoding, and never retries or rolls back a
+partial append. `r3_access_repair_guest.py` adds local account, IMDS/boot identity,
+descriptor-chain and cooperative deadline gates; it has no standalone CLI.
+`r3_access_repair_packet.py` renders offline, exact-source drafts. Separate
+`r3_access_repair_control.py` phases gate one conditional extension-enable PATCH
+and one Managed Run Command PUT; `r3_access_repair_receive.py` gates a separate
+strict-pinned private evidence fetch and local age encryption. Every phase needs
+published source, an exact owner approval, fresh target/client bindings and an
+exclusive attempt marker. Drafts with missing bindings remain unexecutable.
+The owner must explicitly accept Microsoft's managed delivery component: its
+binary cannot be pinned by our Python source hash. The guest payload preserves
+accounts, sudo, SSH configuration and services; delivery-side handler installation,
+state and logs are separate effects. No automatic retry, rollback or handler
+cleanup occurs. Advisory locking cannot exclude uncooperative writers or parent
+renames, and Managed Run Command PUT is not an atomic absent-only create.
+See [the recovery contract](infra/runbooks/10-qa-clean-replacement.md#narrow-ssh-access-recovery-draft-separate-from-collection)
+for phase budgets, custody and remaining live qualification requirements.
 The r02 runtime source contract
 rejects both legacy installation shells. Local tools now inspect pinned package
 control/scripts and Node bytes, render offline guard files and a full source plan,
