@@ -40,7 +40,7 @@ toolchain('plan-candidate-versions', "            or {match.groups() for match i
 install('archive-prewrite', '    check_node_archive(node)', '    pass')
 install('node-directory-root', "member.name == root or member.name.startswith(root + '/')", "member.name.startswith(root + '/')")
 install('archive-filter', "archive.extractall('/opt/tonyai-tools', filter='data')", "archive.extractall('/opt/tonyai-tools', filter='fully_trusted')")
-install('attempt-journal', "    write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))", '    pass')
+install('attempt-journal', "    if policy is None:\n        write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))", '    if policy is None:\n        pass')
 install('policy-content', "b'#!/bin/sh\\nexit 101\\n'", "b'#!/bin/sh\\nexit 0\\n'")
 install('mask-call', "    capture(['systemctl', 'mask', *SERVICES])", '    pass')
 install('runtime-mask', "['systemctl', 'mask', *SERVICES]", "['systemctl', 'mask', '--runtime', *SERVICES]")

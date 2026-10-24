@@ -23,6 +23,9 @@ from replacement_host import validate_contract, validate_identity, safe_path
 from r3_toolchain import verify_toolchain, dependency_plan, install_argv, capture
 from r3_package_state import INVENTORY_ARGV, inventory, require_absent, inventory_diff, held_inventory, transaction
 from r3_apt_observer import observe, validate as validate_observation, process_identity
+import r3_install_policy as install_policy
+import r3_maintenance
+from r3_noble_common import run as bounded_run
 
 DAEMON = {'log-driver': 'local', 'log-opts': {'max-size': '10m', 'max-file': '3'},
           'live-restore': False, 'firewall-backend': 'iptables'}
@@ -58,7 +61,7 @@ def check_node_archive(node):
             tarfile.data_filter(member, '/opt/tonyai-tools')
 
 
-def install(bundle, contract_path, approval_path, approved_hash):
+def install(bundle, contract_path, approval_path, approved_hash, policy_path=None):
     if os.geteuid() != 0 or platform.machine() != 'x86_64' or platform.freedesktop_os_release().get('VERSION_ID') != '24.04' or platform.freedesktop_os_release().get('ID') != 'ubuntu':
         raise ValueError('Root on Ubuntu 24.04 amd64 required.')
     if any(k.startswith(('APT_', 'DPKG_', 'LD_')) or k in ('PYTHONPATH', 'PYTHONHOME', 'DEBIAN_FRONTEND') for k in os.environ):
@@ -86,6 +89,13 @@ def install(bundle, contract_path, approval_path, approved_hash):
                 'host_guard_sha256': digest(Path(__file__).with_name('replacement_host.py').read_bytes()),
                 'bundle_helper_sha256': digest(Path(__file__).with_name('replacement_bundle.py').read_bytes()),
                 'layout_sha256': digest(Path(__file__).with_name('replacement-source-layout.json').read_bytes())}
+    policy = None
+    if policy_path is not None:
+        policy_bytes = private_read(policy_path)
+        policy = install_policy.load(policy_bytes, approval.get('policy_sha256'))
+        expected.update(format=3, action='r02-maintenance-toolchain-install', policy_sha256=digest(policy_bytes))
+        for name in ('r3_install_policy.py', 'r3_maintenance.py', 'r3_noble_common.py', 'r3_noble_identity.py'):
+            expected[name + '_sha256'] = digest(Path(__file__).with_name(name).read_bytes())
     if approval != expected:
         raise ValueError('Install approval binding differs.')
     if Path(__file__).resolve().parent != bundle / 'helpers':
@@ -104,8 +114,10 @@ def install(bundle, contract_path, approval_path, approved_hash):
         raise ValueError('Existing/partial installation refused; preserve and review.')
     # A dedicated toolchain install must not overwrite pre-existing package state.
     lock, paths = verify_toolchain(bundle, approval['toolchain_lock_sha256'])
-    initial_state = observe()
-    validate_observation(initial_state)
+    initial_state = None
+    if policy is None:
+        initial_state = observe()
+        validate_observation(initial_state)
     before_raw = capture(INVENTORY_ARGV)
     before = inventory(before_raw)
     require_absent(before, lock)
@@ -115,15 +127,41 @@ def install(bundle, contract_path, approval_path, approved_hash):
             raise ValueError('Existing Docker package state refused.')
     if capture(['dpkg', '--audit']).strip():
         raise ValueError('Pending or inconsistent package state refused.')
-    simulation = {}
-    plan = dependency_plan(lock, paths, simulation)
     node = bundle / 'artifacts' / lock['node']['url'].rsplit('/', 1)[1]
     check_node_archive(node)
-    safe_path('/etc/tonyai', directory=True)
-    write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))
-    write_new('/etc/tonyai/r3-install-plan.txt', plan.encode())
     evidence = Path('/etc/tonyai/r3-package-evidence')
-    evidence.mkdir(mode=0o700)
+    if policy is not None:
+        policy_facts = install_policy.facts()
+        config = capture(['apt-config', 'dump']).encode()
+        units = capture(['systemctl', 'cat', *r3_maintenance.UNITS]).encode()
+        cache_before = install_policy.cache_snapshot()
+        install_policy.preflight(policy, (bundle / 'r3-toolchain.lock.json').read_bytes(), before, config, policy_facts, units, cache_before)
+        install_policy.cache_effects(cache_before, cache_before)
+        safe_path('/etc/tonyai', directory=True)
+        write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))
+        evidence.mkdir(mode=0o700)
+        write_new(evidence / 'installation-policy.json', policy_bytes)
+        write_new(evidence / 'policy-facts-before.json', encoded(policy_facts))
+        write_new(evidence / 'policy-config.txt', config)
+        write_new(evidence / 'policy-units.txt', units)
+        write_new(evidence / 'cache-before.json', encoded(cache_before))
+        write_new(evidence / 'inventory-before-isolation.txt', before_raw.encode())
+        deadline = time.monotonic() + 180
+        def maintenance_command(argv, label, **kwargs):
+            return bounded_run(argv, evidence, label, **kwargs)
+        initial_state = r3_maintenance.isolate(evidence, before,
+            lambda phase, timeout: inventory(bounded_run(INVENTORY_ARGV, evidence,
+                phase + '-isolation-inventory', timeout=timeout).decode()), maintenance_command, deadline)
+        if install_policy.facts() != policy_facts:
+            raise ValueError('Native policy files changed during isolation')
+    simulation = {}
+    plan = dependency_plan(lock, paths, simulation)
+    safe_path('/etc/tonyai', directory=True)
+    if policy is None:
+        write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))
+    write_new('/etc/tonyai/r3-install-plan.txt', plan.encode())
+    if policy is None:
+        evidence.mkdir(mode=0o700)
     write_new(evidence / 'inventory-before.txt', before_raw.encode())
     write_new(evidence / 'simulation.stdout.log', simulation['stdout'])
     write_new(evidence / 'simulation.stderr.log', simulation['stderr'])
@@ -184,7 +222,17 @@ def install(bundle, contract_path, approval_path, approved_hash):
     write_new(evidence / 'inventory-after.txt', after_raw.encode())
     after = inventory(after_raw)
     diff = inventory_diff(before, after, lock)
-    observed_actions = transaction(private_read(transaction_path).decode(), lock)
+    if policy is None:
+        observed_actions = transaction(private_read(transaction_path).decode(), lock)
+    else:
+        after_facts = install_policy.facts()
+        write_new(evidence / 'policy-facts-after.json', encoded(after_facts))
+        cache_after = install_policy.cache_snapshot()
+        write_new(evidence / 'cache-after.json', encoded(cache_after))
+        observed_actions = install_policy.trigger_transaction(private_read(transaction_path).decode(), lock, policy)
+        write_new(evidence / 'cache-effects.json', encoded(install_policy.cache_effects(cache_before, cache_after, policy)))
+        if after_facts != policy_facts or capture(['apt-config', 'dump']).encode() != config:
+            raise ValueError('Native policy configuration drift after installation')
     installed = []
     for item in lock['packages']:
         actual = capture(['dpkg-query', '-W', '-f=${Package}\n${Version}\n${Architecture}\n${db:Status-Status}', item['name']]).splitlines()
@@ -220,7 +268,7 @@ def install(bundle, contract_path, approval_path, approved_hash):
     safe_path(node_binary)
     info = node_binary.stat()
     evidence_hashes = {f.name: digest(private_read(f)) for f in evidence.iterdir()}
-    receipt = {'format': 2, 'approval_sha256': approved_hash, 'binding': expected,
+    receipt = {'format': expected['format'], 'approval_sha256': approved_hash, 'binding': expected,
                'packages': installed, 'apt_plan_sha256': digest(plan.encode()),
                'package_transaction': {'inventory_diff': diff, 'held': True, 'actions': observed_actions,
                    'executed_argv': executed_argv, 'returncode': process.returncode,
@@ -242,9 +290,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('bundle', 'contract', 'approval', 'approved-sha256'):
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--policy', help='Separate private reviewed maintenance policy; requires format-3 approval')
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        install(args.bundle, args.contract, args.approval, args.approved_sha256)
+        install(args.bundle, args.contract, args.approval, args.approved_sha256, args.policy)
     except Exception:
         raise SystemExit('FAIL: offline installation refused/interrupted; preserve isolation and inspect privately.')

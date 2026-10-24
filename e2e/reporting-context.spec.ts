@@ -139,11 +139,21 @@ test('a mutation that completes after a new selection refreshes the new one, not
   await expect(page.getByText('Net-zero pathway 2030')).toHaveCount(0);
 
   // The follow-up refresh is the current selection's, so Energy's targets never return under Mfg.
-  const followUp = page.waitForRequest((r) => r.method() === 'GET' && /\/api\/v1\/targets\?/.test(r.url()));
+  // Every target read after the release is recorded, so a second, stale refresh cannot hide.
+  const isTargetRead = (r: Request) => r.method() === 'GET' && /\/api\/v1\/targets(\/progress)?\?/.test(r.url());
+  const readsAfterRelease: string[] = [];
+  page.on('request', (r) => {
+    if (isTargetRead(r)) readsAfterRelease.push(new URL(r.url()).searchParams.get('subsidiaryId') ?? '');
+  });
+  const followUp = page.waitForRequest((r) => isTargetRead(r) && /\/api\/v1\/targets\?/.test(r.url()));
   release();
   await expect(page.getByText('Target removed')).toBeVisible();
-  expect(new URL((await followUp).url()).searchParams.get('subsidiaryId')).toBe(SUB.mfg);
-  await page.waitForLoadState('networkidle');
+  const followUpRequest = await followUp;
+  expect(new URL(followUpRequest.url()).searchParams.get('subsidiaryId')).toBe(SUB.mfg);
+  // Its own response, not `networkidle`: under `page.route` the page-wide idle signal never
+  // came on CI (E2E run 39860897619) although the API had answered every request.
+  await followUpRequest.response();
+  expect(new Set(readsAfterRelease)).toEqual(new Set([SUB.mfg]));
   await expect(page.getByText('Manufacturing SBTi 1.5°C')).toBeVisible();
   await expect(page.getByText('Net-zero pathway 2030')).toHaveCount(0);
 });
