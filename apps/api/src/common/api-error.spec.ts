@@ -434,6 +434,15 @@ describe('CodedValidationPipe — a constraint with its own code (LP4-04)', () =
     expect(refused.code).toBe('validation_failed');
   });
 
+  it.each([
+    // The coded field FIRST in declaration order, then after: the answer
+    // must not depend on which failure class-validator lists first.
+    ['the over-bound value before a bad unit', { ...CREATE, activityValue: ACTIVITY_VALUE_MAX + 1, activityUnit: 'furlongs' }],
+    ['a bad year before the over-bound value', { ...CREATE, reportingYear: 1066, activityValue: ACTIVITY_VALUE_MAX + 1 }],
+  ])('keeps validation_failed with %s', async (_, body) => {
+    expect((await refusal(CreateActivityRecordDto, body)).code).toBe('validation_failed');
+  });
+
   it('keeps validation_failed for a value that fails an uncoded rule as well (a string fails isNumber, min and max)', async () => {
     expect((await refusal(CreateActivityRecordDto, { ...CREATE, activityValue: '2e12' })).code).toBe('validation_failed');
   });
@@ -461,7 +470,23 @@ describe('failureCode', () => {
   });
 
   it('is null for a failure with nested children or no constraints, and for a context that is not a registry code', () => {
-    expect(failureCode({ property: 'p', children: [failure(11)], constraints: {} } as ValidationError)).toBeNull();
+    // Coded on its own constraints, but with nested failures beneath it.
+    expect(
+      failureCode({
+        property: 'p',
+        constraints: { max: 'too big' },
+        contexts: { max: { code: 'activity_value_too_large' } },
+        children: [failure(-1)],
+      } as ValidationError),
+    ).toBeNull();
+    expect(
+      failureCode({
+        property: 'p',
+        constraints: { max: 'too big' },
+        contexts: { max: { code: 'activity_value_too_large' } },
+        children: [],
+      } as ValidationError),
+    ).toBe('activity_value_too_large');
     expect(failureCode({ property: 'p', children: [] } as ValidationError)).toBeNull();
     expect(
       failureCode({
