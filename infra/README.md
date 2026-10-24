@@ -227,6 +227,15 @@ from Azure inventory packet B, production installation, and composition smoke.
 No service/trigger disabling or strict-parser relaxation is included. A refusal
 can be useful diagnostic evidence; it does not qualify the target.
 
+
+The recovery renderer also supports `--identity-diagnostic` for a separate
+`ONE_MANAGED_IDENTITY_DIAGNOSTIC` approval and `--phase diagnose` execution.
+This metadata-only guest payload reports the failing IMDS/boot-ID stage and
+bounded selected identity fields without opening an account or appending a key.
+It requires a new source-bound packet, fresh observations, the exact retained
+failed command, and private encrypted custody. See the
+[identity diagnostic contract](runbooks/10-qa-clean-replacement.md#managed-identity-diagnostic-after-a-failed-repair).
+It does not establish access or installation qualification.
 The separate `purpose=snap-leaf-diagnostic` observes only `/usr/bin/snap`
 metadata and uninterpreted symlink text, without opening or resolving the target.
 It has a distinct three-file private frame and independent validation. A stable

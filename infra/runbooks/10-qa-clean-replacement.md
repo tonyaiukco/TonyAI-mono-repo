@@ -1787,3 +1787,62 @@ means a source-bound evidence chain was validated and sealed, not installation,
 policy acceptance, bootstrap eligibility or comprehensive SSH/sudo preservation
 proof. A new post-repair identity/access/configuration qualification and a new
 exact B collection approval remain necessary.
+
+
+#### Managed identity diagnostic after a failed repair
+
+An identity-before refusal may precede both append and evidence-directory
+creation. Preserve that consumed repair and its status evidence. Do not retry
+the append or fetch guest files that the payload never created.
+
+`r3_access_repair_packet.py --identity-diagnostic` prepares a new proposal with
+purpose `R3_ACCESS_IDENTITY_DIAGNOSTIC`, a new packet ID and an empty export
+payload. A separate `ONE_MANAGED_IDENTITY_DIAGNOSTIC` approval binds its exact
+delivery/fresh hashes and path. `r3_access_repair_control.py --phase diagnose
+--execute` uses the existing owner-held bearer client and custody machinery;
+preparation does not authorize execution or owner-only authentication.
+
+The bindings contain `prior_command`: its exact resource ID, source SHA,
+canonical delivery SHA256, request body, terminal execution state `Failed`,
+nonzero integer exit code, and retained `delivery` and `proposal` documents.
+The validator cross-checks those documents, their hashes, original append
+purpose, packet ID, target identity and script/options. These references are
+preserved historical provenance, never authority to execute the old payload.
+
+Fresh observations must include the exact extension and command list bodies'
+SHA256 values (`extensions_model_sha256`, `commands_model_sha256`) and the
+failed command's full instance-view body hash (`prior_command_model_sha256`).
+The sole allowed existing command is that reviewed terminal failed command;
+at most four explicitly observed extension IDs are allowed. The controller
+rechecks the full models, failed state, exact script/options, VM model/ETag,
+and identity before checking that the new `r3-identity-<packet_id>` name is
+absent. Unknown delivery resources, drift or an active old command refuse.
+The exclusive operator window remains necessary: Azure PUT is create-or-update,
+not an atomic conditional create. No old command is updated or removed.
+
+The bounded operation is one PUT plus at most eleven GETs, with existing
+900-second freshness, 180-second request-start window, request deadlines,
+durable consumption, interruption and private sealing controls. A refusal or
+partial result consumes the attempt; no automatic retry or rollback follows.
+Microsoft's privileged handler retains its previously disclosed installation,
+log, cache and state effects. RunCommand response locations accept only ASCII
+alphanumeric case variation of the expected Azure region. Guest IMDS equality
+and the VM target checks remain unchanged.
+
+The fixed Python entry point has a 30-second cooperative alarm and calls the
+existing identity helper once: one bounded 32769-byte IMDS read, at most 32768
+accepted bytes, and one no-follow `/proc/sys/kernel/random/boot_id` read.
+Internal checkpoints retain the failing stage; only the eight already selected
+IMDS identity fields and a valid boot UUID can enter the report. Each field is
+classified by type/length/hash/exact comparison; mismatch values share a 1024-byte
+canonical-JSON budget. No full IMDS response, exception message, account data,
+key append, subprocess or guest evidence-directory write is performed by this
+entry point. The overall report is bounded to 4096 bytes and stays private.
+
+`IDENTITY_DIAGNOSTIC_REVIEW_REQUIRED` means a validated diagnostic was returned,
+including a reported identity refusal. It never means SSH access was recovered:
+access, qualification and installation flags remain false. Error-free reports
+require all eight nonempty string fields, a valid boot ID and consistent exact
+comparison. Review the observation before proposing any repair correction,
+fresh collection or further execution. Historical partial records and all
+R3/CL-P2-3/bootstrap gates remain unchanged.

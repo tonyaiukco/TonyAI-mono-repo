@@ -13,7 +13,7 @@ from r3_noble_common import encoded, read
 API = '2025-04-01'
 PURPOSE = 'R3_MANAGED_ACCESS_RECOVERY'
 ACTIONS = {'enable': 'ONE_EXTENSION_ENABLE', 'repair': 'ONE_MANAGED_KEY_APPEND',
-           'export': 'ONE_REPAIR_EVIDENCE_FETCH'}
+           'export': 'ONE_REPAIR_EVIDENCE_FETCH', 'diagnose': 'ONE_MANAGED_IDENTITY_DIAGNOSTIC'}
 VM_PATTERN = (r'/subscriptions/[a-f0-9-]{36}/resourceGroups/[A-Za-z0-9_.()-]{1,90}'
               r'/providers/Microsoft.Compute/virtualMachines/[A-Za-z0-9_-]{1,64}')
 
@@ -74,7 +74,7 @@ def endpoint(vm, suffix='', expand=False):
 
 def requests(proposal, guest):
     vm = proposal['target_imds']['resourceId']
-    name = 'r3-key-' + proposal['packet_id']
+    name = ('r3-identity-' if proposal['purpose'] == 'R3_ACCESS_IDENTITY_DIAGNOSTIC' else 'r3-key-') + proposal['packet_id']
     # The quoted delimiter cannot occur in the generated Python source.
     delimiter = 'R3_' + sha256(guest)
     require(delimiter.encode() not in guest and b'\0' not in guest, 'SCRIPT_DELIMITER')
@@ -140,6 +140,40 @@ def vm_target(model, target):
     require(len(nics) == 1 and nics[0]['id'].lower() == cp['network']['nic_id'].lower(), 'VM_NIC')
 
 
+def validate_prior_command(prior, proposal):
+    from r3_access_repair_guest import validate
+    require(isinstance(prior, dict) and set(prior) == {'id', 'source_sha', 'delivery_sha256',
+            'request_body', 'execution_state', 'exit_code', 'delivery', 'proposal'}, 'PRIOR_COMMAND_SHAPE')
+    prefix = proposal['target_imds']['resourceId'] + '/runCommands/r3-key-'
+    require(isinstance(prior['id'], str) and prior['id'].startswith(prefix) and
+            re.fullmatch('[a-f0-9]{32}', prior['id'][len(prefix):]), 'PRIOR_COMMAND_ID')
+    require(isinstance(prior['source_sha'], str) and re.fullmatch('[a-f0-9]{40}', prior['source_sha']) and
+            isinstance(prior['delivery_sha256'], str) and re.fullmatch('[a-f0-9]{64}', prior['delivery_sha256']), 'PRIOR_SOURCE')
+    previous, previous_proposal = prior['delivery'], prior['proposal']
+    validate(previous_proposal)
+    require(isinstance(previous, dict) and previous.get('format') == 1 and
+            type(previous['format']) is int and previous.get('purpose') == PURPOSE and
+            sha256(encoded(previous)) == prior['delivery_sha256'] and
+            previous.get('proposal_sha256') == sha256(encoded(previous_proposal)) and
+            previous_proposal['source']['published_sha'] == prior['source_sha'] and
+            previous_proposal['target_imds'] == proposal['target_imds'] and
+            prior['id'] == prefix + previous_proposal['packet_id'] and
+            previous.get('requests', {}).get('repair_body') == prior['request_body'], 'PRIOR_PACKET_BINDING')
+    body = prior['request_body']
+    require(isinstance(body, dict) and set(body) == {'location', 'properties'} and
+            body['location'] == proposal['target_imds']['location'], 'PRIOR_BODY')
+    props = body['properties']
+    require(isinstance(props, dict) and set(props) == {'source', 'asyncExecution', 'timeoutInSeconds',
+            'treatFailureAsDeploymentFailure'} and props['asyncExecution'] is False and
+            type(props['timeoutInSeconds']) is int and props['timeoutInSeconds'] == 60 and
+            props['treatFailureAsDeploymentFailure'] is True and
+            isinstance(props['source'], dict) and set(props['source']) == {'script'} and
+            isinstance(props['source']['script'], str) and 0 < len(props['source']['script']) <= 512 * 1024,
+            'PRIOR_OPTIONS')
+    require(prior['execution_state'] == 'Failed' and type(prior['exit_code']) is int and
+            prior['exit_code'] != 0 and -2**31 <= prior['exit_code'] < 2**31, 'PRIOR_TERMINAL')
+
+
 def approve(packet, approval_raw, approval_hash, fresh_raw, phase):
     """Resolve source, exact bytes, owner authority and live bindings before I/O."""
     from r3_access_repair_packet import ROOT, source_map, payload, export_payload
@@ -153,7 +187,11 @@ def approve(packet, approval_raw, approval_hash, fresh_raw, phase):
     plan = load(plan_raw)
     proposal_raw = read(packet / 'proposal.json')
     proposal = load(proposal_raw)
-    validate(proposal)
+    if phase == 'diagnose':
+        from r3_access_identity_diagnostic import validate_proposal
+        validate_proposal(proposal)
+    else:
+        validate(proposal)
     require(plan['format'] == 1 and type(plan['format']) is int and plan['purpose'] == PURPOSE, 'PLAN_PURPOSE')
     require(plan['proposal_sha256'] == sha256(proposal_raw) and plan['packet_path'] == str(packet), 'PACKET_BINDING')
     require(plan['handler_trust'] == 'MICROSOFT_MANAGED_ACCEPTED_BY_OWNER', 'HANDLER_TRUST')
@@ -162,7 +200,10 @@ def approve(packet, approval_raw, approval_hash, fresh_raw, phase):
     require(proposal['source']['files'] == source_map() and
             verified_head(ROOT, source_map()) == proposal['source']['published_sha'], 'PUBLISHED_SOURCE')
     guest, export = read(packet / 'guest.py'), read(packet / 'export.py')
-    require(guest == payload(proposal) and export == export_payload(proposal) and
+    from r3_access_repair_packet import diagnostic_payload
+    expected_guest = diagnostic_payload(proposal) if phase == 'diagnose' else payload(proposal)
+    expected_export = b'' if phase == 'diagnose' else export_payload(proposal)
+    require(guest == expected_guest and export == expected_export and
             plan['guest_sha256'] == sha256(guest) and plan['export_sha256'] == sha256(export), 'PAYLOAD_BINDING')
     require(plan['requests'] == requests(proposal, guest), 'REQUEST_BINDING')
     expected = {'action', 'packet_path', 'delivery_sha256', 'fresh_sha256', 'attempts', 'owner_authorization_reference'}
@@ -179,7 +220,14 @@ def approve(packet, approval_raw, approval_hash, fresh_raw, phase):
     target_custody(plan, proposal)
     require(isinstance(fresh['vm_etag'], str) and re.fullmatch(r'[\x20-\x7e]{1,256}', fresh['vm_etag']), 'ETAG')
     require(isinstance(fresh['vm_model_sha256'], str) and re.fullmatch('[a-f0-9]{64}', fresh['vm_model_sha256']), 'VM_MODEL_HASH')
-    if phase in ('enable', 'repair'):
+    if phase == 'diagnose':
+        validate_prior_command(plan['prior_command'], proposal)
+        require(fresh['allow_extension_operations'] is True and
+                isinstance(fresh['extensions'], list) and len(fresh['extensions']) <= 4 and
+                fresh['run_commands'] == [plan['prior_command']['id']], 'DIAGNOSTIC_EXISTING_DELIVERY')
+        for key in ('extensions_model_sha256', 'commands_model_sha256', 'prior_command_model_sha256'):
+            require(isinstance(fresh[key], str) and re.fullmatch('[a-f0-9]{64}', fresh[key]), 'DIAGNOSTIC_MODEL_HASH')
+    elif phase in ('enable', 'repair'):
         require(fresh['extensions'] == [] and fresh['run_commands'] == [], 'EXISTING_DELIVERY')
         require(fresh['allow_extension_operations'] is (phase == 'repair'), 'EXTENSION_STATE')
     else:

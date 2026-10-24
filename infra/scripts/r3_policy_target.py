@@ -18,27 +18,39 @@ class NoRedirect(HTTPRedirectHandler):
         raise ValueError('IMDS redirect refused')
 
 
-def identity():
+def identity(observer=None):
+    def checkpoint(stage, value=None):
+        if observer is not None:
+            observer(stage, value)
+    checkpoint('imds-request')
     opener = build_opener(ProxyHandler({}), NoRedirect())
     request = Request('http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01',
                       headers={'Metadata': 'true'})
     with opener.open(request, timeout=10) as response:
         raw = response.read(32769)
+    checkpoint('imds-size', {'bytes': len(raw)})
     require(len(raw) <= 32768)
+    checkpoint('imds-json')
     compute = json.loads(raw)
     selected = {key: compute.get(key) for key in IMDS_FIELDS}
+    checkpoint('imds-fields', selected)
     require(all(isinstance(v, str) and 0 < len(v) <= 2048 for v in selected.values()))
+    checkpoint('boot-parent')
     fd = directory('/proc/sys/kernel/random')
     try:
+        checkpoint('boot-open')
         boot = os.open('boot_id', os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
         try:
+            checkpoint('boot-read')
             boot_id = os.read(boot, 129).decode().strip()
         finally:
             os.close(boot)
     finally:
         os.close(fd)
+    checkpoint('boot-format', {'boot_id': boot_id})
     import re
     require(re.fullmatch('[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', boot_id) is not None)
+    checkpoint('complete')
     return {'imds': selected, 'boot_id': boot_id}
 
 
