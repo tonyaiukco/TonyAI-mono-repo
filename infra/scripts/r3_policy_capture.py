@@ -9,6 +9,44 @@ from r3_noble_common import digest
 LIMIT = 8 * 1024 * 1024
 BODY_LIMIT = 128 * 1024
 FIELDS = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns', 'st_mode', 'st_uid', 'st_gid', 'st_nlink')
+READ_STAGES = ('resolve-parent', 'open-file', 'stat-before', 'read', 'stat-after',
+               'stat-path', 'close-file', 'close-parent')
+
+
+class ReadError(OSError):
+    """Fixed syscall context only; never retain exception text or filenames."""
+    def __init__(self, stage, error):
+        super().__init__()
+        self.stage = stage
+        self.errno = error.errno if type(error.errno) is int and 1 <= error.errno <= 4095 else None
+        self.cleanup = []
+
+
+def observed(stage, function, *args, **kwargs):
+    try:
+        return function(*args, **kwargs)
+    except TimeoutError:
+        # Preserve the existing timeout classification, including cleanup.
+        raise
+    except OSError as exc:
+        if isinstance(exc, FileNotFoundError) and stage in ('resolve-parent', 'open-file'):
+            raise
+        raise ReadError(stage, exc) from None
+
+
+def close(fd, stage, primary=None):
+    try:
+        os.close(fd)
+    except OSError as exc:
+        failure = ReadError(stage, exc)
+        if primary is None or isinstance(primary, FileNotFoundError):
+            if isinstance(exc, TimeoutError):
+                raise
+            raise failure from None
+        # Never replace an active timeout/outer deadline with an Exception that
+        # the section handler could swallow. Snap OSErrors retain cleanup detail.
+        if isinstance(primary, ReadError):
+            primary.cleanup.append({'stage': failure.stage, 'errno': failure.errno})
 
 
 def same(left, right):
@@ -17,15 +55,15 @@ def same(left, right):
 
 
 def directory(path):
-    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    fd = observed('resolve-parent', os.open, '/', os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in Path(path).parts[1:]:
-            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            os.close(fd)
-            fd = nxt
+            nxt = observed('resolve-parent', os.open, part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            previous, fd = fd, nxt
+            close(previous, 'close-parent')
         return fd
-    except BaseException:
-        os.close(fd)
+    except BaseException as exc:
+        close(fd, 'close-parent', exc)
         raise
 
 
@@ -42,34 +80,42 @@ def file_record(path, body=False):
         parent = directory(str(Path(path).parent))
     except FileNotFoundError:
         return {'absent': True}
+    parent_error = None
     try:
         try:
-            fd = os.open(Path(path).name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+            fd = observed('open-file', os.open, Path(path).name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
         except FileNotFoundError:
             return {'absent': True}
+        file_error = None
         try:
-            before = os.fstat(fd)
+            before = observed('stat-before', os.fstat, fd)
             cap = BODY_LIMIT if body else LIMIT
             if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > cap:
                 raise ValueError('UNSAFE_FILE')
             data = bytearray()
             while len(data) <= cap:
-                block = os.read(fd, min(65536, cap + 1 - len(data)))
+                block = observed('read', os.read, fd, min(65536, cap + 1 - len(data)))
                 if not block:
                     break
                 data.extend(block)
-            same(before, os.fstat(fd))
-            same(before, os.stat(Path(path).name, dir_fd=parent, follow_symlinks=False))
+            same(before, observed('stat-after', os.fstat, fd))
+            same(before, observed('stat-path', os.stat, Path(path).name, dir_fd=parent, follow_symlinks=False))
             if len(data) != before.st_size:
                 raise ValueError('CHANGED')
             value = {**metadata(before), 'bytes': len(data), 'sha256': digest(data)}
             if body:
                 value['body'] = blob(bytes(data))
             return value
+        except BaseException as exc:
+            file_error = exc
+            raise
         finally:
-            os.close(fd)
+            close(fd, 'close-file', file_error)
+    except BaseException as exc:
+        parent_error = exc
+        raise
     finally:
-        os.close(parent)
+        close(parent, 'close-parent', parent_error)
 
 
 def membership(path, maximum=256):

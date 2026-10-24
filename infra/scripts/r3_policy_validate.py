@@ -6,7 +6,7 @@ from pathlib import PurePosixPath
 from r3_noble_common import digest, encoded
 from r3_package_state import inventory
 from r3_install_policy import FIXED, DIRECTORIES
-from r3_policy_capture import LIMIT, BODY_LIMIT
+from r3_policy_capture import LIMIT, BODY_LIMIT, READ_STAGES
 from r3_policy_evidence import COMMANDS, BODIES, EXTRA_FILES, DIRECTORY_NAMES, PURPOSE, ERRORS, SCOPES, load
 
 
@@ -84,7 +84,20 @@ def cache(value):
     require(value['.'].get('directory') is True and total <= 32 * 1024 * 1024)
 
 
-def section(value, check, allow_unreviewed=False):
+def read_context(value):
+    require(isinstance(value, dict) and set(value) == {'format', 'stage', 'errno', 'cleanup'})
+    require(type(value['format']) is int and value['format'] == 1)
+    def failure(item, stages):
+        require(item['stage'] in stages)
+        require(item['errno'] is None or type(item['errno']) is int and 1 <= item['errno'] <= 4095)
+    failure(value, READ_STAGES)
+    require(isinstance(value['cleanup'], list) and len(value['cleanup']) <= 2)
+    for item in value['cleanup']:
+        require(isinstance(item, dict) and set(item) == {'stage', 'errno'})
+        failure(item, ('close-file', 'close-parent'))
+
+
+def section(value, check, allow_unreviewed=False, snap_context=False):
     require(isinstance(value, dict))
     state = value.get('state')
     if state == 'ok':
@@ -94,8 +107,13 @@ def section(value, check, allow_unreviewed=False):
     if state == 'not_reached':
         require(set(value) == {'state'})
         return False
-    require(state == 'error' and set(value) in ({'state', 'error'}, {'state', 'error', 'prior'}))
+    keys = ({'state', 'error'}, {'state', 'error', 'prior'})
+    require(state == 'error' and (set(value) in keys or
+            snap_context and set(value) == {'state', 'error', 'context'}))
     require(value['error'] in (*ERRORS, 'CHANGED', *(['UNREVIEWED_PATH'] if allow_unreviewed else [])))
+    if 'context' in value:
+        require(value['error'] == 'OSError')
+        read_context(value['context'])
     if 'prior' in value:
         require(value['error'] in ('CHANGED', 'TimeoutError'))
         check(value['prior'])
@@ -165,7 +183,8 @@ def validate(data, binding):
             else:
                 complete &= section(record, lambda v: file_record(v, True, absent=False))
     for path in (*FIXED, *EXTRA_FILES):
-        complete &= section(sections.get('file:' + path), lambda v, path=path: file_record(v, path in BODIES))
+        complete &= section(sections.get('file:' + path), lambda v, path=path: file_record(v, path in BODIES),
+                            snap_context=path == '/usr/bin/snap')
     complete &= section(sections.get('cache'), cache)
     def socket(v):
         require(v in ({'exists': False, 'socket': False}, {'exists': True, 'socket': True})

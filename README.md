@@ -532,6 +532,10 @@ and fresh approval bound to the exact packet path and host-key fingerprint;
 historical B is not rebound. Collection rejects APT line-comment redirection and
 unit reload/warning drift, retains partial evidence without aggregate hashes, and
 uses source-only controller imports plus replacement-independent Git checks.
+An initial `/usr/bin/snap` read failure can retain a fixed syscall stage and
+numeric errno, including bounded cleanup errors, inside the encrypted evidence.
+It adds no reads, follows no links and remains partial with no aggregate policy
+hashes. This context describes only that attempt, not a historical failure.
 Source verification refuses Git filter/include/diff configuration, redirected or
 partial-clone worktrees, and nonempty or symlinked Git info attributes before
 status/object reads; lazy object fetching is disabled. Index or HEAD gitlinks
