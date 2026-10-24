@@ -24,6 +24,7 @@ import {
   fileAcceptAttribute,
   groupIssues,
   ISSUE_CODE_LABEL,
+  readAmountLabel,
   MAX_ISSUE_ROWS_PER_GROUP,
   preflightFile,
   sizeCapLabel,
@@ -55,6 +56,8 @@ function accepted(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAccepted
     periodValue: 'January',
     category: 'Electricity',
     activityType: null,
+    activityValue: 1200,
+    activityUnit: 'kWh',
     tCo2e: 1.5,
     anomalous: false,
     ...over,
@@ -648,6 +651,36 @@ describe('uploadErrorMessage — the remaining branch', () => {
 });
 
 
+describe('the import preview in the user\'s language (LP4-04)', () => {
+  it.each([['en', en], ['tr', tr]] as const)('%s labels every issue group from the catalogue, the new refusals included', (locale, messages) => {
+    const t = createTranslator({ locale, messages });
+    const groups = groupIssues(
+      [
+        { row: 2, column: 'activityValue', code: 'wrong_decimal_separator', message: 'm' },
+        { row: 3, column: 'activityValue', code: 'activity_value_too_large', message: 'm' },
+        { row: 4, column: 'activityValue', code: 'activity_value_too_large', message: 'm' },
+      ],
+      (code) => t(`bulkUploadIssues.${code}`),
+    );
+    expect(groups.map((g) => [g.code, g.label])).toEqual([
+      ['activity_value_too_large', messages.bulkUploadIssues.activity_value_too_large],
+      ['wrong_decimal_separator', messages.bulkUploadIssues.wrong_decimal_separator],
+    ]);
+  });
+
+  it('defaults to the English catalogue — the map the exhaustiveness tests pin', () => {
+    expect(ISSUE_CODE_LABEL).toEqual(en.bulkUploadIssues);
+  });
+
+  it('writes an amount with its unit symbol, by locale, from the number', () => {
+    expect(readAmountLabel(accepted({ activityValue: 1.234, activityUnit: 'kWh' }), 'tr')).toBe('1,234 kWh');
+    expect(readAmountLabel(accepted({ activityValue: 1.234, activityUnit: 'kWh' }), 'en')).toBe('1.234 kWh');
+    expect(readAmountLabel(accepted({ activityValue: 1200, activityUnit: 'litres' }), 'tr')).toBe('1.200 L');
+    // A unit this build does not know is still shown, as the server wrote it.
+    expect(readAmountLabel(accepted({ activityValue: 5, activityUnit: 'furlongs' }), 'en')).toBe('5 furlongs');
+  });
+});
+
 describe('translated import deadline accounting', () => {
   it.each([['en', en], ['tr', tr]] as const)('%s labels an unstarted row separately from a refused one', (locale, messages) => {
     const t = createTranslator({ locale, messages });
@@ -663,7 +696,7 @@ describe('translated import deadline accounting', () => {
       description: t('bulkDeadline.detail', { accepted: 1, refused: 1, unstarted: 1 }),
     });
     expect(summarise(applied, t).detail).toBe(t('bulkDeadline.detail', { accepted: 1, refused: 1, unstarted: 1 }));
-    expect(groupIssues(errors, t('bulkIssues.not_processed_deadline')).find((group) => group.code === 'not_processed_deadline')?.label).toBe(messages.bulkIssues.not_processed_deadline);
+    expect(groupIssues(errors, (code) => t(`bulkUploadIssues.${code}`)).find((group) => group.code === 'not_processed_deadline')?.label).toBe(messages.bulkUploadIssues.not_processed_deadline);
   });
 });
 

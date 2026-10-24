@@ -2,7 +2,10 @@ import { deadlineSummary, type DeadlineTranslator } from './bulk-submit-view';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
+  unitSymbol,
+  type Locale,
 } from '@/lib/types';
+import { formatReadAmount } from '@/lib/i18n/number';
 import type {
   BulkUploadAcceptedRow,
   BulkUploadColumn,
@@ -91,21 +94,7 @@ export function preflightFile(file: {
  * label in front of a user. The audit screen's action-colour map already works
  * this way for the same reason.
  */
-export const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = {
-  invalid: 'Invalid value',
-  duplicate_in_file: 'Duplicated in this file',
-  duplicate_existing: 'Already recorded',
-  not_found: 'Unknown reporting entity',
-  no_factor: 'No emission factor',
-  period_locked: 'Period closed',
-  unexpected: 'Could not be imported',
-  // Contract-only fallback; PR B must render this code through the locale
-  // catalogue before its API starts emitting deadline outcomes.
-  not_processed_deadline: enErrors.bulkIssues.not_processed_deadline,
-  formula_lead: 'Reads as a formula',
-  would_block_submit: 'Cannot be submitted yet',
-  evidence_required: 'Needs an evidence file',
-};
+export const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = enErrors.bulkUploadIssues;
 
 /** The column names as a person reads them. Exhaustive for the same reason. */
 export const COLUMN_LABEL: Record<BulkUploadColumn, string> = enEntry.bulkColumns;
@@ -120,6 +109,15 @@ export function bulkActivityLabel(activityType: string | null,
   return Object.hasOwn(ACTIVITY_TYPE_LABEL, activityType)
     ? translate(`activityTypes.${activityType as keyof typeof ACTIVITY_TYPE_LABEL}`)
     : activityType;
+}
+
+/**
+ * An accepted row's amount as the server read it, in the user's locale with
+ * its unit (`1,234 kWh` in Turkish for a file's `1.234`; D15). Formatted from
+ * the number, never the file's text, so a language change cannot change it.
+ */
+export function readAmountLabel(row: Pick<BulkUploadAcceptedRow, 'activityValue' | 'activityUnit'>, locale: Locale): string {
+  return `${formatReadAmount(row.activityValue, locale)} ${unitSymbol(row.activityUnit)}`;
 }
 
 export interface IssueGroup {
@@ -137,7 +135,11 @@ export interface IssueGroup {
  * period that is closed" is a decision; seventeen separate lines scattered
  * through a thousand are a search.
  */
-export function groupIssues(issues: BulkUploadRowIssue[], deadlineLabel = enErrors.bulkIssues.not_processed_deadline): IssueGroup[] {
+export function groupIssues(
+  issues: BulkUploadRowIssue[],
+  // The screen passes the catalogue's (`errors.bulkUploadIssues.<code>`, LP4-04).
+  labelOf: (code: BulkUploadIssueCode) => string = (code) => ISSUE_CODE_LABEL[code],
+): IssueGroup[] {
   const byCode = new Map<BulkUploadIssueCode, BulkUploadRowIssue[]>();
   for (const issue of issues) {
     const list = byCode.get(issue.code) ?? [];
@@ -147,7 +149,7 @@ export function groupIssues(issues: BulkUploadRowIssue[], deadlineLabel = enErro
   return [...byCode.entries()]
     .map(([code, rows]) => ({
       code,
-      label: code === 'not_processed_deadline' ? deadlineLabel : ISSUE_CODE_LABEL[code],
+      label: labelOf(code),
       count: rows.length,
       rows: [...rows].sort((a, b) => a.row - b.row),
     }))

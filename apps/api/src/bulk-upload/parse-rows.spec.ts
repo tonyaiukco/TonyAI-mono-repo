@@ -12,7 +12,7 @@ import {
   xlsx,
 } from '../../test/xlsx';
 import { isUtf8 } from 'node:buffer';
-import { extensionOf, FILE_NOT_UTF8, parseRows, strictNumber } from './parse-rows';
+import { extensionOf, FILE_NOT_UTF8, isCommaFigure, parseRows, strictNumber } from './parse-rows';
 import { WORKBOOK_NOT_UTF8, XLSX_MAX_UNPACKED_BYTES } from './xlsx-reader';
 
 // A header from a template older than LP4-02: `activityType` is optional, so
@@ -41,6 +41,9 @@ describe('strictNumber', () => {
     ['  42  ', 42],
     ['-5', -5],
     ['0', 0],
+    // D15: dot-decimal in every language — a Turkish thousand written `1.234`
+    // reads as 1.234, which is why the dry run shows the number read.
+    ['1.234', 1.234],
   ])('reads %s', (raw, expected) => {
     expect(strictNumber(raw)).toBe(expected);
   });
@@ -51,6 +54,7 @@ describe('strictNumber', () => {
     ['   ', 'whitespace is the same missing figure'],
     ['1,200', 'ambiguous across locales — 1200 or 1.2? guessing misstates CO2e'],
     ['1.200,5', 'European decimal comma, same ambiguity'],
+    ['1,5', 'a Turkish decimal comma: 1.5 or 15?'],
     ['1e3', 'exponent notation is not what a meter reading looks like'],
     ['=SUM(A1)', 'a formula fails as a TYPE — the cheapest formula defence'],
     ['12kWh', 'a unit glued to the figure belongs in activityUnit'],
@@ -69,6 +73,16 @@ describe('strictNumber', () => {
       expect(Number(raw)).not.toBeNaN();
       expect(strictNumber(raw)).toBeNull();
     }
+  });
+});
+
+describe('isCommaFigure', () => {
+  it.each(['1,5', '1.234,5', '1,200', '-1,5', ' 1,5 ', '1,234,567.8'])('%s is a comma figure', (raw) => {
+    expect(isCommaFigure(raw)).toBe(true);
+  });
+
+  it.each(['1.5', '1200', '', ',', 'abc,d', '1,5 kWh', '=1,5', '+1,5', '1;5'])('%s is not', (raw) => {
+    expect(isCommaFigure(raw)).toBe(false);
   });
 });
 
@@ -121,6 +135,19 @@ describe('parseRows — XLSX cell values, as a real writer saves them', () => {
         .varianceReason,
     ).toBe('Meter replaced');
     expect((await cellsWith(8, true)).varianceReason).toBe('true');
+  });
+
+  it.each(['1.234', '1.234,5', '1,5'])(
+    'reads a text cell %s as its text, for the same rule a CSV cell meets (F09)',
+    async (raw) => {
+      expect((await cellsWith(6, raw)).activityValue).toBe(raw);
+    },
+  );
+
+  it('reads a numeric cell 1.234 as 1.234 — a number is taken as-is (D15)', async () => {
+    const cells = await cellsWith(6, 1.234);
+    expect(cells.activityValue).toBe('1.234');
+    expect(strictNumber(cells.activityValue)).toBe(1.234);
   });
 
   it('reads a date as a timestamp, which the numeric columns then refuse', async () => {

@@ -12,6 +12,21 @@
     "calculation_stale": "Hesap güncel değil",
     "unexpected": "İncelemeye gönderilemedi"
   },
+  "bulkUploadIssues": {
+    "invalid": "Geçersiz değer",
+    "wrong_decimal_separator": "Sayıda virgül var",
+    "activity_value_too_large": "Değer çok büyük",
+    "duplicate_in_file": "Bu dosyada yineleniyor",
+    "duplicate_existing": "Zaten kayıtlı",
+    "not_found": "Bilinmeyen raporlama birimi",
+    "no_factor": "Emisyon faktörü yok",
+    "period_locked": "Dönem kapalı",
+    "unexpected": "İçe aktarılamadı",
+    "not_processed_deadline": "Süre sınırı dolduğu için işlenmedi",
+    "formula_lead": "Formül olarak okunuyor",
+    "would_block_submit": "Henüz incelemeye gönderilemez",
+    "evidence_required": "Kanıt dosyası gerekiyor"
+  },
   "codes": {
     "query_too_broad": "Bu istek işleme sınırını aşıyor. Filtreleri daraltın veya daha küçük bir rapor isteyin.",
     "bad_request": "İstek işlenemedi.",
@@ -24,6 +39,7 @@
     "rate_limited": "Çok fazla istek gönderildi — bir dakika bekleyip yeniden deneyin.",
     "internal_error": "Bizim tarafımızda bir sorun oluştu. Yeniden deneyin; sürerse bildirin.",
     "invalid_id": "Bu bağlantı ya da kimlik geçerli değil.",
+    "activity_value_too_large": "Faaliyet değeri çok büyük: en fazla 1.000.000.000.000 girin.",
     "evidence_required": "{category} kategorisindeki bir kayıt gönderilmeden önce en az bir kanıt dosyası eklenmelidir.",
     "variance_reason_required": "Bu değer geçmiş ortalamadan belirgin biçimde sapıyor — göndermeden önce bir sapma açıklaması ekleyin.",
     "record_create_forbidden": "Rolünüz faaliyet kaydı oluşturamaz.",

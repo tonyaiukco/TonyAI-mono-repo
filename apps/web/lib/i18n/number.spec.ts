@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   alternativeReading,
+  checkActivityParse,
   checkActivityValue,
   checkDecimal,
+  formatReadAmount,
   parseYearInput,
   formatDecimalInput,
   formatNumber,
@@ -12,6 +14,7 @@ import {
   typedText,
   typedValue,
 } from "./number";
+import { ACTIVITY_VALUE_MAX } from "@/lib/types";
 
 /**
  * D15 / F09's acceptance cases: every one has an explicit, tested outcome in
@@ -157,6 +160,19 @@ describe("checkActivityValue — Data Entry's rule", () => {
     expect(checkActivityValue(input, "tr")).toEqual({ ok: false, reason: "not_positive" });
   });
 
+  it("refuses a value above ACTIVITY_VALUE_MAX as too_large, and takes the bound itself (LP4-04)", () => {
+    // The API's own bound: refused here, in the user's language, before the
+    // preview or the save would answer activity_value_too_large.
+    expect(checkActivityValue("1.000.000.000.000", "tr")).toEqual({ ok: true, value: ACTIVITY_VALUE_MAX, grouped: true });
+    expect(checkActivityValue("1.000.000.000.000,5", "tr")).toEqual({ ok: false, reason: "too_large", max: ACTIVITY_VALUE_MAX });
+    expect(checkActivityValue("1000000000001", "en")).toEqual({ ok: false, reason: "too_large", max: ACTIVITY_VALUE_MAX });
+    expect(checkActivityParse(parseLocaleDecimal("1000000000001", "en"))).toEqual({ ok: false, reason: "too_large", max: ACTIVITY_VALUE_MAX });
+  });
+
+  it("puts the range before the bound: a negative value is not_positive, never too_large", () => {
+    expect(checkActivityValue("-1000000000001", "en")).toEqual({ ok: false, reason: "not_positive" });
+  });
+
   it("passes the parser's reasons through", () => {
     expect(checkActivityValue("", "tr")).toEqual({ ok: false, reason: "empty" });
     expect(checkActivityValue("1234.5", "tr")).toEqual({ ok: false, reason: "wrong_decimal_separator" });
@@ -165,6 +181,12 @@ describe("checkActivityValue — Data Entry's rule", () => {
 });
 
 describe("checkDecimal — a field's range on top of the grammar (Targets, Intensity)", () => {
+  it("bounds only a field given a max — Targets and Intensity keep theirs open", () => {
+    expect(checkDecimal(parseLocaleDecimal("2000000000000", "en"), "non_negative")).toMatchObject({ ok: true });
+    expect(checkDecimal(parseLocaleDecimal("11", "en"), "non_negative", 10)).toEqual({ ok: false, reason: "too_large", max: 10 });
+    expect(checkDecimal(parseLocaleDecimal("10", "en"), "non_negative", 10)).toMatchObject({ ok: true, value: 10 });
+  });
+
   it("non_negative: zero passes, below zero does not", () => {
     expect(checkDecimal(parseLocaleDecimal("0", "tr"), "non_negative")).toEqual({ ok: true, value: 0, grouped: false });
     expect(checkDecimal(parseLocaleDecimal("1.600", "tr"), "non_negative")).toEqual({ ok: true, value: 1600, grouped: true });
@@ -294,5 +316,20 @@ describe("formatNumber — display", () => {
     expect(formatNumber(1234567.891, "en", { maximumFractionDigits: 3 })).toBe(
       new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 }).format(1234567.891),
     );
+  });
+});
+
+describe("formatReadAmount — a bulk preview's amount (D15)", () => {
+  it.each([
+    [1.234, "1,234", "1.234"],
+    [1234, "1.234", "1,234"],
+    [1234.5, "1.234,5", "1,234.5"],
+    [1.2345678, "1,2345678", "1.2345678"],
+    [0.1 + 0.2, "0,30000000000000004", "0.30000000000000004"],
+    [1e12, "1.000.000.000.000", "1,000,000,000,000"],
+    [1e-7, "0,0000001", "0.0000001"],
+  ])("%s reads as %s in Turkish and %s in English, every digit kept", (value, tr, en) => {
+    expect(formatReadAmount(value, "tr")).toBe(tr);
+    expect(formatReadAmount(value, "en")).toBe(en);
   });
 });

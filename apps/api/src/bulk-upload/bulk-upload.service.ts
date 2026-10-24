@@ -8,10 +8,11 @@ import {
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { plainToInstance } from 'class-transformer';
-import { validateSync } from 'class-validator';
+import { validateSync, type ValidationError } from 'class-validator';
 import { ActivityRecordStatus } from '@tonyai/db';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
+  BULK_UPLOAD_ERROR_CODES,
   BULK_UPLOAD_COLUMNS,
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
@@ -23,6 +24,7 @@ import {
   type ActivityCalculationSnapshot,
   type BulkImportAuditDiff,
   type BulkUploadAcceptedRow,
+  type BulkUploadErrorCode,
   type BulkUploadColumn,
   type Category,
   type ReportingPeriod,
@@ -44,6 +46,7 @@ import {
   SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
+import { storedUnit } from '../calculations/storable-unit';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -58,8 +61,10 @@ import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
 import { QueryTooBroadError } from '../common/api-error';
+import { failureCode } from '../common/coded-validation.pipe';
 import {
   extensionOf,
+  isCommaFigure,
   parseRows,
   strictNumber,
   type ParsedRow,
@@ -432,7 +437,7 @@ export class BulkUploadService {
       out.errors.push({
         row,
         column: this.asColumn(first.property),
-        code: 'invalid',
+        code: this.rowCodeOf(first),
         message:
           Object.values(first.constraints ?? {})[0] ??
           `${first.property} is not valid.`,
@@ -584,6 +589,18 @@ export class BulkUploadService {
       anomalous: created.anomalyFlag,
     });
     out.warnings.push(...rowWarnings);
+  }
+
+  /**
+   * A DTO failure's row code: the code its constraint declares
+   * (`codedConstraint`) when the bulk vocabulary has it — the record API's
+   * `activity_value_too_large` — and `invalid` otherwise.
+   */
+  private rowCodeOf(failure: ValidationError): BulkUploadErrorCode {
+    const code = failureCode(failure);
+    return code !== null && (BULK_UPLOAD_ERROR_CODES as readonly string[]).includes(code)
+      ? (code as BulkUploadErrorCode)
+      : 'invalid';
   }
 
   /**
@@ -1111,6 +1128,8 @@ export class BulkUploadService {
     periodValue: string;
     category: Category;
     activityType: string | null;
+    activityValue: number;
+    activityUnit: string;
   } {
     return {
       subsidiaryId: dto.subsidiaryId,
@@ -1120,6 +1139,11 @@ export class BulkUploadService {
       periodValue: canonicalPeriod,
       category: dto.category,
       activityType: dto.activityType ?? null,
+      // What the record stores, so the preview shows the number and unit
+      // that land (D15): a file's `1.234` reads as 1.234, and a Turkish user
+      // who meant a thousand sees it before applying.
+      activityValue: dto.activityValue,
+      activityUnit: storedUnit(dto.activityUnit),
     };
   }
 
@@ -1198,6 +1222,17 @@ export class BulkUploadService {
       };
     }
     const activityValue = strictNumber(cells.activityValue);
+    if (activityValue === null && isCommaFigure(cells.activityValue)) {
+      // Refused, never reinterpreted (D15): `1.234,5` and `1,200` are each a
+      // real figure in one locale and a different one in another.
+      return {
+        issue: {
+          column: 'activityValue',
+          code: 'wrong_decimal_separator',
+          message: `"${quoteCallerText(cells.activityValue)}" uses a comma. Write the figure with a point for decimals and no thousands separator, such as 1234.5.`,
+        },
+      };
+    }
     if (activityValue === null) {
       return {
         issue: {

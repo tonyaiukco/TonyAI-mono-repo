@@ -20,6 +20,7 @@ import type { Category, GeographyCode } from '@tonyai/shared-types';
 import { Transform } from 'class-transformer';
 import { IsActivityUnit } from '../is-activity-unit.decorator';
 import { storableUnit } from '../storable-unit';
+import { codedConstraint } from '../../common/coded-validation.pipe';
 import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../activity-type';
 
 /**
@@ -77,7 +78,7 @@ export class CalculationInputDto {
   // would refuse is a divergence.
   @IsNumber()
   @Min(0)
-  @Max(ACTIVITY_VALUE_MAX)
+  @Max(ACTIVITY_VALUE_MAX, codedConstraint('activity_value_too_large'))
   value!: number;
 
   // Bounded to match the write DTOs, because the vocabulary check bounds

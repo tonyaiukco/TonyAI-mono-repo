@@ -914,7 +914,6 @@ describe('BulkUploadService — warnings', () => {
 describe('BulkUploadService — row validation reaches the real DTO rules', () => {
   it.each([
     ['a negative consumption figure', { activityValue: '-5' }, 'activityValue'],
-    ['a consumption figure past ACTIVITY_VALUE_MAX (LP4-02 (33))', { activityValue: '1000000000001' }, 'activityValue'],
     ['a category that does not exist', { category: 'Vibes' }, 'category'],
     ['a unit the calc engine does not know', { activityUnit: 'furlongs' }, 'activityUnit'],
     ['a year outside the allowed range', { reportingYear: '1066' }, 'reportingYear'],
@@ -927,6 +926,42 @@ describe('BulkUploadService — row validation reaches the real DTO rules', () =
 
     expect(report.errors[0]).toMatchObject({ code: 'invalid', column });
     expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a figure past ACTIVITY_VALUE_MAX with its own code — the record API\'s (LP4-02 (33), LP4-04 (35))', async () => {
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ activityValue: '1000000000001' }), row({ periodValue: 'February', activityValue: '1000000000000' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column: 'activityValue',
+        code: 'activity_value_too_large',
+        message: 'activityValue must not be greater than 1000000000000',
+      },
+    ]);
+    // The bound itself is a figure, not a refusal.
+    expect(report.accepted.map((a) => [a.row, a.activityValue])).toEqual([[3, 1e12]]);
+    expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps invalid for a row whose first refusal is another field, even with an over-bound value', async () => {
+    // The row carries ONE error; it is the first failure's, and its code
+    // must not borrow the value's.
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ reportingYear: '1066', activityValue: '1000000000001' })]),
+      DRY,
+    );
+
+    expect(report.errors[0]).toMatchObject({ code: 'invalid', column: 'reportingYear' });
   });
 
   it('refuses a blank consumption cell rather than importing a zero', async () => {
@@ -1015,6 +1050,9 @@ describe('BulkUploadService — the figures that reach the write', () => {
       category: 'Electricity',
       // Part of the row's identity since K1; an untyped category names none.
       activityType: null,
+      // What the server read and will store (D15) — the number, not the text.
+      activityValue: 1200,
+      activityUnit: 'kWh',
       tCo2e: 0.528,
       anomalous: false,
     });
@@ -2940,4 +2978,105 @@ it('closes the import through the final audit transaction client, never the root
   await service.import(dataEntry(), csvFile([row()]), { dryRun: false });
   expect(tx.importBatch.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed', acceptedCount: 1, rejectedCount: 0 }) }));
   expect(prisma.importBatch.update).not.toHaveBeenCalled();
+});
+
+describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09)', () => {
+  // A file's numbers are dot-decimal in every language. The preview shows the
+  // number read, so a Turkish `1.234` (meant as a thousand) is seen as 1.234
+  // before it is applied; a comma is refused, never guessed.
+  async function xlsxFile(activityValue: ExcelJS.CellValue, activityUnit = 'kWh'): Promise<Express.Multer.File> {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Data');
+    sheet.addRow(HEADER.split(','));
+    sheet.addRow([SUB_1, '', 2024, 'monthly', 'January', 'Electricity', '', activityValue, activityUnit, '']);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    return {
+      originalname: 'data.xlsx',
+      mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: buffer.length,
+      buffer,
+    } as Express.Multer.File;
+  }
+
+  const csvWith = (activityValue: string, activityUnit = 'kWh') =>
+    // Quoted, as a spreadsheet writes a cell holding a comma.
+    csvFile([row({ activityValue: `"${activityValue}"`, activityUnit })]);
+
+  it('reads a CSV 1.234 as 1.234 and says so in the dry run, with the unit as stored', async () => {
+    const { records, service } = build();
+
+    const report = await service.import(dataEntry(), csvWith('1.234', 'KWH'), DRY);
+
+    expect(report.errors).toEqual([]);
+    expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
+    // The preview priced the same number the row reports.
+    expect(records.previewCreate.mock.calls[0][1]).toMatchObject({ activityValue: 1.234 });
+  });
+
+  it('reads an XLSX text cell 1.234 as 1.234 — the same rule as a CSV cell', async () => {
+    const { service } = build();
+
+    const report = await service.import(dataEntry(), await xlsxFile('1.234'), DRY);
+
+    expect(report.errors).toEqual([]);
+    expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
+  });
+
+  it('takes a numeric XLSX cell as the number it holds', async () => {
+    const { service } = build();
+
+    const report = await service.import(dataEntry(), await xlsxFile(1234.5), DRY);
+
+    expect(report.accepted[0]).toMatchObject({ activityValue: 1234.5 });
+  });
+
+  it('reports the same figure on an apply as on the dry run', async () => {
+    const { service } = build();
+
+    const report = await service.import(dataEntry(), csvWith('1.234'), NOTHING);
+
+    expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
+  });
+
+  it.each([
+    ['CSV', '1.234,5'],
+    ['CSV', '1,5'],
+    ['CSV', '1,200'],
+    ['CSV', '-1,5'],
+    ['XLSX', '1.234,5'],
+    ['XLSX', '1,5'],
+  ])('refuses a %s comma figure %s with wrong_decimal_separator, writing nothing', async (kind, raw) => {
+    const { records, service } = build();
+    const file = kind === 'CSV' ? csvWith(raw) : await xlsxFile(raw);
+
+    const report = await service.import(dataEntry(), file, NOTHING);
+
+    expect(report.accepted).toEqual([]);
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column: 'activityValue',
+        code: 'wrong_decimal_separator',
+        message: `"${raw}" uses a comma. Write the figure with a point for decimals and no thousands separator, such as 1234.5.`,
+      },
+    ]);
+    expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['1,5 kWh', 'abc,d', ',', '1e3'])('keeps invalid for %s — not a figure at all', async (raw) => {
+    const { service } = build();
+
+    const report = await service.import(dataEntry(), csvWith(raw), DRY);
+
+    expect(report.errors[0]).toMatchObject({ code: 'invalid', column: 'activityValue' });
+  });
+
+  it('refuses a numeric XLSX cell past what a plain figure can spell as not a number (pinned; filed)', async () => {
+    // exceljs hands 1e21 back as "1e+21", which strictNumber refuses as text.
+    const { service } = build();
+
+    const report = await service.import(dataEntry(), await xlsxFile(1e21), DRY);
+
+    expect(report.errors[0]).toMatchObject({ code: 'invalid', column: 'activityValue' });
+  });
 });
