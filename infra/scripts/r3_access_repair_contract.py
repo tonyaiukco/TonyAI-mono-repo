@@ -217,10 +217,20 @@ def approve(packet, approval_raw, approval_hash, fresh_raw, phase):
     require(encoded(fresh['target']) == encoded(plan['target']) and fresh['target']['imds'] == proposal['target_imds'], 'FRESH_TARGET')
     require(fresh['exclusive_operator_window'] is True, 'CONCURRENT_OPERATOR')
     require(plan['client'] is not None and fresh['client'] == plan['client'], 'CLIENT_BINDING')
-    target_custody(plan, proposal)
+    if 'amendment' in plan:
+        from r3_access_repair_amendment import legacy_view
+        require(phase in ('repair', 'export'), 'AMENDMENT_PHASE')
+        target_custody(*legacy_view(plan, proposal))
+    else:
+        target_custody(plan, proposal)
     require(isinstance(fresh['vm_etag'], str) and re.fullmatch(r'[\x20-\x7e]{1,256}', fresh['vm_etag']), 'ETAG')
     require(isinstance(fresh['vm_model_sha256'], str) and re.fullmatch('[a-f0-9]{64}', fresh['vm_model_sha256']), 'VM_MODEL_HASH')
-    if phase == 'diagnose':
+    if 'amendment' in plan:
+        from r3_access_repair_amendment import check_fresh
+        check_fresh(plan, proposal, fresh, phase)
+        if phase == 'export':
+            require(stat.S_ISSOCK(os.stat(os.environ.get('SSH_AUTH_SOCK', '')).st_mode), 'SSH_AGENT_SOCKET')
+    elif phase == 'diagnose':
         validate_prior_command(plan['prior_command'], proposal)
         require(fresh['allow_extension_operations'] is True and
                 isinstance(fresh['extensions'], list) and len(fresh['extensions']) <= 4 and

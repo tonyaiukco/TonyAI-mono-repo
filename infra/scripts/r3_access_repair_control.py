@@ -123,14 +123,19 @@ def perform(packet, plan, proposal, fresh, phase, approval_hash, adapter, sleep=
         vm = request('GET', req['vm'])
         require(vm['status'] == 200 and sha256(encoded(vm['body'])) == fresh['vm_model_sha256'] and
                 (vm['etag'] or vm['body'].get('etag')) == fresh['vm_etag'], 'VM_CHANGED')
-        vm_target(vm['body'], plan['target'])
+        if 'amendment' in plan:
+            from r3_access_repair_amendment import legacy_view
+            require(phase == 'repair', 'AMENDMENT_PHASE')
+            vm_target(vm['body'], legacy_view(plan, proposal)[0]['target'])
+        else:
+            vm_target(vm['body'], plan['target'])
         props = vm['body']['properties']
         require(vm['body']['id'].lower() == proposal['target_imds']['resourceId'].lower() and
                 props['vmId'] == proposal['target_imds']['vmId'] and
                 props['osProfile']['allowExtensionOperations'] is (phase != 'enable'), 'VM_IDENTITY')
         for key in ('extensions', 'commands'):
             response = request('GET', req[key])
-            if phase == 'diagnose':
+            if phase == 'diagnose' or 'amendment' in plan:
                 require(response['status'] == 200 and sha256(encoded(response['body'])) ==
                         fresh[key + '_model_sha256'] and set(response['body']) == {'value'}, 'DELIVERY_CHANGED')
                 ids = [item['id'] for item in response['body']['value']]
@@ -142,6 +147,12 @@ def perform(packet, plan, proposal, fresh, phase, approval_hash, adapter, sleep=
             prior = plan['prior_command']['id']
             prior_url = endpoint(proposal['target_imds']['resourceId'], '/runCommands/' + prior.rsplit('/', 1)[1], True)
             check_prior_command(request('GET', prior_url), plan, fresh)
+        if 'amendment' in plan:
+            from r3_access_repair_amendment import predecessors, check_response
+            from r3_access_repair_contract import endpoint
+            for index, (command_id, _body) in enumerate(predecessors(plan, proposal)):
+                url = endpoint(proposal['target_imds']['resourceId'], '/runCommands/' + command_id.rsplit('/', 1)[1], True)
+                check_response(request('GET', url), plan, proposal, fresh, index)
         if phase == 'enable':
             response = request('PATCH', req['vm'], req['enable_body'], {'If-Match': fresh['vm_etag']})
             require(response['status'] == 200, 'ENABLE_RESPONSE')
@@ -152,7 +163,7 @@ def perform(packet, plan, proposal, fresh, phase, approval_hash, adapter, sleep=
             require(response['status'] == 404, 'COMMAND_EXISTS')
             response = request('PUT', req['command'], req['repair_body'])
             require(response['status'] in (200, 201), 'DELIVERY_RESPONSE')
-        for _ in range(6):
+        for _ in range(5 if 'amendment' in plan else 6):
             require(not interrupted, 'INTERRUPTED')
             sleep(5)
             response = request('GET', req['vm'] if phase == 'enable' else req['status'])

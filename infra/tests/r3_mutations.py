@@ -372,10 +372,32 @@ add('infra/scripts/r3_noble_fixture.py', 'snap-frame-readback', "result['checks'
 add('infra/scripts/r3_noble_inputs.py', 'snap-input-policy', 'if snap_leaf and (collection_only or policy_bytes is not None):', 'if False:')
 
 
+add('infra/scripts/r3_access_repair_history.py', 'recovery-history-published-anchor', "(source['published_sha'], sha256(encoded(source['files']))) == PUBLISHED_CLOSURES[diagnostic]", 'True')
+add('infra/scripts/r3_access_repair_history.py', 'recovery-history-module-hash', "sha256(source) == proposal['source']['files'].get('infra/scripts/' + name + '.py')", 'True')
+add('infra/scripts/r3_access_repair_history.py', 'recovery-history-embedded-proposal', 'embedded == proposal', 'True')
+add('infra/scripts/r3_access_repair_history.py', 'recovery-history-wrapper', 'factory(proposal, modules=modules) == guest', 'True')
+add('infra/scripts/r3_access_repair_history.py', 'recovery-history-export', "sha256(export) == delivery['export_sha256']", 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-other-identities', "all(item['exact_match'] is True for key, item in fields.items() if key != 'location')", 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-early-refusal', "failed['phase'] == 'identity-before'", 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-new-attempt', "proposal['packet_id'] not in (diagnostic['packet_id'], prior['proposal']['packet_id'])", 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-terminal-provider', "props.get('provisioningState') == state", 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-exact-output', "value == plan['amendment']['failed_summary' if index == 0 else 'diagnostic_report']", 'True')
+add('infra/scripts/r3_access_repair_control.py', 'recovery-amendment-prior-check', "check_response(request('GET', url), plan, proposal, fresh, index)", "request('GET', url)")
+add('infra/scripts/r3_access_repair_control.py', 'recovery-amendment-poll-bound', "range(5 if 'amendment' in plan else 6)", "range(4 if 'amendment' in plan else 6)")
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-prior-error', "view['exitCode'] == code and not view.get('error')", "view['exitCode'] == code")
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-no-extensions', "fresh['extensions'] == []", 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-failure-kind', "failed['failure'] == 'ValueError'", 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-prior-hash-keys', 'set(hashes) == set(ids[:2])', 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-command-set', 'set(observed) == set(ids)', 'True')
+add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-prior-exit-code', "prior['exit_code'] == 2", 'True')
+add('infra/scripts/r3_access_repair_contract.py', 'recovery-amendment-approval-phase', "require(phase in ('repair', 'export'), 'AMENDMENT_PHASE')", "require(True, 'AMENDMENT_PHASE')")
+add('infra/scripts/r3_access_repair_control.py', 'recovery-amendment-perform-phase', "require(phase == 'repair', 'AMENDMENT_PHASE')", "require(True, 'AMENDMENT_PHASE')")
+add('infra/scripts/r3_access_repair_control.py', 'recovery-amendment-live-identities', "ids == fresh['extensions' if key == 'extensions' else 'run_commands']", 'True')
+
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
     if file.startswith('infra/scripts/r3_access_'):
-        suites = ['test_r3_access_repair', 'test_r3_access_delivery', 'test_r3_access_custody', 'test_r3_access_identity_diagnostic']
+        suites = ['test_r3_access_repair', 'test_r3_access_delivery', 'test_r3_access_custody', 'test_r3_access_identity_diagnostic', 'test_r3_access_amendment']
     elif file.endswith('.mjs'):
         return node_command
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
