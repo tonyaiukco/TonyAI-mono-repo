@@ -1601,3 +1601,152 @@ workflow dispatch is authorized by development or publication of this code.
 R3 and CL-P2-3 remain OPEN; bootstrap remains
 `NOT_READY_FOR_BOOTSTRAP_APPROVAL`. Delivery order remains R3 → R4 → Sweden
 application foundation → API/web deployment → QA acceptance.
+
+### Narrow SSH access recovery draft (separate from collection)
+
+Loss of an authorized private key is not repaired by generating another key
+locally. Its public counterpart would still need explicit guest authorization.
+Do not replay a consumed B attempt, rebind its packet, use VMAccess implicitly,
+or treat a Portal agent status as proof that a recovery delivery channel works.
+
+`r3_access_repair_packet.py` prepares a new offline draft from retained expected
+IMDS fields and an exact public-key byte hash. It never generates or reads private
+keys, contacts Azure, installs a handler, or invokes either collection entry point.
+The source map includes the new recovery modules and the existing identity helper
+dependencies. An unpublished/dirty candidate remains unbound to a published SHA.
+Draft publication, authenticated client, fresh observations, exact approvals,
+actual encrypted export and post-recovery readback stay null until supplied or
+observed. Implemented controllers do not make such a draft execution-ready.
+
+The distinct guest payload is designed to refuse before writing when the target
+IMDS identity differs, the existing local `tonyaiops` account/home is unexpected,
+or a path is missing, linked, incorrectly owned or writable by other users. It
+does not create an account or `.ssh` directory. An existing regular single-link
+`authorized_keys` must have the account's owner/group and mode 0600 or 0644. A
+bounded local passwd read avoids NSS lookups. No password, sudo, SSH configuration,
+service, package, disk or network change is part of the payload.
+
+The intended mutation is one append syscall, at most 4 KiB, preserving the prior
+file bytes as an exact prefix and retaining its inode, owner and mode. A missing
+final newline is separated before the new key. The selected key is refused if its
+semantic identity already appears, including restricted entries, alternative
+base64 padding or equivalent RSA mpints; no unrestricted duplicate is added.
+Advisory locking and descriptor-chain verification detect some concurrent changes
+but cannot exclude a hostile/uncooperative owner or prevent parent renames. The
+approved effect must refer to the verified open inode as well as its path; a race
+or uncertain readback is partial, not evidence of isolated execution.
+
+The guest would retain an exclusive root-only attempt directory at
+`/var/lib/tonyai-r3-access-recovery-<packet_id>`, with a private before-image,
+prepared append hashes/metadata, invocation binding and pre-close result. Existing
+attempt directories or evidence files are never overwritten. A short append,
+deadline, changed target, failed fsync/close or uncertain path preserves partial
+evidence and has no automatic retry, truncate, rollback or cleanup deletion. The
+pre-close result is historical: the returned summary can still downgrade it after
+cleanup. Even `KEY_APPENDED_REVIEW_REQUIRED` is not authenticated access,
+collection completion, installation qualification or bootstrap approval.
+
+Payload budgets: existing key file/local passwd at most 256 KiB each, selected
+public bytes less than 4 KiB, IMDS at most 32 KiB per observation via the existing
+helper, cooperative 30-second payload alarm plus 5-second finalization grace,
+and at most 4 KiB summary. These are not cancellation guarantees for an Azure
+handler or an uninterruptible syscall. The controller limits below do not prove remote outcome or cancellation. The private
+before-image remains on the guest until a separately reviewed encrypted custody
+export succeeds; a summary hash alone does not close custody.
+
+Any Azure extension enablement, delivery installation/state/log/cache effects,
+one-time approval consumption, actual guest execution, status polling, evidence
+retrieval and access verification require a concrete separately reviewed packet
+and owner approval. Source publication alone supplies none of this authority.
+Keep the old access and collection evidence immutable and requalify changed guest
+access state before considering another B collection. All R3/CL-P2-3 and
+pre-bootstrap gates above remain open.
+
+#### Managed delivery and separate approval contracts
+
+The offline `delivery.json` binds the canonical packet directory, proposal,
+repair/export payload hashes, retained target, custody, exact ARM request bodies,
+client identity, and the owner's explicit Microsoft-managed-handler design choice.
+The renderer never invents owner authority, fresh observations or publication.
+`proposal.json` retains `execution_authorized: false`: execution authority is a
+separate exact phase document, not a claim the guest can mint.
+
+Each approval has exactly `action`, `packet_path`, `delivery_sha256`,
+`fresh_sha256`, `attempts: 1`, and the actual `owner_authorization_reference`.
+Actions are `ONE_EXTENSION_ENABLE`, `ONE_MANAGED_KEY_APPEND`, and
+`ONE_REPAIR_EVIDENCE_FETCH`. An approval binds one canonical packet and one fresh
+record, not all three phases. Each phase writes its exclusive consumed marker
+before dispatch; refusal, ambiguity, interruption or partial capture consumes it.
+No marker deletion, resend, rerun, automatic rollback, extension disable or
+Run Command deletion is implemented.
+
+Fresh records bind `observed_at` (timezone-aware, no future time, at most 900
+seconds old), exact `target` and `client`, an owner-coordinated
+`exclusive_operator_window`, `vm_etag`, canonical JSON `vm_model_sha256`, extension
+and Run Command lists, and `allow_extension_operations`. Export additionally
+binds the exact repair-summary hash and host-key fingerprint. Retained Portal
+observations are historical expected identity, never fresh execution evidence.
+Fresh observations and credentials require their own authorized acquisition;
+rendering neither contacts Azure nor reads an authentication token.
+
+1. **Enable:** `r3_access_repair_control.py --phase enable --execute` verifies the
+   live VM model/etag and empty delivery lists, then sends one minimal VM PATCH
+   with `If-Match`, setting only `osProfile.allowExtensionOperations=true`.
+   Its readback refuses unrelated model changes. Enabling extension operations
+   has a wider capability effect than the key append and needs separate approval.
+2. **Repair:** the same controller with `--phase repair --execute` requires fresh
+   enablement and empty extension/command lists, verifies absence of its unique
+   command name, and sends one Managed Run Command PUT with the exact inline
+   Python payload. No credentials, output blob or run-as override is in that
+   body. The documented create-or-update PUT has no atomic absence guard: the
+   exclusive operator window is an explicit residual concurrency assumption.
+   A lost response is partial and must never cause another PUT.
+3. **Evidence fetch:** `r3_access_repair_receive.py --execute` uses the retained
+   exact host pin and public SSH identity via the owner's existing agent. It
+   runs only the separate read-only export payload through noninteractive sudo,
+   retrieving four fixed root-private evidence files. The append receipt binds
+   the exact pre-close file hash and finalization overlay. A partial ARM result
+   can be preserved by separately approved fetch, but cannot become complete
+   repair evidence. No collection or installation entry point is invoked.
+
+Both entry points require `--packet`, `--approval`, `--approval-sha256` and
+`--fresh`; the fetch also requires `--repair-summary`. The concrete private
+packet supplies absolute paths and exact arguments; these descriptions are not
+execution commands or approval. The controllers verify current source-map and
+published HEAD correspondence before I/O. A different candidate needs new source
+binding and review; a consumed packet cannot be rebound.
+
+The ARM transport accepts only an explicitly bound `OWNER_ARM_BEARER_FILE` client
+(`tenant`, `principal`, canonical private `credential_path`). The owner must
+provision a short-lived ARM token privately through a separately authorized
+route. No login, credential discovery, token printing, package installation or
+use of a browser's cached credentials is implemented. JWT claims select the
+expected tenant/principal/audience/expiry; ARM verifies authentication. TLS uses
+system trust, no proxies, no redirects and no request retries. Never put the
+bearer file in evidence archives or share its contents in chat.
+
+The Microsoft-managed handler can install/update binaries, state, caches and
+logs. Its exact binary hash is not guaranteed by the reviewed Python hash.
+Accepting this trust boundary does not prove the live handler version, its
+behavior or cleanup. Existing agent panels and outbound NSG rules are not channel
+proof. Retain actual delivery observations for separate review. No VMAccess,
+account/sudo reset, network exception or automatic handler removal is included.
+
+| Boundary | Limit and meaning |
+| --- | --- |
+| ARM phase | 180-second cooperative request-start window; at most 12 requests, including at most six status polls separated by 5 seconds. A final request can overrun the window by up to its 15-second cooperative alarm; finalization/encryption is additional. No remote cancellation guarantee. |
+| ARM request | 256 KiB request body, 1 MiB response, 5-second socket timeout and 15-second cooperative total alarm; HTTP errors retain status only. No retry or redirect. |
+| Managed command | `timeoutInSeconds=60`, synchronous configuration, failure treated as deployment failure; provisioning success alone is insufficient. |
+| Private fetch | 30-second cooperative guest export alarm; 512 KiB semantic envelope. Existing receiver hard capture caps are 24 MiB stdout, 64 KiB stderr, 360 seconds plus 5 seconds process cleanup. Remote exit is not proven by killing local SSH. |
+| Local custody | Public-recipient probe 10 seconds; age sealing 60 seconds. At most 48 capture files, 24 MiB/file and 32 MiB aggregate before tar. Private root 0700/files 0600. Failed sealing retains plaintext and partial ciphertext for review. |
+
+SIGINT/SIGTERM defer to bounded capture/finalization, never resume dispatch.
+SIGKILL, process crashes and uninterruptible syscalls cannot guarantee completed
+local sealing or remote cancellation. Durable attempt markers and retained
+partial files must survive for review; uncertainty never permits an automatic
+retry. The before-image and invocation records stay private; public output is
+limited to disposition/hash metadata. `REPAIR_EVIDENCE_VERIFIED_REVIEW_REQUIRED`
+means a source-bound evidence chain was validated and sealed, not installation,
+policy acceptance, bootstrap eligibility or comprehensive SSH/sudo preservation
+proof. A new post-repair identity/access/configuration qualification and a new
+exact B collection approval remain necessary.
