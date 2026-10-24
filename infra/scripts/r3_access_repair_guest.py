@@ -30,11 +30,15 @@ def expired(_signum, _frame):
 
 
 def validate(proposal):
+    return validate_envelope(proposal, 'R3_SSH_KEY_APPEND_ONLY')
+
+
+def validate_envelope(proposal, purpose):
     require(isinstance(proposal, dict) and set(proposal) == {
         'format', 'purpose', 'packet_id', 'source', 'target_imds', 'public_key',
         'public_key_sha256', 'execution_authorized'}, 'PROPOSAL')
     require(type(proposal['format']) is int and proposal['format'] == 1 and
-            proposal['purpose'] == 'R3_SSH_KEY_APPEND_ONLY', 'PURPOSE')
+            proposal['purpose'] == purpose, 'PURPOSE')
     require(isinstance(proposal['packet_id'], str) and
             re.fullmatch('[a-f0-9]{32}', proposal['packet_id']), 'PACKET_ID')
     # Proposal metadata is never owner authority. The external executor must

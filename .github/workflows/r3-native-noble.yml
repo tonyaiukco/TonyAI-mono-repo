@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       purpose:
-        description: Collection reads policy inputs only; diagnostic retains the existing installation path
+        description: Select policy collection, fixed snap leaf observation, or the existing installation diagnostic
         required: true
         type: choice
         default: diagnostic
         options:
           - diagnostic
           - policy-collection
+          - snap-leaf-diagnostic
       source_sha:
         description: Exact owner-approved published commit (must equal the selected ref and workflow SHA)
         required: true

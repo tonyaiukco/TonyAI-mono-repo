@@ -1515,6 +1515,43 @@ uses the collection validator and never treats this frame as an installation
 receipt. A process refusal is not needed to collect policy evidence. Incomplete
 transport stays a refusal/partial capture, never an automatic retry.
 
+### Fixed snap leaf diagnostic
+
+Select `purpose=snap-leaf-diagnostic` only under a new exact published-source,
+recipient and single-attempt dispatch approval. Both installation-policy inputs
+must be empty. The input manifest purpose is `FIXTURE_SNAP_LEAF_DIAGNOSTIC`.
+This route reuses signed image/input verification, the existing pinned runner
+package setup and public Docker artifact staging, isolated QEMU lifecycle and
+age custody. Those runner downloads/installations remain part of the separately
+reviewed dispatch scope. The guest never invokes collection, package simulation,
+installation, maintenance isolation, service changes or target repair.
+
+After bounded input verification (120 seconds), a separate ten-second cooperative
+observation budget covers a fixed descriptor-relative no-follow walk through
+`/`, `usr`, `bin`. The guest records leaf and parent metadata before/after and
+reopens the parent chain to compare the observed directory identity. Only a
+symlink permits `readlink`; at most4096 uninterpreted bytes are retained as
+Base64, length and hash. There is no target resolution, content open, recursive
+scan or arbitrary path parameter. A regular or absent leaf records metadata or
+explicit absence; unsupported types, drift, errors or cleanup failures remain
+partial. A sixty-second framing grace and the existing controller lifecycle
+bounds remain; these do not guarantee cancellation of uninterruptible I/O.
+
+The exact private frame is `manifest.json`, `snap-leaf.json`, `result.json`.
+The diagnostic report is capped16KiB and binds full source by canonical hash,
+published SHA, run/attempt, image hash and fixture UUID. The controller validates
+its schema, recomputes checks and forbids this frame in other purposes. Only a
+valid stable observation plus sealed custody permits the diagnostic exit0;
+all policy/installation/qualification flags stay false. Link bytes and metadata
+remain encrypted, not in public summaries.
+
+Matching before/after samples cannot exclude privileged swap-and-restore. A new
+observation cannot prove the historical A run's exact leaf state or retroactively
+change its ELOOP failure. The old collector's no-follow/content checks are
+unchanged. PackageKit eligibility, hook/effect closure, P3 and lifecycle/sampling/
+writer/content/detached-child questions remain open. Do not retry a consumed
+attempt or infer an accepted installation policy from this diagnostic.
+
 ### B: separate packet, receiver and validator
 
 Offline preparation (no guest or cloud access):
@@ -1750,3 +1787,62 @@ means a source-bound evidence chain was validated and sealed, not installation,
 policy acceptance, bootstrap eligibility or comprehensive SSH/sudo preservation
 proof. A new post-repair identity/access/configuration qualification and a new
 exact B collection approval remain necessary.
+
+
+#### Managed identity diagnostic after a failed repair
+
+An identity-before refusal may precede both append and evidence-directory
+creation. Preserve that consumed repair and its status evidence. Do not retry
+the append or fetch guest files that the payload never created.
+
+`r3_access_repair_packet.py --identity-diagnostic` prepares a new proposal with
+purpose `R3_ACCESS_IDENTITY_DIAGNOSTIC`, a new packet ID and an empty export
+payload. A separate `ONE_MANAGED_IDENTITY_DIAGNOSTIC` approval binds its exact
+delivery/fresh hashes and path. `r3_access_repair_control.py --phase diagnose
+--execute` uses the existing owner-held bearer client and custody machinery;
+preparation does not authorize execution or owner-only authentication.
+
+The bindings contain `prior_command`: its exact resource ID, source SHA,
+canonical delivery SHA256, request body, terminal execution state `Failed`,
+nonzero integer exit code, and retained `delivery` and `proposal` documents.
+The validator cross-checks those documents, their hashes, original append
+purpose, packet ID, target identity and script/options. These references are
+preserved historical provenance, never authority to execute the old payload.
+
+Fresh observations must include the exact extension and command list bodies'
+SHA256 values (`extensions_model_sha256`, `commands_model_sha256`) and the
+failed command's full instance-view body hash (`prior_command_model_sha256`).
+The sole allowed existing command is that reviewed terminal failed command;
+at most four explicitly observed extension IDs are allowed. The controller
+rechecks the full models, failed state, exact script/options, VM model/ETag,
+and identity before checking that the new `r3-identity-<packet_id>` name is
+absent. Unknown delivery resources, drift or an active old command refuse.
+The exclusive operator window remains necessary: Azure PUT is create-or-update,
+not an atomic conditional create. No old command is updated or removed.
+
+The bounded operation is one PUT plus at most eleven GETs, with existing
+900-second freshness, 180-second request-start window, request deadlines,
+durable consumption, interruption and private sealing controls. A refusal or
+partial result consumes the attempt; no automatic retry or rollback follows.
+Microsoft's privileged handler retains its previously disclosed installation,
+log, cache and state effects. RunCommand response locations accept only ASCII
+alphanumeric case variation of the expected Azure region. Guest IMDS equality
+and the VM target checks remain unchanged.
+
+The fixed Python entry point has a 30-second cooperative alarm and calls the
+existing identity helper once: one bounded 32769-byte IMDS read, at most 32768
+accepted bytes, and one no-follow `/proc/sys/kernel/random/boot_id` read.
+Internal checkpoints retain the failing stage; only the eight already selected
+IMDS identity fields and a valid boot UUID can enter the report. Each field is
+classified by type/length/hash/exact comparison; mismatch values share a 1024-byte
+canonical-JSON budget. No full IMDS response, exception message, account data,
+key append, subprocess or guest evidence-directory write is performed by this
+entry point. The overall report is bounded to 4096 bytes and stays private.
+
+`IDENTITY_DIAGNOSTIC_REVIEW_REQUIRED` means a validated diagnostic was returned,
+including a reported identity refusal. It never means SSH access was recovered:
+access, qualification and installation flags remain false. Error-free reports
+require all eight nonempty string fields, a valid boot ID and consistent exact
+comparison. Review the observation before proposing any repair correction,
+fresh collection or further execution. Historical partial records and all
+R3/CL-P2-3/bootstrap gates remain unchanged.

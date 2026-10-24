@@ -33,7 +33,8 @@ POLICY_FILES = {'installation-policy.json', 'policy-facts-before.json', 'policy-
                 'maintenance-final.json', 'maintenance-complete.json', 'maintenance-pre-stop.json'} | {
     name + suffix for name in POLICY_COMMANDS for suffix in ('.stdout', '.stderr', '.command.json', '.exit.json')}
 COLLECTION_FILES = {'manifest.json', 'result.json', 'policy-evidence.json'}
-GUEST_FILES = GUEST_REQUIRED_FILES | {SNAPSHOT} | POLICY_FILES | COLLECTION_FILES
+SNAP_FILES = {'manifest.json', 'result.json', 'snap-leaf.json'}
+GUEST_FILES = GUEST_REQUIRED_FILES | {SNAPSHOT} | POLICY_FILES | COLLECTION_FILES | SNAP_FILES
 
 
 def fixture_observation(value, baseline=None, child=None):
@@ -109,7 +110,7 @@ def archive(directory):
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode='w') as tar:
         for path in entries:
-            data = read(path, 24 * 1024 * 1024 if path.name == 'policy-evidence.json' else 8 * 1024 * 1024)
+            data = read(path, 16384 if path.name == 'snap-leaf.json' else 24 * 1024 * 1024 if path.name == 'policy-evidence.json' else 8 * 1024 * 1024)
             info = tarfile.TarInfo(path.name)
             info.size, info.mode = len(data), 0o600
             tar.addfile(info, io.BytesIO(data))
@@ -351,6 +352,50 @@ def collection_main():
     return 0 if result['status'] == 'COLLECTED_REVIEW_REQUIRED' else 1
 
 
+def snap_binding(manifest):
+    from r3_snap_leaf import PURPOSE
+    if (manifest.get('purpose') != PURPOSE or 'policy_sha256' in manifest
+            or 'installation-policy.json' in manifest['files']):
+        raise ValueError('Snap diagnostic cannot carry installation policy')
+    source = manifest['source']
+    return {'source_sha': source['sha'], 'source_sha256': digest(encoded(source)),
+            'run_id': source['run_id'], 'attempt': source['attempt'],
+            'image_sha256': manifest['image_sha256'], 'fixture_uuid': manifest['fixture_uuid']}
+
+
+def snap_main():
+    from r3_snap_leaf import PURPOSE, OBSERVED, observe, validate
+    os.umask(0o077)
+    OUTPUT.mkdir(mode=0o700)
+    result = {'format': 1, 'purpose': PURPOSE, 'qa_ready': False,
+              'target_qualified': False, 'install_attempted': False, 'status': 'REFUSED',
+              'phase': 'snap-leaf', 'source': None, 'checks': {}}
+    def alarm(_sig, _frame):
+        raise TimeoutError('Snap diagnostic deadline')
+    signal.signal(signal.SIGALRM, alarm)
+    signal.alarm(120)
+    try:
+        manifest = verify_input((PURPOSE,))
+        result['source'] = manifest['source']
+        binding = snap_binding(manifest)
+        signal.alarm(10)
+        value = observe(binding)
+        # Validation and private report write share the observation budget.
+        result['checks'] = validate(value, binding)
+        write(OUTPUT / 'snap-leaf.json', encoded(value))
+        result['status'] = result['checks']['status']
+    except BaseException:
+        result['status'] = 'REFUSED'
+    finally:
+        signal.alarm(60)
+        result['files'] = {p.name: file_hash(p) for p in OUTPUT.iterdir() if p.is_file()}
+        write(OUTPUT / 'result.json', encoded(result))
+        with open(PORT, 'wb', buffering=0) as port:
+            write_all(port, archive(OUTPUT))
+        signal.alarm(0)
+    return 0 if result['status'] == OBSERVED else 1
+
+
 def main():
     # Routing reads only the bounded input manifest. Each route verifies it again.
     # The collection call graph never enters installation_main, including cleanup.
@@ -358,6 +403,8 @@ def main():
         purpose = json.loads(read(INPUT / 'manifest.json')).get('purpose')
     except Exception:
         return 1
+    if purpose == 'FIXTURE_SNAP_LEAF_DIAGNOSTIC':
+        return snap_main()
     if purpose == 'FIXTURE_POLICY_COLLECTION_ONLY':
         return collection_main()
     if purpose in ('FIXTURE_DIAGNOSTIC_ONLY', 'FIXTURE_MAINTENANCE_ONLY'):

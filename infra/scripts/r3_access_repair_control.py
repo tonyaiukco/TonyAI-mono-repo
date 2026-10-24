@@ -2,6 +2,7 @@
 import argparse
 import copy
 import os
+import re
 from pathlib import Path
 import sys
 import time
@@ -29,15 +30,24 @@ def model_without_transition(model):
     return result
 
 
-def completed_command(body, plan, proposal):
-    expected = plan['requests']['repair_body']
-    vm = proposal['target_imds']['resourceId']
-    require(body['id'].lower() == (vm + '/runCommands/r3-key-' + proposal['packet_id']).lower(), 'COMMAND_ID')
+def same_arm_location(actual, expected):
+    return (isinstance(actual, str) and isinstance(expected, str) and
+            re.fullmatch('[A-Za-z0-9]{1,64}', actual) is not None and
+            re.fullmatch('[A-Za-z0-9]{1,64}', expected) is not None and
+            actual.lower() == expected.lower())
+
+
+def command_properties(body, expected, command_id):
+    require(body['id'].lower() == command_id.lower(), 'COMMAND_ID')
     props = body['properties']
-    require(body['location'] == expected['location'] and
+    require(same_arm_location(body['location'], expected['location']) and
             all(encoded(props.get(k)) == encoded(v) for k, v in expected['properties'].items()), 'COMMAND_SOURCE')
     allowed = set(expected['properties']) | {'provisioningState', 'instanceView'}
     require(all(v in (None, '', []) for k, v in props.items() if k not in allowed), 'UNEXPECTED_COMMAND_OPTIONS')
+    return props
+
+
+def command_output(props):
     view = props.get('instanceView', {})
     state = view.get('executionState')
     if state in ('Pending', 'Running', 'Unknown', None):
@@ -46,14 +56,41 @@ def completed_command(body, plan, proposal):
             not view.get('error'), 'COMMAND_FAILED')
     output = view.get('output', '').encode()
     require(0 < len(output) <= 4096, 'SUMMARY_SIZE')
-    summary = load(output)
-    validate_summary(summary, proposal)
+    return load(output)
+
+
+def completed_command(body, plan, proposal):
+    vm = proposal['target_imds']['resourceId']
+    props = command_properties(body, plan['requests']['repair_body'], vm + '/runCommands/r3-key-' + proposal['packet_id'])
+    summary = command_output(props)
+    if summary is not None:
+        validate_summary(summary, proposal)
     return summary
+
+
+def completed_diagnostic(body, plan, proposal):
+    from r3_access_identity_diagnostic import validate_report
+    vm = proposal['target_imds']['resourceId']
+    props = command_properties(body, plan['requests']['repair_body'], vm + '/runCommands/r3-identity-' + proposal['packet_id'])
+    report = command_output(props)
+    if report is not None:
+        validate_report(report, proposal)
+    return report
+
+
+def check_prior_command(response, plan, fresh):
+    prior = plan['prior_command']
+    require(response['status'] == 200 and sha256(encoded(response['body'])) ==
+            fresh['prior_command_model_sha256'], 'PRIOR_COMMAND_CHANGED')
+    props = command_properties(response['body'], prior['request_body'], prior['id'])
+    view = props.get('instanceView', {})
+    require(props.get('provisioningState') == 'Failed' and view.get('executionState') == prior['execution_state'] and
+            type(view.get('exitCode')) is int and view['exitCode'] == prior['exit_code'], 'PRIOR_COMMAND_NOT_TERMINAL')
 
 
 def perform(packet, plan, proposal, fresh, phase, approval_hash, adapter, sleep=time.sleep, interrupted=None):
     """Internal orchestration seam. Public entry validates actual source/approval first."""
-    require(phase in ('enable', 'repair') and adapter.identity == plan['client'], 'PHASE_CLIENT')
+    require(phase in ('enable', 'repair', 'diagnose') and adapter.identity == plan['client'], 'PHASE_CLIENT')
     packet = Path(packet)
     root_identity = private_path(packet, True)
     durable(packet / (phase + '-consumed.json'), {'approval_sha256': approval_hash,
@@ -90,10 +127,21 @@ def perform(packet, plan, proposal, fresh, phase, approval_hash, adapter, sleep=
         props = vm['body']['properties']
         require(vm['body']['id'].lower() == proposal['target_imds']['resourceId'].lower() and
                 props['vmId'] == proposal['target_imds']['vmId'] and
-                props['osProfile']['allowExtensionOperations'] is (phase == 'repair'), 'VM_IDENTITY')
+                props['osProfile']['allowExtensionOperations'] is (phase != 'enable'), 'VM_IDENTITY')
         for key in ('extensions', 'commands'):
             response = request('GET', req[key])
-            require(response['status'] == 200 and response['body'] == {'value': []}, 'OCCUPIED_DELIVERY')
+            if phase == 'diagnose':
+                require(response['status'] == 200 and sha256(encoded(response['body'])) ==
+                        fresh[key + '_model_sha256'] and set(response['body']) == {'value'}, 'DELIVERY_CHANGED')
+                ids = [item['id'] for item in response['body']['value']]
+                require(ids == fresh['extensions' if key == 'extensions' else 'run_commands'], 'DELIVERY_IDENTITIES')
+            else:
+                require(response['status'] == 200 and response['body'] == {'value': []}, 'OCCUPIED_DELIVERY')
+        if phase == 'diagnose':
+            from r3_access_repair_contract import endpoint
+            prior = plan['prior_command']['id']
+            prior_url = endpoint(proposal['target_imds']['resourceId'], '/runCommands/' + prior.rsplit('/', 1)[1], True)
+            check_prior_command(request('GET', prior_url), plan, fresh)
         if phase == 'enable':
             response = request('PATCH', req['vm'], req['enable_body'], {'If-Match': fresh['vm_etag']})
             require(response['status'] == 200, 'ENABLE_RESPONSE')
@@ -115,6 +163,11 @@ def perform(packet, plan, proposal, fresh, phase, approval_hash, adapter, sleep=
                 if (after['properties']['osProfile']['allowExtensionOperations'] is True and
                         after['properties'].get('provisioningState') == 'Succeeded'):
                     result['status'] = 'EXTENSIONS_ENABLED_REVIEW_REQUIRED'
+                    break
+            elif phase == 'diagnose':
+                report = completed_diagnostic(response['body'], plan, proposal)
+                if report is not None:
+                    result.update(status='IDENTITY_DIAGNOSTIC_REVIEW_REQUIRED', diagnostic_report=report, remote_exit_proven=True)
                     break
             else:
                 summary = completed_command(response['body'], plan, proposal)
@@ -140,7 +193,7 @@ def perform(packet, plan, proposal, fresh, phase, approval_hash, adapter, sleep=
 def execute(packet, approval_raw, approval_hash, fresh_raw, phase):
     os.umask(0o077)
     plan, proposal, fresh = approve(packet, approval_raw, approval_hash, fresh_raw, phase)
-    require(phase in ('enable', 'repair'), 'ARM_PHASE')
+    require(phase in ('enable', 'repair', 'diagnose'), 'ARM_PHASE')
     with capture_signals() as interrupted:
         return perform(packet, plan, proposal, fresh, phase, approval_hash, ArmBearerClient(plan['client']), interrupted=interrupted)
 
@@ -151,7 +204,7 @@ if __name__ == '__main__':
     parser.add_argument('--approval', type=Path, required=True)
     parser.add_argument('--approval-sha256', required=True)
     parser.add_argument('--fresh', type=Path, required=True)
-    parser.add_argument('--phase', choices=('enable', 'repair'), required=True)
+    parser.add_argument('--phase', choices=('enable', 'repair', 'diagnose'), required=True)
     parser.add_argument('--execute', action='store_true', required=True)
     args = parser.parse_args()
     value = execute(args.packet, read(args.approval), args.approval_sha256, read(args.fresh), args.phase)
