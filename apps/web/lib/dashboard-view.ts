@@ -15,6 +15,8 @@ import type {
   TrackingMatrixDTO,
   TrackingMatrixRow,
 } from "@/lib/types";
+import type { ViewCopy } from "@/lib/i18n/view-translator";
+import { formatNumber } from "@/lib/i18n/number";
 
 /**
  * A subsidiary's Scope 1 + 2 total, as the headline and every report count it
@@ -103,8 +105,34 @@ export function buildKpiData(
   };
 }
 
-/** Real action items: one warning per anomaly-flagged matrix cell. */
-export function matrixToAlerts(matrix: TrackingMatrixDTO): Alert[] {
+/** The dashboard keys a compact figure is worded with. */
+export type CompactKey = "compact.thousand" | "compact.million";
+
+const ONE_DECIMAL = { minimumFractionDigits: 1, maximumFractionDigits: 1 } as const;
+
+/**
+ * A tonnage on a card or a matrix cell: `818`, `12.3k`, `1.2M` — the suffix
+ * from the catalogue, the digits in the user's language. A figure under 1,000
+ * is a whole number, grouped like every other count.
+ */
+export function compactTonnes(value: number, { t, locale }: ViewCopy<CompactKey>): string {
+  if (value >= 1_000_000) return t("compact.million", { value: formatNumber(value / 1_000_000, locale, ONE_DECIMAL) });
+  if (value >= 1000) return t("compact.thousand", { value: formatNumber(value / 1000, locale, ONE_DECIMAL) });
+  // A value that rounds to zero prints 0, never Intl's "-0" (the old `toFixed`).
+  return formatNumber(Math.abs(value) < 0.5 ? 0 : value, locale, { maximumFractionDigits: 0 });
+}
+
+/** A chart axis tick in thousands, no decimals: `12k`. */
+export function axisThousands(value: number, { t, locale }: ViewCopy<CompactKey>): string {
+  return t("compact.thousand", { value: formatNumber(value / 1000, locale, { maximumFractionDigits: 0 }) });
+}
+
+/**
+ * Real action items: one warning per anomaly-flagged matrix cell. `message`
+ * words the item for a category (the dashboard's `alerts.anomaly`, the
+ * category in the user's language); the alert keeps the canonical category.
+ */
+export function matrixToAlerts(matrix: TrackingMatrixDTO, message: (category: string) => string): Alert[] {
   const alerts: Alert[] = [];
   for (const row of matrix.rows) {
     for (const cell of row.cells) {
@@ -112,7 +140,7 @@ export function matrixToAlerts(matrix: TrackingMatrixDTO): Alert[] {
       alerts.push({
         id: `${row.subsidiaryId}-${cell.category}`,
         type: "warning",
-        message: `Anomaly flag on ${cell.category} records — review the variance reason`,
+        message: message(cell.category),
         subsidiary: row.subsidiaryName,
         category: cell.category,
         timestamp: cell.lastUpdate ?? new Date().toISOString(),

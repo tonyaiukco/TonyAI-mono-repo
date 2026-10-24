@@ -64,7 +64,7 @@ describe('every sentence is Turkish', () => {
 
   it('a bulk verdict', () => {
     const report = { dryRun: true, accepted: [row(1)], errors: [], warnings: [], totalRows: 1, fileName: 'f.csv' } as unknown as BulkUploadReportDTO;
-    expect(summarise(report, undefined, up('tr')).headline).toBe('1 satır içe aktarılacak.');
+    expect(summarise(report, copyFor('errors', 'tr').t as never, up('tr')).headline).toBe('1 satır içe aktarılacak.');
   });
 
   it('an API refusal with a code is the Turkish catalogue’s, never the server’s English', () => {
@@ -83,8 +83,8 @@ describe('one and many are worded apart (each pair, both languages)', () => {
   });
   it('bulk submit', () => {
     const report = (moved: number) => ({ requested: moved, submitted: Array.from({ length: moved }, (_, i) => ({ recordId: String(i) })), failed: [] }) as never;
-    expect(summariseSubmit(report(1), undefined, sub('en')).headline).toBe('1 record is now in the review queue.');
-    expect(summariseSubmit(report(2), undefined, sub('en')).headline).toBe('2 records are now in the review queue.');
+    expect(summariseSubmit(report(1), copyFor('errors', 'en').t as never, sub('en')).headline).toBe('1 record is now in the review queue.');
+    expect(summariseSubmit(report(2), copyFor('errors', 'en').t as never, sub('en')).headline).toBe('2 records are now in the review queue.');
   });
   it('anomaly', () => {
     const { t } = copyFor('anomaly', 'en');
@@ -109,7 +109,7 @@ describe('Turkish-only paths (English reads the same either way, so these pin th
 
   it('a many-row verdict says "satır" once', () => {
     const report = { dryRun: true, accepted: [row(1), row(2)], errors: [], warnings: [], totalRows: 2, fileName: 'f.csv' } as unknown as BulkUploadReportDTO;
-    const headline = summarise(report, undefined, up('tr')).headline;
+    const headline = summarise(report, copyFor('errors', 'tr').t as never, up('tr')).headline;
     expect(headline).toBe('Satırların tümü (2 satır) içe aktarılacak.');
     expect(headline.match(/satır/gi)?.length).toBe(2);
     expect(tonnesLabel([row(1), row(null)], up('tr'))).toBe('1,000 tCO₂e; 2 satır içinden 1 satır için. 1 satırın hesaplanmış değeri yok');
@@ -122,7 +122,7 @@ describe('Turkish-only paths (English reads the same either way, so these pin th
   it('a batch submit failure groups its counts the Turkish way', () => {
     const failed = Array.from({ length: 1200 }, (_, i) => ({ recordId: String(i), code: 'evidence_required', message: 'x' }));
     const t = copyFor('errors', 'tr').t;
-    const detail = submitFailureDetail({ requested: 1200, submitted: [], failed } as never, 'x', t as never, t as never, 'tr');
+    const detail = submitFailureDetail({ requested: 1200, submitted: [], failed } as never, t as never, t as never, 'tr');
     expect(detail).toContain('1.200');
   });
 });

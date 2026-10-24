@@ -1,10 +1,13 @@
 'use client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert } from '@/lib/types';
+import type { Alert } from '@/lib/types';
+import { useRecordWords } from '@/lib/i18n/hooks';
 import { AlertTriangle, AlertCircle, Info, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
+import { useLocale, useTranslations } from 'use-intl';
+import { formatNumber } from '@/lib/i18n/number';
+import { formatTimeAgo } from '@/lib/i18n/relative-time';
 import { Button } from '@/components/ui/button';
 
 interface AlertsPanelProps {
@@ -44,6 +47,9 @@ const alertConfig = {
 };
 
 export function AlertsPanel({ alerts, reportingYear }: AlertsPanelProps) {
+  const t = useTranslations('dashboard');
+  const words = useRecordWords();
+  const locale = useLocale();
   const errorCount = alerts.filter(a => a.type === 'error').length;
   const warningCount = alerts.filter(a => a.type === 'warning').length;
 
@@ -52,7 +58,7 @@ export function AlertsPanel({ alerts, reportingYear }: AlertsPanelProps) {
       <CardHeader className="pb-3 px-5 pt-5">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base font-semibold text-foreground">
-            Action Items
+            {t('alerts.title')}
             {reportingYear ? (
               <span className="text-sm font-normal text-[#6E6E73]">
                 {reportingYear}
@@ -66,7 +72,7 @@ export function AlertsPanel({ alerts, reportingYear }: AlertsPanelProps) {
                     alertConfig.error.badgeBg,
                     alertConfig.error.badgeText
                   )}>
-                    {errorCount} critical
+                    {t('alerts.critical', { count: formatNumber(errorCount, locale) })}
                   </span>
                 )}
                 {warningCount > 0 && (
@@ -75,14 +81,14 @@ export function AlertsPanel({ alerts, reportingYear }: AlertsPanelProps) {
                     alertConfig.warning.badgeBg,
                     alertConfig.warning.badgeText
                   )}>
-                    {warningCount} warnings
+                    {t('alerts.warnings', { count: formatNumber(warningCount, locale) })}
                   </span>
                 )}
               </span>
             )}
           </CardTitle>
           <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground hover:bg-secondary h-7 px-2 rounded-lg">
-            View All
+            {t('alerts.viewAll')}
             <ArrowRight className="ml-1 h-3 w-3" />
           </Button>
         </div>
@@ -90,7 +96,7 @@ export function AlertsPanel({ alerts, reportingYear }: AlertsPanelProps) {
       <CardContent className="space-y-2 px-5 pb-5">
         {alerts.length === 0 && (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            No action items — all clear.
+            {t('alerts.empty')}
           </p>
         )}
         {alerts.slice(0, 5).map((alert) => {
@@ -116,13 +122,13 @@ export function AlertsPanel({ alerts, reportingYear }: AlertsPanelProps) {
                   {alert.category && (
                     <>
                       <span className="text-border">|</span>
-                      <span className="truncate">{alert.category}</span>
+                      <span className="truncate">{words.category(alert.category)}</span>
                     </>
                   )}
                 </div>
               </div>
               <span className="text-[10px] text-[#8A94A6] whitespace-nowrap">
-                {formatDistanceToNow(new Date(alert.timestamp), { addSuffix: false })}
+                {formatTimeAgo(alert.timestamp, locale, false)}
               </span>
             </div>
           );

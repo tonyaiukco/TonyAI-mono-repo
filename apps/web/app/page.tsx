@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useState, useMemo, useEffect, useRef } from 'react';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { SignOutButton } from '@/components/dashboard/sign-out-button';
@@ -32,11 +32,12 @@ import {
   Globe,
   Search,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
+import { useRecordWords, useStableErrorToast } from '@/lib/i18n/hooks';
+import { formatNumber } from '@/lib/i18n/number';
 import {
   buildKpiData,
   matrixToAlerts,
@@ -76,6 +77,11 @@ function CarbonDashboardInner() {
   const tContext = useTranslations('reportingContext');
   const tDashboard = useTranslations('dashboard');
   const tCategory = useTranslations('categories');
+  const tCommon = useTranslations('common');
+  const words = useRecordWords();
+  // Stable: `loadDashboard` is an effect's dependency, and a language switch
+  // must not reload the dashboard.
+  const showError = useStableErrorToast();
   const contextView = useReportingContext();
   const contextKey = contextView.status === 'ready' ? contextView.key : null;
   const context = useMemo(
@@ -181,7 +187,7 @@ function CarbonDashboardInner() {
         setSummary(null);
         setMatrix(null);
         setCoverage(null);
-        toast.error((e as Error).message);
+        showError(e);
       } else {
         // Swallowing one transient failure is right; swallowing them forever is
         // not. After a few, say the numbers are not live any more.
@@ -195,14 +201,14 @@ function CarbonDashboardInner() {
         if (!silent) setLoading(false);
       }
     }
-  }, [router, context]);
+  }, [router, context, showError]);
 
   useEffect(() => {
     api
       .me()
       .then(setUser)
-      .catch((e) => toast.error((e as Error).message));
-  }, [setUser]);
+      .catch(showError);
+  }, [setUser, showError]);
 
   // Again whenever the selection changes; the sequence token drops the older answer.
   useEffect(() => {
@@ -269,7 +275,15 @@ function CarbonDashboardInner() {
         .filter(Boolean)
         .join(' · ')
     : '';
-  const liveAlerts = useMemo(() => (matrix ? matrixToAlerts(matrix) : []), [matrix]);
+  const liveAlerts = useMemo(
+    () =>
+      matrix
+        ? matrixToAlerts(matrix, (category) =>
+            tDashboard('alerts.anomaly', { category: words.category(category) }),
+          )
+        : [],
+    [matrix, tDashboard, words],
+  );
 
   const selectedRow = selected
     ? (matrix?.rows.find((row) => row.subsidiaryId === selected.subsidiaryId) ?? null)
@@ -339,7 +353,7 @@ function CarbonDashboardInner() {
         <header className="sticky top-0 z-30 h-16 border-b border-[#D8D8DC] bg-[#EBEBF0]">
           <div className="flex h-16 items-center justify-between px-6">
             <div className="flex items-center gap-4">
-              <h1 className="text-xl font-bold text-[#1D1D1F]" data-testid="dashboard-title">Carbon Dashboard</h1>
+              <h1 className="text-xl font-bold text-[#1D1D1F]" data-testid="dashboard-title">{tDashboard('title')}</h1>
               {user && (
                 <span className="hidden text-sm font-medium text-[#6E6E73] md:inline">
                   {user.fullName} · {tRoles(`roles.${user.role}`)}
@@ -351,7 +365,7 @@ function CarbonDashboardInner() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6E6E73]" />
                 <Input
-                  placeholder="Search subsidiaries..."
+                  placeholder={tDashboard('searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="h-9 w-56 rounded-lg border-[#D8D8DC] bg-[#EBEBF0] pl-9 text-sm font-medium text-[#1D1D1F] placeholder:text-[#8E8E93] focus:ring-[#1B5E3B]/40"
@@ -370,7 +384,7 @@ function CarbonDashboardInner() {
           <Card className="rounded-[18px] border-border bg-white shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between px-6 pb-4 pt-5">
               <CardTitle className="text-lg font-semibold text-foreground">
-                Subsidiary Register
+                {tDashboard('register.title')}
               </CardTitle>
               {/* The badge is a claim. Once background refreshes keep failing
                   it stops being true, and a green "Live data" beside stale
@@ -381,7 +395,7 @@ function CarbonDashboardInner() {
                   className="gap-1.5 rounded-lg border-amber-500/30 bg-amber-500/10 text-amber-700"
                 >
                   <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  Not refreshing — reload to retry
+                  {tDashboard('stale')}
                 </Badge>
               ) : (
                 <Badge
@@ -389,31 +403,31 @@ function CarbonDashboardInner() {
                   className="gap-1.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
                 >
                   <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  Live data
+                  {tDashboard('live')}
                 </Badge>
               )}
             </CardHeader>
             <CardContent className="p-0">
               {loading ? (
-                <p className="py-12 text-center text-sm text-muted-foreground">Loading…</p>
+                <p className="py-12 text-center text-sm text-muted-foreground">{tCommon('loading')}</p>
               ) : subsidiaries.length === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
-                  No subsidiaries accessible to your account.
+                  {tDashboard('register.empty')}
                 </p>
               ) : filteredSubsidiaries.length === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
-                  No subsidiaries match “{searchQuery}”.
+                  {tDashboard('register.noMatch', { query: searchQuery })}
                 </p>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow className="border-border bg-secondary hover:bg-transparent">
-                      <TableHead className="pl-6">Legal name</TableHead>
-                      <TableHead>Trading name</TableHead>
-                      <TableHead>Location</TableHead>
-                      <TableHead>Geography</TableHead>
-                      <TableHead>Sector</TableHead>
-                      <TableHead className="pr-6 text-right">Status</TableHead>
+                      <TableHead className="pl-6">{tDashboard('register.columns.legalName')}</TableHead>
+                      <TableHead>{tDashboard('register.columns.tradingName')}</TableHead>
+                      <TableHead>{tDashboard('register.columns.location')}</TableHead>
+                      <TableHead>{tDashboard('register.columns.geography')}</TableHead>
+                      <TableHead>{tDashboard('register.columns.sector')}</TableHead>
+                      <TableHead className="pr-6 text-right">{tDashboard('register.columns.status')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -447,7 +461,7 @@ function CarbonDashboardInner() {
                             variant="outline"
                             className={statusClass[s.reportingStatus]}
                           >
-                            {s.reportingStatus}
+                            {tDashboard(`register.status.${s.reportingStatus}`)}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -461,7 +475,7 @@ function CarbonDashboardInner() {
           {/* LIVE: Emissions Overview from /emissions/summary + /emissions/tracking-matrix */}
           <section className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-[#1D1D1F]">Emissions Overview</h2>
+              <h2 className="text-lg font-bold text-[#1D1D1F]">{tDashboard('overview.title')}</h2>
               {/* The badge is a claim. Once background refreshes keep failing
                   it stops being true, and a green "Live data" beside stale
                   figures is worse than no badge at all. */}
@@ -471,7 +485,7 @@ function CarbonDashboardInner() {
                   className="gap-1.5 rounded-lg border-amber-500/30 bg-amber-500/10 text-amber-700"
                 >
                   <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  Not refreshing — reload to retry
+                  {tDashboard('stale')}
                 </Badge>
               ) : (
                 <Badge
@@ -479,7 +493,7 @@ function CarbonDashboardInner() {
                   className="gap-1.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
                 >
                   <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  Live data
+                  {tDashboard('live')}
                 </Badge>
               )}
             </div>
@@ -501,10 +515,10 @@ function CarbonDashboardInner() {
             {contextView.status === 'invalid' ? (
               <ReportingContextInvalid invalid={contextView.invalid} onReset={contextView.reset} />
             ) : loading ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">Loading…</p>
+              <p className="py-12 text-center text-sm text-muted-foreground">{tCommon('loading')}</p>
             ) : !emissionsKpiData || !matrix ? (
               <p className="py-12 text-center text-sm text-muted-foreground">
-                Emissions data could not be loaded.
+                {tDashboard('overview.loadFailed')}
               </p>
             ) : (
               <div className="space-y-6">
@@ -561,31 +575,36 @@ function CarbonDashboardInner() {
 }
 
 function LiveKpiStrip({ kpi, loading }: { kpi: DashboardKpi | null; loading: boolean }) {
+  const t = useTranslations('dashboard');
+  const locale = useLocale();
   const cards = [
     {
-      title: 'Total Subsidiaries',
+      key: 'total',
+      title: t('strip.totalSubsidiaries'),
       value: kpi?.totalSubsidiaries ?? 0,
       icon: <Building2 className="h-4 w-4 text-primary" />,
-      hint: 'Accessible to you',
+      hint: t('strip.accessible'),
     },
     {
-      title: 'Active',
+      key: 'active',
+      title: t('strip.active'),
       value: kpi?.activeSubsidiaries ?? 0,
       icon: <CheckCircle2 className="h-4 w-4 text-primary" />,
-      hint: 'Reporting active',
+      hint: t('strip.activeHint'),
     },
     {
-      title: 'Pending',
+      key: 'pending',
+      title: t('strip.pending'),
       value: kpi?.pendingSubsidiaries ?? 0,
       icon: <Clock className="h-4 w-4 text-primary" />,
-      hint: 'Awaiting onboarding',
+      hint: t('strip.pendingHint'),
     },
   ];
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
       {cards.map((c) => (
-        <Card key={c.title} className="rounded-[18px] border-border bg-white shadow-sm">
+        <Card key={c.key} className="rounded-[18px] border-border bg-white shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               {c.title}
@@ -594,7 +613,7 @@ function LiveKpiStrip({ kpi, loading }: { kpi: DashboardKpi | null; loading: boo
           </CardHeader>
           <CardContent>
             <div className="font-mono text-3xl font-bold tabular-nums text-foreground">
-              {loading ? '—' : c.value}
+              {loading ? '—' : formatNumber(c.value, locale)}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{c.hint}</p>
           </CardContent>
@@ -605,7 +624,7 @@ function LiveKpiStrip({ kpi, loading }: { kpi: DashboardKpi | null; loading: boo
       <Card className="rounded-[18px] border-border bg-white shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">
-            Geographies
+            {t('strip.geographies')}
           </CardTitle>
           <Globe className="h-4 w-4 text-primary" />
         </CardHeader>
@@ -621,14 +640,14 @@ function LiveKpiStrip({ kpi, loading }: { kpi: DashboardKpi | null; loading: boo
                   className="rounded-lg border-border bg-secondary/50 font-mono text-muted-foreground"
                 >
                   {g.geographyCode}
-                  <span className="ml-1 font-semibold text-foreground">{g.count}</span>
+                  <span className="ml-1 font-semibold text-foreground">{formatNumber(g.count, locale)}</span>
                 </Badge>
               ))}
             </div>
           ) : (
-            <div className="text-sm text-muted-foreground">No data</div>
+            <div className="text-sm text-muted-foreground">{t('strip.noData')}</div>
           )}
-          <p className="mt-2 text-xs text-muted-foreground">Subsidiaries by region</p>
+          <p className="mt-2 text-xs text-muted-foreground">{t('strip.byRegion')}</p>
         </CardContent>
       </Card>
     </div>

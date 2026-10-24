@@ -64,6 +64,7 @@ export function RecentImports({
 }) {
   const tErrors = useTranslations("errors");
   const t = useTranslations("imports");
+  const tCommon = useTranslations("common");
   const tSubmit = useTranslations("bulkSubmit");
   const locale = useLocale();
   const describe = useDescribeError();
@@ -109,7 +110,7 @@ export function RecentImports({
       const report = await api.submitImportBatch(batch.id);
       const summary = summariseSubmit(report, tErrors, submitCopy);
       // The panel's "see below" has no list below it here: say why instead.
-      const description = submitFailureDetail(report, tErrors("bulkIssues.not_processed_deadline"), tErrors, tErrors, locale) ?? undefined;
+      const description = submitFailureDetail(report, tErrors, tErrors, locale) ?? undefined;
       if (summary.tone === "clean") toast.success(summary.headline);
       else toast.warning(summary.headline, { description });
     } catch (e) {
@@ -169,7 +170,7 @@ export function RecentImports({
                   dateStyle: "medium",
                   timeStyle: "short",
                 })}
-                {batch.uploadedByName ? ` · ${batch.uploadedByName}` : ""} · {batchOutcome(batch, tErrors)}
+                {batch.uploadedByName ? ` · ${batch.uploadedByName}` : ""} · {batchOutcome(batch, tErrors, locale)}
               </p>
               {waiting && (
                 <p className="mt-1 text-xs text-status-incomplete-text">{waiting}</p>
@@ -217,7 +218,7 @@ export function RecentImports({
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setConfirming(null)}>
-                {t("cancel")}
+                {tCommon("cancel")}
               </Button>
               <Button onClick={() => void submit(confirming)}>{t("confirmSend")}</Button>
             </DialogFooter>

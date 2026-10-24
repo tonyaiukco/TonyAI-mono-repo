@@ -6,6 +6,9 @@ import { StatusCell } from './status-cell';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { ChevronRight } from 'lucide-react';
+import { useLocale, useTranslations } from 'use-intl';
+import { formatNumber } from '@/lib/i18n/number';
+import { useRecordWords } from '@/lib/i18n/hooks';
 
 interface TrackingMatrixProps {
   /**
@@ -27,20 +30,6 @@ interface TrackingMatrixProps {
   onCategoryClick: (row: TrackingMatrixRow, category: string) => void;
 }
 
-const categoryShortNames: Record<string, string> = {
-  'Electricity': 'Elec',
-  'Natural Gas': 'Gas',
-  'Fuel': 'Fuel',
-  'Mobile Combustion': 'Mobile',
-  'Refrigerants': 'Refrig',
-  'Purchased Goods': 'Goods',
-  'Waste': 'Waste',
-  'Water': 'Water',
-  'Business Travel': 'Travel',
-  'Commuting': 'Commute',
-  'Logistics': 'Logist',
-};
-
 function getCompletionColor(rate: number): string {
   if (rate >= 75) return 'text-[#1D7A5F]';
   if (rate >= 50) return 'text-[#92400E]';
@@ -48,13 +37,16 @@ function getCompletionColor(rate: number): string {
 }
 
 export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCategoryClick }: TrackingMatrixProps) {
+  const t = useTranslations('dashboard');
+  const locale = useLocale();
+  const words = useRecordWords();
   return (
     <Card className="border-[#D2D2D7] bg-white rounded-xl shadow-sm overflow-hidden">
       <CardHeader className="pb-0 pt-5 px-6">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-[#1D1D1F]">
-              Data Collection Status
+              {t('kpi.collection')}
               {reportingYear ? (
                 <span className="ml-2 text-base font-semibold text-[#6E6E73]">
                   {reportingYear}
@@ -62,23 +54,21 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
               ) : null}
             </h2>
             <p className="text-sm font-medium text-[#6E6E73] mt-1">
-              {reportingYear
-                ? 'Click a cell to enter or review that category. Values show calculated emissions in tCO₂e.'
-                : 'Showing every reporting year at once — a cell mixes years, so its status describes none of them.'}
+              {reportingYear ? t('matrix.hint') : t('matrix.allYears')}
             </p>
           </div>
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
               <div className="h-4 w-4 rounded-full bg-[#34C759]" />
-              <span className="text-sm font-semibold text-[#1D1D1F]">Complete</span>
+              <span className="text-sm font-semibold text-[#1D1D1F]">{t('status.complete')}</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="h-4 w-4 rounded-full bg-[#FF9500]" />
-              <span className="text-sm font-semibold text-[#1D1D1F]">Partial</span>
+              <span className="text-sm font-semibold text-[#1D1D1F]">{t('status.incomplete')}</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="h-4 w-4 rounded-full bg-[#FF3B30]" />
-              <span className="text-sm font-semibold text-[#1D1D1F]">Missing</span>
+              <span className="text-sm font-semibold text-[#1D1D1F]">{t('status.missing')}</span>
             </div>
           </div>
         </div>
@@ -89,15 +79,15 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
             {/* Header Row */}
             <div className="grid grid-cols-[200px_repeat(11,1fr)_40px] gap-2 px-6 py-3 bg-[#F5F5F7] border-y border-[#E5E5EA]">
               <div className="text-xs font-bold text-[#6E6E73] uppercase tracking-wider">
-                Subsidiary
+                {t('matrix.subsidiary')}
               </div>
               {CATEGORIES.map((cat) => (
                 <div 
                   key={cat} 
                   className="text-center text-xs font-bold text-[#6E6E73] uppercase tracking-wider"
-                  title={cat}
+                  title={words.category(cat)}
                 >
-                  {categoryShortNames[cat]}
+                  {t(`matrix.short.${cat}`)}
                 </div>
               ))}
               <div />
@@ -126,7 +116,7 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
                           'text-sm font-bold tabular-nums font-mono',
                           getCompletionColor((row.completeCount / row.categoryCount) * 100)
                         )}>
-                          {row.completeCount}/{row.categoryCount}
+                          {formatNumber(row.completeCount, locale)}/{formatNumber(row.categoryCount, locale)}
                         </span>
                         <span className="text-xs font-medium text-[#8E8E93]">
                           {row.sector ?? '—'}
@@ -137,8 +127,9 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
                           and without this the user has no way to tell. */}
                       {byLocation && (
                         <span className="mt-0.5 text-[10px] font-medium text-[#8E8E93]">
-                          per location · {row.locationCount}{' '}
-                          {row.locationCount === 1 ? 'site' : 'sites'}
+                          {row.locationCount === 1
+                            ? t('matrix.perLocationOne', { count: formatNumber(1, locale) })
+                            : t('matrix.perLocationMany', { count: formatNumber(row.locationCount, locale) })}
                         </span>
                       )}
                     </button>
@@ -150,7 +141,7 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
                         cell={cell}
                         responsible={row.designatedPerson ?? '—'}
                         reportingYear={reportingYear}
-                        label={`${row.subsidiaryName} ${cell.category}`}
+                        label={`${row.subsidiaryName} ${words.category(cell.category)}`}
                         onClick={() => onCategoryClick(row, cell.category)}
                         compact
                       />

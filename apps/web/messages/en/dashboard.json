@@ -7,5 +7,140 @@
   "overviewNote": "Committed activity records. The total is Scope 1 + 2; Scope 3 is recorded but not covered by the inventory. Year-over-year trends arrive once prior-year data exists.",
   "notCovered": "Not covered",
   "outsideSelection": "Outside this Scope 3 selection",
-  "totalScope3Only": "Scope 3 is not covered, so this selection has no inventory total"
+  "totalScope3Only": "Scope 3 is not covered, so this selection has no inventory total",
+  "title": "Carbon Dashboard",
+  "searchPlaceholder": "Search subsidiaries...",
+  "live": "Live data",
+  "stale": "Not refreshing — reload to retry",
+  "percent": "{value}%",
+  "tonnes": "{value} tCO₂e",
+  "compact": {
+    "thousand": "{value}k",
+    "million": "{value}M"
+  },
+  "status": {
+    "complete": "Complete",
+    "incomplete": "Partial",
+    "missing": "Missing"
+  },
+  "strip": {
+    "totalSubsidiaries": "Total Subsidiaries",
+    "accessible": "Accessible to you",
+    "active": "Active",
+    "activeHint": "Reporting active",
+    "pending": "Pending",
+    "pendingHint": "Awaiting onboarding",
+    "geographies": "Geographies",
+    "noData": "No data",
+    "byRegion": "Subsidiaries by region"
+  },
+  "register": {
+    "title": "Subsidiary Register",
+    "empty": "No subsidiaries accessible to your account.",
+    "noMatch": "No subsidiaries match “{query}”.",
+    "columns": {
+      "legalName": "Legal name",
+      "tradingName": "Trading name",
+      "location": "Location",
+      "geography": "Geography",
+      "sector": "Sector",
+      "status": "Status"
+    },
+    "status": {
+      "active": "active",
+      "pending": "pending",
+      "inactive": "inactive"
+    }
+  },
+  "overview": {
+    "title": "Emissions Overview",
+    "loadFailed": "Emissions data could not be loaded."
+  },
+  "kpi": {
+    "scope1": "Scope 1 Emissions",
+    "scope1Description": "Direct emissions",
+    "scope2": "Scope 2 Emissions",
+    "scope2Description": "Purchased energy",
+    "scope3": "Scope 3 Emissions",
+    "trendPending": "Year-over-year trend needs prior-year data",
+    "collection": "Data Collection Status",
+    "companies": "Companies",
+    "locations": "Locations",
+    "byLocationOne": "1 company is measured per location: their electricity, gas and water need one invoice per site per month, so those categories count as complete only when every month is in.",
+    "byLocationMany": "{count} companies are measured per location: their electricity, gas and water need one invoice per site per month, so those categories count as complete only when every month is in."
+  },
+  "charts": {
+    "bySubsidiary": "By Subsidiary (tCO₂e)",
+    "dataStatus": "Data Status",
+    "categories": "categories"
+  },
+  "alerts": {
+    "title": "Action Items",
+    "critical": "{count} critical",
+    "warnings": "{count} warnings",
+    "viewAll": "View All",
+    "empty": "No action items — all clear.",
+    "anomaly": "Anomaly flag on {category} records — review the variance reason"
+  },
+  "matrix": {
+    "hint": "Click a cell to enter or review that category. Values show calculated emissions in tCO₂e.",
+    "allYears": "Showing every reporting year at once — a cell mixes years, so its status describes none of them.",
+    "subsidiary": "Subsidiary",
+    "perLocationOne": "per location · {count} site",
+    "perLocationMany": "per location · {count} sites",
+    "short": {
+      "Electricity": "Elec",
+      "Natural Gas": "Gas",
+      "Fuel": "Fuel",
+      "Mobile Combustion": "Mobile",
+      "Refrigerants": "Refrig",
+      "Purchased Goods": "Goods",
+      "Waste": "Waste",
+      "Water": "Water",
+      "Business Travel": "Travel",
+      "Commuting": "Commute",
+      "Logistics": "Logist"
+    }
+  },
+  "cell": {
+    "invoicesOf": "{covered} of {required} invoices",
+    "ariaTonnes": "{value} tCO2e",
+    "invoices": "Invoices",
+    "ofRequired": "of {required}",
+    "emissions": "Emissions",
+    "entries": "Entries (all statuses)",
+    "withdrawnOne": "Withdrawn (counts towards nothing)",
+    "withdrawnMany": "Withdrawn entries (count towards nothing)",
+    "owner": "Owner",
+    "updated": "Updated",
+    "uncalculated": "{count} of the committed entries here produced no tCO₂e figure. Today that means the category has no emission factor yet.",
+    "details": "Click to view details"
+  },
+  "drawer": {
+    "perLocationOne": "Measured per location · {count} site",
+    "perLocationMany": "Measured per location · {count} sites",
+    "wholeCompany": "Measured as a whole company",
+    "overall": "Overall Completion",
+    "calculated": "Calculated",
+    "ofCategories": "/ {count} categories",
+    "categoryStatus": "Category Status",
+    "invoices": "invoices",
+    "status": {
+      "complete": "Complete",
+      "incomplete": "Incomplete",
+      "missing": "Missing"
+    },
+    "invoiceGrid": "Invoices by site and month"
+  },
+  "grid": {
+    "loadFailed": "Could not load the invoice breakdown.",
+    "wholeCompany": "{name} is measured as a whole company, so there is no per-location invoice breakdown.",
+    "accepted": "invoice attached and approved",
+    "open": "missing",
+    "awaiting": "waiting for review",
+    "company": "already recorded company-wide",
+    "oneInvoice": "One invoice per site per month.",
+    "clickMissing": "Click a missing month to enter it.",
+    "companyMarked": "Months marked ◆ are already recorded for the whole company — entering them again per site would count that month twice."
+  }
 }

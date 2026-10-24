@@ -1,8 +1,10 @@
 'use client';
 
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { KPIData } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { formatNumber } from '@/lib/i18n/number';
+import { compactTonnes } from '@/lib/dashboard-view';
 import { Building2, MapPin, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 interface KPICardsProps {
@@ -20,16 +22,6 @@ interface KPICardsProps {
   scope3Only?: boolean;
 }
 
-function formatEmissions(value: number): string {
-  if (value >= 1000000) {
-    return `${(value / 1000000).toFixed(1)}M`;
-  }
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(1)}k`;
-  }
-  return value.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
-
 interface EmissionsCardProps {
   label: string;
   /** null = not covered by this selection: a word, not a 0. */
@@ -43,6 +35,8 @@ interface EmissionsCardProps {
 
 function EmissionsCard({ label, value, trend, description, highlight = false, scopeColor }: EmissionsCardProps) {
   const t = useTranslations('dashboard');
+  const tCommon = useTranslations('common');
+  const locale = useLocale();
   const isPositiveTrend = (trend ?? 0) > 0;
   const TrendIcon = isPositiveTrend ? ArrowUpRight : ArrowDownRight;
 
@@ -71,9 +65,9 @@ function EmissionsCard({ label, value, trend, description, highlight = false, sc
                 'text-4xl font-bold font-mono tabular-nums tracking-tight',
                 highlight ? 'text-primary' : 'text-[#1D1D1F]'
               )}>
-                {formatEmissions(value)}
+                {compactTonnes(value, { t, locale })}
               </span>
-              <span className="text-sm font-medium text-[#6E6E73]">tCO₂e</span>
+              <span className="text-sm font-medium text-[#6E6E73]">{tCommon('tco2e')}</span>
             </div>
           )}
           <p className="text-sm text-[#6E6E73] mt-2 font-medium">{description}</p>
@@ -81,7 +75,7 @@ function EmissionsCard({ label, value, trend, description, highlight = false, sc
         {trend === null ? (
           <div
             className="flex items-center gap-1 rounded-full bg-[#F5F5F7] px-3 py-1.5 text-sm font-semibold text-[#8E8E93]"
-            title="Year-over-year trend needs prior-year data"
+            title={t('kpi.trendPending')}
           >
             <span>—</span>
           </div>
@@ -93,7 +87,7 @@ function EmissionsCard({ label, value, trend, description, highlight = false, sc
               : 'bg-[#D1F2EB] text-[#1D7A5F]'
           )}>
             <TrendIcon className="h-4 w-4" />
-            <span>{Math.abs(trend).toFixed(1)}%</span>
+            <span>{t('percent', { value: formatNumber(Math.abs(trend), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}</span>
           </div>
         )}
       </div>
@@ -117,6 +111,8 @@ interface DataStatusCardProps {
 
 function DataStatusCard({ complete, partial, missing, subsidiaries, locations, completionRate, reportingYear, byLocationCount }: DataStatusCardProps) {
   const t = useTranslations('dashboard');
+  const locale = useLocale();
+  const count = (n: number) => formatNumber(n, locale);
   const total = complete + partial + missing;
   // `total === 0` happens on a tenant with no subsidiaries yet, and produced a
   // literal `NaN%` bar width. Untested edge, so it survived until the matrix
@@ -128,7 +124,7 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
     <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between mb-4">
         <p className="text-base font-semibold text-[#1D1D1F]">
-          Data Collection Status
+          {t('kpi.collection')}
           {reportingYear ? (
             <span className="ml-2 text-sm font-normal text-[#6E6E73]">
               {reportingYear}
@@ -156,11 +152,8 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
         {byLocationCount > 0 && (
           <p className="text-xs text-[#6E6E73]">
             {byLocationCount === 1
-              ? '1 company is'
-              : `${byLocationCount} companies are`}{' '}
-            measured per location: their electricity, gas and water need one
-            invoice per site per month, so those categories count as complete
-            only when every month is in.
+              ? t('kpi.byLocationOne')
+              : t('kpi.byLocationMany', { count: count(byLocationCount) })}
           </p>
         )}
       </div>
@@ -184,36 +177,36 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
         <div className="flex items-center gap-3">
           <div className="h-4 w-4 rounded-full" style={{ backgroundColor: '#34C759' }} />
           <div>
-            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{complete}</span>
-            <p className="text-sm font-medium text-[#6E6E73]">Complete</p>
+            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{count(complete)}</span>
+            <p className="text-sm font-medium text-[#6E6E73]">{t('status.complete')}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="h-4 w-4 rounded-full" style={{ backgroundColor: '#FF9500' }} />
           <div>
-            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{partial}</span>
-            <p className="text-sm font-medium text-[#6E6E73]">Partial</p>
+            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{count(partial)}</span>
+            <p className="text-sm font-medium text-[#6E6E73]">{t('status.incomplete')}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="h-4 w-4 rounded-full" style={{ backgroundColor: '#FF3B30' }} />
           <div>
-            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{missing}</span>
-            <p className="text-sm font-medium text-[#6E6E73]">Missing</p>
+            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{count(missing)}</span>
+            <p className="text-sm font-medium text-[#6E6E73]">{t('status.missing')}</p>
           </div>
         </div>
         <div className="flex items-center gap-3 pl-5 border-l border-border">
           <Building2 className="h-5 w-5 text-[#6E6E73]" />
           <div>
-            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{subsidiaries}</span>
-            <p className="text-sm font-medium text-[#6E6E73]">Companies</p>
+            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{count(subsidiaries)}</span>
+            <p className="text-sm font-medium text-[#6E6E73]">{t('kpi.companies')}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <MapPin className="h-5 w-5 text-[#6E6E73]" />
           <div>
-            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{locations ?? '—'}</span>
-            <p className="text-sm font-medium text-[#6E6E73]">Locations</p>
+            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{locations === null ? '—' : count(locations)}</span>
+            <p className="text-sm font-medium text-[#6E6E73]">{t('kpi.locations')}</p>
           </div>
         </div>
       </div>
@@ -228,21 +221,21 @@ export function KPICards({ data, reportingYear, byLocationCount = 0, scope3Only 
       {/* Emissions KPIs - Executive Level */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <EmissionsCard
-          label="Scope 1 Emissions"
+          label={t('kpi.scope1')}
           value={scope3Only ? null : data.emissions.scope1}
           trend={data.emissions.scope1Trend}
-          description={scope3Only ? t('outsideSelection') : 'Direct emissions'}
+          description={scope3Only ? t('outsideSelection') : t('kpi.scope1Description')}
           scopeColor="#34C759"
         />
         <EmissionsCard
-          label="Scope 2 Emissions"
+          label={t('kpi.scope2')}
           value={scope3Only ? null : data.emissions.scope2}
           trend={data.emissions.scope2Trend}
-          description={scope3Only ? t('outsideSelection') : 'Purchased energy'}
+          description={scope3Only ? t('outsideSelection') : t('kpi.scope2Description')}
           scopeColor="#007AFF"
         />
         <EmissionsCard
-          label="Scope 3 Emissions"
+          label={t('kpi.scope3')}
           value={data.emissions.scope3}
           trend={data.emissions.scope3Trend}
           description={t('scope3Description')}

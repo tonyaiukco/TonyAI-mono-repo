@@ -4,6 +4,8 @@ import { useLocale, useMessages, useTranslations } from "use-intl";
 import { describeApiError, type ErrorDescription, type ErrorTranslator } from "./errors";
 import { recordWordsOf, type RecordWords, type RootTranslator } from "@/lib/vocabulary";
 import type { CompletenessCopy } from "@/lib/completeness-view";
+import type { EntityWords } from "@/lib/void-view";
+import type { ActorWords } from "@/lib/record-actor";
 
 /** `describeApiError` bound to the current language. */
 export function useDescribeError(): (error: unknown) => ErrorDescription {
@@ -67,4 +69,16 @@ export function useCompletenessCopy(): CompletenessCopy {
   const locale = useLocale();
   const words = useRecordWords();
   return useMemo(() => ({ t, locale, words }), [t, locale, words]);
+}
+
+/** The reporting entity's words when it is not a named site (`entityLabel`). */
+export function useEntityWords(): EntityWords {
+  const t = useTranslations("common");
+  return useMemo(() => ({ wholeCompany: t("entity.wholeCompany"), unnamedSite: t("entity.unnamedSite") }), [t]);
+}
+
+/** How a gone or nameless actor is described (`recordActorLabel`). */
+export function useActorWords(): ActorWords {
+  const t = useTranslations("common");
+  return useMemo(() => ({ deleted: t("actor.deleted"), unnamed: t("actor.unnamed") }), [t]);
 }

@@ -1,0 +1,150 @@
+{
+  "title": "Emisyon Analitiği",
+  "subtitle": "Emisyonları kapsamlar, kategoriler ve dönemler arasında analiz edin",
+  "view": {
+    "absolute": "Mutlak",
+    "intensity": "Yoğunluk",
+    "intensityLocked": "Bunu etkinleştirmek için bir yoğunluk paydası tanımlayın"
+  },
+  "export": "Dışa aktar",
+  "banner": "Rakamlar, sayılan faaliyet kayıtlarından <strong>prototip demo emisyon faktörleri</strong> kullanılarak hesaplanır — yetkili DEFRA/AIB değerleri değildir. Kapsam 3, 1. Aşama'nın kapsamı dışındadır.",
+  "errors": {
+    "sessionExpired": "Oturumunuzun süresi doldu — lütfen yeniden giriş yapın.",
+    "forbidden": "Bu verilere erişiminiz yok.",
+    "unavailable": "Analitik hizmeti şu anda kullanılamıyor.",
+    "loadTitle": "Analitik yüklenemedi",
+    "retry": "Tekrar dene"
+  },
+  "tabs": {
+    "summary": "Özet",
+    "breakdown": "Döküm",
+    "history": "Geçmiş",
+    "targets": "Hedefler",
+    "trends": "Eğilimler"
+  },
+  "scopeName": "Kapsam {scope}",
+  "tonnes": "{value} tCO₂e",
+  "percent": "%{value}",
+  "periodYear": "{period} {year}",
+  "summary": {
+    "total1": "Toplam Kapsam 1",
+    "total2": "Toplam Kapsam 2",
+    "total3": "Toplam Kapsam 3",
+    "hint1": "Doğrudan emisyonlar",
+    "hint2": "Satın alınan enerji",
+    "hint3": "Değer zinciri (2. Aşama)",
+    "empty": "Seçili filtreler için sayılan emisyon yok. Analitiği doldurmak için Veri Girişi'ndeki faaliyet kayıtlarını onaylayın.",
+    "byScope": "Kapsama Göre Emisyonlar",
+    "scopeDistribution": "Kapsam {scope} Kategori Dağılımı",
+    "share": "%{value} pay",
+    "contributors": "En Büyük 5 Katkı",
+    "byCompany": "Şirkete göre",
+    "byCategory": "Kategoriye göre"
+  },
+  "breakdown": {
+    "empty": "Seçili filtreler için kategori verisi yok.",
+    "scale": "Kategori Ölçeği Görselleştirmesi",
+    "performance": "Kategori Performansı",
+    "columns": {
+      "category": "Kategori",
+      "scope": "Kapsam",
+      "emissions": "Emisyonlar",
+      "share": "Toplamdaki %",
+      "records": "Kayıtlar"
+    },
+    "rowHint": "Kayıtlarını Geçmiş sekmesinde görmek için bir satıra tıklayın."
+  },
+  "history": {
+    "search": "Bağlı şirket, kategori, dönem ya da nota göre ara...",
+    "allCategories": "Tüm Kategoriler",
+    "columns": {
+      "created": "Oluşturulma",
+      "subsidiary": "Bağlı şirket",
+      "category": "Kategori",
+      "period": "Dönem",
+      "activity": "Faaliyet",
+      "unit": "Birim",
+      "status": "Durum"
+    },
+    "empty": "Faaliyet kaydı bulunamadı. Veri Girişi sekmesinden veri ekleyerek başlayın.",
+    "anomaly": "Anomali işaretlendi",
+    "shown": "{shown} kayıt gösteriliyor, en yeniden eskiye",
+    "shownOf": "{total} kaydın {shown} tanesi gösteriliyor, en yeniden eskiye",
+    "loadMore": "Daha fazla yükle"
+  },
+  "trend": {
+    "period": {
+      "monthly": "aylık",
+      "quarterly": "çeyreklik",
+      "yearly": "yıllık"
+    },
+    "empty": "Seçili bağlı şirketler için {period} veri yok.",
+    "title": "Kapsama Göre Emisyon Eğilimi",
+    "change": "Seri boyunca değişim ({period}, ilk → son)",
+    "decreased": "Emisyonlar dönem boyunca azaldı",
+    "increased": "Emisyonlar dönem boyunca arttı",
+    "unchanged": "Dönem boyunca değişim yok",
+    "month": "{month} {year}",
+    "quarter": "{year} {quarter}"
+  },
+  "granularity": {
+    "monthly": "aylık",
+    "quarterly": "çeyreklik",
+    "annual": "yıllık"
+  },
+  "drawer": {
+    "title": "Kayıt Ayrıntısı",
+    "anomaly": "Anomali İşaretlendi",
+    "activityValue": "Faaliyet Değeri",
+    "calculated": "Hesaplanan Emisyonlar",
+    "reportingPeriod": "Raporlama Dönemi",
+    "periodWithGranularity": "{period} {year} ({granularity})",
+    "scope": "Kapsam",
+    "entity": "Raporlayan Birim",
+    "methodology": "Metodoloji ve Faktör",
+    "factor": "Emisyon Faktörü",
+    "methodologyRow": "Metodoloji",
+    "geography": "Coğrafya",
+    "normalised": "Normalleştirilmiş",
+    "source": "Kaynak",
+    "version": "Faktör Sürümü",
+    "recordedAs": "Kaydedilen değer",
+    "notConverted": "{value} {unit} (dönüştürülmedi)",
+    "auditTrail": "Denetim İzi",
+    "enteredBy": "Giren",
+    "reviewedBy": "İnceleyen",
+    "createdAt": "Oluşturulma",
+    "updatedAt": "Güncellenme",
+    "recordId": "Kayıt kimliği",
+    "varianceReason": "Sapma Gerekçesi",
+    "sentBack": "Neden geri gönderildi"
+  },
+  "void": {
+    "why": "Bu rakam neden geri çekildi",
+    "noReason": "Gerekçe kaydedilmedi — bu kayıt, gerekçe zorunluluğundan önceye ait.",
+    "withdrawnBy": "<actor>{name}</actor> tarafından geri çekildi.",
+    "withdrawnByOn": "<actor>{name}</actor> tarafından {date} tarihinde geri çekildi.",
+    "staysOnTrail": "Denetim izi için kayıtta kalır ve hiçbir toplama sayılmaz.",
+    "title": "Bu rakamı geri çek",
+    "explain": "Onaylanmış bir rakam düzenlenemez. Yanlışsa — çift sayım, yanlış okunmuş bir fatura — geri çekmek onu tüm toplamlardan çıkarır ve dönemi yeniden açar; böylece yerine düzeltilmiş bir rakam girilebilir.",
+    "reasonLabel": "Gerekçe (zorunlu; kalıcı kayda geçer)",
+    "reasonPlaceholder": "Bu rakam neden geri çekiliyor?",
+    "open": "Envanterden geri çek",
+    "confirmTitle": "Bu rakam envanterden geri çekilsin mi?",
+    "withdrawing": "Geri çekiliyor…",
+    "confirm": "Geri çek",
+    "reasonRequired": "Gerekçe zorunludur — bir geri çekme nedenini söylemelidir.",
+    "reasonShort": "Bu rakamın neden geri çekildiğini yazın — en az {min} karakter (şu ana kadar {count}).",
+    "reasonLong": "Gerekçe {max} karakteri aşamaz ({count} girildi).",
+    "removes": "Bu işlem envanterden {tonnes} tCO₂e çıkarır.",
+    "noFigure": "Bu giriş bir tCO₂e değeri üretmedi; bu yüzden hiçbir emisyon toplamı değişmez.",
+    "subject": "{category} · {subsidiary} · {entity} · {period} {year}",
+    "stopsCounting": "Toplamlara, raporlara ve fatura kapsamına sayılmaz hale gelir.",
+    "reopens": "{entity} için {period} {year} dönemi ardından yeniden açılır; böylece yerine düzeltilmiş bir {category} rakamı girilebilir.",
+    "staysOnRecord": "Giriş gerekçenizle birlikte kayıtta kalır ve geri çekme denetim kaydına yazılır.",
+    "printed": "Gerekçeniz oluşturulan her rapora — PDF, Excel ve CSV — olduğu gibi basılır ve sonradan düzenlenemez.",
+    "cannotUndo": "Geri alınamaz.",
+    "withdrawn": "Geri çekildi — {tonnes} tCO₂e envanterden çıktı.",
+    "withdrawnNoFigure": "Geri çekildi — giriş artık hiçbir toplama sayılmıyor."
+  }
+}

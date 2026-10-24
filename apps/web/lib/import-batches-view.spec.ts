@@ -6,8 +6,8 @@ import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
   INTERRUPTED_AFTER_MS,
   awaitingEvidenceNote as awaitingEvidenceNoteIn,
-  submitFailureDetail,
-  batchOutcome,
+  submitFailureDetail as submitFailureDetailIn,
+  batchOutcome as batchOutcomeIn,
   batchState,
   batchSubmitLabel as batchSubmitLabelIn,
   importBatchesErrorMessage as importBatchesErrorMessageIn,
@@ -16,6 +16,12 @@ import { copyFor, describeFor } from '@/lib/i18n/testing';
 
 // English: the text the panel showed before LP4-04.
 const ib = () => copyFor('imports');
+// The `errors` translator recent-imports passes (no English default since LP4-04 slice 2).
+const errorsT = (locale: 'en' | 'tr' = 'en') => copyFor('errors', locale).t as never;
+const batchOutcome = (batch: Parameters<typeof batchOutcomeIn>[0], t: Parameters<typeof batchOutcomeIn>[1] = errorsT(), locale: 'en' | 'tr' = 'en') =>
+  batchOutcomeIn(batch, t, locale);
+const submitFailureDetail = (report: Parameters<typeof submitFailureDetailIn>[0], locale: 'en' | 'tr' = 'en') =>
+  submitFailureDetailIn(report, errorsT(locale), errorsT(locale), locale);
 const awaitingEvidenceNote = (b: Parameters<typeof awaitingEvidenceNoteIn>[0]) => awaitingEvidenceNoteIn(b, ib());
 const batchSubmitLabel = (n: number) => batchSubmitLabelIn(n, ib());
 const importBatchesErrorMessage = (e: unknown) => importBatchesErrorMessageIn(e, ib(), describeFor()).title;
@@ -108,25 +114,34 @@ describe('submitFailureDetail', () => {
 
 it.each([['en', en], ['tr', tr]] as const)('%s preserves persisted unstarted and unknown outcomes', (locale, messages) => {
   const t = createTranslator({ locale, messages });
-  expect(batchOutcome({ totalRows: 6, acceptedCount: 2, rejectedCount: 1 }, t)).toBe([
+  expect(batchOutcome({ totalRows: 6, acceptedCount: 2, rejectedCount: 1 }, t, locale)).toBe([
     t('bulkOutcomes.imported', { count: 2 }), t('bulkOutcomes.refused', { count: 1 }), t('bulkOutcomes.notProcessed', { count: 3 }),
   ].join(' · '));
-  expect(batchOutcome({ totalRows: 6, acceptedCount: 2, rejectedCount: null }, t)).toBe(t('bulkOutcomes.unknown', { count: 6 }));
+  expect(batchOutcome({ totalRows: 6, acceptedCount: 2, rejectedCount: null }, t, locale)).toBe(t('bulkOutcomes.unknown', { count: 6 }));
+  // A count of 1,000 or more is grouped in the user's language, in every branch.
+  const g = (n: string) => (locale === 'en' ? n : n.replace(',', '.'));
+  expect(batchOutcome({ totalRows: 4600, acceptedCount: 1200, rejectedCount: 1300 }, t, locale)).toBe([
+    t('bulkOutcomes.imported', { count: g('1,200') }), t('bulkOutcomes.refused', { count: g('1,300') }),
+    t('bulkOutcomes.notProcessed', { count: g('2,100') }),
+  ].join(' · '));
+  expect(batchOutcome({ totalRows: 1200, acceptedCount: null, rejectedCount: null }, t, locale)).toBe(
+    t('bulkOutcomes.unknown', { count: g('1,200') }),
+  );
 });
 
 
 it.each([['en', en], ['tr', tr]] as const)('%s keeps accepted counts and safe retry guidance in the RecentImports toast', (locale, messages) => {
   const t = createTranslator({ locale, messages });
-  const detail = submitFailureDetail({ requested: 2, completion: 'deadline_exceeded',
+  const detail = submitFailureDetailIn({ requested: 2, completion: 'deadline_exceeded',
     submitted: [{ recordId: 'a' } as never], failed: [{ recordId: 'b', code: 'not_processed_deadline', message: 'Not started' }],
-  }, t('bulkIssues.not_processed_deadline'), t);
+  }, t as never, t as never, locale);
   expect(detail).toBe(t('bulkDeadline.detail', { accepted: 1, refused: 0, unstarted: 1 }));
 });
 
 
 it.each([['en', en], ['tr', tr]] as const)('%s localises stale records in recent imports', (locale, messages) => {
   const t = createTranslator({ locale, messages });
-  expect(submitFailureDetail({ requested: 1, submitted: [], failed: [
+  expect(submitFailureDetailIn({ requested: 1, submitted: [], failed: [
     { recordId: 'draft', code: 'calculation_stale', message: 'server English' },
-  ] }, messages.bulkIssues.not_processed_deadline, t, t)).toBe(`${messages.bulkIssues.calculation_stale} · 1`);
+  ] }, t as never, t as never, locale)).toBe(`${messages.bulkIssues.calculation_stale} · 1`);
 });

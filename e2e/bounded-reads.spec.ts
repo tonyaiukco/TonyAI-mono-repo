@@ -123,10 +123,11 @@ test('Emissions History shows one page of the whole ledger, and Load more append
   const shown = browser.getByTestId('history-shown');
   const rows = browser.locator('table tbody tr');
   // Anchored: the count is the metadata's, never the rows on screen.
-  await expect(shown).toHaveText(`Showing 50 of ${total} records, newest first`);
+  // Grouped as the screen writes counts (`formatNumber`, LP4-04 slice 2 PR B).
+  await expect(shown).toHaveText(`Showing 50 of ${new Intl.NumberFormat('en-GB').format(total)} records, newest first`);
   await expect(rows).toHaveCount(50);
   await browser.getByTestId('history-load-more').click();
   const next = Math.min(100, total);
-  await expect(shown).toHaveText(`Showing ${next} of ${total} records, newest first`);
+  await expect(shown).toHaveText(`Showing ${next} of ${new Intl.NumberFormat('en-GB').format(total)} records, newest first`);
   await expect(rows).toHaveCount(next);
 });

@@ -304,7 +304,6 @@
     "attachStart": "Tek dosyayı birden fazla kayda ekle",
     "attachHint": "Bu belgenin kanıtladığı kayıtları işaretleyin.",
     "selectedCount": "{count} seçildi",
-    "cancel": "İptal",
     "clear": "Temizle",
     "moreNotShown": "+{count} tane daha gösterilmiyor.",
     "empty": "Bu bağlı şirket için henüz gönderim yok.",

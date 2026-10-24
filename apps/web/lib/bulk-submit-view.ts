@@ -12,9 +12,9 @@ import type {
   BulkSubmitIssueCode,
   BulkSubmitReportDTO,
   BulkUploadAcceptedRow,
+  Locale,
 } from '@/lib/types';
 import { ApiError } from '@/lib/api';
-import { formatNumber as formatGrouped } from '@/lib/utils';
 import { formatNumber } from '@/lib/i18n/number';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
 import type { ErrorDescription } from '@/lib/i18n/errors';
@@ -198,20 +198,22 @@ export interface SubmitSummary {
 
 /** The verdict after a bulk submit. */
 export type DeadlineTranslator = (key: 'bulkDeadline.title' | 'bulkDeadline.detail' | 'bulkDeadline.previewDetail',
-  values?: { accepted: number; refused: number; unstarted: number }) => string;
+  values?: { accepted: string; refused: string; unstarted: string }) => string;
 
-export function deadlineSummary(accepted: number, issues: readonly { code: string }[], translate?: DeadlineTranslator, dryRun = false) {
+export function deadlineSummary(accepted: number, issues: readonly { code: string }[], translate: DeadlineTranslator, locale: Locale, dryRun = false) {
   const unstarted = issues.filter((i) => i.code === 'not_processed_deadline').length;
   if (!unstarted) return null;
-  const values = { accepted, refused: issues.length - unstarted, unstarted };
+  // Counts written in the user's language before they are passed (a simple
+  // argument prints a number ungrouped).
+  const count = (n: number) => formatNumber(n, locale);
+  const values = { accepted: count(accepted), refused: count(issues.length - unstarted), unstarted: count(unstarted) };
   const detailKey = dryRun ? 'previewDetail' : 'detail';
-  const detail = translate ? translate(`bulkDeadline.${detailKey}`, values)
-    : Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, formatGrouped(value)), enErrors.bulkDeadline[detailKey]);
-  return { tone: 'partial' as const, headline: translate ? translate('bulkDeadline.title') : enErrors.bulkDeadline.title, detail };
+  const detail = translate(`bulkDeadline.${detailKey}`, values);
+  return { tone: 'partial' as const, headline: translate('bulkDeadline.title'), detail };
 }
 
-export function summariseSubmit(report: BulkSubmitReportDTO, translate: DeadlineTranslator | undefined, { t, locale }: BulkSubmitCopy): SubmitSummary {
-  const deadline = deadlineSummary(report.submitted.length, report.failed, translate);
+export function summariseSubmit(report: BulkSubmitReportDTO, translate: DeadlineTranslator, { t, locale }: BulkSubmitCopy): SubmitSummary {
+  const deadline = deadlineSummary(report.submitted.length, report.failed, translate, locale);
   if (deadline) return deadline;
   const moved = report.submitted.length;
   const failed = report.failed.length;

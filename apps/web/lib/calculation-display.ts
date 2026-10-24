@@ -15,11 +15,11 @@ import { isCalculated, type ActivityCalculationSnapshot } from '@/lib/types';
  * exists, and inventing one is forbidden.
  */
 
-/** Shown in place of a tCO₂e figure. Deliberately not "0" and not "—". */
-export const NOT_CALCULATED_LABEL = 'Not calculated';
-
-/** Shown in place of a factor/methodology field. */
-export const NO_FACTOR_LABEL = 'No factor available';
+/*
+ * The words themselves live in the catalogue: `common.notCalculated` in place
+ * of a tCO₂e figure (deliberately not "0" and not "—"), `common.noFactor` in
+ * place of a factor/methodology field.
+ */
 
 /**
  * The explanation to put next to the label, or null when the record does carry
@@ -44,7 +44,7 @@ export function formatTCo2e(
   calculation: ActivityCalculationSnapshot,
   format: (value: number) => string,
   /** The label in the screen's language (`common.notCalculated`). */
-  notCalculated: string = NOT_CALCULATED_LABEL,
+  notCalculated: string,
 ): string {
   return isCalculated(calculation)
     ? format(calculation.tCo2e)

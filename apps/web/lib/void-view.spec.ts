@@ -3,11 +3,15 @@ import {
   VOID_REASON_MAX_LENGTH,
   VOID_REASON_MIN_LENGTH,
   canOfferVoid,
-  entityLabel,
-  voidConsequence,
-  voidReasonError,
-  voidSuccessMessage,
+  entityLabel as entityLabelWith,
+  voidConsequence as voidConsequenceWith,
+  voidReasonError as voidReasonErrorWith,
+  voidSuccessMessage as voidSuccessMessageWith,
+  type VoidCopy,
 } from './void-view';
+import { copyFor, recordWordsFor } from '@/lib/i18n/testing';
+import type { Locale } from '@/lib/types';
+import { entityLabel as sharedEntityLabel } from '@/lib/types';
 import type {
   ActivityCalculationSnapshot,
   ActivityRecordDTO,
@@ -21,6 +25,22 @@ import type {
  * whole safety story on this side of the wire, and both are asserted here
  * rather than trusted to a screen.
  */
+
+/** The copy the Emissions screen passes, over the real catalogue. */
+const voidCopy = (locale: Locale = 'en'): VoidCopy => {
+  const common = copyFor('common', locale);
+  return {
+    ...copyFor('emissions', locale),
+    words: recordWordsFor(locale),
+    entity: { wholeCompany: common.t('entity.wholeCompany'), unnamedSite: common.t('entity.unnamedSite') },
+  };
+};
+// Thin wrappers: the assertions below are about the English the screen shows.
+const voidReasonError = (reason: string) => voidReasonErrorWith(reason, voidCopy());
+const entityLabel = (record: Parameters<typeof entityLabelWith>[0]) => entityLabelWith(record, voidCopy().entity);
+const voidConsequence = (record: ActivityRecordDTO, subsidiaryName: string) =>
+  voidConsequenceWith(record, subsidiaryName, voidCopy());
+const voidSuccessMessage = (record: ActivityRecordDTO) => voidSuccessMessageWith(record, voidCopy());
 
 const calculated = (tCo2e: number): ActivityCalculationSnapshot => ({
   category: 'Electricity',
@@ -293,5 +313,44 @@ describe('voidSuccessMessage', () => {
     );
     expect(message).not.toContain('NaN');
     expect(message).toContain('no longer counts');
+  });
+});
+
+describe('the void path in Turkish', () => {
+  const tr = voidCopy('tr');
+
+  it('names the same tonnage with Turkish separators', () => {
+    const r = record({ calculation: calculated(1234.5) });
+    expect(voidConsequenceWith(r, 'TonyAI Mfg', tr).headline).toBe('Bu işlem envanterden 1.234,500 tCO₂e çıkarır.');
+    expect(voidSuccessMessageWith(r, tr)).toBe('Geri çekildi — 1.234,500 tCO₂e envanterden çıktı.');
+    expect(voidConsequenceWith(r, 'TonyAI Mfg', voidCopy('en')).headline).toBe('This removes 1,234.500 tCO₂e from the inventory.');
+  });
+
+  it("words the record's own values and entity in Turkish", () => {
+    const { subject, effects } = voidConsequenceWith(record(), 'TonyAI Mfg', tr);
+    expect(subject).toBe('Elektrik · TonyAI Mfg · Şirket bütünü · Ocak 2026');
+    expect(effects[1]).toContain('Şirket bütünü için Ocak 2026');
+    expect(entityLabelWith({ locationId: 'loc-1', locationName: null }, tr.entity)).toBe('Tesis (adı alınamadı)');
+  });
+
+  it('counts the reason the Turkish way', () => {
+    expect(voidReasonErrorWith('abcd', tr)).toBe('Bu rakamın neden geri çekildiğini yazın — en az 10 karakter (şu ana kadar 4).');
+    expect(voidReasonErrorWith('a'.repeat(VOID_REASON_MAX_LENGTH + 1), tr)).toBe('Gerekçe 2.000 karakteri aşamaz (2.001 girildi).');
+  });
+});
+
+describe("entityLabel keeps shared-types' rule (the generated report's)", () => {
+  // The rule exists twice — here with the screen's words, in shared-types with
+  // the report's English. Every case must name the same entity, or the dialog
+  // and the PDF an auditor keeps would call one record two things.
+  it.each([
+    { locationId: 'loc-1', locationName: 'Istanbul HQ' },
+    { locationId: 'loc-1', locationName: null },
+    { locationId: 'loc-1', locationName: '   ' },
+    { locationId: null, locationName: null },
+    { locationId: null, locationName: '  Ankara  ' },
+    { locationId: null, locationName: '' },
+  ])('%o', (record) => {
+    expect(entityLabelWith(record, voidCopy('en').entity)).toBe(sharedEntityLabel(record));
   });
 });

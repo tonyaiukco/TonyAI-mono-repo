@@ -1,0 +1,150 @@
+{
+  "title": "Emissions Analytics",
+  "subtitle": "Analyse emissions across scopes, categories and time periods",
+  "view": {
+    "absolute": "Absolute",
+    "intensity": "Intensity",
+    "intensityLocked": "Configure an intensity denominator to enable this"
+  },
+  "export": "Export",
+  "banner": "Figures are computed from committed activity records using <strong>prototype demo emission factors</strong> — not authoritative DEFRA/AIB values. Scope 3 is out of scope for Phase 1.",
+  "errors": {
+    "sessionExpired": "Your session has expired — please sign in again.",
+    "forbidden": "You do not have access to this data.",
+    "unavailable": "The analytics service is unavailable right now.",
+    "loadTitle": "Couldn't load analytics",
+    "retry": "Try again"
+  },
+  "tabs": {
+    "summary": "Summary",
+    "breakdown": "Breakdown",
+    "history": "History",
+    "targets": "Targets",
+    "trends": "Trends"
+  },
+  "scopeName": "Scope {scope}",
+  "tonnes": "{value} tCO₂e",
+  "percent": "{value}%",
+  "periodYear": "{period} {year}",
+  "summary": {
+    "total1": "Total Scope 1",
+    "total2": "Total Scope 2",
+    "total3": "Total Scope 3",
+    "hint1": "Direct emissions",
+    "hint2": "Purchased energy",
+    "hint3": "Value chain (Phase 2)",
+    "empty": "No committed emissions for the selected filters. Approve activity records in Data Entry to populate analytics.",
+    "byScope": "Emissions by Scope",
+    "scopeDistribution": "Scope {scope} Category Distribution",
+    "share": "{value}% share",
+    "contributors": "Top 5 Contributors",
+    "byCompany": "By Company",
+    "byCategory": "By Category"
+  },
+  "breakdown": {
+    "empty": "No category data for the selected filters.",
+    "scale": "Category Scale Visualisation",
+    "performance": "Category Performance",
+    "columns": {
+      "category": "Category",
+      "scope": "Scope",
+      "emissions": "Emissions",
+      "share": "% of Total",
+      "records": "Records"
+    },
+    "rowHint": "Click a row to view its records in the History tab."
+  },
+  "history": {
+    "search": "Search by subsidiary, category, period, or note...",
+    "allCategories": "All Categories",
+    "columns": {
+      "created": "Created",
+      "subsidiary": "Subsidiary",
+      "category": "Category",
+      "period": "Period",
+      "activity": "Activity",
+      "unit": "Unit",
+      "status": "Status"
+    },
+    "empty": "No activity records found. Start by adding data in the Data Entry tab.",
+    "anomaly": "Anomaly flagged",
+    "shown": "Showing {shown} records, newest first",
+    "shownOf": "Showing {shown} of {total} records, newest first",
+    "loadMore": "Load more"
+  },
+  "trend": {
+    "period": {
+      "monthly": "monthly",
+      "quarterly": "quarterly",
+      "yearly": "yearly"
+    },
+    "empty": "No {period} data for the selected subsidiaries.",
+    "title": "Emissions Trend by Scope",
+    "change": "Change across the {period} series (first → last)",
+    "decreased": "Emissions decreased over the period",
+    "increased": "Emissions increased over the period",
+    "unchanged": "No change over the period",
+    "month": "{month} {year}",
+    "quarter": "{year}-{quarter}"
+  },
+  "granularity": {
+    "monthly": "monthly",
+    "quarterly": "quarterly",
+    "annual": "annual"
+  },
+  "drawer": {
+    "title": "Record Detail",
+    "anomaly": "Anomaly Flagged",
+    "activityValue": "Activity Value",
+    "calculated": "Calculated Emissions",
+    "reportingPeriod": "Reporting Period",
+    "periodWithGranularity": "{period} {year} ({granularity})",
+    "scope": "Scope",
+    "entity": "Reporting Entity",
+    "methodology": "Methodology & Factor",
+    "factor": "Emission Factor",
+    "methodologyRow": "Methodology",
+    "geography": "Geography",
+    "normalised": "Normalised",
+    "source": "Source",
+    "version": "Factor Version",
+    "recordedAs": "Recorded as",
+    "notConverted": "{value} {unit} (not converted)",
+    "auditTrail": "Audit Trail",
+    "enteredBy": "Entered by",
+    "reviewedBy": "Reviewed by",
+    "createdAt": "Created At",
+    "updatedAt": "Updated At",
+    "recordId": "Record ID",
+    "varianceReason": "Reason for Variance",
+    "sentBack": "Why this was sent back"
+  },
+  "void": {
+    "why": "Why this figure was withdrawn",
+    "noReason": "No reason was recorded — this predates the requirement.",
+    "withdrawnBy": "Withdrawn by <actor>{name}</actor>.",
+    "withdrawnByOn": "Withdrawn by <actor>{name}</actor> on {date}.",
+    "staysOnTrail": "It stays on record for the audit trail and counts towards no total.",
+    "title": "Withdraw this figure",
+    "explain": "An approved figure cannot be edited. If it is wrong — a double count, a misread invoice — withdrawing it takes it out of every total and reopens the period, so a corrected figure can be entered in its place.",
+    "reasonLabel": "Reason (required, and it goes on the permanent record)",
+    "reasonPlaceholder": "Why is this figure being withdrawn?",
+    "open": "Withdraw from inventory",
+    "confirmTitle": "Withdraw this figure from the inventory?",
+    "withdrawing": "Withdrawing…",
+    "confirm": "Withdraw",
+    "reasonRequired": "A reason is required — a withdrawal has to say why.",
+    "reasonShort": "Say why this figure is being withdrawn — at least {min} characters ({count} so far).",
+    "reasonLong": "A reason cannot run past {max} characters ({count} entered).",
+    "removes": "This removes {tonnes} tCO₂e from the inventory.",
+    "noFigure": "This entry produced no tCO₂e figure, so no emissions total changes.",
+    "subject": "{category} · {subsidiary} · {entity} · {period} {year}",
+    "stopsCounting": "It stops counting towards totals, reports and invoice coverage.",
+    "reopens": "{period} {year} then reopens for {entity}, so a corrected {category} figure can be entered in its place.",
+    "staysOnRecord": "The entry stays on record with your reason, and the withdrawal is written to the audit log.",
+    "printed": "Your reason is printed verbatim in every generated report — PDF, Excel and CSV — and cannot be edited afterwards.",
+    "cannotUndo": "It cannot be undone.",
+    "withdrawn": "Withdrawn — {tonnes} tCO₂e left the inventory.",
+    "withdrawnNoFigure": "Withdrawn — the entry no longer counts towards any total."
+  }
+}

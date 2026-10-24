@@ -20,7 +20,12 @@ import {
   ACTIVITY_UNITS,
   GEOGRAPHY_CODES,
   GEOGRAPHY_LABELS,
+  INTENSITY_METRIC_KEYS,
+  INTENSITY_METRIC_META,
+  UNNAMED_SITE_ENTITY_LABEL,
+  WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
+import { TARGET_BASES, TARGET_STATUSES } from "@/lib/vocabulary";
 
 /** Every leaf of a catalogue, as `dotted.key → message`. */
 function leaves(node: unknown, prefix = ""): Map<string, string> {
@@ -114,6 +119,18 @@ describe("the catalogues", () => {
       'evidence.size.bytes',
       'evidence.removeAria',
       'geography.TR',
+      // Units and formats with no words (LP4-04 slice 2 PR B).
+      'common.tco2e',
+      'dashboard.tonnes',
+      'dashboard.cell.ariaTonnes',
+      'emissions.tonnes',
+      'emissions.periodYear',
+      'emissions.trend.month',
+      'emissions.drawer.periodWithGranularity',
+      'emissions.void.subject',
+      'targets.tonnes',
+      'intensity.perUnit',
+      'intensity.formula',
     ]);
     const other = leaves(MESSAGES[locale]);
     for (const [key, message] of en) {
@@ -244,6 +261,39 @@ describe("the shared vocabularies (LP4-04 slice 2)", () => {
           if (option.key) expect(options[option.key], `${set}.${field.id}.${option.value}`).toBeTruthy();
         }
       }
+    }
+  });
+});
+
+describe("the dashboard and Emissions vocabularies (LP4-04 slice 2 PR B)", () => {
+  it.each(SUPPORTED_LOCALES)("%s: one word per TargetStatus, TargetBasis and intensity metric", (locale) => {
+    const m = MESSAGES[locale];
+    expect(Object.keys(m.targetStatus).sort()).toEqual([...TARGET_STATUSES].sort());
+    expect(Object.keys(m.targetBasis).sort()).toEqual([...TARGET_BASES].sort());
+    expect(Object.keys(m.intensityMetrics).sort()).toEqual([...INTENSITY_METRIC_KEYS].sort());
+  });
+
+  it("English is the contract's own wording, unchanged (metric labels, the reporting entity's phrases)", () => {
+    const en = MESSAGES.en;
+    for (const key of INTENSITY_METRIC_KEYS) expect(en.intensityMetrics[key], key).toBe(INTENSITY_METRIC_META[key].label);
+    // The generated report prints shared-types' phrases; the screens print these.
+    expect(en.common.entity.wholeCompany).toBe(WHOLE_COMPANY_ENTITY_LABEL);
+    expect(en.common.entity.unnamedSite).toBe(UNNAMED_SITE_ENTITY_LABEL);
+  });
+
+  it.each(SUPPORTED_LOCALES)("%s: a short matrix header and a label per category", (locale) => {
+    expect(Object.keys(MESSAGES[locale].dashboard.matrix.short).sort()).toEqual([...CATEGORIES].sort());
+  });
+});
+
+describe("rich text (LP4-04 slice 2 PR B)", () => {
+  // `args()` reads only {arguments}: a Turkish message that lost <strong> or
+  // <actor> would pass it, and `t.rich` would then drop or garble the text.
+  const tags = (message: string) => (message.match(/<\/?\w+>/g) ?? []).sort();
+  it.each(SUPPORTED_LOCALES.filter((l) => l !== "en"))("%s carries every message's tags", (locale) => {
+    const other = leaves(MESSAGES[locale]);
+    for (const [key, message] of leaves(MESSAGES.en)) {
+      expect(tags(other.get(key) ?? ""), key).toEqual(tags(message));
     }
   });
 });

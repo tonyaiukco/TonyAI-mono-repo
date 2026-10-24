@@ -1,5 +1,12 @@
 import type { ActorLabel } from '@/lib/audit-view';
 
+/** How a gone or nameless actor is described, in the user's language
+ *  (`common.actor.*`). */
+export interface ActorWords {
+  deleted: string;
+  unnamed: string;
+}
+
 /**
  * Who entered a record, and who decided it.
  *
@@ -32,9 +39,10 @@ import type { ActorLabel } from '@/lib/audit-view';
 export function recordActorLabel(
   id: string | null,
   name: string | null,
+  words: ActorWords,
 ): ActorLabel {
   if (id === null) return { text: '—', muted: true };
-  if (name === null) return { text: 'deleted user', muted: true };
+  if (name === null) return { text: words.deleted, muted: true };
   // Third, and ONLY third. The type says the key is always present, but this
   // value crosses an HTTP boundary: a web bundle rolled forward ahead of the
   // API — which Phase 2 makes possible, since the two become separate
@@ -49,6 +57,6 @@ export function recordActorLabel(
   // blank-name case in too, and a blank name is a person with an account.
   if (typeof name !== 'string') return { text: '—', muted: true };
   return name.trim() === ''
-    ? { text: 'unnamed user', muted: true }
+    ? { text: words.unnamed, muted: true }
     : { text: name, muted: false };
 }

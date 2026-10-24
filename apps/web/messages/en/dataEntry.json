@@ -304,7 +304,6 @@
     "attachStart": "Attach one file to several records",
     "attachHint": "Tick the records this one document evidences.",
     "selectedCount": "{count} selected",
-    "cancel": "Cancel",
     "clear": "Clear",
     "moreNotShown": "+{count} more not shown.",
     "empty": "No submissions yet for this subsidiary.",
