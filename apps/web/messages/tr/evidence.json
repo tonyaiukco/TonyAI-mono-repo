@@ -1,0 +1,43 @@
+{
+  "title": "Kanıt",
+  "required": "Zorunlu",
+  "filesCount": "{count} dosya",
+  "requiredNote": "Bu kategori, gönderilmeden önce en az bir destekleyici dosya (fatura, sayaç kaydı, …) gerektirir.",
+  "uploading": "Yükleniyor…",
+  "chooseFiles": "Dosya seç",
+  "accepted": "PDF, JPG, PNG, XLSX, CSV · en fazla 10 MB",
+  "loading": "Yükleniyor…",
+  "none": "Ekli kanıt yok.",
+  "download": "İndir",
+  "loadMore": "Daha fazla dosya yükle",
+  "unsupportedType": "{fileName}: desteklenmeyen tür (yalnızca PDF, JPG, PNG, XLSX, CSV)",
+  "uploaded": "Kanıt yüklendi",
+  "size": {
+    "mb": "{value} MB",
+    "kb": "{value} KB",
+    "bytes": "{value} B"
+  },
+  "removeAria": "{label}: {fileName}",
+  "block": {
+    "role": "Rolünüz kanıt ekleyemez.",
+    "notAuthor": "Başka biri tarafından girildi.",
+    "already": "Zaten {status}.",
+    "locked": "{period} {year} kilitli."
+  },
+  "attachNone": "Tek dosya ekle",
+  "attachOne": "Tek dosyayı {count} kayda ekle",
+  "attachMany": "Tek dosyayı {count} kayda ekle",
+  "confirmOne": "“{fileName}” bu kayda eklenecek:",
+  "confirmMany": "“{fileName}” tek bir dosya olarak bu {count} kayda eklenecek. İnceleyiciler dosyanın desteklediği her kaydı görür.",
+  "successOne": "{fileName} artık {count} kaydı destekliyor.",
+  "successMany": "{fileName} artık {count} kaydı destekliyor.",
+  "attachFailed": "Dosya eklenemedi.",
+  "sharedOne": "Ayrıca {count} başka kaydı destekliyor: {named}",
+  "sharedMany": "Ayrıca {count} başka kaydı destekliyor: {named}",
+  "sharedMore": "; +{count} tane daha",
+  "remove": "Kaldır",
+  "removeFromThis": "Bu kayıttan kaldır",
+  "detached": "Kanıt kaldırıldı",
+  "detachedStillOne": "Bu kayıttan kaldırıldı — {fileName} hâlâ {count} başka kaydı destekliyor.",
+  "detachedStillMany": "Bu kayıttan kaldırıldı — {fileName} hâlâ {count} başka kaydı destekliyor."
+}

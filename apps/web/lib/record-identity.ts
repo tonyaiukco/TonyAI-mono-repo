@@ -13,7 +13,7 @@
 //                built for: opening a Fuel Q3 draft, switching to Electricity
 //                Q1 and saving overwrote the Fuel record with the Electricity
 //                numbers and reported "Draft saved".
-import { NOT_CALCULATED_LABEL } from "@/lib/calculation-display";
+import type { ViewCopy } from "@/lib/i18n/view-translator";
 import type { ReportingPeriod } from "@/lib/types";
 
 /**
@@ -83,17 +83,15 @@ export function describeMove(
    * on-screen contradiction this branch exists to remove, pointed the other way.
    */
   recordHasFigure: boolean,
+  { t }: ViewCopy<"move.anotherSite" | "move.wholeCompany" | "move.withFigure" | "move.withoutFigure">,
 ): string | null {
   if (!opened) return null;
   if (opened.locationId === form.locationId) return null;
   const nameOf = (id: string) =>
-    id ? (locationNames.get(id) ?? "another site") : "the whole company";
-  const to = nameOf(form.locationId);
-  const move = `Saving moves this record from ${nameOf(opened.locationId)} to ${to}. It is not copied`;
+    id ? (locationNames.get(id) ?? t("move.anotherSite")) : t("move.wholeCompany");
+  const values = { from: nameOf(opened.locationId), to: nameOf(form.locationId) };
   // The second clause is only true where a factor exists. A record with no
   // figure has none to recalculate, and promising one would contradict the
   // "not calculated" value shown for the same record two cards away.
-  return recordHasFigure
-    ? `${move} — the emission factor is recalculated for its geography.`
-    : `${move} — and no emission factor resolves for it today, so it stays "${NOT_CALCULATED_LABEL}".`;
+  return recordHasFigure ? t("move.withFigure", values) : t("move.withoutFigure", values);
 }

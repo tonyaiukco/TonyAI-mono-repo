@@ -4,8 +4,9 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
-import { CheckCircle2, CopyPlus, FilePlus2, Info, LogOut, Trash2 } from "lucide-react";
+import { CheckCircle2, CopyPlus, FilePlus2, Info, Trash2 } from "lucide-react";
 import { Sidebar } from "@/components/dashboard/sidebar";
+import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { DeclarationEditor, type EditorSite } from "@/components/inventory-boundary/declaration-editor";
 import { ReportingContextBar, ReportingContextInvalid } from "@/components/reporting-context/reporting-context-bar";
 import {
@@ -97,7 +98,6 @@ export default function InventoryBoundaryPage() {
  */
 function InventoryBoundaryScreen() {
   const t = useTranslations("boundary");
-  const tCommon = useTranslations("common");
   const tContext = useTranslations("reportingContext");
   const tPeriods = useTranslations("periods");
   const locale = useLocale() as Locale;
@@ -370,10 +370,7 @@ function InventoryBoundaryScreen() {
               <h1 className="text-2xl font-semibold">{t("title")}</h1>
               <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
             </div>
-            <Button variant="outline" onClick={handleLogout} className="gap-2">
-              <LogOut className="h-4 w-4" />
-              {tCommon("signOut")}
-            </Button>
+            <SignOutButton onClick={handleLogout} />
           </div>
 
           <div className="space-y-2">

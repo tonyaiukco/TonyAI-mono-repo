@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useLocale, useTranslations } from "use-intl";
 import {
   FileText,
   FileSpreadsheet,
@@ -26,6 +27,9 @@ import {
   sharedWithNote,
 } from "@/lib/evidence-view";
 import { cn } from "@/lib/utils";
+import { useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
+import { formatNumber } from "@/lib/i18n/number";
+import type { Locale } from "@/lib/types";
 
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,.xlsx,.csv";
 
@@ -35,10 +39,13 @@ function iconFor(mime: string) {
   return FileText;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
+function formatSize(bytes: number, locale: Locale, t: (key: "size.mb" | "size.kb" | "size.bytes", values: { value: string }) => string): string {
+  const plain = { useGrouping: false } as const;
+  if (bytes >= 1024 * 1024) {
+    return t("size.mb", { value: formatNumber(bytes / 1024 / 1024, locale, { ...plain, minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
+  }
+  if (bytes >= 1024) return t("size.kb", { value: formatNumber(Math.round(bytes / 1024), locale, plain) });
+  return t("size.bytes", { value: formatNumber(bytes, locale, plain) });
 }
 
 interface EvidenceVaultProps {
@@ -54,6 +61,13 @@ export function EvidenceVault({
   canManage,
   onCountChange,
 }: EvidenceVaultProps) {
+  const t = useTranslations("evidence");
+  const locale = useLocale();
+  const words = useRecordWords();
+  const copy = { t, locale, words };
+  const errorToast = useErrorToast();
+  // Stable: `refresh` is a dependency of the effect that loads the files.
+  const stableErrorToast = useStableErrorToast();
   const [files, setFiles] = useState<EvidenceDTO[]>([]);
   // The loaded pages of files (LP4-05 PR C) and the record's whole count.
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -86,11 +100,11 @@ export function EvidenceVault({
       setCount(total);
       onCountChange?.(total);
     } catch (e) {
-      if (mine === loadSeq.current) toast.error((e as Error).message);
+      if (mine === loadSeq.current) stableErrorToast(e);
     } finally {
       if (mine === loadSeq.current) setLoading(false);
     }
-  }, [recordId, onCountChange]);
+  }, [recordId, onCountChange, stableErrorToast]);
 
   useEffect(() => {
     void refresh();
@@ -107,7 +121,7 @@ export function EvidenceVault({
       setNextCursor(page.nextCursor);
     } catch (e) {
       if (mine !== loadSeq.current) return;
-      toast.error((e as Error).message);
+      errorToast(e);
       if (isStaleCursor(e)) void refresh();
     } finally {
       setLoadingMore(false);
@@ -121,16 +135,15 @@ export function EvidenceVault({
     try {
       for (const file of chosen) {
         if (!(EVIDENCE_ALLOWED_MIME_TYPES as readonly string[]).includes(file.type)) {
-          toast.error(`${file.name}: unsupported type (PDF, JPG, PNG, XLSX, CSV only)`);
+          toast.error(t("unsupportedType", { fileName: file.name }));
           continue;
         }
         await api.uploadEvidence(recordId, file);
       }
-      toast.success("Evidence uploaded");
+      toast.success(t("uploaded"));
       await refresh();
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : (e as Error).message;
-      toast.error(msg);
+      errorToast(e);
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -143,10 +156,10 @@ export function EvidenceVault({
   async function handleRemove(file: EvidenceDTO) {
     try {
       const result = await api.detachEvidence(recordId, file.id);
-      toast.success(detachSuccessMessage(result, file));
+      toast.success(detachSuccessMessage(result, file, copy));
       await refresh();
     } catch (e) {
-      toast.error((e as Error).message);
+      errorToast(e);
       if (e instanceof ApiError && e.status === 409) await refresh();
     }
   }
@@ -156,7 +169,7 @@ export function EvidenceVault({
       const { url } = await api.getEvidenceUrl(id);
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (e) {
-      toast.error((e as Error).message);
+      errorToast(e);
     }
   }
 
@@ -167,23 +180,20 @@ export function EvidenceVault({
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2 text-base">
           <FileText className="h-4 w-4 text-muted-foreground" />
-          Evidence
+          {t("title")}
           {required && (
             <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
-              Required
+              {t("required")}
             </span>
           )}
         </CardTitle>
-        <span className="text-xs text-muted-foreground">{count} file(s)</span>
+        <span className="text-xs text-muted-foreground">{t("filesCount", { count: formatNumber(count, locale) })}</span>
       </CardHeader>
       <CardContent className="space-y-3">
         {needsEvidence && (
           <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              This category requires at least one supporting file (invoice, meter
-              record, …) before it can be submitted.
-            </span>
+            <span>{t("requiredNote")}</span>
           </div>
         )}
 
@@ -213,7 +223,7 @@ export function EvidenceVault({
             )}
             {uploading ? (
               <p className="text-sm font-medium text-foreground" role="status">
-                Uploading…
+                {t("uploading")}
               </p>
             ) : (
               /* A real button, not a clickable div: the input is
@@ -226,10 +236,10 @@ export function EvidenceVault({
                 size="sm"
                 onClick={() => inputRef.current?.click()}
               >
-                Choose files
+                {t("chooseFiles")}
               </Button>
             )}
-            <p className="text-xs text-muted-foreground">PDF, JPG, PNG, XLSX, CSV · max 10 MB</p>
+            <p className="text-xs text-muted-foreground">{t("accepted")}</p>
             <input
               ref={inputRef}
               type="file"
@@ -249,19 +259,17 @@ export function EvidenceVault({
         )}
 
         {loading ? (
-          <p className="py-2 text-center text-sm text-muted-foreground">Loading…</p>
+          <p className="py-2 text-center text-sm text-muted-foreground">{t("loading")}</p>
         ) : files.length === 0 ? (
           !canManage && (
-            <p className="py-2 text-center text-sm text-muted-foreground">
-              No evidence attached.
-            </p>
+            <p className="py-2 text-center text-sm text-muted-foreground">{t("none")}</p>
           )
         ) : (
           <ul className="space-y-2">
             {files.map((f) => {
               const Icon = iconFor(f.mimeType);
-              const shared = sharedWithNote(f, recordId);
-              const removeLabel = removeFileLabel(f);
+              const shared = sharedWithNote(f, recordId, copy);
+              const removeLabel = removeFileLabel(f, copy);
               return (
                 <li
                   key={f.id}
@@ -270,7 +278,7 @@ export function EvidenceVault({
                   <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground">{f.fileName}</p>
-                    <p className="text-xs text-muted-foreground">{formatSize(f.sizeBytes)}</p>
+                    <p className="text-xs text-muted-foreground">{formatSize(f.sizeBytes, locale, t)}</p>
                     {shared && (
                       <p className="text-xs text-muted-foreground" data-testid="evidence-shared-note">
                         {shared}
@@ -282,7 +290,7 @@ export function EvidenceVault({
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => void handleDownload(f.id)}
-                    title="Download"
+                    title={t("download")}
                   >
                     <Download className="h-4 w-4" />
                   </Button>
@@ -293,7 +301,7 @@ export function EvidenceVault({
                       className="h-8 w-8 text-red-600 hover:text-red-700"
                       onClick={() => void handleRemove(f)}
                       title={removeLabel}
-                      aria-label={`${removeLabel}: ${f.fileName}`}
+                      aria-label={t("removeAria", { label: removeLabel, fileName: f.fileName })}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -307,7 +315,7 @@ export function EvidenceVault({
           hasMore={!loading && nextCursor !== null}
           loading={loadingMore}
           onClick={() => void loadMore()}
-          label="Load more files"
+          label={t("loadMore")}
           testId="evidence-vault-load-more"
         />
       </CardContent>

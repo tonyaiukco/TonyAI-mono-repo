@@ -6,13 +6,45 @@ import type {
   EvidenceDTO,
   EvidenceLinkedRecordDTO,
 } from '@/lib/types';
-import { api, ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import {
   authoredBy,
+  type DescribeError,
+  type ErrorWords,
   type SubmittableRow,
   type SubmittingUser,
 } from '@/lib/bulk-submit-view';
-import { formatNumber } from '@/lib/utils';
+import { formatNumber } from '@/lib/i18n/number';
+import type { ViewCopy } from '@/lib/i18n/view-translator';
+import type { RecordWords } from '@/lib/vocabulary';
+
+/** The `evidence` catalogue keys this module words its sentences with. */
+export type EvidenceKey =
+  | 'block.role'
+  | 'block.notAuthor'
+  | 'block.already'
+  | 'block.locked'
+  | 'attachNone'
+  | 'attachOne'
+  | 'attachMany'
+  | 'confirmOne'
+  | 'confirmMany'
+  | 'successOne'
+  | 'successMany'
+  | 'attachFailed'
+  | 'sharedOne'
+  | 'sharedMany'
+  | 'sharedMore'
+  | 'remove'
+  | 'removeFromThis'
+  | 'detached'
+  | 'detachedStillOne'
+  | 'detachedStillMany';
+
+/** The module's copy, and the words a record's values are shown by. */
+export interface EvidenceCopy extends ViewCopy<EvidenceKey> {
+  words: RecordWords;
+}
 
 /**
  * The client half of evidence that backs several records (WP8 PR7): which
@@ -62,11 +94,12 @@ const EVIDENCE_EDITABLE = new Set<string>(['draft', 'rejected']);
 export function attachBlockReason(
   row: SubmittableRow,
   user: SubmittingUser,
+  { t, words }: EvidenceCopy,
 ): string | null {
-  if (!mayAuthorRecords(user)) return 'Your role cannot attach evidence.';
-  if (user.role !== 'super_admin' && !authoredBy(row, user)) return 'Entered by someone else.';
-  if (!EVIDENCE_EDITABLE.has(row.status)) return `Already ${row.status.replace(/_/g, ' ')}.`;
-  if (row.periodLocked) return `${row.periodValue} ${row.reportingYear} is locked.`;
+  if (!mayAuthorRecords(user)) return t('block.role');
+  if (user.role !== 'super_admin' && !authoredBy(row, user)) return t('block.notAuthor');
+  if (!EVIDENCE_EDITABLE.has(row.status)) return t('block.already', { status: words.status(row.status) });
+  if (row.periodLocked) return t('block.locked', { period: words.period(row.periodValue), year: row.reportingYear });
   return null;
 }
 
@@ -81,12 +114,13 @@ export interface AttachSelection {
 export function attachableRecords(
   rows: SubmittableRow[],
   user: SubmittingUser | null,
+  copy: EvidenceCopy,
 ): AttachSelection {
   if (!user) return { attachableIds: [], reasonById: {} };
   const attachableIds: string[] = [];
   const reasonById: Record<string, string> = {};
   for (const row of rows) {
-    const reason = attachBlockReason(row, user);
+    const reason = attachBlockReason(row, user, copy);
     if (reason === null) attachableIds.push(row.id);
     else if (EVIDENCE_EDITABLE.has(row.status)) reasonById[row.id] = reason;
   }
@@ -110,14 +144,20 @@ export function toggleAttach(
 /** How a record is named next to a file — the same words the list shows. */
 export function recordLabel(
   r: Pick<EvidenceLinkedRecordDTO, 'category' | 'periodValue' | 'reportingYear' | 'locationName'>,
+  words: RecordWords,
 ): string {
-  return [r.category, `${r.periodValue} ${r.reportingYear}`, ...(r.locationName ? [r.locationName] : [])].join(' · ');
+  return [
+    words.category(r.category),
+    `${words.period(r.periodValue)} ${r.reportingYear}`,
+    ...(r.locationName ? [r.locationName] : []),
+  ].join(' · ');
 }
 
 /** The button in the selection bar — disabled, and unnumbered, until a record is ticked. */
-export function attachButtonLabel(n: number): string {
-  if (n === 0) return 'Attach one file';
-  return `Attach one file to ${formatNumber(n)} ${n === 1 ? 'record' : 'records'}`;
+export function attachButtonLabel(n: number, { t, locale }: EvidenceCopy): string {
+  if (n === 0) return t('attachNone');
+  const count = formatNumber(n, locale);
+  return n === 1 ? t('attachOne', { count }) : t('attachMany', { count });
 }
 
 /**
@@ -128,27 +168,28 @@ export function attachButtonLabel(n: number): string {
 export function attachConfirmation(
   fileName: string,
   rows: Pick<ActivityRecordDTO, 'category' | 'periodValue' | 'reportingYear' | 'locationName'>[],
+  { t, locale, words }: EvidenceCopy,
 ): { lead: string; records: string[] } {
   return {
     lead:
       rows.length === 1
-        ? `“${fileName}” will be attached to this record:`
-        : `“${fileName}” will be attached, as one file, to these ${formatNumber(rows.length)} records. Reviewers see every record it backs.`,
-    records: rows.map((r) => recordLabel({ ...r, locationName: r.locationName ?? null })),
+        ? t('confirmOne', { fileName })
+        : t('confirmMany', { fileName, count: formatNumber(rows.length, locale) }),
+    records: rows.map((r) => recordLabel({ ...r, locationName: r.locationName ?? null }, words)),
   };
 }
 
 /** Said after a successful upload. */
-export function attachSuccessMessage(file: Pick<EvidenceDTO, 'fileName' | 'linkedRecords'>): string {
+export function attachSuccessMessage(file: Pick<EvidenceDTO, 'fileName' | 'linkedRecords'>, { t, locale }: EvidenceCopy): string {
   const n = file.linkedRecords.length;
-  return `${file.fileName} now backs ${formatNumber(n)} ${n === 1 ? 'record' : 'records'}.`;
+  const values = { fileName: file.fileName, count: formatNumber(n, locale) };
+  return n === 1 ? t('successOne', values) : t('successMany', values);
 }
 
 /** Said when the upload is refused: the server's sentence names each refused record. */
-export function attachErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.status === 401) return SESSION_EXPIRED_MESSAGE;
-  if (error instanceof Error) return error.message;
-  return 'The file could not be attached.';
+export function attachErrorMessage(error: unknown, { t }: EvidenceCopy, describe: DescribeError): ErrorWords {
+  if (error instanceof Error) return describe(error);
+  return { title: t('attachFailed') };
 }
 
 /**
@@ -156,26 +197,31 @@ export function attachErrorMessage(error: unknown): string {
  * or `null` when it backs this record alone. Shown on the file in the vault
  * and in the review panel.
  */
-export function sharedWithNote(file: Pick<EvidenceDTO, 'linkedRecords'>, recordId: string): string | null {
+export function sharedWithNote(file: Pick<EvidenceDTO, 'linkedRecords'>, recordId: string, { t, locale, words }: EvidenceCopy): string | null {
   const others = file.linkedRecords.filter((r) => r.id !== recordId);
   if (others.length === 0) return null;
   const SHOWN = 3;
-  const named = others.slice(0, SHOWN).map(recordLabel).join('; ');
   const rest = others.length - SHOWN;
-  return `Also backs ${formatNumber(others.length)} other ${others.length === 1 ? 'record' : 'records'}: ${named}${rest > 0 ? `; +${formatNumber(rest)} more` : ''}`;
+  const named =
+    others.slice(0, SHOWN).map((r) => recordLabel(r, words)).join('; ') +
+    (rest > 0 ? t('sharedMore', { count: formatNumber(rest, locale) }) : '');
+  const count = formatNumber(others.length, locale);
+  return others.length === 1 ? t('sharedOne', { count, named }) : t('sharedMany', { count, named });
 }
 
 /** The remove button's name: taking a shared file off one record is not deleting it. */
-export function removeFileLabel(file: Pick<EvidenceDTO, 'linkedRecords'>): string {
-  return file.linkedRecords.length > 1 ? 'Remove from this record' : 'Remove';
+export function removeFileLabel(file: Pick<EvidenceDTO, 'linkedRecords'>, { t }: EvidenceCopy): string {
+  return file.linkedRecords.length > 1 ? t('removeFromThis') : t('remove');
 }
 
 /** Said after a remove: whether the file itself is gone or still backs others. */
 export function detachSuccessMessage(
   result: Pick<EvidenceDetachDTO, 'fileDeleted'>,
   file: Pick<EvidenceDTO, 'fileName' | 'linkedRecords'>,
+  { t, locale }: EvidenceCopy,
 ): string {
-  if (result.fileDeleted) return 'Evidence removed';
+  if (result.fileDeleted) return t('detached');
   const others = file.linkedRecords.length - 1;
-  return `Removed from this record — ${file.fileName} still backs ${formatNumber(others)} other ${others === 1 ? 'record' : 'records'}.`;
+  const values = { fileName: file.fileName, count: formatNumber(others, locale) };
+  return others === 1 ? t('detachedStillOne', values) : t('detachedStillMany', values);
 }

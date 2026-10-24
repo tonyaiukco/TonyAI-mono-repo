@@ -1,0 +1,20 @@
+{
+  "label": {
+    "kWh": "kWh (elektrik / gaz)",
+    "MWh": "MWh (elektrik)",
+    "cubic_metres": "Metreküp — m³",
+    "standard_cubic_metres": "Standart metreküp — Sm³ (doğal gaz)",
+    "therms": "Therm (doğal gaz)",
+    "gj": "GJ (doğal gaz)",
+    "litres": "Litre (sıvı yakıt)",
+    "uk_gallons": "İngiliz galonu (sıvı yakıt)",
+    "us_gallons": "ABD galonu (sıvı yakıt)",
+    "kilometres": "Kilometre",
+    "passenger_kilometres": "Yolcu-km",
+    "tonnes": "Ton",
+    "kg": "Kilogram — kg"
+  },
+  "blocked": {
+    "standard_cubic_metres": "Standart metreküpün kWh'ye çevrilmesi için kaynağı belli bir ısıl değer gerekir ve bu prototipte henüz yok — Faz 4 faktör kütüphanesiyle gelecek. Hacmi m³ olarak ya da enerjiyi kWh olarak girin."
+  }
+}

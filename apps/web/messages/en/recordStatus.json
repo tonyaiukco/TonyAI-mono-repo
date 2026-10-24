@@ -1,0 +1,20 @@
+{
+  "label": {
+    "draft": "Draft",
+    "submitted": "Submitted",
+    "under_review": "Under review",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "locked": "Locked",
+    "voided": "Voided"
+  },
+  "inline": {
+    "draft": "draft",
+    "submitted": "submitted",
+    "under_review": "under review",
+    "approved": "approved",
+    "rejected": "rejected",
+    "locked": "locked",
+    "voided": "voided"
+  }
+}

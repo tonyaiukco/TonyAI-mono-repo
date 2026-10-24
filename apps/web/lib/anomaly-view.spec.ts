@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { ANOMALY_BASELINE_PERIODS } from '@/lib/types';
-import { anomalyStatement, notEvaluatedNote } from './anomaly-view';
+import { createTranslator } from 'use-intl/core';
+import { MESSAGES } from '@/messages';
+import type { Locale } from '@/lib/types';
+import { anomalyStatement as statementIn, notEvaluatedNote as noteIn } from './anomaly-view';
 
-const record = (over: Partial<Parameters<typeof anomalyStatement>[0]> = {}) => ({
+const tFor = (locale: Locale) => createTranslator({ locale, messages: MESSAGES[locale], namespace: 'anomaly' });
+const anomalyStatement = (record: Parameters<typeof statementIn>[0], locale: Locale = 'en') =>
+  statementIn(record, tFor(locale), locale);
+const notEvaluatedNote = (count: number, locale: Locale = 'en') => noteIn(count, tFor(locale));
+
+const record = (over: Partial<Parameters<typeof statementIn>[0]> = {}) => ({
   anomalyFlag: false,
   anomalyBaselinePriorCount: ANOMALY_BASELINE_PERIODS,
   anomalyBaselineTCo2e: 41.2,
@@ -93,5 +101,25 @@ describe('notEvaluatedNote', () => {
   it('is singular for one and plural beyond it', () => {
     expect(notEvaluatedNote(1)).toMatch(/^1 entry was/);
     expect(notEvaluatedNote(4)).toMatch(/^4 entries were/);
+  });
+});
+
+describe('in Turkish (LP4-04)', () => {
+  it('writes the baseline with the Turkish decimal mark and the same number', () => {
+    const en = anomalyStatement(record({ anomalyFlag: true, anomalyBaselineTCo2e: 1234.5 }));
+    const tr = anomalyStatement(record({ anomalyFlag: true, anomalyBaselineTCo2e: 1234.5 }), 'tr');
+    // English as before LP4-04: no grouping, dot decimal.
+    expect(en.detail).toContain('1234.5 tCO₂e');
+    expect(tr.detail).toContain('1234,5 tCO₂e');
+    expect(tr.headline).toBe('Anormal olarak işaretlendi');
+    expect(tr.detail).toContain('%50');
+  });
+
+  it('keeps every absence distinct in Turkish too', () => {
+    const details = [null, 0, 1, 2].map(
+      (priors) => anomalyStatement(record({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: null }), 'tr').detail,
+    );
+    expect(new Set(details).size).toBe(details.length);
+    expect(notEvaluatedNote(4, 'tr')).toMatch(/^4 kayıt/);
   });
 });

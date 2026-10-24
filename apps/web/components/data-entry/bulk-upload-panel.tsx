@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "use-intl";
+import { useLocale, useTranslations } from "use-intl";
 
 import { useRef, useState } from "react";
 import {
@@ -59,7 +59,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { cn, formatNumber } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useDescribeError, showErrorToast } from "@/lib/i18n/hooks";
+import { formatNumber } from "@/lib/i18n/number";
+import type { ErrorDescription } from "@/lib/i18n/errors";
 
 /**
  * Import a file of historical records.
@@ -87,6 +90,11 @@ export function BulkUploadPanel({
   onImported: () => void;
 }) {
   const tErrors = useTranslations("errors");
+  const t = useTranslations("bulkUpload");
+  const locale = useLocale();
+  const describe = useDescribeError();
+  const copy = { t, locale };
+  const submitCopy = { t: useTranslations("bulkSubmit"), locale };
   const inputRef = useRef<HTMLInputElement>(null);
   const verdictRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -95,7 +103,7 @@ export function BulkUploadPanel({
   /** Its own flag: the template download must not clear the import's. */
   const [templateBusy, setTemplateBusy] = useState(false);
   const [report, setReport] = useState<BulkUploadReportDTO | null>(null);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<ErrorDescription | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmingSubmit, setConfirmingSubmit] = useState(false);
   const [submitReport, setSubmitReport] = useState<BulkSubmitReportDTO | null>(
@@ -117,9 +125,9 @@ export function BulkUploadPanel({
     setTemplateBusy(true);
     try {
       await api.downloadBulkUploadTemplate();
-      toast.success("Template downloaded");
+      toast.success(t("templateDownloaded"));
     } catch (e) {
-      toast.error(templateErrorMessage(e));
+      showErrorToast(templateErrorMessage(e, copy, describe));
     } finally {
       setTemplateBusy(false);
     }
@@ -132,7 +140,7 @@ export function BulkUploadPanel({
     // (A request-sequence ref once guarded overlapping runs; with this guard
     // no path could produce one — `bulk-upload-panel.spec.ts` asserts one POST.)
     if (working) return;
-    const problem = preflightFile(picked);
+    const problem = preflightFile(picked, copy);
     if (problem) {
       // Refused here so it costs no request: the budget is five a minute per
       // user, and a dry run plus an apply already spends two of them.
@@ -152,7 +160,7 @@ export function BulkUploadPanel({
       // Rendered in the card, not only as a toast: a whole-file refusal names
       // the column or up to ten offending rows, which is not something anyone
       // reads in four seconds.
-      setRefusal(uploadErrorMessage(e, tErrors) || "The import failed.");
+      setRefusal(uploadErrorMessage(e, tErrors, copy, describe));
     } finally {
       setBusy("none");
     }
@@ -169,11 +177,11 @@ export function BulkUploadPanel({
       // import is real — no transaction spans the batch.
       setReport(applied);
       setSubmitReport(null);
-      const outcome = applyToast(applied, tErrors);
+      const outcome = applyToast(applied, tErrors, copy);
       toast[outcome.kind](outcome.message, { description: outcome.description });
       verdictRef.current?.focus();
     } catch (e) {
-      toast.error(uploadErrorMessage(e, tErrors));
+      showErrorToast(uploadErrorMessage(e, tErrors, copy, describe));
     } finally {
       setBusy("none");
       // In `finally`, because an apply that FAILED may still have written
@@ -196,7 +204,7 @@ export function BulkUploadPanel({
     try {
       setSubmitReport(await api.bulkSubmitActivityRecords(recordIds));
     } catch (e) {
-      toast.error(submitErrorMessage(e));
+      showErrorToast(submitErrorMessage(e, submitCopy, describe));
     } finally {
       setBusy("none");
       // In `finally` for the same reason the import's is: no transaction spans
@@ -209,23 +217,22 @@ export function BulkUploadPanel({
   // still a card the reader has to parse.
   if (!canManage) return null;
 
-  const summary = report ? summarise(report, tErrors) : null;
+  const summary = report ? summarise(report, tErrors, copy) : null;
   const issueLabel = (code: BulkUploadIssueCode) => tErrors(`bulkUploadIssues.${code}`);
   const errorGroups = report ? groupIssues(report.errors.filter((issue) => issue.code !== "not_processed_deadline"), issueLabel) : [];
   const warningGroups = report ? groupIssues(report.warnings, issueLabel) : [];
   // Only after a real import: a dry run's rows carry no id, by contract.
   const eligible =
     report && !report.dryRun
-      ? eligibleForSubmit(report.accepted)
+      ? eligibleForSubmit(report.accepted, submitCopy)
       : { recordIds: [], needingEvidence: 0, overCap: 0, blockedReason: null };
-  const submitSummary = submitReport ? summariseSubmit(submitReport, tErrors) : null;
+  const submitSummary = submitReport ? summariseSubmit(submitReport, tErrors, submitCopy) : null;
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2 text-base">
-          <FileSpreadsheet className="h-4 w-4 text-muted-foreground" /> Bulk
-          upload
+          <FileSpreadsheet className="h-4 w-4 text-muted-foreground" /> {t("title")}
         </CardTitle>
         <Button
           variant="outline"
@@ -238,16 +245,12 @@ export function BulkUploadPanel({
           ) : (
             <Download className="mr-2 h-3.5 w-3.5" />
           )}
-          Download template
+          {t("downloadTemplate")}
         </Button>
       </CardHeader>
 
       <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Rows name reporting entities by id, so start from the template: its
-          Reference sheet lists the reporting entities you can import for, with
-          their ids.
-        </p>
+        <p className="text-sm text-muted-foreground">{t("intro")}</p>
 
         {!report && (
           <div
@@ -276,7 +279,7 @@ export function BulkUploadPanel({
             )}
             {busy === "checking" ? (
               <p className="text-sm font-medium text-foreground" role="status">
-                Checking {file?.name ?? "your file"}… nothing is being written.
+                {t("checking", { fileName: file?.name ?? t("yourFile") })}
               </p>
             ) : (
               <>
@@ -290,16 +293,13 @@ export function BulkUploadPanel({
                   size="sm"
                   onClick={() => inputRef.current?.click()}
                 >
-                  Choose a file
+                  {t("chooseFile")}
                 </Button>
-                <p className="text-xs text-muted-foreground">
-                  …or drop one here
-                </p>
+                <p className="text-xs text-muted-foreground">{t("orDrop")}</p>
               </>
             )}
             <p className="text-xs text-muted-foreground">
-              CSV or XLSX · up to {rowCount(BULK_UPLOAD_MAX_ROWS)} · max{" "}
-              {sizeCapLabel()}
+              {t("limits", { rows: rowCount(BULK_UPLOAD_MAX_ROWS, copy), size: sizeCapLabel(copy) })}
             </p>
             <input
               ref={inputRef}
@@ -322,8 +322,9 @@ export function BulkUploadPanel({
           >
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <p>{refusal}</p>
-              <p className="mt-1 font-medium">Nothing was imported.</p>
+              <p>{refusal.title}</p>
+              {refusal.description && <p className="mt-1 text-xs opacity-80">{refusal.description}</p>}
+              <p className="mt-1 font-medium">{t("nothingImported")}</p>
             </div>
           </div>
         )}
@@ -354,7 +355,7 @@ export function BulkUploadPanel({
                 {summary.detail && <p>{summary.detail}</p>}
                 {summary.acceptedCount > 0 && (
                   <p className="font-mono text-xs">
-                    {tonnesLabel(report.accepted)}
+                    {tonnesLabel(report.accepted, copy)}
                   </p>
                 )}
                 <p className="text-xs opacity-80">{report.fileName}</p>
@@ -424,8 +425,7 @@ export function BulkUploadPanel({
                     </ul>
                     {failuresToShow(submitReport.failed).remainder > 0 && (
                       <p className="mt-1.5 opacity-80">
-                        +{failuresToShow(submitReport.failed).remainder} more not
-                        shown.
+                        {t("moreNotShown", { count: formatNumber(failuresToShow(submitReport.failed).remainder, locale) })}
                       </p>
                     )}
                   </div>
@@ -446,9 +446,9 @@ export function BulkUploadPanel({
                   ) : null}
                   {/* The same label as the Previous submissions bar: "records",
                       not "rows" — imported rows are records by now. */}
-                  {draftsSubmitLabel(eligible.recordIds.length)}
+                  {draftsSubmitLabel(eligible.recordIds.length, submitCopy)}
                   {eligible.overCap > 0
-                    ? ` (${formatNumber(eligible.overCap)} more after this)`
+                    ? t("moreAfterThis", { count: formatNumber(eligible.overCap, locale) })
                     : ""}
                 </Button>
               )}
@@ -461,7 +461,7 @@ export function BulkUploadPanel({
                   {busy === "importing" ? (
                     <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                   ) : null}
-                  Import {rowCount(summary.acceptedCount)}
+                  {t("importRows", { rows: rowCount(summary.acceptedCount, copy) })}
                 </Button>
               )}
               <Button
@@ -470,9 +470,7 @@ export function BulkUploadPanel({
                 onClick={reset}
                 disabled={working}
               >
-                {report.dryRun
-                  ? "Choose a different file"
-                  : "Upload another file"}
+                {report.dryRun ? t("chooseDifferent") : t("uploadAnother")}
               </Button>
             </div>
           </div>
@@ -482,21 +480,21 @@ export function BulkUploadPanel({
       <Dialog open={confirmingSubmit} onOpenChange={setConfirmingSubmit}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Send these for review?</DialogTitle>
+            <DialogTitle>{t("submitTitle")}</DialogTitle>
             <DialogDescription>
-              {submitConfirmation(eligible.recordIds.length)}
+              {submitConfirmation(eligible.recordIds.length, submitCopy)}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmingSubmit(false)}>
-              Cancel
+              {t("cancel")}
             </Button>
             <Button
               data-testid="bulk-submit-confirm"
               onClick={() => void submitImported(eligible.recordIds)}
               disabled={working}
             >
-              Send for review
+              {t("sendForReview")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -505,21 +503,21 @@ export function BulkUploadPanel({
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Import these rows?</DialogTitle>
+            <DialogTitle>{t("importTitle")}</DialogTitle>
             <DialogDescription>
-              {report ? applyConfirmation(report) : null}
+              {report ? applyConfirmation(report, copy) : null}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirming(false)}>
-              Cancel
+              {t("cancel")}
             </Button>
             <Button
               data-testid="bulk-import-confirm"
               onClick={() => void apply()}
               disabled={working}
             >
-              Import
+              {t("import")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -544,6 +542,9 @@ function IssueList({
   groups: IssueGroup[];
   tone: "error" | "warning";
 }) {
+  const t = useTranslations("bulkUpload");
+  const locale = useLocale();
+  const copy = { t, locale };
   const widest = groups.reduce(
     (max, g) => (g.count > max ? g.count : max),
     0,
@@ -551,7 +552,7 @@ function IssueList({
   return (
     <div className="space-y-1.5">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {tone === "error" ? "Problems to fix" : "Worth knowing"}
+        {tone === "error" ? t("problems") : t("worthKnowing")}
       </p>
       {groups.map((group) => (
         <details
@@ -566,7 +567,7 @@ function IssueList({
         >
           <summary className="flex cursor-pointer items-center gap-1.5 rounded font-medium outline-none [&::-webkit-details-marker]:hidden focus-visible:ring-2 focus-visible:ring-ring">
             <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
-            {group.label} · {rowCount(group.count)}
+            {t("groupHeading", { label: group.label, rows: rowCount(group.count, copy) })}
           </summary>
           {/* A list, not a table: without headers a `<table>` is announced as
               "table, 50 rows, 3 columns" with nothing to orient by, and the
@@ -578,8 +579,7 @@ function IssueList({
           </ul>
           {group.count > MAX_ISSUE_ROWS_PER_GROUP && (
             <p className="mt-1.5 text-xs opacity-80">
-              +{group.count - MAX_ISSUE_ROWS_PER_GROUP} more with the same
-              problem.
+              {t("moreSameProblem", { count: formatNumber(group.count - MAX_ISSUE_ROWS_PER_GROUP, locale) })}
             </p>
           )}
         </details>
@@ -591,9 +591,10 @@ function IssueList({
 function IssueItem({ issue }: { issue: BulkUploadRowIssue }) {
   const tErrors = useTranslations("errors");
   const tEntry = useTranslations("dataEntry");
+  const t = useTranslations("bulkUpload");
   return (
     <li className="text-xs">
-      <span className="font-mono opacity-70">Row {issue.row}</span>
+      <span className="font-mono opacity-70">{t("row", { row: issue.row })}</span>
       {issue.column && (
         <span className="opacity-70"> · {tEntry(`bulkColumns.${issue.column}`)}</span>
       )}

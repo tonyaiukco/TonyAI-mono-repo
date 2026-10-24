@@ -1,0 +1,21 @@
+{
+  "title": "Son içe aktarmalar",
+  "loadFailed": "Son içe aktarmalar yüklenemedi.",
+  "empty": "Henüz içe aktarma yok. İçe aktardığınız bir dosya burada görünür; böylece ona geri dönebilirsiniz.",
+  "state": {
+    "completed": "İçe aktarıldı",
+    "failed": "Durduruldu",
+    "processing": "İçe aktarılıyor…",
+    "interrupted": "Yarıda kaldı"
+  },
+  "sendOne": "{count} taslağı incelemeye gönder",
+  "sendMany": "{count} taslağı incelemeye gönder",
+  "notAvailable": "Bu içe aktarma artık size açık değil.",
+  "waitingOne": "1 taslak önce bir kanıt dosyası gerektiriyor — dosya eklemek için Önceki gönderimler altında açın.",
+  "waitingMany": "{count} taslak önce bir kanıt dosyası gerektiriyor — Önceki gönderimler altında her faturayı kanıtladığı taslaklara ekleyin; bir dosya birden fazla taslağı kapsayabilir.",
+  "sourceCaution": "Yüklendiği haliyle özgün dosya. Elektronik tablo hücreleri formül içerebilir — yalnızca içeriğine güveniyorsanız açın.",
+  "download": "Dosyayı indir",
+  "confirmTitle": "Bunlar incelemeye gönderilsin mi?",
+  "cancel": "İptal",
+  "confirmSend": "İncelemeye gönder"
+}

@@ -1,20 +1,33 @@
 import { describe, it, expect } from 'vitest';
 import {
-  deriveEntryCoverage,
-  duplicateNote,
+  deriveEntryCoverage as deriveEntryCoverageIn,
+  duplicateNote as duplicateNoteIn,
   duplicatedMonths,
-  reviewBadge,
-  reviewNote,
-  reviewSentence,
-  shortfallReasons,
+  reviewBadge as reviewBadgeIn,
+  reviewNote as reviewNoteIn,
+  reviewSentence as reviewSentenceIn,
+  shortfallReasons as shortfallReasonsIn,
   slotState,
-  unreviewedRecordsNote,
+  unreviewedRecordsNote as unreviewedRecordsNoteIn,
+  invoiceTrackedList,
 } from './completeness-view';
 import type {
   CategoryCompleteness,
   CompletenessSlot,
   SubsidiaryCompletenessDTO,
 } from '@tonyai/shared-types';
+import { copyFor, recordWordsFor } from '@/lib/i18n/testing';
+import type { Locale } from '@/lib/types';
+
+// English unless a test says otherwise: the text the screens showed before LP4-04.
+const cc = (locale: Locale = 'en') => ({ ...copyFor('completeness', locale), words: recordWordsFor(locale) });
+const deriveEntryCoverage = (input: Omit<Parameters<typeof deriveEntryCoverageIn>[0], 'copy'>) => deriveEntryCoverageIn({ ...input, copy: cc() });
+const duplicateNote = (months: readonly string[]) => duplicateNoteIn(months, cc());
+const reviewBadge = (input: Parameters<typeof reviewBadgeIn>[0]) => reviewBadgeIn(input, cc());
+const reviewNote = (n: number) => reviewNoteIn(n, cc());
+const reviewSentence = (input: Parameters<typeof reviewSentenceIn>[0]) => reviewSentenceIn(input, cc());
+const shortfallReasons = (c: Parameters<typeof shortfallReasonsIn>[0], year: number | null) => shortfallReasonsIn(c, year, cc());
+const unreviewedRecordsNote = (n: number) => unreviewedRecordsNoteIn(n, cc());
 
 /**
  * The sentences this module builds are the whole of what a data-entry user is
@@ -694,5 +707,54 @@ describe('deriveEntryCoverage — the selected site', () => {
     expect(state('April')).toBe('open');
     // The other site's row must not leak into the panel for this one.
     expect(view.selected?.months).toHaveLength(12);
+  });
+});
+
+describe('in Turkish (LP4-04 slice 2)', () => {
+  const tr = () => cc('tr');
+  it('names a month held by the whole company in Turkish, with its year', () => {
+    const view = deriveEntryCoverageIn({
+      data: dto({ categories: [category({ companyLevelMonths: ['january'] })] }),
+      category: 'Electricity',
+      locationId: 'loc-1',
+      reportingPeriod: 'monthly',
+      periodValue: 'January',
+      hasEntry: true,
+      copy: tr(),
+    });
+    expect(view.kind === 'tracked' && view.warnings).toEqual([
+      'Ocak 2026 zaten tüm şirket için kaydedildi. Bunun için ayrıca bir tesis faturası girmek o ayı iki kez sayar — iki satır da emisyon toplamına girer.',
+    ]);
+  });
+
+  it('an annual and a quarterly entry get their own sentence', () => {
+    const at = (reportingPeriod: string) =>
+      deriveEntryCoverageIn({ data: dto(), category: 'Electricity', locationId: 'loc-1', reportingPeriod, periodValue: 'Q1', hasEntry: true, copy: tr() });
+    const annual = at('annual');
+    const quarterly = at('quarterly');
+    expect(annual.kind === 'tracked' && annual.warnings[0]).toMatch(/^Yıllık/);
+    expect(quarterly.kind === 'tracked' && quarterly.warnings[0]).toMatch(/^Çeyreklik/);
+  });
+
+  it('lists duplicated months by their Turkish names, one and many worded apart', () => {
+    expect(duplicateNoteIn(['January'], tr())).toMatch(/^Ocak hem bir tesiste .* o ay /);
+    expect(duplicateNoteIn(['January', 'February', 'March'], tr())).toMatch(/^Ocak, Şubat ve Mart hem .* bu aylar /);
+    expect(duplicateNote(['January'])).toMatch(/^January is recorded .*that month is/);
+    expect(duplicateNote(['January', 'March'])).toMatch(/^January and March are recorded .*those months are/);
+  });
+
+  it('a missing year reads as the reported year, never "null"', () => {
+    const coverage = { unattributedRecords: 0, outOfScopeRecords: 2, nonMonthlyRecords: 0, missingEvidenceRecords: 0 } as never;
+    expect(shortfallReasonsIn(coverage, null, tr())[0]).toContain('raporlanan yılın sonunda');
+    expect(shortfallReasons(coverage, null)[0]).toContain('at the end of the reported year');
+  });
+
+  it('the tracked categories are listed in Turkish', () => {
+    expect(invoiceTrackedList(tr())).toBe('Elektrik, Doğal gaz ve Su');
+  });
+
+  it('groups counts the Turkish way', () => {
+    expect(reviewBadgeIn({ awaitingReviewSlots: 1200, awaitingReviewRecords: 0 }, tr())).toBe('1.200 fatura inceleme bekliyor');
+    expect(reviewBadge({ awaitingReviewSlots: 1, awaitingReviewRecords: 0 })).toBe('1 invoice awaiting review');
   });
 });

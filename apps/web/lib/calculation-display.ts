@@ -43,8 +43,10 @@ export function notCalculatedReason(
 export function formatTCo2e(
   calculation: ActivityCalculationSnapshot,
   format: (value: number) => string,
+  /** The label in the screen's language (`common.notCalculated`). */
+  notCalculated: string = NOT_CALCULATED_LABEL,
 ): string {
   return isCalculated(calculation)
     ? format(calculation.tCo2e)
-    : NOT_CALCULATED_LABEL;
+    : notCalculated;
 }

@@ -1,7 +1,10 @@
+import { formatNumber } from '@/lib/i18n/number';
+import type { ViewTranslator } from '@/lib/i18n/view-translator';
 import {
   ANOMALY_BASELINE_PERIODS,
   ANOMALY_THRESHOLD,
   isAnomalyEvaluated,
+  type Locale,
 } from '@/lib/types';
 
 /**
@@ -39,19 +42,40 @@ export interface AnomalyVerdictFields {
 
 const pct = Math.round(ANOMALY_THRESHOLD * 100);
 
-/** tCO₂e as the rest of the app prints it — three decimals, no trailing noise. */
-function tonnes(value: number): string {
-  return `${value.toFixed(3).replace(/\.?0+$/, '')} tCO₂e`;
+/** The `anomaly` catalogue keys this module words its statements with. */
+export type AnomalyKey =
+  | 'tonnes'
+  | 'flagged.headline'
+  | 'flagged.detail'
+  | 'flagged.detailNoBaseline'
+  | 'clean.headline'
+  | 'clean.detail'
+  | 'notEvaluated.headline'
+  | 'notEvaluated.noFigure'
+  | 'notEvaluated.zeroAverage'
+  | 'notEvaluated.noHistory'
+  | 'notEvaluated.oneEarlier'
+  | 'notEvaluated.someEarlier'
+  | 'note.one'
+  | 'note.other';
+
+export type AnomalyTranslator = ViewTranslator<AnomalyKey>;
+
+/** tCO₂e as the rest of the app prints it — three decimals, no trailing noise,
+ *  no grouping (the English text the screens showed before LP4-04). */
+function tonnes(value: number, t: AnomalyTranslator, locale: Locale): string {
+  return t('tonnes', { value: formatNumber(value, locale, { maximumFractionDigits: 3, useGrouping: false }) });
 }
 
-export function anomalyStatement(record: AnomalyVerdictFields): AnomalyStatement {
+export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTranslator, locale: Locale): AnomalyStatement {
   const priors = record.anomalyBaselinePriorCount;
   const baseline = record.anomalyBaselineTCo2e;
+  const periods = ANOMALY_BASELINE_PERIODS;
 
   if (record.anomalyFlag) {
     return {
       tone: 'flagged',
-      headline: 'Flagged as anomalous',
+      headline: t('flagged.headline'),
       // VAR §4.3 PRESCRIBES this sentence ("This value deviates significantly
       // from historical average. Please verify."), so it is kept verbatim in
       // substance and the missing half is appended rather than substituted.
@@ -60,46 +84,40 @@ export function anomalyStatement(record: AnomalyVerdictFields): AnomalyStatement
       // that would let an author judge the warning was the one number absent.
       detail:
         baseline === null
-          ? `This value deviates significantly from the historical average for this reporting entity.`
-          : `This value deviates significantly from the historical average for this reporting entity — ${tonnes(baseline)} over the previous ${ANOMALY_BASELINE_PERIODS} comparable periods, a deviation of more than ${pct}%.`,
+          ? t('flagged.detailNoBaseline')
+          : t('flagged.detail', { baseline: tonnes(baseline, t, locale), periods, percent: pct }),
     };
   }
 
   if (isAnomalyEvaluated(record)) {
     return {
       tone: 'clean',
-      headline: 'Within the expected range',
-      detail: `Compared against ${tonnes(baseline as number)}, the average of the previous ${ANOMALY_BASELINE_PERIODS} comparable periods, and within ${pct}%.`,
+      headline: t('clean.headline'),
+      detail: t('clean.detail', { baseline: tonnes(baseline as number, t, locale), periods, percent: pct }),
     };
   }
 
   // Everything below is NOT a verdict. Each branch says which absence it is,
   // because "no figure of its own", "not enough history" and "every prior was
   // zero" are three different things to do something about.
+  const headline = t('notEvaluated.headline');
   if (priors === null) {
-    return {
-      tone: 'not_evaluated',
-      headline: 'Not checked for anomalies',
-      detail:
-        'This category produces no calculated figure, so there is nothing to compare against its history.',
-    };
+    return { tone: 'not_evaluated', headline, detail: t('notEvaluated.noFigure') };
   }
 
   if (priors >= ANOMALY_BASELINE_PERIODS) {
-    return {
-      tone: 'not_evaluated',
-      headline: 'Not checked for anomalies',
-      detail: `The previous ${ANOMALY_BASELINE_PERIODS} comparable periods average zero, so no deviation can be computed from them.`,
-    };
+    return { tone: 'not_evaluated', headline, detail: t('notEvaluated.zeroAverage', { periods }) };
   }
 
   return {
     tone: 'not_evaluated',
-    headline: 'Not checked for anomalies',
+    headline,
     detail:
       priors === 0
-        ? `No earlier committed period exists for this reporting entity, so there is no history to compare against. The check needs ${ANOMALY_BASELINE_PERIODS}.`
-        : `Only ${priors} earlier committed ${priors === 1 ? 'period' : 'periods'} exist${priors === 1 ? 's' : ''} for this reporting entity; the check needs ${ANOMALY_BASELINE_PERIODS}.`,
+        ? t('notEvaluated.noHistory', { periods })
+        : priors === 1
+          ? t('notEvaluated.oneEarlier', { periods })
+          : t('notEvaluated.someEarlier', { count: priors, periods }),
   };
 }
 
@@ -108,9 +126,7 @@ export function anomalyStatement(record: AnomalyVerdictFields): AnomalyStatement
  * there is nothing to say. Takes a COUNT rather than a record: the cell knows
  * how many of its records went unchecked, not which.
  */
-export function notEvaluatedNote(count: number): string | null {
+export function notEvaluatedNote(count: number, t: AnomalyTranslator): string | null {
   if (count <= 0) return null;
-  return count === 1
-    ? '1 entry was not checked for anomalies — too few comparable periods.'
-    : `${count} entries were not checked for anomalies — too few comparable periods.`;
+  return count === 1 ? t('note.one') : t('note.other', { count });
 }

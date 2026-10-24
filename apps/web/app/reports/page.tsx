@@ -12,6 +12,7 @@ import { CoverageCard } from '@/components/reports/coverage-card';
 import { IssuedReports } from '@/components/reports/issued-reports';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sidebar } from '@/components/dashboard/sidebar';
+import { SignOutButton } from '@/components/dashboard/sign-out-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,7 +33,6 @@ import {
   FileText,
   Info,
   Leaf,
-  LogOut,
   Radio,
   Table2,
 } from 'lucide-react';
@@ -95,7 +95,6 @@ function ReportsPageInner() {
   const tContext = useTranslations('reportingContext');
   const tCategory = useTranslations('categories');
   const t = useTranslations('reports');
-  const tCommon = useTranslations('common');
   const locale = useLocale() as Locale;
   const showError = useErrorToast();
   const fmt = (value: number) => formatNumber(value, locale, { maximumFractionDigits: 1 });
@@ -275,10 +274,7 @@ function ReportsPageInner() {
                 {user ? t('subtitleUser', { name: user.fullName, role: user.role }) : t('subtitle')}
               </p>
             </div>
-            <Button variant="outline" onClick={handleLogout} className="gap-2">
-              <LogOut className="h-4 w-4" />
-              {tCommon('signOut')}
-            </Button>
+            <SignOutButton onClick={handleLogout} />
           </div>
 
           {/* Provenance banner */}

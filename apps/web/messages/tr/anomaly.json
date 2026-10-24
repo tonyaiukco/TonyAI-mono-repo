@@ -1,0 +1,24 @@
+{
+  "tonnes": "{value} tCO₂e",
+  "flagged": {
+    "headline": "Anormal olarak işaretlendi",
+    "detail": "Bu değer, bu raporlama birimi için geçmiş ortalamadan önemli ölçüde sapıyor — önceki {periods} karşılaştırılabilir dönemde {baseline}; sapma %{percent} sınırını aşıyor.",
+    "detailNoBaseline": "Bu değer, bu raporlama birimi için geçmiş ortalamadan önemli ölçüde sapıyor."
+  },
+  "clean": {
+    "headline": "Beklenen aralıkta",
+    "detail": "Önceki {periods} karşılaştırılabilir dönemin ortalaması olan {baseline} ile karşılaştırıldı; sapma %{percent} içinde."
+  },
+  "notEvaluated": {
+    "headline": "Anormallik kontrolü yapılmadı",
+    "noFigure": "Bu kategori hesaplanmış bir değer üretmiyor; bu yüzden geçmişiyle karşılaştırılacak bir şey yok.",
+    "zeroAverage": "Önceki {periods} karşılaştırılabilir dönemin ortalaması sıfır; bu yüzden onlardan bir sapma hesaplanamaz.",
+    "noHistory": "Bu raporlama birimi için daha önce kesinleşmiş bir dönem yok; karşılaştırılacak geçmiş bulunmuyor. Kontrol için {periods} dönem gerekir.",
+    "oneEarlier": "Bu raporlama birimi için daha önce kesinleşmiş yalnızca 1 dönem var; kontrol için {periods} dönem gerekir.",
+    "someEarlier": "Bu raporlama birimi için daha önce kesinleşmiş yalnızca {count} dönem var; kontrol için {periods} dönem gerekir."
+  },
+  "note": {
+    "one": "1 kayıt anormallik açısından kontrol edilmedi — karşılaştırılabilir dönem sayısı yetersiz.",
+    "other": "{count} kayıt anormallik açısından kontrol edilmedi — karşılaştırılabilir dönem sayısı yetersiz."
+  }
+}

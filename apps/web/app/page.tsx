@@ -4,6 +4,7 @@ import { Suspense, useCallback, useState, useMemo, useEffect, useRef } from 'rea
 import { useTranslations } from 'use-intl';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
+import { SignOutButton } from '@/components/dashboard/sign-out-button';
 import { KPICards } from '@/components/dashboard/kpi-cards';
 import { TrackingMatrix } from '@/components/dashboard/tracking-matrix';
 import { AlertsPanel } from '@/components/dashboard/alerts-panel';
@@ -13,7 +14,6 @@ import { CoverageCard, CoverageUnavailable } from '@/components/reports/coverage
 import { withPreviewRetry } from '@/lib/report-preview';
 import { selectsScope3Only } from '@/lib/report-coverage-view';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,7 +30,6 @@ import {
   CheckCircle2,
   Clock,
   Globe,
-  LogOut,
   Search,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -70,6 +69,7 @@ export default function CarbonDashboard() {
 }
 
 function CarbonDashboardInner() {
+  const tRoles = useTranslations('users');
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   // LP3-02 N1: the one reporting selection, carried in the URL.
@@ -339,10 +339,10 @@ function CarbonDashboardInner() {
         <header className="sticky top-0 z-30 h-16 border-b border-[#D8D8DC] bg-[#EBEBF0]">
           <div className="flex h-16 items-center justify-between px-6">
             <div className="flex items-center gap-4">
-              <h1 className="text-xl font-bold text-[#1D1D1F]">Carbon Dashboard</h1>
+              <h1 className="text-xl font-bold text-[#1D1D1F]" data-testid="dashboard-title">Carbon Dashboard</h1>
               {user && (
                 <span className="hidden text-sm font-medium text-[#6E6E73] md:inline">
-                  {user.fullName} · {user.role}
+                  {user.fullName} · {tRoles(`roles.${user.role}`)}
                 </span>
               )}
             </div>
@@ -357,15 +357,7 @@ function CarbonDashboardInner() {
                   className="h-9 w-56 rounded-lg border-[#D8D8DC] bg-[#EBEBF0] pl-9 text-sm font-medium text-[#1D1D1F] placeholder:text-[#8E8E93] focus:ring-[#1B5E3B]/40"
                 />
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleLogout}
-                className="h-9 gap-2 rounded-lg border-[#D8D8DC] bg-[#EBEBF0] font-semibold text-[#1D1D1F] hover:bg-[#E0E0E5]"
-              >
-                <LogOut className="h-4 w-4" />
-                Sign out
-              </Button>
+              <SignOutButton onClick={handleLogout} size="sm" className="h-9 rounded-lg border-[#D8D8DC] bg-[#EBEBF0] font-semibold text-[#1D1D1F] hover:bg-[#E0E0E5]" />
             </div>
           </div>
         </header>

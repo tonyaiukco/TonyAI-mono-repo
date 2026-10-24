@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MESSAGES } from "@/messages";
+import { CONTEXT_FIELDS } from "@/lib/context-fields";
 import {
   ACTIVITY_VALUE_MAX,
   API_ERROR_CODES,
@@ -15,6 +16,10 @@ import {
   REPORTING_PERIODS,
   SUPPORTED_LOCALES,
   LOCALE_FORMAT_TAGS,
+  ACTIVITY_RECORD_STATUSES,
+  ACTIVITY_UNITS,
+  GEOGRAPHY_CODES,
+  GEOGRAPHY_LABELS,
 } from "@/lib/types";
 
 /** Every leaf of a catalogue, as `dotted.key → message`. */
@@ -96,6 +101,19 @@ describe("the catalogues", () => {
         .map((key) => `reports.${key}`),
       // Formats with no words (LP4-03 PR C).
       ...['subsidiaries.monthRange', 'gaps.line', 'gaps.lineWithSources'].map((key) => `boundary.${key}`),
+      // Units and formats with no words, and a name spelled alike (LP4-04 slice 2).
+      'anomaly.tonnes',
+      'bulkUpload.groupHeading',
+      'bulkUpload.sizeCap',
+      'bulkUpload.tonnes.figure',
+      'completeness.panel.slotLabel',
+      'dataEntry.preview.sourceValue',
+      'dataEntry.submissions.tonnes',
+      'evidence.size.mb',
+      'evidence.size.kb',
+      'evidence.size.bytes',
+      'evidence.removeAria',
+      'geography.TR',
     ]);
     const other = leaves(MESSAGES[locale]);
     for (const [key, message] of en) {
@@ -184,5 +202,48 @@ describe("the bulk import's issue labels (LP4-04)", () => {
     expect(Object.keys(labels).sort()).toEqual([...BULK_UPLOAD_ISSUE_CODES].sort());
     expect(Object.values(labels).every((v) => v.trim() !== "")).toBe(true);
     expect(new Set(Object.values(labels)).size).toBe(BULK_UPLOAD_ISSUE_CODES.length);
+  });
+});
+
+describe("the shared vocabularies (LP4-04 slice 2)", () => {
+  it.each(SUPPORTED_LOCALES)("%s: one status word per ACTIVITY_RECORD_STATUSES entry, as a badge and inside a sentence", (locale) => {
+    const statuses = MESSAGES[locale].recordStatus;
+    expect(Object.keys(statuses.label).sort()).toEqual([...ACTIVITY_RECORD_STATUSES].sort());
+    expect(Object.keys(statuses.inline).sort()).toEqual([...ACTIVITY_RECORD_STATUSES].sort());
+  });
+
+  it.each(SUPPORTED_LOCALES)("%s: one label per ACTIVITY_UNITS entry and one reason per blocked unit", (locale) => {
+    const units = MESSAGES[locale].units;
+    expect(Object.keys(units.label).sort()).toEqual(ACTIVITY_UNITS.map((u) => u.value).sort());
+    expect(Object.keys(units.blocked).sort()).toEqual(ACTIVITY_UNITS.filter((u) => u.blocked).map((u) => u.value).sort());
+  });
+
+  it("English is the contract's own wording, unchanged (units, blocked reasons, geography names)", () => {
+    const en = MESSAGES.en;
+    for (const unit of ACTIVITY_UNITS) {
+      expect(en.units.label[unit.value as keyof typeof en.units.label], unit.value).toBe(unit.label);
+      if (unit.blocked) expect(en.units.blocked[unit.value as keyof typeof en.units.blocked]).toBe(unit.blocked);
+    }
+    expect(en.geography).toEqual(GEOGRAPHY_LABELS);
+  });
+
+  it.each(SUPPORTED_LOCALES)("%s: one name per GEOGRAPHY_CODES entry", (locale) => {
+    expect(Object.keys(MESSAGES[locale].geography).sort()).toEqual([...GEOGRAPHY_CODES].sort());
+  });
+
+  it.each(SUPPORTED_LOCALES)("%s: every Additional context field has its label, its placeholder when it shows one, and its options' labels", (locale) => {
+    const context = MESSAGES[locale].dataEntry.context as unknown as Record<string, Record<string, { label?: string; placeholder?: string }>>;
+    const options = MESSAGES[locale].dataEntry.context.options as Record<string, string>;
+    for (const [set, fields] of Object.entries(CONTEXT_FIELDS)) {
+      const words = context[set];
+      expect(Object.keys(words ?? {}).sort(), set).toEqual(fields.map((f) => f.id).sort());
+      for (const field of fields) {
+        expect(words[field.id].label, `${set}.${field.id}`).toBeTruthy();
+        expect(words[field.id].placeholder !== undefined, `${set}.${field.id} placeholder`).toBe(field.placeholder === true);
+        for (const option of field.options ?? []) {
+          if (option.key) expect(options[option.key], `${set}.${field.id}.${option.value}`).toBeTruthy();
+        }
+      }
+    }
   });
 });

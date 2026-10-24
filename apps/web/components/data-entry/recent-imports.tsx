@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "use-intl";
+import { useLocale, useTranslations } from "use-intl";
 
 import { useCallback, useEffect, useState } from "react";
 import { Download, FileSpreadsheet, Loader2, Send } from "lucide-react";
@@ -19,6 +19,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useDescribeError, useStableErrorToast, showErrorToast } from "@/lib/i18n/hooks";
+import { LOCALE_FORMAT_TAGS } from "@/lib/types";
 import type { ImportBatchDTO } from "@/lib/types";
 import {
   submitConfirmation,
@@ -26,13 +28,12 @@ import {
   summariseSubmit,
 } from "@/lib/bulk-submit-view";
 import {
-  BATCH_STATE_LABEL,
   awaitingEvidenceNote,
   batchOutcome,
   batchState,
   batchSubmitLabel,
+  batchStateLabel,
   importBatchesErrorMessage,
-  SOURCE_FILE_CAUTION,
   submitFailureDetail,
   type BatchState,
 } from "@/lib/import-batches-view";
@@ -62,6 +63,14 @@ export function RecentImports({
   onSubmitted: () => void;
 }) {
   const tErrors = useTranslations("errors");
+  const t = useTranslations("imports");
+  const tSubmit = useTranslations("bulkSubmit");
+  const locale = useLocale();
+  const describe = useDescribeError();
+  const copy = { t, locale };
+  const submitCopy = { t: tSubmit, locale };
+  // Stable: `load` is a dependency of the effect that reads the list.
+  const stableErrorToast = useStableErrorToast();
   const [batches, setBatches] = useState<ImportBatchDTO[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [confirming, setConfirming] = useState<ImportBatchDTO | null>(null);
@@ -73,9 +82,9 @@ export function RecentImports({
       setFailed(false);
     } catch (e) {
       setFailed(true);
-      toast.error(importBatchesErrorMessage(e));
+      stableErrorToast(e);
     }
-  }, []);
+  }, [stableErrorToast]);
 
   useEffect(() => {
     void load();
@@ -87,9 +96,9 @@ export function RecentImports({
       window.open(url, "_blank", "noopener,noreferrer");
       // The file is kept exactly as it was uploaded, refused rows included, so
       // a cell can hold a spreadsheet formula someone else typed.
-      toast.message(SOURCE_FILE_CAUTION);
+      toast.message(t("sourceCaution"));
     } catch (e) {
-      toast.error(importBatchesErrorMessage(e));
+      showErrorToast(importBatchesErrorMessage(e, copy, describe));
     }
   }
 
@@ -98,13 +107,13 @@ export function RecentImports({
     setBusyId(batch.id);
     try {
       const report = await api.submitImportBatch(batch.id);
-      const summary = summariseSubmit(report, tErrors);
+      const summary = summariseSubmit(report, tErrors, submitCopy);
       // The panel's "see below" has no list below it here: say why instead.
-      const description = submitFailureDetail(report, tErrors("bulkIssues.not_processed_deadline"), tErrors, tErrors) ?? undefined;
+      const description = submitFailureDetail(report, tErrors("bulkIssues.not_processed_deadline"), tErrors, tErrors, locale) ?? undefined;
       if (summary.tone === "clean") toast.success(summary.headline);
       else toast.warning(summary.headline, { description });
     } catch (e) {
-      toast.error(submitErrorMessage(e));
+      showErrorToast(submitErrorMessage(e, submitCopy, describe));
     } finally {
       // In `finally`: there is no transaction, so a call that threw may still
       // have moved records.
@@ -121,7 +130,7 @@ export function RecentImports({
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
-          Recent imports
+          {t("title")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -132,17 +141,15 @@ export function RecentImports({
           </>
         )}
         {failed && batches === null && (
-          <p className="text-sm text-muted-foreground">Recent imports could not be loaded.</p>
+          <p className="text-sm text-muted-foreground">{t("loadFailed")}</p>
         )}
         {batches?.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            No imports yet. A file you import appears here, so you can come back to it.
-          </p>
+          <p className="text-sm text-muted-foreground">{t("empty")}</p>
         )}
         {batches?.map((batch) => {
           const state = batchState(batch, now);
-          const sendLabel = canSubmit ? batchSubmitLabel(batch.submittableDraftCount) : null;
-          const waiting = canSubmit ? awaitingEvidenceNote(batch) : null;
+          const sendLabel = canSubmit ? batchSubmitLabel(batch.submittableDraftCount, copy) : null;
+          const waiting = canSubmit ? awaitingEvidenceNote(batch, copy) : null;
           return (
             <div
               key={batch.id}
@@ -154,11 +161,11 @@ export function RecentImports({
                   {batch.fileName}
                 </span>
                 <Badge variant="outline" className={cn("text-xs", STATE_CLASS[state])}>
-                  {BATCH_STATE_LABEL[state]}
+                  {batchStateLabel(state, copy)}
                 </Badge>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                {new Date(batch.createdAt).toLocaleString("en-GB", {
+                {new Date(batch.createdAt).toLocaleString(LOCALE_FORMAT_TAGS[locale], {
                   dateStyle: "medium",
                   timeStyle: "short",
                 })}
@@ -172,11 +179,11 @@ export function RecentImports({
                   <Button
                     size="sm"
                     variant="outline"
-                    title={SOURCE_FILE_CAUTION}
+                    title={t("sourceCaution")}
                     onClick={() => void download(batch)}
                   >
                     <Download className="mr-1.5 h-3.5 w-3.5" />
-                    Download file
+                    {t("download")}
                   </Button>
                 )}
                 {sendLabel && (
@@ -203,16 +210,16 @@ export function RecentImports({
         <Dialog open onOpenChange={(open) => !open && setConfirming(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Send these for review?</DialogTitle>
+              <DialogTitle>{t("confirmTitle")}</DialogTitle>
               <DialogDescription>
-                {submitConfirmation(confirming.submittableDraftCount)}
+                {submitConfirmation(confirming.submittableDraftCount, submitCopy)}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setConfirming(null)}>
-                Cancel
+                {t("cancel")}
               </Button>
-              <Button onClick={() => void submit(confirming)}>Send for review</Button>
+              <Button onClick={() => void submit(confirming)}>{t("confirmSend")}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

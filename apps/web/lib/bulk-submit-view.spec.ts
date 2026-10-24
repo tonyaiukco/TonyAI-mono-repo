@@ -12,25 +12,43 @@ import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
   allEligibleSelected,
   authoredBy,
-  capRefusedNotice,
-  draftsSubmitLabel,
+  capRefusedNotice as capRefusedNoticeIn,
+  draftsSubmitLabel as draftsSubmitLabelIn,
   liveSelection,
-  eligibleForSubmit,
+  eligibleForSubmit as eligibleForSubmitIn,
   failuresToShow,
   MAX_FAILURES_SHOWN,
   needsEvidenceBeforeSubmit,
-  selectableDrafts,
+  selectableDrafts as selectableDraftsIn,
   selectAllEligible,
-  selectAllNotices,
-  submitBlockReason,
-  submitConfirmation,
-  submitErrorMessage,
+  selectAllNotices as selectAllNoticesIn,
+  submitBlockReason as submitBlockReasonIn,
+  submitConfirmation as submitConfirmationIn,
+  submitErrorMessage as submitErrorMessageIn,
   SUBMIT_ISSUE_LABEL,
   submitIssueLabel,
   submitIssueMessage,
-  summariseSubmit,
+  summariseSubmit as summariseSubmitIn,
   toggleSelected,
 } from '@/lib/bulk-submit-view';
+import { copyFor, describeFor, recordWordsFor } from '@/lib/i18n/testing';
+import type { Locale } from '@/lib/types';
+
+// The screens pass their language's copy; these specs assert the English
+// catalogue (the text the screens showed before LP4-04) unless they say so.
+const copy = (locale: Locale = 'en') => copyFor('bulkSubmit', locale);
+const eligibleForSubmit = (rows: BulkUploadAcceptedRow[], locale: Locale = 'en') => eligibleForSubmitIn(rows, copy(locale));
+const submitConfirmation = (n: number, locale: Locale = 'en') => submitConfirmationIn(n, copy(locale));
+const summariseSubmit = (r: BulkSubmitReportDTO, translate?: Parameters<typeof summariseSubmitIn>[1], locale: Locale = 'en') =>
+  summariseSubmitIn(r, translate, copy(locale));
+const submitErrorMessage = (e: unknown, locale: Locale = 'en') => submitErrorMessageIn(e, copy(locale), describeFor(locale)).title;
+const submitBlockReason = (row: SubmittableRow, user: SubmittingUser, locale: Locale = 'en') =>
+  submitBlockReasonIn(row, user, copy(locale), recordWordsFor(locale));
+const selectableDrafts = (rows: SubmittableRow[], user: SubmittingUser | null, locale: Locale = 'en') =>
+  selectableDraftsIn(rows, user, copy(locale), recordWordsFor(locale));
+const capRefusedNotice = (locale: Locale = 'en') => capRefusedNoticeIn(copy(locale));
+const selectAllNotices = (taken: number, overCap: number, locale: Locale = 'en') => selectAllNoticesIn(taken, overCap, copy(locale));
+const draftsSubmitLabel = (n: number, locale: Locale = 'en') => draftsSubmitLabelIn(n, copy(locale));
 import type {
   SubmittableRow,
   SubmittingUser,
@@ -271,15 +289,17 @@ describe('submitErrorMessage', () => {
     );
   });
 
-  it('keeps the server’s own sentence otherwise', () => {
+  it('keeps the server’s own sentence otherwise — in English', () => {
     expect(submitErrorMessage(new ApiError('recordIds must contain record ids', 400))).toBe(
       'recordIds must contain record ids',
     );
   });
 
-  it('survives something that is not an ApiError', () => {
-    expect(submitErrorMessage(new Error('offline'))).toBe('offline');
+  it('words anything else in the user’s language, never error.message', () => {
+    expect(submitErrorMessage(new Error('offline'))).toBe('Something went wrong.');
     expect(submitErrorMessage(null)).toMatch(/failed/i);
+    expect(submitErrorMessage(new ApiError('Too Many Requests', 429), 'tr')).toMatch(/bir dakika/i);
+    expect(submitErrorMessage(new ApiError('Forbidden', 403), 'tr')).toBe('Rolünüz faaliyet kaydı gönderemez.');
   });
 });
 
