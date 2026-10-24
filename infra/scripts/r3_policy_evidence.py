@@ -55,12 +55,16 @@ def error_code(exc):
     return next((name for name in ERRORS if isinstance(exc, getattr(builtins, name))), 'RuntimeError')
 
 
-def operation(function):
+def operation(function, snap_context=False):
     try:
         return {'state': 'ok', 'value': function()}
     except Exception as exc:
         # Exception messages can contain private output. Never export them.
-        return {'state': 'error', 'error': error_code(exc)}
+        result = {'state': 'error', 'error': error_code(exc)}
+        if snap_context and isinstance(exc, capture.ReadError):
+            result['context'] = {'format': 1, 'stage': exc.stage, 'errno': exc.errno,
+                                 'cleanup': exc.cleanup}
+        return result
 
 
 def command(name, deadline):
@@ -98,7 +102,8 @@ def collect(binding, checkpoint=lambda _value: None):
     value = {'format': 1, 'purpose': PURPOSE, 'binding': binding, 'sections': sections,
              'qualification': False, 'installation_success': False, 'policy_generated': False}
     def take(name, function):
-        sections[name] = ({'state': 'not_reached'} if time.monotonic() >= deadline else operation(function))
+        sections[name] = ({'state': 'not_reached'} if time.monotonic() >= deadline else
+                          operation(function, snap_context=name == 'file:/usr/bin/snap'))
         checkpoint(value)
     for name in ('inventory', 'audit', 'architecture'):
         take(name, lambda name=name: command(name, deadline))
