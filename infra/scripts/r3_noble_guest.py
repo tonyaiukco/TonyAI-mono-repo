@@ -32,7 +32,8 @@ POLICY_FILES = {'installation-policy.json', 'policy-facts-before.json', 'policy-
                 'cache-before.json', 'cache-after.json', 'maintenance-intent.json',
                 'maintenance-final.json', 'maintenance-complete.json', 'maintenance-pre-stop.json'} | {
     name + suffix for name in POLICY_COMMANDS for suffix in ('.stdout', '.stderr', '.command.json', '.exit.json')}
-GUEST_FILES = GUEST_REQUIRED_FILES | {SNAPSHOT} | POLICY_FILES
+COLLECTION_FILES = {'manifest.json', 'result.json', 'policy-evidence.json'}
+GUEST_FILES = GUEST_REQUIRED_FILES | {SNAPSHOT} | POLICY_FILES | COLLECTION_FILES
 
 
 def fixture_observation(value, baseline=None, child=None):
@@ -61,7 +62,7 @@ def fixture_observation(value, baseline=None, child=None):
                 raise ValueError('Changed package child identity')
 
 
-def verify_input():
+def verify_input(allowed_purposes):
     if os.geteuid() != 0 or Path('/sys/class/dmi/id/product_uuid').read_text().strip().lower() != 'd7fa1822-80db-4cba-9ef1-6e63549fe928':
         raise ValueError('Not the disposable fixture')
     mounts = Path('/proc/mounts').read_text().splitlines()
@@ -72,7 +73,7 @@ def verify_input():
     actual = {str(p.relative_to(INPUT)): file_hash(p) for p in INPUT.rglob('*') if p.is_file() and p.name != 'manifest.json'}
     if actual != manifest['files'] or any(p.is_symlink() for p in INPUT.rglob('*')):
         raise ValueError('Fixture input changed')
-    if manifest['purpose'] not in ('FIXTURE_DIAGNOSTIC_ONLY', 'FIXTURE_MAINTENANCE_ONLY'):
+    if manifest['purpose'] not in allowed_purposes:
         raise ValueError('Wrong input purpose')
     write(OUTPUT / 'manifest.json', encoded(manifest))
     return manifest
@@ -108,7 +109,7 @@ def archive(directory):
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode='w') as tar:
         for path in entries:
-            data = read(path)
+            data = read(path, 24 * 1024 * 1024 if path.name == 'policy-evidence.json' else 8 * 1024 * 1024)
             info = tarfile.TarInfo(path.name)
             info.size, info.mode = len(data), 0o600
             tar.addfile(info, io.BytesIO(data))
@@ -138,7 +139,7 @@ def write_all(port, data):
         remaining = remaining[written:]
 
 
-def main():
+def installation_main():
     os.umask(0o077)
     OUTPUT.mkdir(mode=0o700)  # Existing directory consumes/refuses this attempt.
     result = {'format': 1, 'purpose': 'FIXTURE_DIAGNOSTIC_ONLY', 'qa_ready': False,
@@ -171,7 +172,7 @@ def main():
     started = time.monotonic()
     command_deadline = started + 900
     try:
-        manifest = verify_input()
+        manifest = verify_input(('FIXTURE_DIAGNOSTIC_ONLY', 'FIXTURE_MAINTENANCE_ONLY'))
         result['source'] = manifest['source']
         result['purpose'] = manifest['purpose']
         if manifest['purpose'] == 'FIXTURE_MAINTENANCE_ONLY':
@@ -291,6 +292,77 @@ def main():
             write_all(port, archive(OUTPUT))
         signal.alarm(0)
     return 0 if result['status'] == 'DIAGNOSTIC_PASS_REVIEW_REQUIRED' else 1
+
+
+def collection_binding(manifest):
+    from r3_policy_evidence import A_PURPOSE
+    if (manifest.get('purpose') != A_PURPOSE or 'policy_sha256' in manifest
+            or 'installation-policy.json' in manifest['files']):
+        raise ValueError('Collection cannot carry installation policy')
+    return {'purpose': A_PURPOSE, 'source': manifest['source'],
+            'image_sha256': manifest['image_sha256'], 'fixture_uuid': manifest['fixture_uuid'],
+            'toolchain_sha256': manifest['files']['r3-toolchain.lock.json']}
+
+
+def collection_main():
+    from r3_policy_evidence import A_PURPOSE, collect, deadline_alarm, error_code
+    from r3_policy_validate import validate
+    os.umask(0o077)
+    OUTPUT.mkdir(mode=0o700)
+    result = {'format': 1, 'purpose': A_PURPOSE, 'qa_ready': False,
+              'target_qualified': False, 'install_attempted': False, 'status': 'REFUSED',
+              'phase': 'collection', 'source': None, 'checks': {}}
+    def checkpoint(value):
+        data = encoded(value)
+        if len(data) > 24 * 1024 * 1024:
+            raise ValueError('Collection evidence limit')
+        pending = OUTPUT / 'policy-progress.tmp'
+        try:
+            write(pending, data)
+            os.replace(pending, OUTPUT / 'policy-evidence.json')
+        finally:
+            pending.unlink(missing_ok=True)
+    signal.signal(signal.SIGALRM, deadline_alarm)
+    signal.alarm(300)
+    try:
+        manifest = verify_input((A_PURPOSE,))
+        result['source'] = manifest['source']
+        binding = collection_binding(manifest)
+        collect(binding, checkpoint)
+        result['checks'] = validate(read(OUTPUT / 'policy-evidence.json', 24 * 1024 * 1024), binding)
+        result['status'] = result['checks']['status']
+    except BaseException as exc:
+        result['failure_type'] = error_code(exc)
+    finally:
+        signal.alarm(60)
+        if 'failure_type' in result and (OUTPUT / 'policy-evidence.json').exists():
+            try:
+                result['checks'] = validate(read(OUTPUT / 'policy-evidence.json', 24 * 1024 * 1024), binding)
+                result['checks'].update(status='PARTIAL_REVIEW_REQUIRED', policy_input_hashes={})
+                result['status'] = 'PARTIAL_REVIEW_REQUIRED'
+            except Exception:
+                pass
+        result['not_reached'] = list(COMMANDS + POLICY_COMMANDS)
+        result['files'] = {p.name: file_hash(p) for p in OUTPUT.iterdir() if p.is_file()}
+        write(OUTPUT / 'result.json', encoded(result))
+        with open(PORT, 'wb', buffering=0) as port:
+            write_all(port, archive(OUTPUT))
+        signal.alarm(0)
+    return 0 if result['status'] == 'COLLECTED_REVIEW_REQUIRED' else 1
+
+
+def main():
+    # Routing reads only the bounded input manifest. Each route verifies it again.
+    # The collection call graph never enters installation_main, including cleanup.
+    try:
+        purpose = json.loads(read(INPUT / 'manifest.json')).get('purpose')
+    except Exception:
+        return 1
+    if purpose == 'FIXTURE_POLICY_COLLECTION_ONLY':
+        return collection_main()
+    if purpose in ('FIXTURE_DIAGNOSTIC_ONLY', 'FIXTURE_MAINTENANCE_ONLY'):
+        return installation_main()
+    return 1
 
 
 if __name__ == '__main__':

@@ -255,11 +255,100 @@ install('receipt-dpkg-binding', "'dpkg_log_sha256': digest(private_read(transact
 toolchain('dpkg-pty-option', ", '-o', 'Dpkg::Use-Pty=0'", '')
 add(AO, 'observation-zero-job-accepted', "fields['Job'] != ''", "fields['Job'] not in ('', '0')")
 
+# Bounded collector review regression gate; synthetic inputs only.
+add('infra/scripts/r3_policy_scope.py', 'policy-physical-line-comments', ', normalized(apt28_comment_view(raw))', '')
+add('infra/scripts/r3_policy_scope.py', 'policy-reload-no', "item['NeedDaemonReload'] != 'no' or ", '')
+add('infra/scripts/r3_policy_validate.py', 'policy-stderr', "good = blob(item['stderr'], 2 * 1024 * 1024) == b''", 'good = True')
+add('infra/scripts/r3_policy_evidence.py', 'policy-path-stderr', " or value['stderr']['bytes'] != 0", '')
+add('infra/scripts/r3_policy_validate.py', 'policy-cat-body', 'complete &= raw == expected_text', 'complete &= True')
+add('infra/scripts/r3_policy_validate.py', 'policy-paths-crosscheck', "complete &= unit_paths(blob(sections[name]['value']['stdout'], 2 * 1024 * 1024)) == unit['paths']", 'complete &= True')
+add('infra/scripts/r3_policy_validate.py', 'policy-apt-file', "complete &= sections.get('file:' + path) == {'state': 'ok', 'value': item}", 'complete &= True')
+add('infra/scripts/r3_policy_validate.py', 'policy-fixed-unit', "complete &= sections['file:' + path] == {'state': 'ok', 'value': item}", 'complete &= True')
+add('infra/scripts/r3_policy_validate.py', 'policy-scope-check-apt', '        check_apt(value)', '        pass')
+add('infra/scripts/r3_policy_target.py', 'policy-proposal-imds', "or before['imds'] != proposal['target']['imds']", 'or False')
+add('infra/scripts/r3_policy_validate.py', 'policy-os-release', "re.findall(rb'^ID=(.*)$', raw, re.M) == [b'ubuntu']", 'True')
+add('infra/scripts/r3_policy_validate.py', 'policy-os-version', 're.findall(rb\'^VERSION_ID=(.*)$\', raw, re.M) == [b\'"24.04"\']', 'True')
+add('infra/scripts/r3_policy_evidence.py', 'policy-unknown-read', 'if name not in DIRECTORY_NAMES[path]:', 'if False:')
+add('infra/scripts/r3_policy_evidence.py', 'policy-drift', 'elif again != section:', 'elif False:')
+add('infra/scripts/r3_policy_evidence.py', 'policy-deadline-class', 'class CollectionDeadline(BaseException):', 'class CollectionDeadline(Exception):')
+add('infra/scripts/r3_policy_evidence.py', 'policy-reread-deadline', "        if time.monotonic() >= deadline:\n            sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}\n            checkpoint(value)\n            continue", '        if False:\n            continue')
+add('infra/scripts/r3_policy_capture.py', 'policy-path-recheck', '            same(before, os.stat(Path(path).name, dir_fd=parent, follow_symlinks=False))', '            pass')
+add('infra/scripts/r3_policy_capture.py', 'policy-length-recheck', 'if len(data) != before.st_size:', 'if False:')
+add('infra/scripts/r3_policy_receive.py', 'policy-packet-path', "and approval.get('packet_path') == str(packet.resolve())", 'and True')
+add('infra/scripts/r3_policy_receive.py', 'policy-payload', 'require(guest == payload(proposal))', 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-region', "require(target['imds']['location'] == 'swedencentral')", 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-vm-id', "control['vm_id'] == target['imds']['resourceId']", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-index', "require(index == {'proposal_sha256': digest(proposal_bytes), 'guest_sha256': digest(guest),\n                      'state': 'PREPARED_UNAPPROVED_UNEXECUTED'})", 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-host-name', 'fields[0] == host', 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-host-fingerprint', "fresh['host_key_fingerprint'] == host_fingerprint", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-update-hostkeys', "'UpdateHostKeys=no'", "'UpdateHostKeys=yes'")
+add('infra/scripts/r3_policy_git.py', 'policy-replace-objects', "['git', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', str(root), *args]", "['git', '-C', str(root), *args]")
+add('infra/scripts/r3_policy_git.py', 'policy-git-env', 'env=env, timeout=10', 'timeout=10')
+add('infra/scripts/r3_policy_git.py', 'policy-ignored-cache', "or git(root, 'status', '--porcelain', '--ignored', '--untracked-files=all',\n                   '--', 'infra/scripts', 'infra/selfhost')", 'or False')
+add('infra/scripts/r3_policy_git.py', 'policy-blob', "if digest(git(root, 'show', head + ':' + name)) != expected:", 'if False:')
+add('infra/scripts/r3_policy_packet.py', 'policy-source-cache', '    sys.pycache_prefix = _source_cache.name', '    pass')
+add('infra/scripts/r3_policy_receive.py', 'policy-source-cache', '    sys.pycache_prefix = _source_cache.name', '    pass')
+add('infra/scripts/r3_noble_guest.py', 'policy-partial-hashes', "result['checks'].update(status='PARTIAL_REVIEW_REQUIRED', policy_input_hashes={})", "result['checks'].update(status='PARTIAL_REVIEW_REQUIRED')")
+add('infra/scripts/r3_noble_fixture.py', 'policy-partial-readback-hashes', "checked.update(status='PARTIAL_REVIEW_REQUIRED', policy_input_hashes={})", "checked.update(status='PARTIAL_REVIEW_REQUIRED')")
+add('infra/scripts/r3_noble_guest.py', 'policy-route-fallback', '    except Exception:\n        return 1\n    if purpose', '    except Exception:\n        return installation_main()\n    if purpose')
+add('infra/scripts/r3_noble_guest.py', 'policy-route-purpose', "if manifest['purpose'] not in allowed_purposes:", 'if False:')
+
+add('infra/scripts/r3_policy_git.py', 'policy-fsmonitor', "'-c', 'core.fsmonitor=false', ", '')
+
+add('infra/scripts/r3_policy_receive.py', 'policy-transport-failure', "disposition['failure'] is not None or disposition['cleanup_errors']", "False or disposition['cleanup_errors']")
+add('infra/scripts/r3_policy_receive.py', 'policy-cleanup-failure', "or disposition['cleanup_errors']", 'or False')
+add('infra/scripts/r3_policy_receive.py', 'policy-transport-exit', "disposition['returncode'] != 0 or interrupted", 'False or interrupted')
+add('infra/scripts/r3_policy_receive.py', 'policy-transport-signal', "or disposition['returncode'] != 0 or interrupted", "or disposition['returncode'] != 0 or False")
+add('infra/scripts/r3_policy_receive.py', 'policy-transport-hashes', "checked.update(status='PARTIAL_REVIEW_REQUIRED', policy_input_hashes={})", "checked.update(status='PARTIAL_REVIEW_REQUIRED')")
+add('infra/scripts/r3_policy_receive.py', 'policy-status-exit', "return 0 if summary['sealed'] and summary['status'] == 'COLLECTED_REVIEW_REQUIRED' else 2", "return 0 if summary['sealed'] else 2")
+add('infra/scripts/r3_noble_fixture.py', 'policy-frame-files', 'or set(entries) != COLLECTION_FILES', 'or False')
+add('infra/scripts/r3_noble_fixture.py', 'policy-checks-readback', "result.get('checks') != checked or result.get('status') != expected_status", "False or result.get('status') != expected_status")
+add('infra/scripts/r3_noble_guest.py', 'policy-manifest-policy-file', "or 'installation-policy.json' in manifest['files']", 'or False')
+add('infra/scripts/r3_noble_inputs.py', 'policy-stage-policy', 'if collection_only and policy_bytes is not None:', 'if False:')
+add('infra/scripts/r3_noble_fixture.py', 'policy-controller-policy', "or (purpose == 'policy-collection' and policy_bytes is not None)", 'or False')
+add('infra/scripts/r3_noble_fixture.py', 'policy-collection-exit', "('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED') and summary['sealed']", "('DIAGNOSTIC_PASS_REVIEW_REQUIRED',) and summary['sealed']")
+
+# Independent re-review: program configuration and isolated authority/scope guards.
+add('infra/scripts/r3_policy_git.py', 'policy-program-config-call', '    refuse_program_config(root)\n', '    pass\n')
+add('infra/scripts/r3_policy_git.py', 'policy-filter-config', "'filter.', ", '')
+add('infra/scripts/r3_policy_git.py', 'policy-info-attributes-size', 'or info.st_size != 0', 'or False')
+add('infra/scripts/r3_policy_git.py', 'policy-no-lazy-fetch', "'GIT_NO_LAZY_FETCH': '1', ", '')
+add('infra/scripts/r3_policy_validate.py', 'policy-apt-directory', "complete &= sections['directory:/etc/apt/apt.conf.d'] == {'state': 'ok', 'value': apt['directory']}", 'complete &= True')
+add('infra/scripts/r3_policy_receive.py', 'policy-approval-digest', 'require(digest(approval_data) == expected_hash)', 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-approval-attempt-count', "and approval['attempts'] == 1", 'and True')
+add('infra/scripts/r3_policy_receive.py', 'policy-owner-reference-bound', '<= 2000', '<= 20000')
+add('infra/scripts/r3_policy_receive.py', 'policy-source-files', "source['files'] == sources()", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-source-map', "source['sha256'] == digest(encoded(source['files']))", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-published-head', "require(verified_head(ROOT, source['files']) == source['published_sha'])", "require(verified_head(ROOT, source['files']) is not None)")
+add('infra/scripts/r3_policy_receive.py', 'policy-custody-digest', "require(digest(read(custody[key], 32 * 1024 * 1024)) == custody[key + '_sha256'])", 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-recipient-digest', "    recipient(custody['recipient'], custody['recipient_sha256'])", '    pass')
+add('infra/scripts/r3_policy_receive.py', 'policy-agent-socket', "require(stat.S_ISSOCK(os.stat(os.environ.get('SSH_AUTH_SOCK', '')).st_mode))", 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-fresh-digest', "require(digest(fresh_bytes) == approval['fresh_control_plane_readback_sha256'])", 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-fresh-schema', "require(set(fresh) == {'observed_at', 'target', 'host_key_fingerprint'})", 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-fresh-future', '0 <= age <= 900', 'age <= 900')
+add('infra/scripts/r3_policy_receive.py', 'policy-fresh-expired', '0 <= age <= 900', '0 <= age')
+add('infra/scripts/r3_policy_receive.py', 'policy-fresh-target', "fresh['target'] == target", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-control-schema', "set(target['control_plane']) ==\n            {'tenant', 'subscription', 'vm_id', 'vm_uuid', 'location', 'image', 'disks', 'public_ip', 'private_ip', 'network'}", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-control-presence', 'require(all(control[k] for k in control))', 'require(True)')
+add('infra/scripts/r3_policy_receive.py', 'policy-control-uuid', "control['vm_uuid'] == target['imds']['vmId']", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-control-subscription', "control['subscription'] == target['imds']['subscriptionId']", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-control-location', "control['location'] == target['imds']['location']", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-control-host', "connection['host'] in (control['public_ip'], control['private_ip'])", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-image-schema', "set(control['image']) == {'publisher', 'offer', 'sku', 'version', 'exactVersion'}", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-image-correspondence', "all(control['image'][k] == target['imds'][k] for k in ('publisher', 'offer', 'sku'))", 'True')
+add('infra/scripts/r3_policy_receive.py', 'policy-image-exact-version', "control['image']['exactVersion'] == target['imds']['version']", 'True')
+
+add('infra/scripts/r3_policy_git.py', 'policy-gitlinks', "if any(entry.startswith(b'160000 ') for entry in listing.split(b'\\0')):", 'if False:')
+add('infra/scripts/r3_policy_git.py', 'policy-index-gitlinks', "git(root, 'ls-files', '--stage', '-z')", "b''")
+add('infra/scripts/r3_policy_git.py', 'policy-head-gitlinks', "git(root, 'ls-tree', '-r', '-z', head)", "b''")
+
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
     if file.endswith('.mjs'):
         return node_command
-    if file.startswith('.github/workflows/'):
+    if file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
+        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config']
+    elif file.startswith('.github/workflows/'):
         suites = ['test_r3_workflow']
     elif file.endswith(('r3_image_transport.py', 'r3_guard_files.py', 'r3_package_evidence.py',
                         'r3_source_plan.py', 'replacement_host.py')):
