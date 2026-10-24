@@ -2,6 +2,8 @@
 
 import type { DataStatus, TrackingMatrixCell } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { useCompletenessCopy } from '@/lib/i18n/hooks';
+import type { CompletenessCopy } from '@/lib/completeness-view';
 import {
   reviewBadge,
   reviewSentence,
@@ -101,7 +103,7 @@ function formatEmission(value: number): string {
  * worth), and the entry count includes drafts, which no counter explains. What
  * these lines are is a list of REASONS entries did not close a slot.
  */
-function cellReasons(cell: TrackingMatrixCell, reportingYear: number | null): string[] {
+function cellReasons(cell: TrackingMatrixCell, reportingYear: number | null, copy: CompletenessCopy): string[] {
   const c = cell.coverage;
   // One chooser for the unit, shared with the drill-down and the entry panel.
   // A cell with no `coverage` has no shortfall counters at all, so this is the
@@ -111,14 +113,14 @@ function cellReasons(cell: TrackingMatrixCell, reportingYear: number | null): st
   const review = reviewSentence({
     awaitingReviewSlots: c?.awaitingReviewSlots,
     awaitingReviewRecords: cell.awaitingReviewRecords,
-  });
+  }, copy);
   if (!c) return review ? [review] : [];
   // One phrasing of the rule, shared with the drill-down and the Data Entry
   // panel. This function used to keep its own near-identical copy, differing in
   // wording ("entries have" vs "entries are with") and in the order the reasons
   // appeared — two sentences for one compliance rule on two surfaces of the
   // same dashboard.
-  const reasons = shortfallReasons(c, reportingYear);
+  const reasons = shortfallReasons(c, reportingYear, copy);
   // Without this the DE-2 scenario renders a "Partial" badge above "Invoices
   // 24 of 24" and no explanation anywhere on the cell: all four shortfall
   // counters are zero when every slot is closed by an unreviewed invoice.
@@ -134,18 +136,19 @@ export function StatusCell({
   compact = false,
   label,
 }: StatusCellProps) {
+  const completenessCopy = useCompletenessCopy();
   const config = statusConfig[cell.status];
   const hasEmission = cell.tCo2e !== null;
   const emission = cell.tCo2e === null ? null : Math.round(cell.tCo2e);
   const coverage = cell.coverage;
-  const reasons = cellReasons(cell, reportingYear);
+  const reasons = cellReasons(cell, reportingYear, completenessCopy);
   // The same unit the tooltip chose. Announcing a record count beside a face
   // showing "3/24" told a screen-reader user a different number from the one on
   // screen, in a different unit, with nothing saying so.
   const badge = reviewBadge({
     awaitingReviewSlots: coverage?.awaitingReviewSlots,
     awaitingReviewRecords: cell.awaitingReviewRecords,
-  });
+  }, completenessCopy);
 
   // On an invoice-tracked cell the fraction IS the status, so it takes the
   // cell face and the tonnage moves into the tooltip. A cell showing "818"

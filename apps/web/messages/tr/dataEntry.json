@@ -106,5 +106,222 @@
   "selectAllLoadedName": "Yüklenen {count} kaydın tümünü seç: yüklenen kayıtlar arasında girdiğiniz ve gönderebileceğiniz her taslak",
   "previousShown": "{total} kayıttan {shown} tanesi gösteriliyor. Seçimler yalnızca burada yüklenen kayıtlara uygulanır.",
   "previousShownLoaded": "Yüklenen {shown} kayıt gösteriliyor. Seçimler yalnızca burada yüklenen kayıtlara uygulanır.",
-  "previousLoadMore": "Daha fazla yükle"
+  "previousLoadMore": "Daha fazla yükle",
+  "subsidiaryUnavailable": "Bu bağlı şirket size açık değil.",
+  "unknownCategory": "Bilinmeyen kategori: \"{category}\".",
+  "recordsExist": "{year} için {total} adet {category} kaydı var. Önceki gönderimlerden birini seçin ya da başka bir dönem girin.",
+  "severalRecordsExist": "{year} için birden fazla {category} kaydı var. Önceki gönderimlerden birini seçin ya da başka bir dönem girin.",
+  "notEditable": "Bu kayıt {status} durumda ve artık düzenlenemez.",
+  "notYourRecord": "Bu kaydı başka biri girdi — yalnızca kaydı giren kişi değiştirebilir.",
+  "periodLockedRecord": "{period} {year} kilitli — bu kaydın değişebilmesi için bir super_admin'in kilidi açması gerekir.",
+  "nowEnteringNew": "Artık yeni bir kayıt giriyorsunuz — açtığınız kayıt değişmedi.",
+  "context": {
+    "title": "Ek bağlam",
+    "badge": "İsteğe bağlı · üst veri olarak kaydedilir",
+    "selectPlaceholder": "Seçin…",
+    "options": {
+      "liters": "Litre",
+      "cubicMeters": "Metreküp",
+      "tonnes": "Ton",
+      "heating": "Isıtma",
+      "powerGeneration": "Elektrik üretimi",
+      "industrialProcess": "Endüstriyel proses",
+      "other": "Diğer",
+      "economy": "Ekonomi",
+      "business": "Business sınıfı",
+      "firstClass": "Birinci sınıf",
+      "mixed": "Karışık",
+      "landfill": "Düzenli depolama",
+      "incineration": "Yakma",
+      "recycling": "Geri dönüşüm",
+      "composting": "Kompostlama"
+    },
+    "electricity": {
+      "total_kwh": {
+        "label": "Toplam tüketim",
+        "placeholder": "Toplam kWh girin"
+      },
+      "renewable_kwh": {
+        "label": "Yenilenebilir enerji",
+        "placeholder": "Yenilenebilir kWh girin"
+      },
+      "billing_period_start": {
+        "label": "Fatura dönemi başlangıcı"
+      },
+      "billing_period_end": {
+        "label": "Fatura dönemi sonu"
+      },
+      "utility_provider": {
+        "label": "Enerji tedarikçisi",
+        "placeholder": "ör. Enerjisa, CK Enerji"
+      },
+      "notes": {
+        "label": "Ek notlar",
+        "placeholder": "İlgili yorum veya açıklamalar..."
+      }
+    },
+    "fuel": {
+      "quantity": {
+        "label": "Miktar",
+        "placeholder": "Miktar girin"
+      },
+      "quantity_unit": {
+        "label": "Birim"
+      },
+      "purpose": {
+        "label": "Kullanım amacı"
+      },
+      "fuel_notes": {
+        "label": "Notlar",
+        "placeholder": "Ek bağlam..."
+      }
+    },
+    "businessTravel": {
+      "short_haul_km": {
+        "label": "Kısa mesafe uçuşlar (<1500 km)",
+        "placeholder": "Toplam kilometre"
+      },
+      "medium_haul_km": {
+        "label": "Orta mesafe uçuşlar (1500-4000 km)",
+        "placeholder": "Toplam kilometre"
+      },
+      "long_haul_km": {
+        "label": "Uzun mesafe uçuşlar (>4000 km)",
+        "placeholder": "Toplam kilometre"
+      },
+      "travel_class": {
+        "label": "Ağırlıklı seyahat sınıfı"
+      },
+      "rental_car_km": {
+        "label": "Kiralık araç mesafesi",
+        "placeholder": "Toplam kilometre"
+      },
+      "train_km": {
+        "label": "Tren mesafesi",
+        "placeholder": "Toplam kilometre"
+      },
+      "taxi_km": {
+        "label": "Taksi/araç paylaşımı mesafesi",
+        "placeholder": "Toplam kilometre"
+      }
+    },
+    "waste": {
+      "general_waste_tonnes": {
+        "label": "Genel atık",
+        "placeholder": "Ton girin"
+      },
+      "recycled_waste_tonnes": {
+        "label": "Geri dönüştürülen atık",
+        "placeholder": "Ton girin"
+      },
+      "hazardous_waste_tonnes": {
+        "label": "Tehlikeli atık",
+        "placeholder": "Ton girin"
+      },
+      "disposal_method": {
+        "label": "Başlıca bertaraf yöntemi"
+      },
+      "waste_notes": {
+        "label": "Notlar",
+        "placeholder": "Atık yönetimi ayrıntıları..."
+      }
+    },
+    "water": {
+      "municipal_water_m3": {
+        "label": "Şebeke suyu",
+        "placeholder": "Metreküp girin"
+      },
+      "groundwater_m3": {
+        "label": "Yeraltı suyu",
+        "placeholder": "Metreküp girin"
+      },
+      "recycled_water_m3": {
+        "label": "Geri kazanılmış su",
+        "placeholder": "Metreküp girin"
+      }
+    },
+    "logistics": {
+      "road_freight_tkm": {
+        "label": "Karayolu taşımacılığı",
+        "placeholder": "Ton-kilometre girin"
+      },
+      "rail_freight_tkm": {
+        "label": "Demiryolu taşımacılığı",
+        "placeholder": "Ton-kilometre girin"
+      },
+      "sea_freight_tkm": {
+        "label": "Denizyolu taşımacılığı",
+        "placeholder": "Ton-kilometre girin"
+      },
+      "air_freight_tkm": {
+        "label": "Havayolu taşımacılığı",
+        "placeholder": "Ton-kilometre girin"
+      },
+      "logistics_notes": {
+        "label": "Notlar",
+        "placeholder": "Lojistik ayrıntıları..."
+      }
+    },
+    "other": {
+      "activity_value": {
+        "label": "Faaliyet değeri",
+        "placeholder": "Değer girin"
+      },
+      "activity_unit": {
+        "label": "Birim"
+      },
+      "notes": {
+        "label": "Notlar",
+        "placeholder": "Ek notlar..."
+      }
+    },
+    "refused": "Ek bağlamdaki bir sayı geçerli değil — kaydetmeden önce düzeltin ya da silin."
+  },
+  "anomaly": {
+    "verifyAndExplain": "Lütfen değeri doğrulayın ve göndermeden önce sapmayı açıklayın.",
+    "varianceLabel": "Sapma gerekçesi *",
+    "variancePlaceholder": "ör. bu dönemde yeni üretim hattı devreye alındı"
+  },
+  "preview": {
+    "emissionFactor": "Emisyon faktörü",
+    "recordedAs": "Kaydedilen değer",
+    "geography": "Coğrafya",
+    "normalisedInput": "Normalleştirilmiş girdi",
+    "activity": "Faaliyet",
+    "methodology": "Metodoloji",
+    "source": "Kaynak",
+    "sourceValue": "{source} ({version})",
+    "factorStatus": "Faktör durumu",
+    "authoritative": "Yetkili",
+    "notAuthoritative": "Yer tutucu — yetkili değil (faktör veya dönüşüm)",
+    "scopeLine": "Kapsam {scope} · {kg} kgCO₂e",
+    "unitConverted": "Faktör uygulanmadan önce birim {from} biriminden {to} birimine dönüştürüldü.",
+    "invoiceRequired": "Bu kaydı yine de kaydedip gönderebilirsiniz. Gönderilmeden önce bir fatura gereklidir; emisyon faktörü olmadığından tüketilen miktarın tek kaydı faturadır.",
+    "invoiceCompleteness": "Tek bir ay için bir tesise kaydedildiğinde, o tesisin fatura tamlığına da sayılır — tamlık hesaplanan değerden değil, faturadan ölçülür."
+  },
+  "submissions": {
+    "title": "Önceki gönderimler",
+    "attachStart": "Tek dosyayı birden fazla kayda ekle",
+    "attachHint": "Bu belgenin kanıtladığı kayıtları işaretleyin.",
+    "selectedCount": "{count} seçildi",
+    "cancel": "İptal",
+    "clear": "Temizle",
+    "moreNotShown": "+{count} tane daha gösterilmiyor.",
+    "empty": "Bu bağlı şirket için henüz gönderim yok.",
+    "attachTitle": "Bu dosya eklensin mi?",
+    "attach": "Ekle",
+    "submitTitle": "Bunlar incelemeye gönderilsin mi?",
+    "sendForReview": "İncelemeye gönder",
+    "checkboxAttach": "Dosyayı şuna ekle: {record}",
+    "checkboxSelect": "Seç: {record}",
+    "aSite": "Bir tesis",
+    "tooLarge": "{fileName}: 10 MB sınırını aşıyor",
+    "tonnes": "{value} tCO₂e"
+  },
+  "move": {
+    "anotherSite": "başka bir tesis",
+    "wholeCompany": "tüm şirket",
+    "withFigure": "Kaydetmek bu kaydı {from} konumundan {to} konumuna taşır. Kopyalanmaz — emisyon faktörü coğrafyasına göre yeniden hesaplanır.",
+    "withoutFigure": "Kaydetmek bu kaydı {from} konumundan {to} konumuna taşır. Kopyalanmaz — bugün için hiçbir emisyon faktörü bulunmuyor, bu yüzden \"Hesaplanmadı\" olarak kalır."
+  }
 }

@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useLocale, useTranslations } from 'use-intl';
+import { useDescribeError, useRecordWords } from '@/lib/i18n/hooks';
+import { formatNumber } from '@/lib/i18n/number';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -11,7 +14,7 @@ import {
   deriveEntryCoverage,
   invoiceTrackedList,
   SHORT_MONTH,
-  SLOT_DESCRIPTION,
+  slotDescription,
   SLOT_GLYPH,
   type SlotState,
 } from '@/lib/completeness-view';
@@ -61,11 +64,6 @@ const TONE_CLASS: Record<DataStatus, string> = {
   missing: 'border-status-missing-text/30 bg-status-missing-bg text-status-missing-text',
 };
 
-const STATUS_LABEL: Record<DataStatus, string> = {
-  complete: 'Complete',
-  incomplete: 'Partial',
-  missing: 'Missing',
-};
 
 // `awaiting` and `company` share the amber tokens — both mean "not done" — so
 // the glyph is the only thing separating them, and `◐` against `◆` is about
@@ -81,12 +79,13 @@ const SLOT_CLASS: Record<SlotState, string> = {
 };
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const t = useTranslations('completeness');
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <ClipboardList className="h-4 w-4 text-muted-foreground" />
-          Data collection status
+          {t('panel.title')}
         </CardTitle>
       </CardHeader>
       <CardContent>{children}</CardContent>
@@ -120,8 +119,14 @@ export function CoveragePanel({
   movingFrom,
   refreshKey,
 }: CoveragePanelProps) {
+  const t = useTranslations('completeness');
+  const locale = useLocale();
+  const words = useRecordWords();
+  const describe = useDescribeError();
+  const copy = { t, locale, words };
   const [data, setData] = useState<SubsidiaryCompletenessDTO | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // The failed read itself, worded at render, so a language switch re-words it.
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     if (!subsidiaryId) return;
@@ -137,16 +142,7 @@ export function CoveragePanel({
       // toast for the same reason — a toast vanishes and leaves a blank card.
       .catch((e) => {
         if (cancelled) return;
-        // An expired session is not a completeness problem, and the API's own
-        // word for it is the bare "Unauthorized" — useless on this card.
-        const expired = e instanceof ApiError && (e.status === 401 || e.status === 403);
-        setError(
-          expired
-            ? 'Your session has expired — sign in again to see the collection status.'
-            : e instanceof ApiError
-              ? e.message
-              : 'Could not load the collection status.',
-        );
+        setError(e ?? new Error('completeness'));
       });
     return () => {
       cancelled = true;
@@ -161,10 +157,18 @@ export function CoveragePanel({
   if (!subsidiaryId) return null;
 
   if (error) {
+    // An expired session is not a completeness problem, and the API's own
+    // word for it is the bare "Unauthorized" — useless on this card.
+    const expired = error instanceof ApiError && (error.status === 401 || error.status === 403);
+    const message = expired
+      ? t('panel.sessionExpired')
+      : error instanceof ApiError
+        ? describe(error).title
+        : t('panel.loadFailed');
     return (
       <Shell>
         <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-          {error}
+          {message}
         </p>
       </Shell>
     );
@@ -189,6 +193,7 @@ export function CoveragePanel({
     periodValue,
     hasEntry,
     movingFrom,
+    copy,
   });
 
   if (view.kind !== 'tracked') {
@@ -197,10 +202,10 @@ export function CoveragePanel({
     // that is simply not measured per site.
     const message =
       view.kind === 'whole_company'
-        ? 'This subsidiary is measured as a whole company, so there are no per-site invoice targets to complete.'
+        ? t('panel.wholeCompany')
         : view.kind === 'no_locations'
-          ? `No site of this subsidiary existed at the end of ${view.year}, so there are no invoices to track for that year.`
-          : `${view.category} is not tracked by invoice. Only ${invoiceTrackedList()} are counted one invoice per site per month.`;
+          ? t('panel.noLocations', { year: view.year })
+          : t('panel.notTracked', { category: words.category(view.category), tracked: invoiceTrackedList(copy) });
     return (
       <Shell>
         <div className="space-y-2">
@@ -222,9 +227,13 @@ export function CoveragePanel({
   // Built as a string. Written as JSX text with `{view.covered}` on its own
   // line, the separating space collapses and it renders "12 of 24 invoices
   // arekeyed in" — this exact bug shipped twice in PR 3.
-  const acceptedLine = `${view.accepted} of those approved${
-    view.awaitingReview > 0 ? `, ${view.awaitingReview} waiting for review` : ''
-  }.`;
+  const acceptedLine =
+    view.awaitingReview > 0
+      ? t('panel.acceptedLineAwaiting', {
+          accepted: formatNumber(view.accepted, locale),
+          awaiting: formatNumber(view.awaitingReview, locale),
+        })
+      : t('panel.acceptedLine', { accepted: formatNumber(view.accepted, locale) });
 
   return (
     <Shell>
@@ -236,7 +245,7 @@ export function CoveragePanel({
               TONE_CLASS[view.status],
             )}
           >
-            {STATUS_LABEL[view.status]}
+            {t(`panel.status.${view.status}`)}
           </span>
           <span className="font-mono text-sm tabular-nums text-foreground">
             {view.covered}/{view.required}
@@ -271,7 +280,7 @@ export function CoveragePanel({
             <ScrollArea className="w-full">
               <div
                 role="group"
-                aria-label={`${view.selected.locationName} — invoices by month`}
+                aria-label={t('panel.monthsGroup', { location: view.selected.locationName })}
                 className="min-w-[240px] space-y-0.5"
               >
                 <div className="grid grid-cols-12 gap-0.5">
@@ -285,8 +294,8 @@ export function CoveragePanel({
                       // dashboard grid escapes this only because its slots are
                       // real buttons.
                       role="img"
-                      title={`${m.month}: ${SLOT_DESCRIPTION[m.state]}`}
-                      aria-label={`${m.month}: ${SLOT_DESCRIPTION[m.state]}`}
+                      title={t('panel.slotLabel', { month: words.period(m.month), description: slotDescription(m.state, copy) })}
+                      aria-label={t('panel.slotLabel', { month: words.period(m.month), description: slotDescription(m.state, copy) })}
                       className={cn(
                         'flex h-5 items-center justify-center rounded-[3px] border text-[9px] font-bold leading-none',
                         SLOT_CLASS[m.state],
@@ -303,7 +312,7 @@ export function CoveragePanel({
                       aria-hidden
                       className="text-center text-[9px] text-muted-foreground"
                     >
-                      {SHORT_MONTH(m.month)}
+                      {SHORT_MONTH(words.period(m.month))}
                     </span>
                   ))}
                 </div>

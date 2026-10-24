@@ -1,0 +1,20 @@
+{
+  "label": {
+    "draft": "Taslak",
+    "submitted": "Gönderildi",
+    "under_review": "İncelemede",
+    "approved": "Onaylandı",
+    "rejected": "Reddedildi",
+    "locked": "Kilitli",
+    "voided": "Geçersiz kılındı"
+  },
+  "inline": {
+    "draft": "taslak",
+    "submitted": "gönderilmiş",
+    "under_review": "incelemede",
+    "approved": "onaylanmış",
+    "rejected": "reddedilmiş",
+    "locked": "kilitli",
+    "voided": "geçersiz kılınmış"
+  }
+}

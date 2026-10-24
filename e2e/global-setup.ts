@@ -5,6 +5,7 @@ import {
   cleanupE2ESubsidiaries,
   cleanupE2EFactors,
   cleanupE2ETargets,
+  resetSeedLanguages,
   seedE2EFactor,
 } from './helpers';
 
@@ -21,6 +22,10 @@ export default async function globalSetup(): Promise<void> {
     await cleanupE2ESubsidiaries(ctx);
     await cleanupE2ELocations(ctx);
     await cleanupE2EFactors(ctx);
+    // A killed run can leave a seed user in Turkish (the Turkish specs restore
+    // the language in `afterAll`, which a SIGINT skips); every spec but those
+    // expects English.
+    await resetSeedLanguages(ctx);
     // Seeded LAST, after the sweep that would otherwise remove it. Without a
     // factor for a non-evidence category there is nothing a bulk submit can
     // submit: every category the seed covers requires an evidence file, and an

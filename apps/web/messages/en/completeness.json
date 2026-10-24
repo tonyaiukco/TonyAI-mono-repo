@@ -1,0 +1,58 @@
+{
+  "listAnd": "{head} and {last}",
+  "slot": {
+    "accepted": "invoice attached and approved",
+    "awaiting": "invoice attached, waiting for review",
+    "company": "recorded for the whole company — entering a site invoice would count this month twice",
+    "open": "missing"
+  },
+  "theReportedYear": "the reported year",
+  "reason": {
+    "unattributedOne": "1 entry is recorded for the whole company rather than a site, so they close no site's month.",
+    "unattributedMany": "{count} entries are recorded for the whole company rather than a site, so they close no site's month.",
+    "outOfScopeOne": "1 entry is at a site that did not exist yet at the end of {year}, so there is no row for them.",
+    "outOfScopeMany": "{count} entries are at a site that did not exist yet at the end of {year}, so there is no row for them.",
+    "nonMonthlyOne": "1 entry is not reported as a single month, so none of them stands in for a monthly invoice.",
+    "nonMonthlyMany": "{count} entries are not reported as a single month, so none of them stands in for a monthly invoice.",
+    "missingEvidenceOne": "1 entry has no invoice attached.",
+    "missingEvidenceMany": "{count} entries have no invoice attached."
+  },
+  "reviewNoteOne": "1 invoice is keyed in but still waiting for review, so this category is not finished yet.",
+  "reviewNoteMany": "{count} invoices are keyed in but still waiting for review, so this category is not finished yet.",
+  "unreviewedOne": "1 entry is keyed in but nobody has reviewed it yet, so this category is not finished.",
+  "unreviewedMany": "{count} entries are keyed in but nobody has reviewed them yet, so this category is not finished.",
+  "badge": {
+    "invoicesOne": "{count} invoice awaiting review",
+    "invoicesMany": "{count} invoices awaiting review",
+    "entriesOne": "{count} entry awaiting review",
+    "entriesMany": "{count} entries awaiting review"
+  },
+  "duplicateOne": "{list} is recorded both at a site and for the whole company, so that month is already counted twice in the emissions total. Removing one of each pair is the only way to resolve it.",
+  "duplicateMany": "{list} are recorded both at a site and for the whole company, so those months are already counted twice in the emissions total. Removing one of each pair is the only way to resolve it.",
+  "warn": {
+    "siteAfterYear": "This site is not part of {year}'s {required} invoices — it was created after that year ended.",
+    "wholeCompany": "This entry is recorded for the whole company, so it closes none of the {required} site invoices tracked here.",
+    "notMonthlyQuarterly": "A quarterly entry closes no invoice slot — the rule counts one invoice per month.",
+    "notMonthlyAnnual": "An annual entry closes no invoice slot — the rule counts one invoice per month.",
+    "companyHoldsMonth": "{period} {year} is already recorded for the whole company. Keying a site invoice for it as well would count that month twice — both rows feed the emissions total.",
+    "sitesHoldMonth": "{period} {year} is already recorded at {sites}. A whole-company entry for the same month would count it twice — both rows feed the emissions total."
+  },
+  "headline": "{covered} of {required} invoices keyed in",
+  "panel": {
+    "title": "Data collection status",
+    "sessionExpired": "Your session has expired — sign in again to see the collection status.",
+    "loadFailed": "Could not load the collection status.",
+    "wholeCompany": "This subsidiary is measured as a whole company, so there are no per-site invoice targets to complete.",
+    "noLocations": "No site of this subsidiary existed at the end of {year}, so there are no invoices to track for that year.",
+    "notTracked": "{category} is not tracked by invoice. Only {tracked} are counted one invoice per site per month.",
+    "acceptedLine": "{accepted} of those approved.",
+    "acceptedLineAwaiting": "{accepted} of those approved, {awaiting} waiting for review.",
+    "monthsGroup": "{location} — invoices by month",
+    "slotLabel": "{month}: {description}",
+    "status": {
+      "complete": "Complete",
+      "incomplete": "Partial",
+      "missing": "Missing"
+    }
+  }
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useTranslations } from "use-intl";
 import { reportError } from "@/lib/report-error";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +25,7 @@ export default function RouteError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const t = useTranslations("common.routeError");
   useEffect(() => {
     reportError(error);
   }, [error]);
@@ -34,21 +36,21 @@ export default function RouteError({
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <AlertTriangle className="h-5 w-5 text-amber-500" />
-            Something went wrong
+            {t("title")}
           </CardTitle>
           <CardDescription>
-            This page could not be displayed. Your data has not been changed.
+            {t("description")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {error.digest && (
             <p className="rounded-lg bg-muted/60 px-3 py-2 font-mono text-xs text-muted-foreground">
-              Reference: {error.digest}
+              {t("reference", { digest: error.digest })}
             </p>
           )}
           <Button onClick={reset} className="w-full gap-2">
             <RefreshCw className="h-4 w-4" />
-            Try again
+            {t("retry")}
           </Button>
         </CardContent>
       </Card>

@@ -6,6 +6,7 @@ import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-vie
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
+import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +27,6 @@ import {
   Calculator,
   Info,
   Leaf,
-  LogOut,
   MoveRight,
   Save,
   Send,
@@ -34,11 +34,12 @@ import {
 import { toast } from "sonner";
 import { useLocale, useTranslations } from "use-intl";
 import { api, ApiError } from "@/lib/api";
-import { useDescribeError } from "@/lib/i18n/hooks";
+import { useDescribeError, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import type { ErrorDescription } from "@/lib/i18n/errors";
 import { checkActivityParse, formatNumber } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import { DecimalNote } from "@/components/i18n/decimal-note";
+import { ContextNumberField } from "@/components/data-entry/context-number-field";
 import {
   anomalyStatement,
   type AnomalyVerdictFields,
@@ -69,7 +70,6 @@ import {
   ACTIVITY_UNITS,
   CATEGORY_ACTIVITY_TYPES,
   CATEGORIES,
-  GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
   isAuthoritativeSnapshot,
   isCalculated,
@@ -85,10 +85,6 @@ import {
   UNSPECIFIED_ACTIVITY_TYPE,
 } from "@/lib/types";
 import { appendById } from "@/lib/cursor-pages";
-import {
-  NOT_CALCULATED_LABEL,
-  NO_FACTOR_LABEL,
-} from "@/lib/calculation-display";
 import type {
   ActivityCalculationSnapshot,
   ActivityRecordDTO,
@@ -99,10 +95,9 @@ import type {
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
-import {
-  categoryFieldGroups,
-  defaultFieldGroups,
-} from "@/lib/data-entry-data";
+import { CONTEXT_FIELDS, contextFieldSet } from "@/lib/context-fields";
+import type { Messages } from "@/messages";
+import { geographyName } from "@/lib/vocabulary";
 import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
 
 // --- Static option sets -----------------------------------------------------
@@ -148,6 +143,7 @@ export default function DataEntryPage() {
 }
 
 function DataEntryPageInner() {
+  const tRoles = useTranslations("users");
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, setUser } = useAuthStore();
@@ -155,8 +151,14 @@ function DataEntryPageInner() {
   const locale = useLocale();
   const tCategories = useTranslations("categories");
   const tPeriods = useTranslations("periods");
-  const tCommon = useTranslations("common");
   const describeError = useDescribeError();
+  const errorToast = useErrorToast();
+  const stableErrorToast = useStableErrorToast();
+  const tAnomaly = useTranslations("anomaly");
+  const tUnits = useTranslations("units");
+  const tGeography = useTranslations("geography");
+  const tStatus = useTranslations("recordStatus");
+  const recordWords = useRecordWords();
 
   // Controls
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
@@ -187,6 +189,14 @@ function DataEntryPageInner() {
 
   // Optional context (demo extras)
   const [context, setContext] = useState<ContextValues>({});
+  // Bumped whenever the context is replaced from outside the fields (a record
+  // opened, a new record, a category change), so each number field remounts
+  // and reads its stored value afresh.
+  const [contextEpoch, setContextEpoch] = useState(0);
+  // The number fields whose text is refused; the save is refused while any is,
+  // so editing a stored value into a typo never drops it. Reset with the epoch.
+  const [refusedContext, setRefusedContext] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => setRefusedContext(new Set()), [contextEpoch]);
 
   // Preview
   const [preview, setPreview] = useState<ActivityCalculationSnapshot | null>(null);
@@ -299,8 +309,9 @@ function DataEntryPageInner() {
       { locationId },
       new Map(availableLocations.map((l) => [l.id, l.name])),
       editingTuple?.calculated ?? true,
+      { t, locale },
     );
-  }, [editingId, editingTuple, locationId, availableLocations]);
+  }, [editingId, editingTuple, locationId, availableLocations, t, locale]);
 
   // Sent as a JSON number (D15). Zero and below are not activity: the form has
   // always asked for a value above zero. Above ACTIVITY_VALUE_MAX it is refused
@@ -326,10 +337,7 @@ function DataEntryPageInner() {
     Number.isFinite(numericValue) &&
     numericValue > 0;
 
-  const contextFieldGroups = useMemo(
-    () => categoryFieldGroups[category] ?? defaultFieldGroups,
-    [category],
-  );
+  const contextSet = contextFieldSet(category);
 
   // --- Data loading ---------------------------------------------------------
 
@@ -410,7 +418,7 @@ function DataEntryPageInner() {
       setRecordsCursor(null);
       setRecordsTotal(null);
       setRecordsFetchedFor(null);
-      toast.error((e as Error).message);
+      stableErrorToast(e);
     } finally {
       if (mine === recordsSeq.current) setRecordsLoading(false);
     }
@@ -427,7 +435,7 @@ function DataEntryPageInner() {
       setRecordsCursor(page.nextCursor);
     } catch (e) {
       if (mine !== recordsSeq.current) return;
-      toast.error((e as Error).message);
+      errorToast(e);
       // A cursor refused after a deployment: start the list again.
       if (e instanceof ApiError && e.status === 400) void refreshRecords(subsidiaryId);
     } finally {
@@ -439,7 +447,7 @@ function DataEntryPageInner() {
     api
       .me()
       .then(setUser)
-      .catch((e) => toast.error((e as Error).message));
+      .catch((e) => stableErrorToast(e));
 
     (async () => {
       setSubsLoading(true);
@@ -473,7 +481,7 @@ function DataEntryPageInner() {
         const wantedCategory = searchParams.get("category");
 
         if (wantedSub && !list.some((sub) => sub.id === wantedSub)) {
-          toast.error("That subsidiary is not available to you.");
+          toast.error(t("subsidiaryUnavailable"));
         }
         const resolvedSub =
           wantedSub && list.some((sub) => sub.id === wantedSub)
@@ -485,7 +493,7 @@ function DataEntryPageInner() {
           if ((CATEGORIES as readonly string[]).includes(wantedCategory)) {
             setCategory(wantedCategory as Category);
           } else {
-            toast.error(`Unknown category "${wantedCategory}".`);
+            toast.error(t("unknownCategory", { category: wantedCategory }));
           }
         }
         if (wantedYear !== undefined) setReportingYear(wantedYear);
@@ -540,7 +548,7 @@ function DataEntryPageInner() {
           };
         }
       } catch (e) {
-        toast.error((e as Error).message);
+        stableErrorToast(e);
       } finally {
         setSubsLoading(false);
       }
@@ -597,12 +605,16 @@ function DataEntryPageInner() {
           const meta = await api.activityRecordMetadata(filters).catch(() => null);
           toast.info(
             meta
-              ? `${meta.total} ${wanted.category} records exist for ${wanted.year}. Pick one from Previous submissions, or enter another period.`
-              : `Several ${wanted.category} records exist for ${wanted.year}. Pick one from Previous submissions, or enter another period.`,
+              ? t("recordsExist", {
+                  total: formatNumber(meta.total, locale),
+                  category: tCategories(wanted.category as Category),
+                  year: wanted.year,
+                })
+              : t("severalRecordsExist", { category: tCategories(wanted.category as Category), year: wanted.year }),
           );
         }
       } catch (e) {
-        toast.error((e as Error).message);
+        stableErrorToast(e);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -684,9 +696,7 @@ function DataEntryPageInner() {
    */
   function loadRecord(rec: ActivityRecordPageItemDTO) {
     if (rec.status !== "draft" && rec.status !== "rejected") {
-      toast.info(
-        `This record is ${rec.status.replace(/_/g, " ")} and can no longer be edited.`,
-      );
+      toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;
     }
     // The API allows an author (or a super_admin) to modify a record, so a
@@ -694,7 +704,7 @@ function DataEntryPageInner() {
     // link this happens with no click at all — the user would be looking at
     // someone else's figures believing they were their own.
     if (user && user.role !== "super_admin" && rec.createdBy !== user.id) {
-      toast.info("This record was entered by someone else — only its author can change it.");
+      toast.info(t("notYourRecord"));
       return;
     }
     // A period lock only flips `approved → locked`, so a draft inside a locked
@@ -702,7 +712,10 @@ function DataEntryPageInner() {
     // to it is refused with a 409.
     if (rec.periodLocked) {
       toast.info(
-        `${rec.periodValue} ${rec.reportingYear} is locked — a super_admin must unlock it before this record can change.`,
+        t("periodLockedRecord", {
+          period: recordWords.period(rec.periodValue),
+          year: rec.reportingYear,
+        }),
       );
       return;
     }
@@ -718,6 +731,7 @@ function DataEntryPageInner() {
     activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
+    setContextEpoch((n) => n + 1);
     setVerdict(verdictOf(rec));
     setVarianceReason(rec.varianceReason ?? "");
     setPreviewError(null);
@@ -759,7 +773,7 @@ function DataEntryPageInner() {
     setEditingId(null);
     setEditingCreatedBy(null);
     setEditingTuple(null);
-    toast.info("Now entering a new record — the one you opened is untouched.");
+    toast.info(t("nowEnteringNew"));
   }, [
     editingId,
     editingTuple,
@@ -773,6 +787,7 @@ function DataEntryPageInner() {
   function resetForm() {
     activity.setValue(null);
     setContext({});
+    setContextEpoch((n) => n + 1);
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
@@ -811,6 +826,10 @@ function DataEntryPageInner() {
   async function persist(): Promise<ActivityRecordDTO | null> {
     if (!hasValidInput || !selectedSubsidiary) {
       toast.error(t("pickRequired"));
+      return null;
+    }
+    if (refusedContext.size > 0) {
+      toast.error(t("context.refused"));
       return null;
     }
     const inputPayload = buildInputPayload();
@@ -964,13 +983,10 @@ function DataEntryPageInner() {
               </h1>
               <p className="mt-1 text-muted-foreground">
                 {t("subtitle")}
-                {user ? ` · ${user.fullName} (${user.role})` : ""}
+                {user ? ` · ${user.fullName} (${tRoles(`roles.${user.role}`)})` : ""}
               </p>
             </div>
-            <Button variant="outline" onClick={handleLogout} className="gap-2">
-              <LogOut className="h-4 w-4" />
-              {tCommon("signOut")}
-            </Button>
+            <SignOutButton onClick={handleLogout} />
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -1074,6 +1090,7 @@ function DataEntryPageInner() {
                         const next = v as Category;
                         setCategory(next);
                         setContext({});
+                        setContextEpoch((n) => n + 1);
                         // Each typed category has its own list; a type chosen
                         // for Fuel means nothing for Refrigerants.
                         setActivityType("");
@@ -1116,9 +1133,9 @@ function DataEntryPageInner() {
                           />
                         </SelectTrigger>
                         <SelectContent>
-                          {activityTypes.map((t) => (
-                            <SelectItem key={t.value} value={t.value}>
-                              {t.label}
+                          {activityTypes.map((type) => (
+                            <SelectItem key={type.value} value={type.value}>
+                              {t(`activityTypes.${type.value}` as never)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1192,9 +1209,7 @@ function DataEntryPageInner() {
                       {t("factorGeography")}{" "}
                       <span className="font-mono">{effectiveGeography}</span> —{" "}
                       {t("factorGeographySource", {
-                        geography:
-                          GEOGRAPHY_LABELS[effectiveGeography as keyof typeof GEOGRAPHY_LABELS] ??
-                          effectiveGeography,
+                        geography: geographyName(effectiveGeography, tGeography),
                         source: selectedLocation
                           ? t("locationSource", { name: selectedLocation.name })
                           : t("subsidiarySource", {
@@ -1282,7 +1297,7 @@ function DataEntryPageInner() {
                               rather than an error. */}
                           {unitsForCategory(category).map((u) => (
                             <SelectItem key={u.value} value={u.value}>
-                              {u.label}
+                              {tUnits(`label.${u.value}` as never)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1297,7 +1312,7 @@ function DataEntryPageInner() {
                     if (spec?.blocked) {
                       return (
                         <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900">
-                          {spec.blocked}
+                          {tUnits(`blocked.${spec.value}` as never)}
                         </p>
                       );
                     }
@@ -1310,22 +1325,21 @@ function DataEntryPageInner() {
               {/* Optional context — demo extras stored into `input` */}
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-base">
-                    Additional context
-                  </CardTitle>
+                  <CardTitle className="text-base">{t("context.title")}</CardTitle>
                   <Badge
                     variant="outline"
                     className="border-amber-500/30 bg-amber-500/10 text-amber-600"
                   >
-                    Optional · saved as metadata
+                    {t("context.badge")}
                   </Badge>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {contextFieldGroups
-                    .flatMap((g) => g.fields)
-                    .filter((f) => f.type !== "file")
-                    .map((f) => (
-                      <Field key={f.id} label={f.label}>
+                  {CONTEXT_FIELDS[contextSet].map((f) => {
+                    const key = `context.${contextSet}.${f.id}` as never;
+                    const label = t(`${key}.label` as never);
+                    const placeholder = f.placeholder ? t(`${key}.placeholder` as never) : undefined;
+                    return (
+                      <Field key={f.id} label={label}>
                         {f.type === "select" ? (
                           <Select
                             value={String(context[f.id] ?? "")}
@@ -1334,19 +1348,19 @@ function DataEntryPageInner() {
                             }
                           >
                             <SelectTrigger>
-                              <SelectValue placeholder="Select…" />
+                              <SelectValue placeholder={t("context.selectPlaceholder")} />
                             </SelectTrigger>
                             <SelectContent>
                               {(f.options ?? []).map((opt) => (
-                                <SelectItem key={opt} value={opt}>
-                                  {opt}
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.key ? t(`context.options.${opt.key}`) : opt.value}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         ) : f.type === "textarea" ? (
                           <Textarea
-                            placeholder={f.placeholder}
+                            placeholder={placeholder}
                             value={String(context[f.id] ?? "")}
                             onChange={(e) =>
                               setContext((prev) => ({
@@ -1355,10 +1369,27 @@ function DataEntryPageInner() {
                               }))
                             }
                           />
+                        ) : f.type === "number" ? (
+                          <ContextNumberField
+                            key={`${contextEpoch}:${contextSet}:${f.id}`}
+                            id={f.id}
+                            stored={context[f.id]}
+                            placeholder={placeholder}
+                            onChange={(value, refused) => {
+                              setContext((prev) => ({ ...prev, [f.id]: value }));
+                              setRefusedContext((prev) => {
+                                if (prev.has(f.id) === refused) return prev;
+                                const next = new Set(prev);
+                                if (refused) next.add(f.id);
+                                else next.delete(f.id);
+                                return next;
+                              });
+                            }}
+                          />
                         ) : (
                           <Input
-                            type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
-                            placeholder={f.placeholder}
+                            type={f.type === "date" ? "date" : "text"}
+                            placeholder={placeholder}
                             value={String(context[f.id] ?? "")}
                             onChange={(e) =>
                               setContext((prev) => ({
@@ -1369,7 +1400,8 @@ function DataEntryPageInner() {
                           />
                         )}
                       </Field>
-                    ))}
+                    );
+                  })}
                 </CardContent>
               </Card>
 
@@ -1397,17 +1429,17 @@ function DataEntryPageInner() {
                     <div className="flex items-start gap-2 text-sm text-amber-800">
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
-                        {anomalyStatement(verdict).detail} Please verify it and
-                        explain the variance before submitting.
+                        {anomalyStatement(verdict, tAnomaly, locale).detail}{" "}
+                        {t("anomaly.verifyAndExplain")}
                       </span>
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="variance-reason">Reason for variance *</Label>
+                      <Label htmlFor="variance-reason">{t("anomaly.varianceLabel")}</Label>
                       <Textarea
                         id="variance-reason"
                         value={varianceReason}
                         onChange={(e) => setVarianceReason(e.target.value)}
-                        placeholder="e.g. new production line commissioned this period"
+                        placeholder={t("anomaly.variancePlaceholder")}
                         rows={2}
                       />
                     </div>
@@ -1422,15 +1454,15 @@ function DataEntryPageInner() {
                   series' first months and is not something to act on. */}
               {editingId !== null &&
                 !anomalyFlag &&
-                anomalyStatement(verdict).tone === "not_evaluated" && (
+                anomalyStatement(verdict, tAnomaly, locale).tone === "not_evaluated" && (
                   <Card className="border-slate-200 bg-slate-50/60">
                     <CardContent className="flex items-start gap-2 pt-5 text-sm text-slate-600">
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
                         <span className="font-medium">
-                          {anomalyStatement(verdict).headline}.
+                          {anomalyStatement(verdict, tAnomaly, locale).headline}.
                         </span>{" "}
-                        {anomalyStatement(verdict).detail}
+                        {anomalyStatement(verdict, tAnomaly, locale).detail}
                       </span>
                     </CardContent>
                   </Card>
@@ -1553,6 +1585,7 @@ function PreviewCard({
   geographyCode: string | null;
 }) {
   const t = useTranslations("dataEntry");
+  const tCommon = useTranslations("common");
   const locale = useLocale();
   const numberFmt = { format: (n: number) => formatNumber(n, locale, PREVIEW_DIGITS) };
   return (
@@ -1592,17 +1625,17 @@ function PreviewCard({
             <div className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-900">
               <Info className="mt-0.5 h-4 w-4 shrink-0" />
               <div className="space-y-1">
-                <p className="font-medium">{NOT_CALCULATED_LABEL}</p>
+                <p className="font-medium">{tCommon("notCalculated")}</p>
                 <p className="text-xs text-sky-900/80">{preview.reason}</p>
               </div>
             </div>
             <dl className="space-y-2 text-sm">
-              <Row label="Emission factor" value={NO_FACTOR_LABEL} />
+              <Row label={t("preview.emissionFactor")} value={tCommon("noFactor")} />
               <Row
-                label="Recorded as"
+                label={t("preview.recordedAs")}
                 value={`${numberFmt.format(preview.inputValue)} ${unitSymbol(preview.inputUnit)}`}
               />
-              {geographyCode && <Row label="Geography" value={geographyCode} />}
+              {geographyCode && <Row label={t("preview.geography")} value={geographyCode} />}
             </dl>
             {/* "It counts towards data completeness" was the first wording, cut
                 because the completeness engine had not shipped. It has now — and
@@ -1614,12 +1647,8 @@ function PreviewCard({
                 own default form state. Two adjacent cards, opposite claims.
                 Stated conditionally instead, which is true in every case. */}
             <p className="text-xs text-muted-foreground">
-              You can still save and submit this entry. An invoice is required
-              before it can be submitted, since without an emission factor the
-              invoice is the only record of what was consumed.
-              {isInvoiceTracked(preview.category)
-                ? " Recorded against a site for a single month, it also counts towards that site's invoice completeness — which is measured from the invoice, not from the calculated figure."
-                : ""}
+              {t("preview.invoiceRequired")}
+              {isInvoiceTracked(preview.category) ? ` ${t("preview.invoiceCompleteness")}` : ""}
             </p>
           </div>
         ) : (
@@ -1635,8 +1664,7 @@ function PreviewCard({
                 </span>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Scope {preview.scope} ·{" "}
-                {numberFmt.format(preview.kgCo2e)} kgCO₂e
+                {t("preview.scopeLine", { scope: preview.scope, kg: numberFmt.format(preview.kgCo2e) })}
               </p>
             </div>
 
@@ -1644,34 +1672,34 @@ function PreviewCard({
 
             <dl className="space-y-2 text-sm">
               <Row
-                label="Emission factor"
+                label={t("preview.emissionFactor")}
                 value={`${formatNumber(preview.factorValue, locale, FACTOR_DIGITS)} ${preview.factorUnit}`}
               />
               <Row
-                label="Normalised input"
+                label={t("preview.normalisedInput")}
                 value={`${numberFmt.format(preview.normalizedValue)} ${unitSymbol(preview.normalizedUnit)}`}
               />
               {isProvenanceSnapshot(preview) && (
-                <Row label="Activity" value={activityLabel(preview.category, preview.activityType)} />
+                <Row label={t("preview.activity")} value={activityLabel(preview.category, preview.activityType, t)} />
               )}
-              <Row label="Methodology" value={preview.methodology} />
+              <Row label={t("preview.methodology")} value={preview.methodology} />
               <Row
-                label="Source"
-                value={`${preview.source} (${preview.version})`}
+                label={t("preview.source")}
+                value={t("preview.sourceValue", { source: preview.source, version: preview.version })}
               />
               {/* Asked of the whole path, never the factor's status alone: a
                   figure is only as authoritative as its weakest link — the
                   conversion's release included (LP3-03). */}
               <Row
-                label="Factor status"
+                label={t("preview.factorStatus")}
                 value={
                   isAuthoritativeSnapshot(preview)
-                    ? "Authoritative"
-                    : "Placeholder — not authoritative (factor or conversion)"
+                    ? t("preview.authoritative")
+                    : t("preview.notAuthoritative")
                 }
               />
               {geographyCode && (
-                <Row label="Geography" value={geographyCode} />
+                <Row label={t("preview.geography")} value={geographyCode} />
               )}
             </dl>
 
@@ -1679,8 +1707,10 @@ function PreviewCard({
               <div className="flex items-start gap-2 rounded-lg bg-secondary/60 p-2.5 text-xs text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  Unit converted from {unitSymbol(preview.inputUnit)} to{" "}
-                  {unitSymbol(preview.normalizedUnit)} before applying the factor.
+                  {t("preview.unitConverted", {
+                    from: unitSymbol(preview.inputUnit),
+                    to: unitSymbol(preview.normalizedUnit),
+                  })}
                 </span>
               </div>
             )}
@@ -1696,12 +1726,14 @@ function PreviewCard({
  * category's own list; `unspecified` is the lookup of a record entered before
  * fuels were tracked.
  */
-function activityLabel(category: string, activityType: string): string {
-  if (activityType === UNSPECIFIED_ACTIVITY_TYPE) return "Not specified (entered before fuels were tracked)";
-  return (
-    CATEGORY_ACTIVITY_TYPES[category as Category]?.types.find((t) => t.value === activityType)?.label ??
-    activityType
-  );
+function activityLabel(
+  category: string,
+  activityType: string,
+  t: (key: "notSpecifiedLegacy" | `activityTypes.${keyof Messages["dataEntry"]["activityTypes"]}`) => string,
+): string {
+  if (activityType === UNSPECIFIED_ACTIVITY_TYPE) return t("notSpecifiedLegacy");
+  const known = CATEGORY_ACTIVITY_TYPES[category as Category]?.types.some((type) => type.value === activityType);
+  return known ? t(`activityTypes.${activityType as keyof Messages["dataEntry"]["activityTypes"]}`) : activityType;
 }
 
 function Row({ label, value }: { label: string; value: string }) {

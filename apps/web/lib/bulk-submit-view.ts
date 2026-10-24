@@ -13,8 +13,12 @@ import type {
   BulkSubmitReportDTO,
   BulkUploadAcceptedRow,
 } from '@/lib/types';
-import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
-import { formatNumber } from '@/lib/utils';
+import { ApiError } from '@/lib/api';
+import { formatNumber as formatGrouped } from '@/lib/utils';
+import { formatNumber } from '@/lib/i18n/number';
+import type { ViewCopy } from '@/lib/i18n/view-translator';
+import type { ErrorDescription } from '@/lib/i18n/errors';
+import type { RecordWords } from '@/lib/vocabulary';
 import enErrors from '@/messages/en/errors.json';
 
 /**
@@ -31,6 +35,46 @@ export { BULK_SUBMIT_MAX_IDS, needsEvidenceBeforeSubmit } from '@/lib/types';
 /** What each refusal is called on screen. Exhaustive, so a new code is a
  *  compile error here rather than a blank label in front of a user. */
 export const SUBMIT_ISSUE_LABEL: Record<BulkSubmitIssueCode, string> = enErrors.bulkIssues;
+
+/** The `bulkSubmit` catalogue keys this module words its sentences with. */
+export type BulkSubmitKey =
+  | 'blockedOne'
+  | 'blockedMany'
+  | 'confirmOne'
+  | 'confirmMany'
+  | 'refusedHeadline'
+  | 'refusedOne'
+  | 'refusedMany'
+  | 'refusedNone'
+  | 'cleanOne'
+  | 'cleanMany'
+  | 'partialHeadline'
+  | 'partialOne'
+  | 'partialMany'
+  | 'rateLimited'
+  | 'roleForbidden'
+  | 'failed'
+  | 'block.role'
+  | 'block.rejected'
+  | 'block.already'
+  | 'block.notAuthor'
+  | 'block.locked'
+  | 'block.evidence'
+  | 'capRefused'
+  | 'selectedFirst'
+  | 'sendOne'
+  | 'sendMany';
+
+export type BulkSubmitCopy = ViewCopy<BulkSubmitKey>;
+
+/** What `submitErrorMessage` falls back to: the error described in the
+ *  user's language (`useDescribeError`). */
+/** An error as a screen shows it: a sentence, and — for a generic code in
+ *  Turkish — the server's English beneath it (K5), which a toast's
+ *  description carries. */
+export type ErrorWords = ErrorDescription;
+
+export type DescribeError = (error: unknown) => ErrorDescription;
 
 export type SubmitIssueTranslator = (key: `bulkIssues.${BulkSubmitIssueCode}` | 'codes.calculation_stale') => string;
 
@@ -82,6 +126,7 @@ export interface SubmitEligibility {
  */
 export function eligibleForSubmit(
   rows: BulkUploadAcceptedRow[],
+  { t, locale }: BulkSubmitCopy,
 ): SubmitEligibility {
   const withIds = rows.filter(
     (r): r is BulkUploadAcceptedRow & { recordId: string } => r.recordId !== null,
@@ -111,8 +156,8 @@ export function eligibleForSubmit(
     // that repeated them through a browser asserts the gate they name.
     blockedReason =
       needingEvidence === 1
-        ? 'The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.'
-        : `All ${formatNumber(needingEvidence)} imported records need an evidence file before they can be submitted, and an import cannot attach one. Under Previous submissions, attach each invoice to the records it evidences — one file can cover several.`;
+        ? t('blockedOne')
+        : t('blockedMany', { count: formatNumber(needingEvidence, locale) });
   }
 
   return { recordIds, needingEvidence, overCap, blockedReason };
@@ -141,12 +186,8 @@ export function failuresToShow(failed: BulkSubmitIssue[]): {
 }
 
 /** What the confirm step says. */
-export function submitConfirmation(n: number): string {
-  const them = n === 1 ? 'it' : 'them';
-  return (
-    `Send ${formatNumber(n)} ${n === 1 ? 'record' : 'records'} for review. ` +
-    `Only a reviewer can send ${them} back — there is no way to un-submit ${them} yourself.`
-  );
+export function submitConfirmation(n: number, { t, locale }: BulkSubmitCopy): string {
+  return n === 1 ? t('confirmOne') : t('confirmMany', { count: formatNumber(n, locale) });
 }
 
 export interface SubmitSummary {
@@ -165,11 +206,11 @@ export function deadlineSummary(accepted: number, issues: readonly { code: strin
   const values = { accepted, refused: issues.length - unstarted, unstarted };
   const detailKey = dryRun ? 'previewDetail' : 'detail';
   const detail = translate ? translate(`bulkDeadline.${detailKey}`, values)
-    : Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, formatNumber(value)), enErrors.bulkDeadline[detailKey]);
+    : Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, formatGrouped(value)), enErrors.bulkDeadline[detailKey]);
   return { tone: 'partial' as const, headline: translate ? translate('bulkDeadline.title') : enErrors.bulkDeadline.title, detail };
 }
 
-export function summariseSubmit(report: BulkSubmitReportDTO, translate?: DeadlineTranslator): SubmitSummary {
+export function summariseSubmit(report: BulkSubmitReportDTO, translate: DeadlineTranslator | undefined, { t, locale }: BulkSubmitCopy): SubmitSummary {
   const deadline = deadlineSummary(report.submitted.length, report.failed, translate);
   if (deadline) return deadline;
   const moved = report.submitted.length;
@@ -178,52 +219,37 @@ export function summariseSubmit(report: BulkSubmitReportDTO, translate?: Deadlin
   if (moved === 0) {
     return {
       tone: 'refused',
-      headline: 'No records were submitted.',
+      headline: t('refusedHeadline'),
       detail:
         failed === 1
-          ? 'It needs attention first — see below.'
+          ? t('refusedOne')
           : failed > 1
-            ? `All ${formatNumber(failed)} need attention first — see below.`
-            : 'There was nothing to submit.',
+            ? t('refusedMany', { count: formatNumber(failed, locale) })
+            : t('refusedNone'),
     };
   }
   if (failed === 0) {
     return {
       tone: 'clean',
-      headline: `${formatNumber(moved)} ${
-        moved === 1 ? 'record is' : 'records are'
-      } now in the review queue.`,
+      headline: moved === 1 ? t('cleanOne', { count: formatNumber(moved, locale) }) : t('cleanMany', { count: formatNumber(moved, locale) }),
       detail: null,
     };
   }
   return {
     tone: 'partial',
-    headline: `${formatNumber(moved)} of ${formatNumber(
-      report.requested,
-    )} submitted.`,
-    // "were not submitted", not "are still drafts": that was false for three
-    // of the six codes — `not_submittable` means the record's status is by
-    // definition NOT draft (commonly `approved`), `not_found` means it is not
-    // there at all, and `not_author` means it is someone else's.
-    detail: `${formatNumber(failed)} ${
-      failed === 1 ? 'record was' : 'records were'
-    } not — see below.`,
+    headline: t('partialHeadline', { moved: formatNumber(moved, locale), requested: formatNumber(report.requested, locale) }),
+    detail: failed === 1 ? t('partialOne', { count: formatNumber(failed, locale) }) : t('partialMany', { count: formatNumber(failed, locale) }),
   };
 }
 
 /** The sentence for a failure that refused the whole request. */
-export function submitErrorMessage(error: unknown): string {
+export function submitErrorMessage(error: unknown, { t }: BulkSubmitCopy, describe: DescribeError): ErrorWords {
   if (error instanceof ApiError) {
-    if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
-    if (error.status === 429) {
-      return 'Too many submissions in a short time. Wait a minute and try again.';
-    }
-    if (error.status === 403) {
-      return 'Your role cannot submit activity records.';
-    }
-    return error.message;
+    if (error.status === 429) return { title: t('rateLimited') };
+    if (error.status === 403) return { title: t('roleForbidden') };
   }
-  return error instanceof Error ? error.message : 'The submission failed.';
+  if (!(error instanceof Error)) return { title: t('failed') };
+  return describe(error);
 }
 
 // ---------------------------------------------------------------------------
@@ -295,24 +321,21 @@ export function authoredBy(row: SubmittableRow, user: SubmittingUser): boolean {
 export function submitBlockReason(
   row: SubmittableRow,
   user: SubmittingUser,
+  { t }: BulkSubmitCopy,
+  /** The status and period words of the user's language. */
+  words: RecordWords,
 ): string | null {
-  // First, as the server does — and it refuses the WHOLE request, not the
-  // record, so without this a demoted seat gets a live button and one 403 for
-  // everything they ticked. `/data-entry` carries no role filter of its own.
-  if (!mayAuthorRecords(user)) return 'Your role cannot submit records.';
+  if (!mayAuthorRecords(user)) return t('block.role');
   if (!acceptsBulkSubmit(row.status)) {
-    // `rejected` is the one worth a sentence rather than a status echo: the
-    // list presents it as editable, so a missing checkbox looks like a bug
-    // instead of the deliberate exclusion it is.
     return row.status === 'rejected'
-      ? 'Sent back by a reviewer — open it on its own, so the note gets read.'
-      : `Already ${row.status.replace(/_/g, ' ')}.`;
+      ? t('block.rejected')
+      : t('block.already', { status: words.status(row.status) });
   }
-  if (!authoredBy(row, user)) return 'Entered by someone else.';
+  if (!authoredBy(row, user)) return t('block.notAuthor');
   if (row.periodLocked) {
-    return `${row.periodValue} ${row.reportingYear} is locked.`;
+    return t('block.locked', { period: words.period(row.periodValue), year: row.reportingYear });
   }
-  if (needsEvidenceBeforeSubmit(row)) return 'Needs an evidence file.';
+  if (needsEvidenceBeforeSubmit(row)) return t('block.evidence');
   return null;
 }
 
@@ -335,6 +358,8 @@ export interface DraftSelection {
 export function selectableDrafts(
   rows: SubmittableRow[],
   user: SubmittingUser | null,
+  copy: BulkSubmitCopy,
+  words: RecordWords,
 ): DraftSelection {
   // No user, no checkboxes. `loadRecord` is deliberately permissive while
   // `api.me()` is in flight — it would rather open a record than block one —
@@ -345,7 +370,7 @@ export function selectableDrafts(
   const selectableIds: string[] = [];
   const reasonById: Record<string, string> = {};
   for (const row of rows) {
-    const reason = submitBlockReason(row, user);
+    const reason = submitBlockReason(row, user, copy, words);
     if (reason === null) {
       selectableIds.push(row.id);
     } else if (isSubmittable(row.status)) {
@@ -426,28 +451,21 @@ export function liveSelection(
 }
 
 /** Told when a tick is refused because the request cannot carry more ids. */
-export function capRefusedNotice(): string {
-  return `${formatNumber(
-    BULK_SUBMIT_MAX_IDS,
-  )} records is the most one submission can carry.`;
+export function capRefusedNotice({ t, locale }: BulkSubmitCopy): string {
+  return t('capRefused', { max: formatNumber(BULK_SUBMIT_MAX_IDS, locale) });
 }
 
 /** Explain the submission cap when select-all cannot take every eligible row. */
-export function selectAllNotices(taken: number, overCap: number): string[] {
+export function selectAllNotices(taken: number, overCap: number, { t, locale }: BulkSubmitCopy): string[] {
   const notices: string[] = [];
   if (overCap > 0) {
-    notices.push(
-      `Selected the first ${formatNumber(taken)}. ${formatNumber(
-        overCap,
-      )} more can go in a second submission.`,
-    );
+    notices.push(t('selectedFirst', { taken: formatNumber(taken, locale), more: formatNumber(overCap, locale) }));
   }
   return notices;
 }
 
 /** The label on the bulk bar's button. */
-export function draftsSubmitLabel(selectedCount: number): string {
-  return `Send ${formatNumber(selectedCount)} ${
-    selectedCount === 1 ? 'record' : 'records'
-  } for review`;
+export function draftsSubmitLabel(selectedCount: number, { t, locale }: BulkSubmitCopy): string {
+  const count = formatNumber(selectedCount, locale);
+  return selectedCount === 1 ? t('sendOne', { count }) : t('sendMany', { count });
 }

@@ -5,13 +5,20 @@ import { describe, expect, it } from 'vitest';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
   INTERRUPTED_AFTER_MS,
-  awaitingEvidenceNote,
+  awaitingEvidenceNote as awaitingEvidenceNoteIn,
   submitFailureDetail,
   batchOutcome,
   batchState,
-  batchSubmitLabel,
-  importBatchesErrorMessage,
+  batchSubmitLabel as batchSubmitLabelIn,
+  importBatchesErrorMessage as importBatchesErrorMessageIn,
 } from './import-batches-view';
+import { copyFor, describeFor } from '@/lib/i18n/testing';
+
+// English: the text the panel showed before LP4-04.
+const ib = () => copyFor('imports');
+const awaitingEvidenceNote = (b: Parameters<typeof awaitingEvidenceNoteIn>[0]) => awaitingEvidenceNoteIn(b, ib());
+const batchSubmitLabel = (n: number) => batchSubmitLabelIn(n, ib());
+const importBatchesErrorMessage = (e: unknown) => importBatchesErrorMessageIn(e, ib(), describeFor()).title;
 
 const T0 = Date.parse('2026-09-19T10:00:00Z');
 
@@ -58,8 +65,11 @@ describe('importBatchesErrorMessage', () => {
     expect(importBatchesErrorMessage(new ApiError('Unauthorized', 401))).toBe(SESSION_EXPIRED_MESSAGE);
     expect(importBatchesErrorMessage(new ApiError('Import not found', 404))).toMatch(/no longer available/);
   });
-  it('keeps the server sentence otherwise', () => {
-    expect(importBatchesErrorMessage(new ApiError('Service unavailable', 503))).toBe('Service unavailable');
+  it('words anything else as the error catalogue does, never error.message', () => {
+    expect(importBatchesErrorMessage(new ApiError('Service unavailable', 503))).toBe(
+      describeFor()(new ApiError('x', 503)).title,
+    );
+    expect(importBatchesErrorMessage(new ApiError('Service unavailable', 503))).not.toBe('Service unavailable');
   });
 });
 

@@ -1,0 +1,21 @@
+{
+  "title": "Recent imports",
+  "loadFailed": "Recent imports could not be loaded.",
+  "empty": "No imports yet. A file you import appears here, so you can come back to it.",
+  "state": {
+    "completed": "Imported",
+    "failed": "Stopped",
+    "processing": "Importing…",
+    "interrupted": "Interrupted"
+  },
+  "sendOne": "Send {count} draft for review",
+  "sendMany": "Send {count} drafts for review",
+  "notAvailable": "That import is no longer available to you.",
+  "waitingOne": "1 draft needs an evidence file first — open it under Previous submissions to attach one.",
+  "waitingMany": "{count} drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.",
+  "sourceCaution": "Original file, exactly as uploaded. Spreadsheet cells can contain formulas — open it only if you trust its contents.",
+  "download": "Download file",
+  "confirmTitle": "Send these for review?",
+  "cancel": "Cancel",
+  "confirmSend": "Send for review"
+}

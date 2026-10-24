@@ -1515,6 +1515,43 @@ uses the collection validator and never treats this frame as an installation
 receipt. A process refusal is not needed to collect policy evidence. Incomplete
 transport stays a refusal/partial capture, never an automatic retry.
 
+### Fixed snap leaf diagnostic
+
+Select `purpose=snap-leaf-diagnostic` only under a new exact published-source,
+recipient and single-attempt dispatch approval. Both installation-policy inputs
+must be empty. The input manifest purpose is `FIXTURE_SNAP_LEAF_DIAGNOSTIC`.
+This route reuses signed image/input verification, the existing pinned runner
+package setup and public Docker artifact staging, isolated QEMU lifecycle and
+age custody. Those runner downloads/installations remain part of the separately
+reviewed dispatch scope. The guest never invokes collection, package simulation,
+installation, maintenance isolation, service changes or target repair.
+
+After bounded input verification (120 seconds), a separate ten-second cooperative
+observation budget covers a fixed descriptor-relative no-follow walk through
+`/`, `usr`, `bin`. The guest records leaf and parent metadata before/after and
+reopens the parent chain to compare the observed directory identity. Only a
+symlink permits `readlink`; at most4096 uninterpreted bytes are retained as
+Base64, length and hash. There is no target resolution, content open, recursive
+scan or arbitrary path parameter. A regular or absent leaf records metadata or
+explicit absence; unsupported types, drift, errors or cleanup failures remain
+partial. A sixty-second framing grace and the existing controller lifecycle
+bounds remain; these do not guarantee cancellation of uninterruptible I/O.
+
+The exact private frame is `manifest.json`, `snap-leaf.json`, `result.json`.
+The diagnostic report is capped16KiB and binds full source by canonical hash,
+published SHA, run/attempt, image hash and fixture UUID. The controller validates
+its schema, recomputes checks and forbids this frame in other purposes. Only a
+valid stable observation plus sealed custody permits the diagnostic exit0;
+all policy/installation/qualification flags stay false. Link bytes and metadata
+remain encrypted, not in public summaries.
+
+Matching before/after samples cannot exclude privileged swap-and-restore. A new
+observation cannot prove the historical A run's exact leaf state or retroactively
+change its ELOOP failure. The old collector's no-follow/content checks are
+unchanged. PackageKit eligibility, hook/effect closure, P3 and lifecycle/sampling/
+writer/content/detached-child questions remain open. Do not retry a consumed
+attempt or infer an accepted installation policy from this diagnostic.
+
 ### B: separate packet, receiver and validator
 
 Offline preparation (no guest or cloud access):

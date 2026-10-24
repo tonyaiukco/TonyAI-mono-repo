@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
-import { AlertTriangle, LogOut, MoreHorizontal, ShieldAlert, UserPlus } from "lucide-react";
+import { AlertTriangle, MoreHorizontal, ShieldAlert, UserPlus } from "lucide-react";
 import { Sidebar } from "@/components/dashboard/sidebar";
+import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -73,7 +74,6 @@ const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
  */
 export default function UsersPage() {
   const t = useTranslations("users");
-  const tCommon = useTranslations("common");
   const locale = useLocale() as Locale;
   const router = useRouter();
   const errorToast = useErrorToast();
@@ -191,10 +191,7 @@ export default function UsersPage() {
                   {t("invite")}
                 </Button>
               )}
-              <Button variant="outline" onClick={handleLogout} className="gap-2">
-                <LogOut className="h-4 w-4" />
-                {tCommon("signOut")}
-              </Button>
+              <SignOutButton onClick={handleLogout} />
             </div>
           </div>
 

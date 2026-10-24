@@ -236,3 +236,10 @@ It requires a new source-bound packet, fresh observations, the exact retained
 failed command, and private encrypted custody. See the
 [identity diagnostic contract](runbooks/10-qa-clean-replacement.md#managed-identity-diagnostic-after-a-failed-repair).
 It does not establish access or installation qualification.
+The separate `purpose=snap-leaf-diagnostic` observes only `/usr/bin/snap`
+metadata and uninterpreted symlink text, without opening or resolving the target.
+It has a distinct three-file private frame and independent validation. A stable
+observation is `DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED`, never installation or policy
+qualification. Existing pinned runner/image/artifact staging still occurs and
+requires its own exact dispatch approval; package inputs remain inert in this
+route. See the [snap diagnostic scope](runbooks/10-qa-clean-replacement.md#fixed-snap-leaf-diagnostic).

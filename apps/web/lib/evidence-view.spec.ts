@@ -1,22 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  attachableRecords,
-  attachBlockReason,
-  attachButtonLabel,
-  attachConfirmation,
-  attachErrorMessage,
-  attachSuccessMessage,
-  detachSuccessMessage,
+  attachableRecords as attachableRecordsIn,
+  attachBlockReason as attachBlockReasonIn,
+  attachButtonLabel as attachButtonLabelIn,
+  attachConfirmation as attachConfirmationIn,
+  attachErrorMessage as attachErrorMessageIn,
+  attachSuccessMessage as attachSuccessMessageIn,
+  detachSuccessMessage as detachSuccessMessageIn,
   EVIDENCE_FALLBACK_PAGE,
   readEvidencePage,
-  recordLabel,
-  removeFileLabel,
-  sharedWithNote,
+  recordLabel as recordLabelIn,
+  removeFileLabel as removeFileLabelIn,
+  sharedWithNote as sharedWithNoteIn,
   toggleAttach,
 } from './evidence-view';
-import { selectableDrafts, type SubmittableRow, type SubmittingUser } from './bulk-submit-view';
+import { selectableDrafts as selectableDraftsIn, type SubmittableRow, type SubmittingUser } from './bulk-submit-view';
 import { api, ApiError, SESSION_EXPIRED_MESSAGE } from './api';
 import { EVIDENCE_MAX_LINKED_RECORDS, type EvidenceLinkedRecordDTO } from './types';
+import { copyFor, describeFor, recordWordsFor } from '@/lib/i18n/testing';
+import type { Locale } from '@/lib/types';
+
+const selectableDrafts = (rows: SubmittableRow[], user: SubmittingUser | null) =>
+  selectableDraftsIn(rows, user, copyFor('bulkSubmit'), recordWordsFor());
+
+// English unless a test says otherwise: the text the screens showed before LP4-04.
+const ev = (locale: Locale = 'en') => ({ ...copyFor('evidence', locale), words: recordWordsFor(locale) });
+const attachableRecords = (rows: SubmittableRow[], user: SubmittingUser | null) => attachableRecordsIn(rows, user, ev());
+const attachBlockReason = (row: SubmittableRow, user: SubmittingUser) => attachBlockReasonIn(row, user, ev());
+const attachButtonLabel = (n: number) => attachButtonLabelIn(n, ev());
+const attachConfirmation = (name: string, rows: Parameters<typeof attachConfirmationIn>[1]) => attachConfirmationIn(name, rows, ev());
+const attachErrorMessage = (e: unknown) => attachErrorMessageIn(e, ev(), describeFor()).title;
+const attachSuccessMessage = (f: Parameters<typeof attachSuccessMessageIn>[0]) => attachSuccessMessageIn(f, ev());
+const detachSuccessMessage = (r: Parameters<typeof detachSuccessMessageIn>[0], f: Parameters<typeof detachSuccessMessageIn>[1]) =>
+  detachSuccessMessageIn(r, f, ev());
+const recordLabel = (r: Parameters<typeof recordLabelIn>[0]) => recordLabelIn(r, recordWordsFor());
+const removeFileLabel = (f: Parameters<typeof removeFileLabelIn>[0]) => removeFileLabelIn(f, ev());
+const sharedWithNote = (f: Parameters<typeof sharedWithNoteIn>[0], id: string) => sharedWithNoteIn(f, id, ev());
 
 const ME: SubmittingUser = { id: 'user-me', role: 'data_entry' };
 const ADMIN: SubmittingUser = { id: 'user-admin', role: 'super_admin' };

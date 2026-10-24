@@ -106,5 +106,222 @@
   "selectAllLoadedName": "Select all {count} loaded: every draft you entered and can send, among the records loaded",
   "previousShown": "Showing {shown} of {total}. Selections apply to the records loaded here.",
   "previousShownLoaded": "Showing {shown} loaded. Selections apply to the records loaded here.",
-  "previousLoadMore": "Load more"
+  "previousLoadMore": "Load more",
+  "subsidiaryUnavailable": "That subsidiary is not available to you.",
+  "unknownCategory": "Unknown category \"{category}\".",
+  "recordsExist": "{total} {category} records exist for {year}. Pick one from Previous submissions, or enter another period.",
+  "severalRecordsExist": "Several {category} records exist for {year}. Pick one from Previous submissions, or enter another period.",
+  "notEditable": "This record is {status} and can no longer be edited.",
+  "notYourRecord": "This record was entered by someone else — only its author can change it.",
+  "periodLockedRecord": "{period} {year} is locked — a super_admin must unlock it before this record can change.",
+  "nowEnteringNew": "Now entering a new record — the one you opened is untouched.",
+  "context": {
+    "title": "Additional context",
+    "badge": "Optional · saved as metadata",
+    "selectPlaceholder": "Select…",
+    "options": {
+      "liters": "Liters",
+      "cubicMeters": "Cubic Meters",
+      "tonnes": "Tonnes",
+      "heating": "Heating",
+      "powerGeneration": "Power Generation",
+      "industrialProcess": "Industrial Process",
+      "other": "Other",
+      "economy": "Economy",
+      "business": "Business",
+      "firstClass": "First Class",
+      "mixed": "Mixed",
+      "landfill": "Landfill",
+      "incineration": "Incineration",
+      "recycling": "Recycling",
+      "composting": "Composting"
+    },
+    "electricity": {
+      "total_kwh": {
+        "label": "Total Consumption",
+        "placeholder": "Enter total kWh"
+      },
+      "renewable_kwh": {
+        "label": "Renewable Energy",
+        "placeholder": "Enter renewable kWh"
+      },
+      "billing_period_start": {
+        "label": "Billing Period Start"
+      },
+      "billing_period_end": {
+        "label": "Billing Period End"
+      },
+      "utility_provider": {
+        "label": "Utility Provider",
+        "placeholder": "e.g., E.ON, Vattenfall"
+      },
+      "notes": {
+        "label": "Additional Notes",
+        "placeholder": "Any relevant comments or explanations..."
+      }
+    },
+    "fuel": {
+      "quantity": {
+        "label": "Quantity",
+        "placeholder": "Enter amount"
+      },
+      "quantity_unit": {
+        "label": "Unit"
+      },
+      "purpose": {
+        "label": "Purpose"
+      },
+      "fuel_notes": {
+        "label": "Notes",
+        "placeholder": "Additional context..."
+      }
+    },
+    "businessTravel": {
+      "short_haul_km": {
+        "label": "Short-haul Flights (<1500km)",
+        "placeholder": "Total kilometers"
+      },
+      "medium_haul_km": {
+        "label": "Medium-haul Flights (1500-4000km)",
+        "placeholder": "Total kilometers"
+      },
+      "long_haul_km": {
+        "label": "Long-haul Flights (>4000km)",
+        "placeholder": "Total kilometers"
+      },
+      "travel_class": {
+        "label": "Predominant Travel Class"
+      },
+      "rental_car_km": {
+        "label": "Rental Car Distance",
+        "placeholder": "Total kilometers"
+      },
+      "train_km": {
+        "label": "Train Distance",
+        "placeholder": "Total kilometers"
+      },
+      "taxi_km": {
+        "label": "Taxi/Ride-share Distance",
+        "placeholder": "Total kilometers"
+      }
+    },
+    "waste": {
+      "general_waste_tonnes": {
+        "label": "General Waste",
+        "placeholder": "Enter tonnes"
+      },
+      "recycled_waste_tonnes": {
+        "label": "Recycled Waste",
+        "placeholder": "Enter tonnes"
+      },
+      "hazardous_waste_tonnes": {
+        "label": "Hazardous Waste",
+        "placeholder": "Enter tonnes"
+      },
+      "disposal_method": {
+        "label": "Primary Disposal Method"
+      },
+      "waste_notes": {
+        "label": "Notes",
+        "placeholder": "Waste management details..."
+      }
+    },
+    "water": {
+      "municipal_water_m3": {
+        "label": "Municipal Water",
+        "placeholder": "Enter cubic meters"
+      },
+      "groundwater_m3": {
+        "label": "Groundwater",
+        "placeholder": "Enter cubic meters"
+      },
+      "recycled_water_m3": {
+        "label": "Recycled Water",
+        "placeholder": "Enter cubic meters"
+      }
+    },
+    "logistics": {
+      "road_freight_tkm": {
+        "label": "Road Freight",
+        "placeholder": "Enter tonne-kilometers"
+      },
+      "rail_freight_tkm": {
+        "label": "Rail Freight",
+        "placeholder": "Enter tonne-kilometers"
+      },
+      "sea_freight_tkm": {
+        "label": "Sea Freight",
+        "placeholder": "Enter tonne-kilometers"
+      },
+      "air_freight_tkm": {
+        "label": "Air Freight",
+        "placeholder": "Enter tonne-kilometers"
+      },
+      "logistics_notes": {
+        "label": "Notes",
+        "placeholder": "Logistics details..."
+      }
+    },
+    "other": {
+      "activity_value": {
+        "label": "Activity Value",
+        "placeholder": "Enter value"
+      },
+      "activity_unit": {
+        "label": "Unit"
+      },
+      "notes": {
+        "label": "Notes",
+        "placeholder": "Additional notes..."
+      }
+    },
+    "refused": "A number in Additional context is not valid — correct it or clear it before saving."
+  },
+  "anomaly": {
+    "verifyAndExplain": "Please verify it and explain the variance before submitting.",
+    "varianceLabel": "Reason for variance *",
+    "variancePlaceholder": "e.g. new production line commissioned this period"
+  },
+  "preview": {
+    "emissionFactor": "Emission factor",
+    "recordedAs": "Recorded as",
+    "geography": "Geography",
+    "normalisedInput": "Normalised input",
+    "activity": "Activity",
+    "methodology": "Methodology",
+    "source": "Source",
+    "sourceValue": "{source} ({version})",
+    "factorStatus": "Factor status",
+    "authoritative": "Authoritative",
+    "notAuthoritative": "Placeholder — not authoritative (factor or conversion)",
+    "scopeLine": "Scope {scope} · {kg} kgCO₂e",
+    "unitConverted": "Unit converted from {from} to {to} before applying the factor.",
+    "invoiceRequired": "You can still save and submit this entry. An invoice is required before it can be submitted, since without an emission factor the invoice is the only record of what was consumed.",
+    "invoiceCompleteness": "Recorded against a site for a single month, it also counts towards that site's invoice completeness — which is measured from the invoice, not from the calculated figure."
+  },
+  "submissions": {
+    "title": "Previous submissions",
+    "attachStart": "Attach one file to several records",
+    "attachHint": "Tick the records this one document evidences.",
+    "selectedCount": "{count} selected",
+    "cancel": "Cancel",
+    "clear": "Clear",
+    "moreNotShown": "+{count} more not shown.",
+    "empty": "No submissions yet for this subsidiary.",
+    "attachTitle": "Attach this file?",
+    "attach": "Attach",
+    "submitTitle": "Send these for review?",
+    "sendForReview": "Send for review",
+    "checkboxAttach": "Attach the file to {record}",
+    "checkboxSelect": "Select {record}",
+    "aSite": "A site",
+    "tooLarge": "{fileName}: exceeds the 10 MB limit",
+    "tonnes": "{value} tCO₂e"
+  },
+  "move": {
+    "anotherSite": "another site",
+    "wholeCompany": "the whole company",
+    "withFigure": "Saving moves this record from {from} to {to}. It is not copied — the emission factor is recalculated for its geography.",
+    "withoutFigure": "Saving moves this record from {from} to {to}. It is not copied — and no emission factor resolves for it today, so it stays \"Not calculated\"."
+  }
 }

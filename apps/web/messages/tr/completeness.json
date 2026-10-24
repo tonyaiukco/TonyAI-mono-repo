@@ -1,0 +1,58 @@
+{
+  "listAnd": "{head} ve {last}",
+  "slot": {
+    "accepted": "fatura eklendi ve onaylandı",
+    "awaiting": "fatura eklendi, inceleme bekliyor",
+    "company": "tüm şirket için kaydedildi — bir tesis faturası girmek bu ayı iki kez sayar",
+    "open": "eksik"
+  },
+  "theReportedYear": "raporlanan yılın",
+  "reason": {
+    "unattributedOne": "1 kayıt bir tesis yerine tüm şirket için kaydedildi; bu yüzden hiçbir tesisin ayını kapatmaz.",
+    "unattributedMany": "{count} kayıt bir tesis yerine tüm şirket için kaydedildi; bu yüzden hiçbir tesisin ayını kapatmaz.",
+    "outOfScopeOne": "1 kayıt, {year} sonunda henüz var olmayan bir tesiste; bu yüzden onun için bir satır yok.",
+    "outOfScopeMany": "{count} kayıt, {year} sonunda henüz var olmayan bir tesiste; bu yüzden onlar için bir satır yok.",
+    "nonMonthlyOne": "1 kayıt tek bir ay olarak raporlanmadı; bu yüzden aylık bir faturanın yerini tutmaz.",
+    "nonMonthlyMany": "{count} kayıt tek bir ay olarak raporlanmadı; bu yüzden hiçbiri aylık bir faturanın yerini tutmaz.",
+    "missingEvidenceOne": "1 kayıtta ekli fatura yok.",
+    "missingEvidenceMany": "{count} kayıtta ekli fatura yok."
+  },
+  "reviewNoteOne": "1 fatura girildi ancak hâlâ inceleme bekliyor; bu yüzden bu kategori henüz tamamlanmadı.",
+  "reviewNoteMany": "{count} fatura girildi ancak hâlâ inceleme bekliyor; bu yüzden bu kategori henüz tamamlanmadı.",
+  "unreviewedOne": "1 kayıt girildi ancak henüz kimse incelemedi; bu yüzden bu kategori tamamlanmadı.",
+  "unreviewedMany": "{count} kayıt girildi ancak henüz kimse incelemedi; bu yüzden bu kategori tamamlanmadı.",
+  "badge": {
+    "invoicesOne": "{count} fatura inceleme bekliyor",
+    "invoicesMany": "{count} fatura inceleme bekliyor",
+    "entriesOne": "{count} kayıt inceleme bekliyor",
+    "entriesMany": "{count} kayıt inceleme bekliyor"
+  },
+  "duplicateOne": "{list} hem bir tesiste hem de tüm şirket için kaydedildi; bu yüzden o ay emisyon toplamında zaten iki kez sayılıyor. Çözmenin tek yolu her çiftten birini kaldırmaktır.",
+  "duplicateMany": "{list} hem bir tesiste hem de tüm şirket için kaydedildi; bu yüzden bu aylar emisyon toplamında zaten iki kez sayılıyor. Çözmenin tek yolu her çiftten birini kaldırmaktır.",
+  "warn": {
+    "siteAfterYear": "Bu tesis {year} yılının {required} faturasına dahil değil — o yıl bittikten sonra oluşturuldu.",
+    "wholeCompany": "Bu kayıt tüm şirket için kaydedildi; bu yüzden burada izlenen {required} tesis faturasının hiçbirini kapatmaz.",
+    "notMonthlyQuarterly": "Çeyreklik bir kayıt hiçbir fatura alanını kapatmaz — kural her ay için bir fatura sayar.",
+    "notMonthlyAnnual": "Yıllık bir kayıt hiçbir fatura alanını kapatmaz — kural her ay için bir fatura sayar.",
+    "companyHoldsMonth": "{period} {year} zaten tüm şirket için kaydedildi. Bunun için ayrıca bir tesis faturası girmek o ayı iki kez sayar — iki satır da emisyon toplamına girer.",
+    "sitesHoldMonth": "{period} {year} zaten şu tesislerde kaydedildi: {sites}. Aynı ay için tüm şirket düzeyinde bir kayıt onu iki kez sayar — iki satır da emisyon toplamına girer."
+  },
+  "headline": "{required} faturadan {covered} tanesi girildi",
+  "panel": {
+    "title": "Veri toplama durumu",
+    "sessionExpired": "Oturumunuzun süresi doldu — toplama durumunu görmek için yeniden giriş yapın.",
+    "loadFailed": "Toplama durumu yüklenemedi.",
+    "wholeCompany": "Bu bağlı şirket tüm şirket olarak ölçülüyor; bu yüzden tamamlanacak tesis bazında fatura hedefi yok.",
+    "noLocations": "{year} sonunda bu bağlı şirketin hiçbir tesisi yoktu; bu yüzden o yıl için izlenecek fatura yok.",
+    "notTracked": "{category} faturayla izlenmiyor. Yalnızca {tracked} için tesis başına aylık bir fatura sayılır.",
+    "acceptedLine": "Bunlardan {accepted} tanesi onaylandı.",
+    "acceptedLineAwaiting": "Bunlardan {accepted} tanesi onaylandı, {awaiting} tanesi inceleme bekliyor.",
+    "monthsGroup": "{location} — aylara göre faturalar",
+    "slotLabel": "{month}: {description}",
+    "status": {
+      "complete": "Tamamlandı",
+      "incomplete": "Kısmi",
+      "missing": "Eksik"
+    }
+  }
+}

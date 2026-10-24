@@ -303,10 +303,10 @@ add('infra/scripts/r3_policy_receive.py', 'policy-transport-hashes', "checked.up
 add('infra/scripts/r3_policy_receive.py', 'policy-status-exit', "return 0 if summary['sealed'] and summary['status'] == 'COLLECTED_REVIEW_REQUIRED' else 2", "return 0 if summary['sealed'] else 2")
 add('infra/scripts/r3_noble_fixture.py', 'policy-frame-files', 'or set(entries) != COLLECTION_FILES', 'or False')
 add('infra/scripts/r3_noble_fixture.py', 'policy-checks-readback', "result.get('checks') != checked or result.get('status') != expected_status", "False or result.get('status') != expected_status")
-add('infra/scripts/r3_noble_guest.py', 'policy-manifest-policy-file', "or 'installation-policy.json' in manifest['files']", 'or False')
+add('infra/scripts/r3_noble_guest.py', 'policy-manifest-policy-file', "or 'installation-policy.json' in manifest['files']):\n        raise ValueError('Collection cannot carry installation policy')", "or False):\n        raise ValueError('Collection cannot carry installation policy')")
 add('infra/scripts/r3_noble_inputs.py', 'policy-stage-policy', 'if collection_only and policy_bytes is not None:', 'if False:')
 add('infra/scripts/r3_noble_fixture.py', 'policy-controller-policy', "or (purpose == 'policy-collection' and policy_bytes is not None)", 'or False')
-add('infra/scripts/r3_noble_fixture.py', 'policy-collection-exit', "('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED') and summary['sealed']", "('DIAGNOSTIC_PASS_REVIEW_REQUIRED',) and summary['sealed']")
+add('infra/scripts/r3_noble_fixture.py', 'policy-collection-exit', "('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED', 'DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED') and summary['sealed']", "('DIAGNOSTIC_PASS_REVIEW_REQUIRED',) and summary['sealed']")
 
 # Independent re-review: program configuration and isolated authority/scope guards.
 add('infra/scripts/r3_policy_git.py', 'policy-program-config-call', '    refuse_program_config(root)\n', '    pass\n')
@@ -361,6 +361,16 @@ add('infra/scripts/r3_access_repair_contract.py', 'identity-diagnostic-prior-del
 add('infra/scripts/r3_access_repair_contract.py', 'identity-diagnostic-prior-source', "previous_proposal['source']['published_sha'] == prior['source_sha']", 'True')
 add('infra/scripts/r3_access_repair_control.py', 'identity-diagnostic-terminal-state', "view.get('executionState') == prior['execution_state']", 'True')
 add('infra/scripts/r3_access_repair_control.py', 'identity-diagnostic-location', 'actual.lower() == expected.lower()', 'True')
+snap_file = 'infra/scripts/r3_snap_leaf.py'
+add(snap_file, 'snap-directory-nofollow', 'os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW', 'os.O_RDONLY | os.O_DIRECTORY')
+add(snap_file, 'snap-leaf-nofollow', 'follow_symlinks=False', 'follow_symlinks=True')
+add(snap_file, 'snap-link-size', "require(value['st_size'] <= 4096)", 'require(True)')
+add(snap_file, 'snap-binding-types', "encoded(value['binding']) == encoded(binding)", "value['binding'] == binding")
+add(snap_file, 'snap-qualified-forgery', "all(value[k] is False for k in ('policy_generated', 'qualification', 'installation_success'))", 'True')
+add('infra/scripts/r3_noble_fixture.py', 'snap-frame-files', 'set(entries) != SNAP_FILES', 'False')
+add('infra/scripts/r3_noble_fixture.py', 'snap-frame-readback', "result['checks'] != checked or result['status'] != checked['status']", 'False')
+add('infra/scripts/r3_noble_inputs.py', 'snap-input-policy', 'if snap_leaf and (collection_only or policy_bytes is not None):', 'if False:')
+
 
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
@@ -370,6 +380,10 @@ def mutation_command(file, python_command, node_command):
         return node_command
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
         suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context']
+    if file.endswith('r3_snap_leaf.py'):
+        suites = ['test_r3_snap_leaf']
+    elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
+        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity']
     elif file.startswith('.github/workflows/'):
         suites = ['test_r3_workflow']
     elif file.endswith(('r3_image_transport.py', 'r3_guard_files.py', 'r3_package_evidence.py',

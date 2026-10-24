@@ -10,6 +10,7 @@ import {
 import type { Category, DataStatus, TrackingMatrixRow } from '@/lib/types';
 import { InvoiceCoverageGrid } from './invoice-coverage-grid';
 import { reviewBadge } from '@/lib/completeness-view';
+import { useCompletenessCopy } from '@/lib/i18n/hooks';
 import { scope12Total } from '@/lib/dashboard-view';
 import { useTranslations } from 'use-intl';
 import { Progress } from '@/components/ui/progress';
@@ -97,6 +98,7 @@ const statusConfig: Record<DataStatus, {
 
 export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter = false, onSlotClick }: SubsidiaryDetailProps) {
   const tDashboard = useTranslations('dashboard');
+  const completenessCopy = useCompletenessCopy();
   if (!row) return null;
 
   const completionRate = Math.round((row.completeCount / row.categoryCount) * 100);
@@ -198,7 +200,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                   const awaiting = reviewBadge({
                     awaitingReviewSlots: cat.coverage?.awaitingReviewSlots,
                     awaitingReviewRecords: cat.awaitingReviewRecords,
-                  });
+                  }, completenessCopy);
                   
                   return (
                     <div

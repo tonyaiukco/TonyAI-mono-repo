@@ -16,9 +16,9 @@ import type {
 } from '@/lib/types';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
-  applyConfirmation,
-  applySuccessMessage,
-  applyToast,
+  applyConfirmation as applyConfirmationIn,
+  applySuccessMessage as applySuccessMessageIn,
+  applyToast as applyToastIn,
   COLUMN_LABEL,
   bulkActivityLabel,
   fileAcceptAttribute,
@@ -26,14 +26,28 @@ import {
   ISSUE_CODE_LABEL,
   readAmountLabel,
   MAX_ISSUE_ROWS_PER_GROUP,
-  preflightFile,
-  sizeCapLabel,
-  summarise,
-  templateErrorMessage,
-  tonnesLabel,
+  preflightFile as preflightFileIn,
+  sizeCapLabel as sizeCapLabelIn,
+  summarise as summariseIn,
+  templateErrorMessage as templateErrorMessageIn,
+  tonnesLabel as tonnesLabelIn,
   totalTonnes,
-  uploadErrorMessage,
+  uploadErrorMessage as uploadErrorMessageIn,
 } from '@/lib/bulk-upload-view';
+import { copyFor, describeFor } from '@/lib/i18n/testing';
+// The screens pass their language's copy; these specs assert the English
+// catalogue — the text the panel showed before LP4-04.
+const up = () => copyFor('bulkUpload');
+const applyConfirmation = (r: BulkUploadReportDTO) => applyConfirmationIn(r, up());
+const applySuccessMessage = (r: BulkUploadReportDTO) => applySuccessMessageIn(r, up());
+const applyToast = (r: BulkUploadReportDTO, translate?: Parameters<typeof applyToastIn>[1]) => applyToastIn(r, translate, up());
+const preflightFile = (f: { name: string; size: number }) => preflightFileIn(f, up());
+const sizeCapLabel = () => sizeCapLabelIn(up());
+const summarise = (r: BulkUploadReportDTO, translate?: Parameters<typeof summariseIn>[1]) => summariseIn(r, translate, up());
+const templateErrorMessage = (e: unknown) => templateErrorMessageIn(e, up(), describeFor()).title;
+const tonnesLabel = (rows: BulkUploadAcceptedRow[]) => tonnesLabelIn(rows, up());
+const uploadErrorMessage = (e: unknown, translate: Parameters<typeof uploadErrorMessageIn>[1] = () => en.bulkQueryTooBroad) =>
+  uploadErrorMessageIn(e, translate, up(), describeFor()).title;
 
 /**
  * This module is the whole of what can be tested about bulk upload on the
@@ -403,7 +417,9 @@ describe('uploadErrorMessage', () => {
   });
 
   it('survives something that is not an ApiError', () => {
-    expect(uploadErrorMessage(new Error('offline'))).toBe('offline');
+    // Worded in the user's language, never `error.message` (LP4-04).
+    expect(uploadErrorMessage(new Error('offline'))).toBe('Something went wrong.');
+    expect(uploadErrorMessage(new TypeError('Failed to fetch'))).toMatch(/could not reach the server/i);
     expect(uploadErrorMessage('nonsense')).toMatch(/failed/i);
   });
 });
@@ -420,11 +436,13 @@ describe('templateErrorMessage', () => {
     expect(text).not.toMatch(/import|dry run/i);
   });
 
-  it('keeps the server’s sentence otherwise, and survives a non-ApiError', () => {
+  it('words a 5xx and a non-ApiError from the catalogue, never error.message', () => {
+    // A 5xx says nothing about its cause (localise-ui): the catalogue's sentence.
     expect(templateErrorMessage(new ApiError('Reporting entities could not be read', 500))).toBe(
-      'Reporting entities could not be read',
+      describeFor()(new ApiError('x', 500)).title,
     );
-    expect(templateErrorMessage(new Error('offline'))).toBe('offline');
+    expect(templateErrorMessage(new ApiError('Bad template request', 400))).toBe('Bad template request');
+    expect(templateErrorMessage(new Error('offline'))).toBe('Something went wrong.');
     expect(templateErrorMessage('nonsense')).toMatch(/could not be downloaded/i);
   });
 });

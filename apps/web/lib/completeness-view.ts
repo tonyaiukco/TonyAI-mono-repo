@@ -22,26 +22,62 @@ import type {
   DataStatus,
   SubsidiaryCompletenessDTO,
 } from "@/lib/types";
+import { formatNumber } from "@/lib/i18n/number";
+import type { ViewCopy } from "@/lib/i18n/view-translator";
+import type { RecordWords } from "@/lib/vocabulary";
+
+/** The `completeness` catalogue keys this module words its sentences with. */
+export type CompletenessKey =
+  | "listAnd"
+  | `slot.${SlotState}`
+  | "theReportedYear"
+  | "reason.unattributedOne"
+  | "reason.unattributedMany"
+  | "reason.outOfScopeOne"
+  | "reason.outOfScopeMany"
+  | "reason.nonMonthlyOne"
+  | "reason.nonMonthlyMany"
+  | "reason.missingEvidenceOne"
+  | "reason.missingEvidenceMany"
+  | "reviewNoteOne"
+  | "reviewNoteMany"
+  | "unreviewedOne"
+  | "unreviewedMany"
+  | "badge.invoicesOne"
+  | "badge.invoicesMany"
+  | "badge.entriesOne"
+  | "badge.entriesMany"
+  | "duplicateOne"
+  | "duplicateMany"
+  | "warn.siteAfterYear"
+  | "warn.wholeCompany"
+  | "warn.notMonthlyQuarterly"
+  | "warn.notMonthlyAnnual"
+  | "warn.companyHoldsMonth"
+  | "warn.sitesHoldMonth"
+  | "headline";
+
+/** The module's copy, and the words a record's values are shown by. */
+export interface CompletenessCopy extends ViewCopy<CompletenessKey> {
+  words: RecordWords;
+}
+
+/** `A, B and C` in the copy's language. */
+export function joinList(items: readonly string[], { t }: Pick<CompletenessCopy, "t">): string {
+  return items.length > 1
+    ? t("listAnd", { head: items.slice(0, -1).join(", "), last: items[items.length - 1] })
+    : (items[0] ?? "");
+}
 
 /** "1 entry" / "3 entries" — the count with its noun, but no verb: the four
  *  sentences below do not all take the same one ("are recorded" vs "have no"). */
-export function entries(n: number): string {
-  return n === 1 ? "1 entry" : `${n} entries`;
-}
 
-const isAre = (n: number) => (n === 1 ? "is" : "are");
-const haveHas = (n: number) => (n === 1 ? "has" : "have");
+
 
 /** "a quarterly" / "an annual" — `annual` is a real `ReportingPeriod` value. */
-const article = (word: string) =>
-  /^[aeiou]/i.test(word) ? `An ${word}` : `A ${word}`;
-
 /** "Electricity, Natural Gas and Water", from the rule rather than from memory. */
-export function invoiceTrackedList(): string {
-  const names = [...INVOICE_TRACKED_CATEGORIES];
-  return names.length > 1
-    ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
-    : (names[0] ?? "");
+export function invoiceTrackedList(copy: CompletenessCopy): string {
+  return joinList([...INVOICE_TRACKED_CATEGORIES].map(copy.words.category), copy);
 }
 
 /**
@@ -81,13 +117,9 @@ export const SLOT_GLYPH: Record<SlotState, string> = {
   open: "·",
 };
 
-export const SLOT_DESCRIPTION: Record<SlotState, string> = {
-  accepted: "invoice attached and approved",
-  awaiting: "invoice attached, waiting for review",
-  company:
-    "recorded for the whole company — entering a site invoice would count this month twice",
-  open: "missing",
-};
+export function slotDescription(state: SlotState, { t }: CompletenessCopy): string {
+  return t(`slot.${state}`);
+}
 
 /**
  * Why `covered` falls short of `required` — the committed records that exist
@@ -103,32 +135,23 @@ export const SLOT_DESCRIPTION: Record<SlotState, string> = {
 export function shortfallReasons(
   coverage: CellCoverage,
   reportingYear: number | null,
+  { t, locale }: CompletenessCopy,
 ): string[] {
   const reasons: string[] = [];
-  const n = (c: number) => entries(c);
+  const say = (one: CompletenessKey, many: CompletenessKey, c: number, values: Record<string, string | number> = {}) =>
+    c === 1 ? t(one, values) : t(many, { count: formatNumber(c, locale), ...values });
   if (coverage.unattributedRecords > 0) {
-    const c = coverage.unattributedRecords;
-    reasons.push(
-      `${n(c)} ${isAre(c)} recorded for the whole company rather than a site, so they close no site's month.`,
-    );
+    reasons.push(say("reason.unattributedOne", "reason.unattributedMany", coverage.unattributedRecords));
   }
   if (coverage.outOfScopeRecords > 0) {
-    const c = coverage.outOfScopeRecords;
-    reasons.push(
-      `${n(c)} ${isAre(c)} at a site that did not exist yet at the end of ${reportingYear ?? "the reported year"}, so there is no row for them.`,
-    );
+    const year = reportingYear === null ? t("theReportedYear") : String(reportingYear);
+    reasons.push(say("reason.outOfScopeOne", "reason.outOfScopeMany", coverage.outOfScopeRecords, { year }));
   }
   if (coverage.nonMonthlyRecords > 0) {
-    const c = coverage.nonMonthlyRecords;
-    reasons.push(
-      `${n(c)} ${isAre(c)} not reported as a single month, so none of them stands in for a monthly invoice.`,
-    );
+    reasons.push(say("reason.nonMonthlyOne", "reason.nonMonthlyMany", coverage.nonMonthlyRecords));
   }
   if (coverage.missingEvidenceRecords > 0) {
-    const c = coverage.missingEvidenceRecords;
-    // "entries are with no invoice attached" was the wording this replaced —
-    // the helper supplied a verb that did not fit the sentence.
-    reasons.push(`${n(c)} ${haveHas(c)} no invoice attached.`);
+    reasons.push(say("reason.missingEvidenceOne", "reason.missingEvidenceMany", coverage.missingEvidenceRecords));
   }
   return reasons;
 }
@@ -140,11 +163,11 @@ export function shortfallReasons(
  * accounting for it — the exact "unexplained amber" the shortfall lines above
  * exist to prevent, reintroduced by the review gate.
  */
-export function reviewNote(awaitingReviewSlots: number): string | null {
+export function reviewNote(awaitingReviewSlots: number, { t, locale }: CompletenessCopy): string | null {
   if (awaitingReviewSlots <= 0) return null;
   return awaitingReviewSlots === 1
-    ? "1 invoice is keyed in but still waiting for review, so this category is not finished yet."
-    : `${awaitingReviewSlots} invoices are keyed in but still waiting for review, so this category is not finished yet.`;
+    ? t("reviewNoteOne")
+    : t("reviewNoteMany", { count: formatNumber(awaitingReviewSlots, locale) });
 }
 
 /**
@@ -162,11 +185,11 @@ export function reviewNote(awaitingReviewSlots: number): string | null {
  * Counts committed records only. It is deliberately not comparable with the
  * cell's entry count, which includes drafts nobody has been asked to review.
  */
-export function unreviewedRecordsNote(awaitingReviewRecords: number): string | null {
+export function unreviewedRecordsNote(awaitingReviewRecords: number, { t, locale }: CompletenessCopy): string | null {
   if (awaitingReviewRecords <= 0) return null;
   return awaitingReviewRecords === 1
-    ? "1 entry is keyed in but nobody has reviewed it yet, so this category is not finished."
-    : `${awaitingReviewRecords} entries are keyed in but nobody has reviewed them yet, so this category is not finished.`;
+    ? t("unreviewedOne")
+    : t("unreviewedMany", { count: formatNumber(awaitingReviewRecords, locale) });
 }
 
 /**
@@ -183,14 +206,17 @@ export function unreviewedRecordsNote(awaitingReviewRecords: number): string | n
  * that is not there — which is exactly what the dashboard cell did between the
  * tooltip and its own accessible name before this existed.
  */
-export function reviewSentence(input: {
-  awaitingReviewSlots?: number;
-  awaitingReviewRecords: number;
-}): string | null {
+export function reviewSentence(
+  input: {
+    awaitingReviewSlots?: number;
+    awaitingReviewRecords: number;
+  },
+  copy: CompletenessCopy,
+): string | null {
   const slots = input.awaitingReviewSlots ?? 0;
   return slots > 0
-    ? reviewNote(slots)
-    : unreviewedRecordsNote(input.awaitingReviewRecords);
+    ? reviewNote(slots, copy)
+    : unreviewedRecordsNote(input.awaitingReviewRecords, copy);
 }
 
 /**
@@ -201,17 +227,22 @@ export function reviewSentence(input: {
  * reads as one of those invoices, which is the confusion this whole pair of
  * counters exists to avoid.
  */
-export function reviewBadge(input: {
-  awaitingReviewSlots?: number;
-  awaitingReviewRecords: number;
-}): string | null {
+export function reviewBadge(
+  input: {
+    awaitingReviewSlots?: number;
+    awaitingReviewRecords: number;
+  },
+  { t, locale }: CompletenessCopy,
+): string | null {
   const slots = input.awaitingReviewSlots ?? 0;
   if (slots > 0) {
-    return `${slots} invoice${slots === 1 ? "" : "s"} awaiting review`;
+    const count = formatNumber(slots, locale);
+    return slots === 1 ? t("badge.invoicesOne", { count }) : t("badge.invoicesMany", { count });
   }
   const records = input.awaitingReviewRecords;
   if (records <= 0) return null;
-  return `${records} ${records === 1 ? "entry" : "entries"} awaiting review`;
+  const count = formatNumber(records, locale);
+  return records === 1 ? t("badge.entriesOne", { count }) : t("badge.entriesMany", { count });
 }
 
 /**
@@ -240,13 +271,10 @@ export function duplicatedMonths(category: CategoryCompleteness): string[] {
   return out;
 }
 
-export function duplicateNote(months: readonly string[]): string | null {
+export function duplicateNote(months: readonly string[], copy: CompletenessCopy): string | null {
   if (months.length === 0) return null;
-  const list =
-    months.length > 1
-      ? `${months.slice(0, -1).join(", ")} and ${months[months.length - 1]}`
-      : months[0];
-  return `${list} ${months.length === 1 ? "is" : "are"} recorded both at a site and for the whole company, so ${months.length === 1 ? "that month is" : "those months are"} already counted twice in the emissions total. Removing one of each pair is the only way to resolve it.`;
+  const list = joinList(months.map(copy.words.period), copy);
+  return months.length === 1 ? copy.t("duplicateOne", { list }) : copy.t("duplicateMany", { list });
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +376,7 @@ export interface EntryCoverageInput {
    * warning depend on the API never regressing.
    */
   movingFrom?: string | null;
+  copy: CompletenessCopy;
 }
 
 export function deriveEntryCoverage({
@@ -358,7 +387,9 @@ export function deriveEntryCoverage({
   periodValue,
   hasEntry,
   movingFrom = null,
+  copy,
 }: EntryCoverageInput): EntryCoverage {
+  const { t, locale, words } = copy;
   // The API returns no categories for a subsidiary measured as a whole. That is
   // not zero progress — the rule does not apply to it at all.
   if (data.trackingGranularity !== "location") return { kind: "whole_company" };
@@ -375,22 +406,22 @@ export function deriveEntryCoverage({
     return {
       kind: "no_locations",
       year: data.reportingYear,
-      reasons: shortfallReasons(tracked, data.reportingYear),
+      reasons: shortfallReasons(tracked, data.reportingYear, copy),
     };
   }
 
   const accepted = Math.max(0, tracked.covered - tracked.awaitingReviewSlots);
 
-  const reasons = shortfallReasons(tracked, data.reportingYear);
+  const reasons = shortfallReasons(tracked, data.reportingYear, copy);
   // Slots when months are waiting, records otherwise — the second arm is what
   // accounts for a category whose slots are all closed AND accepted while a
   // whole-company record behind them still waits. Without it this panel shows
   // an amber verdict it cannot explain.
-  const note = reviewSentence(tracked);
+  const note = reviewSentence(tracked, copy);
   if (note) reasons.push(note);
   // A statement about data that already exists, so it sits with the reasons and
   // is NOT gated on `hasEntry`. Reachable on the seeded database today.
-  const dupes = duplicateNote(duplicatedMonths(tracked));
+  const dupes = duplicateNote(duplicatedMonths(tracked), copy);
   if (dupes) reasons.push(dupes);
 
   const site = locationId
@@ -428,19 +459,15 @@ export function deriveEntryCoverage({
       // the panel legitimately shows no months — and the user would never learn
       // why their invoice is not counted.
       warnings.push(
-        `This site is not part of ${data.reportingYear}'s ${tracked.required} invoices — it was created after that year ended.`,
+        t("warn.siteAfterYear", { year: data.reportingYear, required: formatNumber(tracked.required, locale) }),
       );
     } else if (!locationId) {
       // The honest version of what made a tester read green as "done": an entry
       // for the whole company is a perfectly valid record that closes none of
       // the site invoices this panel is counting.
-      warnings.push(
-        `This entry is recorded for the whole company, so it closes none of the ${tracked.required} site invoices tracked here.`,
-      );
+      warnings.push(t("warn.wholeCompany", { required: formatNumber(tracked.required, locale) }));
     } else if (!monthly) {
-      warnings.push(
-        `${article(reportingPeriod)} entry closes no invoice slot — the rule counts one invoice per month.`,
-      );
+      warnings.push(t(reportingPeriod === "annual" ? "warn.notMonthlyAnnual" : "warn.notMonthlyQuarterly"));
     }
 
     // Both directions of the double count, checked independently of the branch
@@ -456,12 +483,14 @@ export function deriveEntryCoverage({
       // rather than adding a second row — the opposite of a double count.
       !movingOffCompanyLevel
     ) {
-      warnings.push(
-        `${periodValue.trim()} ${data.reportingYear} is already recorded for the whole company. Keying a site invoice for it as well would count that month twice — both rows feed the emissions total.`,
-      );
+      warnings.push(t("warn.companyHoldsMonth", { period: words.period(periodValue.trim()), year: data.reportingYear }));
     } else if (monthly && !locationId && sitesHoldingMonth.length > 0) {
       warnings.push(
-        `${periodValue.trim()} ${data.reportingYear} is already recorded at ${sitesHoldingMonth.join(", ")}. A whole-company entry for the same month would count it twice — both rows feed the emissions total.`,
+        t("warn.sitesHoldMonth", {
+          period: words.period(periodValue.trim()),
+          year: data.reportingYear,
+          sites: sitesHoldingMonth.join(", "),
+        }),
       );
     }
   }
@@ -479,7 +508,7 @@ export function deriveEntryCoverage({
     // state qualifies it rather than replacing it — "12 of 24 keyed in" and "6
     // of those approved" are both true and a panel that showed only the second
     // would look like the app had lost half the work.
-    headline: `${tracked.covered} of ${tracked.required} invoices keyed in`,
+    headline: t("headline", { covered: formatNumber(tracked.covered, locale), required: formatNumber(tracked.required, locale) }),
     reasons,
     warnings,
     selected: site
