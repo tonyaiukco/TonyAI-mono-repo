@@ -9,6 +9,7 @@ import {
   SUB,
   bearer,
   getAccessToken,
+  listAllPages,
   login,
 } from './helpers';
 
@@ -118,6 +119,7 @@ test('a mutation that completes after a new selection refreshes the new one, not
       baselineYear: 2023, baselineTCo2e: 2000, targetYear: 2030, targetTCo2e: 1000 },
   });
   expect(created.status()).toBe(201);
+  const { id: energyTargetId } = (await created.json()) as { id: string };
   // The DELETE is held until the user has moved on.
   let release!: () => void;
   const held = new Promise<void>((resolve) => { release = resolve; });
@@ -139,13 +141,22 @@ test('a mutation that completes after a new selection refreshes the new one, not
   await expect(page.getByText('Net-zero pathway 2030')).toHaveCount(0);
 
   // The follow-up refresh is the current selection's, so Energy's targets never return under Mfg.
-  // Every target read after the release is recorded, so a second, stale refresh cannot hide.
+  // Every target read after the release is recorded, so a second, stale refresh cannot hide:
+  // a page of targets by its subsidiary, their progress by the page's own ids (LP4-05 PR C).
   const isTargetRead = (r: Request) => r.method() === 'GET' && /\/api\/v1\/targets(\/progress)?\?/.test(r.url());
   const readsAfterRelease: string[] = [];
+  const progressIdsAfterRelease: string[] = [];
   page.on('request', (r) => {
-    if (isTargetRead(r)) readsAfterRelease.push(new URL(r.url()).searchParams.get('subsidiaryId') ?? '');
+    if (!isTargetRead(r)) return;
+    const url = new URL(r.url());
+    if (url.pathname.endsWith('/targets/progress')) {
+      progressIdsAfterRelease.push(...(url.searchParams.get('targetIds') ?? '').split(','));
+    } else {
+      readsAfterRelease.push(url.searchParams.get('subsidiaryId') ?? '');
+    }
   });
   const followUp = page.waitForRequest((r) => isTargetRead(r) && /\/api\/v1\/targets\?/.test(r.url()));
+  const progressFollowUp = page.waitForRequest((r) => isTargetRead(r) && /\/api\/v1\/targets\/progress\?/.test(r.url()));
   release();
   await expect(page.getByText('Target removed')).toBeVisible();
   const followUpRequest = await followUp;
@@ -153,7 +164,12 @@ test('a mutation that completes after a new selection refreshes the new one, not
   // Its own response, not `networkidle`: under `page.route` the page-wide idle signal never
   // came on CI (E2E run 39860897619) although the API had answered every request.
   await followUpRequest.response();
+  await (await progressFollowUp).response();
   expect(new Set(readsAfterRelease)).toEqual(new Set([SUB.mfg]));
+  const mfgTargetIds = (await listAllPages<{ id: string }>(request, token, `/targets?subsidiaryId=${SUB.mfg}`)).map((t) => t.id);
+  expect(progressIdsAfterRelease.length).toBeGreaterThan(0);
+  for (const id of progressIdsAfterRelease) expect(mfgTargetIds).toContain(id);
+  expect(progressIdsAfterRelease).not.toContain(energyTargetId);
   await expect(page.getByText('Manufacturing SBTi 1.5°C')).toBeVisible();
   await expect(page.getByText('Net-zero pathway 2030')).toHaveCount(0);
 });

@@ -218,6 +218,8 @@ function DataEntryPageInner() {
   const [recordsLoadingMore, setRecordsLoadingMore] = useState(false);
   // A slower answer for an earlier subsidiary must not land over a newer one.
   const recordsSeq = useRef(0);
+  // The subsidiary whose records the list shows (set as a switch starts its load).
+  const shownSubsidiary = useRef("");
   // Which subsidiary the rows in `records` actually belong to. `records.length`
   // cannot answer that: an empty list means both "not fetched yet" and "fetched,
   // none exist", and the deep-link effect below has to tell those apart.
@@ -364,6 +366,10 @@ function DataEntryPageInner() {
    * user had typed.
    */
   const refreshRecords = useCallback(async (subId: string) => {
+    // A refresh asked for by a write that settled after the user picked another
+    // subsidiary is for a list no longer on screen: it never replaces the
+    // current one (the review queue's Codex P2-2, the same race here).
+    if (subId !== shownSubsidiary.current) return;
     const mine = ++recordsSeq.current;
     if (!subId) {
       setRecords([]);
@@ -540,6 +546,7 @@ function DataEntryPageInner() {
   }, []);
 
   useEffect(() => {
+    shownSubsidiary.current = subsidiaryId;
     void refreshRecords(subsidiaryId);
   }, [subsidiaryId, refreshRecords]);
 
