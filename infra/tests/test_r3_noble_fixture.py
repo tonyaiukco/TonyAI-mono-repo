@@ -321,7 +321,8 @@ class LifecycleFailures(unittest.TestCase):
             inp.mkdir()
             (inp / 'r3-toolchain.lock.json').write_text(json.dumps(PINS))
             manifest = {'source': {'sha': 'a' * 40, 'run_id': '123'}, 'purpose': 'FIXTURE_DIAGNOSTIC_ONLY'}
-            def verify():
+            (inp / 'manifest.json').write_bytes(common.encoded(manifest))
+            def verify(_purposes):
                 common.write(out / 'manifest.json', common.encoded(manifest))
                 return manifest
             def row(name, version, status='install ok installed'):

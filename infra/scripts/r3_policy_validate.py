@@ -48,8 +48,8 @@ def file_record(value, body=False, absent=True):
 
 
 def member_name(name):
-    require(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9_.:+@-]{1,255}', name) is not None
-            and name not in ('.', '..'))
+    require(isinstance(name, str) and 0 < len(name) <= 255
+            and '/' not in name and '\0' not in name and name not in ('.', '..'))
 
 
 def directory_record(value):
@@ -97,7 +97,7 @@ def section(value, check, allow_unreviewed=False):
     require(state == 'error' and set(value) in ({'state', 'error'}, {'state', 'error', 'prior'}))
     require(value['error'] in (*ERRORS, 'CHANGED', *(['UNREVIEWED_PATH'] if allow_unreviewed else [])))
     if 'prior' in value:
-        require(value['error'] == 'CHANGED')
+        require(value['error'] in ('CHANGED', 'TimeoutError'))
         check(value['prior'])
     return False
 
@@ -145,6 +145,8 @@ def validate(data, binding):
         good = section(sections.get(name), lambda v, name=name: command(v, name))
         item = sections[name].get('value', {})
         good = good and item['returncode'] == 0 and item['failure'] is None
+        if name in ('apt-config', 'unit-config', 'unit-paths', 'unit-paths-after') and good:
+            good = blob(item['stderr'], 2 * 1024 * 1024) == b''
         commands_ok[name] = good
         complete &= good
     for path in DIRECTORIES:
@@ -181,7 +183,8 @@ def validate(data, binding):
     release = sections['file:/usr/lib/os-release']
     if release['state'] == 'ok' and not release['value'].get('absent'):
         raw = blob(release['value']['body'], BODY_LIMIT)
-        complete &= b'ID=ubuntu\n' in raw and b'VERSION_ID="24.04"\n' in raw
+        complete &= (re.findall(rb'^ID=(.*)$', raw, re.M) == [b'ubuntu']
+                     and re.findall(rb'^VERSION_ID=(.*)$', raw, re.M) == [b'"24.04"'])
     else:
         complete = False
     if commands_ok['audit']:

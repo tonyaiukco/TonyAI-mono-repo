@@ -263,7 +263,8 @@ class GuestAndFrame(unittest.TestCase):
             inp.mkdir()
             (inp / 'r3-toolchain.lock.json').write_bytes(common.encoded(PINS))
             manifest = {'source': {'sha': 'a' * 40, 'run_id': '123'}, 'purpose': 'FIXTURE_DIAGNOSTIC_ONLY'}
-            def verify():
+            (inp / 'manifest.json').write_bytes(common.encoded(manifest))
+            def verify(_purposes):
                 for key, value in [('manifest.json', manifest), ('native-files.json', {}), ('native-state.json', {})]:
                     common.write(out / key, common.encoded(value))
                 return manifest

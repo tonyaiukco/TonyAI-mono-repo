@@ -17,8 +17,8 @@ DOCUMENT_LIMIT = 24 * 1024 * 1024
 COMMANDS = {'inventory': INVENTORY_ARGV, 'audit': ['dpkg', '--audit'],
             'apt-config': ['apt-config', 'dump'], 'unit-config': ['systemctl', 'cat', *UNITS],
             'architecture': ['dpkg', '--print-architecture'],
-            'unit-paths': ['systemctl', 'show', '--property=Id,FragmentPath,DropInPaths', *UNITS],
-            'unit-paths-after': ['systemctl', 'show', '--property=Id,FragmentPath,DropInPaths', *UNITS]}
+            'unit-paths': ['systemctl', 'show', '--property=Id,FragmentPath,DropInPaths,NeedDaemonReload', *UNITS],
+            'unit-paths-after': ['systemctl', 'show', '--property=Id,FragmentPath,DropInPaths,NeedDaemonReload', *UNITS]}
 SCOPES = ('apt-scope-before', 'apt-scope-after', 'unit-scope-before', 'unit-scope-after')
 # Reviewed read scope, not accepted semantics. Unknown members remain explicit
 # partial evidence; never read arbitrary credentials disguised as configuration.
@@ -37,10 +37,20 @@ REVIEW_SCRIPTS = ('/usr/lib/os-release', '/usr/lib/ubuntu-advantage/apt-esm-json
 EXTRA_FILES = (*REVIEW_SCRIPTS, '/usr/bin/snap', '/usr/bin/appstreamcli', '/usr/bin/test')
 BODIES = REVIEW_SCRIPTS + tuple(p for p in FIXED if p not in ('/usr/bin/mandb', '/usr/bin/setpriv',
     '/usr/bin/python3.12', '/usr/bin/gdbus', '/var/lib/dpkg/diversions', '/var/lib/dpkg/statoverride'))
-ERRORS = ('OSError', 'ValueError', 'TimeoutError', 'UnicodeError', 'RuntimeError')
+ERRORS = ('TimeoutError', 'UnicodeError', 'OSError', 'ValueError', 'RuntimeError')
+
+
+class CollectionDeadline(BaseException):
+    """Escape per-section Exception handlers when the outer alarm expires."""
+
+
+def deadline_alarm(_sig, _frame):
+    raise CollectionDeadline()
 
 
 def error_code(exc):
+    if isinstance(exc, CollectionDeadline):
+        return 'TimeoutError'
     import builtins
     return next((name for name in ERRORS if isinstance(exc, getattr(builtins, name))), 'RuntimeError')
 
@@ -114,7 +124,7 @@ def collect(binding, checkpoint=lambda _value: None):
     def paths(name):
         import base64
         value = sections[name]['value']
-        if value['returncode'] != 0 or value['failure'] is not None:
+        if value['returncode'] != 0 or value['failure'] is not None or value['stderr']['bytes'] != 0:
             raise ValueError('Unit path command failed')
         return base64.b64decode(value['stdout']['base64'], validate=True)
     take('unit-scope-before', lambda: unit_scope(paths('unit-paths')))
@@ -128,10 +138,17 @@ def collect(binding, checkpoint=lambda _value: None):
     for name, section in list(sections.items()):
         if not name.startswith(('file:', 'directory:')) or section['state'] != 'ok':
             continue
+        if time.monotonic() >= deadline:
+            sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}
+            checkpoint(value)
+            continue
         path = name.split(':', 1)[1]
         again = operation(lambda: capture.membership(path) if name.startswith('directory:')
                           else capture.file_record(path, 'body' in section['value']))
-        if again != section:
+        if time.monotonic() >= deadline:
+            sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}
+            checkpoint(value)
+        elif again != section:
             sections[name] = {'state': 'error', 'error': 'CHANGED', 'prior': section['value']}
             checkpoint(value)
     return value

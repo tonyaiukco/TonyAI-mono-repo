@@ -30,7 +30,7 @@ def command(name, _deadline=0):
     outputs = {'inventory': INVENTORY, 'audit': b'', 'apt-config': b'APT {};\n',
                'unit-config': b'\n'.join(b'# /usr/lib/systemd/system/' + u.encode() + b'\n[Unit]\n' for u in UNITS),
                'architecture': b'amd64\n', 'os-release': b'ID=ubuntu\nVERSION_ID="24.04"\n',
-               **{name: b'\n'.join(b'Id=' + u.encode() + b'\nFragmentPath=/usr/lib/systemd/system/' + u.encode() + b'\nDropInPaths=\n' for u in UNITS) for name in ('unit-paths', 'unit-paths-after')}}
+               **{name: b'\n'.join(b'Id=' + u.encode() + b'\nFragmentPath=/usr/lib/systemd/system/' + u.encode() + b'\nDropInPaths=\nNeedDaemonReload=no\n' for u in UNITS) for name in ('unit-paths', 'unit-paths-after')}}
     return {'argv': evidence.COMMANDS[name], 'stdout': capture.blob(outputs[name]),
             'stderr': capture.blob(b''), 'returncode': 0, 'failure': None}
 
@@ -252,7 +252,7 @@ class CollectionRoute(unittest.TestCase):
             inputs = root / 'inputs'
             inputs.mkdir()
             write(inputs / 'manifest.json', encoded(manifest))
-            def verified():
+            def verified(_purposes):
                 write(output / 'manifest.json', encoded(manifest))
                 return manifest
             real_collect = evidence.collect
@@ -284,7 +284,7 @@ class CollectionRoute(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             output, port = root / 'output', root / 'port'
-            def verified():
+            def verified(_purposes):
                 write(output / 'manifest.json', encoded(manifest))
                 return manifest
             def partial(binding, checkpoint):

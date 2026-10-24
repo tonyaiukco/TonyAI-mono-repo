@@ -1449,10 +1449,25 @@ No hook suppression, sixth-service stop or writer exemption is added.
 Before native APT configuration is queried, the collector checks the exact
 reviewed files/membership and refuses include directives or configuration-root
 redirection, including quoted, percent-encoded and comment-split forms and the
-APT config-index directive. Harmless literal shell hash comments remain readable.
+APT config-index directive. Three conservative views are checked: raw normalized
+bytes, the original quote-aware C/C++ view, and the physical-line preprocessing in
+[APT 2.8.2 configuration.cc](https://github.com/Debian/apt/blob/39d24618587e28b2dd2cae04ed2393056869f771/apt-pkg/contrib/configuration.cc#L865).
+The third view resets quote parity on each physical line, completes any pending
+block comment, strips `//` then non-magic `#` comments, then strips block comments.
+Only block-comment state persists between lines. It preserves the case-sensitive
+`#clear`, `#include`, and `#x-apt-configure-index` prefix exceptions before the
+conservative redirection scan. This is a read-scope filter, not a complete APT
+parser or semantic approval. Harmless literal shell hash comments remain readable.
 Unit dump paths must identify exactly the five known fragments in
 fixed system directories; unreviewed drop-ins or alternate paths refuse that
-section. Before/after scope correspondence and exact unit body correspondence
+section. Both path queries must return exactly `Id`, `FragmentPath`, `DropInPaths`
+and `NeedDaemonReload=no` for each unit. Nonempty stderr from either path query,
+`systemctl cat` or `apt-config dump` makes evidence partial with no aggregate hashes.
+The first path-query warning prevents the unit dump. This follows
+[systemd 255's reload predicate](https://github.com/systemd/systemd/blob/db11bab38ccf1ed257f310d29070843d4c58ea01/src/core/unit.c#L3909)
+and its [successful cat command with a stderr warning](https://github.com/systemd/systemd/blob/db11bab38ccf1ed257f310d29070843d4c58ea01/src/systemctl/systemctl-edit.c#L82).
+Reload detection compares observed paths and mtimes; it does not prove an atomic
+snapshot or absence of every privileged content rewrite. Before/after scope correspondence and exact unit body correspondence
 are independently checked. This preserves actual native command bytes instead
 of substituting a staged configuration. These observations are not a filesystem
 snapshot and do not contain a concurrent privileged swap-and-restore attack.
@@ -1496,7 +1511,9 @@ python3 -I -B infra/scripts/r3_policy_packet.py --destination /private/tmp/new-p
 
 This creates new files exclusively: `proposal.json`, `guest.py`, and `packet.json`.
 The draft binds the exact collector/receiver/helper/toolchain source hash map and
-base commit. `published_sha`, target and custody are deliberately null; the draft
+verified base commit only when the tree is clean and all mapped Git blobs match.
+Otherwise `base_sha` is null, explicitly marking an unverified development draft.
+`published_sha`, target and custody are deliberately null; the draft
 cannot execute. After separate publication and fresh target/custody preparation,
 use `--proposal <new-complete-proposal.json>` with another fresh destination to
 render that exact proposal. No historical packet is edited or rebound.
@@ -1516,20 +1533,48 @@ and loaded in memory; no source upload or package installation is performed.
 `r3_policy_receive.py` requires `--packet`, `--approval`,
 `--approval-sha256`, and `--execute`. The exact owner authorization record must
 bind action `ONE_POLICY_EVIDENCE_COLLECTION`, one attempt, proposal SHA256 and
-an owner authorization reference. It also binds a private control-plane/host-key
-readback observed within 15 minutes. The receiver verifies current source against
+an owner authorization reference and `packet_path`, the canonical absolute path of
+the new packet directory. A copied packet cannot reuse that approval at another
+path; its exclusive local attempt marker still prevents repetition in place.
+This is not global replay prevention across deleted/restored state or other hosts.
+It also binds a private control-plane/host-key
+readback observed within 15 minutes. Its `host_key_fingerprint` is the OpenSSH
+`SHA256:` fingerprint of the decoded public key, separate from the custody file
+hash. The known-hosts file must contain exactly one ordinary, marker-free
+`ssh-ed25519` key line for the exact connection host: no CA, wildcard, alias,
+comment or extra line. The receiver verifies current source against
 published Git blobs (including hidden working-tree edits), exact rendered payload,
 all helper hashes, target/custody and approval before consuming an exclusive
-attempt marker. None of these files is an authorizer by itself.
+attempt marker. Git runs with a fixed environment, global/system config disabled,
+`--no-replace-objects`, `GIT_NO_REPLACE_OBJECTS=1`, and `core.fsmonitor=false`
+so status queries cannot invoke a repository-local filesystem-monitor hook. Ignored files under
+`infra/scripts` and `infra/selfhost` also refuse execution. Before status/object
+reads, a local key-name query with `--no-includes` refuses `filter.*`, `include.*`,
+`includeIf.*`, `diff.*`, `extensions.worktreeConfig`, `extensions.partialClone`,
+`remote.*.promisor` and `core.worktree`; nonempty, symlinked or nonregular Git
+`info/attributes` also refuses. `GIT_NO_LAZY_FETCH=1` disables implicit missing-object
+fetches. Both index and HEAD tree metadata are checked for mode `160000` gitlinks
+before status: a child repository has independent config and is outside this
+source-verification scope. These conservative configuration restrictions avoid repository-defined
+program execution during source validation. They are preflight observations,
+not protection against concurrent replacement of Git metadata or the interpreter.
+The documented direct
+`python3 -I -B` CLI establishes an empty private bytecode-cache prefix before local
+imports; `-B` alone does not prevent loading stale/unchecked bytecode. None of
+these files is an authorizer by itself.
 
 The receiver probes encryption locally before SSH, then uses fixed strict host-key
-checking with no forwarding or remote shell expansion of supplied values. The
+checking with explicit `UpdateHostKeys=no`, `CheckHostIP=no`, no forwarding or
+remote shell expansion of supplied values. The
 selected fixed IMDS endpoint bypasses proxies and refuses redirects. Guest identity
 and boot ID are observed before/after collection and compared independently;
 control-plane/image mismatch or a reboot cannot yield complete evidence. Output
 and stderr are bounded and retained at 0600 in a new 0700 private capture directory,
 including failed/partial transport. The local transport deadline is 360 seconds.
-Cleanup failure is recorded and cannot suppress capture closure. Local SSH exit
+SIGINT/SIGTERM are recorded and deferred to bounded child cleanup, capture/seal
+and partial-summary finalization. The original transport failure and individual
+cleanup errors are retained separately; streams are unbuffered. SIGKILL, host
+loss and remote detached-child termination remain outside this guarantee. Local SSH exit
 never proves remote child exit after a disconnect.
 
 The receiver seals private capture with the bound age tool and recipient; only

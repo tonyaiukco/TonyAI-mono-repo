@@ -73,16 +73,14 @@ def validate_target(data, proposal):
 
 
 def main(proposal):
-    from r3_policy_evidence import error_code
+    from r3_policy_evidence import error_code, CollectionDeadline, deadline_alarm
     value = {'format': 1, 'purpose': B_PURPOSE, 'source': proposal['source'], 'target': proposal['target'],
              'identity_before': None, 'identity_after': None, 'evidence': None, 'failure': None}
-    def alarm(_sig, _frame):
-        raise TimeoutError('Collection deadline')
     def checkpoint(doc):
         data = encoded(doc)
         require(len(data) <= DOCUMENT_LIMIT - 65536)
         value['evidence'] = json.loads(data)
-    signal.signal(signal.SIGALRM, alarm)
+    signal.signal(signal.SIGALRM, deadline_alarm)
     signal.alarm(300)
     try:
         require(os.geteuid() == 0)
@@ -92,7 +90,7 @@ def main(proposal):
                    'boot_id': value['identity_before']['boot_id']}
         collect(binding, checkpoint)
         value['identity_after'] = identity()
-    except Exception as exc:
+    except (Exception, CollectionDeadline) as exc:
         value['failure'] = error_code(exc)
     finally:
         signal.alarm(30)

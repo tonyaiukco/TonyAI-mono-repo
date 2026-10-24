@@ -195,7 +195,9 @@ def validate_collection(entries, result, expected):
             or result.get('not_reached') != list(COMMANDS + POLICY_COMMANDS)):
         raise ValueError('Invalid collection-only frame')
     checked = validate(entries['policy-evidence.json'], collection_binding(expected))
-    expected_status = 'PARTIAL_REVIEW_REQUIRED' if failed else checked['status']
+    if failed:
+        checked.update(status='PARTIAL_REVIEW_REQUIRED', policy_input_hashes={})
+    expected_status = checked['status']
     if (result.get('checks') != checked or result.get('status') != expected_status
             or failed and result['failure_type'] not in ('OSError', 'ValueError', 'TimeoutError', 'RuntimeError', 'UnicodeError')):
         raise ValueError('Collection readback differs')

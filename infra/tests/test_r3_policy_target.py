@@ -1,5 +1,6 @@
 """Target identity/packet/receiver tests using local synthetic bytes only."""
 import copy
+import base64
 from datetime import datetime, timezone
 import json
 import os
@@ -20,9 +21,33 @@ import r3_policy_target as target
 import r3_policy_packet as packet
 import r3_policy_receive as receiver
 from r3_noble_common import digest, encoded, write
+import r3_policy_git as source_git
 
 BOOT = '00000000-0000-0000-0000-000000000001'
 IMDS = {key: 'synthetic-' + key for key in target.IMDS_FIELDS}
+
+
+HOST_KEY = base64.b64encode(b'\0\0\0\x0bssh-ed25519\0\0\0\x20' + b'k' * 32).decode()
+HOST_LINE = ('192.0.2.1 ssh-ed25519 ' + HOST_KEY + '\n').encode()
+
+
+def synthetic_git(argv, **kwargs):
+    assert argv[:6] == ['git', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', str(packet.ROOT)]
+    assert kwargs['env']['GIT_NO_REPLACE_OBJECTS'] == '1'
+    assert kwargs['env']['GIT_NO_LAZY_FETCH'] == '1'
+    assert kwargs['timeout'] == 10
+    if argv[6:] == ['config', '--local', '--no-includes', '--null', '--name-only', '--list']:
+        return b''
+    if argv[6:] == ['rev-parse', '--git-path', 'info/attributes']:
+        return b'/synthetic-absent-git-info-attributes'
+    if argv[6:] == ['rev-parse', 'HEAD']:
+        return b'a' * 40 + b'\n'
+    if argv[6:] in (['ls-files', '--stage', '-z'], ['ls-tree', '-r', '-z', 'a' * 40]):
+        return b''
+    if argv[6] == 'status':
+        return b''
+    assert argv[6] == 'show'
+    return (packet.ROOT / argv[7].split(':', 1)[1]).read_bytes()
 
 
 def proposal():
@@ -162,11 +187,10 @@ class NativeReadScope(unittest.TestCase):
 
 class ReceiverAndPacket(unittest.TestCase):
     def prepare_packet(self, destination, supplied=None):
-        # The mutation runner copies sources without Git metadata. Mock only
-        # the exact draft HEAD query; source files and payload remain real.
-        with patch.object(packet.subprocess, 'check_output', return_value=b'a' * 40 + b'\n') as head:
+        # Keep real source/payload bytes in the Git-free mutation fixture.
+        with patch.object(source_git.subprocess, 'check_output', side_effect=synthetic_git) as head:
             result = packet.prepare(destination, supplied)
-            head.assert_called_once_with(['git', '-C', str(packet.ROOT), 'rev-parse', 'HEAD'])
+            self.assertEqual(head.call_count, 7 + len(packet.sources()))
         self.assertEqual(result['source']['base_sha'], 'a' * 40)
         return result
 
@@ -204,46 +228,71 @@ class ReceiverAndPacket(unittest.TestCase):
                     'public_ip': '192.0.2.1', 'private_ip': '10.0.0.1', 'network': 'synthetic'}}
             public = 'ssh-ed25519 YWJj\n'
             custody = {'recipient': public, 'recipient_sha256': digest(public.encode())}
-            for key, data in (('age', b'not an executable'), ('known_hosts', b'synthetic'), ('ssh_public_key', public.encode())):
+            for key, data in (('age', b'not an executable'), ('known_hosts', HOST_LINE), ('ssh_public_key', public.encode())):
                 path = root / key
                 path.write_bytes(data)
                 custody[key], custody[key + '_sha256'] = str(path), digest(data)
             p['custody'] = custody
             fresh = root / 'fresh.json'
             fresh_value = {'observed_at': datetime.now(timezone.utc).isoformat(), 'target': p['target'],
-                           'host_key_sha256': custody['known_hosts_sha256']}
+                           'host_key_fingerprint': receiver.known_host(HOST_LINE, '192.0.2.1')}
             fresh.write_bytes(encoded(fresh_value))
             final = root / 'final'
             self.prepare_packet(final, p)
             approval = {'action': 'ONE_POLICY_EVIDENCE_COLLECTION', 'attempts': 1,
-                'proposal_sha256': digest((final / 'proposal.json').read_bytes()), 'owner_authorization_reference': 'synthetic only',
+                'proposal_sha256': digest((final / 'proposal.json').read_bytes()), 'packet_path': str(final.resolve()), 'owner_authorization_reference': 'synthetic only',
                 'fresh_control_plane_readback': str(fresh), 'fresh_control_plane_readback_sha256': digest(fresh.read_bytes())}
-            def git(argv, **kwargs):
-                if argv[3] == 'rev-parse':
-                    return b'a' * 40 + b'\n'
-                if argv[3] == 'status':
-                    return b''
-                return (packet.ROOT / argv[4].split(':', 1)[1]).read_bytes()
             # Only the socket shape is mocked; no SSH or encryption process runs.
             import stat
             from types import SimpleNamespace
             original_stat = receiver.os.stat
             def agent_stat(path, *args, **kwargs):
                 return SimpleNamespace(st_mode=stat.S_IFSOCK) if path == '/synthetic-agent' else original_stat(path, *args, **kwargs)
-            with patch.object(receiver.subprocess, 'check_output', side_effect=git), \
+            with patch.object(receiver.subprocess, 'check_output', side_effect=synthetic_git), \
                  patch.dict(os.environ, {'SSH_AUTH_SOCK': '/synthetic-agent'}), \
                  patch.object(receiver.os, 'stat', side_effect=agent_stat):
                 data = encoded(approval)
                 checked, _guest = receiver.approved(final, data, digest(data))
                 self.assertEqual(checked, p)
-                with patch.object(receiver.subprocess, 'check_output', side_effect=lambda argv, **kw: b'changed' if argv[3] == 'show' else git(argv, **kw)):
+                with patch.object(receiver.subprocess, 'check_output', side_effect=lambda argv, **kw: b'changed' if argv[6] == 'show' else synthetic_git(argv, **kw)):
                     with self.assertRaises(ValueError):
                         receiver.approved(final, data, digest(data))
                 for key, value in [('attempts', True), ('action', 'ONE_READ_ONLY_GUEST_INVENTORY'),
-                                   ('proposal_sha256', '0' * 64), ('owner_authorization_reference', '')]:
+                                   ('proposal_sha256', '0' * 64), ('owner_authorization_reference', ''),
+                                   ('packet_path', str(root / 'copied-packet'))]:
                     bad = encoded({**approval, key: value})
                     with self.subTest(key=key), self.assertRaises(ValueError):
                         receiver.approved(final, bad, digest(bad))
+                for field in ('payload', 'index', 'region', 'vm-id', 'host-key', 'host-fingerprint', 'clean-tree'):
+                    candidate = copy.deepcopy(p)
+                    if field == 'region':
+                        candidate['target']['imds']['location'] = 'elsewhere'
+                        candidate['target']['control_plane']['location'] = 'elsewhere'
+                    if field == 'vm-id': candidate['target']['control_plane']['vm_id'] = 'other'
+                    if field == 'host-key':
+                        Path(custody['known_hosts']).write_bytes(HOST_LINE.replace(b'192.0.2.1', b'*'))
+                        candidate['custody']['known_hosts_sha256'] = digest(Path(custody['known_hosts']).read_bytes())
+                    destination = root / ('negative-' + field)
+                    self.prepare_packet(destination, candidate)
+                    if field == 'payload':
+                        (destination / 'guest.py').write_bytes(b'forged')
+                        index = json.loads((destination / 'packet.json').read_bytes())
+                        index['guest_sha256'] = digest(b'forged')
+                        (destination / 'packet.json').write_bytes(encoded(index))
+                    if field == 'index': (destination / 'packet.json').write_bytes(encoded({}))
+                    fresh_value['target'] = candidate['target']
+                    fresh_value['host_key_fingerprint'] = 'SHA256:wrong' if field == 'host-fingerprint' else receiver.known_host(HOST_LINE, '192.0.2.1')
+                    fresh.write_bytes(encoded(fresh_value))
+                    bad = encoded({**approval, 'packet_path': str(destination.resolve()),
+                        'proposal_sha256': digest((destination / 'proposal.json').read_bytes()),
+                        'fresh_control_plane_readback_sha256': digest(fresh.read_bytes())})
+                    def changed_git(argv, **kwargs):
+                        return b'?? untracked' if field == 'clean-tree' and argv[6] == 'status' else synthetic_git(argv, **kwargs)
+                    with self.subTest(field=field), patch.object(receiver.subprocess, 'check_output', side_effect=changed_git), self.assertRaises(ValueError):
+                        receiver.approved(destination, bad, digest(bad))
+                    Path(custody['known_hosts']).write_bytes(HOST_LINE)
+                fresh_value['target'] = p['target']
+                fresh_value['host_key_fingerprint'] = receiver.known_host(HOST_LINE, '192.0.2.1')
                 fresh_value['observed_at'] = '2000-01-01T00:00:00+00:00'
                 fresh.write_bytes(encoded(fresh_value))
                 bad = encoded({**approval, 'fresh_control_plane_readback_sha256': digest(fresh.read_bytes())})
@@ -257,7 +306,8 @@ class ReceiverAndPacket(unittest.TestCase):
             argv = [sys.executable, '-c', script]
             with patch.object(receiver, 'kill_group', side_effect=OSError('cleanup')):
                 result = receiver.receive(argv, b'payload', root)
-            self.assertEqual(result['failure'], 'OSError')
+            self.assertIsNone(result['failure'])
+            self.assertEqual(result['cleanup_errors'], ['OSError'])
             self.assertEqual((root / 'guest.json').read_bytes(), b'partial\n')
             self.assertEqual((root / 'stderr.private').read_bytes(), b'private\n')
             self.assertEqual((root / 'guest.json').stat().st_mode & 0o777, 0o600)

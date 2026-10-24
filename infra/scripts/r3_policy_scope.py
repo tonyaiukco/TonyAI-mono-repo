@@ -44,6 +44,54 @@ def strip_comments(raw):
     return bytes(result)
 
 
+def apt28_comment_view(raw):
+    """Port of APT 2.8.2 configuration.cc physical-line comment preprocessing.
+
+    Deliberately only the comment view; not a complete APT parser/approval.
+    Pending block comments span physical lines; quote parity never does.
+    """
+    fragments, in_comment = [], False
+    for physical in raw.split(b'\n'):
+        line = physical.replace(b'\t', b'        ').strip()
+        if in_comment:
+            end = line.find(b'*/')
+            if end < 0:
+                continue
+            line = line[end + 2:]
+            in_comment = False
+        for marker in (b'//', b'#'):
+            start = 0
+            while True:
+                start = line.find(marker, start)
+                if start < 0:
+                    break
+                magic = marker == b'#' and any(line[start + 1:].startswith(m) for m in (b'clear', b'include', b'x-apt-configure-index'))
+                if line[:start].count(b'"') % 2 or magic:
+                    start += 1
+                    continue
+                line = line[:start]
+                break
+        pieces, start = [], 0
+        while True:
+            start = line.find(b'/*', start)
+            if start < 0:
+                break
+            if line[:start].count(b'"') % 2:
+                start += 2
+                continue
+            pieces.append(line[:start])
+            end = line.find(b'*/', start + 2)
+            if end < 0:
+                line, in_comment = b'', True
+                break
+            line = line[end + 2:]
+            start = 0
+        pieces.append(line)
+        fragments.append(b''.join(pieces))
+    if in_comment:
+        raise ValueError('Unclosed APT block comment')
+    return b'\n'.join(fragments)
+
 def normalized(raw):
     # APT ParseQuoteWord removes quotes, then decodes percent hex once.
     return re.sub(rb'%([A-Fa-f0-9]{2})', lambda m: bytes([int(m[1], 16)]), raw.replace(b'"', b''))
@@ -61,7 +109,7 @@ def check_apt(value):
         # files; quoted/percent-encoded tags and C/C++ comments are accepted.
         # Scan both views so literal comment markers inside hook values cannot
         # hide directives. Mentioning a dangerous token in a value also refuses.
-        for view in (normalized(raw), normalized(strip_comments(raw))):
+        for view in (normalized(raw), normalized(strip_comments(raw)), normalized(apt28_comment_view(raw))):
             if re.search(rb'#\s*(?:include|x-apt-configure-index)\b|\b(?:Dir|RootDir)\b', view, re.I):
                 raise ValueError('APT scope redirection')
 
@@ -72,12 +120,12 @@ def unit_paths(raw):
     result = {}
     for record in records:
         pairs = [line.split('=', 1) for line in record.splitlines()]
-        if any(len(pair) != 2 for pair in pairs) or len(pairs) != 3:
+        if any(len(pair) != 2 for pair in pairs) or len(pairs) != 4:
             raise ValueError('Malformed unit path query')
         item = dict(pairs)
-        if set(item) != {'Id', 'FragmentPath', 'DropInPaths'} or item['Id'] in result or item['Id'] not in UNITS:
+        if set(item) != {'Id', 'FragmentPath', 'DropInPaths', 'NeedDaemonReload'} or item['Id'] in result or item['Id'] not in UNITS:
             raise ValueError('Unexpected unit path query')
-        if item['DropInPaths'] or item['FragmentPath'] not in [root + item['Id'] for root in UNIT_ROOTS]:
+        if item['NeedDaemonReload'] != 'no' or item['DropInPaths'] or item['FragmentPath'] not in [root + item['Id'] for root in UNIT_ROOTS]:
             raise ValueError('Unreviewed unit fragment/drop-in path')
         result[item['Id']] = item['FragmentPath']
     if set(result) != set(UNITS):

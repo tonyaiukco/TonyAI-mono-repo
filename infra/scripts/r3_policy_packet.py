@@ -6,14 +6,23 @@ from pathlib import Path
 import subprocess
 import sys
 
+# Direct CLI execution loads repository helpers from source, even with a stale
+# unchecked-hash .pyc beside them. -B alone only disables cache writes.
+if __name__ == '__main__':
+    import tempfile
+    _source_cache = tempfile.TemporaryDirectory(prefix='r3-policy-source-cache-')
+    sys.pycache_prefix = _source_cache.name
+    sys.dont_write_bytecode = True
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r3_noble_common import digest, encoded, read, write
 from r3_policy_evidence import B_PURPOSE
+from r3_policy_git import verified_head
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULES = ('r3_noble_common', 'r3_package_state', 'r3_apt_observer', 'r3_install_policy',
            'r3_policy_capture', 'r3_policy_scope', 'r3_policy_evidence', 'r3_policy_validate', 'r3_policy_target')
-PACKET_HELPERS = ('r3_policy_receive.py', 'r3_policy_packet.py', 'r3_noble_inputs.py', 'r3_toolchain.py', 'r3_artifacts.py')
+PACKET_HELPERS = ('r3_policy_git.py', 'r3_policy_receive.py', 'r3_policy_packet.py', 'r3_noble_inputs.py', 'r3_toolchain.py', 'r3_artifacts.py')
 
 
 def sources():
@@ -47,8 +56,13 @@ raise SystemExit(main(proposal))
 def prepare(destination, supplied=None):
     destination.mkdir(mode=0o700)
     files = sources()
+    try:
+        base_sha = verified_head(ROOT, files)
+    except (ValueError, subprocess.CalledProcessError):
+        # Development drafts bind file hashes but never claim a verified commit.
+        base_sha = None
     proposal = {'format': 1, 'purpose': B_PURPOSE,
-                'source': {'base_sha': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode().strip(),
+                'source': {'base_sha': base_sha,
                            'published_sha': None, 'files': files, 'sha256': digest(encoded(files))},
                 'target': None, 'custody': None, 'execution_authorized': False,
                 'historical_B_rebound': False}
