@@ -99,5 +99,10 @@
       "withdrawn": "Withdrawn"
     }
   },
-  "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied."
+  "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",
+  "selectAllLoaded": "Select all {count} loaded",
+  "selectAllLoadedName": "Select all {count} loaded: every draft you entered and can send, among the records loaded",
+  "previousShown": "Showing {shown} of {total}. Selections apply to the records loaded here.",
+  "previousShownLoaded": "Showing {shown} loaded. Selections apply to the records loaded here.",
+  "previousLoadMore": "Load more"
 }

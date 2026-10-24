@@ -1,3 +1,4 @@
+import { QueryTooBroadError } from '../common/api-error';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   ConflictException,
@@ -91,14 +92,35 @@ describe('IntensityService', () => {
     );
   });
 
-  it('listDenominators is tenant-scoped', async () => {
+  it('a denominator page is tenant-scoped, ordered year DESC, metric ASC, id ASC, and fetches one row more', async () => {
     prisma.subsidiaryDenominator.findMany.mockResolvedValue([makeDenominator()]);
-    await service.listDenominators(admin, undefined, 2024);
-    expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, year: 2024 },
-      }),
+    const page = await service.listDenominatorPage(admin, { year: 2024, limit: 10 });
+    expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith({
+      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, year: 2024 },
+      orderBy: [{ year: 'desc' }, { metric: 'asc' }, { id: 'asc' }],
+      take: 11,
+    });
+    expect(page).toMatchObject({ limit: 10, nextCursor: null });
+  });
+
+  it.each([
+    ['subsidiaryId', { subsidiaryId: undefined }],
+    ['year', { year: 2023 }],
+  ])('a denominator cursor is bound to %s (qa-auditor P2-1)', async (_label, change) => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValueOnce(
+      [1, 2].map((n) => makeDenominator({ id: `00000000-0000-4000-8000-00000000000${n}` })),
     );
+    const base = { subsidiaryId: 'sub-1', year: 2024 };
+    const { nextCursor } = await service.listDenominatorPage(admin, { ...base, limit: 1 });
+    await expect(service.listDenominatorPage(admin, { ...base, ...change, limit: 1, cursor: nextCursor! })).rejects.toThrow(
+      expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) }),
+    );
+  });
+
+  it('a denominator page for an inaccessible subsidiary is empty without a query', async () => {
+    const page = await service.listDenominatorPage({ ...admin, accessibleSubsidiaryIds: ['sub-1'] }, { subsidiaryId: 'sub-9' });
+    expect(page).toEqual({ items: [], limit: 50, nextCursor: null });
+    expect(prisma.subsidiaryDenominator.findMany).not.toHaveBeenCalled();
   });
 
   it('createDenominator is forbidden for non-super_admin', async () => {
@@ -229,6 +251,25 @@ describe('IntensityService', () => {
     expect(emissions.summary.mock.calls.map(([, query]) => query)).toEqual([
       { ...context, subsidiaryId: 'sub-1' }, { ...context, subsidiaryId: 'sub-2' },
     ]);
+    // Each numerator is bounded like a report's (LP4-05 PR C).
+    expect(emissions.summary.mock.calls.map(([, , limit]) => limit)).toEqual([5_000, 5_000]);
+  });
+
+  it('summarises a subsidiary once however many metrics it has a denominator for', async () => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValue([
+      makeDenominator({ metric: 'employees', value: 10, unit: 'FTE' }),
+      makeDenominator({ id: 'den-2', metric: 'revenue', value: 20, unit: 'M EUR' }),
+    ]);
+    emissions.summary.mockResolvedValue({ totals: { total: 40 }, uncalculatedRecordCount: 0 });
+    const result = await service.contextIntensity(admin, { year: 2027, subsidiaryId: 'sub-1' });
+    expect(emissions.summary).toHaveBeenCalledTimes(1);
+    expect(result.data.metrics.map((m) => m.intensity)).toEqual([4, 2]);
+  });
+
+  it('answers query_too_broad whole when one subsidiary-year is past the budget', async () => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValue([makeDenominator()]);
+    emissions.summary.mockRejectedValue(new QueryTooBroadError());
+    await expect(service.contextIntensity(admin, { year: 2027 })).rejects.toBeInstanceOf(QueryTooBroadError);
   });
 
   it('permits physical intensity only for an explicit subsidiary', async () => {

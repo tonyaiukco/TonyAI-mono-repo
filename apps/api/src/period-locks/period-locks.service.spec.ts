@@ -324,16 +324,42 @@ describe('PeriodLocksService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('list scopes to the accessible set and returns [] for a foreign subsidiary', async () => {
+  it('a page scopes to the accessible set, newest first, and is empty for a foreign subsidiary', async () => {
     const user = dataEntry();
-    await service.list(user, undefined, undefined);
-    expect(prisma.periodLock.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ subsidiaryId: { in: ['sub-1'] } }),
-      }),
-    );
+    await service.listPage(user, {});
+    expect(prisma.periodLock.findMany).toHaveBeenCalledWith({
+      where: { subsidiaryId: { in: ['sub-1'] } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 51,
+    });
 
-    const foreign = await service.list(user, 'sub-999');
-    expect(foreign).toEqual([]);
+    prisma.periodLock.findMany.mockClear();
+    const foreign = await service.listPage(user, { subsidiaryId: 'sub-999' });
+    expect(foreign).toEqual({ items: [], limit: 50, nextCursor: null });
+    expect(prisma.periodLock.findMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['subsidiaryId', { subsidiaryId: undefined }],
+    ['year', { year: 2025 }],
+    ['period', { period: 'monthly' as const, periodValue: 'January' }],
+    ['periodValue', { periodValue: 'Q2' }],
+  ])('a lock cursor is bound to %s (qa-auditor P2-1)', async (_label, change) => {
+    const at = new Date('2026-03-01T10:00:00.000Z');
+    prisma.periodLock.findMany.mockResolvedValueOnce(
+      [1, 2].map((n) => ({ id: `00000000-0000-4000-8000-00000000000${n}`, subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1', lockedBy: 'u', createdAt: at })),
+    );
+    const base = { subsidiaryId: 'sub-1', year: 2026, period: 'quarterly' as const, periodValue: 'Q1' };
+    const { nextCursor } = await service.listPage(dataEntry(), { ...base, limit: 1 });
+    await expect(service.listPage(dataEntry(), { ...base, ...change, limit: 1, cursor: nextCursor! })).rejects.toThrow(
+      expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) }),
+    );
+  });
+
+  it('the exact query addresses one lock: its period value canonicalised', async () => {
+    await service.listPage(dataEntry(), { subsidiaryId: 'sub-1', year: 2026, period: 'monthly', periodValue: 'march', limit: 1 });
+    expect(prisma.periodLock.findMany.mock.calls[0][0].where).toEqual({
+      subsidiaryId: { in: ['sub-1'] }, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'March',
+    });
   });
 });

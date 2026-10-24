@@ -17,19 +17,32 @@ import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { RejectActivityRecordDto } from './dto/reject-activity-record.dto';
 import { VoidActivityRecordDto } from './dto/void-activity-record.dto';
-import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
+import {
+  ActivityRecordFiltersQueryDto,
+  ActivityRecordPageQueryDto,
+} from './dto/activity-record-page-query.dto';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('activity-records')
 export class ActivityRecordsController {
   constructor(private readonly service: ActivityRecordsService) {}
 
+  /** One `CursorPage` of the caller's records (LP4-05 PR C). */
   @Get()
   list(
     @CurrentUser() user: RequestUser,
-    @Query() query: ListActivityRecordsQueryDto,
+    @Query() query: ActivityRecordPageQueryDto,
   ) {
-    return this.service.list(user, query);
+    return this.service.listPage(user, query);
+  }
+
+  /** The filtered set's size and newest year. Declared before `:id`, which would otherwise claim the path. */
+  @Get('metadata')
+  metadata(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ActivityRecordFiltersQueryDto,
+  ) {
+    return this.service.metadata(user, query);
   }
 
   @Get(':id')

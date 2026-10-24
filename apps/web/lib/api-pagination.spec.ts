@@ -107,9 +107,15 @@ describe('LP4-05 paged client contracts', () => {
     await expect(api.listActivityRecordPage({ cursor: 'same' })).rejects.toBeInstanceOf(ApiError);
   });
 
-  it('retains the legacy array client for the standalone PR A deployment', async () => {
+  it('has no array client left for a bounded route (LP4-05 PR C removed them)', () => {
+    for (const legacy of ['listActivityRecords', 'listEvidence', 'listPeriodLocks', 'listTargets', 'targetProgress', 'listDenominators']) {
+      expect(api).not.toHaveProperty(legacy);
+    }
+  });
+
+  it('refuses an old API\'s array response to a page request', async () => {
     respond([{ id: 'legacy-record' }]);
-    expect(await api.listActivityRecords()).toEqual([{ id: 'legacy-record' }]);
+    await expect(api.listActivityRecordPage()).rejects.toMatchObject({ status: 502, code: 'internal_error' });
   });
 
   it('gets metadata using the same filter set, independently of a page', async () => {

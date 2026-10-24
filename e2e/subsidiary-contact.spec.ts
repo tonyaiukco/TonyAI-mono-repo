@@ -3,6 +3,7 @@ import {
   bearer, getAccessToken, cleanupE2ESubsidiaries,
   lockPeriod,
   ADMIN_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD,
+  listAllPages,
 } from './helpers';
 
 /**
@@ -185,12 +186,13 @@ test('summary tells a non-admin nothing they could not already count themselves'
     headers: bearer(entryToken),
   })).json();
 
-  const listCount = async (path: string) =>
+  // Locations are an unpaged array; the record, lock, target and denominator
+  // lists are `CursorPage`s (LP4-05 PR C), read to the end for the count.
+  const arrayCount = async (path: string) =>
     ((await (await request.get(`${API_BASE}${path}`, { headers: bearer(entryToken) })).json()) as unknown[]).length;
+  const listCount = async (path: string) => (await listAllPages(request, entryToken, path)).length;
 
-  const records = (await (await request.get(
-    `${API_BASE}/activity-records?subsidiaryId=${target}`, { headers: bearer(entryToken) },
-  )).json()) as { status: string }[];
+  const records = await listAllPages<{ status: string }>(request, entryToken, `/activity-records?subsidiaryId=${target}`);
   const tier = (statuses: string[]) => records.filter((r) => statuses.includes(r.status)).length;
 
   expect({
@@ -211,7 +213,7 @@ test('summary tells a non-admin nothing they could not already count themselves'
     terminalRecords: tier(['approved', 'locked', 'voided']),
     reviewRecords: tier(['submitted', 'under_review']),
     openRecords: tier(['draft', 'rejected']),
-    locations: await listCount(`/locations?subsidiaryId=${target}`),
+    locations: await arrayCount(`/locations?subsidiaryId=${target}`),
     periodLocks: await listCount(`/period-locks?subsidiaryId=${target}`),
     targets: await listCount(`/targets?subsidiaryId=${target}`),
     denominators: await listCount(`/denominators?subsidiaryId=${target}`),

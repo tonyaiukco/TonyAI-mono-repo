@@ -12,7 +12,18 @@ import {
 } from '@tonyai/db';
 import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW } from '@tonyai/shared-types';
 import { canonicalPeriodValue } from '@tonyai/shared-types';
-import type { PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
+import type { CursorPage, PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
+import {
+  cursorBinding,
+  decodeCursor,
+  keysetOrderBy,
+  keysetWhere,
+  pageLimit,
+  toCursorPage,
+  type KeysetSort,
+} from '../common/keyset-cursor';
+import { scopedSubsidiaryIds } from '../common/page-filters';
+import { PeriodLockPageQueryDto } from './dto/period-lock-page-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { quoteCallerText } from '../common/caller-text';
 import type { RequestUser } from '../auth/auth.types';
@@ -24,6 +35,17 @@ import {
   type PeriodKey,
 } from '../activity-records/lifecycle-lock';
 import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
+
+/** GET /period-locks: newest first, the id breaking ties. */
+export const PERIOD_LOCK_SORT: KeysetSort = {
+  endpoint: 'period-locks',
+  table: 'period_locks',
+  name: 'newest',
+  keys: [
+    { field: 'createdAt', kind: 'timestamp3', direction: 'desc' },
+    { field: 'id', kind: 'uuid', direction: 'desc' },
+  ],
+};
 
 // Closing a period is only allowed once every record in it has been reviewed:
 // locking with `submitted`/`under_review` rows present is rejected (409), so
@@ -82,27 +104,35 @@ export class PeriodLocksService {
     }
   }
 
-  async list(
-    user: RequestUser,
-    subsidiaryId?: string,
-    year?: number,
-  ): Promise<PeriodLockDTO[]> {
-    // Tenant scope: intersect any requested subsidiaryId with the accessible set.
-    let subsidiaryFilter: Prisma.StringFilter | string;
-    if (subsidiaryId) {
-      if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) {
-        return [];
-      }
-      subsidiaryFilter = subsidiaryId;
-    } else {
-      subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
-    }
+  /** One `CursorPage` of the caller's locks, newest first, inside their current access. */
+  async listPage(user: RequestUser, query: PeriodLockPageQueryDto): Promise<CursorPage<PeriodLockDTO>> {
+    const limit = pageLimit(query.limit);
+    const filters = {
+      subsidiaryId: query.subsidiaryId,
+      year: query.year,
+      period: query.period,
+      periodValue:
+        query.period !== undefined && query.periodValue !== undefined
+          ? (canonicalPeriodValue(query.period, query.periodValue) ?? undefined)
+          : undefined,
+    };
+    const binding = cursorBinding(PERIOD_LOCK_SORT, filters);
+    const after = query.cursor !== undefined ? decodeCursor(PERIOD_LOCK_SORT, binding, query.cursor) : null;
+    const subsidiaryIds = scopedSubsidiaryIds(user, filters.subsidiaryId);
+    if (subsidiaryIds.length === 0) return { items: [], limit, nextCursor: null };
 
+    const where: Prisma.PeriodLockWhereInput = {
+      subsidiaryId: { in: subsidiaryIds },
+      ...(filters.year !== undefined ? { reportingYear: filters.year } : {}),
+      ...(filters.period !== undefined ? { reportingPeriod: filters.period } : {}),
+      ...(filters.periodValue !== undefined ? { periodValue: filters.periodValue } : {}),
+    };
     const rows = await this.prisma.periodLock.findMany({
-      where: { subsidiaryId: subsidiaryFilter, reportingYear: year },
-      orderBy: [{ reportingYear: 'desc' }, { createdAt: 'desc' }],
+      where: after ? { AND: [where, keysetWhere(PERIOD_LOCK_SORT, after) as Prisma.PeriodLockWhereInput] } : where,
+      orderBy: keysetOrderBy(PERIOD_LOCK_SORT) as Prisma.PeriodLockOrderByWithRelationInput[],
+      take: limit + 1,
     });
-    return rows.map((l) => this.toDTO(l));
+    return toCursorPage(rows, limit, PERIOD_LOCK_SORT, binding, (l) => [l.createdAt, l.id], (l) => this.toDTO(l));
   }
 
   /**

@@ -4,14 +4,18 @@ import {
   ForbiddenException,
   type HttpException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { errorBody, ResourceNotFoundError } from '../common/api-error';
+import { errorBody, QueryTooBroadError, ResourceNotFoundError } from '../common/api-error';
+import { readRuntimeConfig } from '../common/runtime-config';
 import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
+  EVIDENCE_MAX_LINKED_RECORDS,
   type Category,
+  type CursorPage,
   type EvidenceDTO,
   type EvidenceDetachDTO,
   type EvidenceLinkRefusal,
@@ -35,6 +39,17 @@ import {
   lockPeriodsShared,
   type PeriodKey,
 } from '../activity-records/lifecycle-lock';
+import { closedRecordIds, lockKey } from '../activity-records/closed-periods';
+import type { CursorPageQueryDto } from '../common/cursor-page-query.dto';
+import {
+  cursorBinding,
+  decodeCursor,
+  keysetOrderBy,
+  keysetWhere,
+  pageLimit,
+  toCursorPage,
+  type KeysetSort,
+} from '../common/keyset-cursor';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { type CheckedEvidenceFile, checkEvidenceFile, downloadName } from './file-content';
 
@@ -51,6 +66,17 @@ const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
 
 const ROLE_REFUSAL = 'Your role may not modify evidence';
 const RECORD_NOT_FOUND = 'Activity record not found';
+
+/** GET /activity-records/:id/evidence: newest first, the id breaking ties. */
+export const EVIDENCE_SORT: KeysetSort = {
+  endpoint: 'evidence',
+  table: 'evidence',
+  name: 'newest',
+  keys: [
+    { field: 'createdAt', kind: 'timestamp3', direction: 'desc' },
+    { field: 'id', kind: 'uuid', direction: 'desc' },
+  ],
+};
 
 /** Every record a file backs, with what a reviewer needs to judge the link. */
 const WITH_LINKED_RECORDS = {
@@ -78,10 +104,6 @@ type EvidenceWithLinks = Prisma.EvidenceGetPayload<{
 /** How a record is named in a refusal — the caller picked it from a list showing exactly this. */
 function recordLabel(r: ActivityRecord): string {
   return `${r.category} · ${r.periodValue} ${r.reportingYear}`;
-}
-
-function lockKey(r: PeriodKey): string {
-  return [r.subsidiaryId, r.reportingYear, r.reportingPeriod, r.periodValue].join('|');
 }
 
 function periodOf(r: PeriodKey): PeriodKey {
@@ -135,6 +157,8 @@ export class EvidenceService {
     private readonly audit: AuditService,
     private readonly intents: StorageIntentsService,
   ) {}
+
+  private readonly limits = readRuntimeConfig();
 
   private toDTO(e: EvidenceWithLinks): EvidenceDTO {
     return {
@@ -201,32 +225,11 @@ export class EvidenceService {
   }
 
   /** The ids of `records` whose reporting period is closed — one query for all of them. */
-  private async lockedRecordIds(
+  private lockedRecordIds(
     records: ActivityRecord[],
     client: Pick<Prisma.TransactionClient, 'periodLock'> = this.prisma,
   ): Promise<Set<string>> {
-    if (records.length === 0) return new Set();
-    // One condition per distinct period, not per record: a thousand drafts of
-    // one import share a handful of periods.
-    const periods = [...new Map(records.map((r) => [lockKey(r), r])).values()];
-    const locks = await client.periodLock.findMany({
-      where: {
-        OR: periods.map((r) => ({
-          subsidiaryId: r.subsidiaryId,
-          reportingYear: r.reportingYear,
-          reportingPeriod: r.reportingPeriod,
-          periodValue: r.periodValue,
-        })),
-      },
-      select: {
-        subsidiaryId: true,
-        reportingYear: true,
-        reportingPeriod: true,
-        periodValue: true,
-      },
-    });
-    const closed = new Set(locks.map(lockKey));
-    return new Set(records.filter((r) => closed.has(lockKey(r))).map((r) => r.id));
+    return closedRecordIds(client, records);
   }
 
   /**
@@ -272,14 +275,35 @@ export class EvidenceService {
     if (refusal) throw refusal;
   }
 
-  async list(user: RequestUser, recordId: string): Promise<EvidenceDTO[]> {
+  /**
+   * One `CursorPage` of the files backing a record, newest first (LP4-05 PR C).
+   * The record is resolved in the caller's scope first — another tenant's is
+   * 404, as before. Each file's linked-record list stays complete: it is read
+   * up to one past EVIDENCE_MAX_LINKED_RECORDS, and a file over the cap is an
+   * integrity failure, never a silently shortened "also backs N records".
+   */
+  async listPage(user: RequestUser, recordId: string, query: CursorPageQueryDto): Promise<CursorPage<EvidenceDTO>> {
+    const limit = pageLimit(query.limit);
+    // The record id in the database's spelling, so either spelling of the path binds alike.
+    const binding = cursorBinding(EVIDENCE_SORT, { recordId: recordId.toLowerCase() });
+    const after = query.cursor !== undefined ? decodeCursor(EVIDENCE_SORT, binding, query.cursor) : null;
     await this.loadRecordScoped(user, recordId);
+    const where: Prisma.EvidenceWhereInput = { links: { some: { activityRecordId: recordId } } };
     const rows = await this.prisma.evidence.findMany({
-      where: { links: { some: { activityRecordId: recordId } } },
-      include: WITH_LINKED_RECORDS,
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      where: after ? { AND: [where, keysetWhere(EVIDENCE_SORT, after) as Prisma.EvidenceWhereInput] } : where,
+      include: { links: { ...WITH_LINKED_RECORDS.links, take: EVIDENCE_MAX_LINKED_RECORDS + 1 } },
+      orderBy: keysetOrderBy(EVIDENCE_SORT) as Prisma.EvidenceOrderByWithRelationInput[],
+      take: limit + 1,
     });
-    return rows.map((e) => this.toDTO(e));
+    if (rows.some((e) => e.links.length > EVIDENCE_MAX_LINKED_RECORDS)) {
+      throw new InternalServerErrorException('An evidence file backs more records than the system allows.');
+    }
+    // The page's whole nested payload is bounded too, by the export budget for
+    // evidence links: a page of widely shared files is refused whole, never cut.
+    if (rows.slice(0, limit).reduce((n, e) => n + e.links.length, 0) > this.limits.REPORT_EVIDENCE_LINK_LIMIT) {
+      throw new QueryTooBroadError();
+    }
+    return toCursorPage(rows, limit, EVIDENCE_SORT, binding, (e) => [e.createdAt, e.id], (e) => this.toDTO(e));
   }
 
   /** `POST /activity-records/:recordId/evidence` — one file for one record, with that record's own refusals. */

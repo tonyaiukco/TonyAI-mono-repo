@@ -369,6 +369,12 @@ model ActivityRecord {
   @@index([subsidiaryId])
   @@index([locationId])
   @@index([importBatchId])
+  // LP4-05 PR C keyset pages (measured on 50,904 rows, 20 subsidiaries):
+  // `newest` within one subsidiary, `newest` across an organisation, and the
+  // review queue (its pending statuses first, then the longest wait).
+  @@index([subsidiaryId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([status, submittedAt, id])
   @@map("activity_records")
 }
 
@@ -493,6 +499,8 @@ model PeriodLock {
 
   @@unique([subsidiaryId, reportingYear, reportingPeriod, periodValue])
   @@index([subsidiaryId])
+  // LP4-05 PR C: GET /period-locks pages newest first.
+  @@index([subsidiaryId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("period_locks")
 }
 
@@ -518,6 +526,8 @@ model Target {
   updatedAt     DateTime   @updatedAt @map("updated_at")
 
   @@index([subsidiaryId])
+  // LP4-05 PR C: GET /targets pages by target year, then newest first.
+  @@index([subsidiaryId, targetYear, createdAt(sort: Desc), id(sort: Desc)])
   @@map("targets")
 }
 

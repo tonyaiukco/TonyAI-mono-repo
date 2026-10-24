@@ -14,6 +14,29 @@ import { currentRequestContext } from './request-context';
 const SILENT_PATHS = new Set(['/api/v1/health', '/api/v1/health/ready']);
 
 /**
+ * Query parameters a request log line keeps by name only (LP4-05 PR C). The
+ * record search is a caller's free text — it may name a person or a supplier
+ * the log has no business holding. The cursor carries an unkeyed digest of the
+ * request's filters, search included, so a logged cursor would let anyone
+ * with the log test candidate words against it (`security-rls` P2-2).
+ */
+const FREE_TEXT_PARAMS = new Set(['search', 'cursor']);
+
+/** The request path as logged: the query kept, free-text values redacted. */
+export function loggablePath(url: string): string {
+  const at = url.indexOf('?');
+  if (at < 0) return url;
+  const query = new URLSearchParams(url.slice(at + 1));
+  let redacted = false;
+  for (const key of new Set(query.keys())) {
+    if (!FREE_TEXT_PARAMS.has(key)) continue;
+    query.set(key, '[redacted]');
+    redacted = true;
+  }
+  return redacted ? `${url.slice(0, at)}?${query.toString()}` : url;
+}
+
+/**
  * One structured line per completed request: method, path, status, duration and
  * user. The request id comes from RequestContextMiddleware (via
  * AsyncLocalStorage), which also sets the response header.
@@ -31,7 +54,7 @@ export class LoggingInterceptor implements NestInterceptor {
     const response = http.getResponse();
 
     const method = String(request.method ?? '');
-    const path = String(request.originalUrl ?? request.url ?? '');
+    const path = loggablePath(String(request.originalUrl ?? request.url ?? ''));
     const startedAt = Date.now();
 
     return next.handle().pipe(

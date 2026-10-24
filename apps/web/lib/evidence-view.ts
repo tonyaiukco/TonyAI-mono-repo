@@ -1,15 +1,14 @@
 import { EVIDENCE_MAX_LINKED_RECORDS, mayAuthorRecords } from '@/lib/types';
 import type {
   ActivityRecordDTO,
+  CursorPage,
   EvidenceDetachDTO,
   EvidenceDTO,
   EvidenceLinkedRecordDTO,
 } from '@/lib/types';
-import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
+import { api, ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
   authoredBy,
-  isPeriodLockedFor,
-  type LockedPeriod,
   type SubmittableRow,
   type SubmittingUser,
 } from '@/lib/bulk-submit-view';
@@ -23,6 +22,30 @@ import { formatNumber } from '@/lib/utils';
  * Here rather than in the components for the reason `bulk-submit-view.ts`
  * gives: `vitest.config.ts` collects only `lib/**`.
  */
+
+/**
+ * The page size that always fits the API's per-page evidence-link budget:
+ * each file backs at most EVIDENCE_MAX_LINKED_RECORDS records, and a page may
+ * carry 10,000 links (`REPORT_EVIDENCE_LINK_LIMIT`'s default).
+ */
+export const EVIDENCE_FALLBACK_PAGE = Math.max(1, Math.floor(10_000 / EVIDENCE_MAX_LINKED_RECORDS));
+
+/**
+ * One page of a record's files. A page of widely shared files can exceed the
+ * per-page link budget (422 `query_too_broad`); it is asked for again at the
+ * size that always fits, so the files stay readable (`security-rls` P3-2).
+ */
+export async function readEvidencePage(recordId: string, cursor?: string): Promise<CursorPage<EvidenceDTO>> {
+  const after = cursor ? { cursor } : {};
+  try {
+    return await api.listEvidencePage(recordId, after);
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'query_too_broad') {
+      return api.listEvidencePage(recordId, { ...after, limit: EVIDENCE_FALLBACK_PAGE });
+    }
+    throw e;
+  }
+}
 
 /** Statuses a file can still be attached to — the API's rule, mirrored. */
 const EVIDENCE_EDITABLE = new Set<string>(['draft', 'rejected']);
@@ -39,12 +62,11 @@ const EVIDENCE_EDITABLE = new Set<string>(['draft', 'rejected']);
 export function attachBlockReason(
   row: SubmittableRow,
   user: SubmittingUser,
-  locks: LockedPeriod[],
 ): string | null {
   if (!mayAuthorRecords(user)) return 'Your role cannot attach evidence.';
   if (user.role !== 'super_admin' && !authoredBy(row, user)) return 'Entered by someone else.';
   if (!EVIDENCE_EDITABLE.has(row.status)) return `Already ${row.status.replace(/_/g, ' ')}.`;
-  if (isPeriodLockedFor(row, locks)) return `${row.periodValue} ${row.reportingYear} is locked.`;
+  if (row.periodLocked) return `${row.periodValue} ${row.reportingYear} is locked.`;
   return null;
 }
 
@@ -59,13 +81,12 @@ export interface AttachSelection {
 export function attachableRecords(
   rows: SubmittableRow[],
   user: SubmittingUser | null,
-  locks: LockedPeriod[],
 ): AttachSelection {
   if (!user) return { attachableIds: [], reasonById: {} };
   const attachableIds: string[] = [];
   const reasonById: Record<string, string> = {};
   for (const row of rows) {
-    const reason = attachBlockReason(row, user, locks);
+    const reason = attachBlockReason(row, user);
     if (reason === null) attachableIds.push(row.id);
     else if (EVIDENCE_EDITABLE.has(row.status)) reasonById[row.id] = reason;
   }

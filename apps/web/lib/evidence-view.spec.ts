@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   attachableRecords,
   attachBlockReason,
@@ -7,13 +7,15 @@ import {
   attachErrorMessage,
   attachSuccessMessage,
   detachSuccessMessage,
+  EVIDENCE_FALLBACK_PAGE,
+  readEvidencePage,
   recordLabel,
   removeFileLabel,
   sharedWithNote,
   toggleAttach,
 } from './evidence-view';
-import { selectableDrafts, type LockedPeriod, type SubmittableRow, type SubmittingUser } from './bulk-submit-view';
-import { ApiError, SESSION_EXPIRED_MESSAGE } from './api';
+import { selectableDrafts, type SubmittableRow, type SubmittingUser } from './bulk-submit-view';
+import { api, ApiError, SESSION_EXPIRED_MESSAGE } from './api';
 import { EVIDENCE_MAX_LINKED_RECORDS, type EvidenceLinkedRecordDTO } from './types';
 
 const ME: SubmittingUser = { id: 'user-me', role: 'data_entry' };
@@ -30,17 +32,10 @@ function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
     reportingYear: 2026,
     reportingPeriod: 'quarterly',
     periodValue: 'Q1',
+    periodLocked: false,
     ...over,
   };
 }
-
-const lock = (over: Partial<LockedPeriod> = {}): LockedPeriod => ({
-  subsidiaryId: 'sub-1',
-  reportingYear: 2026,
-  reportingPeriod: 'quarterly',
-  periodValue: 'Q1',
-  ...over,
-});
 
 function linked(over: Partial<EvidenceLinkedRecordDTO> = {}): EvidenceLinkedRecordDTO {
   return {
@@ -56,33 +51,32 @@ function linked(over: Partial<EvidenceLinkedRecordDTO> = {}): EvidenceLinkedReco
 
 describe('attachBlockReason — the upload’s refusals, in the evidence API’s order', () => {
   it('lets an own draft or rejected record in an open period take a file', () => {
-    expect(attachBlockReason(draft(), ME, [])).toBeNull();
-    expect(attachBlockReason(draft({ status: 'rejected' }), ME, [])).toBeNull();
+    expect(attachBlockReason(draft(), ME)).toBeNull();
+    expect(attachBlockReason(draft({ status: 'rejected' }), ME)).toBeNull();
   });
 
   it('refuses a review-only role before anything else', () => {
-    expect(attachBlockReason(draft(), { id: ME.id, role: 'consultant' }, [])).toBe(
+    expect(attachBlockReason(draft(), { id: ME.id, role: 'consultant' })).toBe(
       'Your role cannot attach evidence.',
     );
   });
 
   it('refuses a record that can no longer change', () => {
-    expect(attachBlockReason(draft({ status: 'submitted' }), ME, [])).toBe('Already submitted.');
-    expect(attachBlockReason(draft({ status: 'under_review' }), ME, [])).toBe('Already under review.');
+    expect(attachBlockReason(draft({ status: 'submitted' }), ME)).toBe('Already submitted.');
+    expect(attachBlockReason(draft({ status: 'under_review' }), ME)).toBe('Already under review.');
   });
 
   it('refuses a colleague’s record, except for a super_admin', () => {
     const theirs = draft({ createdBy: 'user-them' });
-    expect(attachBlockReason(theirs, ME, [])).toBe('Entered by someone else.');
-    expect(attachBlockReason(theirs, ADMIN, [])).toBeNull();
+    expect(attachBlockReason(theirs, ME)).toBe('Entered by someone else.');
+    expect(attachBlockReason(theirs, ADMIN)).toBeNull();
     // Authorship before status, as the API checks it.
-    expect(attachBlockReason({ ...theirs, status: 'submitted' }, ME, [])).toBe('Entered by someone else.');
+    expect(attachBlockReason({ ...theirs, status: 'submitted' }, ME)).toBe('Entered by someone else.');
   });
 
-  it('refuses a record in a locked period — its own period only', () => {
-    expect(attachBlockReason(draft(), ME, [lock()])).toBe('Q1 2026 is locked.');
-    expect(attachBlockReason(draft(), ME, [lock({ periodValue: 'Q2' })])).toBeNull();
-    expect(attachBlockReason(draft(), ME, [lock({ subsidiaryId: 'sub-2' })])).toBeNull();
+  it('refuses a record whose own period the server reports locked', () => {
+    expect(attachBlockReason(draft({ periodLocked: true }), ME)).toBe('Q1 2026 is locked.');
+    expect(attachBlockReason(draft({ periodLocked: false }), ME)).toBeNull();
   });
 });
 
@@ -91,8 +85,8 @@ describe('attachableRecords', () => {
     // The reason this selection exists at all: an evidence-required draft
     // with no file has no submit checkbox, and it is the one that needs this.
     const waiting = draft({ id: 'rec-waiting', category: 'Electricity', evidenceCount: 0 });
-    expect(selectableDrafts([waiting], ME, []).selectableIds).toEqual([]);
-    expect(attachableRecords([waiting], ME, []).attachableIds).toEqual(['rec-waiting']);
+    expect(selectableDrafts([waiting], ME).selectableIds).toEqual([]);
+    expect(attachableRecords([waiting], ME).attachableIds).toEqual(['rec-waiting']);
   });
 
   it('explains only rows that look editable, and offers nothing without a user', () => {
@@ -101,11 +95,11 @@ describe('attachableRecords', () => {
       draft({ id: 'b', createdBy: 'user-them' }),
       draft({ id: 'c', status: 'approved' }),
     ];
-    expect(attachableRecords(rows, ME, [])).toEqual({
+    expect(attachableRecords(rows, ME)).toEqual({
       attachableIds: ['a'],
       reasonById: { b: 'Entered by someone else.' },
     });
-    expect(attachableRecords(rows, null, [])).toEqual({ attachableIds: [], reasonById: {} });
+    expect(attachableRecords(rows, null)).toEqual({ attachableIds: [], reasonById: {} });
   });
 });
 
@@ -209,5 +203,24 @@ describe('a file shared with other records, where it is shown', () => {
     expect(detachSuccessMessage({ fileDeleted: true }, { ...file, linkedRecords: [linked()] })).toBe(
       'Evidence removed',
     );
+  });
+});
+
+describe('readEvidencePage — a page past the link budget is read again at the size that fits', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('asks again at EVIDENCE_FALLBACK_PAGE files, keeping the cursor', async () => {
+    const page = { items: [], limit: EVIDENCE_FALLBACK_PAGE, nextCursor: null };
+    const list = vi
+      .spyOn(api, 'listEvidencePage')
+      .mockRejectedValueOnce(new ApiError('too broad', 422, 'query_too_broad'))
+      .mockResolvedValueOnce(page);
+    await expect(readEvidencePage('rec-1', 'cur')).resolves.toBe(page);
+    expect(list.mock.calls).toEqual([['rec-1', { cursor: 'cur' }], ['rec-1', { cursor: 'cur', limit: 10 }]]);
+  });
+
+  it('passes every other refusal through', async () => {
+    vi.spyOn(api, 'listEvidencePage').mockRejectedValueOnce(new ApiError('gone', 404, 'record_not_found'));
+    await expect(readEvidencePage('rec-1')).rejects.toMatchObject({ status: 404 });
   });
 });

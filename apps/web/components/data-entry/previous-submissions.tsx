@@ -2,7 +2,7 @@
 
 import { useTranslations } from "use-intl";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Ban,
@@ -63,11 +63,12 @@ import {
 } from "@/lib/types";
 import type {
   ActivityRecordDTO,
+  ActivityRecordPageItemDTO,
   ActivityRecordStatus,
   AuthUser,
   BulkSubmitReportDTO,
-  PeriodLockDTO,
 } from "@/lib/types";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 
 /**
  * The record list beside the Data Entry form.
@@ -138,14 +139,20 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
 });
 
 export interface PreviousSubmissionsProps {
-  records: ActivityRecordDTO[];
+  /** The pages loaded so far (LP4-05 PR C), newest first. Each row carries
+   *  whether its own period is locked, read with it. */
+  records: ActivityRecordPageItemDTO[];
   loading: boolean;
+  /** The subsidiary's whole record count (metadata), null when unknown. */
+  total: number | null;
+  /** The API has another page, and reading it. */
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
   /** Open a record in the form beside this list. */
-  onOpen: (record: ActivityRecordDTO) => void;
+  onOpen: (record: ActivityRecordPageItemDTO) => void;
   /** `null` while `api.me()` is in flight — no checkboxes until it lands. */
   user: AuthUser | null;
-  /** Closed periods for this subsidiary; the page already holds them. */
-  locks: PeriodLockDTO[];
   /** Refetch after a submit: statuses on screen have changed. */
   onSubmitted: () => void;
   /** Refetch after one file was attached to several records: their evidence
@@ -170,13 +177,17 @@ function categoryWithActivity(r: Pick<ActivityRecordDTO, "category" | "activityT
 export function PreviousSubmissions({
   records,
   loading,
+  total,
+  hasMore,
+  loadingMore,
+  onLoadMore,
   onOpen,
   user,
-  locks,
   onSubmitted,
   onEvidenceAttached,
 }: PreviousSubmissionsProps) {
   const tErrors = useTranslations("errors");
+  const t = useTranslations("dataEntry");
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -191,8 +202,8 @@ export function PreviousSubmissions({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { selectableIds, reasonById } = useMemo(
-    () => selectableDrafts(records, user, locks),
-    [records, user, locks],
+    () => selectableDrafts(records, user),
+    [records, user],
   );
   // Selection is by id against a list that refetches under it. Anything no
   // longer selectable — submitted by this very call, or edited in another tab —
@@ -205,9 +216,22 @@ export function PreviousSubmissions({
   const summary = report ? summariseSubmit(report, tErrors) : null;
 
   const attach = useMemo(
-    () => attachableRecords(records, user, locks),
-    [records, user, locks],
+    () => attachableRecords(records, user),
+    [records, user],
   );
+  // Page-local selections: a refresh that drops a later page drops its ticks
+  // too, rather than keeping them hidden to reappear checked when that page
+  // is loaded again (qa-auditor P3-8).
+  useEffect(() => {
+    setSelected((ids) => {
+      const kept = liveSelection(ids, selectableIds);
+      return kept.length === ids.length ? ids : kept;
+    });
+    setAttachSelected((ids) => {
+      const kept = ids.filter((id) => attach.attachableIds.includes(id));
+      return kept.length === ids.length ? ids : kept;
+    });
+  }, [selectableIds, attach.attachableIds]);
   const liveAttach = attachSelected.filter((id) => attach.attachableIds.includes(id));
   const attachRows = records.filter((r) => liveAttach.includes(r.id));
 
@@ -334,11 +358,13 @@ export function PreviousSubmissions({
               checked={allEligibleSelected(live.length, selectableIds.length)}
               onCheckedChange={(on) => (on ? selectAll() : setSelected([]))}
               // Starts with the visible text (WCAG 2.5.3, label in name): a
-              // voice-control user says what they see — "Select all 3" — and a
-              // name that never contains it cannot be activated that way.
-              aria-label={`Select all ${selectableIds.length}: every draft you entered and can send`}
+              // voice-control user says what they see — "Select all 3 loaded"
+              // — and a name that never contains it cannot be activated that
+              // way. "Loaded": a selection covers the pages on screen, never
+              // the subsidiary's whole history (LP4-05's contract).
+              aria-label={t("selectAllLoadedName", { count: selectableIds.length })}
             />
-            Select all {selectableIds.length}
+            {t("selectAllLoaded", { count: selectableIds.length })}
           </label>
         )}
       </CardHeader>
@@ -590,6 +616,22 @@ export function PreviousSubmissions({
                 </div>
               );
             })}
+          </div>
+        )}
+        {!loading && records.length > 0 && (
+          <div className="flex flex-col items-center gap-2 pt-1">
+            <p className="text-center text-xs text-muted-foreground" data-testid="previous-submissions-shown">
+              {total === null
+                ? t("previousShownLoaded", { shown: records.length })
+                : t("previousShown", { shown: records.length, total })}
+            </p>
+            <LoadMoreButton
+              hasMore={hasMore}
+              loading={loadingMore}
+              onClick={onLoadMore}
+              label={t("previousLoadMore")}
+              testId="previous-submissions-load-more"
+            />
           </div>
         )}
       </CardContent>

@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { EvidenceService } from './evidence.service';
 import { EVIDENCE_MULTIPART_LIMITS, SHARED_EVIDENCE_MULTIPART_LIMITS } from '../common/multipart-limits';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
+import { CursorPageQueryDto } from '../common/cursor-page-query.dto';
 import { UploadEvidenceForRecordsDto } from './dto/upload-evidence-for-records.dto';
 
 // multer defaults `defParamCharset` to 'latin1', so a browser's UTF-8
@@ -28,13 +30,14 @@ const FILE_NAME_CHARSET = 'utf8';
 export class EvidenceController {
   constructor(private readonly service: EvidenceService) {}
 
-  /** List evidence files linked to an activity record. */
+  /** One `CursorPage` of the evidence files backing a record (LP4-05 PR C). */
   @Get('activity-records/:recordId/evidence')
   list(
     @CurrentUser() user: RequestUser,
     @Param('recordId', ParseUuidParamPipe) recordId: string,
+    @Query() query: CursorPageQueryDto,
   ) {
-    return this.service.list(user, recordId);
+    return this.service.listPage(user, recordId, query);
   }
 
   /** Attach an evidence file to an activity record (multipart `file`). */

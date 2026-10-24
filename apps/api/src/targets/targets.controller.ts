@@ -13,28 +13,23 @@ import type { RequestUser } from '../auth/auth.types';
 import { TargetsService } from './targets.service';
 import { CreateTargetDto } from './dto/create-target.dto';
 import { UpdateTargetDto } from './dto/update-target.dto';
+import { TargetPageQueryDto, TargetProgressQueryDto } from './dto/target-page-query.dto';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('targets')
 export class TargetsController {
   constructor(private readonly service: TargetsService) {}
 
-  /** List targets (tenant-scoped; optional subsidiary filter). */
+  /** One `CursorPage` of targets (tenant-scoped; LP4-05 PR C). */
   @Get()
-  list(
-    @CurrentUser() user: RequestUser,
-    @Query('subsidiaryId') subsidiaryId?: string,
-  ) {
-    return this.service.list(user, subsidiaryId);
+  list(@CurrentUser() user: RequestUser, @Query() query: TargetPageQueryDto) {
+    return this.service.listPage(user, query);
   }
 
-  /** Live progress for the caller's targets. Declared before any `:id` route. */
+  /** Live progress for an explicit set of targets. Declared before any `:id` route. */
   @Get('progress')
-  progress(
-    @CurrentUser() user: RequestUser,
-    @Query('subsidiaryId') subsidiaryId?: string,
-  ) {
-    return this.service.progress(user, subsidiaryId);
+  progress(@CurrentUser() user: RequestUser, @Query() query: TargetProgressQueryDto) {
+    return this.service.progress(user, query);
   }
 
   /** Create a target — super_admin only, audited. */

@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { RuntimeLimits } from './common/runtime-limits';
+import { RuntimeLimitsModule } from './common/runtime-limits.module';
 import { RuntimeAuthGuard } from './common/runtime-request';
 import { PrismaService } from './prisma/prisma.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -31,6 +32,8 @@ import { RequestContextMiddleware } from './observability/request-context.middle
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
+    // LP4-05 PR C: the one RuntimeLimits, exported to the modules that need it.
+    RuntimeLimitsModule,
     AuditModule,
     AuthModule,
     SubsidiariesModule,
@@ -53,7 +56,7 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     ReportIssuancesModule,
   ],
   controllers: [HealthController],
-  providers: [RuntimeLimits, {
+  providers: [{
     provide: APP_GUARD,
     inject: [Reflector, PrismaService, RuntimeLimits],
     useFactory: (reflector: Reflector, prisma: PrismaService, limits: RuntimeLimits) =>

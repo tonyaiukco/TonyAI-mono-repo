@@ -12,8 +12,15 @@ export const LIMIT_DEFAULTS = {
   BULK_DEADLINE_MS: 60_000, REPORT_CONCURRENCY: 1, PDF_TIMEOUT_MS: 30_000,
   REPORT_RECORD_LIMIT: 5_000, REPORT_EVIDENCE_LINK_LIMIT: 10_000,
   REPORT_MAX_BYTES: 20_971_520, DB_CONNECTION_LIMIT: 5, DB_POOL_TIMEOUT_SECONDS: 5,
+  ACTIVITY_RECORD_METADATA_MAX_ROWS: 100_000, AUTH_EMAIL_PER_IP_PER_MINUTE: 5,
 } as const;
 export type LimitName = keyof typeof LIMIT_DEFAULTS;
+/**
+ * Ceilings tighter than the int4 one, where a larger value would switch a
+ * protection off rather than tune it: the public reset endpoint's per-address
+ * quota kept its LP4-01 ceiling when it moved here (LP4-05 PR C).
+ */
+export const LIMIT_MAXIMUMS: Partial<Record<LimitName, number>> = { AUTH_EMAIL_PER_IP_PER_MINUTE: 10_000 };
 export type RuntimeConfig = Record<LimitName, number> & {
   proxyMode: 'direct' | 'azure' | 'cidr'; trustedProxies: string[];
 };
@@ -25,7 +32,7 @@ export const readRuntimeConfig = (env: NodeJS.ProcessEnv = process.env): Runtime
     const value = raw === undefined ? LIMIT_DEFAULTS[name] : Number(raw);
     // Bound timer values too: Node clamps overflowing delays to one millisecond.
     if ((raw !== undefined && !/^[1-9]\d*$/.test(raw)) || !Number.isSafeInteger(value)
-      || value <= 0 || value > 2_147_483_647) throw new Error(`Invalid runtime setting: ${name}`);
+      || value <= 0 || value > (LIMIT_MAXIMUMS[name] ?? 2_147_483_647)) throw new Error(`Invalid runtime setting: ${name}`);
     values[name] = value;
   }
   const proxyMode = env.PROXY_MODE ?? 'direct';

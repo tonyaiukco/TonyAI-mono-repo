@@ -11,6 +11,7 @@ import { PasswordResetService } from './password-reset.service';
 import { UserLifecycleService } from './user-lifecycle.service';
 import { UsersController } from './users.controller';
 import { UsersQueryService } from './users-query.service';
+import { RuntimeLimitsModule } from '../common/runtime-limits.module';
 
 /**
  * Onboarding and the user lifecycle (LP4-01): invitations, acceptance,
@@ -18,7 +19,7 @@ import { UsersQueryService } from './users-query.service';
  * `AccessAdminService` (AuthModule) for every database change.
  */
 @Module({
-  imports: [AuthModule, AuditModule, MailModule],
+  imports: [AuthModule, AuditModule, MailModule, RuntimeLimitsModule],
   controllers: [UsersController, InvitationsController, PasswordResetController],
   providers: [
     AuthAdminService,

@@ -27,6 +27,8 @@ import { Gauge, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DecimalNote } from '@/components/i18n/decimal-note';
 import { api } from '@/lib/api';
+import { appendById, isStaleCursor } from '@/lib/cursor-pages';
+import { LoadMoreButton } from '@/components/ui/load-more-button';
 import { checkDecimal } from '@/lib/i18n/number';
 import { useDecimalInput } from '@/lib/i18n/use-decimal-input';
 import {
@@ -58,6 +60,10 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
   const year = context.year;
   const [intensity, setIntensity] = useState<ReportingIntensityData | null>(null);
   const [denominators, setDenominators] = useState<DenominatorDTO[]>([]);
+  // The management list's loaded pages (LP4-05 PR C); the intensity figures
+  // above come from the aggregate route, never from this list.
+  const [denominatorsCursor, setDenominatorsCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -74,32 +80,56 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
 
   // A slower answer for an earlier selection must not land over a newer one.
   const loadSeq = useRef(0);
+  const denominatorFilters = useCallback(
+    () => ({ year: context.year, ...(context.subsidiaryId ? { subsidiaryId: context.subsidiaryId } : {}) }),
+    [context],
+  );
   const refresh = useCallback(async () => {
     const mine = ++loadSeq.current;
     setLoading(true);
     try {
       const [i, d] = await Promise.all([
         api.reportingIntensity(context),
-        api.listDenominators({ year: context.year, subsidiaryId: context.subsidiaryId }),
+        api.listDenominatorPage(denominatorFilters()),
       ]);
       if (mine !== loadSeq.current) return;
       setIntensity(i.data);
-      setDenominators(d);
+      setDenominators(d.items);
+      setDenominatorsCursor(d.nextCursor);
     } catch (e) {
       if (mine !== loadSeq.current) return;
       // Neither the previous selection's figures nor its deletable denominators
       // stay under the new bar (Codex B9 P2-1).
       setIntensity(null);
       setDenominators([]);
+      setDenominatorsCursor(null);
       toast.error((e as Error).message);
     } finally {
       if (mine === loadSeq.current) setLoading(false);
     }
-  }, [context]);
+  }, [context, denominatorFilters]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  async function loadMoreDenominators() {
+    if (!denominatorsCursor) return;
+    const mine = loadSeq.current;
+    setLoadingMore(true);
+    try {
+      const page = await api.listDenominatorPage({ ...denominatorFilters(), cursor: denominatorsCursor });
+      if (mine !== loadSeq.current) return;
+      setDenominators((list) => appendById(list, page.items));
+      setDenominatorsCursor(page.nextCursor);
+    } catch (e) {
+      if (mine !== loadSeq.current) return;
+      toast.error((e as Error).message);
+      if (isStaleCursor(e)) void refresh();
+    } finally {
+      setLoadingMore(false);
+    }
+  }
   // A mutation's follow-up refresh runs for the selection on screen when the
   // mutation completes, not the one captured when it started: that refresh
   // would be the newest request and land an obsolete selection's rows under
@@ -299,6 +329,13 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
                 </Button>
               </div>
             ))}
+            <LoadMoreButton
+              hasMore={!loading && denominatorsCursor !== null}
+              loading={loadingMore}
+              onClick={() => void loadMoreDenominators()}
+              label="Load more denominators"
+              testId="denominators-load-more"
+            />
           </CardContent>
         </Card>
       )}

@@ -26,6 +26,8 @@ import { Plus, Target as TargetIcon, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DecimalNote } from '@/components/i18n/decimal-note';
 import { api } from '@/lib/api';
+import { appendById, isStaleCursor } from '@/lib/cursor-pages';
+import { LoadMoreButton } from '@/components/ui/load-more-button';
 import { checkDecimal, parseYearInput } from '@/lib/i18n/number';
 import { useDecimalInput } from '@/lib/i18n/use-decimal-input';
 import type {
@@ -80,7 +82,10 @@ const emptyForm = {
 export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }: TargetsPanelProps) {
   const [targets, setTargets] = useState<TargetDTO[]>([]);
   const [progress, setProgress] = useState<TargetProgressDTO[]>([]);
+  // Loaded pages of targets (LP4-05 PR C); progress is read for each page's ids.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -104,20 +109,44 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
     const mine = ++loadSeq.current;
     setLoading(true);
     try {
-      const [t, p] = await Promise.all([api.listTargets({ subsidiaryId }), api.targetProgress({ subsidiaryId })]);
+      const page = await api.listTargetPage(subsidiaryId ? { subsidiaryId } : {});
+      // Progress only for the targets on this page — never every target.
+      const p = page.items.length ? await api.targetPageProgress({ targetIds: page.items.map((t) => t.id) }) : [];
       if (mine !== loadSeq.current) return;
-      setTargets(t);
+      setTargets(page.items);
       setProgress(p);
+      setNextCursor(page.nextCursor);
     } catch (e) {
       if (mine !== loadSeq.current) return;
       // Never the previous subsidiary's targets under the new selection.
       setTargets([]);
       setProgress([]);
+      setNextCursor(null);
       toast.error((e as Error).message);
     } finally {
       if (mine === loadSeq.current) setLoading(false);
     }
   }, [subsidiaryId]);
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    const mine = loadSeq.current;
+    setLoadingMore(true);
+    try {
+      const page = await api.listTargetPage({ ...(subsidiaryId ? { subsidiaryId } : {}), cursor: nextCursor });
+      const p = page.items.length ? await api.targetPageProgress({ targetIds: page.items.map((t) => t.id) }) : [];
+      if (mine !== loadSeq.current) return;
+      setTargets((list) => appendById(list, page.items));
+      setProgress((list) => [...list, ...p]);
+      setNextCursor(page.nextCursor);
+    } catch (e) {
+      if (mine !== loadSeq.current) return;
+      toast.error((e as Error).message);
+      if (isStaleCursor(e)) void refresh();
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     void refresh();
@@ -347,6 +376,13 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
           })}
         </div>
       )}
+      <LoadMoreButton
+        hasMore={!loading && nextCursor !== null}
+        loading={loadingMore}
+        onClick={() => void loadMore()}
+        label="Load more targets"
+        testId="targets-load-more"
+      />
     </div>
   );
 }

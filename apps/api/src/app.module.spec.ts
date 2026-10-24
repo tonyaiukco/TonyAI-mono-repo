@@ -1,5 +1,5 @@
 import { RuntimeAuthGuard } from './common/runtime-request';
-import type { ExecutionContext } from '@nestjs/common';
+import { Module, type ExecutionContext } from '@nestjs/common';
 import 'reflect-metadata';
 import { describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
@@ -8,12 +8,20 @@ import { AppModule } from './app.module';
 import { PdfRenderer } from './common/pdf-renderer';
 import { PdfRendererModule } from './common/pdf-renderer.module';
 import { CapacityError, RuntimeLimits } from './common/runtime-limits';
+import { RuntimeLimitsModule } from './common/runtime-limits.module';
+import { UsersModule } from './users/users.module';
 
 // Compile only the production admission provider: no database/auth clients.
 describe('AppModule runtime admission', () => {
   it('registers one authentication/admission guard with the runtime policy', () => {
     const providers = Reflect.getMetadata('providers', AppModule);
-    expect(providers).toContain(RuntimeLimits);
+    // The one RuntimeLimits comes from its exported module (LP4-05 PR C), never
+    // a second copy provided at the root beside it.
+    expect(providers).not.toContain(RuntimeLimits);
+    expect(Reflect.getMetadata('imports', AppModule)).toContain(RuntimeLimitsModule);
+    expect(Reflect.getMetadata('exports', RuntimeLimitsModule)).toContain(RuntimeLimits);
+    expect(Reflect.getMetadata('imports', UsersModule)).toContain(RuntimeLimitsModule);
+    expect(Reflect.getMetadata('providers', UsersModule)).not.toContain(RuntimeLimits);
     const guards = providers.filter((p) => p.provide === APP_GUARD);
     expect(guards).toHaveLength(1);
     expect(guards[0].inject).toContain(RuntimeLimits);
@@ -30,6 +38,16 @@ describe('AppModule runtime admission', () => {
       } as unknown as ExecutionContext;
       await expect(guard.canActivate(context)).rejects.toMatchObject({ status: 401 });
     } finally { limits.onApplicationShutdown(); }
+  });
+  it('gives every module that imports RuntimeLimitsModule the same instance — the guard\'s and the reset quota\'s', async () => {
+    @Module({ imports: [RuntimeLimitsModule], providers: [{ provide: 'consumer', inject: [RuntimeLimits], useFactory: (l: RuntimeLimits) => l }] })
+    class Consumer {}
+    const app = await Test.createTestingModule({ imports: [RuntimeLimitsModule, Consumer] }).compile();
+    try {
+      expect(app.get('consumer')).toBe(app.get(RuntimeLimits));
+    } finally {
+      app.get(RuntimeLimits).onApplicationShutdown();
+    }
   });
   it('creates independent counters for separate applications', async () => {
     const first = await Test.createTestingModule({ providers: [RuntimeLimits] }).compile();

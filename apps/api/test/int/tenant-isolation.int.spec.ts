@@ -5,6 +5,7 @@ import { ActivityRecordStatus } from '@tonyai/db';
 import {
   BULK_UPLOAD_COLUMNS,
   isApiErrorCode,
+  isCursorPage,
   type ReportingIntensityData,
   type ReportingMatrixResponse,
   type ReportingMetaResponse,
@@ -14,6 +15,7 @@ import ExcelJS from 'exceljs';
 import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RuntimeLimits } from '../../src/common/runtime-limits';
+import { cursorBinding, encodeCursor, type KeysetSort, type KeyValue } from '../../src/common/keyset-cursor';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import {
   apiTokenIssuer,
@@ -607,13 +609,21 @@ const ID_ROUTES: Route[] = [
       prepare: async () => ({ boundaryId: (await createBoundary(owner, A, { locationId: dataA.locationId, reportingYear: 2031 })).boundaryId }),
     },
   },
+  // LP4-05 PR C: the page filters and the progress set naming B's ids
+  {
+    name: 'GET /targets/progress?targetIds=', method: 'GET', path: (i) => `/targets/progress?targetIds=${i.targetId}`,
+    own: { role: 'consultant', ok: (res) => res.status === 200 && (JSON.parse(res.text) as unknown[]).length === 1 },
+  },
+  { name: 'GET /activity-records?locationId=', method: 'GET', path: (i) => `/activity-records?locationId=${i.locationId}`, own: { role: 'consultant' } },
+  { name: 'GET /activity-records/metadata?locationId=', method: 'GET', path: (i) => `/activity-records/metadata?locationId=${i.locationId}`, own: { role: 'consultant' } },
   // filters by subsidiary
   ...(
     [
       ['/activity-records', ''],
+      ['/activity-records', '&sort=review_queue&status=submitted,under_review'],
+      ['/activity-records/metadata', ''],
       ['/locations', ''],
       ['/targets', ''],
-      ['/targets/progress', ''],
       ['/denominators', ''],
       ['/period-locks', ''],
       ['/intensity', '&year=2026'],
@@ -707,9 +717,10 @@ const LIST_ROUTES = [
   '/me',
   '/subsidiaries',
   '/activity-records',
+  '/activity-records?sort=review_queue&limit=1',
+  '/activity-records/metadata',
   '/locations',
   '/targets',
-  '/targets/progress',
   '/denominators',
   '/period-locks',
   '/import-batches',
@@ -824,6 +835,116 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
     } finally {
       await owner.activityRecord.delete({ where: { id: stray.id } });
     }
+  });
+});
+
+/**
+ * LP4-05 PR C: every page re-applies the caller's access, and a cursor carries
+ * only a sort key and a digest of its request — no tenant. So a cursor B's
+ * user was given, or one forged around B's rows, is a position and nothing
+ * more: A's page after it holds only A's rows.
+ */
+describe("pages and cursors (LP4-05 PR C): a page, its cursor and its count reach only A's rows", () => {
+  const as = async (userId: string, path: string) => {
+    const res = await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${await tokenFor(userId)}` } });
+    const text = await res.text();
+    return { status: res.status, text, body: JSON.parse(text) as Record<string, unknown> };
+  };
+  const noB = (text: string, context: string) => {
+    for (const marker of markersB) expect(text, `${context} leaks ${marker}`).not.toContain(marker);
+  };
+
+  it("a traversal one row at a time visits exactly A's records, newest first, and its count agrees", async () => {
+    for (const periodValue of ['July', 'August', 'September']) await createRecord(owner, A, { periodValue });
+    const expected = (await owner.activityRecord.findMany({
+      where: { subsidiaryId: A.subsidiaryId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { id: true },
+    })).map((r) => r.id);
+    expect(expected.length).toBeGreaterThan(3);
+    for (const role of ROLES) {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await as(A.users[role].id, `/activity-records?limit=1${cursor ? `&cursor=${cursor}` : ''}`);
+        expect(page.status, `${role}: ${page.text.slice(0, 200)}`).toBe(200);
+        expect(isCursorPage(page.body), role).toBe(true);
+        noB(page.text, role);
+        seen.push(...(page.body.items as { id: string }[]).map((r) => r.id));
+        cursor = page.body.nextCursor as string | null;
+      } while (cursor !== null && seen.length <= expected.length);
+      expect(seen, role).toEqual(expected);
+      const meta = await as(A.users[role].id, '/activity-records/metadata');
+      expect(meta.body, role).toEqual({ total: expected.length, latestReportingYear: expect.any(Number) });
+    }
+  });
+
+  it("B's own cursor, handed to A on the same request, positions A among A's rows only", async () => {
+    const pageB = await as(B.users.consultant.id, '/activity-records?limit=1');
+    expect(pageB.body.nextCursor, 'B has more than one record').toEqual(expect.any(String));
+    const own = new Set((await owner.activityRecord.findMany({ where: { subsidiaryId: A.subsidiaryId }, select: { id: true } })).map((r) => r.id));
+    for (const role of ROLES) {
+      const page = await as(A.users[role].id, `/activity-records?limit=100&cursor=${pageB.body.nextCursor as string}`);
+      expect(page.status, role).toBe(200);
+      noB(page.text, role);
+      for (const r of page.body.items as { id: string }[]) expect(own.has(r.id), `${role} got ${r.id}`).toBe(true);
+    }
+  });
+
+  it("a cursor of another filter is refused alike, whether the filter names B's subsidiary, an unknown one or A's own", async () => {
+    const first = await as(A.users.consultant.id, '/activity-records?limit=1');
+    const cursor = first.body.nextCursor as string;
+    const answers = await Promise.all([B.subsidiaryId, randomUUID(), A.subsidiaryId].map((id) =>
+      as(A.users.consultant.id, `/activity-records?limit=1&subsidiaryId=${id}&cursor=${cursor}`)));
+    for (const res of answers) expect(res.status).toBe(400);
+    expect(new Set(answers.map((r) => r.text)).size).toBe(1);
+    noB(answers[0].text, 'refusal');
+  });
+
+  it("a cursor forged around B's ids, on every page route, reads only A's rows", async () => {
+    // The services' own sorts, loaded after the app (as AppModule is, above).
+    const { RECORD_SORTS } = await import('../../src/activity-records/record-page');
+    const { PERIOD_LOCK_SORT } = await import('../../src/period-locks/period-locks.service');
+    const { TARGET_SORT } = await import('../../src/targets/targets.service');
+    const { DENOMINATOR_SORT } = await import('../../src/intensity/intensity.service');
+    const { EVIDENCE_SORT } = await import('../../src/evidence/evidence.service');
+    const { USERS_SORT } = await import('../../src/users/users-query.service');
+    const forged = (sort: KeysetSort, filters: object, key: KeyValue[]) => encodeCursor(sort, cursorBinding(sort, filters), key);
+    // Each position precedes every row of A's, so A's page after it is the
+    // positive control: nonempty, and only A's. B's id is the tiebreak.
+    const later = new Date(Date.now() + 86_400_000);
+    const routes: [string, string, Role][] = [
+      ['/activity-records', forged(RECORD_SORTS.newest, {}, [later, dataB.recordId]), 'dataEntry'],
+      ['/activity-records?sort=review_queue', forged(RECORD_SORTS.review_queue, {}, [new Date(0), dataB.recordId]), 'superAdmin'],
+      ['/period-locks', forged(PERIOD_LOCK_SORT, {}, [later, dataB.periodLockId]), 'consultant'],
+      ['/targets', forged(TARGET_SORT, {}, [2000, later, dataB.targetId]), 'consultant'],
+      ['/denominators', forged(DENOMINATOR_SORT, {}, [2100, 'revenue', dataB.denominatorId]), 'consultant'],
+      [`/activity-records/${dataA.recordId}/evidence`, forged(EVIDENCE_SORT, { recordId: dataA.recordId }, [later, dataB.evidenceId]), 'executiveViewer'],
+      ['/users', forged(USERS_SORT, {}, [later, B.users.superAdmin.id]), 'superAdmin'],
+    ];
+    for (const [path, cursor, role] of routes) {
+      const sep = path.includes('?') ? '&' : '?';
+      const page = await as(A.users[role].id, `${path}${sep}cursor=${cursor}`);
+      expect(page.status, `${path}: ${page.text.slice(0, 200)}`).toBe(200);
+      expect(isCursorPage(page.body), path).toBe(true);
+      // The cursor named B's id; no other trace of B may come back.
+      noB(page.text.replaceAll(cursor, ''), path);
+      expect((page.body.items as unknown[]).length, `${path} returned nothing to check`).toBeGreaterThan(0);
+    }
+  });
+
+  it("metadata of B's subsidiary or site is the empty answer an unknown one gets", async () => {
+    for (const filter of [`subsidiaryId=${B.subsidiaryId}`, `locationId=${dataB.locationId}`]) {
+      const foreign = await as(A.users.consultant.id, `/activity-records/metadata?${filter}`);
+      expect(foreign.body).toEqual({ total: 0, latestReportingYear: null });
+    }
+  });
+
+  it("progress for A's id, B's id and an unknown one answers A's alone", async () => {
+    const res = await as(A.users.consultant.id, `/targets/progress?targetIds=${dataB.targetId},${randomUUID()},${dataA.targetId}`);
+    expect(res.status).toBe(200);
+    expect((res.body as unknown as { targetId: string }[]).map((p) => p.targetId)).toEqual([dataA.targetId]);
+    noB(res.text, 'progress');
   });
 });
 
@@ -964,9 +1085,12 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       '/subsidiaries',
       `/subsidiaries/${A.subsidiaryId}/summary`,
       '/activity-records',
+      '/activity-records?limit=1',
+      '/activity-records/metadata',
       '/locations',
       '/targets',
-      '/targets/progress',
+      // B's target id beside A's: answered the same however B's target changes.
+      `/targets/progress?targetIds=${dataA.targetId},${dataB.targetId}`,
       '/denominators',
       '/period-locks',
       '/import-batches',
@@ -1001,7 +1125,7 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
     };
 
     const before = await answers();
-    const progress = JSON.parse((await call('consultant', 'GET', '/targets/progress')).text) as { targetId: string; currentYear: number }[];
+    const progress = JSON.parse((await call('consultant', 'GET', `/targets/progress?targetIds=${dataA.targetId}`)).text) as { targetId: string; currentYear: number }[];
     expect(progress.find((p) => p.targetId === dataA.targetId)?.currentYear).toBe(2026);
     const completeness = JSON.parse(
       (await call('consultant', 'GET', `/emissions/completeness?subsidiaryId=${A.subsidiaryId}&year=2026`)).text,

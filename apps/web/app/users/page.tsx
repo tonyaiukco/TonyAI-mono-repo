@@ -41,6 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
+import { isStaleCursor } from "@/lib/cursor-pages";
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -134,6 +135,8 @@ export default function UsersPage() {
       setNextCursor(page.nextCursor);
     } catch (e) {
       errorToast(e);
+      // A cursor from before a release (the users list's version 1): start again.
+      if (isStaleCursor(e)) void load();
     } finally {
       setLoadingMore(false);
     }

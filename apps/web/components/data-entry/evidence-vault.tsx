@@ -14,11 +14,14 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { api, ApiError } from "@/lib/api";
 import { EVIDENCE_ALLOWED_MIME_TYPES, isEvidenceRequired } from "@/lib/types";
 import type { EvidenceDTO } from "@/lib/types";
 import {
   detachSuccessMessage,
+  readEvidencePage,
   removeFileLabel,
   sharedWithNote,
 } from "@/lib/evidence-view";
@@ -52,29 +55,64 @@ export function EvidenceVault({
   onCountChange,
 }: EvidenceVaultProps) {
   const [files, setFiles] = useState<EvidenceDTO[]>([]);
+  // The loaded pages of files (LP4-05 PR C) and the record's whole count.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const required = isEvidenceRequired(category);
 
+  // A refresh (an upload, a removal) starts a new chain; a "load more" still
+  // in flight from the old one must not append its page to the new first page.
+  const loadSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++loadSeq.current;
     setLoading(true);
     try {
-      const list = await api.listEvidence(recordId);
-      setFiles(list);
-      onCountChange?.(list.length);
+      const page = await readEvidencePage(recordId);
+      // One page is the whole set only when it says so; past it, the count is
+      // the record's own, never the loaded rows'.
+      const total =
+        page.nextCursor === null
+          ? page.items.length
+          : (await api.getActivityRecord(recordId)).evidenceCount;
+      if (mine !== loadSeq.current) return;
+      setFiles(page.items);
+      setNextCursor(page.nextCursor);
+      setCount(total);
+      onCountChange?.(total);
     } catch (e) {
-      toast.error((e as Error).message);
+      if (mine === loadSeq.current) toast.error((e as Error).message);
     } finally {
-      setLoading(false);
+      if (mine === loadSeq.current) setLoading(false);
     }
   }, [recordId, onCountChange]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    const mine = loadSeq.current;
+    setLoadingMore(true);
+    try {
+      const page = await readEvidencePage(recordId, nextCursor);
+      if (mine !== loadSeq.current) return;
+      setFiles((list) => appendById(list, page.items));
+      setNextCursor(page.nextCursor);
+    } catch (e) {
+      if (mine !== loadSeq.current) return;
+      toast.error((e as Error).message);
+      if (isStaleCursor(e)) void refresh();
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function uploadFiles(fileList: FileList | File[]) {
     const chosen = Array.from(fileList);
@@ -136,7 +174,7 @@ export function EvidenceVault({
             </span>
           )}
         </CardTitle>
-        <span className="text-xs text-muted-foreground">{files.length} file(s)</span>
+        <span className="text-xs text-muted-foreground">{count} file(s)</span>
       </CardHeader>
       <CardContent className="space-y-3">
         {needsEvidence && (
@@ -265,6 +303,13 @@ export function EvidenceVault({
             })}
           </ul>
         )}
+        <LoadMoreButton
+          hasMore={!loading && nextCursor !== null}
+          loading={loadingMore}
+          onClick={() => void loadMore()}
+          label="Load more files"
+          testId="evidence-vault-load-more"
+        />
       </CardContent>
     </Card>
   );

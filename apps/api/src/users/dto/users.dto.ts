@@ -1,21 +1,16 @@
-import { Transform, Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsEmail,
   IsIn,
-  IsInt,
   IsOptional,
   IsString,
   Matches,
-  Max,
   MaxLength,
-  Min,
   MinLength,
 } from 'class-validator';
 import {
-  MAX_CURSOR_LENGTH,
-  MAX_PAGE_LIMIT,
   SUPPORTED_LOCALES,
   type InviteUserRequest,
   type ListUsersParams,
@@ -25,6 +20,7 @@ import {
   type UpdateUserRoleRequest,
   type UserRole,
 } from '@tonyai/shared-types';
+import { CursorPageQueryDto } from '../../common/cursor-page-query.dto';
 import { canonicalUuid, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
 
 /** Each id lowercased — the database's spelling, so grants and audit rows carry one. */
@@ -83,20 +79,7 @@ export class ReplaceUserAccessDto implements ReplaceUserAccessRequest {
 }
 
 /** GET /api/v1/users — `CursorPage` bounds (LP4-05's contract). */
-export class ListUsersQueryDto implements ListUsersParams {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(MAX_PAGE_LIMIT)
-  limit?: number;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(1)
-  @MaxLength(MAX_CURSOR_LENGTH)
-  cursor?: string;
-}
+export class ListUsersQueryDto extends CursorPageQueryDto implements ListUsersParams {}
 
 /** POST /api/v1/auth/password-reset — public. */
 export class PasswordResetDto implements PasswordResetRequest {
