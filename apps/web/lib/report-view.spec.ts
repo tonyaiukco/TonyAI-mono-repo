@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { SUPPORTED_LOCALES } from '@/lib/types';
+import { MESSAGES } from '@/messages';
 import { withdrawalNotice } from './report-view';
 
 /**
@@ -14,28 +16,31 @@ describe('withdrawalNotice', () => {
     expect(withdrawalNotice(null)).toBeNull();
   });
 
-  it('reports the real number, in the singular', () => {
-    const notice = withdrawalNotice({ voidedCount: 1 })!;
-    expect(notice).toContain('1 record was withdrawn');
-    expect(notice).toContain('It counts towards no figure above');
-    expect(notice).toContain('lists it with the reason recorded at the time');
-  });
-
-  it('reports the real number, in the plural', () => {
+  it('reports the real number', () => {
     // Pinned on a count that is neither 0 nor 1: a fixture of 1 lets a notice
     // built from the wrong field — the committed count, say — read correctly.
-    const notice = withdrawalNotice({ voidedCount: 6 })!;
-    expect(notice).toContain('6 records were withdrawn');
-    expect(notice).toContain('They count towards no figure above');
-    expect(notice).toContain('lists them with the reason recorded at the time');
+    expect(withdrawalNotice({ voidedCount: 6 })).toEqual({ count: 6 });
+    expect(withdrawalNotice({ voidedCount: 1 })).toEqual({ count: 1 });
   });
 
-  it('states BOTH halves: excluded from the totals, and disclosed in the file', () => {
+  it('words the singular and the plural, in English exactly as before (e2e pins it)', () => {
+    const en = MESSAGES.en.reports;
+    expect(en.withdrawnOne).toBe(
+      '1 record was withdrawn from this reporting year. It counts towards no figure above, and every export lists it with the reason recorded at the time.',
+    );
+    expect(en.withdrawnMany.replace('{count}', '6')).toBe(
+      '6 records were withdrawn from this reporting year. They count towards no figure above, and every export lists them with the reason recorded at the time.',
+    );
+  });
+
+  it.each(SUPPORTED_LOCALES)('%s states BOTH halves: excluded from the totals, and disclosed in the file', (locale) => {
     // Either half alone is misleading. "Excluded" without "disclosed" reads as
     // data quietly dropped; "disclosed" without "excluded" leaves the reader
     // unsure whether the tonnage is still inside the figures on screen.
-    const notice = withdrawalNotice({ voidedCount: 3 })!;
-    expect(notice).toMatch(/no figure above/);
-    expect(notice).toMatch(/every export lists/);
+    const { withdrawnOne, withdrawnMany } = MESSAGES[locale].reports;
+    for (const notice of [withdrawnOne, withdrawnMany]) {
+      expect(notice).toMatch(locale === 'en' ? /no figure above/ : /hiçbir rakama dahil değil/);
+      expect(notice).toMatch(locale === 'en' ? /every export lists/ : /her dışa aktarım/);
+    }
   });
 });

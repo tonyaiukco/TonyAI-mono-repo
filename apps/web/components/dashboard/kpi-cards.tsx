@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'use-intl';
 import { KPIData } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { Building2, MapPin, ArrowUpRight, ArrowDownRight } from 'lucide-react';
@@ -14,6 +15,9 @@ interface KPICardsProps {
   /** How many rows are measured by the WP17 invoice rule. The completion
    *  percentage means something different for those, so the card says so. */
   byLocationCount?: number;
+  /** A Scope 3-only selection: Scope 1, 2 and the total read "Not covered",
+   *  never a 0 the inventory did not measure (LP4-03 K4; `architect` P2). */
+  scope3Only?: boolean;
 }
 
 function formatEmissions(value: number): string {
@@ -28,7 +32,8 @@ function formatEmissions(value: number): string {
 
 interface EmissionsCardProps {
   label: string;
-  value: number;
+  /** null = not covered by this selection: a word, not a 0. */
+  value: number | null;
   /** null = no prior-period data yet; the trend badge shows "—". */
   trend: number | null;
   description: string;
@@ -37,6 +42,7 @@ interface EmissionsCardProps {
 }
 
 function EmissionsCard({ label, value, trend, description, highlight = false, scopeColor }: EmissionsCardProps) {
+  const t = useTranslations('dashboard');
   const isPositiveTrend = (trend ?? 0) > 0;
   const TrendIcon = isPositiveTrend ? ArrowUpRight : ArrowDownRight;
 
@@ -55,15 +61,21 @@ function EmissionsCard({ label, value, trend, description, highlight = false, sc
             )}
             <p className="text-sm font-semibold text-[#1D1D1F]">{label}</p>
           </div>
-          <div className="flex items-baseline gap-2 mt-3">
-            <span className={cn(
-              'text-4xl font-bold font-mono tabular-nums tracking-tight',
-              highlight ? 'text-primary' : 'text-[#1D1D1F]'
-            )}>
-              {formatEmissions(value)}
-            </span>
-            <span className="text-sm font-medium text-[#6E6E73]">tCO₂e</span>
-          </div>
+          {value === null ? (
+            <p className="mt-3 text-2xl font-bold tracking-tight text-[#6E6E73]" data-testid="kpi-not-covered">
+              {t('notCovered')}
+            </p>
+          ) : (
+            <div className="flex items-baseline gap-2 mt-3">
+              <span className={cn(
+                'text-4xl font-bold font-mono tabular-nums tracking-tight',
+                highlight ? 'text-primary' : 'text-[#1D1D1F]'
+              )}>
+                {formatEmissions(value)}
+              </span>
+              <span className="text-sm font-medium text-[#6E6E73]">tCO₂e</span>
+            </div>
+          )}
           <p className="text-sm text-[#6E6E73] mt-2 font-medium">{description}</p>
         </div>
         {trend === null ? (
@@ -104,6 +116,7 @@ interface DataStatusCardProps {
 }
 
 function DataStatusCard({ complete, partial, missing, subsidiaries, locations, completionRate, reportingYear, byLocationCount }: DataStatusCardProps) {
+  const t = useTranslations('dashboard');
   const total = complete + partial + missing;
   // `total === 0` happens on a tenant with no subsidiaries yet, and produced a
   // literal `NaN%` bar width. Untested edge, so it survived until the matrix
@@ -126,7 +139,7 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
           'text-base font-bold font-mono tabular-nums',
           completionRate >= 70 ? 'text-[#1D7A5F]' : completionRate >= 40 ? 'text-[#92400E]' : 'text-[#B91C1C]'
         )}>
-          {completionRate}% Complete
+          {t('entryProgress', { rate: completionRate })}
         </span>
       </div>
       
@@ -138,10 +151,8 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
           reason: the figure now answers "how much has been ACCEPTED", so
           sending a year's data for review no longer completes anything. */}
       <div className="-mt-2 mb-4 space-y-1">
-        <p className="text-xs text-[#6E6E73]">
-          Complete counts categories whose data a reviewer has approved.
-          Anything still waiting for review is counted as partial.
-        </p>
+        {/* Entry progress, never coverage (LP4-03 K9): the boundary's coverage card sits below. */}
+        <p className="text-xs text-[#6E6E73]">{t('entryNote')}</p>
         {byLocationCount > 0 && (
           <p className="text-xs text-[#6E6E73]">
             {byLocationCount === 1
@@ -210,37 +221,38 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
   );
 }
 
-export function KPICards({ data, reportingYear, byLocationCount = 0 }: KPICardsProps) {
+export function KPICards({ data, reportingYear, byLocationCount = 0, scope3Only = false }: KPICardsProps) {
+  const t = useTranslations('dashboard');
   return (
     <div className="space-y-5">
       {/* Emissions KPIs - Executive Level */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <EmissionsCard
           label="Scope 1 Emissions"
-          value={data.emissions.scope1}
+          value={scope3Only ? null : data.emissions.scope1}
           trend={data.emissions.scope1Trend}
-          description="Direct emissions"
+          description={scope3Only ? t('outsideSelection') : 'Direct emissions'}
           scopeColor="#34C759"
         />
         <EmissionsCard
           label="Scope 2 Emissions"
-          value={data.emissions.scope2}
+          value={scope3Only ? null : data.emissions.scope2}
           trend={data.emissions.scope2Trend}
-          description="Purchased energy"
+          description={scope3Only ? t('outsideSelection') : 'Purchased energy'}
           scopeColor="#007AFF"
         />
         <EmissionsCard
           label="Scope 3 Emissions"
           value={data.emissions.scope3}
           trend={data.emissions.scope3Trend}
-          description="Value chain"
+          description={t('scope3Description')}
           scopeColor="#AF52DE"
         />
         <EmissionsCard
-          label="Total Emissions"
-          value={data.emissions.total}
+          label={t('totalLabel')}
+          value={scope3Only ? null : data.emissions.total}
           trend={data.emissions.totalTrend}
-          description="Combined footprint"
+          description={scope3Only ? t('totalScope3Only') : t('totalDescription')}
           highlight
         />
       </div>

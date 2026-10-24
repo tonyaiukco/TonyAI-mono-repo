@@ -16,6 +16,22 @@ import type {
   TrackingMatrixRow,
 } from "@/lib/types";
 
+/**
+ * A subsidiary's Scope 1 + 2 total, as the headline and every report count it
+ * (LP4-03 K4). The row's own `totalTCo2e` also sums its Scope 3 cells, so the
+ * table, the bar chart and the detail drawer would otherwise add up to more
+ * than the dashboard's Total (`architect` P1 on LP4-03 PR B).
+ *
+ * `null` when the row holds no Scope 1 or 2 cell — the matrix keeps only the
+ * selection's categories, so a Scope 3 selection excluded them: not covered,
+ * never a measured 0 (Codex B9 P2-2 on PR B).
+ */
+export function scope12Total(row: TrackingMatrixRow): number | null {
+  const covered = row.cells.filter((cell) => cell.scope !== 3);
+  if (covered.length === 0) return null;
+  return covered.reduce((sum, cell) => sum + (cell.tCo2e ?? 0), 0);
+}
+
 function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
   const categories: CategoryData[] = row.cells.map((cell) => ({
     category: cell.category,
@@ -38,7 +54,9 @@ function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
     name: row.subsidiaryName,
     shortName: row.subsidiaryName,
     sector: row.sector ?? "—",
-    totalEmissions: row.totalTCo2e,
+    // 0 for a row the selection leaves uncovered: the chart is told so on its
+    // own (`notCovered`) and draws no bar at all.
+    totalEmissions: scope12Total(row) ?? 0,
     completionRate: Math.round((row.completeCount / row.categoryCount) * 100),
     categories,
   };
@@ -67,14 +85,16 @@ export function buildKpiData(
     completedCategories: complete,
     incompleteCategories: incomplete,
     missingCategories: missing,
-    totalEmissions: summary.totals.total,
+    // Scope 1 + 2, as every report prints it (LP4-03 K4): Scope 3 is recorded,
+    // shown on its own card, and not covered by the inventory.
+    totalEmissions: summary.totals.scope1 + summary.totals.scope2,
     calculationCompletionRate:
       cellCount > 0 ? Math.round((complete / cellCount) * 100) : 0,
     emissions: {
       scope1: summary.totals.scope1,
       scope2: summary.totals.scope2,
       scope3: summary.totals.scope3,
-      total: summary.totals.total,
+      total: summary.totals.scope1 + summary.totals.scope2,
       scope1Trend: null,
       scope2Trend: null,
       scope3Trend: null,

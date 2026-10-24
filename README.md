@@ -1897,9 +1897,50 @@ year within `REPORT_RECORD_LIMIT`, as the reports do, and a year-less read
 one row past either is `query_too_broad`, 422 — LP4-05 PR C follow-up (17).
 `GET /report-datasets?year=` answers `{ items, truncated }` too.
 
-Still LP4-03's (PRs B and C): the Reports screen's two tabs (live preview,
-issued reports) and its TR/EN copy, the dashboard's and Data Entry's coverage,
-and the boundary editor, with their `api.ts` functions.
+**The screens (LP4-03 PR B; K8, K9).** Reports has two tabs, the choice in
+the URL (`?tab=issued`, kept beside the reporting context):
+- **Live preview** — marked live on its first line ("Live preview — not an
+  issued report"); the review badge ("All records approved", never
+  "Approved") with its note that it certifies nothing; the boundary's
+  coverage card (`components/reports/coverage-card.tsx`, every state and
+  reading worded, gaps by code); the Scope 3 disclosure; tiles reading "Not
+  covered" for a Scope 3 selection; the live PDF/Excel/CSV downloads as
+  before (`tonyai-live-…`).
+- **Issued reports** (`components/reports/issued-reports.tsx`) — the year's
+  issued reports (final or partial, gaps counted, "Current final" = the newest
+  final the caller can read, `truncated` said) with each one's PDF, Excel and
+  CSV; the year's captured datasets with **Check** (the issuance preview, on
+  request — never per row, the EXPORT quota is five a minute: final or partial
+  and each blocking gap named) and **Issue** (the dialog shows that preview
+  first — issuing is irreversible —, then template, language — the caller's
+  by default —, options; a final the caller may not issue is not offered);
+  **Capture the
+  inventory** of the year's newest boundary version (super_admin; a consultant
+  once the version is frozen). An executive viewer reads; data_entry is told
+  its role reads no issued report.
+
+The dashboard's figure is **data entry progress**, never coverage, with the
+same coverage card beside it, and its Total is Scope 1 + 2 as every report's
+(Scope 3 on its own card, "Not covered — outside the total") — so are each
+subsidiary's figure in the table, the bar chart and the detail drawer
+(`scope12Total`), and a Scope 3 selection reads "Not covered", never 0 —
+on the cards, the chart and a subsidiary's drawer. A coverage read refused
+for capacity is retried once when the server's `Retry-After` is short
+(`lib/report-preview.ts`; a longer one is not retried early), then the card
+says the coverage is unavailable — never left out. Data Entry
+shows the selected subsidiary's coverage card beside the invoice panel; a
+data_entry user granted part of an organisation whose boundary declares other
+subsidiaries reads `not_readable` there — the expected answer (Decisions
+2026-10-24, follow-up (1): option A). The Reports screen's copy is in the
+`reports` catalogue (TR/EN), the dashboard's changed words in `dashboard`;
+the client calls are `api.listInventoryBoundaries`, `listReportDatasets`,
+`captureReportDataset`, `previewIssuance`, `issueReport`,
+`listReportIssuances` and `downloadIssuance`. `e2e/report-issuances.spec.ts`
+drives capture → check → issue → the three downloads through the UI on a year
+no other spec reads (2021): a frozen version, a dataset and an issuance are
+never deleted, so it declares a new version each run.
+
+Still LP4-03's (PR C): the boundary editor.
 
 ## Localisation and error codes
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useTranslations } from 'use-intl';
 import { Subsidiary } from '@/lib/types';
 import {
   BarChart,
@@ -17,6 +18,9 @@ import {
 
 interface EmissionsChartsProps {
   subsidiaries: Subsidiary[];
+  /** A Scope 3 selection: Scope 1 + 2 is not covered, so no bar is drawn —
+   *  a row of 0 bars would read as measured zeros (Codex B9 P2-2 on PR B). */
+  notCovered?: boolean;
 }
 
 // TonyAI Premium Color Palette
@@ -29,7 +33,8 @@ const COLORS = {
   chartHighlight: '#7A9CC6',
 };
 
-export function EmissionsCharts({ subsidiaries }: EmissionsChartsProps) {
+export function EmissionsCharts({ subsidiaries, notCovered = false }: EmissionsChartsProps) {
+  const t = useTranslations('dashboard');
   // Emissions by subsidiary data
   const emissionsBySubsidiary = subsidiaries.map((sub) => ({
     name: sub.shortName,
@@ -86,6 +91,11 @@ export function EmissionsCharts({ subsidiaries }: EmissionsChartsProps) {
           <div className="lg:col-span-3">
             <p className="text-xs text-muted-foreground mb-3">By Subsidiary (tCO₂e)</p>
             <div className="h-[200px]">
+              {notCovered ? (
+                <p className="flex h-full items-center justify-center rounded-lg bg-muted/40 px-4 text-center text-sm text-muted-foreground" data-testid="chart-not-covered">
+                  {t('totalScope3Only')}
+                </p>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={emissionsBySubsidiary} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#DCE3EA" strokeOpacity={0.5} vertical={false} />
@@ -110,6 +120,7 @@ export function EmissionsCharts({ subsidiaries }: EmissionsChartsProps) {
                   />
                 </BarChart>
               </ResponsiveContainer>
+              )}
             </div>
           </div>
 
