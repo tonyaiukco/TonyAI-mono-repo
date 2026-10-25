@@ -246,5 +246,8 @@ route. See the [snap diagnostic scope](runbooks/10-qa-clean-replacement.md#fixed
 Collection evidence format 2 records the alias in its own `snap:/usr/bin/snap`
 section (`r3_policy_snap.py`): absent, regular, or exactly `../lib/snapd/snapd`,
 whose fixed target is opened independently with O_NOFOLLOW and hashed (at most
-64 MiB). Other links, types or drift are refused; the section never enters the
-policy-input hashes. Format 1 evidence stays valid.
+64 MiB). Section format 2 streams a regular alias under the same cap
+(`REGULAR_UNSAFE`/`REGULAR_LIMIT`) and records drift as `CHANGED`. Other links,
+types or drift are refused; the section never enters the policy-input hashes.
+Format 1 evidence stays valid. A kernel's `linux-update-<version>` trigger file is
+read only when the same inventory records `linux-image-<version>` installed.

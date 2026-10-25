@@ -268,7 +268,7 @@ add('infra/scripts/r3_policy_validate.py', 'policy-scope-check-apt', '        ch
 add('infra/scripts/r3_policy_target.py', 'policy-proposal-imds', "or before['imds'] != proposal['target']['imds']", 'or False')
 add('infra/scripts/r3_policy_validate.py', 'policy-os-release', "re.findall(rb'^ID=(.*)$', raw, re.M) == [b'ubuntu']", 'True')
 add('infra/scripts/r3_policy_validate.py', 'policy-os-version', 're.findall(rb\'^VERSION_ID=(.*)$\', raw, re.M) == [b\'"24.04"\']', 'True')
-add('infra/scripts/r3_policy_evidence.py', 'policy-unknown-read', 'if name not in DIRECTORY_NAMES[path]:', 'if False:')
+add('infra/scripts/r3_policy_evidence.py', 'policy-unknown-read', '            if not reviewed_member(path, name, kernels):', '            if False:')
 add('infra/scripts/r3_policy_evidence.py', 'policy-drift', 'elif again != section:', 'elif False:')
 add('infra/scripts/r3_policy_evidence.py', 'policy-deadline-class', 'class CollectionDeadline(BaseException):', 'class CollectionDeadline(Exception):')
 add('infra/scripts/r3_policy_evidence.py', 'policy-reread-deadline', "        if time.monotonic() >= deadline:\n            sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}\n            checkpoint(value)\n            continue", '        if False:\n            continue')
@@ -356,20 +356,20 @@ add('infra/scripts/r3_policy_validate.py', 'policy-context-error-class', "requir
 add('infra/scripts/r3_policy_snap.py', 'snap-exact-link', 'if link != LINK:', 'if False:')
 add('infra/scripts/r3_policy_snap.py', 'snap-policy-link-size', 'if info.st_size > LINK_LIMIT:', 'if False:')
 add('infra/scripts/r3_policy_snap.py', 'snap-unsupported-type', "        if link is None:\n            raise Refusal('UNSUPPORTED_TYPE')", "        if False:\n            raise Refusal('UNSUPPORTED_TYPE')")
-add('infra/scripts/r3_policy_snap.py', 'snap-target-nofollow', "TARGET_NAME, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW", "TARGET_NAME, os.O_RDONLY | os.O_NONBLOCK")
+add('infra/scripts/r3_policy_snap.py', 'snap-policy-leaf-nofollow', 'name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)', 'name, os.O_RDONLY | os.O_NONBLOCK, dir_fd=parent)')
 add('infra/scripts/r3_policy_snap.py', 'snap-target-regular', 'if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:', 'if before.st_nlink != 1:')
 add('infra/scripts/r3_policy_snap.py', 'snap-target-single-link', 'if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:', 'if not stat.S_ISREG(before.st_mode):')
 add('infra/scripts/r3_policy_snap.py', 'snap-target-cap', 'if before.st_size > TARGET_LIMIT:', 'if False:')
 add('infra/scripts/r3_policy_snap.py', 'snap-read-deadline', 'if time.monotonic() >= deadline:', 'if False:')
 add('infra/scripts/r3_policy_snap.py', 'snap-alias-recheck', '            if link_again != link:', '            if False:')
-add('infra/scripts/r3_policy_snap.py', 'snap-target-parent-recheck', "            if parent_record(parent) != directory:\n                raise ValueError('CHANGED')\n            recheck(TARGET_PARENT", "            if False:\n                raise ValueError('CHANGED')\n            recheck(TARGET_PARENT")
+add('infra/scripts/r3_policy_snap.py', 'snap-target-parent-recheck', "        if parent_record(parent) != directory:\n            raise ValueError('CHANGED')\n        recheck(TARGET_PARENT", "        if False:\n            raise ValueError('CHANGED')\n        recheck(TARGET_PARENT")
 add('infra/scripts/r3_policy_snap.py', 'snap-reopen-identity', 'if (now.st_dev, now.st_ino) != (before.st_dev, before.st_ino):', 'if False:')
-add('infra/scripts/r3_policy_snap.py', 'snap-target-reopen', '            recheck(TARGET_PARENT, parent, lambda again', '            (lambda *_args: None)(TARGET_PARENT, parent, lambda again')
+add('infra/scripts/r3_policy_snap.py', 'snap-target-reopen', '        recheck(TARGET_PARENT, parent, lambda again', '        (lambda *_args: None)(TARGET_PARENT, parent, lambda again')
 add('infra/scripts/r3_policy_snap.py', 'snap-alias-reopen', '        recheck(ALIAS_PARENT, parent, unchanged)', '        pass')
-add('infra/scripts/r3_policy_snap.py', 'snap-regular-parent-mode', "            recheck(ALIAS_PARENT, parent)\n            if parent_record(parent) != directory:", "            recheck(ALIAS_PARENT, parent)\n            if False:")
+add('infra/scripts/r3_policy_snap.py', 'snap-regular-parent-mode', "'stat-path', os.stat, ALIAS_NAME, dir_fd=again, follow_symlinks=False)))\n            if parent_record(parent) != directory:", "'stat-path', os.stat, ALIAS_NAME, dir_fd=again, follow_symlinks=False)))\n            if False:")
 add('infra/scripts/r3_policy_snap.py', 'snap-recheck-primary', "        capture.close(again, 'close-parent', error)", "        capture.close(again, 'close-parent')")
-add('infra/scripts/r3_policy_snap.py', 'snap-regular-reopen', '            recheck(ALIAS_PARENT, parent)\n', '            pass\n')
-add('infra/scripts/r3_policy_snap.py', 'snap-regular-absent', "            if value.get('absent'):\n                raise ValueError('CHANGED')\n            # The shared", "            if False:\n                raise ValueError('CHANGED')\n            # The shared")
+add('infra/scripts/r3_policy_snap.py', 'snap-regular-reopen', '            recheck(ALIAS_PARENT, parent, lambda again', '            (lambda *_args: None)(ALIAS_PARENT, parent, lambda again')
+add('infra/scripts/r3_policy_snap.py', 'snap-regular-identity', '            capture.same(info, before)\n', '')
 add('infra/scripts/r3_policy_snap.py', 'snap-context-errno', "require(item['errno'] is None or type(item['errno']) is int and 1 <= item['errno'] <= 4095)", 'require(True)')
 add('infra/scripts/r3_policy_snap.py', 'snap-context-cleanup-stage', " and item['stage'] in ('close-file', 'close-parent'))", ')')
 add('infra/scripts/r3_policy_snap.py', 'snap-absent-keys', "require(set(value) == {'format', 'kind', 'alias'} and set(alias) == {'parent'})", 'require(True)')
@@ -380,6 +380,18 @@ add('infra/scripts/r3_policy_snap.py', 'snap-link-schema', "require(alias['link'
 add('infra/scripts/r3_policy_snap.py', 'snap-target-cap-schema', "0 <= item['bytes'] <= TARGET_LIMIT", "0 <= item['bytes']")
 add('infra/scripts/r3_policy_snap.py', 'snap-context-format', "value['format'] == 2 and value['stage'] in STAGES", "value['stage'] in STAGES")
 add('infra/scripts/r3_policy_snap.py', 'snap-context-cleanup-bound', "len(value['cleanup']) <= 4", 'True')
+add('infra/scripts/r3_policy_evidence.py', 'policy-trigger-pattern', 'match = KERNEL_TRIGGER.fullmatch(name) if', 'match = KERNEL_TRIGGER.search(name) if')
+add('infra/scripts/r3_policy_evidence.py', 'policy-trigger-path', 'if path == TRIGGERS else None', 'if True else None')
+add('infra/scripts/r3_policy_evidence.py', 'policy-trigger-installed', 'match is not None and match.group(1) in kernels', 'match is not None')
+add('infra/scripts/r3_policy_evidence.py', 'policy-kernels-status', " and row['status'] == 'install ok installed')", ')')
+add('infra/scripts/r3_policy_evidence.py', 'policy-kernels-prefix', "if row['name'].startswith('linux-image-') and", 'if')
+add('infra/scripts/r3_policy_evidence.py', 'policy-kernels-command', "if item.get('returncode') != 0 or item.get('failure') is not None:", 'if False:')
+add('infra/scripts/r3_policy_validate.py', 'policy-validate-trigger-rule', 'known = reviewed_member(path, name, kernels)', 'known = name in DIRECTORY_NAMES[path]')
+add('infra/scripts/r3_policy_snap.py', 'snap-changed-code', "if type(exc) is ValueError and exc.args == ('CHANGED',):", 'if False:')
+add('infra/scripts/r3_policy_snap.py', 'snap-changed-exact', "type(exc) is ValueError and exc.args == ('CHANGED',)", "exc.args[:1] == ('CHANGED',)")
+add('infra/scripts/r3_policy_snap.py', 'snap-regular-codes', "'open-alias', 'REGULAR_UNSAFE', 'REGULAR_LIMIT'", "'open-alias', 'TARGET_UNSAFE', 'TARGET_LIMIT'")
+add('infra/scripts/r3_policy_snap.py', 'snap-regular-format1-cap', "        if value['format'] == 1:\n            file_record(value['file'], False, absent=False)", "        if True:\n            file_record(value['file'], False, absent=False)")
+add('infra/scripts/r3_policy_snap.py', 'snap-format-history', "value['format'] in (1, FORMAT)", "value['format'] == FORMAT")
 add('infra/scripts/r3_policy_validate.py', 'snap-section-error-class', "require(value['error'] == 'OSError')\n        snap.validate_context", "require(True)\n        snap.validate_context")
 add('infra/scripts/r3_policy_validate.py', 'snap-section-codes', "require(value['error'] in (*ERRORS, 'CHANGED', *snap.REFUSALS))", "require(True)")
 add('infra/scripts/r3_policy_validate.py', 'snap-section-required', '        expected.add(snap.SECTION)', '        pass')
@@ -439,11 +451,11 @@ def mutation_command(file, python_command, node_command):
     elif file.endswith('.mjs'):
         return node_command
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
-        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap']
+        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers']
     if file.endswith('r3_snap_leaf.py'):
         suites = ['test_r3_snap_leaf']
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
-        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity']
+        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity']
     elif file.startswith('.github/workflows/'):
         suites = ['test_r3_workflow']
     elif file.endswith(('r3_image_transport.py', 'r3_guard_files.py', 'r3_package_evidence.py',

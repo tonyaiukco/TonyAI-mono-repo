@@ -1435,6 +1435,14 @@ observed in historical fixture A informed the read allowlist, including the
 fixture's kernel trigger filename. This is read-scope review, not fresh evidence
 or acceptance of hook effects. Unknown names remain `UNREVIEWED_PATH`; extending
 the scope requires code review, never automatic discovery of credential files.
+One reviewed pattern exists (owner decision 2026-10-25): in
+`/var/lib/dpkg/triggers`, `linux-update-<version>` (an exact
+`major.minor.patch-abi-flavour` version) is read only when the same document's
+inventory records `linux-image-<version>` as `install ok installed`; a failed or
+malformed inventory reviews no kernel. The collector and the validator share
+`reviewed_member`, so a read record for any other kernel is refused as a forgery.
+This keeps a target's own kernel trigger-interest file in scope across kernel
+updates without accepting any other name.
 
 Raw bodies are limited to 128 KiB each for fixed native config/scripts and reviewed
 directory members. Binary guard files are hashed within an 8 MiB limit. Directory
@@ -1481,7 +1489,18 @@ configuration, so all raw bytes remain in private/encrypted custody.
 shared no-follow file read ends in ELOOP. Format 2 evidence no longer reads it
 as a `file:` section; `r3_policy_snap.py` writes a `snap:/usr/bin/snap` section
 instead. It lstats the alias without opening it and records one of three kinds:
-`absent`, `regular` (read exactly as before, same 8 MiB limit) or `known-alias`.
+`absent`, `regular` or `known-alias`. Section format 2 (owner decision
+2026-10-25) streams a regular alias (older snapd can ship the binary itself; the
+Azure target's snapd 2.76.3 is inferred to, not proven) under the same 64 MiB, single-link, no-follow rules
+as the link target, refusing `REGULAR_UNSAFE` or `REGULAR_LIMIT`; the opened file
+must be the one the lstat named. Format 1 records, which read a regular alias with
+the shared 8 MiB reader, stay valid under that limit. Drift is recorded as
+`CHANGED` rather than the bare class name `ValueError`.
+
+Retained evidence validates under the source it is bound to: the B03 document
+(source `24ef46a`) recorded the installed kernel's trigger file as
+`UNREVIEWED_PATH`, which the `24ef46a` validator reports PARTIAL; this source's
+validator refuses that record for an installed kernel as inconsistent, by design.
 Only when the link bytes are exactly `../lib/snapd/snapd` does it open the fixed
 `/usr/lib/snapd/snapd` path on its own, again with O_NOFOLLOW, and stream it into
 a SHA-256: a regular single-link file of at most 64 MiB, stable across
