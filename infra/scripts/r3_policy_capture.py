@@ -54,8 +54,9 @@ def same(left, right):
         raise ValueError('CHANGED')
 
 
-def directory(path):
-    fd = observed('resolve-parent', os.open, '/', os.O_RDONLY | os.O_DIRECTORY)
+def directory(path, root='/'):
+    """`root` is only for tests on temporary trees; production reads `/`."""
+    fd = observed('resolve-parent', os.open, root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in Path(path).parts[1:]:
             nxt = observed('resolve-parent', os.open, part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -75,9 +76,9 @@ def blob(data):
     return {'base64': base64.b64encode(data).decode(), 'bytes': len(data), 'sha256': digest(data)}
 
 
-def file_record(path, body=False):
+def file_record(path, body=False, root='/'):
     try:
-        parent = directory(str(Path(path).parent))
+        parent = directory(str(Path(path).parent), root)
     except FileNotFoundError:
         return {'absent': True}
     parent_error = None
@@ -134,9 +135,9 @@ def membership(path, maximum=256):
         os.close(fd)
 
 
-def socket_record():
+def socket_record(root='/'):
     try:
-        fd = directory('/run/dbus')
+        fd = directory('/run/dbus', root)
     except FileNotFoundError:
         return {'exists': False, 'socket': False}
     try:

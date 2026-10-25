@@ -86,10 +86,11 @@ def validate(policy):
             raise ValueError('Unbounded/unsafe native trigger effect')
 
 
-def regular_record(path):
-    """No symlink traversal, devices, unbounded reads or raw content export."""
+def regular_record(path, root='/'):
+    """No symlink traversal, devices, unbounded reads or raw content export.
+    `root` is only for tests on temporary trees; production reads `/`."""
     parts = Path(path).parts
-    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[1:-1]:
             nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -120,8 +121,8 @@ def regular_record(path):
         os.close(fd)
 
 
-def directory_record(path):
-    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+def directory_record(path, root='/'):
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in Path(path).parts[1:]:
             nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -134,23 +135,49 @@ def directory_record(path):
         os.close(fd)
 
 
-def facts():
-    files = {name: regular_record(name) for name in FIXED}
+def bus_socket(root='/'):
+    """Whether the D-Bus system socket exists, with the collector's semantics
+    (`r3_policy_capture.socket_record`): `/run/dbus` is opened without following
+    links, the socket is lstat'd, never connected to, and anything but a socket
+    there refuses."""
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in ('run', 'dbus'):
+            try:
+                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                return False
+            os.close(fd)
+            fd = nxt
+        try:
+            info = os.stat('system_bus_socket', dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISSOCK(info.st_mode):
+            raise ValueError('Unsafe D-Bus system socket')
+        return True
+    finally:
+        os.close(fd)
+
+
+def facts(root='/'):
+    files = {name: regular_record(name, root) for name in FIXED}
     directories = {}
-    for root in DIRECTORIES:
-        path = Path(root)
-        directory_record(path)
-        names = sorted(p.name for p in path.iterdir())
+    for directory in DIRECTORIES:
+        directory_record(directory, root)
+        names = sorted(p.name for p in (Path(root) / directory.lstrip('/')).iterdir())
         if len(names) > 256:
             raise ValueError('Native directory limit')
-        directories[root] = names
+        directories[directory] = names
         for name in names:
-            files[root + '/' + name] = regular_record(root + '/' + name)
+            files[directory + '/' + name] = regular_record(directory + '/' + name, root)
     # Do not read the D-Bus socket. Native PackageKit hooks can activate a foreign
     # writer. Until separately designed, refuse the activation predicate rather
-    # than disable the hook or exempt packagekitd from the writer guard.
+    # than disable the hook or exempt packagekitd from the writer guard. The socket
+    # is checked even without the registration, so an unsafe one always refuses.
+    socket = bus_socket(root)
     packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')
-                  and Path('/run/dbus/system_bus_socket').exists())
+                  and socket)
     return {'files': files, 'directories': directories, 'packagekit_activation_possible': packagekit}
 
 

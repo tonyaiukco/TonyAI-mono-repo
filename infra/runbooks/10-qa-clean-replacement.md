@@ -1347,7 +1347,12 @@ snapshot is insufficient to produce one: mandb/config/helper closure, actual
 cache effects and conditional APT hooks remain to be qualified. The PackageKit
 service-file + D-Bus-socket activation predicate currently refuses even if a
 policy hash matches; this code does not disable that hook, stop a sixth service,
-or exempt packagekitd from foreign-writer checks. Needrestart, update-notifier,
+or exempt packagekitd from foreign-writer checks. Only the literal `False` passes the
+gate. The installer checks the socket with the collector's semantics (`/run/dbus`
+opened without following links, the socket lstat'd and required to be a socket),
+and checks it even when PackageKit is not registered, so a non-socket or a linked
+socket or directory refuses on both sides; tests compare both readers on real
+temporary trees (option C, PR-C0). Needrestart, update-notifier,
 dpkg-preconfigure and other effective hooks need explicit review as well. Historical
 B omits effective hook/path-exclusion bodies and must be extended/reviewed in a new
 private packet before claiming those facts. Do not silently rebind old B.

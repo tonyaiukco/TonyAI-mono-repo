@@ -443,6 +443,28 @@ add('infra/scripts/r3_access_repair_amendment.py', 'recovery-amendment-prior-exi
 add('infra/scripts/r3_access_repair_contract.py', 'recovery-amendment-approval-phase', "require(phase in ('repair', 'export'), 'AMENDMENT_PHASE')", "require(True, 'AMENDMENT_PHASE')")
 add('infra/scripts/r3_access_repair_control.py', 'recovery-amendment-perform-phase', "require(phase == 'repair', 'AMENDMENT_PHASE')", "require(True, 'AMENDMENT_PHASE')")
 add('infra/scripts/r3_access_repair_control.py', 'recovery-amendment-live-identities', "ids == fresh['extensions' if key == 'extensions' else 'run_commands']", 'True')
+# PackageKit gate and installer facts (option C, PR-C0): zero entries before this.
+add('infra/scripts/r3_install_policy.py', 'install-gate-is-true', "observed.get('packagekit_activation_possible') is not False:", "observed.get('packagekit_activation_possible') is True:")
+add('infra/scripts/r3_install_policy.py', 'install-gate-truthy', "observed.get('packagekit_activation_possible') is not False:", "observed.get('packagekit_activation_possible'):")
+add('infra/scripts/r3_install_policy.py', 'install-facts-binding', "            or digest(encoded(observed)) != policy['facts_sha256']):", '            or False):')
+add('infra/scripts/r3_install_policy.py', 'install-mandb-guard', "        if observed['files'][name].get('absent'):\n            raise ValueError('Missing native trigger guard')", "        if False:\n            raise ValueError('Missing native trigger guard')")
+add('infra/scripts/r3_install_policy.py', 'install-trigger-version', "if row.get('version') != item['version'] or row.get('status') != 'install ok installed':", "if row.get('status') != 'install ok installed':")
+add('infra/scripts/r3_install_policy.py', 'install-trigger-status', "if row.get('version') != item['version'] or row.get('status') != 'install ok installed':", "if row.get('version') != item['version']:")
+add('infra/scripts/r3_install_policy.py', 'install-bus-socket-type', "        if not stat.S_ISSOCK(info.st_mode):\n            raise ValueError('Unsafe D-Bus system socket')", "        if False:\n            raise ValueError('Unsafe D-Bus system socket')")
+add('infra/scripts/r3_install_policy.py', 'install-bus-socket-nofollow', "info = os.stat('system_bus_socket', dir_fd=fd, follow_symlinks=False)", "info = os.stat('system_bus_socket', dir_fd=fd, follow_symlinks=True)")
+add('infra/scripts/r3_install_policy.py', 'install-bus-dir-nofollow', '            try:\n                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)', '            try:\n                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)')
+add('infra/scripts/r3_install_policy.py', 'install-bus-always-checked', "    socket = bus_socket(root)\n    packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')\n                  and socket)", "    packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')\n                  and bus_socket(root))")
+add('infra/scripts/r3_install_policy.py', 'install-predicate-registration', "    packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')\n                  and socket)", '    packagekit = socket')
+add('infra/scripts/r3_policy_capture.py', 'capture-bus-socket-type', "        if not stat.S_ISSOCK(value.st_mode):\n            raise ValueError('UNSAFE_SOCKET')", "        if False:\n            raise ValueError('UNSAFE_SOCKET')")
+add('infra/scripts/r3_policy_validate.py', 'policy-predicate-socket', "predicate = not service['value'].get('absent', False) and sock['value']['exists']", "predicate = not service['value'].get('absent', False)")
+add('infra/scripts/r3_policy_validate.py', 'policy-predicate-registration', "predicate = not service['value'].get('absent', False) and sock['value']['exists']", "predicate = sock['value']['exists']")
+add('infra/scripts/r3_maintenance.py', 'maintenance-pending-job', "if fields['Id'] != name or fields['Job'] != '':", "if fields['Id'] != name:")
+add('infra/scripts/r3_maintenance.py', 'maintenance-active-work', "if name in SERVICES[:2] and (fields['ActiveState'], fields['SubState'], fields['MainPID']) != ('inactive', 'dead', '0'):", 'if False:')
+add('infra/scripts/r3_maintenance.py', 'maintenance-foreign-writer', '    if len(found) > 1:\n', '    if False:\n')
+add('infra/scripts/r3_maintenance.py', 'maintenance-inventory-pre-stop', "            if inventory_read('pre-stop', remaining()) != before:", '            if False:')
+add('infra/scripts/r3_maintenance.py', 'maintenance-mask-proof', "if not path.is_symlink() or os.readlink(path) != '/dev/null':", 'if False:')
+add('infra/scripts/r3_maintenance.py', 'maintenance-inventory-post-stop', "    if inventory_read('post-stop', remaining()) != before:", '    if False:')
+add('infra/scripts/r3_maintenance.py', 'maintenance-completion', "    if complete != {'units': list(UNITS), 'inventory_unchanged': True, 'release_authorized': False}:", '    if False:')
 
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
@@ -450,12 +472,12 @@ def mutation_command(file, python_command, node_command):
         suites = ['test_r3_access_repair', 'test_r3_access_delivery', 'test_r3_access_custody', 'test_r3_access_identity_diagnostic', 'test_r3_access_amendment']
     elif file.endswith('.mjs'):
         return node_command
-    elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
-        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers']
-    if file.endswith('r3_snap_leaf.py'):
+    # One chain: an r3_access_ file used to fall through to the final `else` and run the
+    # whole R3 suite per mutant (about ten CI minutes for 29 mutants).
+    elif file.endswith('r3_snap_leaf.py'):
         suites = ['test_r3_snap_leaf']
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
-        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity']
+        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers', 'test_r3_install_policy_facts', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity']
     elif file.startswith('.github/workflows/'):
         suites = ['test_r3_workflow']
     elif file.endswith(('r3_image_transport.py', 'r3_guard_files.py', 'r3_package_evidence.py',
@@ -465,6 +487,9 @@ def mutation_command(file, python_command, node_command):
         suites = ['test_r3_package_state', 'test_r3_install_guards']
     elif file.endswith('r3_install.py'):
         suites = ['test_r3_install_guards', 'test_r3_preparation']
+    elif file.endswith(('r3_install_policy.py', 'r3_maintenance.py')):
+        suites = ['test_r3_maintenance_policy', 'test_r3_maintenance_integration', 'test_r3_install_guards',
+                  'test_r3_install_policy_facts', 'test_r3_policy_evidence', 'test_r3_policy_controller']
     elif file.endswith('r3_transfer.py'):
         suites = ['test_r3_preparation']
     elif file.endswith(('r3_toolchain.py', 'r3_artifacts.py')):
