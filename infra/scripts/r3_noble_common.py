@@ -57,6 +57,24 @@ def read(path, limit=FILE_LIMIT):
         os.close(fd)
 
 
+def reaped_group_gone(child):
+    """Darwin refuses killpg with EPERM when no member can take the signal: an
+    exiting or zombie leader alone in its group. Reap that leader (bounded), then
+    accept the refusal only when the group no longer exists; a leader that does
+    not exit, or a member still present, stays refused."""
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        return False
+    try:
+        os.killpg(child.pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
+
+
 def kill_group(child, privileged=False):
     if privileged:
         # Runner APT executes as root. Never claim unprivileged killpg contains it.
@@ -70,7 +88,7 @@ def kill_group(child, privileged=False):
     except ProcessLookupError:
         pass
     except PermissionError:
-        if not privileged:
+        if not privileged and not reaped_group_gone(child):
             raise
     child.wait(timeout=5)
     if privileged:
