@@ -123,7 +123,7 @@ class Observe(unittest.TestCase):
                     handle.write(b'more')
             return block
         with patch.object(snap.os, 'read', side_effect=grow):
-            self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
+            self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
 
     def test_alias_or_parent_drift_during_the_target_read_is_refused(self):
         for change in ('relink', 'parent'):
@@ -140,7 +140,7 @@ class Observe(unittest.TestCase):
                         os.chmod(path, (os.stat(path).st_mode & 0o7777) ^ 0o010)
                     return value
                 with patch.object(snap, 'target', side_effect=changing):
-                    self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
+                    self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
 
     def test_target_parent_mode_or_rename_swap_during_the_read_is_refused(self):
         for change in ('mode', 'rename'):
@@ -159,7 +159,7 @@ class Observe(unittest.TestCase):
                             parent.mkdir(); (parent / 'snapd').write_bytes(b'y' * 8)
                     return block
                 with patch.object(snap.os, 'read', side_effect=swap):
-                    self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
+                    self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
 
     def test_alias_link_bytes_must_read_back_unchanged(self):
         # A real symlink cannot be rewritten in place; this pins the byte comparison itself.
@@ -170,7 +170,7 @@ class Observe(unittest.TestCase):
             value = real_readlink(name, *args, **kwargs)
             return value if len(reads) == 1 else b'../lib/snapd/other'
         with patch.object(snap.os, 'readlink', side_effect=drifting):
-            self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
+            self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
         self.assertGreater(len(reads), 1)
 
     def test_alias_parent_rename_swap_is_refused(self):
@@ -183,32 +183,94 @@ class Observe(unittest.TestCase):
             bin_dir.mkdir(); (bin_dir / 'snap').symlink_to(snap.LINK.decode())
             return value
         with patch.object(snap, 'target', side_effect=swapping):
-            self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
+            self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
 
-    def test_regular_alias_vanishing_or_swapped_parent_is_refused(self):
-        tree = Tree(self, None)
-        tree.alias.write_bytes(b'#!/bin/sh\n')
-        with patch.object(capture, 'file_record', return_value={'absent': True}):
-            self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
-        real_record = capture.file_record
-        def swapped(path, body=False):
+    def test_regular_alias_vanishing_replaced_or_swapped_parent_is_refused(self):
+        real_leaf = snap.leaf
+        def run_with(tree, action):
+            def acting(*args):
+                action(tree)
+                return real_leaf(*args)
+            with patch.object(snap, 'leaf', side_effect=acting):
+                return tree.run()
+        def vanish(tree):
+            tree.alias.unlink()
+        def replace(tree):
+            tree.alias.unlink(); tree.alias.write_bytes(b'#!/bin/sh\n')
+        def swap(tree):
             bin_dir = tree.root / 'usr/bin'
             bin_dir.rename(tree.root / 'usr/bin-old')
             bin_dir.mkdir(); (bin_dir / 'snap').write_bytes(b'#!/bin/sh\n')
-            return real_record(path, body)
-        with patch.object(capture, 'file_record', side_effect=swapped):
-            self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
+        for action, expected in ((vanish, 'OSError'), (replace, 'CHANGED'), (swap, 'CHANGED')):
+            with self.subTest(action=action.__name__):
+                tree = Tree(self, None)
+                tree.alias.write_bytes(b'#!/bin/sh\n')
+                self.assertEqual(run_with(tree, action)['error'], expected)
+
+    def test_regular_alias_replaced_after_the_read_is_refused_by_the_reopened_check(self):
+        tree = Tree(self, None)
+        tree.alias.write_bytes(b'#!/bin/sh\n')
+        real_leaf = snap.leaf
+        def replaced(*args):
+            result = real_leaf(*args)
+            tree.alias.unlink(); tree.alias.write_bytes(b'#!/bin/sh\n')
+            return result
+        with patch.object(snap, 'leaf', side_effect=replaced):
+            self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
+
+    def test_parent_rename_swap_is_refused_by_the_directory_identity_alone(self):
+        # With every leaf comparison disabled, only the reopened chain's device/inode check sees the swap.
+        for regular in (True, False):
+            with self.subTest(regular=regular):
+                tree = Tree(self, None if regular else snap.LINK.decode())
+                if regular:
+                    tree.alias.write_bytes(b'#!/bin/sh\n')
+                parent = tree.root / ('usr/bin' if regular else 'usr/lib/snapd')
+                real_leaf = snap.leaf
+                def swapped(*args):
+                    result = real_leaf(*args)
+                    parent.rename(parent.with_name(parent.name + '-old'))
+                    parent.mkdir()
+                    return result
+                with patch.object(snap, 'leaf', side_effect=swapped), patch.object(capture, 'same'):
+                    self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
 
     def test_regular_alias_parent_mode_change_during_the_read_is_refused(self):
         tree = Tree(self, None)
         tree.alias.write_bytes(b'#!/bin/sh\n')
-        real_record = capture.file_record
-        def loosened(path, body=False):
+        real_leaf = snap.leaf
+        def loosened(*args):
             bin_dir = tree.root / 'usr/bin'
             os.chmod(bin_dir, (os.stat(bin_dir).st_mode & 0o7777) ^ 0o020)
-            return real_record(path, body)
-        with patch.object(capture, 'file_record', side_effect=loosened):
-            self.assertEqual(tree.run(), {'state': 'error', 'error': 'ValueError'})
+            return real_leaf(*args)
+        with patch.object(snap, 'leaf', side_effect=loosened):
+            self.assertEqual(tree.run(), {'state': 'error', 'error': 'CHANGED'})
+
+    def test_regular_alias_is_streamed_under_the_target_cap(self):
+        # Older snapd ships /usr/bin/snap as the binary itself, larger than the shared 8 MiB reader allows.
+        tree = Tree(self, None)
+        body = b'y' * (capture.LIMIT + 1)
+        tree.alias.write_bytes(body)
+        result = tree.run()
+        self.assertEqual(result['state'], 'ok')
+        value = result['value']
+        self.assertEqual((value['format'], value['kind']), (2, 'regular'))
+        self.assertEqual(value['file'], {**capture.metadata(os.stat(tree.alias)), 'bytes': len(body), 'sha256': digest(body)})
+        self.assertIn('snap', tree.opened)
+        with patch.object(snap, 'TARGET_LIMIT', 16):
+            self.assertEqual(tree.run(), {'state': 'error', 'error': 'REGULAR_LIMIT'})
+
+    def test_regular_alias_with_more_links_is_refused(self):
+        tree = Tree(self, None)
+        tree.alias.write_bytes(b'#!/bin/sh\n')
+        os.link(tree.alias, tree.root / 'usr/bin/snap-second')
+        self.assertEqual(tree.run(), {'state': 'error', 'error': 'REGULAR_UNSAFE'})
+
+    def test_plain_value_errors_keep_the_class_name_and_drift_keeps_its_code(self):
+        self.assertEqual(snap.operation(lambda: (_ for _ in ()).throw(ValueError('CHANGED'))), {'state': 'error', 'error': 'CHANGED'})
+        self.assertEqual(snap.operation(lambda: (_ for _ in ()).throw(ValueError('other'))), {'state': 'error', 'error': 'ValueError'})
+        self.assertEqual(snap.operation(lambda: (_ for _ in ()).throw(ValueError('CHANGED', 'x'))), {'state': 'error', 'error': 'ValueError'})
+        self.assertEqual(snap.operation(lambda: b'\xff'.decode('ascii')), {'state': 'error', 'error': 'UnicodeError'})
 
     def test_recheck_keeps_the_primary_error_and_the_outer_deadline(self):
         tree = Tree(self)
@@ -300,10 +362,26 @@ class Validate(unittest.TestCase):
 
     def test_absent_and_regular_records_are_complete_under_root_parents(self):
         for value in ({'format': 1, 'kind': 'absent', 'alias': {'parent': META}},
+                      {'format': 2, 'kind': 'absent', 'alias': {'parent': META}},
                       {'format': 1, 'kind': 'regular', 'alias': {'parent': META},
-                       'file': {**META, 'bytes': 3, 'sha256': digest(b'abc')}}):
+                       'file': {**META, 'bytes': 3, 'sha256': digest(b'abc')}},
+                      {'format': 2, 'kind': 'regular', 'alias': {'parent': META},
+                       'file': {**META, 'bytes': snap.TARGET_LIMIT, 'sha256': digest(b'abc')}}):
             doc = document_v2(); doc['sections'][snap.SECTION] = {'state': 'ok', 'value': value}
             self.assertEqual(self.status(doc)['status'], 'COLLECTED_REVIEW_REQUIRED')
+
+    def test_regular_record_caps_follow_the_record_format(self):
+        # Format 1 kept the shared 8 MiB reader's limit; format 2 streams under TARGET_LIMIT.
+        for fmt, size in ((1, capture.LIMIT + 1), (2, snap.TARGET_LIMIT + 1)):
+            value = {'format': fmt, 'kind': 'regular', 'alias': {'parent': META},
+                     'file': {**META, 'bytes': size, 'sha256': digest(b'abc')}}
+            doc = document_v2(); doc['sections'][snap.SECTION] = {'state': 'ok', 'value': value}
+            with self.subTest(fmt=fmt), self.assertRaises(ValueError):
+                self.status(doc)
+        value = {'format': 2, 'kind': 'regular', 'alias': {'parent': META}, 'file': {**META, 'bytes': 3, 'sha256': digest(b'abc'), 'body': 'x'}}
+        doc = document_v2(); doc['sections'][snap.SECTION] = {'state': 'ok', 'value': value}
+        with self.assertRaises(ValueError):
+            self.status(doc)
 
     def test_parent_ownership_predicate(self):
         for parent in ('alias', 'target'):
@@ -329,7 +407,7 @@ class Validate(unittest.TestCase):
         def forged(change):
             value = snap_record(); change(value); return {'state': 'ok', 'value': value}
         cases = [
-            forged(lambda v: v.update(format=True)), forged(lambda v: v.update(format=2)),
+            forged(lambda v: v.update(format=True)), forged(lambda v: v.update(format=3)),
             forged(lambda v: v.update(kind='alias')), forged(lambda v: v.pop('target')),
             forged(lambda v: v.update(extra=1)), forged(lambda v: v['alias'].update(link='/usr/lib/snapd/snapd')),
             forged(lambda v: v['target'].update(bytes=True)), forged(lambda v: v['target'].update(bytes=snap.TARGET_LIMIT + 1)),

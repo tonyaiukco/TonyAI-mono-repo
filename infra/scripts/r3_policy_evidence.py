@@ -1,13 +1,15 @@
 """Shared A/B collection contract. Evidence only: never generates install policy."""
+import base64
 import json
 from pathlib import Path
+import re
 import tempfile
 import time
 
 from r3_apt_observer import UNITS
 from r3_install_policy import FIXED, DIRECTORIES, unique
 from r3_noble_common import digest, encoded, read, run
-from r3_package_state import INVENTORY_ARGV
+from r3_package_state import INVENTORY_ARGV, inventory
 import r3_policy_capture as capture
 import r3_policy_snap as snap
 
@@ -34,6 +36,34 @@ DIRECTORY_NAMES = {
         'update-icon-caches', 'update-default-ispell', 'update-default-wordlist',
         'lib32', 'libo32', 'libx32', 'linux-update-6.8.0-147-generic', 'shim-kernel-check',
         'shim-secureboot-policy', 'twisted-plugins-cache', 'update-sgmlcatalog')}
+TRIGGERS = '/var/lib/dpkg/triggers'
+# A kernel's trigger-interest file is reviewed only for a kernel dpkg records as
+# fully installed in the same document's inventory (owner decision 2026-10-25).
+KERNEL_TRIGGER = re.compile(r'linux-update-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+-[a-z][a-z0-9]*)')
+
+
+def installed_kernels(section):
+    """Versions of installed `linux-image-<version>` packages; empty unless the inventory is complete."""
+    if not isinstance(section, dict) or section.get('state') != 'ok':
+        return frozenset()
+    item = section['value']
+    if item.get('returncode') != 0 or item.get('failure') is not None:
+        return frozenset()
+    try:
+        rows = inventory(base64.b64decode(item['stdout']['base64'], validate=True).decode('utf-8'))
+    except (KeyError, TypeError, ValueError):
+        return frozenset()
+    return frozenset(row['name'][len('linux-image-'):] for row in rows.values()
+                     if row['name'].startswith('linux-image-') and row['status'] == 'install ok installed')
+
+
+def reviewed_member(path, name, kernels):
+    if name in DIRECTORY_NAMES[path]:
+        return True
+    match = KERNEL_TRIGGER.fullmatch(name) if path == TRIGGERS else None
+    return match is not None and match.group(1) in kernels
+
+
 REVIEW_SCRIPTS = ('/usr/lib/os-release', '/usr/lib/ubuntu-advantage/apt-esm-json-hook', '/usr/lib/cnf-update-db')
 # Format 1 read the snap alias as a file; it stays listed so format 1 documents and
 # the installer facts filter keep their meaning. Format 2 records the alias in its
@@ -113,13 +143,14 @@ def collect(binding, checkpoint=lambda _value: None):
         take('file:' + path, lambda path=path: capture.file_record(path, path in BODIES))
     sections[snap.SECTION] = {'state': 'not_reached'} if time.monotonic() >= deadline else snap.operation(lambda: snap.observe(deadline))
     checkpoint(value)
+    kernels = installed_kernels(sections['inventory'])
     for path in DIRECTORIES:
         take('directory:' + path, lambda path=path: capture.membership(path))
         section = sections['directory:' + path]
         names = section.get('value', {}).get('names', [])
         for name in names:
             full = path + '/' + name
-            if name not in DIRECTORY_NAMES[path]:
+            if not reviewed_member(path, name, kernels):
                 sections['file:' + full] = {'state': 'error', 'error': 'UNREVIEWED_PATH'}
                 checkpoint(value)
             else:

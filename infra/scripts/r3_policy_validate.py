@@ -7,7 +7,8 @@ from r3_noble_common import digest, encoded
 from r3_package_state import inventory
 from r3_install_policy import FIXED, DIRECTORIES
 from r3_policy_capture import LIMIT, BODY_LIMIT, READ_STAGES
-from r3_policy_evidence import COMMANDS, BODIES, EXTRA_FILES, COLLECTED_FILES, DIRECTORY_NAMES, PURPOSE, ERRORS, SCOPES, load
+from r3_policy_evidence import (COMMANDS, BODIES, EXTRA_FILES, COLLECTED_FILES, DIRECTORY_NAMES, PURPOSE, ERRORS, SCOPES, load,
+                                 installed_kernels, reviewed_member)
 import r3_policy_snap as snap
 
 
@@ -194,6 +195,7 @@ def validate(data, binding):
             good = blob(item['stderr'], 2 * 1024 * 1024) == b''
         commands_ok[name] = good
         complete &= good
+    kernels = installed_kernels(sections['inventory']) if commands_ok['inventory'] else frozenset()
     for path in DIRECTORIES:
         key = 'directory:' + path
         good = section(sections.get(key), directory_record)
@@ -203,7 +205,7 @@ def validate(data, binding):
             full = path + '/' + name
             expected.add('file:' + full)
             record = sections.get('file:' + full)
-            known = name in DIRECTORY_NAMES[path]
+            known = reviewed_member(path, name, kernels)
             if not known:
                 require(record == {'state': 'error', 'error': 'UNREVIEWED_PATH'})
                 complete = False

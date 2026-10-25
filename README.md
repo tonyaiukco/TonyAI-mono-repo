@@ -535,7 +535,9 @@ unit reload/warning drift, retains partial evidence without aggregate hashes, an
 uses source-only controller imports plus replacement-independent Git checks.
 Evidence format 2 records `/usr/bin/snap` in its own section: absent, a regular
 file, or exactly the known `../lib/snapd/snapd` link, whose fixed target is opened
-independently with no-follow and hashed (at most 64 MiB). No link is followed
+independently with no-follow and hashed (at most 64 MiB; a regular alias is
+streamed under the same cap). A kernel's dpkg trigger-interest file is reviewed
+only for a kernel the same inventory records installed. No link is followed
 generally; other links, types or drift are refused. The section is collection
 evidence only and never enters the aggregate policy hashes. A failure can retain
 a fixed syscall stage, numeric errno and bounded cleanup errors inside the
