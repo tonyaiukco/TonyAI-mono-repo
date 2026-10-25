@@ -295,3 +295,12 @@ whose fixed target is opened independently with O_NOFOLLOW and hashed (at most
 types or drift are refused; the section never enters the policy-input hashes.
 Format 1 evidence stays valid. A kernel's `linux-update-<version>` trigger file is
 read only when the same inventory records `linux-image-<version>` installed.
+Collection evidence format 3 (option C, PR-C1) adds the shared PackageKit sections
+of `r3_packagekit_state.py`: one `observe` -> `normalize` -> `evaluate` domain that the
+installer's facts and the validator both use, with no-follow reads and exactly three
+fixed commands (two `systemctl show`, one `dpkg-query -W`) and no PackageKit or socket
+contact. Its reviewed values are module literals in per-target profiles, none shipped
+yet, so a run is `DISCOVERY_ONLY` (complete and sealed, never a policy input); the
+installer's gate is not wired before PR-C2 (`PACKAGEKIT_GATE_WIRED`), so no host becomes
+eligible. No mask, stop or unmask exists in this code. See
+[R3-POLICY-01-C1](runbooks/10-qa-clean-replacement.md#r3-policy-01-c1-shared-packagekit-state-option-c).

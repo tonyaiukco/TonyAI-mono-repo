@@ -524,7 +524,11 @@ execution approval; no runnable target policy is supplied or inferred. Native
 triggers stay enabled and the five additions/holds remain exact. The original
 diagnostic mode and format-2 strict installer remain available without this opt-in;
 maintenance installation requires format 3. Unknown PackageKit activation, hook or
-effect closure blocks preparation for execution. No workflow, Azure installation,
+effect closure blocks preparation for execution. Option C's shared PackageKit state
+module (`infra/scripts/r3_packagekit_state.py`, PR-C1) is the one predicate for the
+installer and the validator; its reviewed values are not filled and the installer's gate
+is not wired to it before PR-C2, so nothing becomes eligible, and it never masks, stops or
+unmasks anything. No workflow, Azure installation,
 unmask/reboot qualification or QA acceptance is established by this code.
 The [policy evidence collection path](infra/runbooks/10-qa-clean-replacement.md#collection-only-policy-evidence-a-and-b)
 adds `purpose=policy-collection` for A and a new private B packet generator,
@@ -545,6 +549,10 @@ generally; other links, types or drift are refused. The section is collection
 evidence only and never enters the aggregate policy hashes. A failure can retain
 a fixed syscall stage, numeric errno and bounded cleanup errors inside the
 encrypted evidence; format 1 documents and their context stay valid.
+Evidence format 3 adds option C's PackageKit sections (the same reads the installer's
+facts make) and reports `DISCOVERY_ONLY` - complete, never a policy input - until the
+packaged-unit index is reviewed; formats 1 and 2 keep their meaning
+(`predicate_contract: legacy`).
 Source verification refuses Git filter/include/diff configuration, redirected or
 partial-clone worktrees, and nonempty or symlinked Git info attributes before
 status/object reads; lazy object fetching is disabled. Index or HEAD gitlinks

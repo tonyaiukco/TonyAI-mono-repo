@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+import r3_pk_fixtures
 import r3_policy_capture as capture
 import r3_policy_evidence as evidence
 import r3_policy_validate as validator
@@ -31,8 +32,9 @@ def command(name, _deadline=0):
     outputs = {'inventory': INVENTORY, 'audit': b'', 'apt-config': b'APT {};\n',
                'unit-config': b'\n'.join(b'# /usr/lib/systemd/system/' + u.encode() + b'\n[Unit]\n' for u in UNITS),
                'architecture': b'amd64\n', 'os-release': b'ID=ubuntu\nVERSION_ID="24.04"\n',
+               'pk-dpkg-index': b'/usr/libexec/packagekitd\n',
                **{name: b'\n'.join(b'Id=' + u.encode() + b'\nFragmentPath=/usr/lib/systemd/system/' + u.encode() + b'\nDropInPaths=\nNeedDaemonReload=no\n' for u in UNITS) for name in ('unit-paths', 'unit-paths-after')}}
-    return {'argv': evidence.COMMANDS[name], 'stdout': capture.blob(outputs[name]),
+    return {'argv': {**evidence.COMMANDS, **evidence.C_COMMANDS}[name], 'stdout': capture.blob(outputs[name]),
             'stderr': capture.blob(b''), 'returncode': 0, 'failure': None}
 
 
@@ -324,6 +326,11 @@ class CollectionRoute(unittest.TestCase):
         with self.assertRaises(ValueError):
             guest.collection_binding({'purpose': evidence.A_PURPOSE, 'policy_sha256': 'a' * 64})
 
+
+
+def setUpModule():
+    # Format-3 collection reads its PackageKit sections from a synthetic masked host.
+    r3_pk_fixtures.module_canned_sections()
 
 if __name__ == '__main__':
     unittest.main()

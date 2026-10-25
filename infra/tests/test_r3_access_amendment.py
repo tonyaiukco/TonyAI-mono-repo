@@ -21,7 +21,8 @@ import test_r3_access_identity_diagnostic as identity_tests
 import test_r3_access_delivery as delivery_tests
 from test_r3_access_repair import HASH
 
-HISTORICAL_MODULES = tuple(name for name in packet.MODULES if name != 'r3_policy_snap')
+# Published history predates the snap collector and the option C PackageKit state module.
+HISTORICAL_MODULES = tuple(name for name in packet.MODULES if name not in ('r3_policy_snap', 'r3_packagekit_state'))
 
 
 def failed_summary():

@@ -433,7 +433,9 @@ def main():
         write(publish / 'binding.json', encoded(binding))
         write(publish / 'summary.json', encoded(summary))
     print('Native fixture finished. Inspect the encrypted evidence and public binding; no target qualification claimed.')
-    return 0 if summary['status'] in ('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED', 'DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED') and summary['sealed'] else 1
+    from r3_policy_validate import SEALED_STATUSES
+    return 0 if summary['status'] in ('DIAGNOSTIC_PASS_REVIEW_REQUIRED', *SEALED_STATUSES,
+                                      'DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED') and summary['sealed'] else 1
 
 
 if __name__ == '__main__':

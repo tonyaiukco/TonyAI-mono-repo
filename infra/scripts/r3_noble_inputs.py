@@ -15,7 +15,7 @@ from r3_toolchain import validate_lock, verify_index
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = ('r3_noble_common.py', 'r3_noble_guest.py', 'r3_noble_identity.py', 'r3_toolchain.py',
            'r3_artifacts.py', 'r3_package_state.py', 'r3_apt_observer.py',
-           'r3_install_policy.py', 'r3_maintenance.py', 'r3_policy_capture.py', 'r3_policy_snap.py',
+           'r3_install_policy.py', 'r3_packagekit_state.py', 'r3_maintenance.py', 'r3_policy_capture.py', 'r3_policy_snap.py',
            'r3_policy_evidence.py', 'r3_policy_validate.py', 'r3_policy_scope.py', 'r3_snap_leaf.py')
 WORKFLOW = '.github/workflows/r3-native-noble.yml'
 

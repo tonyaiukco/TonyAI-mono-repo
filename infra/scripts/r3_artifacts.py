@@ -16,7 +16,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = ('r3_artifacts.py', 'r3_toolchain.py', 'r3_install.py', 'r3_package_state.py', 'r3_apt_observer.py', 'replacement_host.py',
            'replacement_bundle.py', 'replacement-source-layout.json', 'selfhost_init.mjs', 'selfhost_pin.py',
-           'r3_install_policy.py', 'r3_maintenance.py', 'r3_noble_common.py', 'r3_noble_identity.py')
+           'r3_install_policy.py', 'r3_packagekit_state.py', 'r3_policy_capture.py', 'r3_maintenance.py',
+           'r3_noble_common.py', 'r3_noble_identity.py')
 RUNTIME = ('compose.qa.yml', 'compose.https.yml', 'compose.r02.yml', 'Caddyfile',
            'credential-template.json', 'images.qa.lock.json', 'upstream.lock.json')
 

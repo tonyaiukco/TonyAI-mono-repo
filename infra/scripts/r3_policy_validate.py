@@ -8,8 +8,14 @@ from r3_package_state import inventory
 from r3_install_policy import FIXED, DIRECTORIES
 from r3_policy_capture import LIMIT, BODY_LIMIT, READ_STAGES
 from r3_policy_evidence import (COMMANDS, BODIES, EXTRA_FILES, COLLECTED_FILES, DIRECTORY_NAMES, PURPOSE, ERRORS, SCOPES, load,
-                                 installed_kernels, reviewed_member)
+                                 installed_kernels, reviewed_member, C_COMMANDS, C_LIMITS, PK_SECTIONS)
+import r3_packagekit_state as pk_state
 import r3_policy_snap as snap
+
+
+# Statuses of a complete, sealed collection run. DISCOVERY_ONLY (option C LIVE-A1a: names
+# and metadata, no bodies by design) completes a run but never yields policy inputs.
+SEALED_STATUSES = ('COLLECTED_REVIEW_REQUIRED', 'DISCOVERY_ONLY')
 
 
 def require(condition):
@@ -172,11 +178,45 @@ def scope(value, apt):
         check_apt(value)
 
 
+def packagekit_sections(sections):
+    """Format 3: every shared PackageKit section has the module's strict schema. Returns
+    completeness; the predicate itself comes only from `evaluate(normalize(raw))`."""
+    complete = True
+    for name in pk_state.SECTION_NAMES:
+        if name == 'dbus-socket':
+            continue  # validated with the legacy section shape below
+        good = section(sections.get(name), lambda v, name=name: pk_state.check(name, v))
+        if good and name in pk_state.COMMANDS:
+            item = sections[name]['value']
+            good = item['returncode'] == 0 and item['stderr']['bytes'] == 0
+        complete &= good
+    after = section(sections.get('pk-units-after'), lambda v: pk_state.check_command(v, 'pk-units'))
+    if after and complete:
+        # A field-by-field second read: any change between the two reads is partial.
+        try:
+            complete &= (pk_state.unit_blocks(sections['pk-units']['value'])
+                         == pk_state.unit_blocks(sections['pk-units-after']['value']))
+        except (ValueError, UnicodeError, pk_state.Unavailable):
+            complete = False
+    else:
+        complete = False
+    def index(value):
+        # Discovery evidence for offline review; never a read list or a completeness input.
+        require(isinstance(value, dict) and set(value) == {'argv', 'stdout', 'stderr', 'returncode', 'failure'})
+        require(value['argv'] == C_COMMANDS['pk-dpkg-index'])
+        blob(value['stdout'], C_LIMITS['pk-dpkg-index'])
+        blob(value['stderr'], C_LIMITS['pk-dpkg-index'])
+        require(value['returncode'] is None or type(value['returncode']) is int)
+        require(value['failure'] is None or value['failure'] in ERRORS)
+    section(sections.get('pk-dpkg-index'), index)
+    return complete
+
+
 def validate(data, binding):
     doc = load(data)
     require(isinstance(doc, dict) and set(doc) == {'format', 'purpose', 'binding', 'sections',
             'qualification', 'installation_success', 'policy_generated'})
-    require(type(doc['format']) is int and doc['format'] in (1, 2) and doc['purpose'] == PURPOSE
+    require(type(doc['format']) is int and doc['format'] in (1, 2, 3) and doc['purpose'] == PURPOSE
             and doc['binding'] == binding and all(doc[k] is False for k in
                 ('qualification', 'installation_success', 'policy_generated')))
     sections = doc['sections']
@@ -184,8 +224,10 @@ def validate(data, binding):
     # Format 1 read the snap alias as a file; format 2 records it in its own section.
     extra = EXTRA_FILES if doc['format'] == 1 else COLLECTED_FILES
     expected = set(COMMANDS) | {'file:' + p for p in (*FIXED, *extra)} | {'directory:' + p for p in DIRECTORIES} | set(SCOPES) | {'cache', 'dbus-socket'}
-    if doc['format'] == 2:
+    if doc['format'] >= 2:
         expected.add(snap.SECTION)
+    if doc['format'] == 3:
+        expected |= set(PK_SECTIONS)
     complete, commands_ok, parsed = True, {}, None
     for name in COMMANDS:
         good = section(sections.get(name), lambda v, name=name: command(v, name))
@@ -214,8 +256,10 @@ def validate(data, binding):
     for path in (*FIXED, *extra):
         complete &= section(sections.get('file:' + path), lambda v, path=path: file_record(v, path in BODIES),
                             snap_context=doc['format'] == 1 and path == '/usr/bin/snap')
-    if doc['format'] == 2:
+    if doc['format'] >= 2:
         complete &= snap_section(sections.get(snap.SECTION))
+    if doc['format'] == 3:
+        complete &= packagekit_sections(sections)
     complete &= section(sections.get('cache'), cache)
     def socket(v):
         require(v in ({'exists': False, 'socket': False}, {'exists': True, 'socket': True})
@@ -276,21 +320,36 @@ def validate(data, binding):
             return b'# ' + unit['paths'][name].encode() + b'\n' + body
         expected_text = b'\n'.join(cat_body(name) for name in UNITS)
         complete &= raw == expected_text
-    service = sections['file:/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service']
-    sock = sections['dbus-socket']
-    predicate = None
-    if service['state'] == sock['state'] == 'ok':
-        predicate = not service['value'].get('absent', False) and sock['value']['exists']
+    packagekit, discovery = None, False
+    if doc['format'] == 3:
+        # The one predicate, over the same raw domain the installer observes.
+        raw = pk_state.raw_from_sections(sections)
+        norm = pk_state.normalize(raw)
+        predicate, packagekit, discovery = pk_state.evaluate(norm), pk_state.facts_view(norm), pk_state.discovery(raw)
+    else:
+        # Legacy formats keep their status, hashes and predicate (QA F11).
+        service = sections['file:/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service']
+        sock = sections['dbus-socket']
+        predicate = None
+        if service['state'] == sock['state'] == 'ok':
+            predicate = not service['value'].get('absent', False) and sock['value']['exists']
     hashes = {}
-    if complete:
+    if complete and not discovery:
         files = {key[5:]: {k: v for k, v in value['value'].items() if k != 'body'}
                  for key, value in sections.items() if key.startswith('file:') and key[5:] not in EXTRA_FILES}
         facts = {'files': files, 'directories': {p: sections['directory:' + p]['value']['names'] for p in DIRECTORIES},
                  'packagekit_activation_possible': predicate}
+        if doc['format'] == 3:
+            facts['packagekit'] = packagekit
         hashes = {'inventory_sha256': digest(encoded(parsed)), 'facts_sha256': digest(encoded(facts)),
                   'cache_before_sha256': digest(encoded(sections['cache']['value'])),
                   **{key + '_sha256': sections[name]['value']['stdout']['sha256']
                      for name, key in (('apt-config', 'apt_config'), ('unit-config', 'unit_config'))}}
-    return {'status': 'COLLECTED_REVIEW_REQUIRED' if complete else 'PARTIAL_REVIEW_REQUIRED',
+    # A discovery document (names and metadata, no bodies by design) is never a policy input.
+    status = 'PARTIAL_REVIEW_REQUIRED' if not complete else 'DISCOVERY_ONLY' if discovery else 'COLLECTED_REVIEW_REQUIRED'
+    # The contract names the proof its reviewed values come from, so a result is never read
+    # against another module version's semantics.
+    contract = 'option-c/' + pk_state.REVIEWED['proof_id'] if doc['format'] == 3 else 'legacy'
+    return {'status': status, 'predicate_contract': contract,
             'packagekit_activation_possible': predicate, 'policy_input_hashes': hashes,
             'qualification': False, 'installation_success': False, 'policy_generated': False}
