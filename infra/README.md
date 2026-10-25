@@ -228,6 +228,24 @@ No service/trigger disabling or strict-parser relaxation is included. A refusal
 can be useful diagnostic evidence; it does not qualify the target.
 
 
+### Registry-denied image transport run
+
+`r3-image-transport.yml` (dispatch-only, attempt 1, `contents: read`, no secrets)
+runs `r3_image_qualify.py` once on a fresh GitHub-hosted `ubuntu-24.04` amd64 runner.
+Connected, it stages the hash-locked Docker packages, fetches the twelve locked roots
+by digest with `r3_image_acquire.py` (hash-checked, no daemon) and packages them
+with `r3_image_transport.py`. Then `r3_image_import.py` runs as root in a
+loopback-only network namespace: denial probes and a loopback DNS observer, the
+pinned containerd/Engine 29.9.1 extracted from those packages on new roots, an
+observed empty containerd image store, one refused pull, `docker load` of only the
+nine active roots, Docker API and content-store readback of every root, repo
+digest, platform, config and diff ID, and `docker create` (never started), which
+needs every layer unpacked (at load, or at create at the latest). Evidence is sealed to the owner's recipient. It
+starts no service, so nine-service startup from a transported store stays a gate.
+Its own exact source and single-dispatch approval are required; see
+[the run](runbooks/10-qa-clean-replacement.md#offline-input-qualification-and-host-installation-proposal).
+
+
 The recovery renderer also supports `--identity-diagnostic` for a separate
 `ONE_MANAGED_IDENTITY_DIAGNOSTIC` approval and `--phase diagnose` execution.
 This metadata-only guest payload reports the failing IMDS/boot-ID stage and
