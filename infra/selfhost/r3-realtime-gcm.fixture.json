@@ -1,0 +1,710 @@
+{
+  "format": 1,
+  "purpose": "R3_REALTIME_GCM_CONSUMER_FIXTURE_ONLY",
+  "executable": false,
+  "blockedBy": [
+    "SOURCE_BINDINGS: the 30 requiredBindings are retained and verified (realtime-consumer-source03, 144 blobs); still unread: source.pendingBindings \u2014 the release migrate script, the RealtimeWeb.Socket wrapper and ErrorView (which settle whether a raised decrypt in socket connect / AuthTenant is the inferred HTTP 500), SynHandler (the connect_down path behind the bound join reason), the log filter, the RPC layer behind the bound join reason (rpc.ex, gen_rpc.ex), the rate limiters, Connect's RegisterProcess/ReconcileMigrations, realtime_web.ex, SignalHandler, TenantBroadcaster, nodes/region placement, the join payload, GetTenant, the replication poller, and the tenant_db_dump_15/17.sql that a fresh tenant loads before its migrations; crash-report shapes (Plug.Cowboy request crash with Server:/Request: lines; Connect GenServer crash with project/external_id metadata before the level) are inferred from Elixir/Plug.Cowboy, not captured; the two InitializingProjectConnection replies (realtime_channel.ex:227,230) can answer the same Connect crash and are accepted only with an attributed, untagged Connect crash entry",
+    "POSTGRES_IMAGE: the supabase/postgres linux/amd64 manifest and config digests, its init behaviour (owner role, POSTGRES_PASSWORD, pg_hba, wal2json, anon/authenticated roles) and its effective config are not bound; pg_hba must require scram-sha-256 for the fixture subnet so the positive path proves db_password is used; supautils (reserved roles/memberships) may refuse the tenant migrations' GRANT supabase_realtime_admin TO postgres for a non-superuser tenant role \u2014 bind its settings, or make the disposable tenant roles SUPERUSER as upstream's supabase_admin is",
+    "LIBRARIES: library tree hashes are computed on the execution checkout (--bind-libraries) and must be reviewed into this file",
+    "BOOTSTRAP: the statements are an unreviewed draft. Per the bound tenant migrations each tenant DB needs before create: schema realtime (no migration creates it), roles anon/authenticated/service_role/postgres/dashboard_user/supabase_realtime_admin, a db_user with LOGIN REPLICATION, membership in supabase_realtime_admin WITH ADMIN OPTION and in authenticated, SET on parameter log_min_messages, wal_level=logical with wal2json, and at least 10 free connections; the metadata DB needs schema _realtime owned by its login role; the publication must contain gcm_fixture.events beforehand, and the slot must NOT be pre-created (Realtime makes a temporary wal2json slot)",
+    "RUNTIME: the disposable linux/amd64 runner, its workflow (which must hand the runner an approval bound to that exact run \u2014 runBinding {repository, runId} \u2014 so a new dispatch cannot replay it), and the explicit digest-pinned image acquisition and import step are a later publication change; on that runner's Docker version the host must reach containers on an --internal network; tenant DB connections go through :inet6_tcp first (an IPv4 literal resolves IPv4-mapped), so the fixture network is dual-stack; the daemon must be Engine \u226527 with ip6tables enabled so the --internal network isolates IPv6 too, and both containers drop NET_RAW and refuse router advertisements",
+    "CUSTODY: sealing the private evidence directory to the owner recipient is not wired into this runner"
+  ],
+  "source": {
+    "repository": "https://github.com/supabase/realtime",
+    "commit": "ef866244e88428bbd286f3e4ac88eb5e54a41bd4",
+    "version": "v2.134.10",
+    "provenance": "VERIFIED_DIGEST_LINKED_SOURCE_ASSERTION; AUTHENTICATED_PUBLISHER_BUILD_PROVENANCE_UNVERIFIED",
+    "retainedFiles": [
+      {
+        "path": "config/runtime.exs",
+        "sha256": "6892bee389b9974972ece8e8737d2cdbe8bac50e82f2776037641e786b16d84c"
+      },
+      {
+        "path": "lib/extensions/extensions.ex",
+        "sha256": "c51f8d61b3779b1f051bd0a5d0fc0091c8ed4cb5836a4d6304fa434eb16f6412"
+      },
+      {
+        "path": "lib/extensions/postgres_cdc_rls/db_settings.ex",
+        "sha256": "c842dc0213c99300391b9cec7a409f8240bafa65043486fcb4d534c1fe753955"
+      },
+      {
+        "path": "lib/realtime/api/extensions.ex",
+        "sha256": "0a69d27295e9c2b7c30f62f1f34b427ee459fe7b0e9b065d0493417becd4f5bd"
+      },
+      {
+        "path": "lib/realtime/api/tenant.ex",
+        "sha256": "153def15efadb96738b513d1fc9226ba15dc5c620ced70d123d90a1d65860285"
+      },
+      {
+        "path": "lib/realtime/crypto.ex",
+        "sha256": "60638363b1fd9957b7c188367e94cfc8e8a546f59672b62091fb33517f61ad87"
+      },
+      {
+        "path": "lib/realtime/database.ex",
+        "sha256": "80992bd9c81ebfea3bddb6f4a8711dcca394a260ceab5956bb68381c1f0afc4d"
+      },
+      {
+        "path": "lib/realtime/tenants.ex",
+        "sha256": "200d6b09cfc060139c28801817e83c0b45c98ab506b1f4f6bf426ef41431c54e"
+      },
+      {
+        "path": "lib/realtime/tenants/connect.ex",
+        "sha256": "0292825eed86320ffd970f894c9456968b749abb74c1645d3d38581557d284e5"
+      },
+      {
+        "path": "lib/realtime/tenants/encryption_reconciler.ex",
+        "sha256": "0a00fb23574bcb1151381eaa3900cf721b7a9a2901c7d1b057fdcd2c02dfacb4"
+      },
+      {
+        "path": "lib/realtime_web/channels/realtime_channel.ex",
+        "sha256": "a242cdec21d810beb663579db792afc0583ab9355ad3918344c1c9af5f2f9e76"
+      },
+      {
+        "path": "lib/realtime_web/channels/user_socket.ex",
+        "sha256": "c5c5f82042707ca562a39c4c6701719f450ef18b5059c066b08454e52ca28956"
+      },
+      {
+        "path": "lib/realtime_web/controllers/broadcast_controller.ex",
+        "sha256": "78df3c55eae097aac372a93a4c86fff75be8b5b0d6f5c04c79aec3f9f051121d"
+      },
+      {
+        "path": "lib/realtime_web/controllers/tenant_controller.ex",
+        "sha256": "2eda69bd1360c33f33d2b3ccb91077ab7e61844791f9a641d8ee6e4a57468199"
+      },
+      {
+        "path": "lib/realtime_web/endpoint.ex",
+        "sha256": "4116abbceb4f700c27ccaaab3d3d11f7b8d5ccb09a3bffac330fb4ecce0735c4"
+      },
+      {
+        "path": "lib/realtime_web/plugs/auth_tenant.ex",
+        "sha256": "abf44fce010cbec12fb818259f62643668b28075647bfb23a2ceb85cb4a2309d"
+      },
+      {
+        "path": "lib/realtime_web/router.ex",
+        "sha256": "526287c8440e8a74d10822f8477d2cd0bb9898f9ac465411034c8d45d65b1085"
+      }
+    ],
+    "requiredBindings": [
+      {
+        "path": "run.sh",
+        "type": "blob",
+        "gitSha1": "22cd50ea7da7159042e339bd4ffa89d88e5bb1c5",
+        "sha256": "449d87ca642b62258e557d19f94c57666c91927c8ef1e23e61e6473a714097c4"
+      },
+      {
+        "path": "rel/env.sh.eex",
+        "type": "blob",
+        "gitSha1": "c7c7764ff9e4e2cb664413579abc9b07a3696470",
+        "sha256": "3fbe75e1c0ea82357e01a38af7666f2f54fac8e389c303084a45a48aeb178121"
+      },
+      {
+        "path": "lib/realtime/release.ex",
+        "type": "blob",
+        "gitSha1": "54e1e35c1de4d246aeb9dde1db6e099b195d45e5",
+        "sha256": "0bc0ea6db1039a257423a2eff79a9d9c24206e057f249de6135b5c1a2befebda"
+      },
+      {
+        "path": "lib/realtime/repo.ex",
+        "type": "blob",
+        "gitSha1": "5375c2c973fd0444f507cb8f84184054baac64d6",
+        "sha256": "a03ace3dfaa9937cd1a4c367e9766e0d83a0800cd46fe62df80622c0e5b3043a"
+      },
+      {
+        "path": "config/prod.exs",
+        "type": "blob",
+        "gitSha1": "146420af935a069108cb23e5795426c58fa95697",
+        "sha256": "0d83c35cc0406e9ad3f9f7e67b667ac4409b88f1df17ae42ec38ab336fa77137"
+      },
+      {
+        "path": "lib/realtime/application.ex",
+        "type": "blob",
+        "gitSha1": "37ed8cee5c337c0900996c0a7618f540fd2014f9",
+        "sha256": "81fc57dc535dbb154e18c0147217ff6a83d7f51cc143e575138590eeea464851"
+      },
+      {
+        "path": "lib/realtime/tenants/migrations.ex",
+        "type": "blob",
+        "gitSha1": "bb799b1ec737d7c556242dac1fde96eb36d6f68f",
+        "sha256": "b56d21fe5ec9e51b241a75d56bc6ad905627a5b46a7350a0cf8934d8e02c7fb8"
+      },
+      {
+        "path": "lib/realtime/tenants/repo/migrations",
+        "type": "tree",
+        "gitSha1": "970d1c23b8d164ed1684230b0cb85052cc33f8b1",
+        "sha256": "028f80f2a7f6e9c49557818fc3db3834fa653ec6e3864a1cd885de385a5a37bd",
+        "files": 82
+      },
+      {
+        "path": "priv/repo/migrations",
+        "type": "tree",
+        "gitSha1": "6a6f23f9b57a3905268acf364e0c6558afb2d49b",
+        "sha256": "ee2116d5ad786ab5fb3892199814612b50086eb152b643640f4ac0a195d7c26f",
+        "files": 34
+      },
+      {
+        "path": "lib/realtime/tenants/batch_broadcast.ex",
+        "type": "blob",
+        "gitSha1": "01f3dc7bc74f8d9fe84dd2d46e17a0027bfc762f",
+        "sha256": "b961d292468f3f652bf4f1099d1369de75ac3ae7fba1b0dd0b9d02bd46a8c1b3"
+      },
+      {
+        "path": "lib/realtime_web/open_api_schemas.ex",
+        "type": "blob",
+        "gitSha1": "571e0c62c1d79430e3c7f8011c02b704a48a3d0d",
+        "sha256": "e9e4f6eacd5ecc6c18c7e851ddf8cb4302c5b616f1cfa843ac76bd5cabe9f6e8"
+      },
+      {
+        "path": "lib/realtime_web/channels/auth/channels_authorization.ex",
+        "type": "blob",
+        "gitSha1": "e8f72b4d7c2cb63398e0113d70f1aa1be2a4cac0",
+        "sha256": "8657c04f253ffa49c8e5eb67f5866393675631001fd606e699c65151d29b18b9"
+      },
+      {
+        "path": "lib/realtime_web/channels/auth/jwt_verification.ex",
+        "type": "blob",
+        "gitSha1": "6f4d4f35bf9c43f033733cb376d81e3dc16975ea",
+        "sha256": "7c76b65ddbd6e430e76afd536786c3be81cfe3685214c8675af32bd6f7610b6a"
+      },
+      {
+        "path": "lib/realtime_web/plugs/assign_tenant.ex",
+        "type": "blob",
+        "gitSha1": "4b48631e1ef3f2d4b66d2e104fd04f1f8eda860c",
+        "sha256": "9efd51b502edb858d6241bbd39dc92791ba8fd23335d570c73ad66c216f3b6d0"
+      },
+      {
+        "path": "lib/realtime/tenants/cache.ex",
+        "type": "blob",
+        "gitSha1": "4bc830982ca5a99a7562fed2d48cffb8ec9fbd66",
+        "sha256": "ae06c19a411f460bfb73d4f5f33ef01cfffdc300e5389f863e427bc120ae773e"
+      },
+      {
+        "path": "lib/extensions/postgres_cdc_rls/cdc_rls.ex",
+        "type": "blob",
+        "gitSha1": "3520bdb2b8727f576df67033d0dc11e79ca4ee0f",
+        "sha256": "f47df23860556f7363d0c940edae9a0027d21b0901bf95946a4a446538ea6e45"
+      },
+      {
+        "path": "lib/extensions/postgres_cdc_rls/replications.ex",
+        "type": "blob",
+        "gitSha1": "8991f9052583d91061994346618b61bd04f74702",
+        "sha256": "01c76925f32e3550ccdc162609ca01e69075553e131c72f843eb7b2dc3c8e997"
+      },
+      {
+        "path": "lib/extensions/postgres_cdc_rls/subscription_manager.ex",
+        "type": "blob",
+        "gitSha1": "313117b7c8a27e162280b91063ef6b0060bac7a2",
+        "sha256": "4521b725c94a98399d947fadb6510d4b42c8059a271293a2f2ebd3feed5e92aa"
+      },
+      {
+        "path": "lib/extensions/postgres_cdc_rls/subscriptions.ex",
+        "type": "blob",
+        "gitSha1": "414e07790e054c2f13effbc78e9dd7e0d7981112",
+        "sha256": "b328605a215245d6cf043cecfe933efeb3bf923ef3afb826486f9de647e324f5"
+      },
+      {
+        "path": "lib/realtime/feature_flags.ex",
+        "type": "blob",
+        "gitSha1": "9b30de946b8772c04b5294ff8202f951ca8f998c",
+        "sha256": "37c9e701673c213dab44beae0e0b545c123b193610be6a74668bfc38482fc5c9"
+      },
+      {
+        "path": "config/config.exs",
+        "type": "blob",
+        "gitSha1": "641d1fcc3faa87b1e164dab7dfbf9c672b8ee536",
+        "sha256": "277dce3d0d9848dd069f4a4ff7124e638e31cf28c90e3eaed52ed3679be0fc64"
+      },
+      {
+        "path": "mix.exs",
+        "type": "blob",
+        "gitSha1": "c188b1770aeda4d1d5a5bae88e86535e2d3863e9",
+        "sha256": "915d7046f96666259d9de4e49230345e8d2b39fb329fd685b7d81f3104c3566f"
+      },
+      {
+        "path": "mix.lock",
+        "type": "blob",
+        "gitSha1": "65be99473aa663148e164c0947f24656a4440c85",
+        "sha256": "a771d8428178bccce1bdae3126316d87829d1fe2264878f23b802400824a2f3c"
+      },
+      {
+        "path": "lib/realtime/logs.ex",
+        "type": "blob",
+        "gitSha1": "f16f55d47aa740d1e88846d25ea4478a66f10812",
+        "sha256": "004b5366f57b9072e729370db45a379fa2292e4dcbf6354bdd1d0a2253a99d79"
+      },
+      {
+        "path": "lib/realtime_web/channels/realtime_channel/logging.ex",
+        "type": "blob",
+        "gitSha1": "177dcb910d2421ab91cd5601a462af6892c6e905",
+        "sha256": "9ba746ee424e097229e37addc5696fbee583c03e5483e2a7aa58b2c1cbcb74e2"
+      },
+      {
+        "path": "lib/realtime/tenants/connect/check_connection.ex",
+        "type": "blob",
+        "gitSha1": "c8e66d2ce07e3cae192e0b7e3c6ebd753265adf0",
+        "sha256": "39779f9985929c594b89dd157f07ca6a49e15fd67a7582ab112b3ce41d626d08"
+      },
+      {
+        "path": "lib/realtime/tenants/connect/piper.ex",
+        "type": "blob",
+        "gitSha1": "9951808e77c9ccb2f74b386915c9e89f8d343231",
+        "sha256": "499ac5d49ab601ea326730ba110f5210bbb85e8b1dd1c5778dd9e38e76c59a84"
+      },
+      {
+        "path": "lib/realtime/api.ex",
+        "type": "blob",
+        "gitSha1": "70d8e682d23f7932ec6042bc01522fb2d8f4dfea",
+        "sha256": "3855217d58a58504ef2a0c5f5d75289c6c9daf4deb5e36610b8322bbc6fb63be"
+      },
+      {
+        "path": "lib/realtime_web/plugs/baggage_request_id.ex",
+        "type": "blob",
+        "gitSha1": "f4778191d71b9104cacca42c5b928f9bf91e2a6f",
+        "sha256": "2609c5b7933ca03ba2e5d7ef5cad7b8e49a72c960168442f24c017813f2a8ae3"
+      },
+      {
+        "path": "lib/realtime_web/controllers/fallback_controller.ex",
+        "type": "blob",
+        "gitSha1": "681c83a13d4da165e23b80aacf06a56e4fa296b2",
+        "sha256": "8094004a81b55c195936414e2b457694db2e1546b1f67b3d5b31f457a6c77741"
+      }
+    ],
+    "retainedBindings": {
+      "index": "realtime-consumer-source03/index.json",
+      "indexSha256": "49bb1f63b59da5014c98cda9c128d282cec310b24a9016bb5e17000be203885c",
+      "files": 144,
+      "bytes": 593075,
+      "treeHash": "sha256 over the tree's blobs as '<sha256>  <full repo path>' lines, sorted, joined by '\\n', no trailing newline"
+    },
+    "pendingBindings": [
+      {
+        "path": "rel/overlays/bin/migrate",
+        "type": "blob",
+        "gitSha1": "fc86139ad774a04c37916d9eace736e32fc2a89e",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime_web/socket.ex",
+        "type": "blob",
+        "gitSha1": "174ca788a74bce8a6380fdd89e993e0cede352b2",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime_web/views/error_view.ex",
+        "type": "blob",
+        "gitSha1": "07e77c6435e324c6538f769e3f983fb2e6439a4d",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/syn_handler.ex",
+        "type": "blob",
+        "gitSha1": "aec39cf01480a82746dc08a770d7bf8718989e5b",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/log_filter.ex",
+        "type": "blob",
+        "gitSha1": "c6d33575033c8793bc8e319d8610b4be57e64076",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/nodes.ex",
+        "type": "blob",
+        "gitSha1": "601828b2f7922b3e6131d95c9c5561fea79b2b22",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime_web/channels/payloads/join.ex",
+        "type": "blob",
+        "gitSha1": "fb5eb98fe6c0cee28e509dab6a2a8aca7c0a0dfd",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/tenants/connect/get_tenant.ex",
+        "type": "blob",
+        "gitSha1": "2cd14af1c2214575ae3262dc2520bbaea68f749f",
+        "sha256": null
+      },
+      {
+        "path": "priv/repo/tenant_db_dump_15.sql",
+        "type": "blob",
+        "gitSha1": "693908061c0f145177ef5083501bc5890acb756a",
+        "sha256": null
+      },
+      {
+        "path": "priv/repo/tenant_db_dump_17.sql",
+        "type": "blob",
+        "gitSha1": "378c26003e4ecdd6d27995b107378655c8aa668e",
+        "sha256": null
+      },
+      {
+        "path": "lib/extensions/postgres_cdc_rls/replication_poller.ex",
+        "type": "blob",
+        "gitSha1": "86fe4e2570ff5cebc53a1a3f45e6170a9eb7d845",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/rpc.ex",
+        "type": "blob",
+        "gitSha1": "7e4095b95222ab80122d561dcc414be54bbf5725",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/gen_rpc.ex",
+        "type": "blob",
+        "gitSha1": "ffb6e9ddef1f2b6e47d007f7f35d8fc277c3691a",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime_web/plugs/rate_limiter.ex",
+        "type": "blob",
+        "gitSha1": "4214e40e3b3cbac665865888bc4126227c54f059",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime_web/channels/tenant_rate_limiters.ex",
+        "type": "blob",
+        "gitSha1": "2101ac945bceb6d3f23af7c6d682135433f78aa3",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/tenants/connect/register_process.ex",
+        "type": "blob",
+        "gitSha1": "e2f1e07d00a7e48a1fe2d74f62a5e8a3bcecdd58",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/tenants/connect/reconcile_migrations.ex",
+        "type": "blob",
+        "gitSha1": "33c18821ecd720745b0da7804b15d2118842f911",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime_web.ex",
+        "type": "blob",
+        "gitSha1": "3fd925f8b00ee2e7b010c03786935e82550afd14",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime/signal_handler.ex",
+        "type": "blob",
+        "gitSha1": "46908cc675d471123809fdaf1d350e965b5dffeb",
+        "sha256": null
+      },
+      {
+        "path": "lib/realtime_web/tenant_broadcaster.ex",
+        "type": "blob",
+        "gitSha1": "b44ed2068e462f35c8637316785e964e7fdfa3fe",
+        "sha256": null
+      }
+    ]
+  },
+  "images": {
+    "realtime": {
+      "lockRoot": "supabase/realtime@sha256:cbcc6a7986fc28b6dcffa798b077d5fb9c69cd25500371ab49147a86d7edbb03",
+      "platform": "linux/amd64",
+      "manifest": "sha256:c1d078d929608f3eb4d441e30317bbdccc1bfcc1169efa3d1a26d4252417cc76",
+      "config": "sha256:902ac8c3569967c01f4d45ece4c9fac3528b848dbc2504e65dd7131506331ca1"
+    },
+    "postgres": {
+      "lockRoot": "supabase/postgres@sha256:e85bc10ac5b141223b289e1e8dc8d448cf3df92501917149db0366b9c5aaf053",
+      "platform": "linux/amd64",
+      "manifest": null,
+      "config": null,
+      "ownerUser": "supabase_admin",
+      "env": {
+        "POSTGRES_HOST": "/var/run/postgresql",
+        "PGPORT": "5432",
+        "POSTGRES_PORT": "5432"
+      }
+    }
+  },
+  "libraries": {
+    "realtimeJs": {
+      "version": "2.108.2",
+      "treeSha256": null
+    },
+    "phoenix": {
+      "version": "0.4.4",
+      "treeSha256": null
+    },
+    "ws": {
+      "version": "8.21.1",
+      "treeSha256": null
+    },
+    "jose": {
+      "version": "6.2.4",
+      "treeSha256": null
+    },
+    "tonyaiDb": {
+      "version": "0.0.0",
+      "treeSha256": null
+    },
+    "prismaRuntime": {
+      "version": "6.19.3",
+      "treeSha256": null
+    }
+  },
+  "node": {
+    "version": "v22.23.3"
+  },
+  "client": {
+    "vsn": "2.0.0",
+    "role": "authenticated"
+  },
+  "expected": {
+    "jwtSocketStatus": 500,
+    "jwtBroadcastStatus": 500,
+    "dbJoinReasons": [
+      "UnableToConnectToProject: Realtime was unable to connect to the project database"
+    ],
+    "dbConnectPathReasons": [
+      "InitializingProjectConnection: Realtime is initializing the project connection",
+      "InitializingProjectConnection: Connecting to the project database"
+    ]
+  },
+  "hostSuffix": "realtime-gcm.invalid",
+  "adminHost": "admin.realtime-gcm.invalid",
+  "unknownTenantId": "gcm-fixture-z",
+  "region": "local",
+  "topicPrefix": "gcm",
+  "tenants": {
+    "a": {
+      "externalId": "gcm-fixture-a",
+      "publication": "gcm_pub_a",
+      "slotName": "gcm_slot_a",
+      "database": "gcm_tenant_a",
+      "dbUser": "gcm_tenant_a_user"
+    },
+    "b": {
+      "externalId": "gcm-fixture-b",
+      "publication": "gcm_pub_b",
+      "slotName": "gcm_slot_b",
+      "database": "gcm_tenant_b",
+      "dbUser": "gcm_tenant_b_user"
+    }
+  },
+  "tenantTable": {
+    "schema": "gcm_fixture",
+    "table": "events"
+  },
+  "metadata": {
+    "database": "gcm_meta",
+    "schema": "_realtime",
+    "user": "gcm_meta_owner"
+  },
+  "network": {
+    "subnet": "172.31.250.0/24",
+    "realtimeIp": "172.31.250.10",
+    "postgresIp": "172.31.250.20",
+    "subnet6": "fd42:7a1b:3c5d:1::/64"
+  },
+  "realtimePort": 4000,
+  "realtimeEnv": {
+    "PORT": "4000",
+    "APP_NAME": "gcm-fixture",
+    "DB_HOST": "172.31.250.20",
+    "DB_PORT": "5432",
+    "DB_NAME": "gcm_meta",
+    "DB_USER": "gcm_meta_owner",
+    "DB_AFTER_CONNECT_QUERY": "SET search_path TO _realtime",
+    "DB_ENC_WRITE_GCM": "true",
+    "DB_IP_VERSION": "ipv4",
+    "ERL_AFLAGS": "-proto_dist inet_tcp",
+    "DNS_NODES": "''",
+    "RLIMIT_NOFILE": "10000",
+    "SEED_SELF_HOST": "false",
+    "RUN_JANITOR": "false",
+    "REGION": "local",
+    "LOG_LEVEL": "info",
+    "METRICS_PUSHER_ENABLED": "false"
+  },
+  "resources": {
+    "realtime": {
+      "memory": "1g",
+      "cpus": "1.0",
+      "pids": 512,
+      "logMaxSize": "16m"
+    },
+    "postgres": {
+      "memory": "1g",
+      "cpus": "1.0",
+      "pids": 256,
+      "shm": "256m",
+      "logMaxSize": "16m"
+    }
+  },
+  "caps": {
+    "processStarts": 27,
+    "sockets": 31,
+    "httpCalls": 27,
+    "inserts": 17,
+    "sqlOps": 103,
+    "logReads": 41,
+    "liveness": 12
+  },
+  "timeouts": {
+    "outcomeMs": 30000,
+    "overallMs": 1800000,
+    "startupMs": 60000,
+    "settleMs": 1000,
+    "createMs": 90000
+  },
+  "limits": {
+    "readinessProbes": 60,
+    "readinessIntervalMs": 1000,
+    "handshakeMs": 10000,
+    "heartbeatMs": 15000,
+    "frameBytes": 16384,
+    "framesPerSession": 128,
+    "transcriptBytes": 4194304,
+    "responseBytes": 16384,
+    "serverLogBytes": 393216,
+    "logReadBytes": 131072,
+    "evidenceBytes": 67108864,
+    "settleReads": 3
+  },
+  "bootstrap": {
+    "reviewed": false,
+    "statements": [
+      {
+        "database": "postgres",
+        "sql": "CREATE ROLE gcm_meta_owner LOGIN PASSWORD '{{meta_verifier}}'"
+      },
+      {
+        "database": "postgres",
+        "sql": "CREATE DATABASE gcm_meta OWNER gcm_meta_owner"
+      },
+      {
+        "database": "postgres",
+        "sql": "REVOKE CONNECT, TEMPORARY ON DATABASE gcm_meta FROM PUBLIC"
+      },
+      {
+        "database": "postgres",
+        "sql": "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_realtime_admin') THEN CREATE ROLE supabase_realtime_admin NOLOGIN NOINHERIT; END IF; END $$"
+      },
+      {
+        "database": "postgres",
+        "sql": "CREATE ROLE gcm_tenant_a_user LOGIN REPLICATION PASSWORD '{{tenant_a_verifier}}'"
+      },
+      {
+        "database": "postgres",
+        "sql": "GRANT supabase_realtime_admin TO gcm_tenant_a_user WITH ADMIN OPTION"
+      },
+      {
+        "database": "postgres",
+        "sql": "GRANT authenticated TO gcm_tenant_a_user"
+      },
+      {
+        "database": "postgres",
+        "sql": "GRANT SET ON PARAMETER log_min_messages TO gcm_tenant_a_user"
+      },
+      {
+        "database": "postgres",
+        "sql": "CREATE DATABASE gcm_tenant_a OWNER gcm_tenant_a_user"
+      },
+      {
+        "database": "postgres",
+        "sql": "REVOKE CONNECT, TEMPORARY ON DATABASE gcm_tenant_a FROM PUBLIC"
+      },
+      {
+        "database": "postgres",
+        "sql": "CREATE ROLE gcm_tenant_b_user LOGIN REPLICATION PASSWORD '{{tenant_b_verifier}}'"
+      },
+      {
+        "database": "postgres",
+        "sql": "GRANT supabase_realtime_admin TO gcm_tenant_b_user WITH ADMIN OPTION"
+      },
+      {
+        "database": "postgres",
+        "sql": "GRANT authenticated TO gcm_tenant_b_user"
+      },
+      {
+        "database": "postgres",
+        "sql": "GRANT SET ON PARAMETER log_min_messages TO gcm_tenant_b_user"
+      },
+      {
+        "database": "postgres",
+        "sql": "CREATE DATABASE gcm_tenant_b OWNER gcm_tenant_b_user"
+      },
+      {
+        "database": "postgres",
+        "sql": "REVOKE CONNECT, TEMPORARY ON DATABASE gcm_tenant_b FROM PUBLIC"
+      },
+      {
+        "database": "gcm_meta",
+        "sql": "CREATE SCHEMA _realtime AUTHORIZATION gcm_meta_owner"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "CREATE SCHEMA realtime AUTHORIZATION gcm_tenant_a_user"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "CREATE SCHEMA gcm_fixture AUTHORIZATION gcm_tenant_a_user"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "CREATE TABLE gcm_fixture.events (id uuid PRIMARY KEY, case_id text NOT NULL, nonce text NOT NULL)"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "ALTER TABLE gcm_fixture.events OWNER TO gcm_tenant_a_user"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "GRANT USAGE ON SCHEMA gcm_fixture TO authenticated"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "GRANT SELECT ON gcm_fixture.events TO authenticated"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "CREATE PUBLICATION gcm_pub_a FOR TABLE gcm_fixture.events"
+      },
+      {
+        "database": "gcm_tenant_a",
+        "sql": "ALTER PUBLICATION gcm_pub_a OWNER TO gcm_tenant_a_user"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "CREATE SCHEMA realtime AUTHORIZATION gcm_tenant_b_user"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "CREATE SCHEMA gcm_fixture AUTHORIZATION gcm_tenant_b_user"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "CREATE TABLE gcm_fixture.events (id uuid PRIMARY KEY, case_id text NOT NULL, nonce text NOT NULL)"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "ALTER TABLE gcm_fixture.events OWNER TO gcm_tenant_b_user"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "GRANT USAGE ON SCHEMA gcm_fixture TO authenticated"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "GRANT SELECT ON gcm_fixture.events TO authenticated"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "CREATE PUBLICATION gcm_pub_b FOR TABLE gcm_fixture.events"
+      },
+      {
+        "database": "gcm_tenant_b",
+        "sql": "ALTER PUBLICATION gcm_pub_b OWNER TO gcm_tenant_b_user"
+      }
+    ]
+  },
+  "runtime": {
+    "dockerPath": "/usr/bin/docker",
+    "dockerHost": "unix:///var/run/docker.sock",
+    "secretParent": "/dev/shm",
+    "ledgerDir": "/var/tmp/tonyai-r3-gcm-ledger"
+  }
+}
