@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Targeted call-site mutations in a disposable source copy. No cloud or Docker."""
+"""Targeted call-site mutations in disposable source copies, one per worker. No cloud or Docker."""
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
 from pathlib import Path
+import queue
 import shutil
 import subprocess
 import sys
@@ -616,40 +618,81 @@ def mutation_command(file, python_command, node_command):
     return [sys.executable, '-B', '-c', loader + repr(['unittest', *suites]) + ')']
 
 
-def main(output):
+SOURCE_DIRS = ('infra/scripts', 'infra/tests', 'infra/selfhost', '.github/workflows')
+MUTANT_TIMEOUT = 60
+
+
+def anchor_matches(name):
+    # SHA tests intentionally remove both job bindings.
+    return 2 if name.startswith('source-sha-') else 1
+
+
+def source_hashes(root):
+    """Bind the bytes actually exercised in a disposable copy, not only the
+    checkout observed by an external command wrapper."""
+    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(root.rglob('*')) if path.is_file() and '__pycache__' not in path.parts}
+
+
+def main(output, workers=None, source=ROOT, mutations=MUTATIONS):
+    if workers is None: workers = os.cpu_count() or 1
+    if workers < 1: raise ValueError('At least one mutation worker is required.')
     with tempfile.TemporaryDirectory(prefix='r3-mutants-') as temp:
-        root = Path(temp)
-        root.chmod(0o755)
-        for name in ('infra/scripts', 'infra/tests', 'infra/selfhost', '.github/workflows'):
-            shutil.copytree(ROOT / name, root / name, ignore=shutil.ignore_patterns('__pycache__'))
-        # Bind the bytes actually exercised in this disposable copy, not only
-        # the checkout observed by an external command wrapper.
-        def source_hashes():
-            return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in sorted(root.rglob('*')) if path.is_file() and '__pycache__' not in path.parts}
-        tested_source = source_hashes()
+        Path(temp).chmod(0o755)
+        # One disposable copy per worker. A mutant is applied only in the copy its
+        # worker holds, so no two mutants ever share a tree.
+        roots = [Path(temp) / str(index) for index in range(min(workers, len(mutations) + 2))]
+        for root in roots:
+            root.mkdir(); root.chmod(0o755)
+            for name in SOURCE_DIRS:
+                shutil.copytree(source / name, root / name, ignore=shutil.ignore_patterns('__pycache__'))
+        tested_source = source_hashes(roots[0])
+        if any(source_hashes(root) != tested_source for root in roots[1:]):
+            raise ValueError('Disposable worker copies differ before any test ran.')
+        # Every anchor is checked in registry order before anything runs.
+        for file, name, before, after in mutations:
+            original = (roots[0] / file).read_text()
+            if original.count(before) != anchor_matches(name): raise ValueError('Unmatched mutation: ' + name)
+            if file.endswith('.py'): compile(original.replace(before, after), file, 'exec')
         command = [sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'infra/tests', '-p', 'test_r3*.py']
-        baseline = subprocess.run(command, cwd=root, capture_output=True)
-        if baseline.returncode: raise SystemExit(baseline.stderr.decode())
         node_command = ['node', '--test', 'infra/tests/selfhost_init_entry.test.mjs']
-        node_baseline = subprocess.run(node_command, cwd=root, capture_output=True)
-        if node_baseline.returncode: raise SystemExit(node_baseline.stdout.decode() + node_baseline.stderr.decode())
-        results = []
-        for file, name, before, after in MUTATIONS:
-            path = root / file; original = path.read_text()
-            # SHA tests intentionally remove both job bindings.
-            expected = 2 if name.startswith('source-sha-') else 1
-            if original.count(before) != expected: raise ValueError('Unmatched mutation: ' + name)
-            mutated = original.replace(before, after)
-            if file.endswith('.py'): compile(mutated, file, 'exec')
-            path.write_text(mutated)
-            test_command = mutation_command(file, command, node_command)
+        free = queue.Queue()
+        for root in roots: free.put(root)
+
+        def borrow(work):
+            root = free.get()
+            try: return work(root)
+            finally: free.put(root)
+
+        def baseline(test_command):
+            return borrow(lambda root: subprocess.run(test_command, cwd=root, capture_output=True))
+
+        def exercise(file, name, before, after):
+            def work(root):
+                path = root / file; original = path.read_text()
+                # Re-checked in this copy: a drifted copy must never pass for an applied mutant.
+                if original.count(before) != anchor_matches(name): raise ValueError('Unmatched mutation: ' + name)
+                path.write_text(original.replace(before, after))
+                test_command = mutation_command(file, command, node_command)
+                try: result = subprocess.run(test_command, cwd=root, capture_output=True, timeout=MUTANT_TIMEOUT)
+                finally: path.write_text(original)
+                return {'name': name, 'file': file, 'command': test_command, 'result': 'KILLED' if result.returncode else 'SURVIVED',
+                        'diagnostic': (result.stdout + result.stderr).decode()[-3000:] if result.returncode else ''}
+            return borrow(work)
+
+        with concurrent.futures.ThreadPoolExecutor(len(roots)) as pool:
+            baselines = pool.submit(baseline, command), pool.submit(baseline, node_command)
+            pending = [pool.submit(exercise, *mutation) for mutation in mutations]
             try:
-                result = subprocess.run(test_command, cwd=root, capture_output=True, timeout=60)
-                results.append({'name': name, 'file': file, 'command': test_command, 'result': 'KILLED' if result.returncode else 'SURVIVED',
-                                'diagnostic': (result.stdout + result.stderr).decode()[-3000:] if result.returncode else ''})
-            finally: path.write_text(original)
-        if source_hashes() != tested_source:
+                python_baseline, node_baseline = (future.result() for future in baselines)
+                if python_baseline.returncode: raise SystemExit(python_baseline.stderr.decode())
+                if node_baseline.returncode: raise SystemExit(node_baseline.stdout.decode() + node_baseline.stderr.decode())
+                # Registry order, whatever order the workers finished in.
+                results = [future.result() for future in pending]
+            except BaseException:
+                pool.shutdown(cancel_futures=True)
+                raise
+        if any(source_hashes(root) != tested_source for root in roots):
             raise ValueError('Disposable test source changed outside the restored mutations.')
     report = {'baseline': 'PASS', 'node_baseline': 'PASS', 'mutations': results, 'killed': sum(r['result'] == 'KILLED' for r in results),
               'survived': [r['name'] for r in results if r['result'] == 'SURVIVED'], 'invalid': 0,
@@ -661,4 +704,6 @@ def main(output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('--output', required=True)
-    raise SystemExit(main(parser.parse_args().output))
+    parser.add_argument('--workers', type=int, help='parallel worker copies (default: CPU count)')
+    args = parser.parse_args()
+    raise SystemExit(main(args.output, args.workers))

@@ -154,6 +154,17 @@ test selector and control/mutant/total durations, flushed as each result arrives
 Syntax failures, process failures and test errors are invalid evidence; a mutant
 must cause an assertion failure. The separate R3 and Terraform checks still run.
 
+`r3_mutations.py --output <report.json> [--workers N]` copies `infra/scripts`,
+`infra/tests`, `infra/selfhost` and `.github/workflows` once per worker
+(default: the CPU count, never more than the mutants plus the two baselines)
+and requires every copy to hash identically before any test runs. It checks
+every anchor in registry order first, then runs the full R3
+and Node baselines and the mutants on a shared pool; each mutant is applied only
+in the copy its worker holds, runs its mapped suites with a 60-second timeout and
+is restored there. The report lists results in registry order whatever order they
+finished in, and is written only when both baselines pass and every copy still
+hashes as it did before the run.
+
 For a checkout already bound to a live backend, run offline init/validate/test
 in a disposable source copy with a separate local `TF_DATA_DIR` and
 `-backend=false`; preserve the original backend metadata and remote state.
