@@ -489,7 +489,10 @@ offline toolchain installer that leaves services persistently masked. A manual
 GitHub Ubuntu 24.04 amd64 workflow prepares QA composition smoke using recorded hosted Docker versions on the
 owner-selected disposable target. Its source/dispatch, full private regression,
 Realtime consumer proof, offline transfer/install qualification and live
-host/custody acceptance remain gates. Its separate package job retains a source-bound
+host/custody acceptance remain gates. A dispatch-only registry-denied transport run
+(`r3-image-transport.yml`, not yet executed) imports the nine active images into an
+empty pinned-Engine store in a loopback-only namespace and reads their identities
+back; it starts no service. Its separate package job retains a source-bound
 vendor provenance receipt and five public metadata files for seven days; CI's
 signed fixture is not vendor-artifact verification. Receipt issuance checks the
 complete bundle source map against committed files and upstream pins, and hashes

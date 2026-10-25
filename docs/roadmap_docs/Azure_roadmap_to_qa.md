@@ -154,6 +154,7 @@ Missing live entrypoint work: exact existing generated Prisma6.19.3/Linux engine
 - API writes JWT secret and five DB fields; health200 is not a GCM consumer proof.
 - Proposed injected harness uses existing realtime-js/Phoenix/ws/jose/Prisma, two isolated services and two synthetic tenants; exercise six stored fields, actual API/socket/broadcast/DB changes, cold restart persistence, ten tag-tamper cases and separate JWT/DB wrong-key cases. Bound SDK reconnect/rejoin behavior; fresh sockets per refusal. No harness implementation or runtime run yet.
 - Registry-denied, empty-store exact nine-service transport has not run. Twelve pins/nine active services and existing archives remain evidence/preparation only. Never pull/build implicitly or claim transport qualification from archive validation.
+- Prepared, not executed (branch `feat/r3-registry-denied-transport`, PR open): `r3-image-transport.yml` → `r3_image_qualify.py` acquires the twelve roots by digest, then `r3_image_import.py` imports only the nine active roots into a new Engine 29.9.1 containerd store inside a loopback-only namespace and reads back root, repo digest, platform, config and diff IDs; `docker create` without start materializes each rootfs. It closes only the transport identity row; nine-service startup from a transported store stays open. Needs the owner's merge, an acquire-and-package dry run (no Docker) and one owner-approved dispatch.
 
 ## Continuation order and final acceptance
 

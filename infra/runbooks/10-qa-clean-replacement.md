@@ -507,6 +507,106 @@ registry access is failure, never repaired by tagging, pulling or fallback image
 The import driver, real OCI bytes/config receipts, actual denial and service
 execution remain required evidence; local synthetic fixtures close none of them.
 
+**Registry-denied transport run (implemented, not executed).** `r3-image-transport.yml`
+(`workflow_dispatch` only, attempt 1 only, `contents: read`, no secrets or OIDC)
+runs `r3_image_qualify.py` once on a fresh GitHub-hosted `ubuntu-24.04` amd64
+runner. Its scope is the transport identity half of the gate below; it starts no
+service. The steps, in order, each refusing the run on any difference:
+
+1. **Bind** the dispatch: `source_sha` = `GITHUB_SHA` = `GITHUB_WORKFLOW_SHA` = clean
+   `HEAD`, run attempt 1, every tracked file hashed; the owner's public SSH recipient
+   must equal its approved SHA256. Reruns are refused by the job's `run_attempt == 1`
+   guard and the binding; a second dispatch needs a new owner approval.
+2. **Stage** the pinned age tool, then **preflight** (`/mnt` scratch ≥ 40 GiB,
+   `ip`/`dpkg-deb`/`gpg`/`systemctl`, no existing network namespace).
+3. **Toolchain** — `r3_artifacts.stage`: the five Docker packages by locked SHA256
+   behind the GPG-verified InRelease/Packages chain. Nothing is installed.
+4. **Acquire** — `r3_image_acquire.py`: anonymous pull-scoped Docker Hub reads of
+   the twelve locked roots **by digest**, the unique linux/amd64 child of an index
+   and its config/layers; every document and blob is size- and hash-checked; the
+   bearer is never forwarded to a CDN redirect; non-HTTPS redirects refuse. It
+   records each serving endpoint's resolved addresses. Never a tag, daemon or pull.
+5. **Archive** — the unchanged `r3_image_transport.prepare`: all twelve roots
+   verified, deterministic `images.oci.tar` and its analysis.
+6. **Isolate** — the hosted Engine (`docker.socket`, `docker.service`,
+   `containerd.service`) is stopped and must read inactive (or failed). Fallback
+   tunnel devices are kept out of new namespaces
+   (`net.core.fb_tunnels_only_for_init_net=2`). A network namespace
+   `tonyai-r3-deny` gets **only `lo`**: no interface, address or route can carry a
+   packet off the host. `/etc/netns/tonyai-r3-deny/` supplies `resolv.conf`
+   (`nameserver 127.0.0.53`), `hosts` (localhost only) and `nsswitch.conf`
+   (`hosts: files dns` — no `resolve`, so no host resolver socket).
+7. **Denied import** — `sudo ip netns exec tonyai-r3-deny env -i … python3 -I -B
+   r3_image_import.py` as root:
+   - re-observe the namespace (only `lo`, no default/gateway route, inode ≠ PID 1's)
+     and the three resolver files — each resolved through any symlink (Ubuntu's
+     `/etc/resolv.conf` is one) and required to be the staged file's inode, not
+     merely equal bytes; start a loopback DNS observer on
+     `127.0.0.53:53` that logs every question with its window and answers REFUSED;
+   - **denial probes**: each Docker Hub name and every acquisition endpoint must
+     fail to resolve *and* be observed; each recorded address must fail to connect
+     with `ENETUNREACH`/`EHOSTUNREACH`/`EADDRNOTAVAIL`;
+   - re-hash the archive against its analysis and the image lock, extract regular
+     OCI files only, re-run `verify` on all twelve, then copy the nine active roots'
+     closure and `verify` it strictly as a nine-image lock. The load archive differs
+     from that subset only in `index.json`, which adds `io.containerd.image.name`
+     = `docker.io/<repo>@<root>` — the name a by-digest pull records;
+   - extract `containerd`, `ctr`, `runc`, `containerd-shim-runc-v2`, `dockerd` and
+     `docker` from the hash-locked packages; restore cgroup2 in the private mount
+     namespace; start containerd (CRI disabled) and dockerd on **new** roots under
+     `/mnt`, sockets under `/run`, with `daemon.r02.json`'s keys (minus
+     `firewall-backend`) plus `bridge: none`, `iptables: false`,
+     `userland-proxy: false`, no mirrors or proxies and **no store feature flag**:
+     Engine 29's fresh-root default store is what is qualified. Both daemons must
+     run in the denied namespace from the extracted paths; client and server must
+     be 29.9.1;
+   - **empty store**: `docker info` reports the containerd snapshotter store
+     (`overlayfs`, `driver-type io.containerd.snapshotter.v1`), zero images and
+     containers, no mirror or proxy; image, container and volume lists and
+     containerd's `moby` content and image lists are empty;
+   - **daemon probe**: one `docker pull` of the locked, inactive `caddy` root must
+     fail with the observer seeing a Docker registry question; the store must still
+     be empty;
+   - `docker load --platform linux/amd64` of the nine-image archive;
+   - **readback** per service via `docker image inspect <locked ref>`: `Id` and
+     `Descriptor` equal the pinned root (digest, media type, size), `RepoDigests`
+     equals exactly the locked reference, no tag, linux/amd64 with no variant,
+     `RootFS.Layers` equal the verified config's diff IDs. Through `ctr content get`
+     the stored root, platform manifest and config bytes hash to their digests and
+     the stored config is the pinned closure's; `db` must also equal
+     `database-image-policy.json`. Store image names, image IDs and the content set
+     must equal exactly the nine names, roots and closure blobs; `caddy`, `functions`
+     and `supavisor` must not resolve;
+   - **materialize**: `docker create --pull never --network none` per service needs
+     every layer unpacked — at load, or at create at the latest — and containerd
+     validates each diff ID when it unpacks; inspect
+     must show `created`, PID 0 and a zero start time; then `docker rm --volumes`.
+     No process from any image executes;
+   - final store unchanged, namespace unchanged, **no resolver question outside the
+     probe windows** (name, address, daemon); both daemons must stop on SIGTERM.
+   Afterwards the controller kills any process still in the namespace (a sudo PTY
+   can keep the driver outside the killed group), refuses if one survives, and
+   takes ownership of the root-written evidence; an unreadable evidence directory
+   refuses sealing instead of sealing it as empty.
+8. **Seal** — every raw file (command argv/stdout/stderr/exit, daemon logs capped
+   at 32 MiB, manifests and configs but never layers, the resolver log) under a
+   retention manifest, age-encrypted to the owner's recipient. Only
+   `transport-evidence.tar.age`, `binding.json` and `summary.json` upload, seven days.
+
+`TRANSPORT_IDENTITY_PASS_REVIEW_REQUIRED` is the only success status; any refusal
+is retained evidence, never retried. **Why no service starts:** the transport claim
+is fully content-addressed — pinned root → manifest → config → diff IDs, verified on
+ingest, validated on unpack (at load or create), and read back through the Docker API —
+so starting a process adds no transport evidence. Startup under the reviewed
+composition additionally depends on Compose 5.6.0 rendering, generated credentials,
+database seeding and host binds, which are not this gate's inputs; mixing them in
+would make a refusal ambiguous and a pass a composite claim. That half stays open
+(table below). **Limits:** a hosted Ubuntu 24.04 runner, not the r02 image; the
+packages are extracted, not installed (the installer lifecycle is its own gate);
+non-DNS connection attempts by the daemon are not individually counted — they
+cannot leave a loopback-only namespace; GitHub-hosted runner identity is trusted
+for this disposable run as for the composition smoke.
+
 **Concrete next hosted proposal.** Publish/review this patch first; an uncommitted
 patch has no dispatchable source SHA. Then bind the full published SHA, tree,
 `.github/workflows/r3-offline-inputs.yml` SHA256 and branch ref in a new addendum,
@@ -538,7 +638,8 @@ These are preparation requirements, not jobs hidden in the smoke workflow:
 | Private DB regression | Privately reviewed and hash-bound refused-statement payload on the exact QA database digest/composition. Use persistent connections, record backend PID/session identity before and after each refusal, SQLSTATE, benign positive controls and continued independent-connection queries. Detect restart/reconnect/server instability; a refused statement alone is insufficient. Keep payload and raw diagnostics outside Git/public artifacts. Separately approve its private execution/delivery mechanism before running. |
 | Realtime source and GCM | Bind locked amd64 digest/config to upstream source/build evidence for v2.134.10, stating any unattested correspondence. Test the actual consumer's GCM write/read and restart persistence with generated synthetic keys, plus wrong-key/tamper refusal. The configured 32 ASCII bytes carry 192 bits entropy; configuration/health or a standalone crypto function is not consumer proof. |
 | Offline toolchain | Inventory the exact r02 Ubuntu image and installed package versions; prove all Depends/Pre-Depends and the no-download five-package apt plan. Qualify pinned Engine/Compose and image store, maintainer scripts, persistent masks, exclusive attempt journal, interrupted/lock-failure behavior, policy-rc.d removal and guarded unmask sequence on an explicitly approved disposable environment. A preloaded hosted runner cannot establish target OS dependency closure or an installer/reboot lifecycle. |
-| Offline image transport | Bind export archive hash and every locked repository digest/platform/config; import on an empty store with registry access denied and resolve every original digest. Prove `--pull never --no-build` starts the exact nine services. Docker save/load or mutable tags alone are not acceptance; transport format/store compatibility remains unselected until demonstrated. |
+| Offline image transport — identity | Bind export archive hash and every locked repository digest/platform/config; import on an empty store with registry access denied and resolve every original digest. Docker save/load or mutable tags alone are not acceptance. Implemented as the registry-denied transport run above (`r3-image-transport.yml`, not executed): its PASS, reviewed, closes this row for Engine 29.9.1's containerd image store only. |
+| Offline image transport — startup | Prove `--pull never --no-build` starts the exact nine services from a transported store under the reviewed composition (pinned Compose 5.6.0 rendering, generated credentials, DB seeding, host binds), with registry access still denied. Depends on the identity row and on the r02 daemon store policy matching the store it qualified; importing the same archive hash on r02 itself belongs here. |
 | Final host source map | Bind every source/config/generated file, actual Node binary, installed package receipt and root ownership/modes, plus exact SSH/IMDS/disk/UUID/custody operations. Legacy `selfhost_docker.sh` is excluded. `selfhost_host_guard.sh` is now excluded from the r02 runtime contract. The offline renderer/source plan supplies an installation proposal only; actual file installation and observation still need approval. Final installation, unmask ordering and guarded reboot remain open. |
 
 The bootstrap packet remains **NOT_READY_FOR_BOOTSTRAP_APPROVAL** until all these
