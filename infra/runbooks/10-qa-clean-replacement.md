@@ -1414,7 +1414,8 @@ historical B remains prepared/unapproved/unexecuted at its original source.
 
 ### Shared bounded contract
 
-`r3_policy_evidence.py` collects a format-1 private document with exact purpose,
+`r3_policy_evidence.py` collects a format-2 private document (format 1 remains
+valid for older evidence; see the snap alias paragraph below) with exact purpose,
 binding, sections, and explicit false qualification/installation/policy flags.
 `r3_policy_validate.py` independently checks every section, fixed argv, stream
 length/hash, file metadata/body hash, directory membership, cache structure and
@@ -1475,19 +1476,43 @@ No private keys, APT auth files, token stores or general environment dumps are
 collection inputs. Effective APT and unit output can still contain sensitive
 configuration, so all raw bytes remain in private/encrypted custody.
 
-An initial `/usr/bin/snap` file-read `OSError` may include strict optional
-`context`: format 1, a fixed syscall-stage enum, numeric errno (or null), and up
-to two cleanup-stage/errno records. No exception message, filename, link target,
-extra metadata or new syscall is collected. Existing no-follow, regular-file,
-single-link, size and stability checks remain in force. Missing paths and
-timeouts keep their existing classifications; a cleanup failure cannot turn
-absence into success or replace an already recorded primary read error.
-Context is allowed only on this initial snap error, never on another section,
-an `ok` result or a `prior` value. Older context-free evidence is still accepted.
-The same source/run/attempt/image binding, three-member guest frame, 240-second
-collection budget, 300-second guest alarm and encrypted export apply. This is
-same-attempt diagnostic evidence, not proof of the cause of an older run; it
-remains `PARTIAL_REVIEW_REQUIRED` with no aggregate policy-input hashes.
+**Snap alias (evidence format 2, owner decision 2026-10-25).** Ubuntu 24.04's
+`/usr/bin/snap` is a relative symbolic link to `../lib/snapd/snapd`, so the
+shared no-follow file read ends in ELOOP. Format 2 evidence no longer reads it
+as a `file:` section; `r3_policy_snap.py` writes a `snap:/usr/bin/snap` section
+instead. It lstats the alias without opening it and records one of three kinds:
+`absent`, `regular` (read exactly as before, same 8 MiB limit) or `known-alias`.
+Only when the link bytes are exactly `../lib/snapd/snapd` does it open the fixed
+`/usr/lib/snapd/snapd` path on its own, again with O_NOFOLLOW, and stream it into
+a SHA-256: a regular single-link file of at most 64 MiB, stable across
+fstat/path-stat, with a deadline check per chunk. After the target is read, both
+parent chains are reopened by path and must still name the held directories
+(device and inode, so a rename swap is refused), with unchanged owner and mode;
+the target is re-stated and the alias re-read through the reopened chain. A
+regular alias's parent is reopened the same way. Any difference is refused.
+This narrows, not removes, the sampling limit: a privileged swap-and-restore
+between reads remains undetectable. No link is ever followed generally and no binary body is exported. Any
+other link (`UNEXPECTED_ALIAS`), file type (`UNSUPPORTED_TYPE`), unsafe target
+(`TARGET_UNSAFE`) or oversize target (`TARGET_LIMIT`) is a fixed refusal with no
+hash. The late re-sample covers the section; drift is `CHANGED` with `prior`.
+A section is complete only under root-owned parents that neither group nor
+others can write. It never enters `facts_sha256` or any other policy-input hash:
+collection completeness stays separate from installer acceptance, and no package
+(`snapd.list`/`md5sums`) corroboration is claimed. The fixed snap leaf
+diagnostic below stays separate and unchanged.
+
+A snap-section `OSError` may include strict optional `context`: format 2, a fixed
+syscall-stage enum, numeric errno (or null), and up to four cleanup-stage/errno
+records (a reopened chain, the file, the target parent and the alias parent). No exception message, filename,
+link target or extra metadata is collected. Missing paths and timeouts keep their
+classifications; a cleanup failure cannot turn absence into success or replace a
+primary error. Format 1 documents stay valid unchanged, including the format 1
+context that was allowed only on an initial `file:/usr/bin/snap` error. A format 2
+document must carry the snap section and never `file:/usr/bin/snap`. The same
+source/run/attempt/image binding, three-member guest frame, 240-second
+collection budget, 300-second guest alarm and encrypted export apply. New A or B
+collection still needs its own published source and exact approval; historical
+attempts are never rebound.
 
 `COLLECTED_REVIEW_REQUIRED` means structurally complete collection only.
 `PARTIAL_REVIEW_REQUIRED` never supplies the aggregate policy-input hashes.
@@ -1547,8 +1572,8 @@ remain encrypted, not in public summaries.
 
 Matching before/after samples cannot exclude privileged swap-and-restore. A new
 observation cannot prove the historical A run's exact leaf state or retroactively
-change its ELOOP failure. The old collector's no-follow/content checks are
-unchanged. PackageKit eligibility, hook/effect closure, P3 and lifecycle/sampling/
+change its ELOOP failure. The shared no-follow/content checks are unchanged; the
+format 2 snap section (above) records the alias without relaxing them. PackageKit eligibility, hook/effect closure, P3 and lifecycle/sampling/
 writer/content/detached-child questions remain open. Do not retry a consumed
 attempt or infer an accepted installation policy from this diagnostic.
 

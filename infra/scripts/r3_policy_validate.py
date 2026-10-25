@@ -7,7 +7,8 @@ from r3_noble_common import digest, encoded
 from r3_package_state import inventory
 from r3_install_policy import FIXED, DIRECTORIES
 from r3_policy_capture import LIMIT, BODY_LIMIT, READ_STAGES
-from r3_policy_evidence import COMMANDS, BODIES, EXTRA_FILES, DIRECTORY_NAMES, PURPOSE, ERRORS, SCOPES, load
+from r3_policy_evidence import COMMANDS, BODIES, EXTRA_FILES, COLLECTED_FILES, DIRECTORY_NAMES, PURPOSE, ERRORS, SCOPES, load
+import r3_policy_snap as snap
 
 
 def require(condition):
@@ -120,6 +121,28 @@ def section(value, check, allow_unreviewed=False, snap_context=False):
     return False
 
 
+def snap_section(value):
+    """Format 2 snap alias section; returns completeness of collection evidence only."""
+    require(isinstance(value, dict))
+    state = value.get('state')
+    if state == 'ok':
+        require(set(value) == {'state', 'value'})
+        return snap.validate_record(value['value'], file_record)
+    if state == 'not_reached':
+        require(set(value) == {'state'})
+        return False
+    require(state == 'error' and set(value) in ({'state', 'error'}, {'state', 'error', 'prior'},
+                                                 {'state', 'error', 'context'}))
+    require(value['error'] in (*ERRORS, 'CHANGED', *snap.REFUSALS))
+    if 'context' in value:
+        require(value['error'] == 'OSError')
+        snap.validate_context(value['context'])
+    if 'prior' in value:
+        require(value['error'] in ('CHANGED', 'TimeoutError'))
+        snap.validate_record(value['prior'], file_record)
+    return False
+
+
 def command(value, name):
     require(isinstance(value, dict) and set(value) == {'argv', 'stdout', 'stderr', 'returncode', 'failure'})
     require(value['argv'] == COMMANDS[name])
@@ -152,12 +175,16 @@ def validate(data, binding):
     doc = load(data)
     require(isinstance(doc, dict) and set(doc) == {'format', 'purpose', 'binding', 'sections',
             'qualification', 'installation_success', 'policy_generated'})
-    require(type(doc['format']) is int and doc['format'] == 1 and doc['purpose'] == PURPOSE
+    require(type(doc['format']) is int and doc['format'] in (1, 2) and doc['purpose'] == PURPOSE
             and doc['binding'] == binding and all(doc[k] is False for k in
                 ('qualification', 'installation_success', 'policy_generated')))
     sections = doc['sections']
     require(isinstance(sections, dict))
-    expected = set(COMMANDS) | {'file:' + p for p in (*FIXED, *EXTRA_FILES)} | {'directory:' + p for p in DIRECTORIES} | set(SCOPES) | {'cache', 'dbus-socket'}
+    # Format 1 read the snap alias as a file; format 2 records it in its own section.
+    extra = EXTRA_FILES if doc['format'] == 1 else COLLECTED_FILES
+    expected = set(COMMANDS) | {'file:' + p for p in (*FIXED, *extra)} | {'directory:' + p for p in DIRECTORIES} | set(SCOPES) | {'cache', 'dbus-socket'}
+    if doc['format'] == 2:
+        expected.add(snap.SECTION)
     complete, commands_ok, parsed = True, {}, None
     for name in COMMANDS:
         good = section(sections.get(name), lambda v, name=name: command(v, name))
@@ -182,9 +209,11 @@ def validate(data, binding):
                 complete = False
             else:
                 complete &= section(record, lambda v: file_record(v, True, absent=False))
-    for path in (*FIXED, *EXTRA_FILES):
+    for path in (*FIXED, *extra):
         complete &= section(sections.get('file:' + path), lambda v, path=path: file_record(v, path in BODIES),
-                            snap_context=path == '/usr/bin/snap')
+                            snap_context=doc['format'] == 1 and path == '/usr/bin/snap')
+    if doc['format'] == 2:
+        complete &= snap_section(sections.get(snap.SECTION))
     complete &= section(sections.get('cache'), cache)
     def socket(v):
         require(v in ({'exists': False, 'socket': False}, {'exists': True, 'socket': True})

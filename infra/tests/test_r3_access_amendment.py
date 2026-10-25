@@ -21,6 +21,8 @@ import test_r3_access_identity_diagnostic as identity_tests
 import test_r3_access_delivery as delivery_tests
 from test_r3_access_repair import HASH
 
+HISTORICAL_MODULES = tuple(name for name in packet.MODULES if name != 'r3_policy_snap')
+
 
 def failed_summary():
     return {'status': 'REFUSED_REVIEW_REQUIRED', 'phase': 'identity-before', 'failure': 'ValueError',
@@ -41,12 +43,12 @@ class Amendment(unittest.TestCase):
         self.retained = self.base.root / 'complete-retained.json'; self.retained.write_bytes(encoded(retained))
         self.bindings = {'published_sha': 'c' * 40, 'client': self.base.client,
                          'handler_trust': 'MICROSOFT_MANAGED_ACCEPTED_BY_OWNER', 'design_decision_sha256': 'd' * 64}
-        self.old_dir = self.base.root / 'old'; self.prepare(self.old_dir)
+        self.old_dir = self.base.root / 'old'; self.prepare(self.old_dir, historical=True)
         old, old_proposal = self.read(self.old_dir)
         prior = {'id': old_proposal['target_imds']['resourceId'] + '/runCommands/r3-key-' + old_proposal['packet_id'],
                  'source_sha': 'c' * 40, 'delivery_sha256': digest(encoded(old)), 'request_body': old['requests']['repair_body'],
                  'execution_state': 'Failed', 'exit_code': 2, 'delivery': old, 'proposal': old_proposal}
-        self.diag_dir = self.base.root / 'diagnostic'; self.prepare(self.diag_dir, {'prior_command': prior}, identity_diagnostic=True)
+        self.diag_dir = self.base.root / 'diagnostic'; self.prepare(self.diag_dir, {'prior_command': prior}, historical=True, identity_diagnostic=True)
         diagnostic, dp = self.read(self.diag_dir)
         result = identity_tests.report(dp, dict(dp['target_imds'], location='SwedenCentral'))
         self.amend = {'format': 1, 'purpose': amendment.PURPOSE, 'diagnostic_delivery': diagnostic,
@@ -77,8 +79,10 @@ class Amendment(unittest.TestCase):
                           commands_model_sha256=digest(encoded(self.commands)),
                           predecessor_model_sha256={cid: digest(encoded(model)) for cid, model in zip(self.ids, self.models)})
 
-    def prepare(self, dest, extra=None, **kwargs):
-        with patch.object(packet, 'verified_head', return_value='c' * 40):
+    def prepare(self, dest, extra=None, historical=False, **kwargs):
+        # Published history predates the snap collector module; its closure is fixed.
+        modules = HISTORICAL_MODULES if historical else packet.MODULES
+        with patch.object(packet, 'verified_head', return_value='c' * 40), patch.object(packet, 'MODULES', modules):
             return packet.prepare(dest, self.retained, self.base.root / 'ssh_public_key', HASH,
                                   dict(self.bindings, **(extra or {})), **kwargs)
 
@@ -237,7 +241,7 @@ class Amendment(unittest.TestCase):
         prior = {'id': old_proposal['target_imds']['resourceId'] + '/runCommands/r3-key-' + old_proposal['packet_id'],
                  'source_sha': 'c' * 40, 'delivery_sha256': digest(encoded(old)), 'request_body': old['requests']['repair_body'],
                  'execution_state': 'Failed', 'exit_code': 3, 'delivery': old, 'proposal': old_proposal}
-        dest = self.base.root / 'diagnostic-exit3'; self.prepare(dest, {'prior_command': prior}, identity_diagnostic=True)
+        dest = self.base.root / 'diagnostic-exit3'; self.prepare(dest, {'prior_command': prior}, historical=True, identity_diagnostic=True)
         diagnostic, dp = self.read(dest)
         result = identity_tests.report(dp, dict(dp['target_imds'], location='SwedenCentral'))
         changed = dict(self.amend, diagnostic_delivery=diagnostic, diagnostic_proposal=dp,
@@ -283,7 +287,7 @@ class Amendment(unittest.TestCase):
         for diagnostic in (False, True):
             dest = self.diag_dir if diagnostic else self.old_dir
             delivery, item = self.read(dest)
-            modules = {name: base64.b64encode((packet.ROOT / 'infra/scripts' / (name + '.py')).read_bytes()).decode() for name in packet.MODULES}
+            modules = {name: base64.b64encode((packet.ROOT / 'infra/scripts' / (name + '.py')).read_bytes()).decode() for name in HISTORICAL_MODULES}
             name = 'r3_access_identity_diagnostic' if diagnostic else 'r3_access_repair_guest'
             modules[name] = base64.b64encode(b'pass\n').decode()
             item['source']['files']['infra/scripts/' + name + '.py'] = digest(b'pass\n')
@@ -300,7 +304,7 @@ class Amendment(unittest.TestCase):
                  'proposal': 'HISTORICAL_EMBEDDED_PROPOSAL', 'shell': 'HISTORICAL_SHELL_WRAPPER'}
         for kind, code in codes.items():
             delivery, item = self.read(self.diag_dir)
-            modules = {name: base64.b64encode((packet.ROOT / 'infra/scripts' / (name + '.py')).read_bytes()).decode() for name in packet.MODULES}
+            modules = {name: base64.b64encode((packet.ROOT / 'infra/scripts' / (name + '.py')).read_bytes()).decode() for name in HISTORICAL_MODULES}
             embedded = copy.deepcopy(item)
             if kind == 'hash': modules['r3_access_identity_diagnostic'] = base64.b64encode(b'pass\n').decode()
             elif kind == 'closure': del modules['r3_access_identity_diagnostic']

@@ -243,3 +243,8 @@ observation is `DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED`, never installation or poli
 qualification. Existing pinned runner/image/artifact staging still occurs and
 requires its own exact dispatch approval; package inputs remain inert in this
 route. See the [snap diagnostic scope](runbooks/10-qa-clean-replacement.md#fixed-snap-leaf-diagnostic).
+Collection evidence format 2 records the alias in its own `snap:/usr/bin/snap`
+section (`r3_policy_snap.py`): absent, regular, or exactly `../lib/snapd/snapd`,
+whose fixed target is opened independently with O_NOFOLLOW and hashed (at most
+64 MiB). Other links, types or drift are refused; the section never enters the
+policy-input hashes. Format 1 evidence stays valid.

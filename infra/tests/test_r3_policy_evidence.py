@@ -14,6 +14,7 @@ import r3_policy_capture as capture
 import r3_policy_evidence as evidence
 import r3_policy_validate as validator
 import r3_policy_scope as scope
+import r3_policy_snap as snap
 import r3_noble_guest as guest
 import r3_noble_fixture as host
 from r3_noble_common import encoded, digest, write
@@ -63,6 +64,21 @@ def document(binding=BINDING):
     sections['dbus-socket'] = {'state': 'ok', 'value': {'exists': False, 'socket': False}}
     return {'format': 1, 'purpose': evidence.PURPOSE, 'binding': binding, 'sections': sections,
             'qualification': False, 'installation_success': False, 'policy_generated': False}
+
+
+def snap_record():
+    """Synthetic known alias under root-owned parents; never the host's real snap."""
+    return {'format': 1, 'kind': 'known-alias',
+            'alias': {'parent': {**META}, 'leaf': {**META, 'mode': 0o777}, 'link': snap.LINK.decode()},
+            'target': {'parent': {**META}, **META, 'bytes': 5, 'sha256': digest(b'snapd')}}
+
+
+def document_v2(binding=BINDING):
+    doc = document(binding)
+    doc['format'] = 2
+    del doc['sections']['file:/usr/bin/snap']
+    doc['sections'][snap.SECTION] = {'state': 'ok', 'value': snap_record()}
+    return doc
 
 
 class Schema(unittest.TestCase):
@@ -232,7 +248,8 @@ class CollectionRoute(unittest.TestCase):
              patch.object(capture, 'socket_record', return_value={'exists': False, 'socket': False}), \
              patch.object(capture, 'cache', return_value={'.': {'directory': True, **META}}), \
              patch.object(scope, 'apt_scope', side_effect=apt_scope), \
-             patch.object(scope, 'unit_scope', side_effect=unit_scope):
+             patch.object(scope, 'unit_scope', side_effect=unit_scope), \
+             patch.object(snap, 'observe', return_value=snap_record()):
             return evidence.collect(binding, checkpoint)
 
     def test_checkpoints_precede_completeness_and_preserve_partial(self):
@@ -263,7 +280,8 @@ class CollectionRoute(unittest.TestCase):
                      patch.object(capture, 'socket_record', return_value={'exists': False, 'socket': False}), \
                      patch.object(capture, 'cache', return_value={'.': {'directory': True, **META}}), \
              patch.object(scope, 'apt_scope', side_effect=apt_scope), \
-             patch.object(scope, 'unit_scope', side_effect=unit_scope):
+             patch.object(scope, 'unit_scope', side_effect=unit_scope), \
+             patch.object(snap, 'observe', return_value=snap_record()):
                     return real_collect(binding, checkpoint)
             with patch.object(guest, 'INPUT', inputs), patch.object(guest, 'OUTPUT', output), \
                  patch.object(guest, 'PORT', str(port)), patch.object(guest, 'verify_input', side_effect=verified), \
