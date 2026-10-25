@@ -219,10 +219,10 @@ class ReceiverAndPacket(unittest.TestCase):
             bundle = root / 'packet'
             p = self.prepare_packet(bundle)
             p['source']['published_sha'] = 'a' * 40
-            imds = {**IMDS, 'location': 'swedencentral'}
+            imds = {**IMDS, 'location': 'SwedenCentral'}
             p['target'] = {'imds': imds, 'connection': {'host': '192.0.2.1', 'user': 'ubuntu'},
                 'control_plane': {'tenant': 'synthetic', 'subscription': imds['subscriptionId'],
-                    'vm_id': imds['resourceId'], 'vm_uuid': imds['vmId'], 'location': imds['location'],
+                    'vm_id': imds['resourceId'], 'vm_uuid': imds['vmId'], 'location': 'swedencentral',
                     'image': {**{k: imds[k] for k in ('publisher', 'offer', 'sku', 'version')},
                               'exactVersion': imds['version']}, 'disks': ['synthetic'],
                     'public_ip': '192.0.2.1', 'private_ip': '10.0.0.1', 'network': 'synthetic'}}

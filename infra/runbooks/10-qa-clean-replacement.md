@@ -1599,7 +1599,11 @@ The complete proposal retains false `execution_authorized` and
 binds base/published commit, exact files and canonical source-map SHA256. Target
 binds selected IMDS fields (`resourceId`, `vmId`, `location`, `subscriptionId`,
 `publisher`, `offer`, `sku`, `version`), connection host/user, and the complete
-private control-plane identity/image/disks/network record. Custody binds exact
+private control-plane identity/image/disks/network record. The region is pinned
+twice and exactly: the guest IMDS `location` must be `SwedenCentral` (the
+spelling #218's identity diagnostic observed) and the ARM control-plane
+`location` must be `swedencentral`; no casefolded or other spelling passes
+either side. Custody binds exact
 local public known-hosts, SSH public identity and age tool paths/hashes, plus the
 public encryption recipient/hash. SSH uses only that public identity with the
 existing signing agent; the receiver never reads a private key. Paths reject

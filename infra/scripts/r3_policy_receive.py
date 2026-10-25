@@ -61,7 +61,8 @@ def approved(packet, approval_data, expected_hash):
     require(isinstance(target, dict) and set(target) == {'imds', 'connection', 'control_plane'})
     require(isinstance(target['imds'], dict) and set(target['imds']) == set(IMDS_FIELDS)
             and all(isinstance(v, str) and 0 < len(v) <= 2048 for v in target['imds'].values()))
-    require(target['imds']['location'] == 'swedencentral')
+    # Guest IMDS spells the region 'SwedenCentral' (#218's diagnostic); ARM spells it 'swedencentral'.
+    require(target['imds']['location'] == 'SwedenCentral')
     connection = target['connection']
     require(set(connection) == {'host', 'user'} and re.fullmatch('[a-z_][a-z0-9_-]{0,31}', connection['user']) is not None
             and re.fullmatch('[A-Za-z0-9][A-Za-z0-9.-]{0,252}', connection['host']) is not None)
@@ -92,7 +93,7 @@ def approved(packet, approval_data, expected_hash):
     control = target['control_plane']
     require(all(control[k] for k in control))
     require(control['vm_id'] == target['imds']['resourceId'] and control['vm_uuid'] == target['imds']['vmId']
-            and control['subscription'] == target['imds']['subscriptionId'] and control['location'] == target['imds']['location']
+            and control['subscription'] == target['imds']['subscriptionId'] and control['location'] == 'swedencentral'
             and connection['host'] in (control['public_ip'], control['private_ip']))
     require(isinstance(control['image'], dict) and set(control['image']) == {'publisher', 'offer', 'sku', 'version', 'exactVersion'}
             and all(control['image'][k] == target['imds'][k] for k in ('publisher', 'offer', 'sku'))

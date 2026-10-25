@@ -23,10 +23,10 @@ class ApprovalGuards(unittest.TestCase):
             bundle = root / 'packet'
             bundle.mkdir()
             files = packet.sources()
-            imds = {**IMDS, 'location': 'swedencentral'}
+            imds = {**IMDS, 'location': 'SwedenCentral'}
             target = {'imds': imds, 'connection': {'host': '192.0.2.1', 'user': 'ubuntu'},
                 'control_plane': {'tenant': 'synthetic', 'subscription': imds['subscriptionId'],
-                    'vm_id': imds['resourceId'], 'vm_uuid': imds['vmId'], 'location': imds['location'],
+                    'vm_id': imds['resourceId'], 'vm_uuid': imds['vmId'], 'location': 'swedencentral',
                     'image': {**{k: imds[k] for k in ('publisher', 'offer', 'sku', 'version')},
                               'exactVersion': imds['version']}, 'disks': ['synthetic'],
                     'public_ip': '192.0.2.1', 'private_ip': '10.0.0.1', 'network': 'synthetic'}}
@@ -118,6 +118,16 @@ class ApprovalGuards(unittest.TestCase):
         for key in ('vm_id', 'vm_uuid', 'subscription', 'location', 'public_ip'):
             with self.subTest(key=key):
                 self.check(proposal_change=lambda p: p['target']['control_plane'].update({key: 'foreign'}))
+
+    def test_each_location_spelling_is_pinned_exactly(self):
+        # IMDS reports 'SwedenCentral', ARM 'swedencentral'; neither side
+        # accepts the other spelling, another casing, padding or a lookalike.
+        for value in ('swedencentral', 'SWEDENCENTRAL', 'SwedenCentral ', '\u017fwedenCentral', '\uff33wedenCentral', 'westeurope'):
+            with self.subTest(imds=value):
+                self.check(proposal_change=lambda p: p['target']['imds'].update(location=value))
+        for value in ('SwedenCentral', 'SWEDENCENTRAL', 'swedencentral ', '\u017fwedencentral', '\uff53wedencentral', 'westeurope'):
+            with self.subTest(control=value):
+                self.check(proposal_change=lambda p: p['target']['control_plane'].update(location=value))
 
     def test_image_schema_and_each_imds_correspondence(self):
         self.check(proposal_change=lambda p: p['target']['control_plane']['image'].update(extra='unreviewed'))
