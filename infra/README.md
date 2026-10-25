@@ -209,6 +209,21 @@ and explicit `create_host_path: false` source overlays are unchanged.
 The r02 runtime contract rejects both legacy installation shells.
 `r3_package_evidence.py`, `r3_guard_files.py` and `r3_source_plan.py` prepare public
 archive analysis, offline guard payloads and a proposed source map.
+`r3_realtime_gcm.mjs` (pure case machine), `r3_realtime_clients.mjs` (pinned
+realtime-js/Phoenix/ws/jose/Prisma adapters) and `r3_realtime_gcm_run.mjs` (single-attempt
+runner) are the offline Realtime GCM consumer harness for a two-service disposable fixture
+(`infra/selfhost/r3-realtime-gcm.fixture.json`): real API writes of the JWT secret and five DB
+fields, socket/broadcast/postgres_changes reads, cold-restart persistence, global and DB-only
+wrong-key cases and ten validly encoded tamper cases, each with positive recovery. A refusal counts
+only with the source's status/reason and a crypto.ex failure entry attributed to exactly that tenant.
+`--execute` needs a canonical owner approval (its SHA-256 given separately) naming the manifest,
+harness and evidence directory, consumed in a fixed ledger before any effect (on GitHub Actions it
+must also name that exact run, first attempt, so a new dispatch or re-run cannot replay it); key
+files stay on tmpfs, and signals or `--teardown --attempt <id>` remove only that attempt's labelled
+objects.
+Its Node tests use an AES-GCM model, a one-guard-at-a-time perturbation table and fakes; the
+manifest is deliberately `executable: false` with its unbound inputs listed. It has never been
+executed and is not consumer evidence.
 `r3_image_transport.py` verifies/packages the selected-platform OCI closure retaining
 the original root, without importing it. Duplicate/case-colliding keys, foreign
 descriptor fields and conflicting document types are refused. Exact APT
