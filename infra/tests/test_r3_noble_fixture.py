@@ -310,9 +310,68 @@ class LifecycleFailures(unittest.TestCase):
     def test_privileged_residual_group_is_not_reported_clean(self):
         from unittest.mock import Mock
         child = Mock(pid=123)
-        with patch.object(common.subprocess, 'run', return_value=Mock(returncode=1)), patch.object(common.os, 'killpg', side_effect=PermissionError), self.assertRaises(ValueError):
-            common.kill_group(child, privileged=True)
+        calls = []
+        def killpg(pid, number):
+            calls.append((pid, number)); raise PermissionError
+        with patch.object(common.subprocess, 'run', return_value=Mock(returncode=1)), patch.object(common.os, 'killpg', side_effect=killpg):
+            try: common.kill_group(child, privileged=True)
+            except Exception as exc: refusal = exc
+            else: self.fail('a residual privileged group was reported clean')
+        # The privileged path keeps its own probe: a refusal message, never the unprivileged reaping.
+        self.assertIsInstance(refusal, ValueError)
+        self.assertEqual(calls, [(123, signal.SIGKILL), (123, 0)])
         child.wait.assert_called_once_with(timeout=5)
+
+    def test_exited_unreaped_leader_is_reaped_not_refused(self):
+        # Darwin answers killpg with EPERM once the group holds only the zombie leader.
+        child = subprocess.Popen([sys.executable, '-c', 'pass'], stdout=subprocess.PIPE, start_new_session=True)
+        self.addCleanup(child.wait)
+        child.stdout.read(); child.stdout.close()
+        deadline = time.monotonic() + 5
+        # Exited but not reaped: a zombie leader alone in its group (no waitid on Darwin).
+        while subprocess.run(['ps', '-o', 'stat=', '-p', str(child.pid)], capture_output=True, text=True).stdout.strip()[:1] != 'Z':
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+        try: common.kill_group(child)
+        except PermissionError: self.fail('a zombie leader alone in its group was refused')
+        self.assertEqual(child.returncode, 0)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(child.pid, 0)
+
+    def test_unprivileged_refusal_stays_refused_unless_the_group_is_gone(self):
+        from unittest.mock import Mock, call
+        denied = PermissionError('denied')
+        # (the leader exits within the bound, the group's probe after reaping) -> refused?
+        for exits, probe, refused in ((False, None, True), (True, PermissionError, True), (True, None, True),
+                                      (True, ProcessLookupError, False)):
+            with self.subTest(exits=exits, probe=probe):
+                child = Mock(pid=123)
+                if not exits: child.wait.side_effect = subprocess.TimeoutExpired('leader', 5)
+                calls = []
+                def killpg(pid, number):
+                    calls.append((pid, number))
+                    if number == signal.SIGKILL: raise denied
+                    if probe: raise probe
+                with patch.object(common.os, 'killpg', side_effect=killpg):
+                    if refused:
+                        with self.assertRaises(PermissionError) as caught:
+                            common.kill_group(child)
+                        self.assertIs(caught.exception, denied)
+                    else:
+                        try: common.kill_group(child)
+                        except PermissionError: self.fail('refused although the reaped group is gone')
+                self.assertEqual(child.wait.call_args_list, [call(timeout=5)] * (1 if refused else 2))
+                self.assertEqual(calls, [(123, signal.SIGKILL), (123, 0)] if exits else [(123, signal.SIGKILL)])
+
+    def test_reaped_leader_with_a_live_member_is_not_gone(self):
+        child = subprocess.Popen(['/bin/sh', '-c', 'sleep 30 & exit 0'], start_new_session=True)
+        def stop():
+            try: os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+        self.addCleanup(stop)
+        child.wait(timeout=5)
+        # The reaped leader's group still holds the live sleep: never reported gone.
+        self.assertIs(common.reaped_group_gone(child), False)
 
     def test_native_man_db_transaction_refuses_before_holds_and_exports_actual_state(self):
         with tempfile.TemporaryDirectory() as name:

@@ -567,6 +567,16 @@ add(TW, 'transport-workflow-plaintext-upload', '            ${{ runner.temp }}/r
 add(TW, 'transport-workflow-oidc', '  contents: read\n\nconcurrency', '  contents: read\n  id-token: write\n\nconcurrency')
 
 
+NC = 'infra/scripts/r3_noble_common.py'
+# Darwin's EPERM for a zombie-only group: accepted only once the reaped group is gone.
+add(NC, 'kill-group-unprivileged-refusal', 'if not privileged and not reaped_group_gone(child):', 'if not privileged and False:')
+add(NC, 'kill-group-privileged-short-circuit', 'if not privileged and not reaped_group_gone(child):', 'if not reaped_group_gone(child):')
+add(NC, 'kill-group-leader-alive', '    except subprocess.TimeoutExpired:\n        return False\n    try:', '    except subprocess.TimeoutExpired:\n        pass\n    try:')
+add(NC, 'kill-group-gone-accepted', '    except ProcessLookupError:\n        return True\n', '    except ProcessLookupError:\n        return False\n')
+add(NC, 'kill-group-probe-refused', '    except PermissionError:\n        return False\n    return False\n', '    except PermissionError:\n        return True\n    return False\n')
+add(NC, 'kill-group-probe-target', '        os.killpg(child.pid, 0)\n    except ProcessLookupError:\n        return True', '        os.killpg(child.pid + 1, 0)\n    except ProcessLookupError:\n        return True')
+add(NC, 'kill-group-probe-live', '        return False\n    return False\n\n\ndef kill_group', '        return False\n    return True\n\n\ndef kill_group')
+
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
     if file.startswith('infra/scripts/r3_access_'):
@@ -577,7 +587,7 @@ def mutation_command(file, python_command, node_command):
     # whole R3 suite per mutant (about ten CI minutes for 29 mutants).
     elif file.endswith('r3_snap_leaf.py'):
         suites = ['test_r3_snap_leaf']
-    elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
+    elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py', 'r3_noble_common.py')):
         suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers', 'test_r3_install_policy_facts', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity']
     elif file.endswith(('r3_image_acquire.py', 'r3_image_import.py', 'r3_image_qualify.py', 'r3-image-transport.yml')):
         suites = ['test_r3_image_transport_run']
