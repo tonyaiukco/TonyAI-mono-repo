@@ -1,4 +1,8 @@
-"""Synthetic same-attempt error context; never inspects a real guest or snap."""
+"""Synthetic same-attempt error context; never inspects a real guest or snap.
+
+The snap section (format 2 evidence) produces context format 2; format 1
+documents with the old file-section context must still validate as before.
+"""
 import copy
 import errno
 import os
@@ -8,10 +12,16 @@ import unittest
 from unittest.mock import patch
 
 from test_r3_policy_evidence import (BINDING, META, apt_scope, unit_scope, command,
-    document, release_record, capture, evidence, validator, scope, guest, host, encoded, write)
+    document, release_record, capture, evidence, validator, scope, snap, guest, host, encoded, write)
 
 
 def context(stage='open-file', number=errno.ELOOP):
+    """Context the current snap section produces."""
+    return {'format': 2, 'stage': stage, 'errno': number, 'cleanup': []}
+
+
+def v1_context(stage='open-file', number=errno.ELOOP):
+    """Context retained in format 1 documents."""
     return {'format': 1, 'stage': stage, 'errno': number, 'cleanup': []}
 
 
@@ -26,7 +36,7 @@ class ErrorContext(unittest.TestCase):
             for path, stage in ((leaf, 'open-file'), (parent / 'snap', 'resolve-parent')):
                 with patch.object(capture.os, 'read', side_effect=AssertionError('body read')), \
                      patch.object(capture.os, 'readlink', side_effect=AssertionError('extra read')):
-                    result = evidence.operation(lambda: capture.file_record(str(path)), snap_context=True)
+                    result = snap.operation(lambda: capture.file_record(str(path)))
                 self.assertEqual(result['error'], 'OSError')
                 self.assertEqual(result['context']['stage'], stage)
                 self.assertIs(type(result['context']['errno']), int)
@@ -50,7 +60,7 @@ class ErrorContext(unittest.TestCase):
                         return original(*args, **kwargs)
                     raise failure[-1] if isinstance(failure, list) else failure
                 with self.subTest(stage=stage), patch.object(capture.os, name, side_effect=fail):
-                    result = evidence.operation(lambda: capture.file_record(str(path)), snap_context=True)
+                    result = snap.operation(lambda: capture.file_record(str(path)))
                 self.assertEqual(result['context']['stage'], stage)
                 self.assertNotIn(b'secret', encoded(result))
                 self.assertNotIn(b'private-path', encoded(result))
@@ -76,9 +86,9 @@ class ErrorContext(unittest.TestCase):
                      patch.object(capture.os, 'close', side_effect=close_then_fail):
                     if isinstance(failure, evidence.CollectionDeadline):
                         with self.assertRaises(evidence.CollectionDeadline):
-                            evidence.operation(lambda: capture.file_record(str(path)), snap_context=True)
+                            snap.operation(lambda: capture.file_record(str(path)))
                         continue
-                    result = evidence.operation(lambda: capture.file_record(str(path)), snap_context=True)
+                    result = snap.operation(lambda: capture.file_record(str(path)))
                 if isinstance(failure, TimeoutError):
                     self.assertEqual(result, {'state': 'error', 'error': 'TimeoutError'})
                 else:
@@ -96,7 +106,7 @@ class ErrorContext(unittest.TestCase):
                 raise OSError(errno.EBADF, 'private')
             with patch.object(capture, 'directory', return_value=parent), \
                  patch.object(capture.os, 'close', side_effect=fail):
-                result = evidence.operation(lambda: capture.file_record(str(root / 'missing')), snap_context=True)
+                result = snap.operation(lambda: capture.file_record(str(root / 'missing')))
             self.assertEqual(result['context'], context('close-parent', errno.EBADF))
 
     def test_unrelated_handled_exception_cannot_hide_cleanup_or_timeout(self):
@@ -115,7 +125,7 @@ class ErrorContext(unittest.TestCase):
                 except ValueError:
                     with patch.object(capture, 'directory', return_value=parent), \
                          patch.object(capture.os, 'close', side_effect=fail):
-                        result = evidence.operation(lambda: capture.file_record(str(path)), snap_context=True)
+                        result = snap.operation(lambda: capture.file_record(str(path)))
                 self.assertEqual(result['state'], 'error')
                 self.assertEqual(result['error'], 'TimeoutError' if isinstance(failure, TimeoutError) else 'OSError')
 
@@ -126,10 +136,10 @@ class ErrorContext(unittest.TestCase):
             def fail():
                 raise capture.ReadError('read', error)
             self.assertEqual(evidence.operation(fail), {'state': 'error', 'error': 'OSError'})
-            self.assertIsNone(evidence.operation(fail, snap_context=True)['context']['errno'])
+            self.assertIsNone(snap.operation(fail)['context']['errno'])
 
     def test_context_remains_partial_and_old_evidence_valid(self):
-        for detail in (None, context(), context('read', None), {**context('read'),
+        for detail in (None, v1_context(), v1_context('read', None), {**v1_context('read'),
                 'cleanup': [{'stage': 'close-file', 'errno': errno.EBADF}]}):
             doc = document()
             item = {'state': 'error', 'error': 'OSError'}
@@ -143,14 +153,14 @@ class ErrorContext(unittest.TestCase):
                 self.assertIs(result[key], False)
 
     def test_context_forgeries_refused(self):
-        bad = [{**context(), key: value} for key, values in {
+        bad = [{**v1_context(), key: value} for key, values in {
             'format': [True, 2], 'stage': ['unknown', None],
             'errno': [True, '40', 0, -1, 4096],
             'cleanup': [None, [{}], [{'stage': 'read', 'errno': 5}],
                 [{'stage': 'close-file', 'errno': True}],
                 [{'stage': 'close-file', 'errno': 5, 'message': 'secret'}],
                 [{'stage': 'close-file', 'errno': 5}] * 3]}.items() for value in values]
-        bad += [{**context(), 'message': 'secret'}, {'format': 1}, None]
+        bad += [{**v1_context(), 'message': 'secret'}, {'format': 1}, None]
         for detail in bad:
             doc = document()
             doc['sections']['file:/usr/bin/snap'] = {'state': 'error', 'error': 'OSError', 'context': detail}
@@ -162,7 +172,7 @@ class ErrorContext(unittest.TestCase):
             if name == 'file:/usr/bin/snap':
                 continue
             doc = document()
-            doc['sections'][name] = {'state': 'error', 'error': 'OSError', 'context': context()}
+            doc['sections'][name] = {'state': 'error', 'error': 'OSError', 'context': v1_context()}
             with self.subTest(name=name), self.assertRaises(ValueError):
                 validator.validate(encoded(doc), BINDING)
         for item in ({'state': 'ok', 'value': {'absent': True}}, {'state': 'not_reached'},
@@ -170,7 +180,7 @@ class ErrorContext(unittest.TestCase):
                      {'state': 'error', 'error': 'CHANGED', 'prior': {'absent': True}},
                      {'state': 'error', 'error': 'OSError', 'prior': {'absent': True}}):
             doc = document()
-            doc['sections']['file:/usr/bin/snap'] = {**item, 'context': context()}
+            doc['sections']['file:/usr/bin/snap'] = {**item, 'context': v1_context()}
             with self.assertRaises(ValueError):
                 validator.validate(encoded(doc), BINDING)
 
@@ -179,7 +189,8 @@ class ErrorContext(unittest.TestCase):
                     'image_sha256': BINDING['image_sha256'], 'fixture_uuid': BINDING['fixture_uuid'],
                     'files': {'r3-toolchain.lock.json': BINDING['toolchain_sha256']}}
         def file(path, body=False):
-            if path in ('/usr/bin/snap', '/usr/bin/mandb'):
+            self.assertNotEqual(path, '/usr/bin/snap')
+            if path == '/usr/bin/mandb':
                 raise capture.ReadError('open-file', OSError(errno.ELOOP, 'private'))
             return release_record() if path == '/usr/lib/os-release' else unit_scope()['files'].get(path, {'absent': True})
         points = []
@@ -188,11 +199,13 @@ class ErrorContext(unittest.TestCase):
              patch.object(capture, 'membership', return_value={'metadata': META, 'names': []}), \
              patch.object(capture, 'socket_record', return_value={'exists': False, 'socket': False}), \
              patch.object(capture, 'cache', return_value={'.': {'directory': True, **META}}), \
-             patch.object(scope, 'apt_scope', side_effect=apt_scope), patch.object(scope, 'unit_scope', side_effect=unit_scope):
+             patch.object(scope, 'apt_scope', side_effect=apt_scope), patch.object(scope, 'unit_scope', side_effect=unit_scope), \
+             patch.object(snap, 'observe', side_effect=capture.ReadError('stat-alias', OSError(errno.ELOOP, 'private'))):
             doc = evidence.collect(BINDING, lambda v: points.append(copy.deepcopy(v)))
-        self.assertEqual(doc['sections']['file:/usr/bin/snap']['context'], context())
+        self.assertEqual(doc['sections'][snap.SECTION]['context'], context('stat-alias'))
+        self.assertNotIn('file:/usr/bin/snap', doc['sections'])
         self.assertEqual(doc['sections']['file:/usr/bin/mandb'], {'state': 'error', 'error': 'OSError'})
-        self.assertTrue(any('context' in v['sections']['file:/usr/bin/snap'] for v in points))
+        self.assertTrue(any('context' in v['sections'][snap.SECTION] for v in points))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             output, port = root / 'output', root / 'port'

@@ -533,10 +533,13 @@ and fresh approval bound to the exact packet path and host-key fingerprint;
 historical B is not rebound. Collection rejects APT line-comment redirection and
 unit reload/warning drift, retains partial evidence without aggregate hashes, and
 uses source-only controller imports plus replacement-independent Git checks.
-An initial `/usr/bin/snap` read failure can retain a fixed syscall stage and
-numeric errno, including bounded cleanup errors, inside the encrypted evidence.
-It adds no reads, follows no links and remains partial with no aggregate policy
-hashes. This context describes only that attempt, not a historical failure.
+Evidence format 2 records `/usr/bin/snap` in its own section: absent, a regular
+file, or exactly the known `../lib/snapd/snapd` link, whose fixed target is opened
+independently with no-follow and hashed (at most 64 MiB). No link is followed
+generally; other links, types or drift are refused. The section is collection
+evidence only and never enters the aggregate policy hashes. A failure can retain
+a fixed syscall stage, numeric errno and bounded cleanup errors inside the
+encrypted evidence; format 1 documents and their context stay valid.
 Source verification refuses Git filter/include/diff configuration, redirected or
 partial-clone worktrees, and nonempty or symlinked Git info attributes before
 status/object reads; lazy object fetching is disabled. Index or HEAD gitlinks

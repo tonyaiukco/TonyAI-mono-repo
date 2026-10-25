@@ -9,6 +9,7 @@ from r3_install_policy import FIXED, DIRECTORIES, unique
 from r3_noble_common import digest, encoded, read, run
 from r3_package_state import INVENTORY_ARGV
 import r3_policy_capture as capture
+import r3_policy_snap as snap
 
 PURPOSE = 'R3_POLICY_EVIDENCE_COLLECTION'
 A_PURPOSE = 'FIXTURE_POLICY_COLLECTION_ONLY'
@@ -34,7 +35,12 @@ DIRECTORY_NAMES = {
         'lib32', 'libo32', 'libx32', 'linux-update-6.8.0-147-generic', 'shim-kernel-check',
         'shim-secureboot-policy', 'twisted-plugins-cache', 'update-sgmlcatalog')}
 REVIEW_SCRIPTS = ('/usr/lib/os-release', '/usr/lib/ubuntu-advantage/apt-esm-json-hook', '/usr/lib/cnf-update-db')
+# Format 1 read the snap alias as a file; it stays listed so format 1 documents and
+# the installer facts filter keep their meaning. Format 2 records the alias in its
+# own snap section and collects only the remaining extra files.
 EXTRA_FILES = (*REVIEW_SCRIPTS, '/usr/bin/snap', '/usr/bin/appstreamcli', '/usr/bin/test')
+COLLECTED_FILES = tuple(p for p in EXTRA_FILES if p != '/usr/bin/snap')
+FORMAT = 2
 BODIES = REVIEW_SCRIPTS + tuple(p for p in FIXED if p not in ('/usr/bin/mandb', '/usr/bin/setpriv',
     '/usr/bin/python3.12', '/usr/bin/gdbus', '/var/lib/dpkg/diversions', '/var/lib/dpkg/statoverride'))
 ERRORS = ('TimeoutError', 'UnicodeError', 'OSError', 'ValueError', 'RuntimeError')
@@ -55,16 +61,12 @@ def error_code(exc):
     return next((name for name in ERRORS if isinstance(exc, getattr(builtins, name))), 'RuntimeError')
 
 
-def operation(function, snap_context=False):
+def operation(function):
     try:
         return {'state': 'ok', 'value': function()}
     except Exception as exc:
         # Exception messages can contain private output. Never export them.
-        result = {'state': 'error', 'error': error_code(exc)}
-        if snap_context and isinstance(exc, capture.ReadError):
-            result['context'] = {'format': 1, 'stage': exc.stage, 'errno': exc.errno,
-                                 'cleanup': exc.cleanup}
-        return result
+        return {'state': 'error', 'error': error_code(exc)}
 
 
 def command(name, deadline):
@@ -98,17 +100,19 @@ def collect(binding, checkpoint=lambda _value: None):
     """Checkpoint every section before any completeness decision. No eligibility."""
     deadline = time.monotonic() + 240
     sections = {name: {'state': 'not_reached'} for name in (*COMMANDS,
-        *('file:' + p for p in (*FIXED, *EXTRA_FILES)), *('directory:' + p for p in DIRECTORIES), *SCOPES, 'dbus-socket', 'cache')}
-    value = {'format': 1, 'purpose': PURPOSE, 'binding': binding, 'sections': sections,
+        *('file:' + p for p in (*FIXED, *COLLECTED_FILES)), snap.SECTION,
+        *('directory:' + p for p in DIRECTORIES), *SCOPES, 'dbus-socket', 'cache')}
+    value = {'format': FORMAT, 'purpose': PURPOSE, 'binding': binding, 'sections': sections,
              'qualification': False, 'installation_success': False, 'policy_generated': False}
     def take(name, function):
-        sections[name] = ({'state': 'not_reached'} if time.monotonic() >= deadline else
-                          operation(function, snap_context=name == 'file:/usr/bin/snap'))
+        sections[name] = {'state': 'not_reached'} if time.monotonic() >= deadline else operation(function)
         checkpoint(value)
     for name in ('inventory', 'audit', 'architecture'):
         take(name, lambda name=name: command(name, deadline))
-    for path in (*FIXED, *EXTRA_FILES):
+    for path in (*FIXED, *COLLECTED_FILES):
         take('file:' + path, lambda path=path: capture.file_record(path, path in BODIES))
+    sections[snap.SECTION] = {'state': 'not_reached'} if time.monotonic() >= deadline else snap.operation(lambda: snap.observe(deadline))
+    checkpoint(value)
     for path in DIRECTORIES:
         take('directory:' + path, lambda path=path: capture.membership(path))
         section = sections['directory:' + path]
@@ -141,15 +145,18 @@ def collect(binding, checkpoint=lambda _value: None):
     take('cache', capture.cache)
     # A second read detects observed drift; this remains a sampling limit.
     for name, section in list(sections.items()):
-        if not name.startswith(('file:', 'directory:')) or section['state'] != 'ok':
+        if not name.startswith(('file:', 'directory:', 'snap:')) or section['state'] != 'ok':
             continue
         if time.monotonic() >= deadline:
             sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}
             checkpoint(value)
             continue
         path = name.split(':', 1)[1]
-        again = operation(lambda: capture.membership(path) if name.startswith('directory:')
-                          else capture.file_record(path, 'body' in section['value']))
+        if name.startswith('snap:'):
+            again = snap.operation(lambda: snap.observe(deadline))
+        else:
+            again = operation(lambda: capture.membership(path) if name.startswith('directory:')
+                              else capture.file_record(path, 'body' in section['value']))
         if time.monotonic() >= deadline:
             sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}
             checkpoint(value)
