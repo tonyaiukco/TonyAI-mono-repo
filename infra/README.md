@@ -369,5 +369,7 @@ fixed commands (two `systemctl show`, one `dpkg-query -W`) and no PackageKit or 
 contact. Its reviewed values are module literals in per-target profiles, none shipped
 yet, so a run is `DISCOVERY_ONLY` (complete and sealed, never a policy input); the
 installer's gate is not wired before PR-C2 (`PACKAGEKIT_GATE_WIRED`), so no host becomes
-eligible. No mask, stop or unmask exists in this code. See
+eligible. A unit root reached through a symlink (Noble's `/etc/xdg/systemd/user`) is
+recorded as that link, never followed, and counts as covered only when it points at
+another scanned, non-`/run` root of the same manager family with `..` only as a leading run. No mask, stop or unmask exists in this code. See
 [R3-POLICY-01-C1](runbooks/10-qa-clean-replacement.md#r3-policy-01-c1-shared-packagekit-state-option-c).

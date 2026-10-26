@@ -681,6 +681,23 @@ pk('profile-version', "if profile['code']['manager_version'] == version\n", "if 
 pk('profile-kernel-filter', "    code_rows = [row for row in rows if not row[0].startswith('linux-image-')]", "    code_rows = rows")
 pk('profile-ambiguous', "    return matches[0] if len(matches) == 1 else None", "    return matches[0] if matches else None")
 pk('scope-no-index', "    if allow is None or allow['unit_index'] is None:\n        return (profile", "    if allow is None:\n        return (profile")
+# A1a: a unit root reached through a symlink is recorded as that link, never followed (SymlinkedRoot).
+pk('root-link-skipped', "        if link is not None:\n            roots[path] = link\n            continue\n", "")
+pk('root-link-component', "                return {'link': str(current), 'target': readlink_at(part, fd)}", "                return {'link': path, 'target': readlink_at(part, fd)}")
+pk('root-link-schema-prefix', "                need(item['link'] == path or path.startswith(item['link'] + '/'))\n", "")
+pk('root-link-schema-prefix-slash', "path.startswith(item['link'] + '/')", "path.startswith(item['link'])")
+pk('root-link-schema-target', "                check_text(item['target'])\n                need(item['link'] == path", "                need(item['link'] == path")
+pk('root-covered-above', "    if value['link'] != root:\n        return None\n", "")
+pk('root-covered-absent', "    if resolved.startswith('/run/') or other is None or 'entries' not in other:", "    if resolved.startswith('/run/') or other is None:")
+pk('root-covered-dotdot', "        base, parts = base[:-1], parts[1:]", "        parts = parts[1:]")
+# No mutant for root_covered's inner-`..` guard: without it the resolved key keeps its `..` and matches no
+# (normalised) root, so the verdict is None either way; the guard states the rule instead of relying on that.
+pk('root-covered-run', "    if resolved.startswith('/run/') or other is None", "    if other is None")
+pk('root-covered-absolute', "    base = [] if target.is_absolute() else list(PurePosixPath(root).parent.parts[1:])", "    base = list(PurePosixPath(root).parent.parts[1:])")
+pk('root-covered-family', "    if (root in USER_ROOTS) != (resolved in USER_ROOTS):\n        return None", "    if False:\n        return None")
+pk('root-link-schema-link-text', "                check_text(item['link'])\n", "")
+pk('root-covered-unknown', "            results.append(root_covered(root, value, universe_value['roots']))", "            results.append(False)")
+pk('root-link-digest', "                   {'link': value['link'], 'target': value['target']} if 'link' in value else", "                   {'link': value['link']} if 'link' in value else")
 pk('c13-profile-match', "    if (allow is None or allow['unit_index'] is None or universe_value['profile'] != profile['id']", "    if (allow is None or allow['unit_index'] is None")
 pk('c12-kernel-row', "    return (kernel == code['kernel'] and rows.get('linux-image-' + kernel) == list(code['kernel_row'])", "    return (kernel == code['kernel']")
 pk('c12-files', "\n            and all(core['binaries'][path] == dict(code['files'][path]) for path in C12_FILES))", ")")
@@ -882,6 +899,7 @@ def mutation_command(file, python_command, node_command):
                   'test_r3_packagekit_state.Legacy',
                   'test_r3_packagekit_state.Drift',
                   'test_r3_packagekit_state.Universe',
+                  'test_r3_packagekit_state.SymlinkedRoot',
                   'test_r3_packagekit_state.Volatile',
                   'test_r3_packagekit_contract', 'test_r3_install_policy_facts']
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py', 'r3_noble_common.py')):
