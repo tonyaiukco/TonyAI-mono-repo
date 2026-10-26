@@ -1204,6 +1204,38 @@ class Universe(unittest.TestCase):
         self.assertIs(host.evaluate(reviewed), False)
 
 
+class FixtureCleanup(unittest.TestCase):
+    """The synthetic hosts never outlive their test, even when building one fails."""
+    def root(self):
+        directory = tempfile.TemporaryDirectory(prefix='r3fx-', dir='/tmp')
+        self.addCleanup(directory.cleanup)
+        environment = patch.dict(os.environ, {'R3_PK_FIXTURE_ROOT': directory.name})
+        environment.start()
+        self.addCleanup(environment.stop)
+        return Path(directory.name)
+
+    def test_hosts_are_rooted_where_the_runner_says(self):
+        root = self.root()
+        host = Host(self)
+        self.assertEqual(host.root.parent, root.resolve())
+
+    def test_a_shared_host_that_fails_to_build_removes_its_root(self):
+        root = self.root()
+        for failure in (RuntimeError('broken'), KeyboardInterrupt()):
+            with patch.object(Host, 'build', side_effect=failure), self.assertRaises(type(failure)):
+                Host()
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_a_test_host_that_fails_to_build_is_removed_by_its_cleanup(self):
+        root = self.root()
+        case = unittest.TestCase()
+        with patch.object(Host, 'build', side_effect=RuntimeError('broken')), self.assertRaises(RuntimeError):
+            Host(case)
+        self.assertEqual(len(list(root.iterdir())), 1)
+        case.doCleanups()
+        self.assertEqual(list(root.iterdir()), [])
+
+
 class SymlinkedRoot(unittest.TestCase):
     """A1a (run 40254443615): /etc/xdg/systemd/user is packaged as a link to /etc/systemd/user, and the
     no-follow open aborted the whole unit-universe section. A linked root is recorded, never followed."""

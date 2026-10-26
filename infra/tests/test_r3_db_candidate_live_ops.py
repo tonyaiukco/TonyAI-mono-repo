@@ -130,7 +130,9 @@ class ArgvTests(unittest.TestCase):
                 lo.interpret_stderr_stat(rc_, out, err)
 
     def test_host_lock_is_exclusive(self):
-        path = os.path.join(tempfile.mkdtemp(prefix='r3lock-'), 'lock')
+        directory = tempfile.TemporaryDirectory(prefix='r3lock-')
+        self.addCleanup(directory.cleanup)
+        path = os.path.join(directory.name, 'lock')
         fd = lo.acquire_host_lock(path)
         try:
             with self.assertRaises(ex.ExecutorRefusal) as ctx:
@@ -373,6 +375,19 @@ class FilesystemTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             lo.service_loop(P(), cand, ex.service_one_attestation, lambda pid: 'maps', deadline_s=60,
                             sleep=lambda s: None, kill=killed.append)
+
+
+class TempHygieneTests(unittest.TestCase):
+    def test_the_host_lock_test_leaves_no_directory(self):
+        with tempfile.TemporaryDirectory(prefix='r3tmp-') as scratch:
+            saved, tempfile.tempdir = tempfile.tempdir, scratch
+            try:
+                result = unittest.TestResult()
+                unittest.defaultTestLoader.loadTestsFromName('test_host_lock_is_exclusive', ArgvTests).run(result)
+            finally:
+                tempfile.tempdir = saved
+            self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+            self.assertEqual(os.listdir(scratch), [])
 
 
 class DefaultKillTests(unittest.TestCase):

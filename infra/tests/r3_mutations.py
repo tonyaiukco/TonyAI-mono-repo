@@ -2,12 +2,15 @@
 """Targeted call-site mutations in disposable source copies, one per worker. No cloud or Docker."""
 import argparse
 import concurrent.futures
+import contextlib
 import hashlib
 import json
 import os
 from pathlib import Path
 import queue
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -939,6 +942,56 @@ def mutation_command(file, python_command, node_command):
 
 SOURCE_DIRS = ('infra/scripts', 'infra/tests', 'infra/selfhost', '.github/workflows')
 MUTANT_TIMEOUT = 60
+# r3_pk_fixtures.Host roots its synthetic hosts here. A suite killed on its timeout never runs
+# its cleanups, so every worker gets its own short directory (AF_UNIX paths stay under 104
+# bytes) and the runner sweeps it after every run.
+FIXTURE_ENV = 'R3_PK_FIXTURE_ROOT'
+
+
+NOFOLLOW = {'follow_symlinks': False} if os.chmod in os.supports_follow_symlinks else {}  # macOS: lchmod
+
+
+def wipe(path):
+    """Remove a tree a killed test may have left with restrictive modes; never follows a link."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_dir():
+        path.unlink(missing_ok=True)
+        return
+    os.chmod(path, 0o700, **NOFOLLOW)
+    for current, dirs, _files in os.walk(path):  # followlinks=False: a linked directory is not entered
+        for name in dirs:
+            child = os.path.join(current, name)
+            if not os.path.islink(child):
+                os.chmod(child, 0o700, **NOFOLLOW)
+    shutil.rmtree(path)
+
+
+def owned_directory(path):
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise RuntimeError('fixture root replaced: ' + str(path))
+
+
+def sweep(directory):
+    # A test runs as the same user and could swap its fixture root for a link: never sweep through one.
+    owned_directory(Path(directory).parent)
+    owned_directory(directory)
+    for child in Path(directory).iterdir():
+        wipe(child)
+
+
+def install_sigterm():
+    """A plain kill (SIGTERM) unwinds like Ctrl-C, so the worker copies and fixture roots are removed."""
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
+
+@contextlib.contextmanager
+def fixture_roots():
+    base = Path(tempfile.mkdtemp(prefix='r3mw-', dir='/tmp'))
+    try:
+        yield base
+    finally:
+        wipe(base)
 
 
 def anchor_matches(name):
@@ -956,13 +1009,13 @@ def source_hashes(root):
 def main(output, workers=None, source=ROOT, mutations=MUTATIONS):
     if workers is None: workers = os.cpu_count() or 1
     if workers < 1: raise ValueError('At least one mutation worker is required.')
-    with tempfile.TemporaryDirectory(prefix='r3-mutants-') as temp:
+    with tempfile.TemporaryDirectory(prefix='r3-mutants-') as temp, fixture_roots() as fixtures:
         Path(temp).chmod(0o755)
         # One disposable copy per worker. A mutant is applied only in the copy its
         # worker holds, so no two mutants ever share a tree.
         roots = [Path(temp) / str(index) for index in range(min(workers, len(mutations) + 2))]
         for root in roots:
-            root.mkdir(); root.chmod(0o755)
+            root.mkdir(); root.chmod(0o755); (fixtures / root.name).mkdir()
             for name in SOURCE_DIRS:
                 shutil.copytree(source / name, root / name, ignore=shutil.ignore_patterns('__pycache__'))
         tested_source = source_hashes(roots[0])
@@ -983,8 +1036,13 @@ def main(output, workers=None, source=ROOT, mutations=MUTATIONS):
             try: return work(root)
             finally: free.put(root)
 
+        def run(test_command, root, **options):
+            try: return subprocess.run(test_command, cwd=root, capture_output=True,
+                                       env={**os.environ, FIXTURE_ENV: str(fixtures / root.name)}, **options)
+            finally: sweep(fixtures / root.name)
+
         def baseline(test_command):
-            return borrow(lambda root: subprocess.run(test_command, cwd=root, capture_output=True))
+            return borrow(lambda root: run(test_command, root))
 
         def exercise(file, name, before, after):
             def work(root):
@@ -993,7 +1051,7 @@ def main(output, workers=None, source=ROOT, mutations=MUTATIONS):
                 if original.count(before) != anchor_matches(name): raise ValueError('Unmatched mutation: ' + name)
                 path.write_text(original.replace(before, after))
                 test_command = mutation_command(file, command, node_command)
-                try: result = subprocess.run(test_command, cwd=root, capture_output=True, timeout=MUTANT_TIMEOUT)
+                try: result = run(test_command, root, timeout=MUTANT_TIMEOUT)
                 finally: path.write_text(original)
                 return {'name': name, 'file': file, 'command': test_command, 'result': 'KILLED' if result.returncode else 'SURVIVED',
                         'diagnostic': (result.stdout + result.stderr).decode()[-3000:] if result.returncode else ''}
@@ -1025,4 +1083,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('--output', required=True)
     parser.add_argument('--workers', type=int, help='parallel worker copies (default: CPU count)')
     args = parser.parse_args()
+    install_sigterm()
     raise SystemExit(main(args.output, args.workers))
