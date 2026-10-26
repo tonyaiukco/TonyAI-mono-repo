@@ -1,13 +1,11 @@
 # Sweden QA application integration
 
-This is the integration design and approval boundary for the existing self-hosted
-QA host. The **offline network creation preflight** and a **locally tested dashboard
-rotation helper** are implemented by this change; neither authorizes live execution.
-The additive `foundation/qa` application foundation is prepared and mock-tested;
-the QA release writer and public offline validators are also prepared. Image
-building and private database TLS remain separate implementation/review work. OIDC and runtime/app grants start disabled. This runbook is
-not an apply command, an approval, or evidence that the application is deployed.
-Use [runbook 07](07-selfhost.md) for existing host ownership and runtime recovery.
+This runbook prepares the **Azure Sweden Central** application layer against the
+accepted r02 self-hosted Supabase replacement. The additive Terraform roots,
+public release validators and manual image workflow are offline preparation;
+no cloud operation, R3/R4 acceptance or deployment is implied. The original
+network-preflight/dashboard sections below retain their historical host scope.
+Use [runbook 07](07-selfhost.md) for host ownership and recovery.
 
 ## Resume from existing resources
 
@@ -44,7 +42,7 @@ the owner; do not switch regions. Provider registration is not SKU/capacity proo
 | --- | --- |
 | Existing VM, VNet and both subnets, NSG, IPs, disks, recovery vault | Existing `selfhost` root; Sweden Central; existing `foundation/staging-selfhost.tfstate`, unchanged |
 | Managed environment, ACR Basic, app Key Vault, API/web identities, Log Analytics and scoped RBAC | Additive `foundation/qa` root; proposed group `tonyai-staging-apps`; Sweden Central |
-| API and web Container Apps, revisions, ingress and runtime references | New, additive `selfhost-application` root; Sweden Central; one writer for release, rotation and rollback |
+| API and web Container Apps, revisions, ingress and runtime references | Additive `application/qa` root; Sweden Central; one writer for release, rotation and rollback |
 | Private DNS zone, VNet link and records | Nonregional Azure Private DNS resources, owned by the new foundation; group metadata location Sweden Central |
 | Entra tenant, service principals, role definitions/assignments; GitHub and Namecheap DNS | Directory/control-plane or external global services, not Sweden regional workloads; separate residency/processor decisions apply |
 | Recovery storage, backup jobs, alert delivery | Later reviewed Sweden design; no production or backup resources created by this preparation |
@@ -67,7 +65,7 @@ human approver, trust-root and ephemeral runner prerequisites are satisfied.
 
 The selfhost contract's `apps_subnet_id` identifies the only allowed subnet.
 `infra/terraform/selfhost/variables.tf` defines QA `local.apps_net` as
-`10.80.2.0/23`; the host subnet is `10.80.0.0/24` inside `10.80.0.0/16`.
+`10.80.2.0/23`; the original host subnet is `10.80.0.0/24`, and r02 uses `10.80.1.0/24`, inside `10.80.0.0/16`. The QA app DNS record targets r02 at `10.80.1.4`, never the old host.
 The existing root remains the only VNet/subnet writer. Require
 `Microsoft.App/environments` delegation, no conflicting IP configurations/service
 association links, and review peerings, custom DNS, routes and service CIDR
@@ -159,14 +157,14 @@ URL with hostname checking disabled is unacceptable. A short-lived owner runner
 inside the VNet is a separate Sweden alternative if this cannot be qualified.
 Schema/role/migration changes require the API/DB lane's explicit reservation.
 
-The new release contract must bind full source SHA, lockfile and ordered migration
+The QA release contract binds full source SHA, lockfile and ordered migration
 hashes, both image digests, environment/region/subnet IDs, exact Key Vault versions,
 Supabase public origin, JWKS URL, expected issuer, browser key binding, DB trust
 hash, runtime limits, and storage cleanup hold. Reject unknown/secret-value fields,
 hosted project refs, mutable tags and unversioned secret URIs. Build the web with
 its actual target origins; reusing a hosted bundle is not integration. Require
 exact-source CI/E2E/integration qualification and actual-image smoke before release.
-The future release writer must read back images, references, ingress and identity;
+The owner release procedure must independently read back images, references, ingress and identity;
 it is the only application writer for deployment, rotation and compatible rollback.
 
 **API dependency integrated; deployment acceptance pending:** #180 (`83715fe`)
@@ -431,73 +429,245 @@ executable secrets/auth integration. The B9 handoff records evidence and propose
 ledger updates; the central roadmap remains the sole planning/status file.
 
 
-## Additive QA application foundation preparation
+## Application preparation and owner execution
 
-The prepared root is `infra/terraform/foundation/qa`; use its invalid-placeholder
-`inputs.example.json` only as a template for owner-selected nonsecret identifiers.
-It is QA-only in Sweden Central. The first environment PUT carries the exact
-reserved app subnet and Consumption profile. Private DNS maps
-`db.qa.tonyai.internal` to the accepted r02 address `10.80.1.4`, never the old host.
-The existing selfhost root remains the only VNet/subnet/NSG/VM writer.
+**This section authorizes nothing.** Every remote discovery, secret operation,
+state initialization, apply, workflow dispatch, image push, migration and DNS
+change requires a separate exact owner approval. A denied, failed or interrupted
+attempt consumes that approval: inspect the result and request a new bounded
+attempt. Never combine the steps below into an unattended script. Production is
+not accepted by these QA-only roots; it requires separately reviewed Sweden inputs.
 
-No live unit is authorized. Before any state initialization or plan/apply,
-require accepted R3/R4/PD-3, fresh resource/subnet/backend inventory, approved
-state keys and capacity/cost review. The separate DNS creation needs explicit
-approval. First foundation inputs keep `oidc_enabled`, `runtime_secrets_ready`,
-`smtp_secret_ready` and `apps_ready` false. Runtime grants can later name only the
-API's exact app-vault secrets; DIRECT_URL and recovery escrow never reach workloads.
-Federation requires the existing full owner/admin GitHub preflight, independent
-reviewer and verified ephemeral JIT host destruction. Production is not supported
-by this QA-only root. The final execution sequence follows with the release/image
-preparation; do not use the legacy hosted apply helpers for this root.
+### Inputs that remain deliberately unresolved
 
-Offline checks only:
+The `inputs.example.json` files inside each QA root and
+`application/qa/target.example.json` contain **invalid `REQUIRED_*` placeholders**.
+They are not runnable tfvars. After the accepted R3/R4 handoff, the owner prepares
+private copies outside the checkout. No password, token or private key goes into
+those files, a workflow input, a plan, an artifact, Git or chat.
+
+| Input | Source / boundary |
+| --- | --- |
+| Tenant/owner UUIDs, ACR/vault names, source SHA | Owner-selected, reviewed nonsecret identifiers; only Sweden QA subscription/group accepted |
+| Default ACA domain and app subnet | Foundation output independently checked against ARM; environment must have its subnet bound at creation |
+| Supabase HTTPS origin / issuer | Accepted scoped r02 hostname, exact `/auth/v1` issuer and derived `/auth/v1/.well-known/jwks.json`; no guessed hostname or hosted project ref |
+| Public browser key / SHA256 | R3 owner handoff; actual key only in protected build environment, hash in public target/candidate; live invalid-key and Auth-settings controls still required |
+| Public DB CA / SHA256 | Reviewed r02 private-DB TLS handoff; **certificate only**, no private key; copied into API image at `/app/infra/certs/qa-db-ca.crt` with hash-dependent cache invalidation |
+| API/web digests, lockfile and ordered migrations | Successful exact-source `qa-candidate.yml` artifact; never tag lookup or hand-authored provenance |
+| `database_secret_version` | App-vault `database-url`, authenticating **tonyai_runtime**, private `db.qa.tonyai.internal:5432`, strict TLS |
+| `backend_secret_version` | App-vault `supabase-service-role-key`, API only; no web secret or recovery-vault access |
+| `DIRECT_URL` | Separate owner-controlled Key Vault/custody channel, using owner role for `pnpm db:deploy`; never app tfvars/env, candidate artifact, app identity or deployer grant |
+| Optional `mail` | Complete provider-approved public SMTP parameters and exact app-vault `smtp-password` version; no provider is selected here |
+
+The new `qa_database_url.py` is an owner-run **syntax check only**, before an
+individually approved secret upload. It never contacts a database or vault and
+never prints its input. Its accepted URL query is exactly
+`sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/qa-db-ca.crt`.
+It rejects host/role/TLS overrides. The runtime role and real Prisma TLS behavior
+still require positive and wrong-CA/wrong-SAN/plaintext/network-negative tests.
+The CA path must exist in the separately reviewed owner migration execution image
+too; do not rewrite the hostname to localhost or disable hostname verification.
 
 ```bash
-terraform -chdir=infra/terraform/foundation/qa init -backend=false -input=false -lockfile=readonly
-terraform -chdir=infra/terraform/foundation/qa validate
-terraform -chdir=infra/terraform/foundation/qa test
+# Owner only, after permission to read this exact credential file; no value output.
+python3 infra/scripts/qa_database_url.py --private-file "$QA_DIR/runtime-url"
+# Separately approved owner credential inspection, never supplied to Container Apps.
+python3 infra/scripts/qa_database_url.py --private-file "$QA_DIR/owner-url" --owner
 ```
 
-
-## QA application release contract preparation
-
-`infra/terraform/application/qa` is the sole application writer for both QA apps;
-its public foundation contract never reads foundation state. Only exact image
-digests and Key Vault secret versions are accepted. APP_URL/WEB_ORIGIN match the
-web origin; Supabase origin/issuer are r02-specific and JWKS-only. API is bounded
-to one replica, 1 CPU/2Gi and five DB connections; web uses 0.5 CPU/1Gi and 0–2
-replicas. Startup, liveness and dependency readiness remain separate probes.
-Optional API SMTP needs complete public parameters and an API-only password
-reference; it does not configure GoTrue password-reset delivery.
-
-The root's invalid-placeholder `inputs.example.json` and `target.example.json`
-are templates only. `qa_release.py` checks the clean source, public release and
-local candidate binding. Its saved-plan oracle independently computes expected
-app bodies and rejects unknown writers, deletes, owner credentials, sidecars,
-insecure ingress, identity drift and revision reuse. Hold removal requires explicit
-acknowledgement. `qa_readback.py` checks public environment/app/revision projections
-and rejects unreviewed executable surfaces; neither tool authenticates arbitrary
-caller-supplied evidence. The authenticated image artifact pipeline and final
-owner execution sequence follow in the next PR. No live release is authorized.
-
-`qa_database_url.py` is an owner-only, status-only syntax check on a separately
-approved private file: runtime uses `tonyai_runtime`; owner uses `postgres`;
-both bind private DB DNS/5432 and strict CA verification without URL overrides.
-It never connects or uploads secrets. Actual Prisma TLS, privileges and host
-readiness remain required. DIRECT_URL never reaches app env, tfvars or identities.
-The eventual release must authenticate its image artifact, drain prior API
-revisions before an unchanged saved-plan apply, preserve cleanup hold and use
-only schema-compatible rollback. No seed/reset or migration is included here.
-
-Offline checks (no cloud):
+Secret transfer examples below are **not authorized now**. Each line needs its
+own exact credential/file/vault approval; only a version URI may leave the owner
+channel. These protected source files are never read by the coding agent.
+`QA_OWNER_VAULT` is a separately approved owner-only custody vault, not a workload
+grantee or a request to reuse the R3 recovery vault.
 
 ```bash
+# Runtime URL: after syntax validation and real role/TLS acceptance.
+az keyvault secret set --vault-name "$QA_APP_VAULT" --name database-url \
+  --file "$QA_DIR/runtime-url" --query id -o tsv
+# Separate approval: r02 backend service key, API-only reference.
+az keyvault secret set --vault-name "$QA_APP_VAULT" --name supabase-service-role-key \
+  --file "$QA_DIR/backend-key" --query id -o tsv
+# Separate owner custody approval: never add this secret to application inputs/grants.
+az keyvault secret set --vault-name "$QA_OWNER_VAULT" --name direct-url \
+  --file "$QA_DIR/owner-url" --query id -o tsv
+```
+
+### Ordered approval units
+
+Before proposing an actual operation, replace every placeholder privately and
+attach its reviewed source SHA, resource IDs, input/plan hashes, exact command,
+expected writes, preconditions and failure stop. A document placeholder is never
+a sufficient apply request. Use Node 22, pnpm 11.9.0 and Terraform 1.13.3.
+
+| Unit | Exact scope and consumed authority | Required evidence / stop |
+| --- | --- | --- |
+| 0 — R3/R4 and resource discovery | Owner-approved read-only ARM projections of r02, all three subnets, NSGs/routes/DNS, all managed environments and both backend containers; no credential reads | Accepted R3 plus full R4/PD-3; fresh unused delegated `10.80.2.0/23` subnet, Sweden capacity, no competing app writer. Bootstrap alone is insufficient. |
+| 1 — bind new state keys | Owner Entra data-plane access to the **existing** backend; `foundation/staging-selfhost-apps.tfstate` and `application/staging-selfhost-apps.tfstate` only | Owner approves new keys after inventory. No bootstrap recreation, import, migration of state, or `-reconfigure` of another root. |
+| 2 — app foundation | Saved `foundation/qa` plan creates `tonyai-staging-apps` RG, Sweden ACR Basic, Log Analytics, ACA environment, app vault, API/web identities, scoped grants; also global private DNS zone/link/r02 A record | Plan has no VNet/subnet/NSG/VM/disk/old-state writes or deletes. First apply has OIDC/runtime/SMTP/app grants disabled. Private DNS is part of this separate DNS approval. Verify region, subnet, profile, identities, vault and diagnostics after apply. |
+| 3 — host TLS/schema/runtime | Claude/API-DB lane's separately reviewed host TLS/listener/NSG patch and migration slot; owner `DIRECT_URL` channel | TLS negative controls using the separately reviewed **owner migration execution image**; only `pnpm db:deploy`, never seed/reset/migrate-dev. `runtime-role.mjs check`, buckets, storage/reconciliation and Auth issuer acceptance. Codex does not patch or run R3 here. |
+| 4 — versioned runtime secrets | Separate approved reads/transfers into the named app-vault `database-url` and `supabase-service-role-key` secrets; optional `smtp-password` only after provider approval | Values stay in the owner's secure channel. Record only exact version IDs. Next reviewed foundation plan enables API grants on those names; no owner/recovery grant. |
+| 5 — federation | Saved foundation plan enables `tonyai-staging-release` managed identity, exact GitHub staging federation and ACR push/identity-operator/environment-read/join grants | Immediately before enabling, owner runs the full GitHub admin preflight below, verifies independent reviewer and fresh JIT host destruction. No app-wide/group Contributor, Graph credential or static client secret. `apps_ready` stays false until owner creates both apps. |
+| 6 — image candidate | One exact-main `qa-candidate.yml` dispatch, staging reviewer approval, fresh `tonyai-staging-eu` JIT host; pushes two ACR images and provenance/SBOM, exports the candidate artifact | Full admin preflight before **each** dispatch; exact-source CI/E2E/integration green. Node image digest and public CA/key/origins bound. Both digests from build metadata; extracted API CA and exact web bundle checked. After this build, prove strict TLS and wrong-CA/wrong-SAN/plaintext/network negatives using the **exact API digest**, before Unit 7. Startup/login/export acceptance remains separate. |
+| 7 — application release | Owner approves one saved `application/qa` plan and its hash; API revision deactivation/drain plus apply writes only the two Container Apps | Authenticate candidate artifact, validate source/inputs/plan, accept schema compatibility and hold setting, then drain old API. Re-read ARM and active revisions. An unsuccessful first release stays unaccepted; no implicit retry. |
+| 8 — app-scoped deployment grants and acceptance | Later separate foundation plan with `apps_ready=true`; grants Container Apps Contributor on only the two existing apps | This principal can replace API code and indirectly access runtime secrets. It never gets foundation/recovery state, migration secrets or role-assignment write. No new automated deployment workflow is enabled by this preparation. |
+
+Unit 1's explicit initialization commands (owner only after state-key approval):
+
+```bash
+# QA_DIR is a private directory outside the repository; these variables contain IDs only.
+terraform -chdir=infra/terraform/foundation/qa init -input=false -lockfile=readonly \
+  -backend-config=use_azuread_auth=true -backend-config="tenant_id=$QA_TENANT_ID" \
+  -backend-config="subscription_id=$QA_SUBSCRIPTION_ID" \
+  -backend-config="storage_account_name=$QA_STATE_ACCOUNT" \
+  -backend-config=container_name=foundation -backend-config=key=staging-selfhost-apps.tfstate
+terraform -chdir=infra/terraform/application/qa init -input=false -lockfile=readonly \
+  -backend-config=use_azuread_auth=true -backend-config="tenant_id=$QA_TENANT_ID" \
+  -backend-config="subscription_id=$QA_SUBSCRIPTION_ID" \
+  -backend-config="storage_account_name=$QA_STATE_ACCOUNT" \
+  -backend-config=container_name=application -backend-config=key=staging-selfhost-apps.tfstate
+```
+
+Do not inherit `TF_VAR_*`, `TF_CLI_ARGS*`, `TF_LOG*`, `AZAPI_LOG*`, a different
+`TF_WORKSPACE`/`TF_DATA_DIR`, automatic tfvars/override files, Shared Key, SAS or
+client-secret environment variables. Verify account tenant/subscription and
+cached backend binding before each unit; only the default Terraform workspace
+is used. State key initialization itself needs approval even though resource
+planning is non-mutating. Never print a state file or raw secret response.
+
+Units 2/4/5/8 each use a new reviewed **foundation** saved plan:
+
+```bash
+terraform -chdir=infra/terraform/foundation/qa plan -input=false -lock-timeout=60s \
+  -var-file="$QA_DIR/foundation.json" -out="$QA_DIR/foundation.tfplan"
+terraform -chdir=infra/terraform/foundation/qa show -no-color "$QA_DIR/foundation.tfplan"
+# Only after the owner approves this exact plan/hash and its resource changes:
+terraform -chdir=infra/terraform/foundation/qa apply -input=false "$QA_DIR/foundation.tfplan"
+```
+
+Unit 6 requires this **owner/admin** check immediately before every dispatch:
+
+```bash
+python3 infra/scripts/github_environment.py --repo tonyaiukco/TonyAI-mono-repo
+# Only after that PASS, independent-reviewer/JIT proof and explicit dispatch approval:
+gh workflow run qa-candidate.yml --ref main
+```
+
+`GITHUB_TOKEN` cannot read all Administration/Variables settings used by that
+preflight; the workflow deliberately does not pretend otherwise. A refusal,
+unreadable setting, unenforceable protection or absent independent reviewer
+blocks dispatch/federation. Do not add a long-lived admin token to the workflow
+or skip the check. The workflow only checks the accessible exact-source release
+gates and public build bindings before federation. Set reviewed public GitHub
+variables `QA_TARGET_JSON`, `QA_PUBLIC_DB_CA`, `QA_PUBLIC_BROWSER_KEY`,
+`QA_AZURE_CLIENT_ID`, `QA_AZURE_TENANT_ID`, `QA_AZURE_SUBSCRIPTION_ID` in a separately
+approved configuration step. `QA_TARGET_JSON` follows `target.example.json`; it
+must name the exact selected `main` SHA. Browser key text is not requested in chat.
+BuildKit provenance/SBOM is attached to OCI output; no independent signature
+verification or bit-for-bit reproducibility is claimed.
+
+Unit 7's owner-reviewed application commands:
+
+```bash
+# Authenticates run identity, repository, workflow, SHA, status and artifact ZIP digest.
+python3 infra/scripts/qa_candidate_artifact.py --sha "$QA_SOURCE_SHA" \
+  --run-id "$QA_CANDIDATE_RUN_ID" --output "$QA_DIR/candidate.json"
+python3 infra/scripts/qa_release.py --inputs "$QA_DIR/release.json" --candidate "$QA_DIR/candidate.json"
+terraform -chdir=infra/terraform/application/qa plan -input=false -lock-timeout=60s \
+  -var-file="$QA_DIR/release.json" -out="$QA_DIR/application.tfplan"
+terraform -chdir=infra/terraform/application/qa show -json "$QA_DIR/application.tfplan" > "$QA_DIR/application-plan.json"
+python3 infra/scripts/qa_release.py --inputs "$QA_DIR/release.json" \
+  --candidate "$QA_DIR/candidate.json" --plan "$QA_DIR/application-plan.json"
+shasum -a 256 "$QA_DIR/application.tfplan"
+```
+
+The offline validator binds inputs and **independently computed** app bodies;
+it does not authenticate an arbitrary caller-supplied candidate JSON. The preceding
+artifact retrieval and private run/approval record are mandatory. If a previous
+candidate file exists, reconcile its exact recorded artifact identity; never
+silently overwrite it or hand-edit it. A new rollout/rollback uses a new
+`release_id`. First creation keeps `storage_cleanup_hold=true`; any removal of a
+hold needs reviewed reconciliation reports and separate owner approval before
+using `qa_release.py --ack-clear-storage-hold`.
+
+After approval of the saved plan, explicitly drain/deactivate prior API revisions
+using the existing bounded drain helper **before** applying it. `Single` revision
+mode and max one replica do not prevent rollout overlap of process-local quotas.
+This creates a maintenance window; no zero-downtime claim is made.
+
+```bash
+# Separate approved API revision mutation; consumes the exact release approval.
+PYTHONPATH=infra/scripts python3 - "$QA_DIR/release.json" <<'PYDRAIN'
+import sys
+from qa_contract import load, foundation
+from drain_api import drain
+from runtime_limits import validate_limits
+value = load(sys.argv[1])
+foundation(value['foundation'])
+grace = validate_limits(value['release']['runtime_limits'])['SHUTDOWN_GRACE_MS']
+drain(value['foundation'], value['release']['release_id'], attempts=(grace + 31999) // 2000)
+PYDRAIN
+# Apply only the exact approved, unchanged saved-plan hash; never silently re-plan.
+terraform -chdir=infra/terraform/application/qa apply -input=false -lock-timeout=60s "$QA_DIR/application.tfplan"
+```
+
+Capture **public** ARM projections privately: the managed environment resource,
+both Container App resources keyed by `api`/`web`, and both complete revision
+lists keyed by `api`/`web`. Use ordinary `show`/revision-list reads, never
+`listSecrets`, vault value reads or full Terraform state. Then:
+
+```bash
+python3 infra/scripts/qa_readback.py --inputs "$QA_DIR/release.json" \
+  --candidate "$QA_DIR/candidate.json" --environment "$QA_DIR/environment.json" \
+  --apps "$QA_DIR/apps.json" --revisions "$QA_DIR/revisions.json"
+```
+
+A readback PASS is not application acceptance. Verify actual-image startup,
+readiness and recovery, login → factorless entry/no-factor refusal → evidence →
+review → report, API/PostgREST cross-tenant negatives, private buckets, exact-ID
+synthetic cleanup, runtime privilege exclusion, alert delivery and compatible
+rollback. Temporary tenants and email delivery need their own write approval.
+The existing resource/runtime limits stay: API 1 CPU/2Gi, exactly one replica and
+five DB connections; web 0.5 CPU/1Gi, 0–2 replicas. Raising them needs capacity proof.
+
+Rollback uses this same application root with an authenticated previous candidate,
+a new revision suffix and exact compatible secret versions, followed by drain
+and readback. Check the previous source from its clean reviewed checkout; do not
+relabel an old candidate as the current source. Image rollback never reverses
+schema, data, secrets or Auth settings. On failure preserve evidence/state and
+request a new specific recovery approval; do not destroy shared infrastructure.
+
+### SMTP, Auth and operational acceptance
+
+`APP_URL` and exact CORS `WEB_ORIGIN` always equal the web origin. Optional API
+mail parameters are `host`, `port`, `secure`, `user`, `from`, and
+`password_secret_version`; password resolution is API-only through Key Vault.
+The same provider must also be configured separately on self-hosted GoTrue for
+password reset; an API SMTP setting does **not** configure GoTrue. The R3/host
+owner supplies that reviewed configuration and exact redirect allow-list.
+Sender/processor/residency, SPF/DKIM/DMARC and invitation/reset delivery remain
+owner decisions and acceptance; no ACS/Resend or production deployment is implied.
+
+The foundation routes ACA console/system logs to the Sweden Log Analytics
+workspace by ARM ID, without workspace keys. Named-operator alert delivery,
+secret rotation, dependency-loss/recovery and DB **plus object-byte** restore
+are still live gates, not a consequence of successful log routing.
+
+### Offline verification
+
+```bash
+python3 infra/scripts/check_terraform_policy.py
 python3 infra/scripts/qa_policy.py
 python3 -m unittest discover -s infra/tests -p 'test_qa_*.py' -v
-terraform -chdir=infra/terraform/application/qa init -backend=false -input=false -lockfile=readonly
-terraform -chdir=infra/terraform/application/qa validate
-terraform -chdir=infra/terraform/application/qa test
+terraform fmt -check -recursive infra/terraform
+for root in foundation/qa application/qa; do
+  terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
+  terraform -chdir="infra/terraform/$root" validate
+  terraform -chdir="infra/terraform/$root" test
+done
 terraform -chdir=infra/terraform/application/qa test -json -verbose > "$TMPDIR/qa-plan.jsonl"
 python3 infra/scripts/qa_plan_contract.py "$TMPDIR/qa-plan.jsonl"
 ```
+
+These mock/synthetic checks use no R3 host or local Supabase stack and do not
+prove live networking, TLS, effective Azure grants or tenant isolation.

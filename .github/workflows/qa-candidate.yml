@@ -1,0 +1,60 @@
+name: Sweden QA candidate images
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: qa-application-release
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main' && vars.STAGING_RUNNER_MODE == 'ephemeral-jit'
+    runs-on: tonyai-staging-eu
+    environment: staging
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      # The owner runs github_environment.py with their authorized admin session
+      # before each dispatch. GITHUB_TOKEN cannot read Administration/Variables
+      # settings; never pretend this job token establishes those prerequisites.
+      - name: Check exact-source release before federation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 infra/scripts/release_checks.py
+      - name: Bind only public build parameters before cloud login
+        env:
+          QA_TARGET_JSON: ${{ vars.QA_TARGET_JSON }}
+          QA_PUBLIC_DB_CA: ${{ vars.QA_PUBLIC_DB_CA }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.QA_PUBLIC_BROWSER_KEY }}
+          QA_CLIENT_ID: ${{ vars.QA_AZURE_CLIENT_ID }}
+          QA_TENANT_ID: ${{ vars.QA_AZURE_TENANT_ID }}
+          QA_SUBSCRIPTION_ID: ${{ vars.QA_AZURE_SUBSCRIPTION_ID }}
+        run: |
+          python3 infra/scripts/qa_workflow.py
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.QA_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.QA_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.QA_AZURE_SUBSCRIPTION_ID }}
+      - name: Build and push the approved QA candidate
+        env:
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.QA_PUBLIC_BROWSER_KEY }}
+        run: >-
+          python3 infra/scripts/qa_images.py
+          --target "$RUNNER_TEMP/qa-target.json"
+          --public-db-ca "$RUNNER_TEMP/qa-db-ca.crt"
+          --output "$RUNNER_TEMP/qa-candidate.json" --approved-push
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qa-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/qa-candidate.json
+          if-no-files-found: error
+          retention-days: 30

@@ -78,18 +78,21 @@ is used. Hosted helper secrets stay in memory and Key Vault. Self-hosted service
 also require protected root-only runtime files as described in runbook 07.
 Secret payloads never enter tfvars, state, plan files, logs, repository files or chat.
 
-## Sweden QA application foundation
+## Sweden QA application preparation
 
-`terraform/foundation/qa` is an additive QA-only root. It creates the app resource
-group, ACR, Log Analytics, VNet-bound Container Apps environment, application
-vault, API/web identities and private r02 DNS. It references the existing app
-subnet and never writes the data VNet, NSG or VM. OIDC and runtime/app secret
-grants start disabled; each requires a later reviewed owner approval. The
-`qa-infra.yml` workflow validates and mock-tests this root without cloud credentials.
-`terraform/application/qa` now owns both app definitions. Public release, saved-plan,
-DB URL syntax and ARM-readback validators are separate from credential transfer.
-The candidate pipeline follows separately; live R3/R4, TLS and application
-acceptance remain required. See runbook 08.
+The additive `terraform/foundation/qa` and `terraform/application/qa` roots are
+independent from the retained hosted roots and from the Claude-owned R3 host.
+The environment binds the existing app subnet at creation; private DB DNS points
+only to r02. Workloads receive exact Key Vault runtime references, never the
+migration owner or recovery escrow. OIDC starts disabled. The manual
+`qa-candidate.yml` and `qa_*` helpers bind source, public inputs, provenance,
+image digests and independent plan/readback policy. `qa-infra.yml` exercises both
+new roots and their tests without cloud credentials.
+
+See [runbook 08](runbooks/08-qa-application.md#application-preparation-and-owner-execution)
+for the required placeholders and exact approval units. R3/R4, private DB TLS,
+schema/runtime privileges and live acceptance are still required. No live step
+is authorized by these files or by passing mock tests.
 
 ## Historical hosted reference (00–06)
 
