@@ -37,5 +37,6 @@ jobs:
           terraform -chdir=infra/terraform/foundation/qa test -json -verbose > "$RUNNER_TEMP/qa-foundation-plan.jsonl"
           python3 infra/scripts/qa_foundation_mock.py "$RUNNER_TEMP/qa-foundation-plan.jsonl"
           python3 infra/scripts/qa_runtime_mock.py --terraform "$(command -v terraform)"
+          python3 infra/scripts/qa_oidc_mock.py --terraform "$(command -v terraform)"
           terraform fmt -check -recursive infra/terraform
-          terraform fmt -check infra/tests/fixtures/qa-runtime.tftest.hcl
+          terraform fmt -check infra/tests/fixtures/qa-runtime.tftest.hcl infra/tests/fixtures/qa-oidc.tftest.hcl

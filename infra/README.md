@@ -117,6 +117,19 @@ initial policy changed. See [offline Unit 4 tools](runbooks/08-qa-application.md
 a disposable copy; it removes only the five prevent-destroy guards for mock
 teardown and does not initialize a backend or run a real plan/apply.
 
+Unit 5 uses `qa_oidc.py` and its independent `qa_oidc_plan.py` oracle. It accepts
+only `runtime=true, oidc=false, smtp=false, apps=false` → `true,true,false,false`,
+plus an explicitly bound optional `releaseSha` tag change. All 17 Unit 4 resources
+remain; only the release identity, exact staging federation and five narrow grants
+are created (24 total). `qa_oidc_receipt.py` prepares complete public resource,
+identity, federation and assignment snapshots; `qa_oidc_github.py` checks projected
+admin prerequisites with pagination/failure/freshness bindings. Both are offline;
+no caller JSON authenticates Azure/GitHub or proves effective/inherited access.
+The owner packet stays `BLOCKED_DRAFT`, including with complete synthetic receipts.
+`qa_oidc_mock.py` runs the installed-provider mock transition in a disposable copy,
+with the same five teardown-only guard removals. No production Terraform changed.
+See [offline Unit 5 tools](runbooks/08-qa-application.md#offline-unit-5-tools).
+
 Unit 7 uses `qa_application.py` to derive JSON privately from the exact saved
 application binary, retain the two-app body oracle and bind source/configuration,
 provider lock, inputs and candidate hashes. `qa_application_receipt.py` prepares
