@@ -141,6 +141,22 @@ existing authenticated GitHub artifact lookup; it is not part of offline tests.
 See [offline Unit 7 tools](runbooks/08-qa-application.md#offline-unit-7-tools).
 There is no apply executor, automatic promotion, retry or acceptance claim.
 
+Unit 8 uses `qa_deployment.py` and its separate two-grant policy: only `apps_ready`
+changes false to true, with an optional exact RG `tags.releaseSha` update. All 24
+existing foundation resources remain; the resulting 26-resource state excludes
+the two apps, whose sole writer is still `application/qa`. Historical Unit 5 and
+Unit 7 evidence is checked against each source commit's public Git blobs, including
+the historical candidate lockfile/migration fingerprint, never today's checkout.
+Fresh public observations must prove both accepted apps exist and remain unchanged;
+all prior resources/assignments/identities/federation are preserved. The existing
+pure Unit 5 GitHub prerequisite policy is reused. `qa_deployment_mock.py` establishes
+24 resources with the installed provider, then checks exactly two creates in a
+disposable copy, removing only five teardown guards there. `qa_deployment_packet.py`
+always returns `BLOCKED_DRAFT` and `authorization=false`. Container Apps Contributor
+can replace API code and indirectly access runtime secrets. No live grant, automatic
+deployment workflow or operational acceptance follows from offline success.
+See [offline Unit 8 tools](runbooks/08-qa-application.md#offline-unit-8-tools).
+
 ## Historical hosted reference (00–06)
 
 1. [Restore a safe session](runbooks/00-session.md).

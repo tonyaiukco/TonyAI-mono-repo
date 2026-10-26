@@ -10,7 +10,7 @@ from qa_oidc_contract import predecessor
 from qa_oidc_expected import additions, resource_id
 
 
-def validate(request, evidence, report, *, now=None):
+def validate(request, evidence, report, *, now=None, source_root=ROOT):
     before, after, _, principals = predecessor(request,evidence,now=now)
     fields(report, 'resource_count actions resources additions principals release_principal_id oidc_client_id '
         'computed_references_require_post_apply_readback source_tag_change source_sha previous_source_sha saved_plan_path '
@@ -28,9 +28,9 @@ def validate(request, evidence, report, *, now=None):
         if key.endswith('_sha256') and key!='file_sha256': match(r'[a-f0-9]{64}',value)
     for value in report.get('file_sha256',{}).values(): match(r'[a-f0-9]{64}',value)
     for key in ('saved_plan_path','terraform_path'): require(Path(report[key]).is_absolute())
-    require(report['provider_lock_sha256']==sha256((QA_ROOT/'.terraform.lock.hcl').read_bytes())
-        and report['deployment_policy_sha256']==sha256((ROOT/'infra/config/deployment-policy.json').read_bytes())
-        and report['configuration_sha256']==digest({n:sha256((QA_ROOT/n).read_bytes()) for n in sorted(CONFIG_FILES)}))
+    require(report['provider_lock_sha256']==sha256((source_root/'infra/terraform/foundation/qa/.terraform.lock.hcl').read_bytes())
+        and report['deployment_policy_sha256']==sha256((source_root/'infra/config/deployment-policy.json').read_bytes())
+        and report['configuration_sha256']==digest({n:sha256((source_root/'infra/terraform/foundation/qa'/n).read_bytes()) for n in sorted(CONFIG_FILES)}))
     require(timestamp(evidence['after_receipt']['completed_at']) <= timestamp(report['plan_created_at']))
     principal,client=report['release_principal_id'],report['oidc_client_id']
     require((principal is None)==(client is None))

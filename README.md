@@ -413,6 +413,12 @@ Unit 7 also has an application binary/source/lock
 inspector, complete revision receipts and a secret-free `BLOCKED_DRAFT` owner
 packet; local candidate JSON and offline receipts do not authenticate live
 provenance. These tools validate offline evidence only;
+Unit 8 adds an independent saved-binary app-grant inspector: it preserves 24
+foundation resources and creates only two Container Apps Contributor assignments
+on the already accepted API/web apps. Separate historical Unit 5/7 source chains,
+fresh unchanged-app snapshots and exact assignment deltas remain a permanently
+`BLOCKED_DRAFT` owner packet. This permission can replace API code and indirectly
+access runtime secrets; no automatic deployment executor is enabled.
 R3/R4 acceptance, approved backend initialization and a separately approved
 foundation apply remain prerequisites. The application is not deployed.
 JWT issuer enforcement was integrated by #180; deployed selfhost issuer/JWKS and

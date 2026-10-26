@@ -1,7 +1,7 @@
 """Full public Unit 5 snapshots. Local consistency never proves effective access."""
 from datetime import datetime, timezone
 import re
-from qa_contract import SUBSCRIPTION, GROUP, fields, require, match
+from qa_contract import ROOT, SUBSCRIPTION, GROUP, fields, require, match
 from qa_discovery import digest, timestamp, verify_record
 from qa_foundation_inputs import UUID
 from qa_foundation_expected import expected
@@ -81,8 +81,14 @@ def verify(request, evidence, plan_hash, receipt, phase, *, not_before, now=None
     records={r['key']:r for r in receipt['records']}
     require(len(records)==len(receipt['records']) and set(records)==set(spec['commands']))
     data={k:verify_record(records[k],v,start,end) for k,v in spec['commands'].items()}
-    require(normalized(data['account'])=={'subscription_id':SUBSCRIPTION,'tenant_id':after['tenant_id']})
-    config=before if phase=='before' else after
+    snapshot = check_snapshot(before if phase=='before' else after, historical, principals, data, phase)
+    return dict(receipt_sha256=digest(receipt),manifest_sha256=digest(spec),started_at=receipt['started_at'],
+                completed_at=receipt['completed_at'], **snapshot)
+
+
+def check_snapshot(config, historical, principals, data, phase):
+    """Pure Unit 5 public snapshot oracle, shared without changing its policy."""
+    require(normalized(data['account'])=={'subscription_id':SUBSCRIPTION,'tenant_id':config['tenant_id']})
     resources={**expected(config,principals),**grants(config,principals)}
     for address,wanted in expected(config,principals).items():
         if address.startswith('azapi_resource.grant['): continue
@@ -128,15 +134,14 @@ def verify(request, evidence, plan_hash, receipt, phase, *, not_before, now=None
     for kind,identity_id in ids.items():
         row=inventory[identity_id]
         require(row['type'].lower()=='microsoft.managedidentity/userassignedidentities' and row['location']=='swedencentral'
-                and row['tags']==identities[identity_id]['tags'])
-    return dict(receipt_sha256=digest(receipt),manifest_sha256=digest(spec),started_at=receipt['started_at'],completed_at=receipt['completed_at'],
-                roles=roles,resources=inventory,identities=identities,release_principal_id=principal,
+                and (row['tags'] in (None,{}) if kind=='release' else row['tags']==identities[identity_id]['tags']))
+    return dict(roles=roles,resources=inventory,identities=identities,release_principal_id=principal,
                 oidc_client_id=identities[ids['release']]['client_id'] if phase=='after' else None)
 
 
-def verify_after(request,evidence,report,before_receipt,after_receipt,*,plan_completed_at,apply_started_at,apply_completed_at,now=None):
+def verify_after(request,evidence,report,before_receipt,after_receipt,*,plan_completed_at,apply_started_at,apply_completed_at,now=None,source_root=ROOT):
     from qa_oidc_report import validate, correlate_identity
-    validate(request,evidence,report,now=now)
+    validate(request,evidence,report,now=now,source_root=source_root)
     plan_hash=report['plan_sha256']
     require(timestamp(report['plan_created_at']) <= timestamp(plan_completed_at))
     before=verify(request,evidence,plan_hash,before_receipt,'before',not_before=plan_completed_at,now=now)
