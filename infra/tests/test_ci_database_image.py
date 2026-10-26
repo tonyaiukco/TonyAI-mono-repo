@@ -82,6 +82,8 @@ class DatabaseImageTests(unittest.TestCase):
         image.prepare(self.root)
         pull = ('docker', 'pull', '--platform', 'linux/amd64', image.REGISTRY + '/' + self.policy['image'])
         tag = ('docker', 'tag', image.REGISTRY + '/' + self.policy['image'], image.REGISTRY + '/' + self.policy['image_tag'])
+        self.assertIn(pull, self.calls)  # an assertion, never a ValueError from index (check_mutations)
+        self.assertIn(tag, self.calls)
         self.assertLess(self.calls.index(pull), self.calls.index(tag))
         image.verify(self.root)
         self.assertIn(('docker', 'image', 'inspect', self.policy['config_digest'], '--format',
