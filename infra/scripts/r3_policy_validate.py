@@ -105,7 +105,7 @@ def read_context(value):
         failure(item, ('close-file', 'close-parent'))
 
 
-def section(value, check, allow_unreviewed=False, snap_context=False):
+def section(value, check, allow_unreviewed=False, snap_context=False, items=None):
     require(isinstance(value, dict))
     state = value.get('state')
     if state == 'ok':
@@ -117,11 +117,18 @@ def section(value, check, allow_unreviewed=False, snap_context=False):
         return False
     keys = ({'state', 'error'}, {'state', 'error', 'prior'})
     require(state == 'error' and (set(value) in keys or
-            snap_context and set(value) == {'state', 'error', 'context'}))
+            snap_context and set(value) == {'state', 'error', 'context'} or
+            items is not None and set(value) == {'state', 'error', 'locus'}))
     require(value['error'] in (*ERRORS, 'CHANGED', *(['UNREVIEWED_PATH'] if allow_unreviewed else [])))
     if 'context' in value:
         require(value['error'] == 'OSError')
         read_context(value['context'])
+    if 'locus' in value:
+        # A PackageKit item failure: its index in the section's fixed ITEMS and the errno, nothing else.
+        locus = value['locus']
+        require(value['error'] != 'CHANGED' and isinstance(locus, dict) and set(locus) == {'item', 'errno'}
+                and type(locus['item']) is int and 0 <= locus['item'] < items
+                and (locus['errno'] is None or type(locus['errno']) is int and 1 <= locus['errno'] <= 4095))
     if 'prior' in value:
         require(value['error'] in ('CHANGED', 'TimeoutError'))
         check(value['prior'])
@@ -185,7 +192,8 @@ def packagekit_sections(sections):
     for name in pk_state.SECTION_NAMES:
         if name == 'dbus-socket':
             continue  # validated with the legacy section shape below
-        good = section(sections.get(name), lambda v, name=name: pk_state.check(name, v))
+        good = section(sections.get(name), lambda v, name=name: pk_state.check(name, v),
+                       items=len(pk_state.ITEMS[name]) if name in pk_state.ITEMS else None)
         if good and name in pk_state.COMMANDS:
             item = sections[name]['value']
             good = item['returncode'] == 0 and item['stderr']['bytes'] == 0
@@ -349,7 +357,7 @@ def validate(data, binding):
     status = 'PARTIAL_REVIEW_REQUIRED' if not complete else 'DISCOVERY_ONLY' if discovery else 'COLLECTED_REVIEW_REQUIRED'
     # The contract names the proof its reviewed values come from, so a result is never read
     # against another module version's semantics.
-    contract = 'option-c/' + pk_state.REVIEWED['proof_id'] if doc['format'] == 3 else 'legacy'
+    contract = f"option-c/{pk_state.REVIEWED['proof_id']}/r{pk_state.PREDICATE_REVISION}" if doc['format'] == 3 else 'legacy'
     return {'status': status, 'predicate_contract': contract,
             'packagekit_activation_possible': predicate, 'policy_input_hashes': hashes,
             'qualification': False, 'installation_success': False, 'policy_generated': False}

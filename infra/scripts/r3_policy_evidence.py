@@ -102,8 +102,9 @@ def operation(function):
     try:
         return {'state': 'ok', 'value': function()}
     except Exception as exc:
-        # Exception messages can contain private output. Never export them.
-        return {'state': 'error', 'error': error_code(exc)}
+        # Exception messages can contain private output. Never export them; a PackageKit
+        # item failure adds only its path-free `locus` (pk_state.error_record).
+        return pk_state.error_record(exc, error_code)
 
 
 def command(name, deadline):

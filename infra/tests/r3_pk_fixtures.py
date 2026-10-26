@@ -35,6 +35,12 @@ SYSTEM_CONF = (b'<busconfig>\n  <standard_system_servicedirs/>\n'
                b'  <includedir>/etc/dbus-1/system.d</includedir>\n'
                b'  <include ignore_missing="yes">/etc/dbus-1/system-local.conf</include>\n</busconfig>\n')
 POLICY_CONF = b'<busconfig><policy user="root"><allow own="org.freedesktop.PackageKit"/></policy></busconfig>\n'
+# snapd's include: one servicedir, appended after the standard ones (C2/C9, PR-C1b).
+SNAPD_CONF = (b'<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"\n'
+              b' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
+              b'<busconfig>\n  <servicedir>/var/lib/snapd/dbus-1/system-services/</servicedir>\n</busconfig>\n')
+SESSION_CONF = b'<busconfig>\n  <type>session</type>\n  <standard_session_servicedirs/>\n  <includedir>session.d</includedir>\n</busconfig>\n'
+NEEDRESTART_CONF = b"# needrestart - Restart daemons after library updates.\n$nrconf{verbosity} = 1;\n"
 PACKAGED_UNITS = {
     'dbus.service': DBUS_FRAGMENT,
     'dbus.socket': b'[Socket]\nListenStream=/run/dbus/system_bus_socket\n',
@@ -121,7 +127,19 @@ class Host:
         self.write('/usr/share/dbus-1/system-services/org.freedesktop.systemd1.service', SYSTEMD1_BODY)
         self.write('/usr/share/dbus-1/system.conf', SYSTEM_CONF)
         self.write('/usr/share/dbus-1/system.d/org.freedesktop.PackageKit.conf', POLICY_CONF)
+        self.write(state.SNAPD_INCLUDE, SNAPD_CONF)
+        self.path(state.SNAPD_SERVICE_DIR).mkdir(parents=True)
         self.path('/etc/dbus-1/system.d').mkdir(parents=True)
+        # The O7/O11/O12 evidence trees (deb-systemd-helper state, needrestart, session bus, linger).
+        self.write('/var/lib/systemd/deb-systemd-helper-enabled/ssh.service.dsh-also',
+                   b'/etc/systemd/system/multi-user.target.wants/ssh.service\n')
+        self.write('/var/lib/systemd/deb-systemd-helper-enabled/multi-user.target.wants/ssh.service', b'')
+        self.write('/etc/needrestart/needrestart.conf', NEEDRESTART_CONF)
+        self.write('/etc/needrestart/conf.d/README.needrestart', b'# configuration snippets\n')
+        self.write('/etc/needrestart/hook.d/10-dpkg', b'#!/bin/sh\n', 0o755)
+        self.write('/usr/share/dbus-1/session.conf', SESSION_CONF)
+        self.path('/usr/share/dbus-1/session.d').mkdir(parents=True)
+        self.path('/var/lib/systemd/linger').mkdir(parents=True)
         self.path('/sys/fs/selinux').mkdir(parents=True)
         for name, body in PACKAGED_UNITS.items():
             self.write('/usr/lib/systemd/system/' + name, body)
@@ -255,9 +273,10 @@ class Host:
                     'service_members': {'/usr/local/share/dbus-1/system-services': (),
                                         '/usr/share/dbus-1/system-services': ('org.freedesktop.PackageKit.service',
                                                                               'org.freedesktop.systemd1.service'),
-                                        '/usr/lib/dbus-1/system-services': ()},
+                                        '/usr/lib/dbus-1/system-services': (), state.SNAPD_SERVICE_DIR: ()},
                     'config_files': {'/usr/share/dbus-1/system.conf': digest(SYSTEM_CONF)},
-                    'config_members': {'/usr/share/dbus-1/system.d': {'org.freedesktop.PackageKit.conf': digest(POLICY_CONF)},
+                    'config_members': {'/usr/share/dbus-1/system.d': {'org.freedesktop.PackageKit.conf': digest(POLICY_CONF),
+                                                                      'snapd.system-services.conf': digest(SNAPD_CONF)},
                                        '/etc/dbus-1/system.d': {}},
                     'selinux_rule': 'selinuxfs-absent-or-empty',
                     'masked_fragment_path': state.MASK_PATH,

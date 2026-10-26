@@ -54,9 +54,11 @@ UNIT_PROPERTIES = ('Id', 'Names', 'LoadState', 'UnitFileState', 'ActiveState', '
                    'ActiveExitTimestampMonotonic', 'InactiveEnterTimestampMonotonic')
 SERVICE_PROPERTIES = ('MainPID', 'NRestarts', 'ExecMainStartTimestamp')
 ROW_FORMAT = '${binary:Package}\\t${Version}\\t${source:Package}\\t${source:Version}\\t${db:Status-Status}\\n'
-# C12 code identity plus the kernel (security H2: O15/O16 are kernel semantics).
+# C12 code identity plus the kernel (security H2: O15/O16 are kernel semantics). polkitd
+# authorizes PackageKit's methods and snapd ships the C9 include (PR-C1b, owner K5).
 PACKAGES = ('dbus*', 'libdbus-1-3*', 'systemd', 'systemd-sysv', 'libsystemd-shared', 'libsystemd0*',
-            'libglib2.0*', 'packagekit*', 'init-system-helpers', 'needrestart', 'linux-image-*')
+            'libglib2.0*', 'packagekit*', 'init-system-helpers', 'needrestart', 'polkitd',
+            'libpolkit-gobject-1-0*', 'snapd', 'linux-image-*')
 # The only commands this module runs (T-READONLY pins them).
 COMMANDS = {
     'pk-units': ['systemctl', 'show', '--no-pager', '--timestamp=unix',
@@ -81,17 +83,23 @@ USER_ROOTS = ('/root/.config/systemd/user.control', '/run/user/0/systemd/user.co
               '/usr/local/lib/systemd/user', '/usr/lib/systemd/user', '/var/lib/snapd/desktop/systemd/user',
               '/run/user/0/systemd/generator.late')
 # O2 system service directories in dbus' proven order. /lib/dbus-1/system-services is
-# reached through the recorded /lib alias, never by following it (C2).
+# reached through the recorded /lib alias, never by following it (C2). snapd's include
+# declares one more `<servicedir>`; dbus appends an included servicedir after the
+# standard ones and activation takes the first matching Name= in that order (o9-o12
+# review: config-parser.c servicedir append, activation.c directory scan).
+SNAPD_SERVICE_DIR = '/var/lib/snapd/dbus-1/system-services'
 SERVICE_DIRS = ('/usr/local/share/dbus-1/system-services', '/usr/share/dbus-1/system-services',
-                '/usr/lib/dbus-1/system-services')
+                '/usr/lib/dbus-1/system-services', SNAPD_SERVICE_DIR)
 SESSION_DIRS = ('/root/.local/share/dbus-1/services', '/usr/local/share/dbus-1/services',
                 '/usr/share/dbus-1/services', '/var/lib/snapd/desktop/dbus-1/services', '/run/user/0/dbus-1/services')
 # Parents of the C2/C9 paths: a file added or removed after dbus started changes their ctime (C15).
-DBUS_PARENTS = ('/usr/share/dbus-1', '/etc/dbus-1', '/usr/local/share/dbus-1', '/usr/lib/dbus-1')
+DBUS_PARENTS = ('/usr/share/dbus-1', '/etc/dbus-1', '/usr/local/share/dbus-1', '/usr/lib/dbus-1', '/var/lib/snapd/dbus-1')
 # C9 chain (O2 PROVEN incl. system-local.conf); the SELinux contexts include is
 # honoured only when SELinux is enabled, so its runtime state is recorded.
 CONFIG_FILES = ('/usr/share/dbus-1/system.conf', '/etc/dbus-1/system.conf', '/etc/dbus-1/system-local.conf')
 CONFIG_DIRS = ('/usr/share/dbus-1/system.d', '/etc/dbus-1/system.d')
+# The one include allowed to declare a servicedir, and only SNAPD_SERVICE_DIR (C9).
+SNAPD_INCLUDE = '/usr/share/dbus-1/system.d/snapd.system-services.conf'
 SELINUX = '/sys/fs/selinux'
 PK_FRAGMENTS = ('/usr/lib/systemd/system/dbus.service', '/usr/lib/systemd/system/dbus.socket',
                 '/usr/lib/systemd/system/packagekit.service',
@@ -100,33 +108,69 @@ PK_FRAGMENTS = ('/usr/lib/systemd/system/dbus.service', '/usr/lib/systemd/system
 # members are reviewed; an absent or different file can only give None.
 C12_FILES = ('/usr/libexec/packagekitd', '/usr/bin/dbus-daemon', '/usr/lib/dbus-1.0/dbus-daemon-launch-helper',
              '/usr/lib/systemd/systemd', '/usr/lib/x86_64-linux-gnu/systemd/libsystemd-shared-255.so',
-             '/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0')
+             '/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0', '/usr/bin/gdbus')
+# The alias's own drop-in directory and the `packagekit-` prefix drop-in, which systemd 255
+# applies to packagekit-offline-update.service (QA M; the PR-C1 Explore note).
 C5_NAMES = ('packagekit.service', 'packagekit.service.d', 'packagekit@.service', 'packagekit@.service.d',
-            'dbus-org.freedesktop.PackageKit.service')
+            'dbus-org.freedesktop.PackageKit.service', 'dbus-org.freedesktop.PackageKit.service.d',
+            'packagekit-.service.d')
 C14_NAMES = ('packagekit.socket', 'packagekit.path', 'packagekit.timer', 'packagekit@.socket')
 CANDIDATES = (*C5_NAMES, *C14_NAMES, 'dbus.service.d', 'dbus.socket.d', 'service.d', 'socket.d')
 SYSTEM_UPDATE = ('/system-update', '/etc/system-update')
 PK_PROCESSES = frozenset({'packagekitd', 'pk-offline-update', 'pk-offline-upda'})
 LINKS = ('/etc/systemd/system/packagekit.service', '/var/run', '/lib')
+# Evidence for the open O7, O11 and O12 obligations (PR-C1b): no conjunct reads their values
+# yet, but each must be collected and well-formed (G7.evidence), so a gap gives None.
+DSH_DIRS = ('/var/lib/systemd/deb-systemd-helper-enabled', '/var/lib/systemd/deb-systemd-helper-masked')
+NEEDRESTART = '/etc/needrestart'
+NEEDRESTART_FILES = ('/etc/needrestart/needrestart.conf', '/etc/needrestart/notify.conf', '/etc/needrestart/iucode.sh')
+NEEDRESTART_DIRS = ('/etc/needrestart/conf.d', '/etc/needrestart/hook.d', '/etc/needrestart/notify.d',
+                    '/etc/needrestart/restart.d')
+SESSION_CONFIG_FILES = ('/usr/share/dbus-1/session.conf', '/etc/dbus-1/session.conf', '/etc/dbus-1/session-local.conf')
+SESSION_CONFIG_DIRS = ('/usr/share/dbus-1/session.d', '/etc/dbus-1/session.d')
+USER_MANAGER = ('/var/lib/systemd/linger', '/run/user/0', '/run/systemd/users')
+EVIDENCE_SECTIONS = ('dsh-state', 'needrestart-config', 'dbus-session-config', 'user-manager')
 SECTION_NAMES = ('pk-units', 'manager', 'pk-package-metadata', *('link:' + p for p in LINKS),
                  'dir-meta:/var', 'device:/dev/null', 'dbus-socket', 'unit-candidates', 'unit-universe',
                  'dpkg-md5sums', 'pk-fragments', 'dbus-service-dirs', 'dbus-config', 'dbus-daemon-proc',
-                 'pk-binaries', 'pk-processes')
+                 'pk-binaries', 'pk-processes', *EVIDENCE_SECTIONS)
 # Sections the collector re-reads for drift; dbus-daemon-proc compares only its
-# process identity, its volatile values are continuity data.
+# process identity, its volatile values are continuity data. user-manager is runtime
+# state that a login changes.
 REREAD = tuple(n for n in SECTION_NAMES if n not in ('pk-units', 'manager', 'pk-package-metadata',
-                                                      'dbus-socket', 'pk-processes'))
+                                                      'dbus-socket', 'pk-processes', 'user-manager'))
+# Each section's fixed item order. An error record names the failing item's index in it
+# and the errno, never a path or a message (`locus`; owner K3).
+ITEMS = {'unit-candidates': (*UNIT_ROOTS, *SYSTEM_UPDATE), 'unit-universe': (*UNIT_ROOTS, *USER_ROOTS),
+         'pk-fragments': PK_FRAGMENTS, 'pk-binaries': C12_FILES, 'dbus-service-dirs': (*SERVICE_DIRS, *SESSION_DIRS),
+         'dbus-config': (*CONFIG_FILES, *CONFIG_DIRS, *DBUS_PARENTS, SELINUX), 'dsh-state': DSH_DIRS,
+         'needrestart-config': (*NEEDRESTART_FILES, *NEEDRESTART_DIRS, NEEDRESTART),
+         'dbus-session-config': (*SESSION_CONFIG_FILES, *SESSION_CONFIG_DIRS), 'user-manager': USER_MANAGER}
+# Discovery-mode md5sums (owner K4/U1): every package's list is read, and only the lines under a
+# unit root (or its /lib spelling) are kept, as the input for a reviewed unit_index.
+MD5SUMS_DIR = '/var/lib/dpkg/info'
+MD5SUMS_PREFIXES = tuple(root + '/' for root in (*UNIT_ROOTS, *USER_ROOTS, '/lib/systemd/system', '/lib/systemd/user'))
+MD5SUMS_DISCOVERY = {'files': 4096, 'bytes': 32 * 1024 * 1024, 'lines': 8192, 'names': 32768}
 DBUS_EXE = '/usr/bin/dbus-daemon'
 CTIME_MARGIN_NS = 2 * 1000 * 1000 * 1000
 SO_ACCEPTCON = 0x10000
 RISKY_TAGS = re.compile(rb'<\s*(servicedir|servicehelper|standard_system_servicedirs|standard_session_servicedirs'
                         rb'|include|includedir)\b', re.I)
 ESCAPES = re.compile(rb'\\[xuU0-7]')
+# C9.servicedirs reads a `<servicedir>` only in its one plain form. expat would decode
+# character references and expand an internal entity into markup, so any other spelling,
+# a reference in the value or an entity declaration is not established.
+SERVICEDIR_OPEN = re.compile(rb'<\s*servicedir\b', re.I)
+SERVICEDIR = re.compile(rb'<servicedir>([^<&]*)</servicedir>')
+ENTITY_DECL = re.compile(rb'<!\s*ENTITY\b', re.I)
 # Exec*= forms whose program is not literally readable: specifiers, variables, globs, shells.
 INDIRECTION = re.compile(r'[%$*?\[`]|(^|\s)-[A-Za-z]*c[A-Za-z]*(\s|$)')
 QUOTES = str.maketrans('', '', '"\'')  # systemd and shells drop quotes inside a word
 VOLATILE_NAME = re.compile(r'snap[-.]')
 ERRORS = ('TimeoutError', 'UnicodeError', 'OSError', 'ValueError', 'RuntimeError')
+# Bumped by every change of the predicate's or format 3's semantics under the same proof (PR-C1 = 1,
+# PR-C1b = 2), so a validator result names the module revision it was read against.
+PREDICATE_REVISION = 2
 
 # Compile-time reviewed values (design03 2.2, G2/N2). Integrity rests on this module's
 # hash, which every approval binds. Source facts are global; everything derived from a
@@ -134,7 +178,8 @@ ERRORS = ('TimeoutError', 'UnicodeError', 'OSError', 'ValueError', 'RuntimeError
 # (its dpkg rows without kernel images, and the manager Version) equals its own, and a
 # host without a reviewed profile is collected as DISCOVERY_ONLY. None marks a value whose
 # proof or evidence is not yet retained; every conjunct that needs it gives None, so this
-# module cannot return False until a reviewed change fills it (PR-C1b after LIVE-A1a).
+# module cannot return False until a reviewed change fills it. PR-C1b ships no profile
+# (owner K6): A's follows LIVE-A1b, whose discovery md5sums feed its unit_index.
 REVIEWED = frozen({
     # Retained O1/O14 source reviews (o1-o14-findings01.json, SHA256).
     'proof_id': 'o1-o14-findings01:410717a7f1f417776bcb14fa4c7d78788613e3259519e6c6130f5054ae41ad13',
@@ -150,10 +195,15 @@ REVIEWED = frozen({
     #   'allow': {'lib_alias', 'service_members', 'config_files', 'config_members',
     #             'selinux_rule', 'masked_fragment_path', 'dbus_names', 'dbus_fragment',
     #             'var_run_target', 'unit_index', 'link_targets', 'caps'}}.
+    # `service_members` has one key per SERVICE_DIRS entry; `code.files` one per C12_FILES
+    # entry; a `link_targets` entry clears a link only when its target is an indexed file
+    # this scan read (C13, owner K1).
     # A (systemd .18) and B (.17, equivalence not proven) are both pending.
     'profiles': (),
 })
 UNIVERSE_BODY_LIMIT = 64 * 1024
+if REVIEWED['unit_roots'] != UNIT_ROOTS:  # ITEMS indexes UNIT_ROOTS while the readers walk this list
+    raise RuntimeError('ITEMS and the reviewed unit roots differ')
 PROFILE_CODE_KEYS = ('rows', 'manager_version', 'kernel', 'kernel_row', 'files')
 PROFILE_ALLOW_KEYS = ('lib_alias', 'service_members', 'config_files', 'config_members', 'selinux_rule',
                       'masked_fragment_path', 'dbus_names', 'dbus_fragment', 'var_run_target', 'unit_index',
@@ -178,12 +228,39 @@ def error_code(exc):
     return next((name for kind, name in ERROR_TYPES if isinstance(exc, kind)), 'RuntimeError')
 
 
+class ItemError(Exception):
+    """A failure inside one of a section's fixed ITEMS, carrying that item's index."""
+    def __init__(self, index, cause):
+        super().__init__(index)
+        self.index, self.cause = index, cause
+
+
+def each(paths, function):
+    """{path: function(path)} in the section's fixed order; a failure names only the item's index."""
+    result = {}
+    for index, path in enumerate(paths):
+        try:
+            result[path] = function(path)
+        except Exception as exc:
+            raise ItemError(index, exc) from exc
+    return result
+
+
+def error_record(exc, code=error_code):
+    """Exception text can carry private paths or output: never export it. An item failure adds
+    its `locus`, the item's index in ITEMS and the errno (path-free, bounded; owner K3)."""
+    if not isinstance(exc, ItemError):
+        return {'state': 'error', 'error': code(exc)}
+    errno = exc.cause.errno if isinstance(exc.cause, OSError) else None
+    return {'state': 'error', 'error': code(exc.cause),
+            'locus': {'item': exc.index, 'errno': errno if type(errno) is int and 1 <= errno <= 4095 else None}}
+
+
 def operation(function):
     try:
         return {'state': 'ok', 'value': function()}
     except Exception as exc:
-        # Exception text can carry private paths or output. Never export it.
-        return {'state': 'error', 'error': error_code(exc)}
+        return error_record(exc)
 
 
 # ---------------------------------------------------------------- readers
@@ -369,13 +446,11 @@ def names_only(path, root, maximum=256):
 
 
 def candidates(root='/'):
-    roots = {}
-    for path in REVIEWED['unit_roots']:
+    def one(path):
         try:
             fd = open_dir(path, root)
         except FileNotFoundError:
-            roots[path] = {'absent': True}
-            continue
+            return {'absent': True}
         try:
             found = {}
             for name in CANDIDATES:
@@ -385,14 +460,13 @@ def candidates(root='/'):
                     found[name] = {'type': 'absent'}
                     continue
                 found[name] = {'type': kind(info), **({'target': readlink_at(name, fd)} if stat.S_ISLNK(info.st_mode) else {})}
-            roots[path] = {'entries': found}
+            return {'entries': found}
         finally:
             os.close(fd)
-    update = {}
-    for path in SYSTEM_UPDATE:
-        item = entry(path, root)
-        update[path] = {'type': item['type']}
-    return {'roots': roots, 'system_update': update}
+    found = each(ITEMS['unit-candidates'],
+                 lambda path: {'type': entry(path, root)['type']} if path in SYSTEM_UPDATE else one(path))
+    return {'roots': {path: found[path] for path in REVIEWED['unit_roots']},
+            'system_update': {path: found[path] for path in SYSTEM_UPDATE}}
 
 
 def scope(sections):
@@ -431,28 +505,27 @@ def universe(sections, root='/'):
     recorded as that link, never followed; c13 decides whether another root covers it."""
     profile_id, index, caps = scope(sections)
     budget = {'bodies': 0, 'bytes': 0, 'packaged': 0}
-    roots = {}
-    for path in (*REVIEWED['unit_roots'], *USER_ROOTS):
+
+    def one(path):
         try:
             link = root_link(path, root)
         except FileNotFoundError:
-            roots[path] = {'absent': True}
-            continue
+            return {'absent': True}
         if link is not None:
-            roots[path] = link
-            continue
+            return link
         try:
             fd = open_dir(path, root)
         except FileNotFoundError:
-            roots[path] = {'absent': True}
-            continue
+            return {'absent': True}
         try:
             before = os.fstat(fd)
             count = [0]
-            roots[path] = {**meta(before), 'entries': universe_dir(fd, path, index, caps, budget, count, 0)}
+            value = {**meta(before), 'entries': universe_dir(fd, path, index, caps, budget, count, 0)}
             capture.same(before, os.fstat(fd))
+            return value
         finally:
             os.close(fd)
+    roots = each(ITEMS['unit-universe'], one)
     return {'mode': 'discovery' if index is None else 'full', 'profile': profile_id, 'roots': roots}
 
 
@@ -494,10 +567,49 @@ def universe_dir(fd, path, index, caps, budget, count, depth):
     return result
 
 
+def md5sums_discovery(root):
+    """Every package's md5sums file: its SHA256, and its lines under a unit root (owner K4/U1).
+    `digest` binds the complete (name, SHA256) list; checking it needs the host's own list."""
+    limits = MD5SUMS_DISCOVERY
+    try:
+        fd = open_dir(MD5SUMS_DIR, root)
+    except FileNotFoundError:
+        return {'mode': 'discovery', 'files': {}, 'scanned': 0, 'bytes': 0, 'digest': digest(encoded([]))}
+    try:
+        names = [name for name in scan(fd, limits['names']) if name.endswith('.md5sums')]
+        if len(names) > limits['files']:
+            raise ValueError('LIMIT')
+        files, every, total, kept = {}, [], 0, 0
+        for name in names:
+            if not stat.S_ISREG(lstat_at(name, fd).st_mode):
+                raise ValueError('UNSAFE_FILE')  # never open a device or FIFO by that name
+            data = read_at(fd, name, limits['bytes'] - total)
+            total += len(data)
+            every.append([name, digest(data)])
+            lines = {}
+            for line in data.decode('utf-8').splitlines():
+                md5, separator, relative = line.partition('  ')
+                if not separator or not re.fullmatch('[a-f0-9]{32}', md5):
+                    raise ValueError('MALFORMED')
+                path = '/' + relative
+                if path.startswith(MD5SUMS_PREFIXES):
+                    if path in lines:
+                        raise ValueError('MALFORMED')
+                    kept += 1
+                    if kept > limits['lines']:
+                        raise ValueError('LIMIT')
+                    lines[path] = md5
+            if lines:
+                files[name] = {'sha256': every[-1][1], 'lines': lines}
+        return {'mode': 'discovery', 'files': files, 'scanned': len(names), 'bytes': total, 'digest': digest(encoded(every))}
+    finally:
+        os.close(fd)
+
+
 def md5sums(sections, root='/'):
     _profile, index, caps = scope(sections)
     if index is None:
-        return {'mode': 'discovery'}
+        return md5sums_discovery(root)
     wanted = {}
     for item in index.values():
         if item['sha256'] is None:
@@ -669,22 +781,55 @@ def read(name, sections, root='/', runner=None, timeout=COMMAND_TIMEOUT):
     if name == 'dpkg-md5sums':
         return md5sums(sections, root)
     if name == 'pk-fragments':
-        return {path: capture.file_record(path, True, root) for path in PK_FRAGMENTS}
+        return each(ITEMS[name], lambda path: capture.file_record(path, True, root))
     if name == 'dbus-service-dirs':
-        return {'system': {path: listing(path, root) for path in SERVICE_DIRS},
-                'session': {path: listing(path, root) for path in SESSION_DIRS}}
+        found = each(ITEMS[name], lambda path: listing(path, root))
+        return {'system': {path: found[path] for path in SERVICE_DIRS},
+                'session': {path: found[path] for path in SESSION_DIRS}}
     if name == 'dbus-config':
-        return {'files': {path: single(path, root) for path in CONFIG_FILES},
-                'dirs': {path: listing(path, root) for path in CONFIG_DIRS},
-                'parents': {path: entry(path, root) for path in DBUS_PARENTS},
-                'selinux': names_only(SELINUX, root)}
+        found = each(ITEMS[name], lambda path: single(path, root) if path in CONFIG_FILES else listing(path, root)
+                     if path in CONFIG_DIRS else entry(path, root) if path in DBUS_PARENTS else names_only(path, root))
+        return {'files': {path: found[path] for path in CONFIG_FILES},
+                'dirs': {path: found[path] for path in CONFIG_DIRS},
+                'parents': {path: found[path] for path in DBUS_PARENTS},
+                'selinux': found[SELINUX]}
     if name == 'dbus-daemon-proc':
         return dbus_proc(sections, root)
     if name == 'pk-binaries':
-        return {path: capture.file_record(path, False, root) for path in C12_FILES}
+        return each(ITEMS[name], lambda path: capture.file_record(path, False, root))
     if name == 'pk-processes':
         return processes(root)
+    if name == 'dsh-state':
+        return each(ITEMS[name], lambda path: tree(path, root))
+    if name == 'needrestart-config':
+        found = each(ITEMS[name], lambda path: single(path, root) if path in NEEDRESTART_FILES else
+                     listing(path, root) if path in NEEDRESTART_DIRS else names_only(path, root))
+        return {'files': {path: found[path] for path in NEEDRESTART_FILES},
+                'dirs': {path: found[path] for path in NEEDRESTART_DIRS}, 'names': found[NEEDRESTART]}
+    if name == 'dbus-session-config':
+        found = each(ITEMS[name], lambda path: single(path, root) if path in SESSION_CONFIG_FILES else listing(path, root))
+        return {'files': {path: found[path] for path in SESSION_CONFIG_FILES},
+                'dirs': {path: found[path] for path in SESSION_CONFIG_DIRS}}
+    if name == 'user-manager':
+        linger, run_user, users = USER_MANAGER
+        found = each(ITEMS[name], lambda path: entry(path, root) if path == run_user else names_only(path, root))
+        return {'linger': found[linger], 'run_user_0': found[run_user], 'users': found[users]}
     raise KeyError(name)
+
+
+def tree(path, root, maximum=1024):
+    """Names, types, sizes and link targets to depth 1, never a body (deb-systemd-helper state)."""
+    try:
+        fd = open_dir(path, root)
+    except FileNotFoundError:
+        return {'absent': True}
+    try:
+        before = os.fstat(fd)
+        entries = universe_dir(fd, path, None, {'entries': maximum}, None, [0], 0)
+        capture.same(before, os.fstat(fd))
+        return {**meta(before), 'entries': entries}
+    finally:
+        os.close(fd)
 
 
 def observe(root='/', runner=None):
@@ -849,6 +994,25 @@ def check_universe_entries(entries, depth, mode):
         need(set(item) == keys)
 
 
+def check_names(value):
+    need(isinstance(value, dict) and (value == {'absent': True} or (
+        set(value) == {'names'} and isinstance(value['names'], list) and len(value['names']) <= 256
+        and all(check_name(n) is None for n in value['names']) and value['names'] == sorted(set(value['names'])))))
+
+
+def check_files_and_dirs(value, files, dirs):
+    need(isinstance(value['files'], dict) and set(value['files']) == set(files)
+         and isinstance(value['dirs'], dict) and set(value['dirs']) == set(dirs))
+    for item in value['files'].values():
+        need(isinstance(item, dict))
+        if set(item) == {'absent'}:
+            need(item['absent'] is True)
+        else:
+            check_member(item)
+    for item in value['dirs'].values():
+        check_listing(item)
+
+
 def check(name, value):
     """Strict schema of one raw section value; raises ValueError."""
     if name in COMMANDS:
@@ -894,17 +1058,27 @@ def check(name, value):
             check_meta(item)
             check_universe_entries(item['entries'], 0, mode)
     elif name == 'dpkg-md5sums':
-        need(isinstance(value, dict))
-        if value == {'mode': 'discovery'}:
-            return
-        need(set(value) == {'mode', 'files'} and value['mode'] == 'full' and isinstance(value['files'], dict))
+        need(isinstance(value, dict) and value.get('mode') in ('discovery', 'full'))
+        discovery_mode = value['mode'] == 'discovery'
+        need(set(value) == ({'mode', 'files', 'scanned', 'bytes', 'digest'} if discovery_mode else {'mode', 'files'})
+             and isinstance(value['files'], dict))
+        if discovery_mode:
+            limits = MD5SUMS_DISCOVERY
+            need(is_int(value['scanned'], 0, limits['files']) and is_int(value['bytes'], 0, limits['bytes'])
+                 and len(value['files']) <= value['scanned'] and isinstance(value['digest'], str)
+                 and re.fullmatch('[a-f0-9]{64}', value['digest']))
         for file_name, item in value['files'].items():
             check_name(file_name)
+            need(not discovery_mode or file_name.endswith('.md5sums'))
             need(isinstance(item, dict) and set(item) == {'sha256', 'lines'} and isinstance(item['lines'], dict))
             need(isinstance(item['sha256'], str) and re.fullmatch('[a-f0-9]{64}', item['sha256']))
+            need(not discovery_mode or item['lines'])
             for path, value_md5 in item['lines'].items():
                 check_text(path)
+                need(not discovery_mode or path.startswith(MD5SUMS_PREFIXES))
                 need(isinstance(value_md5, str) and re.fullmatch('[a-f0-9]{32}', value_md5))
+        need(not discovery_mode or sum(len(item['lines']) for item in value['files'].values())
+             <= MD5SUMS_DISCOVERY['lines'])
     elif name == 'pk-fragments':
         need(isinstance(value, dict) and set(value) == set(PK_FRAGMENTS))
         for item in value.values():
@@ -958,6 +1132,29 @@ def check(name, value):
         for item in value:
             need(isinstance(item, dict) and set(item) == {'pid', 'comm', 'start_ticks'} and is_int(item['pid'], 1, 2**32)
                  and is_int(item['start_ticks']) and isinstance(item['comm'], str) and len(item['comm']) <= 64)
+    elif name == 'dsh-state':
+        need(isinstance(value, dict) and set(value) == set(DSH_DIRS))
+        for item in value.values():
+            need(isinstance(item, dict))
+            if set(item) == {'absent'}:
+                need(item['absent'] is True)
+                continue
+            need(set(item) == {'uid', 'gid', 'mode', 'entries'})
+            check_meta(item)
+            check_universe_entries(item['entries'], 0, 'discovery')
+            need(sum(1 + len(i.get('entries', ())) for i in item['entries'].values()) <= 1024)
+    elif name == 'needrestart-config':
+        need(isinstance(value, dict) and set(value) == {'files', 'dirs', 'names'})
+        check_files_and_dirs(value, NEEDRESTART_FILES, NEEDRESTART_DIRS)
+        check_names(value['names'])
+    elif name == 'dbus-session-config':
+        need(isinstance(value, dict) and set(value) == {'files', 'dirs'})
+        check_files_and_dirs(value, SESSION_CONFIG_FILES, SESSION_CONFIG_DIRS)
+    elif name == 'user-manager':
+        need(isinstance(value, dict) and set(value) == {'linger', 'run_user_0', 'users'})
+        check_names(value['linger'])
+        check_names(value['users'])
+        check_entry(value['run_user_0'], USER_MANAGER[1])
     else:
         raise ValueError('PACKAGEKIT_SCHEMA')
 
@@ -1099,6 +1296,36 @@ def ctimes(value):
     return [value['ctime_ns'], *(item['ctime_ns'] for item in value['members'].values())]
 
 
+def config_servicedirs(config):
+    """Every `<servicedir>` value in the C9 chain as sorted [file, value] pairs; ValueError when a
+    body declares one in any other form or declares an entity."""
+    bodies = [(path, item) for path, item in config['files'].items() if not item.get('absent')]
+    bodies += [(directory + '/' + name, item) for directory, value in config['dirs'].items()
+               if not value.get('absent') for name, item in value['members'].items()]
+    found = []
+    for path, item in bodies:
+        if item['type'] != 'regular':
+            continue  # not read by this rule; C9.file / C9.dir give None for it
+        data = check_blob(item['body'], 1 << 30)
+        # expat auto-detects UTF-16 (with or without a BOM) even under dbus' UTF-8 protocol encoding;
+        # any such body has a NUL byte, and these byte patterns would not see its declarations.
+        if b'\0' in data:
+            raise ValueError('UNPARSED_SERVICEDIR')
+        values = SERVICEDIR.findall(data)
+        if len(SERVICEDIR_OPEN.findall(data)) != len(values) or ENTITY_DECL.search(data):
+            raise ValueError('UNPARSED_SERVICEDIR')
+        found += [[path, value.decode('utf-8')] for value in values]
+    return sorted(found)
+
+
+def servicedirs_ok(found):
+    """C9.servicedirs: snapd's include is the only declaration, of exactly SNAPD_SERVICE_DIR. This
+    holds whatever a profile pins: no reviewed hash can admit another servicedir."""
+    if found is None:
+        raise TypeError('not established')
+    return all(path == SNAPD_INCLUDE and value in (SNAPD_SERVICE_DIR, SNAPD_SERVICE_DIR + '/') for path, value in found)
+
+
 def registration(services):
     directory = services['system']['/usr/share/dbus-1/system-services']
     item = None if directory.get('absent') else directory['members'].get(PurePosixPath(REGISTRATION).name)
@@ -1178,6 +1405,9 @@ def normalize(raw):
                                           for path, item in config['files'].items()},
                                 'dirs': {path: dir_view(value) for path, value in config['dirs'].items()},
                                 'selinux': config['selinux']}),
+        'config_servicedirs': part(lambda: config_servicedirs(config)),
+        'dbus_parents': part(lambda: {path: compact(item) for path, item in config['parents'].items()}),
+        'evidence': part(lambda: all(section_value(raw, name) is not None for name in EVIDENCE_SECTIONS) or None),
         'dbus_proc': part(lambda: proc_view(raw, blocks)),
         'var': part(lambda: compact(section_value(raw, 'dir-meta:/var'))),
         'var_run': part(lambda: compact(section_value(raw, 'link:/var/run'))),
@@ -1307,22 +1537,18 @@ def classify(path, item, allow, md5, known, lib):
         target = item['target']
         if target == '/dev/null':
             return False
+        resolved = resolve_link(path, target, allow, known, lib)
+        # A reviewed link (owner K1, e.g. the packaged system-update.target.wants offline-update
+        # link) is cleared only when its target is a file this scan read and the reviewed index
+        # binds its bytes; any other value falls through to the rules below.
+        # Never for a link carrying one of PackageKit's own unit names (security P3-2): those stay activators.
+        if (allow['link_targets'].get(path) == target and resolved is not None and resolved in known
+                and resolved in allow['unit_index'] and name not in C5_NAMES + C14_NAMES
+                and not name.startswith('packagekit@')):
+            return False
         if path != MASK_PATH and ('packagekit' in target.lower() or 'packagekit' in name.lower()):
             return True
-        parts = PurePosixPath(target).parts
-        # systemd resolves `..` after following links (chase); only `../<name>` from a directory
-        # this scan read without following anything cancels lexically.
-        if '..' in parts and not (not target.startswith('/') and len(parts) == 2 and parts[0] == '..'
-                                  and str(PurePosixPath(path).parent) in known):
-            return None
-        resolved = str(PurePosixPath(os.path.normpath(target if target.startswith('/')
-                                                      else str(PurePosixPath(path).parent / target))))
-        if lib is not None and lib.get('type') == 'link' and allow['lib_alias'] is not None \
-                and lib.get('target') == allow['lib_alias'] and resolved.startswith('/lib/'):
-            resolved = '/usr' + resolved
-        if resolved in known or allow['link_targets'].get(path) == target:
-            return False
-        return None
+        return False if resolved is not None and resolved in known else None
     if item['type'] != 'regular':
         return None
     index = allow['unit_index']
@@ -1346,6 +1572,22 @@ def classify(path, item, allow, md5, known, lib):
         if separator and key.strip().startswith('Exec') and INDIRECTION.search(value):
             return None  # e.g. %i, $VAR from Environment=, globs or sh -c: not literally checkable
     return False
+
+
+def resolve_link(path, target, allow, known, lib):
+    """The scanned path a unit link names, or None. systemd resolves `..` after following links
+    (chase); only `../<name>` from a directory this scan read without following anything cancels
+    lexically. /lib/... is rewritten through the reviewed /lib alias only."""
+    parts = PurePosixPath(target).parts
+    if '..' in parts and not (not target.startswith('/') and len(parts) == 2 and parts[0] == '..'
+                              and str(PurePosixPath(path).parent) in known):
+        return None
+    resolved = str(PurePosixPath(os.path.normpath(target if target.startswith('/')
+                                                  else str(PurePosixPath(path).parent / target))))
+    if lib is not None and lib.get('type') == 'link' and allow['lib_alias'] is not None \
+            and lib.get('target') == allow['lib_alias'] and resolved.startswith('/lib/'):
+        resolved = '/usr' + resolved
+    return resolved
 
 
 # ---------------------------------------------------------------- evaluate
@@ -1403,6 +1645,9 @@ def checks(view):
             all(item['type'] == 'regular' for item in d()['members'].values()) or None)
         put('C2.no-other-registration:' + path, lambda d=directory, p=path: True if d().get('absent') else
             not any(item.get('declares') for name, item in d()['members'].items() if p + '/' + name != REGISTRATION))
+    # Every present service-directory parent (snapd's under /var/lib included) and its chain is root-owned
+    # and not group- or world-writable: otherwise a member could be swapped after this read.
+    put('C2.parents', lambda: parents_ok(core['dbus_parents'], core['service_dirs']))
 
     mask = core['mask_link']
     put('C3.link', lambda: mask['type'] == 'link')
@@ -1458,6 +1703,7 @@ def checks(view):
                                                             required=path == CONFIG_FILES[0]))
     for path in CONFIG_DIRS:
         put('C9.dir:' + path, lambda path=path: config_dir(cfg['dirs'][path], path, known(allow)))
+    put('C9.servicedirs', lambda: servicedirs_ok(core['config_servicedirs']))
 
     put('C10.var', lambda: core['var']['type'] == 'directory' and safe_dir(core['var'])
         and all(safe_dir(item) for item in core['var']['parents']))
@@ -1481,7 +1727,21 @@ def checks(view):
     put('C15.cache', lambda: (proc['cache_consistent'] or None) if reviewed['o13_mode'] == 'ctime_rule' else None)
 
     put('C16.system-update', lambda: all(item['type'] == 'absent' for item in core['system_update'].values()))
+
+    # The O7/O11/O12 evidence sections are collected and well-formed (no conjunct reads them yet).
+    put('G7.evidence', lambda: core['evidence'] is True or None)
     return result
+
+
+def parents_ok(parents, service_dirs):
+    """C2.parents. Every recorded chain is safe, an absent parent's existing ancestors included (whoever can
+    write there can create the directory later; QA P1); a present parent is a safe directory; an absent one is
+    consistent only when no service directory below it was listed (security P3-5)."""
+    if any(not all(safe_dir(i) for i in item['parents'])
+           or item['type'] != 'absent' and not (item['type'] == 'directory' and safe_dir(item)) for item in parents.values()):
+        return False
+    return not any(item['type'] == 'absent' and any(not service_dirs[d].get('absent') for d in SERVICE_DIRS
+                                                    if d.startswith(path + '/')) for path, item in parents.items())
 
 
 def config_file(item, path, reviewed, required):
@@ -1527,6 +1787,9 @@ def profile_errors(reviewed):
         code = profile['code']
         if list(code['kernel_row'])[:1] != ['linux-image-' + code['kernel']] or set(code['files']) != set(C12_FILES):
             errors.append((profile['id'], 'code'))
+        members = profile['allow']['service_members']
+        if members is not None and set(members) != set(SERVICE_DIRS):
+            errors.append((profile['id'], 'service_members'))
         identity = (code['manager_version'], tuple(tuple(row) for row in code['rows']))
         if identity in seen:
             errors.append((profile['id'], 'duplicate code identity'))

@@ -646,7 +646,7 @@ pk('c13-session', "results.append(scanned(item)['declares'] if item['type'] == '
 pk('c13-true-wins', "    if True in results:\n        return True, digest_value", "    if False:\n        return True, digest_value")
 pk('c13-unknown', "    return (None if None in results else False), digest_value", "    return False, digest_value")
 pk('classify-mask', "        if target == '/dev/null':\n            return False", "        if target == '/dev/null':\n            return None")
-pk('classify-lib', "            resolved = '/usr' + resolved", "            pass")
+pk('classify-lib', "        resolved = '/usr' + resolved", "        pass")
 pk('classify-sha', "            return False if item.get('sha256') == reviewed['sha256'] else None", "            return False")
 pk('classify-md5', "        return False if listed is not None and listed == item.get('md5') else None", "        return False")
 pk('classify-escapes', "    if ESCAPES.search(data):\n        return None", "    if False:\n        return None")
@@ -685,7 +685,7 @@ pk('profile-kernel-filter', "    code_rows = [row for row in rows if not row[0].
 pk('profile-ambiguous', "    return matches[0] if len(matches) == 1 else None", "    return matches[0] if matches else None")
 pk('scope-no-index', "    if allow is None or allow['unit_index'] is None:\n        return (profile", "    if allow is None:\n        return (profile")
 # A1a: a unit root reached through a symlink is recorded as that link, never followed (SymlinkedRoot).
-pk('root-link-skipped', "        if link is not None:\n            roots[path] = link\n            continue\n", "")
+pk('root-link-skipped', "        if link is not None:\n            return link\n", "")
 pk('root-link-component', "                return {'link': str(current), 'target': readlink_at(part, fd)}", "                return {'link': path, 'target': readlink_at(part, fd)}")
 pk('root-link-schema-prefix', "                need(item['link'] == path or path.startswith(item['link'] + '/'))\n", "")
 pk('root-link-schema-prefix-slash', "path.startswith(item['link'] + '/')", "path.startswith(item['link'])")
@@ -706,9 +706,13 @@ pk('c12-kernel-row', "    return (kernel == code['kernel'] and rows.get('linux-i
 pk('c12-files', "\n            and all(core['binaries'][path] == dict(code['files'][path]) for path in C12_FILES))", ")")
 pk('classify-name', "('packagekit' in target.lower() or 'packagekit' in name.lower())", "('packagekit' in target.lower())")
 pk('classify-target', "('packagekit' in target.lower() or 'packagekit' in name.lower())", "('packagekit' in name.lower())")
-pk('classify-dotdot', "        if '..' in parts and not (", "        if False and not (")
-pk('classify-known', "        if resolved in known or allow['link_targets'].get(path) == target:", "        if True:")
-pk('classify-literal', "        if resolved in known or allow['link_targets'].get(path) == target:", "        if resolved in known:")
+pk('classify-dotdot', "    if '..' in parts and not (", "    if False and not (")
+pk('classify-known', "        return False if resolved is not None and resolved in known else None", "        return False")
+# PR-C1b, owner K1: a reviewed link clears C13 only with a literal target that this scan read and the index binds.
+pk('classify-reviewed-literal', "        if (allow['link_targets'].get(path) == target and resolved", "        if (path in allow['link_targets'] and resolved")
+pk('classify-reviewed-known', " and resolved is not None and resolved in known\n                and resolved in allow['unit_index']", " and resolved is not None\n                and resolved in allow['unit_index']")
+pk('classify-reviewed-index', " and resolved in known\n                and resolved in allow['unit_index'] and name", " and resolved in known\n                and name")
+pk('classify-reviewed-rule', "\n                and not name.startswith('packagekit@')):\n            return False", "\n                and not name.startswith('packagekit@')):\n            return None")
 pk('classify-utf8', "    try:\n        text = data.decode('utf-8')\n    except UnicodeError:\n        return None\n    if 'packagekit'", "    text = data.decode('utf-8', 'replace')\n    if 'packagekit'")
 pk('classify-scan', "    if 'packagekit' in text.lower().translate(QUOTES) or 'packagekit' in PurePosixPath(path).name.lower():", "    if 'packagekit' in PurePosixPath(path).name.lower():")
 pk('classify-case', "    if 'packagekit' in text.lower().translate(QUOTES) or", "    if 'packagekit' in text.translate(QUOTES) or")
@@ -723,7 +727,8 @@ pk('evaluate-forced-o13', "        if REVIEWED['o10_ok'] is not True or REVIEWED
 pk('schema-universe-mode', "and value['mode'] in ('discovery', 'full'))", ")")
 pk('v1-roots', "    for root in V1_ROOTS:", "    for root in core['candidates']:")
 pk('v1-names', "                        for name in V1_NAMES})", "                        for name in (*C5_NAMES, *C14_NAMES, 'service.d')})")
-add('infra/scripts/r3_policy_validate.py', 'pk-validate-contract', "contract = 'option-c/' + pk_state.REVIEWED['proof_id'] if doc['format'] == 3 else 'legacy'", "contract = 'option-c' if doc['format'] == 3 else 'legacy'")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-contract', "contract = f\"option-c/{pk_state.REVIEWED['proof_id']}/r{pk_state.PREDICATE_REVISION}\" if doc['format'] == 3 else 'legacy'", "contract = 'option-c' if doc['format'] == 3 else 'legacy'")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-contract-revision', "contract = f\"option-c/{pk_state.REVIEWED['proof_id']}/r{pk_state.PREDICATE_REVISION}\"", "contract = f\"option-c/{pk_state.REVIEWED['proof_id']}\"")
 add('infra/scripts/r3_install_policy.py', 'pk-facts-gate', "if PACKAGEKIT_GATE_WIRED else None", "if True else None")
 add('infra/scripts/r3_install_policy.py', 'pk-facts-gate-constant', "PACKAGEKIT_GATE_WIRED = False", "PACKAGEKIT_GATE_WIRED = True")
 add('infra/scripts/r3_install_policy.py', 'pk-facts-predicate', "    possible = r3_packagekit_state.evaluate(norm) if PACKAGEKIT_GATE_WIRED else None", "    possible = False if PACKAGEKIT_GATE_WIRED else None")
@@ -737,10 +742,45 @@ pk('cap-md5sums-files', "    if len(wanted) > caps['md5sums_files']:\n        ra
 pk('cap-md5sums-bytes', "data = read_at(fd, name, caps['md5sums_bytes'] - total)", "data = read_at(fd, name, 1 << 30)")
 pk('md5sums-duplicate', "                        if path in lines:\n                            raise ValueError('MALFORMED')", "                        if False:\n                            raise ValueError('MALFORMED')")
 pk('md5sums-format', "if not separator or not re.fullmatch('[a-f0-9]{32}', value):", "if not separator:")
+pk('md5sums-discovery-format', "if not separator or not re.fullmatch('[a-f0-9]{32}', md5):", "if not separator:")
 pk('btime-second-read', "'btime': [btime_first, boot_time(root)]", "'btime': [btime_first, btime_first]")
 pk('scope-user-root', "'/usr/local/lib/systemd/user', '/usr/lib/systemd/user', '/var/lib/snapd/desktop/systemd/user',", "'/usr/local/lib/systemd/user', '/usr/lib/systemd/user',")
 pk('scope-session-dir', ", '/run/user/0/dbus-1/services')", ")")
-pk('scope-c12-file', ",\n             '/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0')", ")")
+pk('scope-c12-file', ",\n             '/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0', '/usr/bin/gdbus')", ", '/usr/bin/gdbus')")
+pk('scope-c12-gdbus', "'/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0', '/usr/bin/gdbus')", "'/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0')")
+# PR-C1b: snapd's servicedir (C2/C9), the alias/prefix drop-ins (C5), the evidence sections (G7),
+# discovery md5sums (U1) and the path-free error locus (K3).
+pk('snapd-servicedir', "                '/usr/lib/dbus-1/system-services', SNAPD_SERVICE_DIR)", "                '/usr/lib/dbus-1/system-services')")
+pk('snapd-parent', "'/usr/lib/dbus-1', '/var/lib/snapd/dbus-1')", "'/usr/lib/dbus-1')")
+pk('c2-parents', "    put('C2.parents', lambda: parents_ok(core['dbus_parents'], core['service_dirs']))", "    put('C2.parents', lambda: True)")
+pk('c2-parents-chain', "    if any(not all(safe_dir(i) for i in item['parents'])\n           or item", "    if any(item")
+pk('c9-servicedirs-files', "    bodies = [(path, item) for path, item in config['files'].items() if not item.get('absent')]", "    bodies = []")
+pk('md5sums-discovery-file-sha', "                files[name] = {'sha256': every[-1][1], 'lines': lines}", "                files[name] = {'sha256': digest(b''), 'lines': lines}")
+pk('items-binaries', "'pk-binaries': C12_FILES,", "'pk-binaries': C12_FILES[:-1],")
+pk('c2-parents-absent', "    return not any(item['type'] == 'absent' and any(", "    return True or not any(item['type'] == 'absent' and any(")
+pk('servicedirs-nul', "        if b'\\0' in data:\n            raise ValueError('UNPARSED_SERVICEDIR')", "        if False:\n            raise ValueError('UNPARSED_SERVICEDIR')")
+pk('classify-reviewed-own-name', " and name not in C5_NAMES + C14_NAMES\n", "\n")
+pk('classify-reviewed-instance', "\n                and not name.startswith('packagekit@')):", "):")
+pk('md5sums-discovery-regular', "            if not stat.S_ISREG(lstat_at(name, fd).st_mode):", "            if False:")
+pk('c9-servicedirs', "    put('C9.servicedirs', lambda: servicedirs_ok(core['config_servicedirs']))", "    put('C9.servicedirs', lambda: True)")
+pk('servicedirs-include', "    return all(path == SNAPD_INCLUDE and value in", "    return all(value in")
+pk('servicedirs-value', "value in (SNAPD_SERVICE_DIR, SNAPD_SERVICE_DIR + '/') for path, value in found)", "value.startswith(SNAPD_SERVICE_DIR) for path, value in found)")
+pk('servicedirs-plain-form', "        if len(SERVICEDIR_OPEN.findall(data)) != len(values) or ENTITY_DECL.search(data):", "        if ENTITY_DECL.search(data):")
+pk('servicedirs-entity', "        if len(SERVICEDIR_OPEN.findall(data)) != len(values) or ENTITY_DECL.search(data):", "        if len(SERVICEDIR_OPEN.findall(data)) != len(values):")
+pk('c5-alias-drop-in', "'dbus-org.freedesktop.PackageKit.service', 'dbus-org.freedesktop.PackageKit.service.d',\n            'packagekit-.service.d')", "'dbus-org.freedesktop.PackageKit.service',\n            'packagekit-.service.d')")
+pk('c5-prefix-drop-in', "'dbus-org.freedesktop.PackageKit.service.d',\n            'packagekit-.service.d')", "'dbus-org.freedesktop.PackageKit.service.d')")
+pk('g7-evidence', "    put('G7.evidence', lambda: core['evidence'] is True or None)", "    put('G7.evidence', lambda: True)")
+pk('evidence-sections', "                 'pk-binaries', 'pk-processes', *EVIDENCE_SECTIONS)", "                 'pk-binaries', 'pk-processes')")
+pk('md5sums-discovery-prefix', "                if path.startswith(MD5SUMS_PREFIXES):", "                if True:")
+pk('md5sums-discovery-digest', "            every.append([name, digest(data)])", "            every.append([name])")
+pk('md5sums-discovery-lines', "                    if kept > limits['lines']:", "                    if False:")
+pk('md5sums-discovery-schema-prefix', "                need(not discovery_mode or path.startswith(MD5SUMS_PREFIXES))\n", "")
+pk('locus-index', "            'locus': {'item': exc.index,", "            'locus': {'item': 0,")
+pk('locus-errno', "'errno': errno if type(errno) is int and 1 <= errno <= 4095 else None}}", "'errno': errno}}")
+pk('profile-errors-service-members', "        if members is not None and set(members) != set(SERVICE_DIRS):", "        if False:")
+add('infra/scripts/r3_policy_evidence.py', 'pk-evidence-locus', "        return pk_state.error_record(exc, error_code)", "        return {'state': 'error', 'error': error_code(exc)}")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-locus-range', "                and type(locus['item']) is int and 0 <= locus['item'] < items", "                and type(locus['item']) is int")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-locus-sections', "items=len(pk_state.ITEMS[name]) if name in pk_state.ITEMS else None)", "items=999)")
 pk('scope-fragment', ",\n                '/usr/lib/systemd/system/packagekit-offline-update.service')", ")")
 pk('scope-processes', "frozenset({'packagekitd', 'pk-offline-update', 'pk-offline-upda'})", "frozenset({'packagekitd'})")
 pk('volatile-name', "VOLATILE_NAME = re.compile(r'snap[-.]')", "VOLATILE_NAME = re.compile(r'snap-')")
@@ -903,12 +943,13 @@ def mutation_command(file, python_command, node_command):
                   'test_r3_packagekit_state.Drift',
                   'test_r3_packagekit_state.Universe',
                   'test_r3_packagekit_state.SymlinkedRoot',
+                  'test_r3_packagekit_state.PrC1b',
                   'test_r3_packagekit_state.Volatile',
                   'test_r3_packagekit_contract', 'test_r3_install_policy_facts']
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py', 'r3_noble_common.py')):
         suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers', 'test_r3_install_policy_facts', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity',
                   # The collector and validator classes only; the synthetic-host matrix runs on the module's own mutants.
-                  'test_r3_packagekit_state.Domain', 'test_r3_packagekit_state.Legacy',
+                  'test_r3_packagekit_state.Domain', 'test_r3_packagekit_state.Legacy', 'test_r3_packagekit_state.PrC1b',
                   'test_r3_packagekit_state.Route', 'test_r3_packagekit_state.Volatile', 'test_r3_packagekit_contract']
     elif file.endswith(('r3_image_acquire.py', 'r3_image_import.py', 'r3_image_qualify.py', 'r3-image-transport.yml')):
         suites = ['test_r3_image_transport_run']
