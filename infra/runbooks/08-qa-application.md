@@ -4,8 +4,8 @@ This is the integration design and approval boundary for the existing self-hoste
 QA host. The **offline network creation preflight** and a **locally tested dashboard
 rotation helper** are implemented by this change; neither authorizes live execution.
 The additive `foundation/qa` application foundation is prepared and mock-tested;
-the release writer, image build and private database TLS path remain separate
-implementation/review work. OIDC and runtime/app grants start disabled. This runbook is
+the QA release writer and public offline validators are also prepared. Image
+building and private database TLS remain separate implementation/review work. OIDC and runtime/app grants start disabled. This runbook is
 not an apply command, an approval, or evidence that the application is deployed.
 Use [runbook 07](07-selfhost.md) for existing host ownership and runtime recovery.
 
@@ -457,4 +457,47 @@ Offline checks only:
 terraform -chdir=infra/terraform/foundation/qa init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infra/terraform/foundation/qa validate
 terraform -chdir=infra/terraform/foundation/qa test
+```
+
+
+## QA application release contract preparation
+
+`infra/terraform/application/qa` is the sole application writer for both QA apps;
+its public foundation contract never reads foundation state. Only exact image
+digests and Key Vault secret versions are accepted. APP_URL/WEB_ORIGIN match the
+web origin; Supabase origin/issuer are r02-specific and JWKS-only. API is bounded
+to one replica, 1 CPU/2Gi and five DB connections; web uses 0.5 CPU/1Gi and 0–2
+replicas. Startup, liveness and dependency readiness remain separate probes.
+Optional API SMTP needs complete public parameters and an API-only password
+reference; it does not configure GoTrue password-reset delivery.
+
+The root's invalid-placeholder `inputs.example.json` and `target.example.json`
+are templates only. `qa_release.py` checks the clean source, public release and
+local candidate binding. Its saved-plan oracle independently computes expected
+app bodies and rejects unknown writers, deletes, owner credentials, sidecars,
+insecure ingress, identity drift and revision reuse. Hold removal requires explicit
+acknowledgement. `qa_readback.py` checks public environment/app/revision projections
+and rejects unreviewed executable surfaces; neither tool authenticates arbitrary
+caller-supplied evidence. The authenticated image artifact pipeline and final
+owner execution sequence follow in the next PR. No live release is authorized.
+
+`qa_database_url.py` is an owner-only, status-only syntax check on a separately
+approved private file: runtime uses `tonyai_runtime`; owner uses `postgres`;
+both bind private DB DNS/5432 and strict CA verification without URL overrides.
+It never connects or uploads secrets. Actual Prisma TLS, privileges and host
+readiness remain required. DIRECT_URL never reaches app env, tfvars or identities.
+The eventual release must authenticate its image artifact, drain prior API
+revisions before an unchanged saved-plan apply, preserve cleanup hold and use
+only schema-compatible rollback. No seed/reset or migration is included here.
+
+Offline checks (no cloud):
+
+```bash
+python3 infra/scripts/qa_policy.py
+python3 -m unittest discover -s infra/tests -p 'test_qa_*.py' -v
+terraform -chdir=infra/terraform/application/qa init -backend=false -input=false -lockfile=readonly
+terraform -chdir=infra/terraform/application/qa validate
+terraform -chdir=infra/terraform/application/qa test
+terraform -chdir=infra/terraform/application/qa test -json -verbose > "$TMPDIR/qa-plan.jsonl"
+python3 infra/scripts/qa_plan_contract.py "$TMPDIR/qa-plan.jsonl"
 ```

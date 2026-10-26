@@ -86,8 +86,10 @@ vault, API/web identities and private r02 DNS. It references the existing app
 subnet and never writes the data VNet, NSG or VM. OIDC and runtime/app secret
 grants start disabled; each requires a later reviewed owner approval. The
 `qa-infra.yml` workflow validates and mock-tests this root without cloud credentials.
-Application release and candidate preparation follow separately; live R3/R4,
-TLS and application acceptance remain required. See runbook 08.
+`terraform/application/qa` now owns both app definitions. Public release, saved-plan,
+DB URL syntax and ARM-readback validators are separate from credential transfer.
+The candidate pipeline follows separately; live R3/R4, TLS and application
+acceptance remain required. See runbook 08.
 
 ## Historical hosted reference (00–06)
 

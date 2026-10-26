@@ -1,0 +1,30 @@
+{
+  "foundation": {
+    "subscription_id": "cb7efc2f-37a7-4672-b62c-93c207bcd33d",
+    "tenant_id": "REQUIRED_OWNER_TENANT_UUID",
+    "environment": "staging",
+    "region": "swedencentral",
+    "resource_group": "tonyai-staging-apps",
+    "prefix": "tonyai",
+    "registry_name": "REQUIRED_FOUNDATION_ACR_NAME",
+    "vault_name": "REQUIRED_FOUNDATION_APP_VAULT_NAME",
+    "default_domain": "REQUIRED_FOUNDATION_SWEDEN_DOMAIN",
+    "apps_subnet_id": "/subscriptions/cb7efc2f-37a7-4672-b62c-93c207bcd33d/resourceGroups/tonyai-staging-data/providers/Microsoft.Network/virtualNetworks/tonyai-staging-data-vnet/subnets/container-apps"
+  },
+  "release": {
+    "source_sha": "REQUIRED_EXACT_MAIN_SOURCE_SHA",
+    "supabase_origin": "REQUIRED_ACCEPTED_R02_HTTPS_ORIGIN_AFTER_R3_R4",
+    "jwt_issuer": "REQUIRED_R02_ORIGIN_PLUS_AUTH_V1",
+    "db_ca_sha256": "REQUIRED_REVIEWED_PUBLIC_DB_CA_SHA256",
+    "browser_key_sha256": "REQUIRED_PUBLIC_ANON_KEY_SHA256",
+    "node_image": "docker.io/library/node@sha256:REQUIRED_REVIEWED_NODE22_BOOKWORM_SLIM_DIGEST",
+    "release_id": "REQUIRED_UNIQUE_REVISION_SUFFIX",
+    "api_digest": "sha256:REQUIRED_CANDIDATE_API_DIGEST",
+    "web_digest": "sha256:REQUIRED_CANDIDATE_WEB_DIGEST",
+    "database_secret_version": "REQUIRED_RUNTIME_URL_VERSION_AFTER_R3_R4",
+    "backend_secret_version": "REQUIRED_BACKEND_KEY_VERSION_AFTER_R3_R4",
+    "storage_cleanup_hold": true,
+    "storage_sweep_interval_seconds": 300,
+    "runtime_limits": {}
+  }
+}

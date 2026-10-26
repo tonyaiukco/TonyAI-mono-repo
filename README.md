@@ -633,8 +633,11 @@ TLS, runtime/schema/bucket checks and live acceptance remain prerequisites.
 The additive QA application foundation is now prepared in
 `infra/terraform/foundation/qa`: the managed environment binds the existing app
 subnet at creation, with Sweden ACR/Key Vault/Log Analytics, scoped identities and
-private DNS for r02. OIDC starts disabled. The application release writer and
-candidate image pipeline follow in separate preparation changes. No live
+private DNS for r02. OIDC starts disabled. The additive `infra/terraform/application/qa` writer and public `qa_*`
+validators now prepare exact image/secret-version releases with explicit
+APP_URL/CORS/issuer/SMTP and bounded runtime resources. Independent plan and
+ARM-readback checks reject owner credentials or unreviewed executable surfaces.
+The authenticated candidate image pipeline follows separately. No live
 resource creation or R3/R4 acceptance is implied.
 The [retained hosted implementation](infra/README.md#historical-hosted-reference-0006)
 is historical Germany/Frankfurt compatibility code; never use it as a current

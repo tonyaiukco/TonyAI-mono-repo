@@ -19,11 +19,19 @@ jobs:
         with:
           terraform_version: 1.13.3
           terraform_wrapper: false
+      - name: QA policy and negative tests
+        run: |
+          python3 -m venv "$RUNNER_TEMP/qa-tests"
+          "$RUNNER_TEMP/qa-tests/bin/python" -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
+          python3 infra/scripts/qa_policy.py
+          "$RUNNER_TEMP/qa-tests/bin/python" -m unittest discover -s infra/tests -p 'test_qa_*.py' -v
       - name: Credential-free QA Terraform checks
         run: |
-          for root in foundation/qa; do
+          for root in foundation/qa application/qa; do
             terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
             terraform -chdir="infra/terraform/$root" validate -no-color
             terraform -chdir="infra/terraform/$root" test -no-color
           done
+          terraform -chdir=infra/terraform/application/qa test -json -verbose > "$RUNNER_TEMP/qa-plan.jsonl"
+          python3 infra/scripts/qa_plan_contract.py "$RUNNER_TEMP/qa-plan.jsonl"
           terraform fmt -check -recursive infra/terraform
