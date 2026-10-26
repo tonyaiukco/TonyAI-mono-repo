@@ -11,7 +11,13 @@ import re
 import stat
 from datetime import datetime
 
+import r3_packagekit_state
+
 PURPOSE = 'R3_MAINTENANCE_INSTALL'
+# Option C's predicate reaches the installer gate only in PR-C2, together with the mask
+# completion-record check, continuity sampling and the phase-aware re-evaluation. Until then
+# the installer's facts never carry False, whatever the reviewed values say.
+PACKAGEKIT_GATE_WIRED = False
 DIRECTORIES = ('/etc/apt/apt.conf.d', '/etc/dpkg/dpkg.cfg.d', '/var/lib/dpkg/triggers')
 FIXED = ('/etc/apt/apt.conf', '/etc/dpkg/dpkg.cfg', '/etc/manpath.config',
          '/var/lib/man-db/auto-update', '/var/lib/dpkg/info/man-db.postinst',
@@ -135,32 +141,14 @@ def directory_record(path, root='/'):
         os.close(fd)
 
 
-def bus_socket(root='/'):
-    """Whether the D-Bus system socket exists, with the collector's semantics
-    (`r3_policy_capture.socket_record`): `/run/dbus` is opened without following
-    links, the socket is lstat'd, never connected to, and anything but a socket
-    there refuses."""
-    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for part in ('run', 'dbus'):
-            try:
-                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            except FileNotFoundError:
-                return False
-            os.close(fd)
-            fd = nxt
-        try:
-            info = os.stat('system_bus_socket', dir_fd=fd, follow_symlinks=False)
-        except FileNotFoundError:
-            return False
-        if not stat.S_ISSOCK(info.st_mode):
-            raise ValueError('Unsafe D-Bus system socket')
-        return True
-    finally:
-        os.close(fd)
+def facts(root='/', runner=None):
+    """`root` and `runner` are only for tests on temporary trees and fixed command bytes."""
+    return facts_state(root, runner)[0]
 
 
-def facts(root='/'):
+def facts_state(root='/', runner=None):
+    """(facts, raw, norm) from ONE observation, so a continuity baseline (`volatile(raw)`)
+    and the full unit universe come from the same read that produced the hashed facts."""
     files = {name: regular_record(name, root) for name in FIXED}
     directories = {}
     for directory in DIRECTORIES:
@@ -171,14 +159,16 @@ def facts(root='/'):
         directories[directory] = names
         for name in names:
             files[directory + '/' + name] = regular_record(directory + '/' + name, root)
-    # Do not read the D-Bus socket. Native PackageKit hooks can activate a foreign
-    # writer. Until separately designed, refuse the activation predicate rather
-    # than disable the hook or exempt packagekitd from the writer guard. The socket
-    # is checked even without the registration, so an unsafe one always refuses.
-    socket = bus_socket(root)
-    packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')
-                  and socket)
-    return {'files': files, 'directories': directories, 'packagekit_activation_possible': packagekit}
+    # Option C (PR-C1): native PackageKit hooks can activate a foreign writer, so the
+    # hook is never disabled and packagekitd is never exempted from the writer guard.
+    # The predicate is the shared proof-bound one: `evaluate` is False only when every
+    # conjunct holds against the module's reviewed literals, and the gate below admits
+    # nothing else. Nothing here creates, alters or removes a PackageKit mask.
+    raw = r3_packagekit_state.observe(root, runner)
+    norm = r3_packagekit_state.normalize(raw)
+    possible = r3_packagekit_state.evaluate(norm) if PACKAGEKIT_GATE_WIRED else None
+    return ({'files': files, 'directories': directories, 'packagekit_activation_possible': possible,
+             'packagekit': r3_packagekit_state.facts_view(norm)}, raw, norm)
 
 
 def preflight(policy, lock_bytes, before, apt_config, observed, unit_config, cache_before):

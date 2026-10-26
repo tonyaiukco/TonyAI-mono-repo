@@ -94,7 +94,9 @@ def install(bundle, contract_path, approval_path, approved_hash, policy_path=Non
         policy_bytes = private_read(policy_path)
         policy = install_policy.load(policy_bytes, approval.get('policy_sha256'))
         expected.update(format=3, action='r02-maintenance-toolchain-install', policy_sha256=digest(policy_bytes))
-        for name in ('r3_install_policy.py', 'r3_maintenance.py', 'r3_noble_common.py', 'r3_noble_identity.py'):
+        # Every module the policy path imports is approval-bound (T-IMPORT).
+        for name in ('r3_install_policy.py', 'r3_packagekit_state.py', 'r3_policy_capture.py', 'r3_maintenance.py',
+                     'r3_noble_common.py', 'r3_noble_identity.py'):
             expected[name + '_sha256'] = digest(Path(__file__).with_name(name).read_bytes())
     if approval != expected:
         raise ValueError('Install approval binding differs.')

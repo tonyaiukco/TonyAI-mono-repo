@@ -25,7 +25,8 @@ CACHE = {'.': {'directory': True, 'uid': 6, 'gid': 12, 'mode': 0o755}}
 class PolicyHarness(Harness):
     def __init__(self, root):
         super().__init__(root, fault='man-db-trigger')
-        for name in ('r3_install_policy.py', 'r3_maintenance.py', 'r3_noble_common.py', 'r3_noble_identity.py'):
+        for name in ('r3_install_policy.py', 'r3_packagekit_state.py', 'r3_policy_capture.py', 'r3_maintenance.py',
+                     'r3_noble_common.py', 'r3_noble_identity.py'):
             shutil.copyfile(SCRIPTS / name, self.helpers / name)
             self.approval[name + '_sha256'] = policy.digest((self.helpers / name).read_bytes())
         self.policy, _, self.facts = fixture()

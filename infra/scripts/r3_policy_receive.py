@@ -26,7 +26,7 @@ from r3_policy_evidence import B_PURPOSE, DOCUMENT_LIMIT, load
 from r3_policy_packet import ROOT, payload, sources
 from r3_policy_git import verified_head
 from r3_policy_target import IMDS_FIELDS, validate_target
-from r3_policy_validate import require, sha
+from r3_policy_validate import SEALED_STATUSES, require, sha
 
 
 def approved(packet, approval_data, expected_hash):
@@ -265,7 +265,7 @@ def execute(interrupted):
         if interrupted:
             summary.update(status='PARTIAL_REVIEW_REQUIRED', interruption=interrupted[0])
         write(args.packet / 'collection-summary.json', encoded(summary))
-    return 0 if summary['sealed'] and summary['status'] == 'COLLECTED_REVIEW_REQUIRED' else 2
+    return 0 if summary['sealed'] and summary['status'] in SEALED_STATUSES else 2
 
 
 if __name__ == '__main__':

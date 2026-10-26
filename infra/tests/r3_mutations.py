@@ -302,13 +302,13 @@ add('infra/scripts/r3_policy_receive.py', 'policy-cleanup-failure', "or disposit
 add('infra/scripts/r3_policy_receive.py', 'policy-transport-exit', "disposition['returncode'] != 0 or interrupted", 'False or interrupted')
 add('infra/scripts/r3_policy_receive.py', 'policy-transport-signal', "or disposition['returncode'] != 0 or interrupted", "or disposition['returncode'] != 0 or False")
 add('infra/scripts/r3_policy_receive.py', 'policy-transport-hashes', "checked.update(status='PARTIAL_REVIEW_REQUIRED', policy_input_hashes={})", "checked.update(status='PARTIAL_REVIEW_REQUIRED')")
-add('infra/scripts/r3_policy_receive.py', 'policy-status-exit', "return 0 if summary['sealed'] and summary['status'] == 'COLLECTED_REVIEW_REQUIRED' else 2", "return 0 if summary['sealed'] else 2")
+add('infra/scripts/r3_policy_receive.py', 'policy-status-exit', "return 0 if summary['sealed'] and summary['status'] in SEALED_STATUSES else 2", "return 0 if summary['sealed'] else 2")
 add('infra/scripts/r3_noble_fixture.py', 'policy-frame-files', 'or set(entries) != COLLECTION_FILES', 'or False')
 add('infra/scripts/r3_noble_fixture.py', 'policy-checks-readback', "result.get('checks') != checked or result.get('status') != expected_status", "False or result.get('status') != expected_status")
 add('infra/scripts/r3_noble_guest.py', 'policy-manifest-policy-file', "or 'installation-policy.json' in manifest['files']):\n        raise ValueError('Collection cannot carry installation policy')", "or False):\n        raise ValueError('Collection cannot carry installation policy')")
 add('infra/scripts/r3_noble_inputs.py', 'policy-stage-policy', 'if collection_only and policy_bytes is not None:', 'if False:')
 add('infra/scripts/r3_noble_fixture.py', 'policy-controller-policy', "or (purpose == 'policy-collection' and policy_bytes is not None)", 'or False')
-add('infra/scripts/r3_noble_fixture.py', 'policy-collection-exit', "('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED', 'DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED') and summary['sealed']", "('DIAGNOSTIC_PASS_REVIEW_REQUIRED',) and summary['sealed']")
+add('infra/scripts/r3_noble_fixture.py', 'policy-collection-exit', "('DIAGNOSTIC_PASS_REVIEW_REQUIRED', *SEALED_STATUSES,\n                                      'DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED') and summary['sealed']", "('DIAGNOSTIC_PASS_REVIEW_REQUIRED',) and summary['sealed']")
 
 # Independent re-review: program configuration and isolated authority/scope guards.
 add('infra/scripts/r3_policy_git.py', 'policy-program-config-call', '    refuse_program_config(root)\n', '    pass\n')
@@ -452,11 +452,6 @@ add('infra/scripts/r3_install_policy.py', 'install-facts-binding', "            
 add('infra/scripts/r3_install_policy.py', 'install-mandb-guard', "        if observed['files'][name].get('absent'):\n            raise ValueError('Missing native trigger guard')", "        if False:\n            raise ValueError('Missing native trigger guard')")
 add('infra/scripts/r3_install_policy.py', 'install-trigger-version', "if row.get('version') != item['version'] or row.get('status') != 'install ok installed':", "if row.get('status') != 'install ok installed':")
 add('infra/scripts/r3_install_policy.py', 'install-trigger-status', "if row.get('version') != item['version'] or row.get('status') != 'install ok installed':", "if row.get('version') != item['version']:")
-add('infra/scripts/r3_install_policy.py', 'install-bus-socket-type', "        if not stat.S_ISSOCK(info.st_mode):\n            raise ValueError('Unsafe D-Bus system socket')", "        if False:\n            raise ValueError('Unsafe D-Bus system socket')")
-add('infra/scripts/r3_install_policy.py', 'install-bus-socket-nofollow', "info = os.stat('system_bus_socket', dir_fd=fd, follow_symlinks=False)", "info = os.stat('system_bus_socket', dir_fd=fd, follow_symlinks=True)")
-add('infra/scripts/r3_install_policy.py', 'install-bus-dir-nofollow', '            try:\n                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)', '            try:\n                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)')
-add('infra/scripts/r3_install_policy.py', 'install-bus-always-checked', "    socket = bus_socket(root)\n    packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')\n                  and socket)", "    packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')\n                  and bus_socket(root))")
-add('infra/scripts/r3_install_policy.py', 'install-predicate-registration', "    packagekit = (not files['/usr/share/dbus-1/system-services/org.freedesktop.PackageKit.service'].get('absent')\n                  and socket)", '    packagekit = socket')
 add('infra/scripts/r3_policy_capture.py', 'capture-bus-socket-type', "        if not stat.S_ISSOCK(value.st_mode):\n            raise ValueError('UNSAFE_SOCKET')", "        if False:\n            raise ValueError('UNSAFE_SOCKET')")
 add('infra/scripts/r3_policy_validate.py', 'policy-predicate-socket', "predicate = not service['value'].get('absent', False) and sock['value']['exists']", "predicate = not service['value'].get('absent', False)")
 add('infra/scripts/r3_policy_validate.py', 'policy-predicate-registration', "predicate = not service['value'].get('absent', False) and sock['value']['exists']", "predicate = sock['value']['exists']")
@@ -568,6 +563,213 @@ add(TW, 'transport-workflow-persist', '          persist-credentials: false', ' 
 add(TW, 'transport-workflow-plaintext-upload', '            ${{ runner.temp }}/r3-image-transport-publish/summary.json', '            ${{ runner.temp }}/r3-image-transport-publish/summary.json\n            /mnt/tonyai-r3-transport-*/raw/**')
 add(TW, 'transport-workflow-oidc', '  contents: read\n\nconcurrency', '  contents: read\n  id-token: write\n\nconcurrency')
 
+# Option C PR-C1: the shared PackageKit state module, format-3 collection and validation.
+def pk(name, old, new): add('infra/scripts/r3_packagekit_state.py', 'pk-' + name, old, new)
+pk('open-dir-nofollow', "            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)\n            os.close(fd)\n            fd = nxt\n            if parents", "            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)\n            os.close(fd)\n            fd = nxt\n            if parents")
+pk('lstat-nofollow', "    return os.stat(name, dir_fd=fd, follow_symlinks=False)", "    return os.stat(name, dir_fd=fd, follow_symlinks=True)")
+pk('read-nlink', "        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > cap:\n            raise ValueError('UNSAFE_FILE')\n        data = bytearray()\n        while len(data) <= cap:\n            block = os.read(file_fd, min(65536, cap + 1 - len(data)))\n            if not block:\n                break\n            data.extend(block)\n        capture.same", "        if not stat.S_ISREG(before.st_mode) or before.st_size > cap:\n            raise ValueError('UNSAFE_FILE')\n        data = bytearray()\n        while len(data) <= cap:\n            block = os.read(file_fd, min(65536, cap + 1 - len(data)))\n            if not block:\n                break\n            data.extend(block)\n        capture.same")
+pk('c1-regular', "put('C1.regular', lambda: reg['type'] == 'regular' or None)", "put('C1.regular', lambda: True)")
+pk('c1-owner', "lambda: owner_ok(reg) and reg['mode'] == 0o644)", "lambda: True)")
+pk('c1-owner-uid', "lambda: owner_ok(reg) and reg['mode'] == 0o644)", "lambda: reg['mode'] == 0o644)")
+pk('c1-parsed', "lambda: parsed is not None or None)", "lambda: True)")
+pk('c1-one-group', "lambda: parsed['groups'] == ['D-BUS Service'] and not parsed['malformed'])", "lambda: True)")
+pk('c1-malformed', " and not parsed['malformed'])", ")")
+pk('c1-keys', "lambda: set(parsed['keys']) <= {'Name', 'Exec', 'User', 'SystemdService'}", "lambda: True or set(parsed['keys']) <= {'Name', 'Exec', 'User', 'SystemdService'}")
+pk('c1-key-count', "\n        and all(count == 1 for count in parsed['keys'].values()))", ")")
+pk('c1-name', "lambda: parsed['keys'].get('Name') == 1 and parsed['name'] == 'org.freedesktop.PackageKit')", "lambda: True)")
+pk('c1-systemd-service', "parsed['keys'].get('SystemdService') == 1 and parsed['systemd_service'] == 'packagekit.service')", "True)")
+pk('c1-empty-systemd-service', "lambda: None if parsed['systemd_service'] == '' else", "lambda: None if False else")
+pk('c1-reviewed', "lambda: reg['sha256'] == reviewed['registration_sha256'] or None)", "lambda: True)")
+pk('c2-owner', "lambda d=directory: True if d().get('absent') else safe_dir(d()))", "lambda d=directory: True)")
+pk('c2-regular', "all(item['type'] == 'regular' for item in d()['members'].values()) or None)", "True)")
+pk('c2-other-registration', "not any(item.get('declares') for name, item in d()['members'].items() if p + '/' + name != REGISTRATION))", "True)")
+pk('declares-case', "'declares': b'packagekit' in data.lower()", "'declares': b'packagekit' in data")
+pk('c3-link', "put('C3.link', lambda: mask['type'] == 'link')", "put('C3.link', lambda: True)")
+pk('c3-target', "lambda: mask['target'] == '/dev/null')", "lambda: True)")
+pk('c3-owner', "put('C3.owner', lambda: owner_ok(mask))", "put('C3.owner', lambda: True)")
+pk('c3-parents', "lambda: all(safe_dir(item) for item in mask['parents']))", "lambda: True)")
+pk('safe-dir-mode', "return owner_ok(value) and not value['mode'] & 0o022", "return owner_ok(value)")
+pk('c4-char', "lambda: null['type'] == 'char')", "lambda: True)")
+pk('c4-rdev', "lambda: tuple(null['rdev']) == tuple(reviewed['dev_null']))", "lambda: True)")
+pk('c4-owner', "lambda: owner_ok(null) and null['mode'] == 0o666)", "lambda: True)")
+pk('c4-mode', "owner_ok(null) and null['mode'] == 0o666", "owner_ok(null)")
+pk('c4-parents', "lambda: all(safe_dir(item) for item in null['parents']))", "lambda: True)")
+pk('c5-unit-path', "lambda: tuple(core['manager']['unit_path']) == tuple(reviewed['unit_roots']) or None)", "lambda: True)")
+pk('c5-no-override', "value['entries'][name]['type'] == 'absent' or root + '/' + name == MASK_PATH", "True")
+pk('c5-vendor-type', "(root + '/' + name == VENDOR_FRAGMENT and value['entries'][name]['type'] == 'regular')", "root + '/' + name == VENDOR_FRAGMENT")
+pk('c6-fields', "        put('C6.' + key, lambda key=key, expected=expected: unit[key] == expected)", "        put('C6.' + key, lambda key=key, expected=expected: True)")
+pk('c6-unit-file-state', "('LoadState', 'masked'), ('UnitFileState', 'masked'),", "('LoadState', 'masked'),")
+pk('c6-drop-ins', "('NeedDaemonReload', 'no'),\n                          ('DropInPaths', '')):\n        put('C6.'", "('NeedDaemonReload', 'no')):\n        put('C6.'")
+pk('c6-main-pid', "put('C6.main-pid-zero', lambda: unit['main_pid_zero'] is True)", "put('C6.main-pid-zero', lambda: True)")
+pk('c6-job', "put('C6.job-empty', lambda: unit['job_empty'] is True)", "put('C6.job-empty', lambda: True)")
+pk('main-pid-derivation', "'main_pid_zero': block['MainPID'] == '0' if 'MainPID' in block else None}", "'main_pid_zero': True}")
+pk('job-derivation', "'job_empty': block['Job'] == '',", "'job_empty': True,")
+pk('c7-broker', "lambda: 'dbus-broker' not in dbus['Names'])", "lambda: True)")
+pk('c7-fields', "        put('C7.' + key, lambda key=key, expected=expected: dbus[key] == expected)", "        put('C7.' + key, lambda key=key, expected=expected: True)")
+pk('c7-drop-in-dirs', "(value['entries']['dbus.service.d']['type'] == 'absent')", "True")
+pk('c7-fragment-path', "lambda: dbus['FragmentPath'] == known(fragment)['path'] or None)", "lambda: True)")
+pk('c7-fragment-hash', "core['fragments'][known(fragment)['path']].get('sha256') == fragment['sha256'] or None)", "True)")
+pk('c7-flag', "lambda: core['fragments'][known(fragment)['path']]['exec_start_systemd_activation'])", "lambda: True)")
+pk('fragment-flag-derivation', "bool(starts) and all('--systemd-activation' in s.split() for s in starts)", "True")
+pk('c8-system', "put('C8.system', lambda: proc['argv_system'])", "put('C8.system', lambda: True)")
+pk('c8-flag', "put('C8.systemd-activation', lambda: proc['argv_systemd_activation'])", "put('C8.systemd-activation', lambda: True)")
+pk('c8-exe', "put('C8.exe', lambda: proc['exe_reviewed'])", "put('C8.exe', lambda: True)")
+pk('argv-system-derivation', "'argv_system': b'--system' in argv,", "'argv_system': True,")
+pk('argv-flag-derivation', "'argv_systemd_activation': b'--systemd-activation' in argv,", "'argv_systemd_activation': True,")
+pk('exe-derivation', "'exe_reviewed': proc['exe'] == DBUS_EXE,", "'exe_reviewed': True,")
+pk('proc-pid-binding', "    need(str(proc['pid']) == units['dbus.service']['MainPID'])\n", "")
+pk('c9-selinux', "lambda: (cfg['selinux'].get('absent') is True or cfg['selinux'].get('names') == []) or None", "lambda: True")
+pk('c9-file', "        put('C9.file:' + path, lambda path=path: config_file(", "        put('C9.file:' + path, lambda path=path: True or config_file(")
+pk('c9-risky-optional', "    return False if item['risky'] and not required else None", "    return None")
+pk('c9-required', "        return None if required else True", "        return True")
+pk('c9-reviewed-hash', "    if reviewed['config_files'] is not None and reviewed['config_files'].get(path) == item['sha256']:", "    if reviewed['config_files'] is not None:")
+pk('c9-dir-owner', "    if not safe_dir(value):\n        return False\n    results = []", "    results = []")
+pk('c9-dir-member', "        elif reviewed['config_members'] is not None and expected == item['sha256']:", "        elif True:")
+pk('c9-dir-risky', "            results.append(False if item['risky'] else None)", "            results.append(None)")
+pk('c10-var', "lambda: core['var']['type'] == 'directory' and safe_dir(core['var'])", "lambda: True")
+pk('c10-var-run', "lambda: core['var_run']['type'] == 'link' and owner_ok(core['var_run'])", "lambda: True")
+pk('c10-socket', "lambda: core['socket'] == {'exists': True, 'socket': True} or None)", "lambda: True)")
+pk('c10-listener', "put('C10.listener', lambda: proc['listener_is_dbus'] or None)", "put('C10.listener', lambda: True)")
+pk('listener-flag', "if int(row['flags'], 16) & SO_ACCEPTCON and row['state'] == '01']", "if row['state'] == '01']")
+pk('c11', "put('C11.no-process', lambda: core['pk_process_absent'])", "put('C11.no-process', lambda: True)")
+pk('process-argv', "if comm in PK_PROCESSES or any(os.fsdecode(a).rsplit('/', 1)[-1] in PK_PROCESSES for a in args):", "if comm in PK_PROCESSES:")
+pk('process-comm', "if comm in PK_PROCESSES or any(os.fsdecode(a).rsplit('/', 1)[-1] in PK_PROCESSES for a in args):", "if any(os.fsdecode(a).rsplit('/', 1)[-1] in PK_PROCESSES for a in args):")
+pk('packages-installed', "        if fields[4] != 'not-installed':\n            rows.append(fields)", "        rows.append(fields)")
+pk('units-duplicate', "need(separator and key in UNIT_PROPERTIES + SERVICE_PROPERTIES and key not in current)", "need(separator and key in UNIT_PROPERTIES + SERVICE_PROPERTIES)")
+pk('units-complete', "    need(set(units) == set(PK_UNITS))", "    pass")
+pk('c13', "lambda: {False: True, True: False}.get(view['c13_verdict']))", "lambda: True)")
+pk('c13-nested', "results.append(None if child['type'] == 'directory'", "results.append(False if child['type'] == 'directory'")
+pk('c13-session', "results.append(scanned(item)['declares'] if item['type'] == 'regular' else None)", "results.append(False)")
+pk('c13-true-wins', "    if True in results:\n        return True, digest_value", "    if False:\n        return True, digest_value")
+pk('c13-unknown', "    return (None if None in results else False), digest_value", "    return False, digest_value")
+pk('classify-mask', "        if target == '/dev/null':\n            return False", "        if target == '/dev/null':\n            return None")
+pk('classify-lib', "            resolved = '/usr' + resolved", "            pass")
+pk('classify-sha', "            return False if item.get('sha256') == reviewed['sha256'] else None", "            return False")
+pk('classify-md5', "        return False if listed is not None and listed == item.get('md5') else None", "        return False")
+pk('classify-escapes', "    if ESCAPES.search(data):\n        return None", "    if False:\n        return None")
+pk('stable-run-roots', "for root, value in universe_value['roots'].items() if not root.startswith('/run/')}", "for root, value in universe_value['roots'].items()}")
+pk('stable-snap', "{'entries': {n: project(i) for n, i in value['entries'].items() if not VOLATILE_NAME.match(n)}})", "{'entries': {n: project(i) for n, i in value['entries'].items()}})")
+pk('stable-snap-members', "value['entries'] = {n: project(i) for n, i in item['entries'].items() if not VOLATILE_NAME.match(n)}", "value['entries'] = {n: project(i) for n, i in item['entries'].items()}")
+pk('stable-body-hash', "            value['sha256'] = item['body']['sha256']", "            pass")
+pk('c14-absent', "all(value['entries'][name]['type'] == 'absent' for name in C14_NAMES)", "True")
+pk('c14-units', "lambda: all(core['units'][name]['LoadState'] == 'not-found'", "lambda: True or all(core['units'][name]['LoadState'] == 'not-found'")
+pk('c15', "(proc['cache_consistent'] or None) if reviewed['o13_mode'] == 'ctime_rule' else None)", "True if reviewed['o13_mode'] == 'ctime_rule' else None)")
+pk('ctime-btime-step', "    if abs(first - second) > 1:", "    if abs(first - second) > 9:")
+pk('ctime-margin', "    limit = min(start_ns, int(match.group(1)) * 10**9) - CTIME_MARGIN_NS", "    limit = min(start_ns, int(match.group(1)) * 10**9)")
+pk('ctime-exec-start', "    limit = min(start_ns, int(match.group(1)) * 10**9) - CTIME_MARGIN_NS", "    limit = start_ns - CTIME_MARGIN_NS")
+pk('ctime-future', "    return all(stamp <= limit and stamp <= proc['wall_ns'] for stamp in stamps)", "    return all(stamp <= limit for stamp in stamps)")
+pk('ctime-empty', "    if match is None or not stamps:", "    if match is None:")
+pk('ctime-service-stamps', "    stamps = [stamp for value in services['system'].values() for stamp in ctimes(value)]", "    stamps = [1]")
+pk('ctime-config-files', "    stamps += [item['ctime_ns'] for item in config['files'].values() if not item.get('absent')]\n", "")
+pk('ctime-config-dirs', "    stamps += [stamp for value in config['dirs'].values() for stamp in ctimes(value)]\n", "")
+pk('c16', "lambda: all(item['type'] == 'absent' for item in core['system_update'].values()))", "lambda: True)")
+pk('evaluate-true', "    if False in results.values():\n        return True", "    if False in results.values():\n        return None")
+pk('evaluate-none', "    return None if None in results.values() else False", "    return False")
+pk('evaluate-baseline', "        if view['pk_core']['registration'].get('present') is not True:\n            return None  # NOT_C_BASELINE (D2)", "        if False:\n            return None  # NOT_C_BASELINE (D2)")
+pk('evaluate-proof', "if view['proof_id'] != REVIEWED['proof_id'] or view['pk_core']['registration'] is None:", "if view['pk_core']['registration'] is None:")
+pk('c2-lib-alias', "(lib['type'] == 'link' and lib['target'] == known(known(allow)['lib_alias'])) or None)", "True)")
+pk('c2-members', "set(d()['members']) <= set(known(known(allow)['service_members'])[p]) or None)", "True)")
+pk('c6-fragment', "lambda: unit['FragmentPath'] == known(known(allow)['masked_fragment_path']))", "lambda: True)")
+pk('c7-names', "lambda: dbus['Names'] == known(known(allow)['dbus_names']) or None)", "lambda: True)")
+pk('c9-dir', "lambda path=path: config_dir(cfg['dirs'][path], path, known(allow)))", "lambda path=path: True)")
+pk('c10-var-run-target', "\n        and core['var_run']['target'] == known(known(allow)['var_run_target']))", ")")
+pk('listener-count', "(len(proc['unix_rows']) == 1 and len(bound) == 1", "(len(bound) >= 1")
+pk('listener-inode', "\n                                 and bound[0]['inode'] in proc['socket_inodes']),", "),")
+pk('c12', "lambda: code_reviewed(core, known(profile)) or None)", "lambda: True)")
+pk('profile-rows', "\n               and [list(row) for row in profile['code']['rows']] == code_rows]", "]")
+pk('profile-version', "if profile['code']['manager_version'] == version\n", "if True\n")
+pk('profile-kernel-filter', "    code_rows = [row for row in rows if not row[0].startswith('linux-image-')]", "    code_rows = rows")
+pk('profile-ambiguous', "    return matches[0] if len(matches) == 1 else None", "    return matches[0] if matches else None")
+pk('scope-no-index', "    if allow is None or allow['unit_index'] is None:\n        return (profile", "    if allow is None:\n        return (profile")
+pk('c13-profile-match', "    if (allow is None or allow['unit_index'] is None or universe_value['profile'] != profile['id']", "    if (allow is None or allow['unit_index'] is None")
+pk('c12-kernel-row', "    return (kernel == code['kernel'] and rows.get('linux-image-' + kernel) == list(code['kernel_row'])", "    return (kernel == code['kernel']")
+pk('c12-files', "\n            and all(core['binaries'][path] == dict(code['files'][path]) for path in C12_FILES))", ")")
+pk('classify-name', "('packagekit' in target.lower() or 'packagekit' in name.lower())", "('packagekit' in target.lower())")
+pk('classify-target', "('packagekit' in target.lower() or 'packagekit' in name.lower())", "('packagekit' in name.lower())")
+pk('classify-dotdot', "        if '..' in parts and not (", "        if False and not (")
+pk('classify-known', "        if resolved in known or allow['link_targets'].get(path) == target:", "        if True:")
+pk('classify-literal', "        if resolved in known or allow['link_targets'].get(path) == target:", "        if resolved in known:")
+pk('classify-utf8', "    try:\n        text = data.decode('utf-8')\n    except UnicodeError:\n        return None\n    if 'packagekit'", "    text = data.decode('utf-8', 'replace')\n    if 'packagekit'")
+pk('classify-scan', "    if 'packagekit' in text.lower().translate(QUOTES) or 'packagekit' in PurePosixPath(path).name.lower():", "    if 'packagekit' in PurePosixPath(path).name.lower():")
+pk('classify-case', "    if 'packagekit' in text.lower().translate(QUOTES) or", "    if 'packagekit' in text.translate(QUOTES) or")
+pk('classify-file-name', " or 'packagekit' in PurePosixPath(path).name.lower():", ":")
+pk('classify-indirection', "        if separator and key.strip().startswith('Exec') and INDIRECTION.search(value):", "        if False:")
+pk('classify-continuation', "    for line in text.replace('\\\\\\n', ' ').splitlines():", "    for line in text.splitlines():")
+pk('ctime-parents', "    stamps += [item['ctime_ns'] for item in config['parents'].values() if item['type'] != 'absent']\n", "")
+pk('file-record-bytes', "need(digest(data) == value['sha256'] and len(data) == value['bytes'])", "need(digest(data) == value['sha256'])")
+pk('c15-ctime-only', "(proc['cache_consistent'] or None) if reviewed['o13_mode'] == 'ctime_rule' else None)", "(proc['cache_consistent'] or None))")
+pk('evaluate-forced', "        if REVIEWED['o10_ok'] is not True or REVIEWED['o13_mode'] != 'ctime_rule':", "        if False:")
+pk('evaluate-forced-o13', "        if REVIEWED['o10_ok'] is not True or REVIEWED['o13_mode'] != 'ctime_rule':", "        if REVIEWED['o10_ok'] is not True:")
+pk('schema-universe-mode', "and value['mode'] in ('discovery', 'full'))", ")")
+pk('v1-roots', "    for root in V1_ROOTS:", "    for root in core['candidates']:")
+pk('v1-names', "                        for name in V1_NAMES})", "                        for name in (*C5_NAMES, *C14_NAMES, 'service.d')})")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-contract', "contract = 'option-c/' + pk_state.REVIEWED['proof_id'] if doc['format'] == 3 else 'legacy'", "contract = 'option-c' if doc['format'] == 3 else 'legacy'")
+add('infra/scripts/r3_install_policy.py', 'pk-facts-gate', "if PACKAGEKIT_GATE_WIRED else None", "if True else None")
+add('infra/scripts/r3_install_policy.py', 'pk-facts-gate-constant', "PACKAGEKIT_GATE_WIRED = False", "PACKAGEKIT_GATE_WIRED = True")
+add('infra/scripts/r3_install_policy.py', 'pk-facts-predicate', "    possible = r3_packagekit_state.evaluate(norm) if PACKAGEKIT_GATE_WIRED else None", "    possible = False if PACKAGEKIT_GATE_WIRED else None")
+add('infra/scripts/r3_install_policy.py', 'pk-facts-view', ",\n             'packagekit': r3_packagekit_state.facts_view(norm)}, raw, norm)", "}, raw, norm)")
+pk('safe-dir-owner', "return owner_ok(value) and not value['mode'] & 0o022", "return not value['mode'] & 0o022")
+pk('var-run-owner', "lambda: core['var_run']['type'] == 'link' and owner_ok(core['var_run'])", "lambda: core['var_run']['type'] == 'link'")
+pk('var-parents', "\n        and all(safe_dir(item) for item in core['var']['parents']))", ")")
+pk('cap-aggregate', " or budget['bytes'] > caps['aggregate']:", ":")
+pk('cap-packaged', "                    if budget['packaged'] > caps['packaged']:\n                        raise ValueError('LIMIT')", "                    if False:\n                        raise ValueError('LIMIT')")
+pk('cap-md5sums-files', "    if len(wanted) > caps['md5sums_files']:\n        raise ValueError('LIMIT')", "    if False:\n        raise ValueError('LIMIT')")
+pk('cap-md5sums-bytes', "data = read_at(fd, name, caps['md5sums_bytes'] - total)", "data = read_at(fd, name, 1 << 30)")
+pk('md5sums-duplicate', "                        if path in lines:\n                            raise ValueError('MALFORMED')", "                        if False:\n                            raise ValueError('MALFORMED')")
+pk('md5sums-format', "if not separator or not re.fullmatch('[a-f0-9]{32}', value):", "if not separator:")
+pk('btime-second-read', "'btime': [btime_first, boot_time(root)]", "'btime': [btime_first, btime_first]")
+pk('scope-user-root', "'/usr/local/lib/systemd/user', '/usr/lib/systemd/user', '/var/lib/snapd/desktop/systemd/user',", "'/usr/local/lib/systemd/user', '/usr/lib/systemd/user',")
+pk('scope-session-dir', ", '/run/user/0/dbus-1/services')", ")")
+pk('scope-c12-file', ",\n             '/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0')", ")")
+pk('scope-fragment', ",\n                '/usr/lib/systemd/system/packagekit-offline-update.service')", ")")
+pk('scope-processes', "frozenset({'packagekitd', 'pk-offline-update', 'pk-offline-upda'})", "frozenset({'packagekitd'})")
+pk('volatile-name', "VOLATILE_NAME = re.compile(r'snap[-.]')", "VOLATILE_NAME = re.compile(r'snap-')")
+pk('risky-session-tag', "|standard_session_servicedirs'", "'")
+pk('volatile-unit-fields', "'InactiveEnterTimestampMonotonic', 'ExecMainStartTimestamp')", "'InactiveEnterTimestampMonotonic')")
+pk('socket-inode-filter', "re.fullmatch(r'socket:\\[([0-9]{1,20})\\]', target)", "re.fullmatch(r'[a-z]+:\\[([0-9]{1,20})\\]', target)")
+pk('reread-proc-cmdline', "return {key: value[key] for key in ('pid', 'cmdline', 'exe')}", "return {key: value[key] for key in ('pid', 'exe')}")
+add('infra/scripts/r3_policy_validate.py', 'pk-legacy-facts-unchanged', "        if doc['format'] == 3:\n            facts['packagekit'] = packagekit", "        if True:\n            facts['packagekit'] = packagekit")
+pk('indirection-shell', "INDIRECTION = re.compile(r'[%$*?\\[`]|(^|\\s)-[A-Za-z]*c[A-Za-z]*(\\s|$)')", "INDIRECTION = re.compile(r'[%$*?\\[`]')")
+pk('indirection-combined-flags', "INDIRECTION = re.compile(r'[%$*?\\[`]|(^|\\s)-[A-Za-z]*c[A-Za-z]*(\\s|$)')", "INDIRECTION = re.compile(r'[%$*?\\[`]|(^|\\s)-c(\\s|$)')")
+pk('indirection-variable', "INDIRECTION = re.compile(r'[%$*?\\[`]|(^|\\s)-[A-Za-z]*c[A-Za-z]*(\\s|$)')", "INDIRECTION = re.compile(r'[%*?\\[`]|(^|\\s)-[A-Za-z]*c[A-Za-z]*(\\s|$)')")
+pk('classify-indirection-any-exec', "        if separator and key.strip().startswith('Exec') and INDIRECTION.search(value):", "        if separator and key.strip() == 'ExecStart' and INDIRECTION.search(value):")
+pk('classify-quotes', "    if 'packagekit' in text.lower().translate(QUOTES) or", "    if 'packagekit' in text.lower() or")
+pk('discovery-own-index', "    return (index is None or universe.get('mode') != 'full'", "    return (universe.get('mode') != 'full'")
+pk('discovery-md5sums-mode', " or sums.get('mode') != 'full'\n            or universe.get('profile') != profile_id)", "\n            or universe.get('profile') != profile_id)")
+pk('discovery-profile', "\n            or universe.get('profile') != profile_id)", ")")
+pk('profile-errors-duplicate', "        if identity in seen:\n            errors.append((profile['id'], 'duplicate code identity'))", "        if False:\n            errors.append((profile['id'], 'duplicate code identity'))")
+pk('profile-errors-kernel-row', "        if list(code['kernel_row'])[:1] != ['linux-image-' + code['kernel']] or", "        if")
+pk('schema-argv', "need(value['argv'] == COMMANDS[name] and value['failure'] is None)", "need(value['failure'] is None)")
+pk('schema-entry-depth', "\n         and len(value['parents']) <= depth and (value['type'] == 'absent' or len(value['parents']) == depth))", ")")
+pk('schema-proc-keys', "need(isinstance(value, dict) and set(value) == {'pid', 'cmdline', 'exe',", "need(isinstance(value, dict) and set(value) >= {'pid', 'cmdline', 'exe',")
+pk('schema-candidate-roots', "set(value['roots']) == set(REVIEWED['unit_roots']))", "True)")
+pk('section-schema', "    check(name, section['value'])\n    return section['value']", "    return section['value']")
+pk('stdout-status', "    if record['returncode'] != 0 or record['failure'] is not None or record['stderr']['bytes'] != 0:", "    if record['failure'] is not None:")
+pk('command-limit', "    if len(stdout) > OUTPUT_LIMITS[name] or len(stderr) > OUTPUT_LIMITS[name]:\n        raise ValueError('LIMIT')", "    if False:\n        raise ValueError('LIMIT')")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-sections', "        complete &= packagekit_sections(sections)", "        pass")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-command-status', "            good = item['returncode'] == 0 and item['stderr']['bytes'] == 0", "            good = True")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-after', "            complete &= (pk_state.unit_blocks(sections['pk-units']['value'])\n                         == pk_state.unit_blocks(sections['pk-units-after']['value']))", "            pass")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-discovery-status', "'DISCOVERY_ONLY' if discovery else 'COLLECTED_REVIEW_REQUIRED'", "'COLLECTED_REVIEW_REQUIRED'")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-discovery-hashes', "    if complete and not discovery:", "    if complete:")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-c-facts', "            facts['packagekit'] = packagekit", "            pass")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-section-set', "        expected |= set(PK_SECTIONS)", "        pass")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-index-argv', "        require(value['argv'] == C_COMMANDS['pk-dpkg-index'])", "        pass")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-predicate', "        predicate, packagekit, discovery = pk_state.evaluate(norm), pk_state.facts_view(norm), pk_state.discovery(raw)", "        predicate, packagekit, discovery = False, pk_state.facts_view(norm), pk_state.discovery(raw)")
+add('infra/scripts/r3_policy_validate.py', 'pk-validate-sealed', "SEALED_STATUSES = ('COLLECTED_REVIEW_REQUIRED', 'DISCOVERY_ONLY')", "SEALED_STATUSES = ('COLLECTED_REVIEW_REQUIRED',)")
+add('infra/scripts/r3_policy_evidence.py', 'pk-collect-sections', "        take(name, lambda name=name: pk_state.read(name, sections, timeout=deadline - time.monotonic()))", "        pass")
+add('infra/scripts/r3_policy_evidence.py', 'pk-collect-after', "    take('pk-units-after', lambda: pk_state.command('pk-units', timeout=deadline - time.monotonic()))", "    pass")
+add('infra/scripts/r3_policy_evidence.py', 'pk-collect-index', "    take('pk-dpkg-index', lambda: command('pk-dpkg-index', deadline))", "    pass")
+add('infra/scripts/r3_policy_evidence.py', 'pk-collect-reread', "        reread = name in pk_state.REREAD", "        reread = False")
+add('infra/scripts/r3_policy_evidence.py', 'pk-collect-projection', "== pk_state.reread_projection(name, section['value'])):\n                again = section", "== pk_state.reread_projection(name, section['value'])):\n                pass")
+add('infra/scripts/r3_policy_evidence.py', 'pk-collect-format', "FORMAT = 3\n", "FORMAT = 2\n")
+add('infra/scripts/r3_policy_capture.py', 'pk-capture-socket-identity', "**({'identity': [value.st_dev, value.st_ino]} if identity else {})", "**{}")
+add('infra/scripts/r3_install_policy.py', 'pk-facts-root', "r3_packagekit_state.observe(root, runner)", "r3_packagekit_state.observe('/', runner)")
+add('infra/scripts/r3_install.py', 'pk-install-approval-state', "        for name in ('r3_install_policy.py', 'r3_packagekit_state.py', 'r3_policy_capture.py', 'r3_maintenance.py',", "        for name in ('r3_install_policy.py', 'r3_policy_capture.py', 'r3_maintenance.py',")
+add('infra/scripts/r3_install.py', 'pk-install-approval-capture', "        for name in ('r3_install_policy.py', 'r3_packagekit_state.py', 'r3_policy_capture.py', 'r3_maintenance.py',", "        for name in ('r3_install_policy.py', 'r3_packagekit_state.py', 'r3_maintenance.py',")
+add('infra/scripts/r3_artifacts.py', 'pk-bundle-state', "'r3_install_policy.py', 'r3_packagekit_state.py', 'r3_policy_capture.py', 'r3_maintenance.py',", "'r3_install_policy.py', 'r3_policy_capture.py', 'r3_maintenance.py',")
+add('infra/scripts/r3_artifacts.py', 'pk-bundle-capture', "'r3_install_policy.py', 'r3_packagekit_state.py', 'r3_policy_capture.py', 'r3_maintenance.py',", "'r3_install_policy.py', 'r3_packagekit_state.py', 'r3_maintenance.py',")
+add('infra/scripts/r3_noble_inputs.py', 'pk-iso-state', "'r3_install_policy.py', 'r3_packagekit_state.py', 'r3_maintenance.py',", "'r3_install_policy.py', 'r3_maintenance.py',")
+add('infra/scripts/r3_policy_packet.py', 'pk-packet-state', "'r3_install_policy', 'r3_packagekit_state',\n", "'r3_install_policy',\n")
 
 NC = 'infra/scripts/r3_noble_common.py'
 # Darwin's EPERM for a zombie-only group: accepted only once the reaped group is gone.
@@ -589,8 +791,26 @@ def mutation_command(file, python_command, node_command):
     # whole R3 suite per mutant (about ten CI minutes for 29 mutants).
     elif file.endswith('r3_snap_leaf.py'):
         suites = ['test_r3_snap_leaf']
+    elif file.endswith('r3_packagekit_state.py'):
+        # Every class but DomainCases (the per-case T-DOMAIN matrix, run by the unit suite): a
+        # scratch pass showed no state mutant needs it, and it halves this block's CI time.
+        suites = ['test_r3_packagekit_state.Baseline',
+                  'test_r3_packagekit_state.Truth',
+                  'test_r3_packagekit_state.Leaf',
+                  'test_r3_packagekit_state.Domain',
+                  'test_r3_packagekit_state.ClockBoundaries',
+                  'test_r3_packagekit_state.Frozen',
+                  'test_r3_packagekit_state.Route',
+                  'test_r3_packagekit_state.Legacy',
+                  'test_r3_packagekit_state.Drift',
+                  'test_r3_packagekit_state.Universe',
+                  'test_r3_packagekit_state.Volatile',
+                  'test_r3_packagekit_contract', 'test_r3_install_policy_facts']
     elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py', 'r3_noble_common.py')):
-        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers', 'test_r3_install_policy_facts', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity']
+        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context', 'test_r3_policy_snap', 'test_r3_policy_triggers', 'test_r3_install_policy_facts', 'test_r3_snap_leaf', 'test_r3_noble_fixture', 'test_r3_noble_identity',
+                  # The collector and validator classes only; the synthetic-host matrix runs on the module's own mutants.
+                  'test_r3_packagekit_state.Domain', 'test_r3_packagekit_state.Legacy',
+                  'test_r3_packagekit_state.Route', 'test_r3_packagekit_state.Volatile', 'test_r3_packagekit_contract']
     elif file.endswith(('r3_image_acquire.py', 'r3_image_import.py', 'r3_image_qualify.py', 'r3-image-transport.yml')):
         suites = ['test_r3_image_transport_run']
     elif file.startswith('.github/workflows/'):
@@ -601,14 +821,17 @@ def mutation_command(file, python_command, node_command):
     elif file.endswith(('r3_package_state.py', 'r3_apt_observer.py')):
         suites = ['test_r3_package_state', 'test_r3_install_guards']
     elif file.endswith('r3_install.py'):
-        suites = ['test_r3_install_guards', 'test_r3_preparation']
+        # Approval-binding mutants need only the static T-IMPORT contract, not the synthetic hosts.
+        suites = ['test_r3_install_guards', 'test_r3_preparation', 'test_r3_packagekit_contract']
     elif file.endswith(('r3_install_policy.py', 'r3_maintenance.py')):
         suites = ['test_r3_maintenance_policy', 'test_r3_maintenance_integration', 'test_r3_install_guards',
-                  'test_r3_install_policy_facts', 'test_r3_policy_evidence', 'test_r3_policy_controller']
+                  'test_r3_install_policy_facts', 'test_r3_policy_evidence', 'test_r3_policy_controller',
+                  'test_r3_packagekit_state.Domain', 'test_r3_packagekit_state.Legacy',
+                  'test_r3_packagekit_state.Route', 'test_r3_packagekit_state.Volatile', 'test_r3_packagekit_contract']
     elif file.endswith('r3_transfer.py'):
         suites = ['test_r3_preparation']
     elif file.endswith(('r3_toolchain.py', 'r3_artifacts.py')):
-        suites = ['test_r3_preparation', 'test_r3_provenance', 'test_r3_receipt']
+        suites = ['test_r3_preparation', 'test_r3_provenance', 'test_r3_receipt', 'test_r3_packagekit_contract']
     elif file.endswith(('r3_qualification.py', 'r3_smoke_status.py')):
         suites = ['test_r3_qualification_run', 'test_r3_compose_validation',
                   'test_r3_smoke_diagnostics', 'test_r3_preparation']

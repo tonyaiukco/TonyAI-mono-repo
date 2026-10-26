@@ -14,6 +14,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
 import r3_install_policy as policy
 import r3_maintenance as maintenance
+import r3_packagekit_state as pk_state
 import r3_policy_capture as capture
 from r3_package_fixtures import observation
 from test_r3_maintenance_policy import LOCK_BYTES, fixture
@@ -66,25 +67,25 @@ class Tree:
         test.addCleanup(server.close)
         server.bind(str(path))
 
+    @staticmethod
+    def runner(_argv, _timeout):
+        return b'', b'synthetic: no systemd or dpkg here\n', 1
+
     def installer(self):
-        try:
-            return policy.facts(str(self.root))
-        except (OSError, ValueError):
-            return REFUSED
+        return policy.facts(str(self.root), self.runner)
 
     def collector(self):
-        """What the collector records and the validator derives for the same tree."""
-        try:
-            files = {name: capture.file_record(name, root=str(self.root)) for name in policy.FIXED}
-            bus = capture.socket_record(str(self.root))
-        except (OSError, ValueError):
-            return REFUSED
-        return files, (not files[SERVICE].get('absent', False) and bus['exists'])
+        """What the collector records for the same tree: file records and the shared dbus-socket section."""
+        files = {name: capture.file_record(name, root=str(self.root)) for name in policy.FIXED}
+        return files, pk_state.operation(lambda: pk_state.read('dbus-socket', {}, str(self.root)))
 
 
 class SameTree(unittest.TestCase):
-    """T-SAME-TREE: the installer and the collector agree, or both refuse."""
-    EXPECTED = {'socket': True, 'no-socket': False, 'no-dbus': False, 'no-run': False,
+    """T-SAME-TREE under option C: the installer and the collector read the socket with one
+    reader, and on these minimal trees (no /proc, no systemd) both refuse: the predicate is
+    None, never False. Full trees are covered by T-DOMAIN in test_r3_packagekit_state."""
+    EXPECTED = {'socket': {'exists': True, 'socket': True}, 'no-socket': {'exists': False, 'socket': False},
+                'no-dbus': {'exists': False, 'socket': False}, 'no-run': {'exists': False, 'socket': False},
                 'regular': REFUSED, 'linked-socket': REFUSED, 'dangling-link': REFUSED, 'linked-dbus': REFUSED}
 
     def test_predicate_and_file_records_match_or_both_refuse(self):
@@ -92,45 +93,51 @@ class SameTree(unittest.TestCase):
             for bus, expected in self.EXPECTED.items():
                 with self.subTest(registration=registration, bus=bus):
                     tree = Tree(self, registration, bus)
-                    installer, collector = tree.installer(), tree.collector()
+                    installer, (files, socket_section) = tree.installer(), tree.collector()
+                    observed = pk_state.observe(str(tree.root), Tree.runner)['dbus-socket']
+                    self.assertEqual(observed, socket_section)
                     if expected == REFUSED:
-                        # An unsafe socket refuses whether or not PackageKit is registered.
-                        self.assertEqual((installer, collector), (REFUSED, REFUSED))
-                        continue
-                    files, predicate = collector
-                    self.assertEqual(installer['packagekit_activation_possible'], predicate)
-                    self.assertIs(predicate, expected and registration)
+                        # An unsafe socket is an error section, whether or not PackageKit is registered.
+                        self.assertEqual(socket_section['state'], 'error')
+                    else:
+                        self.assertEqual(socket_section, {'state': 'ok', 'value': expected})
+                    self.assertIsNone(installer['packagekit_activation_possible'])
                     self.assertEqual({name: installer['files'][name] for name in policy.FIXED}, files)
 
     def test_the_real_registration_record_is_identical_on_both_sides(self):
         tree = Tree(self, True, 'socket')
-        installer, (files, _predicate) = tree.installer(), tree.collector()
+        installer, (files, _socket) = tree.installer(), tree.collector()
         self.assertFalse(installer['files'][SERVICE].get('absent', False))
         self.assertEqual(installer['files'][SERVICE], files[SERVICE])
 
     def test_directory_members_are_read_under_the_same_root(self):
         tree = Tree(self, True, 'socket')
-        installer, (files, _predicate) = tree.installer(), tree.collector()
+        installer, (files, _socket) = tree.installer(), tree.collector()
         for directory in policy.DIRECTORIES:
             name = directory + '/member'
             self.assertEqual(installer['directories'][directory], ['member'])
             self.assertEqual(installer['files'][name], {k: v for k, v in capture.file_record(name, root=str(tree.root)).items()})
 
     def test_an_unreadable_socket_entry_refuses_rather_than_reading_as_absent(self):
-        tree = Tree(self, False, 'socket')
-        real = policy.os.stat
+        tree = Tree(self, True, 'socket')
+        real = capture.os.stat
         def denied(path, *args, **kwargs):
             if path == 'system_bus_socket':
                 raise PermissionError(13, 'denied')
             return real(path, *args, **kwargs)
-        with patch.object(policy.os, 'stat', side_effect=denied), self.assertRaises(PermissionError):
-            policy.facts(str(tree.root))
+        with patch.object(capture.os, 'stat', side_effect=denied):
+            raw = pk_state.observe(str(tree.root), Tree.runner)
+            facts = tree.installer()
+        self.assertEqual(raw['dbus-socket'], {'state': 'error', 'error': 'OSError'})
+        self.assertIsNone(facts['packagekit_activation_possible'])
 
     def test_default_root_is_the_real_root(self):
-        self.assertEqual(policy.facts.__defaults__, ('/',))
-        self.assertEqual(policy.bus_socket.__defaults__, ('/',))
-        self.assertEqual(capture.socket_record.__defaults__, ('/',))
+        self.assertEqual(policy.facts.__defaults__, ('/', None))
+        self.assertEqual(pk_state.observe.__defaults__, ('/', None))
+        self.assertEqual(pk_state.read.__defaults__[0], '/')
+        self.assertEqual(capture.socket_record.__defaults__, ('/', False))
         self.assertEqual(capture.directory.__defaults__, ('/',))
+        self.assertFalse(hasattr(policy, 'bus_socket'))
 
 
 class GateValues(unittest.TestCase):

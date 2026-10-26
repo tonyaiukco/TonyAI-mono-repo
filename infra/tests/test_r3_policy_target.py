@@ -336,5 +336,11 @@ class ReceiverAndPacket(unittest.TestCase):
         self.assertNotIn('bash', argv)
 
 
+
+def setUpModule():
+    # Format-3 collection reads its PackageKit sections from a synthetic masked host.
+    import r3_pk_fixtures
+    r3_pk_fixtures.module_canned_sections()
+
 if __name__ == '__main__':
     unittest.main()

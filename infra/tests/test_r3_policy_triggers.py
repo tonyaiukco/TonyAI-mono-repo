@@ -137,5 +137,11 @@ class Validation(unittest.TestCase):
             validator.validate(encoded(self.doc(record={'state': 'error', 'error': 'UNREVIEWED_PATH'})), BINDING)
 
 
+
+def setUpModule():
+    # Format-3 collection reads its PackageKit sections from a synthetic masked host.
+    import r3_pk_fixtures
+    r3_pk_fixtures.module_canned_sections()
+
 if __name__ == '__main__':
     unittest.main()

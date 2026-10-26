@@ -8,7 +8,7 @@ from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_ope
 from r3_noble_common import digest, encoded
 from r3_policy_evidence import B_PURPOSE, collect, DOCUMENT_LIMIT
 from r3_policy_capture import directory
-from r3_policy_validate import require, validate
+from r3_policy_validate import SEALED_STATUSES, require, validate
 
 IMDS_FIELDS = ('resourceId', 'vmId', 'location', 'subscriptionId', 'publisher', 'offer', 'sku', 'version')
 
@@ -72,7 +72,8 @@ def validate_target(data, proposal):
                 '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', observed['boot_id']) is not None)
     require(value['failure'] in (None, 'OSError', 'ValueError', 'TimeoutError', 'RuntimeError', 'UnicodeError'))
     summary = {'status': 'PARTIAL_REVIEW_REQUIRED', 'qualification': False, 'installation_success': False,
-               'policy_generated': False, 'policy_input_hashes': {}, 'packagekit_activation_possible': None}
+               'policy_generated': False, 'policy_input_hashes': {}, 'packagekit_activation_possible': None,
+               'predicate_contract': None}
     if value['evidence'] is not None:
         require(before is not None)
         binding = {'purpose': B_PURPOSE, 'source': proposal['source'], 'target': proposal['target'],
@@ -109,4 +110,4 @@ def main(proposal):
         sys.stdout.buffer.write(encoded(value))
         sys.stdout.buffer.flush()
         signal.alarm(0)
-    return 0 if validate_target(encoded(value), proposal)['status'] == 'COLLECTED_REVIEW_REQUIRED' else 2
+    return 0 if validate_target(encoded(value), proposal)['status'] in SEALED_STATUSES else 2

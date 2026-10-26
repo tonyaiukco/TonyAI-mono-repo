@@ -349,7 +349,8 @@ def collection_main():
         with open(PORT, 'wb', buffering=0) as port:
             write_all(port, archive(OUTPUT))
         signal.alarm(0)
-    return 0 if result['status'] == 'COLLECTED_REVIEW_REQUIRED' else 1
+    from r3_policy_validate import SEALED_STATUSES
+    return 0 if result['status'] in SEALED_STATUSES else 1
 
 
 def snap_binding(manifest):

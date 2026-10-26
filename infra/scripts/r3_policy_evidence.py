@@ -10,6 +10,7 @@ from r3_apt_observer import UNITS
 from r3_install_policy import FIXED, DIRECTORIES, unique
 from r3_noble_common import digest, encoded, read, run
 from r3_package_state import INVENTORY_ARGV, inventory
+import r3_packagekit_state as pk_state
 import r3_policy_capture as capture
 import r3_policy_snap as snap
 
@@ -22,6 +23,12 @@ COMMANDS = {'inventory': INVENTORY_ARGV, 'audit': ['dpkg', '--audit'],
             'architecture': ['dpkg', '--print-architecture'],
             'unit-paths': ['systemctl', 'show', '--property=Id,FragmentPath,DropInPaths,NeedDaemonReload', *UNITS],
             'unit-paths-after': ['systemctl', 'show', '--property=Id,FragmentPath,DropInPaths,NeedDaemonReload', *UNITS]}
+# Format 3 (option C): the shared PackageKit sections, the field-by-field second read
+# of the unit block, and a discovery index that is never a read list.
+C_COMMANDS = {'pk-dpkg-index': ['dpkg-query', '-L', 'packagekit', 'dbus-daemon', 'dbus-system-bus-common',
+                                'dbus-user-session', 'libsystemd-shared', 'libglib2.0-0t64']}
+C_LIMITS = {'pk-dpkg-index': 512 * 1024}
+PK_SECTIONS = (*pk_state.SECTION_NAMES, 'pk-units-after', 'pk-dpkg-index')
 SCOPES = ('apt-scope-before', 'apt-scope-after', 'unit-scope-before', 'unit-scope-after')
 # Reviewed read scope, not accepted semantics. Unknown members remain explicit
 # partial evidence; never read arbitrary credentials disguised as configuration.
@@ -70,7 +77,7 @@ REVIEW_SCRIPTS = ('/usr/lib/os-release', '/usr/lib/ubuntu-advantage/apt-esm-json
 # own snap section and collects only the remaining extra files.
 EXTRA_FILES = (*REVIEW_SCRIPTS, '/usr/bin/snap', '/usr/bin/appstreamcli', '/usr/bin/test')
 COLLECTED_FILES = tuple(p for p in EXTRA_FILES if p != '/usr/bin/snap')
-FORMAT = 2
+FORMAT = 3
 BODIES = REVIEW_SCRIPTS + tuple(p for p in FIXED if p not in ('/usr/bin/mandb', '/usr/bin/setpriv',
     '/usr/bin/python3.12', '/usr/bin/gdbus', '/var/lib/dpkg/diversions', '/var/lib/dpkg/statoverride'))
 ERRORS = ('TimeoutError', 'UnicodeError', 'OSError', 'ValueError', 'RuntimeError')
@@ -106,7 +113,8 @@ def command(name, deadline):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError('Deadline')
-            run(COMMANDS[name], temp, name, timeout=min(30, remaining), limit=2 * 1024 * 1024)
+            run({**COMMANDS, **C_COMMANDS}[name], temp, name, timeout=min(30, remaining),
+                limit=C_LIMITS.get(name, 2 * 1024 * 1024))
         except Exception as exc:
             failure = error_code(exc)
         root = Path(temp)
@@ -115,7 +123,7 @@ def command(name, deadline):
             return capture.blob(read(path, 2 * 1024 * 1024)) if path.exists() else capture.blob(b'')
         exit_path = root / (name + '.exit.json')
         exit_value = json.loads(read(exit_path)) if exit_path.exists() else {}
-        return {'argv': COMMANDS[name], 'stdout': output('.stdout'), 'stderr': output('.stderr'),
+        return {'argv': {**COMMANDS, **C_COMMANDS}[name], 'stdout': output('.stdout'), 'stderr': output('.stderr'),
                 'returncode': exit_value.get('returncode'), 'failure': failure}
 
 
@@ -131,7 +139,7 @@ def collect(binding, checkpoint=lambda _value: None):
     deadline = time.monotonic() + 240
     sections = {name: {'state': 'not_reached'} for name in (*COMMANDS,
         *('file:' + p for p in (*FIXED, *COLLECTED_FILES)), snap.SECTION,
-        *('directory:' + p for p in DIRECTORIES), *SCOPES, 'dbus-socket', 'cache')}
+        *('directory:' + p for p in DIRECTORIES), *SCOPES, *PK_SECTIONS, 'cache')}
     value = {'format': FORMAT, 'purpose': PURPOSE, 'binding': binding, 'sections': sections,
              'qualification': False, 'installation_success': False, 'policy_generated': False}
     def take(name, function):
@@ -172,20 +180,30 @@ def collect(binding, checkpoint=lambda _value: None):
         take('unit-config', lambda: command('unit-config', deadline))
         take('unit-paths-after', lambda: command('unit-paths-after', deadline))
         take('unit-scope-after', lambda: unit_scope(paths('unit-paths-after')))
-    take('dbus-socket', capture.socket_record)
+    # The installer reads the same sections through `pk_state.observe`.
+    for name in pk_state.SECTION_NAMES:
+        take(name, lambda name=name: pk_state.read(name, sections, timeout=deadline - time.monotonic()))
+    take('pk-units-after', lambda: pk_state.command('pk-units', timeout=deadline - time.monotonic()))
+    take('pk-dpkg-index', lambda: command('pk-dpkg-index', deadline))
     take('cache', capture.cache)
     # A second read detects observed drift; this remains a sampling limit.
     for name, section in list(sections.items()):
-        if not name.startswith(('file:', 'directory:', 'snap:')) or section['state'] != 'ok':
+        reread = name in pk_state.REREAD
+        if not (reread or name.startswith(('file:', 'directory:', 'snap:'))) or section['state'] != 'ok':
             continue
         if time.monotonic() >= deadline:
             sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}
             checkpoint(value)
             continue
-        path = name.split(':', 1)[1]
         if name.startswith('snap:'):
             again = snap.operation(lambda: snap.observe(deadline))
+        elif reread:
+            again = operation(lambda: pk_state.read(name, sections))
+            if again['state'] == 'ok' and (pk_state.reread_projection(name, again['value'])
+                                           == pk_state.reread_projection(name, section['value'])):
+                again = section
         else:
+            path = name.split(':', 1)[1]
             again = operation(lambda: capture.membership(path) if name.startswith('directory:')
                               else capture.file_record(path, 'body' in section['value']))
         if time.monotonic() >= deadline:

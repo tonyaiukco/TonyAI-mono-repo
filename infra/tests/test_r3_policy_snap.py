@@ -337,9 +337,9 @@ class Collect(unittest.TestCase):
              patch.object(snap, 'observe', side_effect=observations):
             return evidence.collect(BINDING)
 
-    def test_collector_writes_format_2_with_the_snap_section_and_late_resample(self):
+    def test_collector_writes_its_format_with_the_snap_section_and_late_resample(self):
         doc = self.collect([snap_record(), snap_record()])
-        self.assertEqual(doc['format'], 2)
+        self.assertEqual(doc['format'], 3)
         self.assertNotIn('file:/usr/bin/snap', doc['sections'])
         self.assertEqual(doc['sections'][snap.SECTION], {'state': 'ok', 'value': snap_record()})
         self.assertEqual(validator.validate(encoded(doc), BINDING)['status'], 'COLLECTED_REVIEW_REQUIRED')
@@ -477,6 +477,12 @@ class Closure(unittest.TestCase):
             for name in closure:
                 with self.subTest(module=name):
                     self.assertLessEqual(self.imports(name), closure)
+
+
+def setUpModule():
+    # Format-3 collection reads its PackageKit sections from a synthetic masked host.
+    import r3_pk_fixtures
+    r3_pk_fixtures.module_canned_sections()
 
 if __name__ == '__main__':
     unittest.main()

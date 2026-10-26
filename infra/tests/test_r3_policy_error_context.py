@@ -230,5 +230,11 @@ class ErrorContext(unittest.TestCase):
             self.assertEqual(evidence.load((output / 'policy-evidence.json').read_bytes()), doc)
 
 
+
+def setUpModule():
+    # Format-3 collection reads its PackageKit sections from a synthetic masked host.
+    import r3_pk_fixtures
+    r3_pk_fixtures.module_canned_sections()
+
 if __name__ == '__main__':
     unittest.main()

@@ -135,7 +135,9 @@ def membership(path, maximum=256):
         os.close(fd)
 
 
-def socket_record(root='/'):
+def socket_record(root='/', identity=False):
+    """The only D-Bus socket reader: lstat, never connect. `identity` adds the path's
+    (st_dev, st_ino) for continuity; it is never part of the dbus-socket section."""
     try:
         fd = directory('/run/dbus', root)
     except FileNotFoundError:
@@ -147,7 +149,7 @@ def socket_record(root='/'):
             return {'exists': False, 'socket': False}
         if not stat.S_ISSOCK(value.st_mode):
             raise ValueError('UNSAFE_SOCKET')
-        return {'exists': True, 'socket': True}
+        return {'exists': True, 'socket': True, **({'identity': [value.st_dev, value.st_ino]} if identity else {})}
     finally:
         os.close(fd)
 

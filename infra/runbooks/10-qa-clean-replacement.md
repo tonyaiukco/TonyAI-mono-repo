@@ -1446,14 +1446,12 @@ A review hash is a binding to separately retained review, not a proof that someo
 reviewed it. No executable fixture/target policy is shipped here. The retained A
 snapshot is insufficient to produce one: mandb/config/helper closure, actual
 cache effects and conditional APT hooks remain to be qualified. The PackageKit
-service-file + D-Bus-socket activation predicate currently refuses even if a
-policy hash matches; this code does not disable that hook, stop a sixth service,
+activation predicate (option C, [R3-POLICY-01-C1](#r3-policy-01-c1-shared-packagekit-state-option-c))
+currently refuses even if a policy hash matches; this code does not disable that hook, stop a sixth service,
 or exempt packagekitd from foreign-writer checks. Only the literal `False` passes the
-gate. The installer checks the socket with the collector's semantics (`/run/dbus`
+gate. The D-Bus socket has one reader, `r3_policy_capture.socket_record` (`/run/dbus`
 opened without following links, the socket lstat'd and required to be a socket),
-and checks it even when PackageKit is not registered, so a non-socket or a linked
-socket or directory refuses on both sides; tests compare both readers on real
-temporary trees (option C, PR-C0). Needrestart, update-notifier,
+shared by the installer and the collector (PR-C0, PR-C1). Needrestart, update-notifier,
 dpkg-preconfigure and other effective hooks need explicit review as well. Historical
 B omits effective hook/path-exclusion bodies and must be extended/reviewed in a new
 private packet before claiming those facts. Do not silently rebind old B.
@@ -1492,8 +1490,9 @@ adds a separate `maintenance-policy.json` member beside the verified `r3/` bundl
 and proposes `r3_install.py ... --policy /var/lib/tonyai-r3/maintenance-policy.json`.
 The transfer proposal remains `NOT_EXECUTABLE_APPROVAL`. Format-3 approval changes
 the action to `r02-maintenance-toolchain-install`, binds `policy_sha256` and the
-four additional helper byte hashes (`r3_install_policy.py`, `r3_maintenance.py`,
-`r3_noble_common.py`, `r3_noble_identity.py`), besides all existing source/contract
+six additional helper byte hashes (`r3_install_policy.py`, `r3_packagekit_state.py`,
+`r3_policy_capture.py`, `r3_maintenance.py`, `r3_noble_common.py`, `r3_noble_identity.py`;
+every module the policy path imports), besides all existing source/contract
 bindings. Format-2 approval cannot select this path. The receipt is format 3 and
 retains policy/config/cache/isolation evidence. Five additions and final holds,
 unchanged pre-existing final inventory and clean audits are still required.
@@ -1509,6 +1508,100 @@ CL-P2-3 and the delivery order remain; bootstrap is
 rediscover helper identity, and never interpret this development decision as a
 new execution approval.
 
+### R3-POLICY-01-C1: shared PackageKit state (option C)
+
+Option C (owner decision 2026-10-25) keeps the hook and the writer guard and instead
+requires a separately approved, persistent `systemctl mask packagekit.service` plus a
+proof-bound non-activation predicate. PR-C1 adds only the predicate side,
+`infra/scripts/r3_packagekit_state.py`; the mask step is PR-C2.
+
+- **One domain.** `observe()` returns raw sections in the collector's shape: no-follow
+  reads plus exactly three fixed commands (`systemctl show` of the seven PackageKit and
+  D-Bus units, `systemctl show --property=UnitPath,Version`, one `dpkg-query -W`). It never
+  contacts `org.freedesktop.PackageKit`, never opens or connects a socket and never runs
+  gdbus, busctl, pkcon or systemd-run (`systemctl show` itself queries PID1). `normalize()`
+  keeps boot-invariant values and derived booleans and `evaluate()` is the only predicate:
+  the validator (`raw_from_sections`) computes `evaluate(normalize(raw))`, and the installer
+  and A guest (`r3_install_policy.facts_state`) normalize the same raw and will evaluate it at
+  the gate once PR-C2 wires it. `volatile()` holds a first
+  part of the continuity baseline (the PackageKit unit's invocation data, dbus' PID and start,
+  the listener and socket identity, the boot time); PR-C2 completes design03 2.6's list and
+  adds the controller's re-check of retained raw.
+- **Result.** `False` only when every conjunct C1-C16 holds against `REVIEWED`; `True`
+  when the registration is present and a conjunct fails; `None` otherwise, including an
+  absent registration (NOT_C_BASELINE, D2) and an undischarged obligation (O10's gdbus
+  half, an O13 mode other than the ctime rule), which forces `None` even when a conjunct
+  fails (G7). `False` is proof-bound non-activation, never a claim that activation is
+  impossible.
+- **Reviewed values** are compile-time literals in the module, bound by its hash in every
+  approval; a policy, facts or review hash cannot supply or widen them. Source facts are
+  global; everything derived from a host's packages is per target (QA M2): a host uses the
+  one profile whose code identity (its dpkg rows without kernel images, and systemd's
+  Version) equals its own, `pk_core` names it, and a host without a reviewed profile is
+  collected `DISCOVERY_ONLY`. Profiles have exact key sets, a kernel row naming their kernel and
+  pairwise distinct code identities; targets that share one code identity share one profile
+  with their reviewed allowances merged (`profile_errors`). The validator decides
+  `DISCOVERY_ONLY` from its own selection over the document's package and manager sections,
+  never from the document's declared mode alone. As shipped `o10_ok` is false and no profile
+  exists.
+- **Not wired to the gate.** `r3_install_policy.PACKAGEKIT_GATE_WIRED` is `False`: the
+  installer's facts carry `None` on every host whatever the reviewed values say, so a filled
+  `REVIEWED` (PR-C1b) cannot pass preflight before PR-C2's mask-record, continuity and
+  phase checks exist. **PR-C1 makes no host eligible; hosts the legacy predicate admitted
+  (no registration, or a registration but no bus socket) now refuse.** The gate itself is
+  unchanged (`is not False`).
+- **Facts** are files, directories, the predicate and `packagekit` = `pk_core`,
+  `c13_verdict`, `unit_universe_digest` and `proof_id`. The digest covers the stable admin
+  and package unit roots only; `/run` roots and snap-generated units are left out (QA M1),
+  while the C13 verdict covers every root. Legacy facts lack `packagekit` and never
+  hash-equal C facts. `mask_invariants_v1` is built from its own literals and pinned by a
+  golden digest; a record is checked through `MASK_INVARIANTS[format]`.
+- **Recorded deviations from design03, for review** (each fail-closed or stricter):
+  - C5 permits the package's own `/usr/lib/systemd/system/packagekit.service` as a regular
+    file (the `/etc` mask shadows it, O14) and C13 binds its bytes; C5 and C14 also name the
+    template, alias and type-level drop-in candidates (O14 gaps), C7 checks `dbus.service.d`
+    at every root, C14 requires the three trigger units `not-found`, and C16 also checks
+    `/etc/system-update`.
+  - An absent bus socket gives `None`, not `True`.
+  - C12 binds the dpkg rows of `dbus*`, `libdbus-1-3*`, `systemd`, `systemd-sysv`,
+    `libsystemd-shared`, `libsystemd0*`, `libglib2.0*`, `packagekit*`,
+    `init-system-helpers` and `needrestart`, and only the running kernel's
+    `linux-image-<release>` row and release (security H2); other installed kernels are
+    not code identity.
+  - C15 uses only the ctime rule (O13 proved `reload_on_lookup` fails for this build), also
+    against dbus.service's recorded `ExecMainStartTimestamp` (H2, hence `--timestamp=unix`),
+    and its path set includes the parents `/usr/share/dbus-1`, `/etc/dbus-1`,
+    `/usr/local/share/dbus-1` and `/usr/lib/dbus-1`.
+  - C13: a symlink must resolve to a classified in-root entry or a reviewed literal (H1);
+    a target containing `..` resolves only as `../<name>` from a scanned directory, since
+    systemd follows links before `..`. Packaged units are bound by SHA256 where the index has
+    it and by dpkg MD5 otherwise (H4). A non-packaged unit is an activator if its body or its
+    name contains `packagekit` (any case; stricter than `Exec*=`/`BusName=` only), and not
+    classifiable if an `Exec*=` value uses specifiers, variables, globs or a shell `-c` flag
+    (alone or combined, such as `-ec`); quotes are dropped before the name scan. Every member
+    body of the service and configuration directories is read (not only reviewed ones), and
+    the scan adds `/run/user/0/dbus-1/services` and `/var/lib/snapd/desktop/systemd/user`.
+  - Per-section caps replace design03 4.1's 512-record collector counter.
+- **Open design items before PR-C1b** (owner or security decision): a packaged,
+  PackageKit-named symlink such as an offline-update `system-update.target.wants` link
+  always gives C13 `True` (design03 C13(b)), so a stock host could never be `False` if the
+  package ships one (to be checked against the packagekit .deb); `pk-mask-record` arrives
+  with PR-C2 as evidence document format 4, and format 3 stays frozen; PR-C2 replaces the
+  installer's and guest's plain `facts() == policy_facts` re-checks with the baseline-aware,
+  phase-aware compare and retains each phase's full projected universe (QA M3), because the
+  isolation masks, the Docker masks and the pinned unit files all change the stable-root
+  digest.
+- **Named residuals:** C13 scans names and literal programs, so a packagekitd started under
+  another name or through an indirection the scan cannot see stays with the C11 process scan
+  (O11); the C10 listener rows come from dbus' own network namespace (O16); md5sums lines
+  outside the reviewed set are ignored and a missing one gives `None`.
+- **Unchanged and still forbidden.** Nothing here creates, alters or removes a PackageKit
+  mask: no mask step, no stop, no unmask; the installer and `r3_maintenance` never touch
+  `packagekit.service`. MANAGERS, UNITS, FIXED and `r3_maintenance` are unchanged. The mask
+  helper and purposes, approval format 4, the gate wiring, continuity sampling, the
+  phase-aware (R1) re-evaluation, the completion-record check, `pk-mask-record` and the H5
+  run-history binding are PR-C2.
+
 
 ## Collection-only policy evidence (A and B)
 
@@ -1520,8 +1613,8 @@ historical B remains prepared/unapproved/unexecuted at its original source.
 
 ### Shared bounded contract
 
-`r3_policy_evidence.py` collects a format-2 private document (format 1 remains
-valid for older evidence; see the snap alias paragraph below) with exact purpose,
+`r3_policy_evidence.py` collects a format-3 private document (formats 1 and 2 remain
+valid for older evidence; see the snap alias paragraph and option C below) with exact purpose,
 binding, sections, and explicit false qualification/installation/policy flags.
 `r3_policy_validate.py` independently checks every section, fixed argv, stream
 length/hash, file metadata/body hash, directory membership, cache structure and
@@ -1557,9 +1650,27 @@ membership is bounded to 256 entries; man cache is bounded to 4096 entries and
 seconds, collection to a 240-second budget with an outer 300-second deadline.
 The document cap is 24 MiB. Descriptor-relative reads reject symlinks, hardlinks,
 non-regular files, changed metadata/content and oversized input. The D-Bus socket
-is only inspected, never opened. PackageKit's service-file/socket predicate is
-reported as true, false or unknown; true remains an installer eligibility blocker.
-No hook suppression, sixth-service stop or writer exemption is added.
+is only inspected, never opened. The PackageKit predicate is reported as true, false or
+unknown; anything but false remains an installer eligibility blocker. No hook
+suppression, sixth-service stop or writer exemption is added.
+
+Format 3 (option C, [R3-POLICY-01-C1](#r3-policy-01-c1-shared-packagekit-state-option-c))
+adds the shared PackageKit sections - `pk-units`, `manager`, `pk-package-metadata`,
+`link:` (the mask path, `/var/run`, `/lib`), `dir-meta:/var`, `device:/dev/null`,
+`dbus-socket`, `unit-candidates`, `unit-universe`, `dpkg-md5sums`, `pk-fragments`,
+`dbus-service-dirs`, `dbus-config`, `dbus-daemon-proc`, `pk-binaries`, `pk-processes` -
+plus `pk-units-after` (the unit block read again and compared field by field) and
+`pk-dpkg-index` (a discovery index, never a read list or a completeness input). Each
+file-backed section is re-read for drift; `dbus-daemon-proc` compares only its process
+identity. Caps are module literals (unit roots: 2048 entries each, 128 bodies of at most
+64 KiB and 8 MiB in all, 4096 packaged hashes, depth 1; md5sums 16 MiB and 512 files);
+an overflow is an error section, never truncation. Without a reviewed packaged-unit
+index the unit universe holds names, types, sizes and link targets only and the
+validator reports `DISCOVERY_ONLY`: a complete, sealed run (the guest and controllers
+exit 0) that never yields policy-input hashes. The validator reports
+`predicate_contract`: `option-c` for format 3, `legacy` for formats 1 and 2, which keep
+their status, hashes and registration-and-socket predicate. The 240-second budget is
+unchanged until measured (D22).
 
 Before native APT configuration is queried, the collector checks the exact
 reviewed files/membership and refuses include directives or configuration-root

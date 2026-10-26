@@ -20,7 +20,7 @@ from r3_policy_evidence import B_PURPOSE
 from r3_policy_git import verified_head
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULES = ('r3_noble_common', 'r3_package_state', 'r3_apt_observer', 'r3_install_policy',
+MODULES = ('r3_noble_common', 'r3_package_state', 'r3_apt_observer', 'r3_install_policy', 'r3_packagekit_state',
            'r3_policy_capture', 'r3_policy_snap', 'r3_policy_scope', 'r3_policy_evidence', 'r3_policy_validate', 'r3_policy_target')
 PACKET_HELPERS = ('r3_policy_git.py', 'r3_policy_receive.py', 'r3_policy_packet.py', 'r3_noble_inputs.py', 'r3_toolchain.py', 'r3_artifacts.py')
 
