@@ -72,6 +72,15 @@ the foundation and application roots are blocked for the selected self-host
 subscription. Do not remove that gate or substitute region text to deploy the
 application. Generic example inputs remain placeholders, not live contracts.
 
+**Temporary hosted QA bridge (owner decision 2026-10-26; Claude Code lane).** The
+hosted reference is being re-targeted to Supabase North EU — Stockholm and Azure
+Sweden Central for a temporary QA, in the self-hosted QA's subscription but in its
+own resource groups (`tonyai-qatmp-*`), prefix and Terraform backend account, with
+no VNet. The gate is narrowed only by a new hosted-QA exception file;
+`config/deployment-policy.json` is never edited (its hash is bound into the QA
+receipts). Until that change (PR-T1) merges, the paragraph above still holds. Plan:
+[`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md).
+
 Use Terraform **1.13.3**, AzAPI **2.6.1**, Node **22**, pnpm **11.9.0**, Python **3.10+**,
 Azure CLI, GitHub CLI (`gh`) and Docker/buildx. Run from a clean, reviewed checkout. Terraform provider
 locks belong with each root; no Supabase or secret-reading Terraform provider

@@ -443,7 +443,7 @@ interface ReportConfig {
 - `draft` → Bazı veriler taslak veya inceleme aşamasında
 - `contains_incomplete_data` → %15'ten fazla kayıt onaysız (uyarı banner gösterilir)
 
-**Dışa Aktarım Seçenekleri:** PDF, Excel, Share (Link + Email via Resend)
+**Dışa Aktarım Seçenekleri:** PDF, Excel, Share (Link + Email via Azure Communication Services Email)
 
 **Rapor Geçmişi (Generation Log):**
 ```typescript
@@ -593,7 +593,7 @@ Backend aşağıdaki endpoint gruplarını sunmalıdır. Tüm endpoint'ler JWT i
 │   ├── POST   /generate              → Rapor oluştur
 │   ├── GET    /:id/preview           → Önizleme verisi
 │   ├── GET    /:id/download          → PDF/Excel indirme
-│   ├── POST   /:id/share             → Email ile paylaş (Resend entegrasyonu)
+│   ├── POST   /:id/share             → Email ile paylaş (Azure Communication Services Email entegrasyonu)
 │   └── GET    /history               → Oluşturma geçmişi
 │
 ├── alerts/
@@ -740,7 +740,7 @@ interface Alert {
 }
 ```
 
-### 8.3 Email Bildirim Senaryoları (Resend Entegrasyonu)
+### 8.3 Email Bildirim Senaryoları (Azure Communication Services Email Entegrasyonu)
 
 - Anomali tespit edildiğinde → İlgili Consultant'a email
 - Veri onaya gönderildiğinde → Consultant'a email
@@ -860,7 +860,7 @@ Frontend'de henüz implementasyonu olmamakla birlikte, `technical_analysis.md`'d
 - [ ] Emissions Analytics → 5 tab'ın tüm API bağlantıları
 - [ ] Reports → Rapor oluşturma engine
 - [ ] Reports → PDF/Excel export (server-side rendering)
-- [ ] Reports → Email paylaşım (Resend API)
+- [ ] Reports → Email paylaşım (Azure Communication Services Email, SMTP)
 - [ ] Bulk Upload → CSV/Excel parser + validation + batch insert
 - [ ] Canlı hesaplama API entegrasyonu (Debounce 300ms ve frontend optimizasyonu)
 

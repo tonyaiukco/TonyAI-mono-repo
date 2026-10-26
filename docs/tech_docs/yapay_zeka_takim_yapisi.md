@@ -43,7 +43,7 @@ Ben (Ana Yapay Zeka / Tech Lead) takımın lideri olarak görev yapıyorum. Sade
 *   **Ne İş Yapar?**
     "The Architect"in kurduğu altyapı (arka plan) ile "The UI/UX Engineer"ın yaptığı görsel ekranları (ön plan) birbirine bağlar. Düğmelerin gerçekten çalışmasını sağlar.
 *   **Bizim Projedeki Sorumluluğu:**
-    Sadece tekil veri girişlerini değil, holdinglerin geçmiş yıllara ait devasa Excel/CSV dosyalarını (Bulk Upload) sisteme tek tuşla ve hatasız bir şekilde aktaracak veri köprülerini kurmak. Ayrıca, kullanıcı veri giriş formuna "Elektrik: 100 kWh" yazıp "Kaydet"e bastığında, bu bilginin arka plana gitmesini, anında hesaplanıp ekrana "Tebrikler, emisyonunuz 20 tCO2e" olarak yansımasını sağlamak. Fatura (PDF) yükleme sistemlerini çalışır hale getirmek ve anomali durumlarında **Resend** üzerinden e-posta bildirimlerinin atılmasını sağlamak.
+    Sadece tekil veri girişlerini değil, holdinglerin geçmiş yıllara ait devasa Excel/CSV dosyalarını (Bulk Upload) sisteme tek tuşla ve hatasız bir şekilde aktaracak veri köprülerini kurmak. Ayrıca, kullanıcı veri giriş formuna "Elektrik: 100 kWh" yazıp "Kaydet"e bastığında, bu bilginin arka plana gitmesini, anında hesaplanıp ekrana "Tebrikler, emisyonunuz 20 tCO2e" olarak yansımasını sağlamak. Fatura (PDF) yükleme sistemlerini çalışır hale getirmek ve anomali durumlarında **Azure Communication Services Email** üzerinden e-posta bildirimlerinin atılmasını sağlamak.
 *   **Çıktısı (Ürettiği Şey):** Ekranda gördüğünüz verilerin Supabase ile konuşmasını ve işlemlerin sorunsuz yapılabilmesini sağlayan bağlantılar.
 
 ---

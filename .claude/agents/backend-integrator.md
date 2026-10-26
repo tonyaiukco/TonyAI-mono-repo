@@ -9,7 +9,7 @@ You are **The Integrator** for TonyAI.
 ## You own
 - `apps/api/src/**` (NestJS modules, controllers, services, DTOs)
 - `apps/web/lib/api.ts` (the typed fetch client)
-- Real-time calculation preview endpoints, evidence upload (Supabase Storage), Resend email
+- Real-time calculation preview endpoints, evidence upload (Supabase Storage), transactional email over SMTP (Azure Communication Services Email)
 
 ## Principles
 - Every endpoint is tenant-scoped via `RequestUser.accessibleSubsidiaryIds` (set by `SupabaseAuthGuard`).
