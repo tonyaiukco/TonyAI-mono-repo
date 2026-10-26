@@ -1,14 +1,11 @@
 # 5. Rotation, rollback and recovery
 
-> **Legacy hosted deployment path.** These procedures retain Germany West Central
-> and hosted Supabase Frankfurt assumptions. For active Azure self-hosted QA and
-> planned production in Sweden Central, use [runbook 07](07-selfhost.md). Do not
-> point hosted helpers at the VM or bypass region/project validation; application
-> integration and its acceptance procedures still need a reviewed implementation.
-> **Shared backend exception:** the [backend state-recovery procedure](#recover-backend-state-or-a-vault)
-> also applies to the Sweden backend, preserving its firewall and access restrictions.
-> The vault example using `--location germanywestcentral` is legacy; use the
-> verified original region for the actual vault.
+> **Historical hosted reference, not a deployment route for current QA or production.**
+> Active application/data resources use **Azure Sweden Central** and self-hosted
+> Supabase. Use [runbook 08](08-qa-application.md) for application preparation and
+> [runbook 07](07-selfhost.md) for host ownership. The Germany/Frankfurt commands
+> below describe the retained legacy implementation only; do not run them for
+> Sweden or bypass their subscription/project checks.
 
 Use a private owner session restored through runbook 00. Keep the last verified
 release manifest and DB/schema compatibility evidence. **Every application
@@ -615,8 +612,10 @@ name, group and region; as owner inspect deletion metadata then recover it:
 
 ```bash
 az keyvault list-deleted --query '[].{name:name,location:properties.location,id:id}' -o table
-az keyvault recover --name '<recorded-vault>' --resource-group '<original-staging-group>' --location germanywestcentral --output none
+az keyvault recover --name '<recorded-vault>' --resource-group '<original-staging-group>' --location '<recorded-original-region>' --output none
 ```
+
+**Current Sweden resources require `swedencentral`, matching the recorded original region. Never relocate a recovered vault.**
 
 All old versions return too. Keep workload credentials revoked/traffic closed
 until reconciliation; review secret **metadata** in the portal, disable stale

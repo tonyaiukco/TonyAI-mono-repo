@@ -64,7 +64,8 @@ Host/runtime acceptance, including the 2026-10-15 corrections and normal reboot,
 does not close LP2-01, LP2-02 or LP2-03; DONE requires application integration,
 migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence.
 
-The **legacy hosted path** below uses Azure Germany West Central and Supabase
+The **historical hosted reference** below is not a current QA or production
+deployment route. Active application preparation uses [runbook 08](runbooks/08-qa-application.md). The retained implementation uses Azure Germany West Central and Supabase
 Management API operations for Frankfurt. Its region/project checks remain intact;
 the foundation and application roots are blocked for the selected self-host
 subscription. Do not remove that gate or substitute region text to deploy the
@@ -77,7 +78,7 @@ is used. Hosted helper secrets stay in memory and Key Vault. Self-hosted service
 also require protected root-only runtime files as described in runbook 07.
 Secret payloads never enter tfvars, state, plan files, logs, repository files or chat.
 
-## Legacy hosted owner path (00–06)
+## Historical hosted reference (00–06)
 
 1. [Restore a safe session](runbooks/00-session.md).
 2. [Bootstrap backend, apply foundation, establish OIDC](runbooks/01-azure.md).
