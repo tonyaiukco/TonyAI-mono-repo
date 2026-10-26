@@ -4,7 +4,7 @@
 > self-hosted Sweden QA (R3 → R4 → application) continues in the Codex lane. It
 > lives until **(1)** the first QA handover on the bridge is done and **(2)** the
 > self-hosted Supabase on Azure has replaced the bridge; then the bridge is torn
-> down and this folder is deleted (section 10). It is not a second status file:
+> down and this folder is deleted (section 11). It is not a second status file:
 > `docs/roadmap_docs/project_status_roadmap_phases.md` stays the one planning
 > record (Decisions 2026-10-26, the bridge; ledger row LP2-QT).
 
@@ -64,7 +64,10 @@ Azure, Sweden Central, same subscription — bridge resources only:
   tonyai-qatmp-apps     → ACR · Log Analytics · ACA environment (Consumption, NO VNet)
                           · Key Vault · managed identities · the two apps
                           · Email Communication Service + Communication Services (data location Europe)
-                            — created by the owner outside Terraform
+                            + SMTP Username — Terraform (AzAPI), foundation root
+
+Outside Azure Terraform (section 4): the Entra application that owns the SMTP
+identity and its client secret; the Supabase Cloud project (reviewed scripts).
 ```
 
 - **Separate Terraform backend.** The legacy roots write `foundation/staging.tfstate`
@@ -96,7 +99,32 @@ Azure, Sweden Central, same subscription — bridge resources only:
 | Subscription gate | **Narrowed by a new file**, `infra/config/hosted-qa-exception.json` (`subscription`, `resource_group`, `prefix`, `backend_resource_group`, `backend_storage_account`). `require_hosted_target(subscription, resource_group, prefix)` keeps line 9 verbatim and admits the listed subscription only on an exact match with the exception, never for the `tonyai-staging-*` groups or the `tonyai` prefix; the two legacy `variables.tf` validations mirror it; negative tests prove the self-host targets are still refused |
 | Cost | A subscription budget alert covering the bridge |
 
-## 4. Findings that shape the plan (drift check, 2026-10-26)
+## 4. Terraform scope (owner decision D5 = A, 2026-10-27)
+
+**Every Azure resource of the bridge is Terraform-managed through AzAPI**, inside
+the existing legacy foundation and application roots and under
+`check_terraform_policy.py`'s rule that only reviewed `azapi_resource` types enter
+state and **no secret enters state**. The Supabase Cloud side stays on the
+reviewed scripts: the official `supabase/supabase` provider (1.11.0) covers only
+the project and its settings, stores the database password in state (not
+write-only), cannot create buckets, signing keys or database roles, and would be
+thrown away with the bridge — the permanent QA and production use self-hosted
+Supabase, which that provider does not manage.
+
+| Managed by Terraform (AzAPI) | Outside Terraform, and why |
+|---|---|
+| Resource groups, ACR, Log Analytics, ACA environment, Key Vault, managed identities, role assignments (foundation root) | **Bridge Terraform backend** — `bootstrap_backend.py` creates the state account before any state exists |
+| Container Apps `api` and `web`, their secrets references, probes, ingress (application root) | **Entra application + client secret** for the SMTP identity — a Microsoft Graph object, not an ARM resource; AzAPI cannot create it and a Terraform-made secret would sit in state. The owner creates it once (`az ad app create`, `az ad sp create`) and writes the secret straight into Key Vault as `smtp-password`; Terraform takes only the non-secret application (client) ID, service-principal object ID and tenant ID as inputs |
+| **ACS Email:** `Microsoft.Communication/emailServices` (data location Europe), `emailServices/domains` (`AzureManaged`; a `CustomerManaged` domain when D2 adds one), `communicationServices` (data location Europe, `linkedDomains`), `communicationServices/smtpUsernames` (username, Entra application ID, tenant ID), the role assignment of the Entra service principal on the Communication Services resource — API `2026-03-18` | **Custom-domain DNS records** (verification TXT, SPF, DKIM, DMARC) — the domain's DNS lives at Namecheap, not Azure DNS; the owner publishes what the domain resource reports, then verification is triggered |
+| | **Supabase Cloud** — project, Auth policy, buckets, ES256 key: `supabase_setup.py` / `cloud_ops.py` over the Management API (reviewed, journalled); database roles and passwords: runbook 05 |
+| | **Data and releases** — Prisma migrations (`cloud_ops.py migrate`), onboarding, factor loading, image builds (`build-images.sh`): application operations, never infrastructure state |
+
+The ACS resources hold no secret: an SMTP Username stores only the username and
+the Entra IDs, and the sender address is read back from the domain's
+`mailFromSenderDomain`. New AzAPI types are added to the policy allow-list with
+tests, in PR-T1.
+
+## 5. Findings that shape the plan (drift check, 2026-10-26)
 
 | # | Finding | Consequence |
 |---|---|---|
@@ -104,13 +132,13 @@ Azure, Sweden Central, same subscription — bridge resources only:
 | F2 | The subscription gate refuses the shared subscription; the policy JSON is hash-bound into Codex receipts | PR-T1, the exception file above — never the policy JSON |
 | F3 | Hosted setup creates only `evidence` and `import-sources`; the app also needs `report-artifacts` (20 MiB, PDF only) | PR-T2 |
 | F4 | `runtime-role.mjs provision` refuses remote databases; the hosted handoff is runbook 05 (`CREATE ROLE … BYPASSRLS` privilege probe, then `\password tonyai_runtime`, `ALTER ROLE … LOGIN`, `runtime-role.mjs check`) | Works as designed; **the probe on Supabase Cloud is the go/no-go** (Day 1) |
-| F5 | The seed refuses the cloud; the first super_admin comes from `pnpm onboarding provision --apply --allow-remote`, everyone else by **emailed invitation** | **SMTP is required** before QA accounts exist — Azure Communication Services Email (section 7, step 6a) |
-| F6 | Factors arrive only through the factor-release loader as `tonyai_factor_loader`; **no release file is in the repo** | QA starts with an empty library unless a release is loaded (section 6, D3) |
+| F5 | The seed refuses the cloud; the first super_admin comes from `pnpm onboarding provision --apply --allow-remote`, everyone else by **emailed invitation** | **SMTP is required** before QA accounts exist — Azure Communication Services Email, Terraform-managed (section 4) |
+| F6 | Factors arrive only through the factor-release loader as `tonyai_factor_loader`; **no release file is in the repo** | QA starts with an empty library unless a release is loaded (section 7, D3) |
 | F7 | `smoke-fixtures.mjs` writes `DE` geography; #248 (merged 10-26) narrowly changed it and `smoke-contract.mjs` for its separate `qa-sweden` target, keeping the hosted `staging` target distinct | PR-T2 re-checks the hosted `staging` target against the current schema; both files are now shared with Codex's Sweden adapter — one-slot shared files, changed only with the owner's slot |
-| F8 | The legacy RG, environment and apps carry `prevent_destroy` | Teardown is a manual owner deletion (section 10) |
+| F8 | The legacy RG, environment and apps carry `prevent_destroy` | Teardown is a manual owner deletion (section 11) |
 | F9 | Not provable from the repo: `eu-north-1` offered by the Management API for this org; the bundled `prod-ca-2021.crt` covering that region's pooler | Checked on Day 1 before anything else is built on it |
 
-## 5. Work packages (PRs)
+## 6. Work packages (PRs)
 
 All PRs: a feature branch, green CI, the owner merges. PR-T1 touches the
 deployment gate and the infrastructure path, so it gets the mandatory fresh-eyes
@@ -119,28 +147,29 @@ pass (`security-rls` + `qa-auditor` + `devops-cloud`) before it opens.
 | PR | Branch | Scope | Size |
 |---|---|---|---|
 | **PR-T0** | `chore/qatmp-decision` | This document; the decision, lane split, ledger row and Next up in the status file; pointers in `CLAUDE.md`, `README.md`, `infra/README.md` | done in this change |
-| **PR-T1** | `feat/qatmp-hosted-retarget` | F1 + F2: regions to `eu-north-1` / `swedencentral` across the hosted scripts, Terraform, examples and tests; the hosted-QA exception file, `require_hosted_target`, the mirrored `variables.tf` validations, the `bootstrap_backend.py` pin; negative tests (self-host subscription without the exception, `tonyai-staging-*` groups, `tonyai` prefix, the self-host backend account — all refused; the line-9 mutant still killed) | 1 day |
+| **PR-T1** | `feat/qatmp-hosted-retarget` | F1 + F2 + ACS: regions to `eu-north-1` / `swedencentral` across the hosted scripts, Terraform, examples and tests; the ACS Email AzAPI resources of section 4 in the foundation root (inputs: Entra client ID, service-principal object ID, tenant ID, optional custom domain; outputs: SMTP username, sender address) with their policy allow-list entries and `security.tftest.hcl` cases (data location Europe, no secret in state or outputs, role scoped to the Communication Services resource only); the hosted-QA exception file, `require_hosted_target`, the mirrored `variables.tf` validations, the `bootstrap_backend.py` pin; negative tests (self-host subscription without the exception, `tonyai-staging-*` groups, `tonyai` prefix, the self-host backend account — all refused; the line-9 mutant still killed) | 1–1.5 days |
 | **PR-T2** | `feat/qatmp-handover` | F3 + F7: the `report-artifacts` bucket in `cloud_ops.py` with tests; smoke fixtures re-checked; runbook banners pointing at the bridge; the QA handover runbook `infra/runbooks/11-qa-temporary-hosted.md` (URLs, account issuance, known limitations, reset, teardown) | 0.5 day |
 | PR-T3 *(only if D3 = placeholder release)* | `feat/qatmp-placeholder-factors` | A QA-only factor release file in the import contract's shape, built from the placeholder library and **labelled placeholder / not authoritative** in its source and version; `data-factors` + `qa-auditor` seats; loaded with the loader's dry run first | 0.5 day |
 | PR-T4 *(only if needed)* | `fix/qatmp-*` | Fixes found during the live steps | — |
 
-Total: **3–4 PRs**, plus about **10 owner-run live operations** (section 8).
+Total: **3–4 PRs**, plus about **10 owner-run live operations** (section 9).
 
-## 6. Owner decisions still needed
+## 7. Owner decisions
 
 | # | Decision | Recommendation |
 |---|---|---|
 | D1 | Names: groups `tonyai-qatmp-tfstate` / `tonyai-qatmp-apps`, prefix `tonyaiqt` | Accept |
-| D2 | ~~SMTP provider~~ **Decided 2026-10-27: Azure Communication Services Email** (section 7, step 6a). Still open: the sending domain — an Azure-managed `*.azurecomm.net` domain (instant, but 5 emails/min and 10/hour per subscription, not raisable) or a verified custom domain (DNS records; 30/min and 100/hour, raisable) | Azure-managed domain to start on Day 2; add the custom domain as soon as its DNS verifies and switch `MAIL_FROM` to it |
+| D2 | ~~SMTP provider~~ **Decided 2026-10-27: Azure Communication Services Email** (section 4; step 6a). Still open: the sending domain — an Azure-managed `*.azurecomm.net` domain (instant, but 5 emails/min and 10/hour per subscription, not raisable) or a verified custom domain (DNS records; 30/min and 100/hour, raisable) | Azure-managed domain to start on Day 2; add the custom domain as soon as its DNS verifies and switch `MAIL_FROM` to it |
 | D3 | Factors for QA: (a) a labelled placeholder release (PR-T3), or (b) none until the authoritative UK/TR release (LP4-02) is ready — QA then cannot test calculations | (a), clearly labelled; replaced by the authoritative release when it exists |
+| D5 | ~~Terraform scope~~ **Decided 2026-10-27: A** — all Azure resources, ACS Email included, in Terraform (AzAPI); Supabase Cloud stays on the reviewed scripts (section 4) | — |
 | D4 | Image build: the existing `build-images.sh` (local Docker buildx, amd64 emulation on Apple Silicon — slow and heavy on 16 GB; stop the local Supabase stack first) vs a small change to `az acr build` | Keep `build-images.sh` for the first release (reviewed path); revisit only if the build is too slow |
 
-## 7. Step by step
+## 8. Step by step
 
 **Owner** = consoles, credentials, applies (from the owner's machine). **Agent** =
 Claude Code: code, PRs, dry runs, reading outputs with the owner.
 
-### Day 0 — owner prerequisites (section 9)
+### Day 0 — owner prerequisites (section 10)
 
 ### Day 1 (10-27) — code, Supabase project, go/no-go
 
@@ -157,30 +186,31 @@ Claude Code: code, PRs, dry runs, reading outputs with the owner.
 
 ### Day 2 (10-28, half day) — Azure, database, release
 
-6a. **Owner — Azure Communication Services Email** (portal or `az`, in
-    `tonyai-qatmp-apps`, outside Terraform; can start on Day 1):
-    1. An **Email Communication Service** resource with data location **Europe**;
-       add the **Azure-managed domain** (and, if D2 allows, a custom domain:
-       publish its TXT/SPF/DKIM records and verify).
-    2. A **Communication Services** resource, data location **Europe**; connect the
-       domain(s).
-    3. A **Microsoft Entra application** (app registration) with a client secret
-       (expiry ≤ 90 days, noted for rotation); assign it **Communication and Email
-       Service Owner** on the Communication Services resource (or the narrower
-       custom role: `CommunicationServices/Read`, `CommunicationServices/Write`,
-       `EmailServices/write`).
-    4. **SMTP Usernames** → add one bound to that application; wait for *Ready to
-       use*.
-    5. Record for the release's `mail` block: host `smtp.azurecomm.net`, port `587`,
+6a. **Owner — the SMTP Entra application** (once, outside Terraform — section 4;
+    can start on Day 1):
+    1. `az ad app create --display-name tonyai-qatmp-smtp`, then
+       `az ad sp create --id <appId>`; record the application (client) ID, the
+       service-principal object ID and the tenant ID for the foundation inputs.
+    2. Create a client secret (expiry ≤ 90 days, noted for rotation) and write it
+       **straight into the bridge Key Vault** as `smtp-password` once the vault
+       exists (step 12) — password manager in between, never chat, never Terraform.
+    3. Everything else — the Email Communication Service, the Azure-managed (and
+       optional custom) domain, the Communication Services resource with its linked
+       domain, the SMTP Username and the role assignment — is created by the
+       foundation apply (step 7).
+    4. For a custom domain: publish the verification, SPF and DKIM records the
+       domain resource reports at Namecheap, then trigger verification and switch
+       the release's sender to that domain.
+    5. The release's `mail` block (step 10): host `smtp.azurecomm.net`, port `587`,
        `secure: false` (STARTTLS — the API enforces `requireTLS`), user = the SMTP
-       Username, from = `DoNotReply@<the connected domain>`. The client secret is
-       the `smtp-password` value (step 12) — password manager only, never chat.
+       Username output, from = the sender-address output.
 
 6. **Owner — backend bootstrap**: `bootstrap_backend.py` with `location:
    swedencentral`, the bridge backend group and account, the owner's /32.
 7. **Owner — foundation plan/apply** (legacy foundation root,
-   `runtime_secrets_ready=false`); read the plan first — only bridge resources.
-   Save the contract output.
+   `runtime_secrets_ready=false`), now including the ACS Email resources; read the
+   plan first — only bridge resources. Save the contract output (with the SMTP
+   Username and sender address).
 8. **Owner — `supabase_setup.py`**: reconciles the project, Key Vault entries,
    `direct-url`, the three buckets, the Auth policy (public sign-up off) and the
    ES256 signing key. Management API token at the hidden prompt.
@@ -191,7 +221,7 @@ Claude Code: code, PRs, dry runs, reading outputs with the owner.
 11. **Owner — migrations**: `cloud_ops.py migrate` from a clean checkout at the
     release's `source_sha`; then `\password tonyai_runtime`, `ALTER ROLE … LOGIN`,
     `runtime-role.mjs check` against the runtime URL.
-12. **Owner — SMTP secret** (the Entra application's client secret from step 6a) into Key Vault as `smtp-password`; foundation re-apply
+12. **Owner — SMTP secret** (the Entra application's client secret from step 6a, written directly, not through Terraform) into Key Vault as `smtp-password`; foundation re-apply
     with `runtime_secrets_ready=true` and `smtp_secret_ready=true`.
 13. **Owner — deploy**: `release_secrets.py verify`, then `deploy-apps.sh`
     (interactive `yes`).
@@ -220,14 +250,14 @@ labelled so — results are not authoritative; default Azure hostnames; the
 environment may be reset with notice; it will be replaced by the Sweden
 self-hosted QA and QA data will not be migrated.
 
-## 8. Live operations (each owner-run and owner-approved)
+## 9. Live operations (each owner-run and owner-approved)
 
 | # | Operation | Day |
 |---|---|---|
 | L1 | Supabase project + F9 checks + runbook 05 probe | 1 |
-| L1b | Azure Communication Services Email (step 6a) | 1–2 |
+| L1b | SMTP Entra application + client secret (step 6a; the ACS resources come with L3) | 1–2 |
 | L2 | Backend bootstrap | 2 |
-| L3 | Foundation apply (secrets not ready) | 2 |
+| L3 | Foundation apply (secrets not ready; ACS Email included) | 2 |
 | L4 | `supabase_setup.py` | 2 |
 | L5 | Runtime secret store + images + candidate | 2 |
 | L6 | Migrations + runtime login + `check` | 2 |
@@ -236,9 +266,9 @@ self-hosted QA and QA data will not be migrated.
 | L9 | Factors (if D3 = a) + QA organisation + invitations | 3 |
 | L10 | Smoke + monitoring + handover | 3 |
 
-## 9. Owner prerequisites (before Day 1)
+## 10. Owner prerequisites (before Day 1)
 
-1. **Decisions D1–D4** answered (section 6).
+1. **Decisions D1, D3 and D4** answered (section 7; D2 and D5 are decided).
 2. **Supabase:** MFA on the account; the organisation's **ID and slug**; the **Pro
    plan** with billing approved (~$25/month); a **Management API personal access
    token** in the password manager. Do not create the project yet — Day 1 does it
@@ -257,24 +287,23 @@ self-hosted QA and QA data will not be migrated.
 4. **Email (D2):** decide the sending domain — Azure-managed to start, and, if a
    custom domain is wanted, DNS access to publish its verification, SPF and DKIM
    records. No third-party account is needed: everything is Azure Communication
-   Services in the same subscription (section 7, step 6a).
+   Services in the same subscription, created by Terraform (section 4).
 5. **Local tools** (runbook 00): `az` logged in and `az account set` to the
    subscription; Terraform **1.13.3**; Node **22**; pnpm **11.9.0**; Python
    **3.10+**; Docker with buildx; `psql`.
 6. **QA team inputs:** testers' names and emails and the role each needs.
 
-## 10. Retirement
+## 11. Retirement
 
 When the Sweden self-hosted QA (Codex lane) has passed R3, R4 and its application
 acceptance and QA has moved:
 
 1. Announce the cut-over date; no data migration.
-2. Delete the bridge by hand (F8): the apps, the ACA environment, Key Vault (and
-   purge), ACR, Log Analytics, then the groups `tonyai-qatmp-apps` and
-   `tonyai-qatmp-tfstate`.
-3. Pause, then delete the Supabase project; revoke the Management API token; delete
-   the Entra application's client secret (or keep the Communication Services
-   resources for the self-hosted QA and only rotate the secret), and rotate
+2. Delete the bridge by hand (F8): the apps, the ACA environment, the ACS Email
+   resources, Key Vault (and purge), ACR, Log Analytics, then the groups
+   `tonyai-qatmp-apps` and `tonyai-qatmp-tfstate`; delete the SMTP Entra
+   application.
+3. Pause, then delete the Supabase project; revoke the Management API token; rotate
    anything else that was shared.
 4. Remove the hosted-QA exception file and its code path, or keep the hosted path
    only if the owner decides it stays as a fallback.
