@@ -781,10 +781,88 @@ add(NC, 'kill-group-probe-refused', '    except PermissionError:\n        return
 add(NC, 'kill-group-probe-target', '        os.killpg(child.pid, 0)\n    except ProcessLookupError:\n        return True', '        os.killpg(child.pid + 1, 0)\n    except ProcessLookupError:\n        return True')
 add(NC, 'kill-group-probe-live', '        return False\n    return False\n\n\ndef kill_group', '        return False\n    return True\n\n\ndef kill_group')
 
+
+DR = 'infra/scripts/r3_db_candidate_run.py'
+DW = '.github/workflows/r3-db-candidate.yml'
+# The DB candidate's hosted-runner controller: dispatch binding, lock pins, staging and the entry hand-off.
+add(DR, 'db-run-rerun', "env.get('GITHUB_RUN_ATTEMPT') != '1'", 'False')
+add(DR, 'db-run-workflow-ref', "or env.get('GITHUB_WORKFLOW_REF') != env.get('GITHUB_REPOSITORY', '') + '/' + WORKFLOW + '@' + ref):", 'or False):')
+add(DR, 'db-run-tracked-bytes', "        if hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\\0' + data).hexdigest() != blob.decode():", '        if False:')
+add(DR, 'db-run-lock-regular-files', '    if any(p.is_symlink() or not p.is_file() for p in entries):', '    if False:')
+add(DR, 'db-run-lock-cache-symlink', "if not (p.name == '__pycache__' and p.is_dir() and not p.is_symlink())]", "if not (p.name == '__pycache__' and p.is_dir())]")
+add(DR, 'db-run-lock-file-hashes', 'if names != sorted(manifest) or any(file_hash(root / CANDIDATE / n) != manifest[n] for n in names):', 'if names != sorted(manifest):')
+add(DR, 'db-run-lock-manifest-hash', "    if lock['source_manifest_sha256'] != canonical_sha(manifest):", '    if False:')
+add(DR, 'db-run-generated-pin', "        if prisma['generated'][name] != {'sha256': digest(data), 'bytes': len(data)}:", '        if False:')
+add(DR, 'db-run-artifacts-derived', "    if lock['client_artifacts'] != expected_artifacts(lock):", '    if False:')
+add(DR, 'db-run-artifacts-hash', "    if lock['client_artifacts_sha256'] != canonical_sha(", "    if False and lock['client_artifacts_sha256'] != canonical_sha(")
+add(DR, 'db-run-approval-manifest', "    if not isinstance(approval, dict) or approval.get('source_manifest_sha256') != lock['source_manifest_sha256']:", '    if not isinstance(approval, dict):')
+add(DR, 'db-run-rehearsal-consumes', "if approval.get('purpose') != REHEARSAL_PURPOSE or approval.get('consumes_attempt') is not False:", "if approval.get('purpose') != REHEARSAL_PURPOSE:")
+add(DR, 'db-run-attempt-unbound', "    if attempt['attempt_id'] is None:", '    if False:')
+add(DR, 'db-run-attempt-id', "            or approval.get('attempt_id') != attempt['attempt_id']", '            or False')
+add(DR, 'db-run-root-reuse', '    if os.path.lexists(fixed):', '    if False:')
+add(DR, 'db-run-root-parents', '        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:', '        if False:')
+add(DR, 'db-run-member-unique', '        if len(matches) != 1 or not matches[0].isfile() or matches[0].size != size:', '        if not matches or matches[0].size != size:')
+add(DR, 'db-run-node-digest', "    if digest(data) != node['sha256']:", '    if False:')
+add(DR, 'db-run-library-integrity', "hashlib.sha512(read(archive, 64 * 1024 * 1024)).digest()).decode() != library['archive_integrity']:", 'hashlib.sha512(read(archive, 64 * 1024 * 1024)).digest()).decode() is None:')
+add(DR, 'db-run-library-member', "    if digest(member) != library['member_sha256']:", '    if False:')
+add(DR, 'db-run-library-header', "place(client / 'runtime/library.js', library['generated_header'].encode() + member, 0o644)", "place(client / 'runtime/library.js', member, 0o644)")
+add(DR, 'db-run-engine-bound', "    if len(data) != engine['bytes'] or digest(data) != engine['sha256']:", "    if digest(data[:engine['bytes']]) != engine['sha256']:")
+add(DR, 'db-run-artifact-realpath', "        if os.path.realpath(path) != path or os.path.getsize(path) != meta['bytes']", "        if os.path.getsize(path) != meta['bytes']")
+add(DR, 'db-run-source-recheck', '    if source_binding(env) != source:', '    if False:')
+add(DR, 'db-run-entry-env', 'env=dict(ENTRY_ENV)', 'env=None')
+add(DR, 'db-run-entry-sigterm', 'os.killpg(child.pid, signal.SIGTERM)', 'os.killpg(child.pid, signal.SIGKILL)')
+add(DR, 'db-run-summary-bound', 'return value if isinstance(value, dict) and len(out) <= SUMMARY_LIMIT else None', 'return value if isinstance(value, dict) else None')
+add(DR, 'db-run-code-only', "re.fullmatch(r'[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?', line[0])", "re.fullmatch(r'.+', line[0])")
+add(DR, 'db-run-closure-attempt', "    if mode == 'attempt':\n        summary['phase'] = 'closure'", "    if False:\n        summary['phase'] = 'closure'")
+add(DR, 'db-run-mode-flag', "MODES = {'rehearsal': '--rehearse', 'attempt': '--execute'}", "MODES = {'rehearsal': '--rehearse', 'attempt': '--rehearse'}")
+add(DR, 'db-run-exit', '    return 0 if passed else 1', '    return 0')
+add(DW, 'db-workflow-attempt', "    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1", "    if: github.event_name == 'workflow_dispatch'")
+add(DW, 'db-workflow-persist', '          persist-credentials: false', '          persist-credentials: true')
+add(DW, 'db-workflow-cancel', '  cancel-in-progress: false', '  cancel-in-progress: true')
+add(DW, 'db-workflow-plaintext-upload', '            ${{ runner.temp }}/r3-db-candidate-publish/summary.json', '            ${{ runner.temp }}/r3-db-candidate-publish/summary.json\n            /private/tmp/tonyai-r3-db/run/**')
+add(DW, 'db-workflow-oidc', '  contents: read\n\nconcurrency', '  contents: read\n  id-token: write\n\nconcurrency')
+
+DC = 'infra/scripts/r3_db_candidate/'
+# The candidate's own gates (the private review rounds' mutants, re-anchored in the published copy).
+add(DC + 'attempt_entry.py', 'db-entry-manifest-approved', "_need(isinstance(approval, dict) and approval.get('source_manifest_sha256') == digest, 'MANIFEST_NOT_APPROVED')", "_need(isinstance(approval, dict), 'MANIFEST_NOT_APPROVED')")
+add(DC + 'attempt_entry.py', 'db-entry-pinned-file', "_need(hashlib.sha256(data).hexdigest() == digest, 'PINNED_FILE:' + name)", "_need(True, 'PINNED_FILE:' + name)")
+add(DC + 'attempt_entry.py', 'db-entry-source-root', "_need(os.path.realpath(packet['source_root']) == HERE, 'SOURCE_ROOT_NOT_THIS_DIRECTORY')", "_need(True, 'SOURCE_ROOT_NOT_THIS_DIRECTORY')")
+add(DC + 'attempt_entry.py', 'db-entry-node-bytes', "meta.get('sha256') == digest and meta.get('bytes') == size, 'NODE_BYTES')", "meta.get('bytes') == size, 'NODE_BYTES')")
+add(DC + 'attempt_entry.py', 'db-entry-rehearsal-ops', 'trimmed = {k: v for k, v in ops.items() if k not in NOT_FOR_REHEARSAL}', 'trimmed = dict(ops)')
+add(DC + 'runtime_executor.py', 'db-executor-single-attempt', "_check(approval['single_attempt'] is True, 'APPROVAL_SINGLE_ATTEMPT')", "_check(True, 'APPROVAL_SINGLE_ATTEMPT')")
+add(DC + 'runtime_executor.py', 'db-executor-binding-image', "_check(binding['image'] == image and binding['config_digest'] == config_digest, 'BINDING_IMAGE')", "_check(binding['image'] == image, 'BINDING_IMAGE')")
+add(DC + 'runtime_executor.py', 'db-executor-artifacts-binding', "== binding['client_artifacts_sha256'], 'ARTIFACTS_BINDING')", "!= None, 'ARTIFACTS_BINDING')")
+add(DC + 'runtime_executor.py', 'db-executor-closure-missing', "_check(sorted(summary.get('facts_missing') or []) == sorted(CONTAINER_ONLY), 'CLOSURE_MISSING_SET')", "_check(True, 'CLOSURE_MISSING_SET')")
+add(DC + 'live_ops.py', 'db-live-platform', "_check(system == 'Linux' and machine in ('x86_64', 'amd64'), 'LIVE_NOT_LINUX_AMD64')", "_check(system == 'Linux', 'LIVE_NOT_LINUX_AMD64')")
+add(DC + 'live_ops.py', 'db-live-env-prefix', "and not any(name.startswith(p) for p in FORBIDDEN_ENV_PREFIX), 'LIVE_ENV:' + name)", ", 'LIVE_ENV:' + name)")
+add(DC + 'live_ops.py', 'db-live-recipient-pin', "_check(hashlib.sha256(normalized).hexdigest() == expected_sha256, 'RECIPIENT_PIN')", "_check(True, 'RECIPIENT_PIN')")
+add(DC + 'live_ops.py', 'db-live-seal-secrets', "_check(name not in SECRET_FILES and '..' not in name", "_check('..' not in name")
+add(DC + 'live_ops.py', 'db-live-consumed-once', "    except FileExistsError:\n        raise ExecutorRefusal('ATTEMPT_ALREADY_CONSUMED')", '    except FileExistsError:\n        pass')
+add(DC + 'live_ops.py', 'db-live-kill-pid', 'if isinstance(proc.pid, int) and proc.pid > 1:', 'if isinstance(proc.pid, int):')
+add(DC + 'rehearsal.py', 'db-rehearsal-consumes', "_check(approval['consumes_attempt'] is False, 'REHEARSAL_APPROVAL_CONSUMES')", "_check(True, 'REHEARSAL_APPROVAL_CONSUMES')")
+add(DC + 'rehearsal.py', 'db-rehearsal-purpose', "_check(approval['purpose'] == REHEARSAL_PURPOSE, 'REHEARSAL_APPROVAL_PURPOSE')", "_check(True, 'REHEARSAL_APPROVAL_PURPOSE')")
+# closure_adapter's own OCI_CONFIG_PIN re-check is equivalent: verify_oci_closure already refuses any other config.
+add(DC + 'runtime_contract.py', 'db-contract-config-pin', "_check(config_sha == CONFIG_DIGEST, 'OCI_CONFIG_PIN')", "_check(True, 'OCI_CONFIG_PIN')")
+add(DC + 'entrypoint.mjs', 'db-entrypoint-artifact-hash', "check(digest === meta.sha256, 'ARTIFACT_HASH:' + path);", "check(true, 'ARTIFACT_HASH:' + path);")
+add(DC + 'entrypoint.mjs', 'db-entrypoint-approval-artifacts', "check(approval.client_artifacts_sha256 === expectClientArtifactsSha && HEX64.test(expectClientArtifactsSha), 'APPROVAL_ARTIFACTS');", "check(HEX64.test(expectClientArtifactsSha), 'APPROVAL_ARTIFACTS');")
+add(DC + 'entrypoint.mjs', 'db-entrypoint-env-paths', "check(indexText.includes('\"relativeEnvPaths\"') && indexText.includes('\"rootEnvPath\": null'), 'ARTIFACT_ENV_PATHS');", "check(true, 'ARTIFACT_ENV_PATHS');")
+add(DC + 'entrypoint.mjs', 'db-entrypoint-node-path', "check(typeof nodeExecPath === 'string' && paths.includes(nodeExecPath), 'ARTIFACT_NODE_PATH');", "check(typeof nodeExecPath === 'string', 'ARTIFACT_NODE_PATH');")
+DB_NODE_SUITES = ['infra/tests/r3_db_candidate_' + name + '.test.mjs' for name in (
+    'driver', 'driver_amendments', 'entrypoint', 'fixture_sql', 'manifest', 'prisma_adapter',
+    'prisma_adapter_amendments', 'run_candidate')]
+
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
     if file.startswith('infra/scripts/r3_access_'):
         suites = ['test_r3_access_repair', 'test_r3_access_delivery', 'test_r3_access_custody', 'test_r3_access_identity_diagnostic', 'test_r3_access_amendment']
+    # The candidate's own suites only: test_r3_db_candidate_run pins every candidate byte, so it
+    # would "kill" any candidate mutant without exercising the gate under test.
+    elif file.startswith('infra/scripts/r3_db_candidate/') and file.endswith('.mjs'):
+        return ['node', '--test', *DB_NODE_SUITES]
+    elif file.startswith('infra/scripts/r3_db_candidate/'):
+        suites = ['test_r3_db_candidate_' + name for name in ('executor', 'live_ops', 'entry', 'rehearsal', 'contract', 'closure')]
+    elif file.endswith(('r3_db_candidate_run.py', 'r3-db-candidate.yml')):
+        suites = ['test_r3_db_candidate_run']
     elif file.endswith('.mjs'):
         return node_command
     # One chain: an r3_access_ file used to fall through to the final `else` and run the

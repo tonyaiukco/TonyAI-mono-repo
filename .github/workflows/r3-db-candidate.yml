@@ -1,0 +1,72 @@
+name: R3 private DB candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: rehearsal never consumes the attempt; attempt is the single owner-approved run
+        required: true
+        type: choice
+        options:
+          - rehearsal
+          - attempt
+      source_sha:
+        description: Exact owner-approved published commit (must equal the selected ref and workflow SHA)
+        required: true
+        type: string
+      approval:
+        description: Owner approval JSON for this mode (public correspondence, never a secret)
+        required: true
+        type: string
+      recipient:
+        description: Owner-approved public SSH encryption key, without a comment (never a private key)
+        required: true
+        type: string
+      recipient_sha256:
+        description: SHA256 of the normalized public recipient plus one newline
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3-db-candidate
+  cancel-in-progress: false
+
+jobs:
+  db-candidate:
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the dispatched source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: One DB candidate rehearsal or attempt
+        env:
+          R3_MODE: ${{ inputs.mode }}
+          R3_SOURCE_SHA: ${{ inputs.source_sha }}
+          R3_APPROVAL: ${{ inputs.approval }}
+          R3_RECIPIENT: ${{ inputs.recipient }}
+          R3_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
+        run: python3 -I -B infra/scripts/r3_db_candidate_run.py
+      - name: Retain ciphertext and public correspondence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r3-db-candidate-${{ inputs.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/r3-db-candidate-publish/db-candidate-evidence.tar.age
+            ${{ runner.temp }}/r3-db-candidate-publish/binding.json
+            ${{ runner.temp }}/r3-db-candidate-publish/summary.json
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+      # No repository secrets, Azure/OIDC, SSH or database credentials. The container's
+      # bootstrap password and the probe credential never leave the runner; only the
+      # candidate's age ciphertext and its public summary are uploaded.
