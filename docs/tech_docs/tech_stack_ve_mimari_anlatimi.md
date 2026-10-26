@@ -71,7 +71,7 @@ Verileri asla kaybetmemek ve hızlıca bulmak için kullandığımız teknolojil
 *   **Nedir?** Dosya depolama merkezidir. 
 *   **Neden Seçtik?** Kullanıcılar elektrik faturalarını (kanıt/evidence) sisteme PDF veya JPEG olarak yükleyecekler. Bu dosyaları veritabanında tutmak sistemi yavaşlatır. Bunun yerine onları sınırsız kapasiteli Supabase Storage dolaplarına koyarız.
 
-### Resend (E-posta ve Bildirimler)
+### Azure Communication Services Email (E-posta ve Bildirimler)
 *   **Nedir?** Kullanıcılara giden otomatik e-postaları gönderen kurye sistemidir.
 *   **Neden Seçtik?** "Yeni anomali tespit edildi", "Tesis verisi girildi" gibi otomatik bildirimleri holding yöneticilerinin spam (gereksiz) kutusuna düşmeden, en hızlı ve şık şekilde ulaştırmak için kullanıyoruz.
 

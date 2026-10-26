@@ -49,7 +49,7 @@ Büyük veri setleri, yüksek performans gereksinimi ve kurumsal bir B2B SaaS hi
 *   **Veritabanı & Backend Servisleri:** **Supabase PostgreSQL** (Karmaşık ilişkisel veri modelleri ve RLS politikaları için).
 *   **Kimlik Doğrulama (Auth):** **Supabase Auth** (JWT tabanlı oturum yönetimi ve rol bazlı yetkilendirme).
 *   **Dosya Depolama (Storage):** **Supabase Storage** (Evidence/fatura dökümanları ve iştirak kapasite raporları için).
-*   **Bildirimler:** **Resend** (E-posta bildirimleri ve anomali uyarıları için).
+*   **Bildirimler:** **Azure Communication Services Email** (E-posta bildirimleri ve anomali uyarıları için).
 *   **Rapor Üretimi (Server-side PDF/Excel):** PDF raporlar için **Puppeteer** (sunucu tarafında headless Chrome ile HTML-to-PDF) veya **@react-pdf/renderer** kullanılacaktır. Excel export'ları için **exceljs** tercih edilecektir.
 
 ### Mühendislik ve Güvenlik Altyapısı
@@ -106,11 +106,11 @@ Bu devasa projeyi insansız ve paralel olarak geliştirebilmek için yazılım e
 
 ## 6. Sonraki Adımlar
 
-Yukarıdaki analiz ve güncel kararlar (Supabase, Azure, Github, Figma ve Resend) doğrultusunda, projenin inşasına başlamak için izlememiz gereken yol haritası:
+Yukarıdaki analiz ve güncel kararlar (Supabase, Azure, Github, Figma ve Azure Communication Services Email) doğrultusunda, projenin inşasına başlamak için izlememiz gereken yol haritası:
 1.  **Altyapı Kurulumu:** `~/Repos/TonyAI-mono-repo` altında Turborepo monorepo'nun (pnpm workspaces; `apps/web`, `apps/api`, `packages/shared-types`, `packages/db`) kurulması, GitHub reposunun açılması, Azure üzerinde projenin (Container Apps) yapılandırmasının yapılması ve Supabase (PostgreSQL + Auth) projesinin oluşturulması.
 2.  **Temel Veri (Seed Data):** `data_models_and_json_mocks.md` dosyasındaki verilerin projeye mock olarak entegre edilmesi.
 3.  **UI İnşası (Figma Destekli):** İletilecek Figma tasarımları referans alınarak, ilk olarak **Dashboard (Overview)** ve ardından **Data Entry** sayfalarının görsel olarak inşa edilmesi.
-4.  **Fonksiyonalite:** Hesaplama motorunun bağlanması ve test edilmesi. Resend ile e-posta bildirimlerinin entegrasyonu.
+4.  **Fonksiyonalite:** Hesaplama motorunun bağlanması ve test edilmesi. Azure Communication Services Email ile e-posta bildirimlerinin entegrasyonu.
 5.  **Aşamalama Stratejisi (Phasing):** Ürünü en hızlı şekilde pazara sunmak ve test etmek için geliştirme; önce bir doğrulama dilimi, ardından iki faza ayrılacaktır:
     *   **İlk Milestone — İnce Dikey Dilim (Vertical Slice):** Tek bir akışı uçtan uca canlı veriyle çalıştırarak entegrasyon, RBAC ve deploy riskini en başta çözmek hedeflenir: Supabase Auth + login ekranı (önyüzde henüz yok) → `subsidiaries`/`locations`/RBAC/`audit_log` şeması → NestJS `/subsidiaries` CRUD + `/kpi` + tenant guard → önyüzde `lib/api.ts` + Zustand → Subsidiaries ve Dashboard sayfalarının mock'tan gerçek veriye geçişi → staging deploy + Playwright smoke testi.
     *   **Faz 1 (MVP - En Düşük Kabul Edilebilir Ürün):**
@@ -124,7 +124,7 @@ Yukarıdaki analiz ve güncel kararlar (Supabase, Azure, Github, Figma ve Resend
         *   Scope 3 (Satın alınan mallar, seyahat, lojistik vb.) formlarının ve emisyon faktörlerinin entegre edilmesi.
         *   Tedarikçi Yönetimi (Scope 3 Tedarikçi ESG Skorları) modülü.
         *   Gelişmiş Emissions Analytics: Breakdown (Treemap), History (Audit Ledger), Targets ve Trends sekmeleri.
-        *   Gelişmiş Raporlama ve Dışa Aktarma: PDF ve Excel formatında denetime hazır raporların oluşturulması (Puppeteer/exceljs), Resend ile paylaşım.
+        *   Gelişmiş Raporlama ve Dışa Aktarma: PDF ve Excel formatında denetime hazır raporların oluşturulması (Puppeteer/exceljs), Azure Communication Services Email ile paylaşım.
         *   Gelişmiş Anomali Tespiti: Önceki dönemlere göre yüksek sapma tespiti (%50+).
         *   Toplu Veri Yükleme (Bulk Upload): Geçmiş yılların verilerinin CSV/Excel ile toplu aktarımı (Papa Parse ve sunucu tarafında kuyruk/worker altyapısı).
         *   Playwright ile E2E entegrasyon testleri ve Production ortamı (Azure) dağıtımı.

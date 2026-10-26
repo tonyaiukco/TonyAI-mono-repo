@@ -195,19 +195,25 @@ is code evidence, not deployed acceptance. No API file is changed in this patch.
   I3 consistency or dashboard rotation alone cannot close this condition.
   It blocks QA acceptance, not documentation/PR publication. See the
   [resolution procedure below](#pd-3-resolution-without-finding-the-old-password).
-- **SMTP remains undecided:** runbook 07 previously prescribed ACS Email while
-  LP2-04 prescribes Resend. Neither is selected by this runbook. ACS uses a data
-  geography, not a Sweden Central deployment selection; its global services and
-  delivery events require a separate data-location review. Resend's sending
-  region does not determine storage residency. Do not configure either provider
-  until the owner resolves the processor and data-location requirement; no other
-  region is an implicit fallback. If Sweden-only processing/storage is mandatory,
-  first evaluate a Sweden-operated mail design, delivery limits and reputation
-  without creating it. Recipient mail systems are outside application hosting.
-  Sources: [ACS data location](https://learn.microsoft.com/en-us/azure/communication-services/concepts/privacy),
-  [Resend residency](https://resend.com/security). Include current lifecycle/support
-  terms in provider selection. Domain/sender SPF, DKIM, DMARC and invitation/reset
-  delivery still need Namecheap access and explicit acceptance.
+- **SMTP provider: Azure Communication Services Email** (owner decision
+  2026-10-27; Resend is dropped). The API and self-hosted GoTrue use the ACS SMTP
+  relay `smtp.azurecomm.net`, port 587, STARTTLS (`secure: false`; the API
+  enforces `requireTLS`), with an ACS *SMTP Username* bound to a Microsoft Entra
+  application as `user` and that application's client secret as the versioned
+  app-vault `smtp-password` (rotated before expiry). The Communication Services
+  and Email Communication Service resources use the data location **Europe** — a
+  data geography, not a Sweden Central deployment; Sweden is not offered, and
+  email may transit or be processed in other geographies, so the KVKK/GDPR
+  data-location review is still part of the legal acceptance. An Azure-managed
+  `*.azurecomm.net` domain is limited to 5 emails a minute and 10 an hour per
+  subscription and cannot be raised; QA and production use a verified owned
+  domain (initially 30 a minute and 100 an hour, raisable). Recipient mail
+  systems are outside application hosting. Sources:
+  [ACS data location](https://learn.microsoft.com/en-us/azure/communication-services/concepts/privacy),
+  [ACS SMTP authentication](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication),
+  [ACS email limits](https://learn.microsoft.com/en-us/azure/communication-services/concepts/service-limits).
+  The owned domain's verification, SPF, DKIM and DMARC records still need Namecheap
+  access, and invitation/reset delivery still needs explicit acceptance.
 - **Recovery:** measured database **and object-byte** restore, configuration/secret
   recovery and reconciliation remain launch blockers under LP5-03 and the pilot
   Recoverability gate. RPO 15 minutes / RTO 4 hours are unproven targets. Disk
@@ -461,7 +467,7 @@ those files, a workflow input, a plan, an artifact, Git or chat.
 | `database_secret_version` | App-vault `database-url`, authenticating **tonyai_runtime**, private `db.qa.tonyai.internal:5432`, strict TLS |
 | `backend_secret_version` | App-vault `supabase-service-role-key`, API only; no web secret or recovery-vault access |
 | `DIRECT_URL` | Separate owner-controlled Key Vault/custody channel, using owner role for `pnpm db:deploy`; never app tfvars/env, candidate artifact, app identity or deployer grant |
-| Optional `mail` | Complete provider-approved public SMTP parameters and exact app-vault `smtp-password` version; no provider is selected here |
+| Optional `mail` | Complete public ACS SMTP parameters (`smtp.azurecomm.net`, 587, `secure: false`, the SMTP Username, a sender on a connected domain) and exact app-vault `smtp-password` version |
 
 The new `qa_database_url.py` is an owner-run **syntax check only**, before an
 individually approved secret upload. It never contacts a database or vault and
@@ -664,8 +670,10 @@ mail parameters are `host`, `port`, `secure`, `user`, `from`, and
 The same provider must also be configured separately on self-hosted GoTrue for
 password reset; an API SMTP setting does **not** configure GoTrue. The R3/host
 owner supplies that reviewed configuration and exact redirect allow-list.
-Sender/processor/residency, SPF/DKIM/DMARC and invitation/reset delivery remain
-owner decisions and acceptance; no ACS/Resend or production deployment is implied.
+The provider is Azure Communication Services Email (owner decision 2026-10-27,
+above); the sender domain, SPF/DKIM/DMARC, the data-location review and
+invitation/reset delivery remain owner decisions and acceptance; no production
+deployment is implied.
 
 The foundation routes ACA console/system logs to the Sweden Log Analytics
 workspace by ARM ID, without workspace keys. Named-operator alert delivery,
