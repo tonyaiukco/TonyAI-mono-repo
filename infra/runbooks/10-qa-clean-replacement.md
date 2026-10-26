@@ -1666,8 +1666,16 @@ identity. Caps are module literals (unit roots: 2048 entries each, 128 bodies of
 64 KiB and 8 MiB in all, 4096 packaged hashes, depth 1; md5sums 16 MiB and 512 files);
 an overflow is an error section, never truncation. Without a reviewed packaged-unit
 index the unit universe holds names, types, sizes and link targets only and the
-validator reports `DISCOVERY_ONLY`: a complete, sealed run (the guest and controllers
-exit 0) that never yields policy-input hashes. The validator reports
+validator reports `DISCOVERY_ONLY`. A unit root reached through a symlink (Noble packages
+`/etc/xdg/systemd/user` as a link to `/etc/systemd/user`) is recorded as `{link, target}`,
+never followed; C13 treats it as covered only when the root itself is the link and its
+target, with `..` allowed only as a leading run, never under `/run` and in the same manager
+family (user or system), is another scanned root, and as unclassifiable (`None`) otherwise (a later `..` would be resolved by the kernel
+through a component that may itself be a link). LIVE-A1a (run
+40254443615, `e09e05f`) was `PARTIAL_REVIEW_REQUIRED` because the earlier collector aborted
+the whole `unit-universe` section on that link (ELOOP). A discovery collection is a
+complete, sealed run (the guest and controllers exit 0) that never yields policy-input
+hashes. The validator reports
 `predicate_contract`: `option-c` for format 3, `legacy` for formats 1 and 2, which keep
 their status, hashes and registration-and-socket predicate. The 240-second budget is
 unchanged until measured (D22).

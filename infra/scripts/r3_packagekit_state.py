@@ -405,13 +405,42 @@ def scope(sections):
     return profile['id'], allow['unit_index'], allow['caps']
 
 
+def root_link(path, root='/'):
+    """The first symlink among `path`'s components, read without following it; None when there is none.
+
+    A root such as /etc/xdg/systemd/user is packaged as a link to /etc/systemd/user (systemd 255.4
+    src/core/meson.build; Ubuntu's systemd.install), so a no-follow open of it fails with ELOOP."""
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        current = PurePosixPath('/')
+        for part in PurePosixPath(path).parts[1:]:
+            current = current / part
+            if stat.S_ISLNK(lstat_at(part, fd).st_mode):
+                return {'link': str(current), 'target': readlink_at(part, fd)}
+            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        return None
+    finally:
+        os.close(fd)
+
+
 def universe(sections, root='/'):
     """C13 scope. Without a reviewed packaged index this is DISCOVERY_ONLY: names, types,
-    sizes and link targets, never a body (design03 4.2, N4)."""
+    sizes and link targets, never a body (design03 4.2, N4). A root reached through a symlink is
+    recorded as that link, never followed; c13 decides whether another root covers it."""
     profile_id, index, caps = scope(sections)
     budget = {'bodies': 0, 'bytes': 0, 'packaged': 0}
     roots = {}
     for path in (*REVIEWED['unit_roots'], *USER_ROOTS):
+        try:
+            link = root_link(path, root)
+        except FileNotFoundError:
+            roots[path] = {'absent': True}
+            continue
+        if link is not None:
+            roots[path] = link
+            continue
         try:
             fd = open_dir(path, root)
         except FileNotFoundError:
@@ -851,10 +880,15 @@ def check(name, value):
         mode = value['mode']
         need(value['profile'] is None or (isinstance(value['profile'], str) and 0 < len(value['profile']) <= 128))
         need(isinstance(value['roots'], dict) and set(value['roots']) == {*REVIEWED['unit_roots'], *USER_ROOTS})
-        for item in value['roots'].values():
+        for path, item in value['roots'].items():
             need(isinstance(item, dict))
             if set(item) == {'absent'}:
                 need(item['absent'] is True)
+                continue
+            if set(item) == {'link', 'target'}:
+                check_text(item['link'])
+                check_text(item['target'])
+                need(item['link'] == path or path.startswith(item['link'] + '/'))
                 continue
             need(set(item) == {'uid', 'gid', 'mode', 'entries'})
             check_meta(item)
@@ -1193,8 +1227,32 @@ def stable_projection(universe_value):
             value['entries'] = {n: project(i) for n, i in item['entries'].items() if not VOLATILE_NAME.match(n)}
         return value
     return {root: ({'absent': True} if value.get('absent') else
+                   {'link': value['link'], 'target': value['target']} if 'link' in value else
                    {'entries': {n: project(i) for n, i in value['entries'].items() if not VOLATILE_NAME.match(n)}})
             for root, value in universe_value['roots'].items() if not root.startswith('/run/')}
+
+
+def root_covered(root, value, roots):
+    """False when a root is itself a link whose target is another scanned, non-volatile root (that scan
+    covers it); None otherwise. `..` is resolved only as a leading run, which climbs the link's own parent
+    chain that root_link walked without following anything; a `..` after a named component would be
+    resolved by the kernel through that component, possibly another link, so it is not classifiable."""
+    if value['link'] != root:
+        return None
+    target = PurePosixPath(value['target'])
+    parts = list(target.parts[1:] if target.is_absolute() else target.parts)  # pathlib drops '.' and '//'
+    base = [] if target.is_absolute() else list(PurePosixPath(root).parent.parts[1:])
+    while parts and parts[0] == '..':
+        base, parts = base[:-1], parts[1:]
+    if '..' in parts:
+        return None
+    resolved = '/' + '/'.join(base + parts)
+    other = roots.get(resolved)
+    if resolved.startswith('/run/') or other is None or 'entries' not in other:  # a link record has no entries
+        return None
+    if (root in USER_ROOTS) != (resolved in USER_ROOTS):
+        return None  # another manager reads the target: a system unit is not cleared for root's user manager
+    return False
 
 
 def c13(universe_value, sums, services, lib, profile):
@@ -1210,7 +1268,7 @@ def c13(universe_value, sums, services, lib, profile):
     md5 = {path: value for item in sums['files'].values() for path, value in item['lines'].items()}
     known = set()
     for root, value in universe_value['roots'].items():
-        if not value.get('absent'):
+        if 'entries' in value:
             for name, item in value['entries'].items():
                 known.add(root + '/' + name)
                 for sub in item.get('entries', {}):
@@ -1218,6 +1276,9 @@ def c13(universe_value, sums, services, lib, profile):
     results = []
     for root, value in universe_value['roots'].items():
         if value.get('absent'):
+            continue
+        if 'link' in value:
+            results.append(root_covered(root, value, universe_value['roots']))
             continue
         for name, item in value['entries'].items():
             path = root + '/' + name

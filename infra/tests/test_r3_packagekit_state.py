@@ -1204,6 +1204,122 @@ class Universe(unittest.TestCase):
         self.assertIs(host.evaluate(reviewed), False)
 
 
+class SymlinkedRoot(unittest.TestCase):
+    """A1a (run 40254443615): /etc/xdg/systemd/user is packaged as a link to /etc/systemd/user, and the
+    no-follow open aborted the whole unit-universe section. A linked root is recorded, never followed."""
+    XDG = '/etc/xdg/systemd/user'
+
+    def host(self, target='../../systemd/user', user_unit=b'[Unit]\nDescription=user\n'):
+        host = Host(self)
+        host.write('/etc/systemd/user/local-user.service', user_unit)
+        host.link(self.XDG, target)
+        return host
+
+    def test_the_noble_layout_is_recorded_and_covered_by_its_target_root(self):
+        host = self.host()
+        raw = host.raw()
+        self.assertEqual(raw['unit-universe']['state'], 'ok')
+        self.assertEqual(raw['unit-universe']['value']['roots'][self.XDG], {'link': self.XDG, 'target': '../../systemd/user'})
+        state.check('unit-universe', raw['unit-universe']['value'])
+        self.assertIs(host.evaluate(), False)
+
+    def test_an_absolute_link_to_a_scanned_root_is_covered(self):
+        self.assertIs(self.host('/etc/systemd/user').evaluate(), False)
+
+    def test_an_activator_reached_through_the_link_is_still_found(self):
+        host = self.host(user_unit=b'[Service]\nExecStart=/usr/libexec/packagekitd\n')
+        self.assertIs(host.evaluate(), True)
+
+    def test_a_link_outside_the_scanned_roots_is_not_classifiable(self):
+        self.assertIsNone(self.host('/opt/user-units').evaluate())
+        self.assertIsNone(self.host('../../xdg/systemd/user').evaluate())  # to itself
+
+    def test_a_link_to_an_absent_root_is_not_classifiable(self):
+        host = Host(self)
+        host.link(self.XDG, '../../systemd/user')  # /etc/systemd/user does not exist
+        self.assertIsNone(host.evaluate())
+
+    def test_a_link_above_the_root_is_recorded_and_not_classifiable(self):
+        host = Host(self)
+        host.path('/srv/xdg/systemd/user').mkdir(parents=True)
+        host.link('/etc/xdg', '/srv/xdg')
+        raw = host.raw()
+        self.assertEqual(raw['unit-universe']['value']['roots'][self.XDG], {'link': '/etc/xdg', 'target': '/srv/xdg'})
+        self.assertIsNone(host.evaluate())
+
+    def test_a_link_above_the_root_is_never_covered_even_when_its_target_is_a_scanned_root(self):
+        host = Host(self)
+        host.write('/etc/systemd/user/local-user.service', b'[Unit]\n')
+        host.link('/etc/xdg', '/etc/systemd/user')  # the root is then /etc/systemd/user/systemd/user
+        raw = host.raw()
+        self.assertEqual(raw['unit-universe']['value']['roots'][self.XDG], {'link': '/etc/xdg', 'target': '/etc/systemd/user'})
+        self.assertIsNone(host.evaluate())
+
+    def test_a_dotdot_after_a_named_component_is_not_classifiable(self):
+        """Security/QA P1: the kernel resolves `..` after following an intermediate link, not lexically."""
+        host = self.host('evil/../../../systemd/user')
+        host.link('/etc/xdg/systemd/evil', '../../../srv/a/b/c')
+        host.write('/srv/systemd/user/pk.service', b'[Service]\nExecStart=/usr/libexec/packagekitd\n')
+        self.assertIsNone(host.evaluate())
+
+    def test_a_dotdot_through_the_usrmerge_lib_link_is_not_classifiable(self):
+        self.assertIsNone(self.host('../../../lib/../etc/systemd/user').evaluate())
+
+    def test_leading_dotdots_may_climb_past_the_top(self):
+        self.assertIs(self.host('../../../../../../etc/systemd/user').evaluate(), False)
+        self.assertIs(self.host('/../etc//systemd/./user/').evaluate(), False)
+
+    def test_a_link_into_run_is_not_classifiable(self):
+        host = self.host('/run/systemd/user')
+        host.write('/run/systemd/user/x.service', b'[Unit]\n')
+        self.assertIsNone(host.evaluate())
+
+    def test_the_link_record_fields_are_bounded(self):
+        raw = self.host().raw()
+        for forged in ({'link': '', 'target': '../../systemd/user'}, {'link': self.XDG, 'target': 'x' * 4097}):
+            value = copy.deepcopy(raw['unit-universe']['value'])
+            value['roots'][self.XDG] = forged
+            with self.subTest(forged=str(forged)[:40]), self.assertRaises(ValueError):
+                state.check('unit-universe', value)
+
+    def test_the_digest_distinguishes_which_component_is_the_link(self):
+        first, second = Host(self), Host(self)
+        first.path('/srv/xdg/systemd/user').mkdir(parents=True)
+        second.path('/srv/xdg/systemd/user').mkdir(parents=True)
+        first.link('/etc/xdg', '/srv/xdg')
+        second.link('/etc/xdg/systemd', '/srv/xdg')
+        digests = []
+        for host in (first, second):
+            with host.active():
+                digests.append(state.normalize(host.observe())['unit_universe_digest'])
+        self.assertNotEqual(*digests)
+
+    def test_a_user_root_linked_to_a_system_root_is_not_classifiable(self):
+        """Security delta P2: root's user manager would load the system units through the link, and a
+        system unit cleared for PID 1 is not cleared for the user manager."""
+        self.assertIsNone(self.host('/usr/lib/systemd/system').evaluate())
+        self.assertIsNone(self.host('../../../usr/lib/systemd/system').evaluate())
+
+    def test_the_link_is_part_of_the_stable_digest(self):
+        first = self.host()
+        second = self.host('/etc/systemd/user')
+        with first.active():
+            one = state.normalize(first.observe())['unit_universe_digest']
+        with second.active():
+            two = state.normalize(second.observe())['unit_universe_digest']
+        self.assertNotEqual(one, two)
+
+    def test_schema_refuses_a_forged_link_record(self):
+        raw = self.host().raw()
+        for forged in ({'link': '/etc/other', 'target': 'x'}, {'link': '/etc/xdg/systemd/userx', 'target': 'x'},
+                       {'link': '/etc/xdg/sys', 'target': 'x'},
+                       {'link': self.XDG, 'target': 'x', 'extra': 1}, {'link': self.XDG}, {'link': self.XDG, 'target': 7}):
+            value = copy.deepcopy(raw['unit-universe']['value'])
+            value['roots'][self.XDG] = forged
+            with self.subTest(forged=forged), self.assertRaises(ValueError):
+                state.check('unit-universe', value)
+
+
 class Volatile(unittest.TestCase):
     def test_volatile_holds_the_dropped_values_and_refuses_gaps(self):
         host = Host(self)
