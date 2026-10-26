@@ -121,7 +121,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: ./.github/actions/supabase-stack
-      - run: pnpm exec playwright install --with-deps chromium
+      - name: Use the primary Ubuntu archive for browser dependencies
+        run: sudo python3 infra/scripts/ci_ubuntu_mirror.py
+      - name: Install Chromium and system dependencies
+        timeout-minutes: 6
+        run: pnpm exec playwright install --with-deps chromium
       - uses: docker/setup-buildx-action@v3
       - name: Build and load API image
         uses: docker/build-push-action@v6

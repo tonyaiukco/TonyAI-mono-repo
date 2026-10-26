@@ -1178,7 +1178,7 @@ is needed. Required Claude Code cross-lane review and owner acceptance stay exte
 
 This preparation does not close R3, R4/PD-3 or any deployment acceptance gate.
 Units 4 and 5 now have separate offline transition tools above; live acceptance,
-Unit 8 validation and a Sweden cloud smoke adapter remain separate work.
+Unit 8 has its separate offline contract below; a Sweden cloud smoke adapter remains separate work.
 The initial foundation still requires all four readiness flags false. None of
 these tools performs init/reconfigure, remote state reads, plan, drain or apply.
 Only the explicitly requested `--github-run-id` option makes a GitHub read.
@@ -1334,6 +1334,184 @@ input, real source, real artifact or executable approval):
   "rollback": {"status": "BLOCKED_MISSING_PREDECESSOR", "target": null}
 }
 ```
+
+### Offline Unit 8 tools
+
+This package validates an app-scoped deployment-grant transition offline. It does
+not enable grants, run a real plan, exchange OIDC tokens, build/push images, deploy
+applications or accept R3/R4/PD-3. Production Terraform definitions are unchanged.
+The application root remains the only writer of both Container Apps.
+
+#### Exact transition and two historical chains
+
+`qa_deployment_contract.py` requires a request containing exactly `before_inputs`,
+`after_inputs` (each wrapping `config`) and `predecessor_sha256` (the canonical JSON
+digest of the complete predecessor document). The explicit gates are:
+
+| Gate | Before | After |
+|---|---|---|
+| `runtime_secrets_ready` | true | true |
+| `oidc_enabled` | true | true |
+| `smtp_secret_ready` | false | false |
+| `apps_ready` | false | true |
+
+Only `release_sha` may additionally change; its sole resource effect is the exact
+old/new RG `tags.releaseSha` value. No recovery-marker or general metadata exception
+exists. Already-enabled, reversed, skipped-stage and inconsistent requests refuse.
+
+The predecessor document has exactly `unit5` and `unit7`:
+
+- `unit5`: `oidc_request`, `runtime_predecessor` (the complete Unit 4/initial chain),
+  `saved_plan` (the inspector binding, not its packet), `before_receipt`,
+  `after_receipt`, `plan_completed_at`, `apply_started_at`, `apply_completed_at`,
+  and `owner_acceptance`.
+- `unit7`: `inputs`, `candidate`, `candidate_provenance`, `saved_plan`,
+  `outgoing_revisions`, `before_receipt`, `drained_receipt`, `after_receipt`,
+  `plan_completed_at`, `apply_started_at`, `apply_completed_at`, and
+  `owner_acceptance`. The provenance reference retains the existing downloader's
+  repository/source/run/artifact/archive/candidate-file bindings; this offline
+  package does not authenticate that reference or download an artifact.
+- Each separate `owner_acceptance` reference contains `unit` (5 or 7),
+  `decision_sha256`, `report_sha256`, `after_receipt_sha256`, and `accepted_at`.
+  Decisions must be distinct and follow their observations. These are consistency
+  references only: a caller acceptance hash is not authenticated provenance.
+  A `BLOCKED_DRAFT` packet is never an acceptance reference.
+
+Unit 8 before inputs equal the accepted Unit 5 after inputs. Unit 7's foundation
+and runtime secret versions equal the accepted foundation/Unit 4 selections.
+Its source, release ID, images, candidate fingerprint, saved-plan body hashes,
+outgoing revision set and operation times must agree. Existing-app updates require
+before, drained and after observations; first deployment requires successful full
+inventory proving both absent before, and `drained_receipt: null`. Unit 7 historical
+observations are checked within the final after receipt's freshness window, never
+relabeled as fresh Unit 8 observations. Unit 7 readback alone does not establish
+startup, login, TLS, tenant isolation or full operational acceptance.
+
+Foundation, deployed candidate and new Unit 8 sources may differ. The historical
+reader uses only local immutable Git commit objects, with replacement objects and
+lazy fetch disabled. It projects public config/lock/policy and candidate
+lockfile/migration files into a temporary directory, refuses extra Terraform
+configuration and symlink/gitlink entries, and executes no historical code.
+Missing local history refuses; obtain it under a separate repository-read decision.
+Initial, Unit 4 and Unit 5 reports bind their own historical roots; Unit 7 uses
+`release(..., root=historical_root)` so today's fingerprint cannot substitute.
+
+#### Saved binary and independent grant policy
+
+```bash
+# Local inspection of an existing binary only. The source checkout must be clean
+# at after_inputs.config.release_sha; no init or plan is performed here.
+python3 infra/scripts/qa_deployment.py --request "$QA_DIR/deployment-request.json" \
+  --predecessor "$QA_DIR/deployment-predecessor.json" \
+  --saved-plan "$QA_DIR/deployment.tfplan" --terraform /absolute/path/to/terraform \
+  --ruleset-id "$REVIEWED_RULESET_ID" > "$QA_DIR/deployment-owner-draft.json"
+```
+
+Only private `terraform show -json` output derived from the supplied binary is
+inspection evidence. Caller JSON is not. Embedded config, provider lock, clean
+source, input/predecessor/file hashes, canonical tool/binary paths and tool bytes
+are bound; both paths/content are rechecked after inspection. Command drafts use
+the inspected canonical paths. Raw plan/state and secret values are not copied
+into the packet or logged on refusal.
+
+`qa_deployment_plan.py` independently expects exactly these creates:
+
+| Address | Principal | Role | Scope |
+|---|---|---|---|
+| `azapi_resource.grant["app-api"]` | Existing release identity principal | Container Apps Contributor | Exact existing `tonyai-staging-api` ARM ID |
+| `azapi_resource.grant["app-web"]` | Same existing release identity principal | Container Apps Contributor | Exact existing `tonyai-staging-web` ARM ID |
+
+Both use `ServicePrincipal`, role `358470bc-b998-42bd-ab17-a7e34c199c0f` and
+UUIDv5 URL namespace over the lowercase `scope/principal/role` string. The existing
+24 foundation resources are no-op except the optional exact RG tag update; total
+26 is a **foundation-state count**, not the whole Azure inventory. Both apps must
+already exist in separate application state; import/adoption is forbidden.
+`application_contract` and `oidc_client_id` stay unchanged. Existing runtime,
+owner, ACR push/pull, identity-operator, environment-read/join, custom-role and
+federation bodies remain exact. Delete/replace/import/move/drift, extra resources,
+incomplete/deferred/errored plans and unexpected provider options refuse.
+
+The installed-provider mock establishes 24 resources and produces exactly two
+creates. Only new assignments' `id`, empty `output`, four AzAPI boolean defaults,
+and source-defined empty `location`/`tags` can be computed with source binding.
+Principal, client, name, scope, body and identity are known: no unknown-tree
+exception exists, and a known wrong value cannot exploit a computed allowance.
+
+#### Fresh prerequisites, observations and permanent draft
+
+The packet contains complete before/after public command manifests. The fresh
+envelope binds Unit 8 source, request, predecessor, report and plan hashes plus
+historical application input identity, phase, manifest hash, complete records and
+UTC operation boundaries. Every command must succeed with complete pagination.
+Both fresh app observations use the unchanged Unit 7 after-body/revision oracle,
+including identities, environment, registry, image digests and all outgoing
+revision/replica constraints. App principal/client values also correlate with the
+known managed identities, and the app listing agrees with the full resource list.
+403/404 or a plausible scope string cannot prove app existence or absence.
+
+Historical Unit 5 after inventory reconciles with fresh Unit 8 before by adding
+only the two accepted application rows. Known inventory rows cannot disappear
+from both snapshots. Fresh before/after preserves every other resource and
+assignment, all identity/federation/custom-role bodies, and identical public app
+body, image, revision, traffic and replica/drain state. UUID/ARM IDs compare
+case-insensitively where the foundation contract requires it; `null`/`{}` are
+equivalent only for source-defined empty release-identity tags.
+
+An optional `--observations` file has `plan_completed_at`, `receipt` (fresh Azure
+before) and `github_receipt`. The existing pure Unit 5 GitHub contract checks
+staging/main/reviewer/no-bypass/JIT/outside-contributor rules against this Unit 8
+request. Its admin projections are not workflow `GITHUB_TOKEN` preflight. Human
+review and fresh JIT host provisioning/destruction remain separate external proof;
+agent review, runner labels, mode variables and REST snapshots cannot replace it.
+The observation file hash lives outside the report to avoid a circular
+receipt/report/file-hash dependency. Regenerating a draft after collecting the
+same bound observations must retain identical input paths and file bytes.
+
+```bash
+# Local comparison only; these commands do not collect or mutate anything.
+python3 infra/scripts/qa_deployment_receipt.py manifest \
+  --request "$QA_DIR/deployment-request.json" --predecessor "$QA_DIR/deployment-predecessor.json" \
+  --packet "$QA_DIR/deployment-owner-draft.json"
+python3 infra/scripts/qa_deployment_receipt.py verify \
+  --request "$QA_DIR/deployment-request.json" --predecessor "$QA_DIR/deployment-predecessor.json" \
+  --packet "$QA_DIR/deployment-owner-draft.json" \
+  --before "$QA_DIR/deployment-before.json" --after "$QA_DIR/deployment-after.json" \
+  --plan-completed-at "$QA_PLAN_COMPLETED_AT" --apply-started-at "$QA_APPLY_STARTED_AT" \
+  --apply-completed-at "$QA_APPLY_COMPLETED_AT"
+```
+
+The packet lists all 26 foundation addresses/IDs/actions, the two existing apps'
+separate ownership/acceptance, both exact grants, hashes and saved-plan-apply/public
+readback command drafts. **Container Apps Contributor can replace API code and
+indirectly access runtime secrets. No direct vault grant does not mean no secret
+access.** Offline receipts authenticate neither Azure nor GitHub; direct-role
+snapshots do not prove effective/inherited permission safety.
+
+All packets remain `BLOCKED_DRAFT`, `authorization: false`, `live_acceptance: false`,
+even with complete synthetic/caller evidence. No deploy executor is enabled.
+A refused, failed, partial or interrupted live attempt consumes its separate
+approval. Preserve private evidence/state and stop; no automatic retry, re-plan,
+grant revoke or recovery. New observation/recovery needs a separate exact approval.
+
+The synthetic fixture factory `infra/tests/qa_deployment_fixtures.py` produces
+complete test-only draft inputs; its `synthetic_history` substitution is confined
+to tests and the explicitly synthetic mock adapter, never the inspector CLI.
+An abbreviated secret-free example is:
+
+```json
+{"schema":1,"unit":8,"status":"BLOCKED_DRAFT","authorization":false,
+ "live_acceptance":false,"authenticated_azure_provenance":false,
+ "authenticated_github_provenance":false,"effective_permissions_proven":false,
+ "binding":{"resource_count":26,"actions":{"create":2,"update":1,"no-op":23}},
+ "scope_semantics":"API code replacement can indirectly access runtime secrets."}
+```
+
+For this offline work package, keep `TERRAFORM_TEST_BINARY` unset (the optional
+archive test invokes a real `terraform plan`, although provider-free). With the
+providers already installed, run `qa_deployment_mock.py --terraform
+/absolute/path/to/terraform`. It uses a disposable copy and removes only the five
+`prevent_destroy` guards for mock teardown; production protections stay intact.
+No initialization, real plan/apply or live discovery is part of this validation.
 
 ### Offline verification
 

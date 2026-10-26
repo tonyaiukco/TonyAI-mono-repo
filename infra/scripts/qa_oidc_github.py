@@ -17,8 +17,8 @@ PROJECTIONS = {
 }
 
 
-def manifest(request, plan_hash, ruleset_id):
-    _, config = transition(request)
+def manifest(request, plan_hash, ruleset_id, *, transition_validator=transition):
+    _, config = transition_validator(request)
     match(r'[a-f0-9]{64}', plan_hash)
     require(type(ruleset_id) is int and ruleset_id > 0)
     paths = dict(environment=BASE+'/environments/staging', policies=BASE+'/environments/staging/deployment-branch-policies?per_page=100',
@@ -52,9 +52,9 @@ def validate_projection(key, value):
         fields(value, 'name value' if key == 'mode' else 'approval_policy')
 
 
-def verify(request, plan_hash, receipt, *, not_before, now=None):
+def verify(request, plan_hash, receipt, *, not_before, now=None, transition_validator=transition):
     fields(receipt, 'source_sha request_sha256 plan_sha256 ruleset_id manifest_sha256 started_at completed_at records')
-    spec = manifest(request, plan_hash, receipt['ruleset_id'])
+    spec = manifest(request, plan_hash, receipt['ruleset_id'], transition_validator=transition_validator)
     require(all(receipt[k] == spec[k] for k in ('source_sha','request_sha256','plan_sha256'))
             and receipt['manifest_sha256'] == digest(spec))
     start, end = timestamp(receipt['started_at']), timestamp(receipt['completed_at'])
