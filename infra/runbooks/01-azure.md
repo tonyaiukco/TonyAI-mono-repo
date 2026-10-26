@@ -1,14 +1,13 @@
 # 1. Backend and Azure foundation
 
-Complete [session setup](00-session.md). The owner approves region availability,
-subscription, budget/alerts and organization billing before provisioning. Budget
-amounts are deliberately unspecified. This code does not activate billing or
-claim a cost ceiling.
+> **Active region: Azure Sweden Central.** Reuse the existing verified backend;
+> follow [runbook 08](08-qa-application.md) for the new QA application roots.
+> Section 1.1 is a shared backend reference and requires its own owner approval.
+> Sections 1.2 onward and [session setup](00-session.md) describe historical
+> Germany/hosted tooling, not an alternative current deployment route.
 
-> **Scope:** backend bootstrap supports the verified Sweden self-host path too;
-> sections 1.2 onward describe the legacy Germany/hosted application foundation.
-> For active QA, use [runbook 07](07-selfhost.md) and reuse the existing backend.
-> The legacy application gate stays closed until Sweden VNet integration is reviewed.
+The owner approves subscription, Sweden capacity, budget/alerts and billing
+before provisioning. No budget ceiling or provisioning approval is implied.
 
 ## 1.1 Bootstrap the Entra-only backend
 
@@ -16,8 +15,9 @@ Fill `backend.json`: distinct staging account, owner object ID, explicit public
 owner egress IPv4 (`/32`), empty `application_object_id` until OIDC is established.
 No broad firewall range, trusted-service bypass or storage keys.
 
-The optional backend `location` accepts `germanywestcentral` (the legacy
-default) or `swedencentral`. The self-hosted QA path explicitly uses Sweden.
+For current QA and planned production, explicitly set backend `location` to
+`swedencentral`. The retained helper defaults to `germanywestcentral` for legacy
+compatibility only; never inherit that default for current work.
 Existing backend resources cannot be relocated by changing this field.
 
 ```bash
@@ -34,7 +34,7 @@ inspect inherited Azure roles and record least-privilege evidence separately.
 Do not use a shared production account. Storage RBAC propagation may take time;
 wait and rerun, never enable Shared Key as a workaround.
 
-## 1.2 Apply foundation as owner
+## 1.2 Legacy foundation apply reference
 
 Start with `runtime_secrets_ready=false`, `apps_ready=false`, and an empty
 deployer ID. Select globally unique names. Record the reviewed infrastructure
@@ -55,7 +55,7 @@ owns the RG and shared resources; do not edit them with alternate templates.
 Copy the **public** contract into `release-r001.json.foundation`; verify names
 against restoration. Never give the deployer access to foundation state.
 
-## 1.3 Protect GitHub and create/resume the dedicated OIDC identity
+## 1.3 Legacy GitHub/Entra federation reference
 
 Complete [runbook 03’s one-time GitHub/main/JIT setup](03-deploy.md#one-time-owner-setup)
 before this step. Before federation: verify the GitHub plan actually enforces `staging` environment

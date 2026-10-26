@@ -874,14 +874,14 @@ Frontend'de henüz implementasyonu olmamakla birlikte, `technical_analysis.md`'d
 #### The DevOps & Cloud Engineer Görevleri (Faz 2):
 - [ ] Production (Canlı) ortam bulut altyapısının kurulması ve CDN/SSL konfigürasyonu
 - [ ] GitHub Actions ile tam CI/CD boru hatlarının kurulması (Unit/E2E testlerin otomatik çalışması ve deploy)
-- [ ] KVKK ve GDPR gereksinimlerine göre veri saklama ve Frankfurt bölgesi (EU-Central) veri izolasyonu ayarları
+- [ ] Configure and verify application/data residency in Azure Sweden Central, with self-hosted Supabase and separate QA/production resources.
 - [ ] Veritabanı otomatik yedekleme ve kurtarma (DR) planlarının kurulması
 
 #### The Security & Compliance Engineer Görevleri (Faz 2):
 - [ ] Tüm Scope 3 / supplier tabloları için RLS + guard kapsamının genişletilmesi
 - [ ] Locked period immutability ve revizyon iş akışı güvenlik kontrolleri
 - [ ] Yetki aşımı / penetrasyon senaryolarının (QA ile birlikte) doğrulanması
-- [ ] Frankfurt (EU-Central) veri izolasyonu ve gizlilik denetiminin son hali
+- [ ] Verify Sweden Central resource placement, tenant isolation and separately approved privacy/processor requirements.
 
 #### The Data & Emission Factor Engineer Görevleri (Faz 2):
 - [ ] Scope 3 faktörleri ve AIB (EU residual mix) faktörlerinin seed'i

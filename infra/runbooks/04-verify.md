@@ -1,10 +1,11 @@
 # 4. Acceptance evidence, recreation and recovery
 
-> **Legacy hosted deployment path.** These procedures retain Germany West Central
-> and hosted Supabase Frankfurt assumptions. For active Azure self-hosted QA and
-> planned production in Sweden Central, use [runbook 07](07-selfhost.md). Do not
-> point hosted helpers at the VM or bypass region/project validation; application
-> integration and its acceptance procedures still need a reviewed implementation.
+> **Historical hosted reference, not a deployment route for current QA or production.**
+> Active application/data resources use **Azure Sweden Central** and self-hosted
+> Supabase. Use [runbook 08](08-qa-application.md) for application preparation and
+> [runbook 07](07-selfhost.md) for host ownership. The Germany/Frankfurt commands
+> below describe the retained legacy implementation only; do not run them for
+> Sweden or bypass their subscription/project checks.
 
 First [restore the session](00-session.md). The owner records each actual result in the PR's B9 handoff, including integrated
 SHA, timestamp, environment/project ref, command/scenario, result and a sanitized
@@ -21,7 +22,7 @@ az containerapp secret list -g "$RESOURCE_GROUP" -n "$PREFIX-staging-web" --quer
 az role assignment list --scope "$(foundation_output vaultId)" --all --query '[].{role:roleDefinitionName,scope:scope,principal:principalId}'
 ```
 
-Expected: Germany West Central; ACR Basic/admin false; Key Vault RBAC/purge
+**Historical hosted expectation only:** Germany West Central; ACR Basic/admin false; Key Vault RBAC/purge
 protection true; API's two database/backend **references**, plus `smtp-password` when configured, with API identity; no web secrets.
 Inspect the secret-level role assignments in the portal as well: API has Secrets
 User on the two runtime secrets and, when enabled, `smtp-password` only; `direct-url` has no API/web/deployer grant.

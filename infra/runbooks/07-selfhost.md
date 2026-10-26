@@ -12,8 +12,8 @@ The application layer has not been created. Production provisioning is also
 blocked until owned-domain integration, recovery acceptance and the legacy-key
 decision are complete; the currently executable bootstrap is QA-only. `deployment-policy.json` blocks the
 legacy hosted/Germany foundation and application roots for this subscription,
-in both Python and direct Terraform validation. Do not remove that gate until
-the explicit Sweden VNet/selfhost integration is reviewed. The planning file and
+in both Python and direct Terraform validation. Keep that legacy gate intact;
+use the separate reviewed Sweden integration path described in runbook 08. The planning file and
 CLAUDE.md are updated by the other lane after owner merge, not by this worktree. Pilot maintenance windows are acceptable.
 Recovery targets are RPO 15 minutes and RTO 4 hours for **database and uploaded
 bytes**, including evidence and import sources. Neither target is proven here.
@@ -52,7 +52,7 @@ deployment; do not enable unattended OIDC or remove existing reviewer gates.
 Use the existing Entra-only backend bootstrap and owner-only `foundation`
 container. No new access goes to the application deployer. Keys are
 `staging-selfhost.tfstate` and `production-selfhost.tfstate`, distinct from both
-existing roots. Follow the shared [backend firewall procedure](01-azure.md#11-bootstrap-the-entra-only-backend) and [state-recovery procedure](05-rotation.md#recover-backend-state-or-a-vault); the Germany vault recovery example is legacy.
+existing roots. Follow the shared [backend firewall procedure](01-azure.md#11-bootstrap-the-entra-only-backend) and [state-recovery procedure](05-rotation.md#recover-backend-state-or-a-vault); vault recovery must use the recorded original region, `swedencentral` for current resources.
 
 Set backend `location` to `swedencentral` explicitly; the legacy hosted path
 defaults to Germany West Central. Existing backend resources cannot change region.
