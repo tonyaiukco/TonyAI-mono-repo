@@ -3,18 +3,20 @@
 import argparse
 import json
 from candidate import clean_source
-from qa_contract import GROUP, load, release, require, sha256
+from qa_contract import GROUP, load, release, require, sha256, has_unknown
 from qa_expected import body, canonical, identity
+from qa_application_policy import envelope, resource_options
 
 
-def check_plan(plan, inputs, acknowledge_clear_hold=False):
+def check_plan(plan, inputs, acknowledge_clear_hold=False, *, source_bound=False):
     """Compare the actual two resource plans, not caller-provided approval flags."""
-    require(plan.get('errored') is not True)
+    envelope(plan, inputs)
     changes = plan.get('resource_changes', [])
     allowed = {f'azapi_resource.app["{kind}"]' for kind in ('api', 'web')}
     require({r.get('address') for r in changes} == allowed and len(changes) == 2)
     for row in changes:
         require(row.get('mode') == 'managed' and row.get('type') == 'azapi_resource')
+        resource_options(row, inputs, source_bound)
         change = row['change']
         require(change['actions'] in (['create'], ['update'], ['no-op']))
         after = change['after']
@@ -43,18 +45,11 @@ def check_plan(plan, inputs, acknowledge_clear_hold=False):
         require(props['template']['containers'][0]['image'] ==
                 f"{inputs['foundation']['registry_name']}.azurecr.io/tonyai/{kind}@{inputs['release'][kind + '_digest']}")
         require(props['template']['revisionSuffix'] == inputs['release']['release_id'])
+    require(set(plan['variables']) == {'foundation', 'release'})
     require(plan['variables']['foundation']['value'] == inputs['foundation'])
     # Optional fields are normalized by Terraform's object type; compare supplied values.
     actual = plan['variables']['release']['value']
-    require(all(actual.get(k) == v for k, v in inputs['release'].items()))
-
-
-def has_unknown(value):
-    if isinstance(value, dict):
-        return any(has_unknown(v) for v in value.values())
-    if isinstance(value, list):
-        return any(has_unknown(v) for v in value)
-    return value is True
+    require(actual == {**inputs['release'], 'mail': inputs['release'].get('mail')})
 
 
 def main():
@@ -72,7 +67,7 @@ def main():
         digest = sha256(json.dumps(inputs, sort_keys=True, separators=(',', ':')).encode())
     except Exception:
         raise SystemExit('FAIL: QA release/plan refused; details withheld.') from None
-    print(f'PASS: offline QA release binding sha256={digest}; no live acceptance or authorization.')
+    print(f'PASS: policy-only QA release binding (no binary/provenance proof) sha256={digest}; no live acceptance or authorization.')
 
 
 if __name__ == '__main__':

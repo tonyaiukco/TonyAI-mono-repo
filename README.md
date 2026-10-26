@@ -401,7 +401,10 @@ specifies separate foundation/application writers, creation-time subnet binding,
 private database TLS with bounded Prisma pooling, credential separation and an
 immutable build/release contract. QA preparation includes an r02 three-subnet
 preflight, nonsecret discovery/readback command manifests and an exact initial
-foundation saved-plan checker. These tools validate offline evidence only;
+foundation saved-plan checker. Unit 7 also has an application binary/source/lock
+inspector, complete revision receipts and a secret-free `BLOCKED_DRAFT` owner
+packet; local candidate JSON and offline receipts do not authenticate live
+provenance. These tools validate offline evidence only;
 R3/R4 acceptance, approved backend initialization and a separately approved
 foundation apply remain prerequisites. The application is not deployed.
 JWT issuer enforcement was integrated by #180; deployed selfhost issuer/JWKS and

@@ -2,6 +2,7 @@
 """Verify public ARM projections against a bound QA release; never reads secrets."""
 import argparse
 from qa_contract import GROUP, SUBNET, load, origins, release, require
+from qa_application_policy import tags
 from qa_expected import body, canonical, identity
 
 
@@ -50,7 +51,7 @@ def verify(inputs, environment, apps, revisions):
     require(set(apps) == {'api', 'web'} and set(revisions) == {'api', 'web'})
     for kind, app in apps.items():
         require(app['id'] == GROUP + '/providers/Microsoft.App/containerApps/tonyai-staging-' + kind)
-        require(app['location'] == 'swedencentral')
+        require(app['location'] == 'swedencentral' and app.get('tags') == tags(inputs))
         require(app['identity']['type'] == 'UserAssigned' and set(app['identity']['userAssignedIdentities']) == {identity(kind)})
         expected = body(inputs, kind)
         runtime_shape(expected, app)

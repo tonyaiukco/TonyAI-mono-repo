@@ -579,29 +579,39 @@ python3 infra/scripts/qa_candidate_artifact.py --sha "$QA_SOURCE_SHA" \
 python3 infra/scripts/qa_release.py --inputs "$QA_DIR/release.json" --candidate "$QA_DIR/candidate.json"
 terraform -chdir=infra/terraform/application/qa plan -input=false -lock-timeout=60s \
   -var-file="$QA_DIR/release.json" -out="$QA_DIR/application.tfplan"
-terraform -chdir=infra/terraform/application/qa show -json "$QA_DIR/application.tfplan" > "$QA_DIR/application-plan.json"
-python3 infra/scripts/qa_release.py --inputs "$QA_DIR/release.json" \
-  --candidate "$QA_DIR/candidate.json" --plan "$QA_DIR/application-plan.json"
-shasum -a 256 "$QA_DIR/application.tfplan"
+python3 infra/scripts/qa_application.py --inputs "$QA_DIR/release.json" \
+  --candidate "$QA_DIR/candidate.json" --saved-plan "$QA_DIR/application.tfplan" \
+  --terraform "$TERRAFORM_1_13_3" --github-run-id "$QA_CANDIDATE_RUN_ID" \
+  > "$QA_DIR/application-owner-draft.json"
 ```
 
-The offline validator binds inputs and **independently computed** app bodies;
+The saved-binary inspector requires a clean exact-source checkout, compares the
+embedded configuration and provider lock, and derives JSON using only a private
+copy and sterile `terraform show`. Raw plan JSON is neither logged nor exported.
+`qa_release.py --plan` remains a **policy-only** diagnostic and cannot replace
+this binary binding. The optional `--github-run-id` is an explicit GitHub read,
+not an offline operation. It repeats authenticated artifact retrieval and requires
+the candidate file's exact bytes to match. Without it, the packet labels candidate
+provenance unverified. The independent oracle binds inputs and app bodies;
 it does not authenticate an arbitrary caller-supplied candidate JSON. The preceding
 artifact retrieval and private run/approval record are mandatory. If a previous
 candidate file exists, reconcile its exact recorded artifact identity; never
 silently overwrite it or hand-edit it. A new rollout/rollback uses a new
 `release_id`. First creation keeps `storage_cleanup_hold=true`; any removal of a
 hold needs reviewed reconciliation reports and separate owner approval before
-using `qa_release.py --ack-clear-storage-hold`.
+using `qa_application.py --ack-clear-storage-hold`.
 
 After approval of the saved plan, explicitly drain/deactivate prior API revisions
-using the existing bounded drain helper **before** applying it. `Single` revision
+using the existing bounded drain helper **before** applying it. First bind the
+complete outgoing list and its hash using the Unit 7 packet below. Recheck that
+hash and the full observation immediately before the following separately approved
+commands; these generic snippets alone are not an exact approval. `Single` revision
 mode and max one replica do not prevent rollout overlap of process-local quotas.
 This creates a maintenance window; no zero-downtime claim is made.
 
 ```bash
 # Separate approved API revision mutation; consumes the exact release approval.
-PYTHONPATH=infra/scripts python3 - "$QA_DIR/release.json" <<'PYDRAIN'
+PYTHONPATH=infra/scripts python3 - "$QA_DIR/release.json" "$QA_DIR/approved-outgoing-revisions.json" <<'PYDRAIN'
 import sys
 from qa_contract import load, foundation
 from drain_api import drain
@@ -609,7 +619,9 @@ from runtime_limits import validate_limits
 value = load(sys.argv[1])
 foundation(value['foundation'])
 grace = validate_limits(value['release']['runtime_limits'])['SHUTDOWN_GRACE_MS']
-drain(value['foundation'], value['release']['release_id'], attempts=(grace + 31999) // 2000)
+outgoing = load(sys.argv[2])
+drain(value['foundation'], value['release']['release_id'], attempts=(grace + 31999) // 2000,
+      expected_revision_names=outgoing['api'])
 PYDRAIN
 # Apply only the exact approved, unchanged saved-plan hash; never silently re-plan.
 terraform -chdir=infra/terraform/application/qa apply -input=false -lock-timeout=60s "$QA_DIR/application.tfplan"
@@ -626,7 +638,10 @@ python3 infra/scripts/qa_readback.py --inputs "$QA_DIR/release.json" \
   --apps "$QA_DIR/apps.json" --revisions "$QA_DIR/revisions.json"
 ```
 
-A readback PASS is not application acceptance. Verify actual-image startup,
+The command above is only a body projection check. Unit 7 also requires the
+source/release/plan/time-bound receipt verification below, including every
+approved outgoing revision and its zero-replica result. A readback PASS is not
+application acceptance. Verify actual-image startup,
 readiness and recovery, login → factorless entry/no-factor refusal → evidence →
 review → report, API/PostgREST cross-tenant negatives, private buckets, exact-ID
 synthetic cleanup, runtime privilege exclusion, alert delivery and compatible
@@ -810,6 +825,166 @@ owner, never silently accepted. A narrow projection does not prove every ARM
 field or effective inherited permission; source-plan review and live acceptance
 remain separate. A failed/partial apply consumes approval; no tool here retries,
 destroys, repairs state or changes DNS.
+
+### Offline Unit 7 tools
+
+This preparation does not close R3, R4/PD-3 or any deployment acceptance gate.
+Units 4/5/8 RBAC transitions and a Sweden cloud smoke adapter are separate work.
+The initial foundation still requires all four readiness flags false. None of
+these tools performs init/reconfigure, remote state reads, plan, drain or apply.
+Only the explicitly requested `--github-run-id` option makes a GitHub read.
+
+#### Saved binary and candidate binding
+
+`qa_application.py` accepts no external plan JSON. The trusted absolute Terraform
+1.13.3 executable must use the already installed locked provider. The inspector
+compares the binary's four embedded application `.tf` files and provider lock to
+the clean source, then runs only `show -json` on a private mode-0600 copy with no
+inherited credentials, CLI arguments or logging environment. The original binary
+and executable are checked again after inspection. Keep binaries/private inputs
+in owner custody; the tool never publishes raw plans or embedded state entries.
+
+The report binds source SHA, plan timestamp, Terraform executable/version,
+configuration, provider lock, input bytes, normalized inputs, candidate bytes and
+normalized candidate, binary plan, and the two exact resource addresses/IDs/actions
+and old/new body hashes. Body hashes summarize validated data; bodies come from
+the independent `qa_expected.py` oracle. Source/release tags, image digests, exact
+vault versions and cleanup hold are checked. Extra resource/request options,
+drift, import/move, replace/delete, incomplete/deferred/error plans, unresolved
+checks, sensitive outputs and unknown request fields refuse. Only computed
+ID/output and identity outputs are exempt. Four AzAPI inert defaults may be
+unknown only with embedded-source binding; real Terraform mock tests exercise
+those exact leaves. The CI mock adapter supplies synthetic plan metadata and is
+never a saved-plan or provenance validator.
+
+Local candidate JSON proves only consistency. `--github-run-id` invokes the
+existing downloader, which checks the exact run ID, repository, successful main
+dispatch, workflow, source SHA, unique artifact identity and GitHub ZIP digest.
+The packet records those identities plus the member's byte hash; release binding
+also checks image digests, build target, pnpm lock and migration chain. No caller
+flag/JSON receipt can substitute for that lookup. Fixture transports test this
+code offline; they are not GitHub evidence or image signature verification.
+
+#### Exact observations and command preparation
+
+For the first deployment, a successful full group inventory must prove **both**
+apps absent. Do not collect their nonexistent revision lists; all other expected
+records remain mandatory. Permission/network failures never establish absence.
+For an update, both apps must exist and have nonempty, complete revision lists;
+include inactive revisions and a replica read for each. A proposed fresh
+`release_id` already present in either list refuses. Mixed partial creation is
+a failed deployment needing a new recovery proposal, not a first deployment.
+
+Save the reviewed outgoing set as `approved-outgoing-revisions.json` beside the
+release input, with sorted distinct arrays:
+
+```json
+{"api": [], "web": []}
+```
+
+Empty arrays are only the first-deployment example, not evidence. Calculate its
+canonical hash with `qa_discovery.digest`, not a byte hash; the packet also emits
+`approved_outgoing_revision_names_sha256`. The owner later approves the exact
+list/hash. For each phase, `--revision-names` always refers to this same outgoing
+file. The `after` manifest derives outgoing-union-intended names internally;
+silently dropping an old revision or adding one requires a new proposal.
+
+```bash
+python3 infra/scripts/qa_application_receipt.py manifest --inputs "$QA_DIR/release.json" \
+  --candidate "$QA_DIR/candidate.json" --plan-sha256 "$QA_PLAN_SHA256" \
+  --revision-names "$QA_DIR/approved-outgoing-revisions.json" \
+  --revision-names-sha256 "$QA_OUTGOING_SHA256" --phase before > "$QA_DIR/application-before-manifest.json"
+```
+
+The tool only emits argv; do not pipe the manifest into a shell. A separately
+approved owner collection records each successful command and complete SDK list.
+The receipt uses the Unit 0 page/record schema with these exact outer fields:
+
+```text
+source_sha; release_id; inputs_sha256; plan_sha256; phase; revision_names;
+manifest_sha256; started_at; completed_at; records[]
+```
+
+Times use UTC `YYYY-MM-DDTHH:MM:SSZ`, collection lasts at most 30 minutes and
+starts within one hour of verification. The verifier requires every expected
+command once, its argv/result hashes and successful exit, and all revision/replica
+results. Failed or missing results cannot be empty observations. A `before`
+observation must follow recorded plan completion. `drained` requires the identical
+API revision set inactive with no replicas. `after` must follow owner-recorded
+apply completion, match the source/release-tagged bodies, and show the intended
+revision as the only active revision of each app, with zero outgoing replicas.
+Read projections retain ingress/security options and omit secret values.
+
+For packet preparation, `--observations` contains exactly
+`{plan_completed_at, revision_names, receipt}`. The completion time cannot precede
+the timestamp embedded in the inspected plan. Add it to the inspector invocation:
+
+```bash
+python3 infra/scripts/qa_application.py --inputs "$QA_DIR/release.json" \
+  --candidate "$QA_DIR/candidate.json" --saved-plan "$QA_DIR/application.tfplan" \
+  --terraform "$TERRAFORM_1_13_3" --observations "$QA_DIR/application-before.json" \
+  > "$QA_DIR/application-owner-draft.json"
+```
+
+This produces exact-path drain/apply command strings, expected actions, frozen
+outgoing names/hash and the post-apply verification command. They are **review
+templates**, never executed by the generator. Bind the remaining receipt paths
+and UTC apply boundary before requesting execution approval. Generate `drained`
+and `after` manifests by changing only `--phase` above, then verify with the same
+arguments plus `verify`, `--receipt` and `--not-before`. For `after`, the latter
+is the separately recorded apply completion time, not the receipt's own claim.
+
+The draft remains `BLOCKED_DRAFT`, `authorization: false`,
+`authenticated_azure_provenance: false` even with complete offline inputs.
+Hashes/timestamps and command receipts are consistency evidence; owner custody
+and authenticated execution must be reviewed independently. Missing observations
+produce null outgoing/command fields, never executable commands from guesses.
+
+#### Failure, predecessor and approval consumption
+
+Review the exact source, inputs/candidate/plan/tool hashes, outgoing set, storage
+hold, drain command, saved-plan apply and readback commands together. Recheck all
+hashes and authenticated observations immediately before use. The drain helper
+accepts the exact approved API set and refuses if a revision appears/disappears
+during polling. Apply requires complete inactive outgoing API observations with
+zero replicas. No-op revision mode alone is not proof of no overlap.
+
+Every refused, failed, partial or interrupted live attempt consumes approval,
+including a failed precheck. Stop, retain evidence and leave acceptance open.
+Drain may leave maintenance active; neither a failure nor a receipt ends it.
+Do not retry, re-plan, reactivate a revision or continue automatically. Obtain a
+new specific recovery approval; keep storage cleanup on hold during recovery.
+Clearing hold requires separate owner-approved reconciliation, not merely the
+inspector's `--ack-clear-storage-hold` switch.
+
+The optional `--predecessor` file has exactly `inputs`, `candidate`,
+`accepted_readback_sha256`, `compatibility_review_sha256`. It is allowed only for
+an observed existing deployment. It must target the same foundation and a
+different release ID; the conservative local check requires the same migration
+fingerprint. Hash references alone authenticate neither prior deployment nor
+schema/data compatibility: the predecessor stays BLOCKED pending review of the
+actual retained evidence and authenticated artifact in its own clean source
+checkout. A changed migration chain needs a separate compatibility proposal.
+First deployment has `NO_PREDECESSOR` and no rollback target. Recovery then is
+repair-forward under new approval. A rollback always gets a fresh release ID and
+new saved plan; it never reverses schema, data, secrets or Auth.
+
+A synthetic packet excerpt illustrates the status only (not a schema-complete
+input, real source, real artifact or executable approval):
+
+```json
+{
+  "status": "BLOCKED_DRAFT",
+  "authorization": false,
+  "live_acceptance": false,
+  "authenticated_azure_provenance": false,
+  "candidate_provenance": {"verification": "fixture_only_not_github"},
+  "deployment_mode": "UNRESOLVED",
+  "approved_outgoing_revision_names": null,
+  "command_templates": null,
+  "rollback": {"status": "BLOCKED_MISSING_PREDECESSOR", "target": null}
+}
+```
 
 ### Offline verification
 

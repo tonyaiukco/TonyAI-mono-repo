@@ -28,8 +28,11 @@ def revisions(foundation, read=az, allow_absent=False):
     return rows, scope
 
 
-def drain(foundation, release_id, read=az, sleep=time.sleep, attempts=75):
+def drain(foundation, release_id, read=az, sleep=time.sleep, attempts=75, expected_revision_names=None):
     rows, scope = revisions(foundation, read, allow_absent=True)
+    if expected_revision_names is not None:
+        if len(set(expected_revision_names)) != len(expected_revision_names) or sorted(r['name'] for r in rows) != sorted(expected_revision_names):
+            raise SafeFailure('API revision set differs from the exact approval; rollout refused.')
     if not rows:
         return
     intended = foundation['prefix'] + '-' + foundation['environment'] + '-api--' + release_id
@@ -51,6 +54,8 @@ def drain(foundation, release_id, read=az, sleep=time.sleep, attempts=75):
             read('containerapp', 'revision', 'deactivate', *scope, '--revision', row['name'])
     for _ in range(attempts):
         current, _ = revisions(foundation, read)
+        if sorted(r['name'] for r in current) != sorted(r['name'] for r in rows):
+            raise SafeFailure('API revision observation changed or is incomplete; rollout refused.')
         empty = True
         for row in current:
             replicas = read('containerapp', 'replica', 'list', *scope, '--revision', row['name'])

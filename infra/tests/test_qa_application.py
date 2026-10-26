@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from candidate import fingerprint
 from qa_contract import ROOT, GROUP, SUBNET, SUBSCRIPTION, candidate, load, release, sha256, target
 from qa_expected import body, identity
+from qa_application_policy import tags
+from qa_foundation_plan import DEFAULT_OPTIONS
 from qa_policy import check
 from qa_readback import verify
 from qa_release import check_plan
@@ -46,11 +48,15 @@ def fixture():
 
 
 def plan_fixture(inputs):
-    return {'variables': {key: {'value': value} for key, value in inputs.items()},
+    normalized = deepcopy(inputs)
+    normalized['release']['mail'] = inputs['release'].get('mail')
+    return {'timestamp': '2000-01-01T00:00:00Z', 'terraform_version': '1.13.3', 'format_version': '1.2', 'complete': True, 'errored': False, 'applyable': True,
+            'output_changes': {'reviewed_inputs': {'actions': ['create'], 'after': deepcopy(normalized)}},
+            'variables': {key: {'value': value} for key, value in normalized.items()},
             'resource_changes': [{
-                'address': f'azapi_resource.app["{kind}"]', 'mode': 'managed', 'type': 'azapi_resource',
+                'address': f'azapi_resource.app["{kind}"]', 'mode': 'managed', 'type': 'azapi_resource', 'provider_name': 'registry.terraform.io/azure/azapi',
                 'change': {'actions': ['create'], 'after': {
-                    'parent_id': GROUP, 'name': 'tonyai-staging-' + kind, 'location': 'swedencentral',
+                    **DEFAULT_OPTIONS, 'tags': tags(inputs), 'parent_id': GROUP, 'name': 'tonyai-staging-' + kind, 'location': 'swedencentral',
                     'type': 'Microsoft.App/containerApps@2025-01-01',
                     'response_export_values': ['properties.configuration.ingress.fqdn', 'properties.latestReadyRevisionName'],
                     'identity': [{'type': 'UserAssigned', 'identity_ids': [identity(kind)]}],
@@ -201,7 +207,7 @@ class Readback(unittest.TestCase):
         for kind in ('api', 'web'):
             name = 'tonyai-staging-' + kind
             app = {**body(self.inputs, kind), 'id': GROUP + '/providers/Microsoft.App/containerApps/' + name,
-                   'location': 'swedencentral', 'identity': {'type': 'UserAssigned', 'userAssignedIdentities': {identity(kind): {}}}}
+                   'location': 'swedencentral', 'tags': tags(self.inputs), 'identity': {'type': 'UserAssigned', 'userAssignedIdentities': {identity(kind): {}}}}
             app['properties']['provisioningState'] = 'Succeeded'
             app['properties']['latestReadyRevisionName'] = name + '--qa001'
             app['properties']['configuration']['ingress']['fqdn'] = name + '.' + self.inputs['foundation']['default_domain']
