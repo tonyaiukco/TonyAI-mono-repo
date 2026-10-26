@@ -157,6 +157,18 @@ can replace API code and indirectly access runtime secrets. No live grant, autom
 deployment workflow or operational acceptance follows from offline success.
 See [offline Unit 8 tools](runbooks/08-qa-application.md#offline-unit-8-tools).
 
+`qa_cloud_smoke.py` is the separate Sweden smoke adapter; legacy hosted staging
+and loopback CI remain distinct. Offline `prepare` binds the accepted Unit 5/7
+history and creates only an ID journal with a `BLOCKED_DRAFT` response. A separately
+approved owner run reauthenticates the candidate and collects fresh Unit 7 public
+readbacks before any credential read or fixture write. Owner DB input uses a hidden
+terminal prompt, never the app vault; the browser receives no DB/service credential.
+Failure, drift, partial Auth creation or failed exact-ID cleanup cannot emit a passed
+report. Application/audit rows remain. See the [invocation and failure contract](runbooks/08-qa-application.md#sweden-smoke-adapter).
+Offline checks: `python3 -m unittest discover -s infra/tests -p 'test_qa_*.py'`
+with `TERRAFORM_TEST_BINARY` unset, and `node --test infra/tests/*smoke*.test.mjs`
+on Node 22. No live TLS, database, browser or Azure verification follows from these tests.
+
 ## Historical hosted reference (00–06)
 
 1. [Restore a safe session](runbooks/00-session.md).

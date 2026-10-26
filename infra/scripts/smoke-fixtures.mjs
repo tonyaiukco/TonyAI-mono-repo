@@ -7,6 +7,16 @@ const require = createRequire(new URL('../../apps/api/package.json', import.meta
 const { PrismaClient } = require('@tonyai/db');
 
 export function fixtureDatabaseUrl(target, url) {
+  validateSmoke(target);
+  if (target.mode === 'qa-sweden') {
+    const checked = spawnSync('python3', ['-c',
+      'import json,sys; from qa_smoke_database import local_url; v=json.load(sys.stdin); sys.stdout.write(local_url(v["url"],v["ca"],v["hash"]))'], {
+      input: JSON.stringify({ url, ca: process.env.SMOKE_DB_CA_FILE, hash: target.dbCaSha256 }), encoding: 'utf8',
+      cwd: fileURLToPath(new URL('.', import.meta.url)), timeout: 30_000,
+    });
+    if (checked.status !== 0) throw new Error('Fixture database does not match Sweden QA');
+    return checked.stdout;
+  }
   // Validate the actual connection even when this helper is invoked directly.
   // Reuse the strict project/pooler/TLS allowlist; input/output remain pipes.
   const checked = spawnSync('python3', ['-c',
@@ -19,7 +29,7 @@ export function fixtureDatabaseUrl(target, url) {
 
 export async function provision(target) {
   validateSmoke(target);
-  if (target.mode !== 'staging') throw new Error('Staging fixtures only');
+  if (!['staging', 'qa-sweden'].includes(target.mode)) throw new Error('Staging fixtures only');
   const prisma = new PrismaClient({ datasourceUrl: fixtureDatabaseUrl(target, process.env.DIRECT_URL ?? ''), log: [] });
   try {
     // Single transaction: an interrupted prepare leaves all or none of these rows.

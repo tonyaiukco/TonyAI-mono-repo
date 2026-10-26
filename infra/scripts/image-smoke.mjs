@@ -2,6 +2,7 @@
 /** Actual-image/browser smoke; no local E2E setup, seed, storageState or trace. */
 import { chromium } from '@playwright/test';
 import { validateSmoke } from './smoke-contract.mjs';
+import { routeSweden } from './smoke-browser-route.mjs';
 
 const requireThat = (condition) => { if (!condition) throw new Error('Smoke assertion failed'); };
 const request = async (url, options = {}) => fetch(url, {
@@ -18,7 +19,7 @@ async function probe(target, tenant, other, token, publicKey) {
   requireThat(own.status === 200);
   const row = await own.json();
   requireThat(row.id === tenant.subsidiaryId);
-  if (target.mode === 'staging') requireThat(row.legalName === tenant.name);
+  if (target.mode !== 'ci-local') requireThat(row.legalName === tenant.name);
   if (other) {
     const foreign = await request(`${target.api}/subsidiaries/${other.subsidiaryId}`, { headers });
     requireThat([403, 404].includes(foreign.status));
@@ -54,13 +55,14 @@ async function main() {
     for (const [index, tenant] of target.tenants.entries()) {
       const password = process.env[`SMOKE_PASSWORD_${index + 1}`];
       requireThat(password && (target.mode === 'ci-local' || (password.length >= 20 && password !== 'TonyAI!2026')));
-      const context = await browser.newContext({ acceptDownloads: true });
+      const context = await browser.newContext({ acceptDownloads: true,
+        ...(target.mode === 'qa-sweden' ? { serviceWorkers: 'block' } : {}) });
       let token;
       try {
         // Block unexpected origins before sending credentials; no third-party telemetry.
         const origins = new Set([target.web, new URL(target.api).origin, target.supabase]);
-        await context.route('**/*', (route) => origins.has(new URL(route.request().url()).origin)
-          ? route.continue() : route.abort());
+        await context.route('**/*', (route) => target.mode === 'qa-sweden' ? routeSweden(route, origins)
+          : origins.has(new URL(route.request().url()).origin) ? route.continue() : route.abort());
         const page = await context.newPage();
         await page.goto(`${target.web}/login`);
         await page.getByLabel('Email', { exact: true }).fill(tenant.email);
@@ -99,7 +101,7 @@ async function main() {
     }
   } finally { await browser.close(); }
   console.log('PASS: actual application startup, browser login/download, authenticated PDF/XLSX/CSV and session cleanup.');
-  if (target.mode === 'staging') console.log('PASS: both dedicated tenants pass positive and negative API/PostgREST isolation probes.');
+  if (target.mode !== 'ci-local') console.log('PASS: both dedicated tenants pass positive and negative API/PostgREST isolation probes.');
 }
 
 main().catch(() => {
