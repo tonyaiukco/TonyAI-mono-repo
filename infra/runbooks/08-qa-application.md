@@ -83,6 +83,10 @@ and [dedicated subnet requirements](https://learn.microsoft.com/en-us/azure/cont
 
 ### Offline network preflight
 
+This historical helper accepts the old host and exactly two subnets. It is not
+the r02 Unit 0 gate; never omit `supabase-r02` to obtain PASS. Use the
+[three-subnet QA preparation below](#offline-unit-02-tools) for the active r02 path.
+
 The preflight reads the existing exported host contract and two **nonsecret,
 privately stored projections**. The network projection has exactly:
 
@@ -653,7 +657,168 @@ workspace by ARM ID, without workspace keys. Named-operator alert delivery,
 secret rotation, dependency-loss/recovery and DB **plus object-byte** restore
 are still live gates, not a consequence of successful log routing.
 
+### Offline Unit 0–2 tools
+
+These tools prepare and inspect **offline evidence**. They neither establish
+R3/R4 acceptance nor authorize discovery, backend initialization or apply. The
+discovery/readback tools generate argv manifests but **do not execute Azure CLI**.
+There is no hidden collector, credential read, state download, init, mutation or
+retry. Executing the generated reads later requires the accepted gates and the
+owner's separately bounded discovery approval. Do not pipe a manifest into a shell.
+
+#### Discovery request and receipt
+
+Prepare a nonsecret request outside the checkout, replacing all invalid fields
+from accepted owner metadata, never by inference:
+
+```json
+{
+  "source_sha": "REQUIRED_REVIEWED_MAIN_SHA",
+  "tenant_id": "REQUIRED_OWNER_TENANT_UUID",
+  "backend_account": "REQUIRED_EXISTING_BACKEND_ACCOUNT",
+  "backend_group": "REQUIRED_EXISTING_BACKEND_GROUP",
+  "dns_zones": []
+}
+```
+
+`dns_zones` must eventually enumerate **all** existing subscription private DNS
+zones as `{"group":"...","name":"..."}`. First prepare the base manifest for
+inventory; after the separately approved zone-list read, regenerate the complete
+manifest including every zone's VNet links and A records. Empty `dns_zones` is
+valid evidence only if the complete zone inventory is empty. The complete
+inventory and environment lists are subscription-wide, never filtered to Sweden.
+No TXT values, VM userData/customData, Key Vault secret endpoints, storage keys,
+SAS, blob bodies or raw backend cache/state are queried. NSGs, routes, VNet DNS
+and peerings remain explicit review material. Storage lists use Entra
+`--auth-mode login` and `--num-results '*'`; the CLI documents that `*` retrieves
+[all blobs](https://learn.microsoft.com/en-us/cli/azure/storage/blob#az-storage-blob-list).
+
+```bash
+python3 infra/scripts/qa_discovery.py manifest --request "$QA_DIR/discovery-request.json" > "$QA_DIR/discovery-manifest.json"
+python3 infra/scripts/qa_discovery.py verify --request "$QA_DIR/discovery-request.json" --bundle "$QA_DIR/discovery-bundle.json"
+python3 infra/scripts/qa_network.py --request "$QA_DIR/discovery-request.json" --bundle "$QA_DIR/discovery-bundle.json"
+```
+
+The owner-controlled receipt assembler stores only the selected output fields.
+The bundle schema is strict:
+
+```text
+schema: 1; source_sha; manifest_sha256; started_at; completed_at; records[]
+record: key; complete: true; pages[]
+page: argv_sha256; exit_code: 0; started_at; completed_at; result; result_sha256
+```
+
+Hashes use SHA256 of UTF-8 JSON with sorted keys, compact separators and no NaN
+(`qa_discovery.digest`). Times are `YYYY-MM-DDTHH:MM:SSZ`. All command records
+must exist exactly once; failed results cannot become empty arrays. ARM list
+results preserve `{items: [...], next_link: ...}`. A following page must use the
+exact `next_link` in the same query's argv; `next_command` refuses foreign hosts,
+paths, versions or filters. The final marker must be null. Single/SDK-all commands
+have exactly one receipt page. Collection lasts at most 30 minutes and its start
+must be within the last hour. An incomplete/expired collection needs a fresh
+bounded proposal; this tool never retries. `qa_discovery_shapes.py` defines exact
+projected fields; unprojected/unknown fields refuse at every level.
+
+Hashes, timestamps and `complete` are consistency checks, **not authenticated
+provenance**. The operator must attest actual command execution, CLI version,
+complete SDK pagination and source custody. These tools cannot validate state
+lineage/ownership, effective inherited permissions, Sweden capacity, NSG/route
+semantics, service CIDR conflicts or full R4. Keep those gates open. Source-wide
+NSG/route changes may conservatively refuse comparison while another lane works;
+reconcile the observation, never suppress the difference.
+
+`qa_network.py` checks the r02 VM/NIC/IP binding, the exact three subnet IDs and
+CIDRs, data NSG associations, delegation, zero app IP/service-association/resource-
+navigation occupancy and conflicting managed environments (case-insensitive IDs).
+It does not reuse or modify the old two-subnet helper or any R3 executor.
+
+#### Initial foundation saved-plan policy
+
+`qa_foundation.py` accepts only the initial foundation with all four readiness
+flags explicitly false. After separately approved state initialization and plan
+creation, use the trusted absolute Terraform 1.13.3 path:
+
+```bash
+python3 infra/scripts/qa_foundation.py --inputs "$QA_DIR/foundation.json" \
+  --saved-plan "$QA_DIR/foundation.tfplan" --terraform "$TERRAFORM_1_13_3"
+```
+
+The CLI requires a clean checkout at `release_sha`. It checks the saved binary's
+embedded root configuration byte-for-byte against the seven QA `.tf` files and
+provider lock; extra files/modules/overrides refuse. It reads no embedded state
+entry directly. It invokes only `terraform show -json` on a private copied plan,
+with a sterile environment. Plan source binding uses the pinned Terraform
+[1.13.3 config snapshot format](https://github.com/hashicorp/terraform/blob/v1.13.3/internal/plans/planfile/config_snapshot.go);
+unknown archive layouts refuse. Raw show output stays in memory and is never
+printed. Keep the input and plan under owner custody; plans may contain sensitive
+information if created outside the required nonsecret-input procedure.
+
+The independent oracle requires exactly 15 create actions: RG, ACR, logs,
+environment, diagnostics, vault, two identities, DNS zone/link/A, three grants
+and the unassigned custom environment-join role. It rejects replay/update/delete/
+replace/import/move, extra resources, drift/deferred work, incorrect regions,
+subnet/DNS targets, widened bodies/RBAC, sensitive bodies, headers and exports.
+The owner Secrets Officer grant is present; workload runtime secret grants are
+absent. ACR/vault public access and DNS's VNet effect remain explicit approval
+items, not private-endpoint claims.
+
+Create-time IDs and principal IDs can be unknown. Only enumerated individual
+reference leaves are permitted after embedded source binding; an unknown whole
+body or security setting refuses. This preserves the actual initial-plan shape
+without treating unknown scope/principal expressions as a blanket exception.
+After apply, validate the resolved IDs and principal grants independently.
+The result reports exact binary/input/normalized-input/provider-lock hashes,
+not an apply authorization. Backend ownership, approval freshness and independent
+human/cross-lane plan review remain mandatory.
+
+`qa_foundation_mock.py` is a **CI-only adapter** for Terraform test JSON. It adds
+synthetic plan metadata solely to exercise the oracle; it cannot validate a saved
+binary. The new `initial.tftest.hcl` uses no resource overrides, preserving
+computed references rather than replacing them with known fixture IDs.
+
+#### Post-apply readback preparation and comparison
+
+```bash
+python3 infra/scripts/qa_foundation_readback.py manifest --inputs "$QA_DIR/foundation.json" > "$QA_DIR/readback-manifest.json"
+python3 infra/scripts/qa_foundation_readback.py verify --inputs "$QA_DIR/foundation.json" \
+  --receipt "$QA_DIR/foundation-readback.json" \
+  --before-request "$QA_DIR/discovery-before-request.json" --before "$QA_DIR/discovery-before.json" \
+  --after-request "$QA_DIR/discovery-after-request.json" --after "$QA_DIR/discovery-after.json" \
+  --before-roles "$QA_DIR/roles-before.json"
+```
+
+The readback receipt uses `source_sha`, `manifest_sha256`, UTC start/end and the
+same record/page schema, without the discovery bundle's `schema` field. The
+separate before-roles receipt contains `started_at`, `completed_at`, `record`,
+bound to the readback manifest's `roles` command and the before discovery window.
+Collect it before apply. After discovery must include the new private DNS zone.
+All receipts must remain within the freshness window when compared. The readback
+receipt interval must lie inside the after discovery collection window, which
+must follow the before window; include all these reads in the approved window.
+
+The checker validates narrow projected settings, identities and exact new role
+assignments, preserves old grants, and compares existing VM/NIC/VNet/NSG/routes,
+VM OS/data disk attachments, image reference, disk identity metadata, NIC-level
+NSG/public-IP references, backend/container metadata and old state-blob metadata.
+Only the new app state
+keys and service-managed app-subnet occupancy changes are exempted from equality.
+State metadata equality is not proof of state ownership. Existing DNS links/A
+records and inventory are preserved; extra direct app-group resources refuse.
+New inventory outside the expected 15 IDs returns `REVIEW_REQUIRED` with the
+unreviewed IDs: ACA service-managed infrastructure must be reconciled by the
+owner, never silently accepted. A narrow projection does not prove every ARM
+field or effective inherited permission; source-plan review and live acceptance
+remain separate. A failed/partial apply consumes approval; no tool here retries,
+destroys, repairs state or changes DNS.
+
 ### Offline verification
+
+Run the Python commands in an isolated environment installed from the hash-pinned
+`infra/tests/requirements.txt` (PyYAML and JMESPath). Set
+`TERRAFORM_TEST_BINARY` to the trusted absolute Terraform 1.13.3 path to also run
+the provider-free, output-only saved-plan archive test. Without it, that one test
+is explicitly skipped. This archive-format test uses no init or cloud; the
+computed QA foundation oracle is exercised separately below.
 
 ```bash
 python3 infra/scripts/check_terraform_policy.py
@@ -667,6 +832,8 @@ for root in foundation/qa application/qa; do
 done
 terraform -chdir=infra/terraform/application/qa test -json -verbose > "$TMPDIR/qa-plan.jsonl"
 python3 infra/scripts/qa_plan_contract.py "$TMPDIR/qa-plan.jsonl"
+terraform -chdir=infra/terraform/foundation/qa test -json -verbose > "$TMPDIR/qa-foundation-plan.jsonl"
+python3 infra/scripts/qa_foundation_mock.py "$TMPDIR/qa-foundation-plan.jsonl"
 ```
 
 These mock/synthetic checks use no R3 host or local Supabase stack and do not

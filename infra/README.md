@@ -19,7 +19,8 @@ alone does not establish application QA or recovery acceptance.
 foundation/release design, private DB TLS and credential boundaries, and staged
 approval/rollback plan. Its offline `selfhost_app_network.py` preflight checks the
 existing reserved subnet against nonsecret ARM projections; it neither deploys
-nor initializes state. The new deployment roots remain unimplemented. API issuer
+nor initializes state; that helper retains the historical two-subnet host contract.
+The new deployment roots are offline preparation. API issuer
 enforcement was integrated by #180. Deployment binding and live acceptance of the
 selfhost issuer/JWKS remain open, alongside SMTP provider/residency, PD-3 and
 recovery acceptance.
@@ -93,6 +94,16 @@ See [runbook 08](runbooks/08-qa-application.md#application-preparation-and-owner
 for the required placeholders and exact approval units. R3/R4, private DB TLS,
 schema/runtime privileges and live acceptance are still required. No live step
 is authorized by these files or by passing mock tests.
+
+Units 0–2 have offline tooling in `qa_discovery.py`, `qa_network.py`,
+`qa_foundation.py` and `qa_foundation_readback.py`: exact read-only command
+manifests, complete hash/time-bound projection receipts, an r02 three-subnet
+check, initial 15-create plan policy and protected before/after comparison.
+Discovery/readback never execute Azure CLI. The saved-plan inspector only runs
+local `terraform show` on its private copy after source/config/lock binding;
+it never initializes a backend or applies. See runbook 08's
+[offline Unit 0–2 tools](runbooks/08-qa-application.md#offline-unit-02-tools)
+for schemas, commands, computed-field constraints and remaining owner gates.
 
 ## Historical hosted reference (00–06)
 
