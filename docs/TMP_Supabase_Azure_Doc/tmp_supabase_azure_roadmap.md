@@ -149,20 +149,20 @@ pass (`security-rls` + `qa-auditor` + `devops-cloud`) before it opens.
 | **PR-T0** | `chore/qatmp-decision` | This document; the decision, lane split, ledger row and Next up in the status file; pointers in `CLAUDE.md`, `README.md`, `infra/README.md` | done in this change |
 | **PR-T1** | `feat/qatmp-hosted-retarget` | F1 + F2 + ACS: regions to `eu-north-1` / `swedencentral` across the hosted scripts, Terraform, examples and tests; the ACS Email AzAPI resources of section 4 in the foundation root (inputs: Entra client ID, service-principal object ID, tenant ID, optional custom domain; outputs: SMTP username, sender address) with their policy allow-list entries and `security.tftest.hcl` cases (data location Europe, no secret in state or outputs, role scoped to the Communication Services resource only); the hosted-QA exception file, `require_hosted_target`, the mirrored `variables.tf` validations, the `bootstrap_backend.py` pin; negative tests (self-host subscription without the exception, `tonyai-staging-*` groups, `tonyai` prefix, the self-host backend account — all refused; the line-9 mutant still killed) | 1–1.5 days |
 | **PR-T2** | `feat/qatmp-handover` | F3 + F7: the `report-artifacts` bucket in `cloud_ops.py` with tests; smoke fixtures re-checked; runbook banners pointing at the bridge; the QA handover runbook `infra/runbooks/11-qa-temporary-hosted.md` (URLs, account issuance, known limitations, reset, teardown) | 0.5 day |
-| PR-T3 *(only if D3 = placeholder release)* | `feat/qatmp-placeholder-factors` | A QA-only factor release file in the import contract's shape, built from the placeholder library and **labelled placeholder / not authoritative** in its source and version; `data-factors` + `qa-auditor` seats; loaded with the loader's dry run first | 0.5 day |
+| **PR-T3** *(D3 = a)* | `feat/qatmp-placeholder-factors` | A QA-only factor release file in the import contract's shape, built from the placeholder library and **labelled placeholder / not authoritative** in its source and version; `data-factors` + `qa-auditor` seats; loaded with the loader's dry run first | 0.5 day |
 | PR-T4 *(only if needed)* | `fix/qatmp-*` | Fixes found during the live steps | — |
 
-Total: **3–4 PRs**, plus about **10 owner-run live operations** (section 9).
+Total: **4 PRs** (T0–T3; T4 only if live steps need fixes), plus about **10 owner-run live operations** (section 9).
 
 ## 7. Owner decisions
 
 | # | Decision | Recommendation |
 |---|---|---|
-| D1 | Names: groups `tonyai-qatmp-tfstate` / `tonyai-qatmp-apps`, prefix `tonyaiqt` | Accept |
+| D1 | ~~Names~~ **Decided 2026-10-27:** groups `tonyai-qatmp-tfstate` / `tonyai-qatmp-apps`, prefix `tonyaiqt` | — |
 | D2 | ~~SMTP provider~~ **Decided 2026-10-27: Azure Communication Services Email** (section 4; step 6a). Still open: the sending domain — an Azure-managed `*.azurecomm.net` domain (instant, but 5 emails/min and 10/hour per subscription, not raisable) or a verified custom domain (DNS records; 30/min and 100/hour, raisable) | Azure-managed domain to start on Day 2; add the custom domain as soon as its DNS verifies and switch `MAIL_FROM` to it |
-| D3 | Factors for QA: (a) a labelled placeholder release (PR-T3), or (b) none until the authoritative UK/TR release (LP4-02) is ready — QA then cannot test calculations | (a), clearly labelled; replaced by the authoritative release when it exists |
+| D3 | ~~Factors for QA~~ **Decided 2026-10-27: (a)** — a QA-only placeholder release (PR-T3), labelled placeholder / not authoritative in its source and version and on screen; replaced by the authoritative UK/TR release (LP4-02) when it exists | — |
 | D5 | ~~Terraform scope~~ **Decided 2026-10-27: A** — all Azure resources, ACS Email included, in Terraform (AzAPI); Supabase Cloud stays on the reviewed scripts (section 4) | — |
-| D4 | Image build: the existing `build-images.sh` (local Docker buildx, amd64 emulation on Apple Silicon — slow and heavy on 16 GB; stop the local Supabase stack first) vs a small change to `az acr build` | Keep `build-images.sh` for the first release (reviewed path); revisit only if the build is too slow |
+| D4 | ~~Image build~~ **Decided 2026-10-27:** the existing, reviewed `build-images.sh` (local Docker buildx; amd64 emulation on Apple Silicon is slow and heavy on 16 GB, so stop the local Supabase stack first); `az acr build` only if the build proves too slow | — |
 
 ## 8. Step by step
 
@@ -182,7 +182,7 @@ Claude Code: code, PRs, dry runs, reading outputs with the owner.
    `CREATE ROLE lp1_probe BYPASSRLS` inside a rolled-back transaction).
    **Go/no-go:** if Supabase Cloud refuses it, the bridge stops here and we decide
    with Supabase support — RLS and the tenant guard are never weakened to pass.
-5. **Agent — PR-T2** (bucket, smoke, runbook 11), and PR-T3 if D3 = (a).
+5. **Agent — PR-T2** (bucket, smoke, runbook 11), and PR-T3 (the labelled placeholder factor release).
 
 ### Day 2 (10-28, half day) — Azure, database, release
 
@@ -228,7 +228,7 @@ Claude Code: code, PRs, dry runs, reading outputs with the owner.
 
 ### Day 3 (10-30) — data, verification, handover
 
-14. **Owner — factors** (if D3 = a): loader dry run, then `--apply`, as
+14. **Owner — factors** (PR-T3's release): loader dry run, then `--apply`, as
     `tonyai_factor_loader` (runbook 02's loader login).
 15. **Owner — QA organisation**: `pnpm onboarding provision --apply --allow-remote`
     for one synthetic holding and its first `super_admin`; that admin invites the
@@ -245,7 +245,7 @@ Claude Code: code, PRs, dry runs, reading outputs with the owner.
 18. **Owner — handover to QA** with runbook 11: URLs, how accounts arrive, known
     limitations, bug reporting, the reset policy.
 
-**Known limitations to tell QA:** factors are placeholders (if D3 = a) and are
+**Known limitations to tell QA:** factors are placeholders and are
 labelled so — results are not authoritative; default Azure hostnames; the
 environment may be reset with notice; it will be replaced by the Sweden
 self-hosted QA and QA data will not be migrated.
@@ -263,12 +263,12 @@ self-hosted QA and QA data will not be migrated.
 | L6 | Migrations + runtime login + `check` | 2 |
 | L7 | SMTP secret + foundation re-apply | 2 |
 | L8 | Deploy | 2 |
-| L9 | Factors (if D3 = a) + QA organisation + invitations | 3 |
+| L9 | Factors (PR-T3's release) + QA organisation + invitations | 3 |
 | L10 | Smoke + monitoring + handover | 3 |
 
 ## 10. Owner prerequisites (before Day 1)
 
-1. **Decisions D1, D3 and D4** answered (section 7; D2 and D5 are decided).
+1. ~~Decisions~~ all decided on 2026-10-27 (section 7).
 2. **Supabase:** MFA on the account; the organisation's **ID and slug**; the **Pro
    plan** with billing approved (~$25/month); a **Management API personal access
    token** in the password manager. Do not create the project yet — Day 1 does it
