@@ -27,6 +27,39 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
+    # Every job that starts this stack pulled the reviewed database image (the stack's largest)
+    # from GHCR, and on a busy day the registry's limits refused it (2026-10-15, 2026-10-26).
+    # Only that image is cached, keyed by its reviewed policy, and it is accepted solely by its
+    # reviewed config digest (prepare) and checked again running (verify). The other stack
+    # images are never cached: they run before verify. `docker load` restores every tag an
+    # archive holds, so an archive that changes any tag but the reviewed database tag (one
+    # this action did not write) is refused at load. A load that fails just pulls.
+    - name: Restore the cached database image
+      id: image-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ runner.temp }}/supabase-db-image.tar
+        key: supabase-db-image-v1-${{ runner.os }}-${{ hashFiles('infra/selfhost/database-image-policy.json') }}
+
+    - name: Load the cached database image
+      if: steps.image-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        archive="$RUNNER_TEMP/supabase-db-image.tar"
+        expected="ghcr.io/$(python3 -c 'import json; print(json.load(open("infra/selfhost/database-image-policy.json"))["image_tag"])')"
+        images() { docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' | sort; }
+        before="$(images)"
+        docker load --quiet --input "$archive" >/dev/null \
+          || echo "::warning::The cached database image did not load; pulling instead."
+        after="$(images)"
+        rm -f "$archive"
+        added="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | cut -d' ' -f1)"
+        removed="$(comm -23 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+        if [ -n "$removed" ] || { [ -n "$added" ] && [ "$added" != "$expected" ]; }; then
+          echo "::error::The cached archive changed image tags other than the reviewed database tag; refusing it."
+          exit 1
+        fi
+
     # `studio`, `mailpit` and `realtime` are developer conveniences; `supavisor`
     # is the connection pooler, disabled in config.toml anyway; `edge-runtime`
     # serves functions this project has none of. Everything the probes and the
@@ -48,6 +81,33 @@ runs:
       env:
         SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       run: python3 infra/scripts/ci_database_image.py verify
+
+    # Only after the running database passed verify, and only on a cache miss: the reviewed
+    # tag, which prepare set from the reviewed digest and verify found running.
+    - name: Save the database image for later runs
+      id: image-save
+      if: steps.image-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        tag="ghcr.io/$(python3 -c 'import json; print(json.load(open("infra/selfhost/database-image-policy.json"))["image_tag"])')"
+        docker save --output "$RUNNER_TEMP/supabase-db-image.partial" "$tag"
+        mv "$RUNNER_TEMP/supabase-db-image.partial" "$RUNNER_TEMP/supabase-db-image.tar"
+
+    # Never a partial archive: only a save that completed is uploaded.
+    - name: Cache the database image
+      if: steps.image-cache.outputs.cache-hit != 'true' && steps.image-save.outcome == 'success'
+      continue-on-error: true
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ runner.temp }}/supabase-db-image.tar
+        key: ${{ steps.image-cache.outputs.cache-primary-key }}
+
+    - name: Remove the image archive
+      if: always()
+      shell: bash
+      run: rm -f "$RUNNER_TEMP/supabase-db-image.tar" "$RUNNER_TEMP/supabase-db-image.partial"
 
     # Derived, never hardcoded. The local keys ARE well-known demo values (so no
     # GitHub secret is involved at all), but their exact bytes differ per CLI

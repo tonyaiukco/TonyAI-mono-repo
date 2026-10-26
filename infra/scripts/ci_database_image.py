@@ -35,9 +35,15 @@ def command(*argv):
             ('docker', 'image'): 'image metadata query',
             ('docker', 'container'): 'container metadata query',
         }.get(argv[:2], 'image qualification command')
-        limited = any(marker in result.stderr.lower() for marker in
-                      ('toomanyrequests', 'data limit exceeded', '429 too many requests'))
-        reason = 'registry request limit' if limited else 'command refused'
+        # A data-transfer quota persists until the registry's period resets; a request-rate
+        # limit clears within minutes. Only the fixed class is reported, never the output.
+        stderr = result.stderr.lower()
+        if 'data limit exceeded' in stderr:
+            reason = 'registry data-transfer limit'
+        elif 'toomanyrequests' in stderr or '429 too many requests' in stderr:
+            reason = 'registry request-rate limit'
+        else:
+            reason = 'command refused'
         raise QualificationFailure(f'{operation} failed ({reason}); diagnostics withheld.')
     return result.stdout.strip()
 
@@ -84,8 +90,18 @@ def prepare(root=ROOT):
         raise QualificationFailure('CI must start a fresh disposable database.')
     reference = REGISTRY + '/' + policy['image']
     tag = REGISTRY + '/' + policy['image_tag']
-    command('docker', 'pull', '--platform', policy['platform'], reference)
-    verify_image(policy, reference)
+    # The action may have loaded this image from the Actions cache. On the classic image store
+    # (GitHub's hosted runners) an image ID is the SHA256 of its configuration, which names the
+    # platform and every layer's content digest, and `docker load` rejects a layer that differs,
+    # so a present reviewed ID is the reviewed content and needs no registry request. On the
+    # containerd store the ID is the index digest, the lookup fails, and the digest is pulled
+    # and checked as before (which refuses there too).
+    try:
+        verify_image(policy, policy['config_digest'])
+        reference = policy['config_digest']
+    except QualificationFailure:
+        command('docker', 'pull', '--platform', policy['platform'], reference)
+        verify_image(policy, reference)
     # The pinned CLI resolves cached images before pulling. Seed its embedded
     # default tag from the reviewed digest, then check the running image again.
     # Do not rely on the mutable tag or an unsupported version-file override.

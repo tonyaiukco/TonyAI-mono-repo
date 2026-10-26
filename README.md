@@ -467,7 +467,15 @@ shared stack's later owner-led upgrade. The override does not enable cloud seedi
 CI authenticates public Supabase pulls to GHCR with the job's ephemeral
 `GITHUB_TOKEN` (`contents: read`, `packages: read`); no GHCR PAT is needed.
 The database digest, CLI pin, advisory floor and running-image checks remain
-unchanged. Official Node build images and the migration-diff PostgreSQL service
+unchanged. To stay under GHCR's limits, the stack action caches only the
+reviewed database image, its largest (`actions/cache`, pinned, keyed by the
+database image policy), and loads it in later jobs, where it is still accepted
+only by its reviewed config digest; the other stack images run before the
+running-image check, so they are never cached and are pulled as before, and an
+archive that changes any other image tag is refused when it loads. A load that
+fails just pulls, and a refused pull now says which limit it met
+(`registry data-transfer limit` or `registry request-rate limit`).
+Official Node build images and the migration-diff PostgreSQL service
 use Docker Hub. Repository Actions secrets `DOCKERHUB_USERNAME` (Docker ID) and
 `DOCKERHUB_TOKEN` (a [public-read-only Docker PAT](https://docs.docker.com/security/access-tokens/personal-access-tokens/))
 are required for normal repository runs. The service uses credentials during job
