@@ -33,6 +33,8 @@ const IGNORES = [
   '**/.worktrees/**',
   'worktrees/**',
   'packages/db/generated/**',
+  // Pinned Prisma generator output for the R3 DB candidate (hash-locked; never hand-edited).
+  'infra/selfhost/r3-db-candidate-client/**',
   'coverage/**',
   'playwright-report/**',
   'test-results/**',
@@ -302,6 +304,19 @@ export default tseslint.config(
       // These print to a terminal; that IS their interface.
       'no-console': 'off',
       'no-undef': 'error',
+    },
+  },
+
+  {
+    // The R3 DB candidate is published byte-identical to its privately reviewed files (the owner's
+    // approval binds their hashes), so these style rules are waived here rather than edited away:
+    // the control-character regex and empty catch blocks are deliberate, the rest is cosmetic.
+    files: ['infra/scripts/r3_db_candidate/**/*.mjs'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'off',
+      'no-useless-escape': 'off',
+      'no-control-regex': 'off',
+      'no-empty': 'off',
     },
   },
 );

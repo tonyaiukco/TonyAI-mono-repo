@@ -492,7 +492,10 @@ Realtime consumer proof, offline transfer/install qualification and live
 host/custody acceptance remain gates. A dispatch-only registry-denied transport run
 (`r3-image-transport.yml`, not yet executed) imports the nine active images into an
 empty pinned-Engine store in a loopback-only namespace and reads their identities
-back; it starts no service. Its separate package job retains a source-bound
+back; it starts no service. The private DB replacement-regression candidate
+(`infra/scripts/r3_db_candidate/`, lock `infra/selfhost/r3-db-candidate.lock.json`) runs
+through the dispatch-only `r3-db-candidate.yml` in `rehearsal` or single `attempt` mode
+(not yet executed); it never reproduces the historical SIG11. Its separate package job retains a source-bound
 vendor provenance receipt and five public metadata files for seven days; CI's
 signed fixture is not vendor-artifact verification. Receipt issuance checks the
 complete bundle source map against committed files and upstream pins, and hashes

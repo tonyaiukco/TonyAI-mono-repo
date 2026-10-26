@@ -271,6 +271,34 @@ starts no service, so nine-service startup from a transported store stays a gate
 Its own exact source and single-dispatch approval are required; see
 [the run](runbooks/10-qa-clean-replacement.md#offline-input-qualification-and-host-installation-proposal).
 
+### Private DB candidate (replacement regression)
+
+`infra/scripts/r3_db_candidate/` is the privately reviewed DB replacement-regression
+candidate, published byte-identical to its reviewed files (six special-grantee
+GRANT/REVOKE cases plus two named controls, each three times, on the pinned
+`supabase/postgres` digest). It replaces nothing historical: the supautils SIG11 stays
+`NOT_REPRODUCED` and R3 stays OPEN whatever it returns. `r3-db-candidate.yml`
+(dispatch-only, attempt 1, `contents: read`, no secrets) runs `r3_db_candidate_run.py`
+once on a fresh GitHub-hosted `ubuntu-24.04` amd64 runner in one of two modes:
+`rehearsal` (same container argv, readiness, maps/log reads as postgres and teardown;
+no attempt id, fixture or probe) or `attempt` (the single owner-approved run).
+The controller binds the dispatched source, checks `infra/selfhost/r3-db-candidate.lock.json`
+against the committed bytes, and stages at the fixed root `/private/tmp/tonyai-r3-db`:
+Node 22.23.3's `bin/node` from the toolchain-locked tarball, and a model-free Prisma
+6.19.3 client rebuilt from pinned inputs (the three generated text files vendored in
+`infra/selfhost/r3-db-candidate-client/`, `runtime/library.js` from the
+lockfile-integrity `@prisma/client` tarball plus Prisma's fixed header, and the
+`debian-openssl-3.0.x` query engine from Prisma's binaries host). Every staged byte must
+equal the lock's `client_artifacts`, whose canonical hash the owner's approval binds.
+An attempt also needs its attempt id and owner-decision hash committed to the lock by a
+reviewed PR, and derives the image's closure evidence from its by-digest OCI layout.
+The candidate's own `attempt_entry.py` then re-verifies every file against the approved
+manifest and seals its evidence to the owner's recipient; only that ciphertext,
+`binding.json` and `summary.json` are uploaded. To regenerate the vendored client,
+run `prisma generate` (6.19.3) from `/private/tmp/tonyai-r3-db` with `client/schema.prisma`
+as `/private/tmp/tonyai-r3-db/schema.prisma` and `@prisma/client`/`prisma` linked into its
+`node_modules`: the output is host-independent and must reproduce the lock's hashes.
+
 
 The recovery renderer also supports `--identity-diagnostic` for a separate
 `ONE_MANAGED_IDENTITY_DIAGNOSTIC` approval and `--phase diagnose` execution.
