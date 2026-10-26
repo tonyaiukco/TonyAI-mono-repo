@@ -41,6 +41,11 @@ def verify_environment(repo):
     def read(path):
         return json.loads(command(['gh', 'api', '--hostname', 'github.com',
                                    '-H', 'X-GitHub-Api-Version: 2022-11-28', path]))
+    verify_environment_data(repo, read)
+
+
+def verify_environment_data(repo, read):
+    """Pure reader interface shared by live preflight and offline projections."""
     base = 'repos/' + repo + '/environments/staging'
     environment = read(base)
     reviewers = [rule for rule in environment.get('protection_rules', [])

@@ -998,10 +998,187 @@ Keep `TERRAFORM_TEST_BINARY` unset when real `terraform plan` calls are prohibit
 that existing optional archive test is then explicitly skipped. No init is
 needed when the required provider is already installed.
 
+### Offline Unit 5 tools
+
+This is an offline transition-validation package, not federation activation.
+The existing Terraform identity, federation and grant definitions are unchanged.
+The independent initial foundation and Unit 4 policies are unchanged. R3, full
+R4/PD-3, backend/state lineage and accepted Units 0–4 remain external prerequisites.
+No SMTP decision, image build/push, OIDC exchange or application deployment is implied.
+
+#### Transition, history and saved binary
+
+`qa_oidc_contract.py` accepts only these explicit flags:
+
+| Flag | Before | After |
+| --- | --- | --- |
+| `runtime_secrets_ready` | true | true |
+| `oidc_enabled` | false | true |
+| `smtp_secret_ready` | false | false |
+| `apps_ready` | false | false |
+
+The request has exactly `before_inputs`, `after_inputs` (each `{config: ...}`)
+and `predecessor_sha256` (canonical JSON SHA-256). All foundation identities,
+names and tenant/subscription/owner remain equal. Only `release_sha` may also
+change, and then only the RG's exact old-to-new `tags.releaseSha` changes.
+There is no metadata/recovery-marker exception. Replay from an already enabled
+OIDC state, import/adoption, reverse transitions and stage skipping refuse.
+
+The predecessor object contains `runtime_request`, `initial_predecessor`,
+`saved_plan` (Unit 4 inspector binding report, not its BLOCKED_DRAFT packet),
+`before_receipt`, `after_receipt`, `plan_completed_at`, `apply_started_at`,
+`apply_completed_at`, and a separate `owner_acceptance_sha256`. It retains the
+initial acceptance chain and Unit 4 source/input/configuration/lock/tool/plan,
+manifest and receipt hashes and operation times. Unit 5's normalized before
+inputs must equal Unit 4's after inputs. Historical receipts are checked at
+their recorded completion; they never become fresh Unit 5 observations.
+A caller-written acceptance hash is only a reference: the owner must separately
+authenticate the historical evidence and acceptance. An offline draft is not
+live acceptance and cannot bootstrap this trust chain.
+
+```bash
+# Only local inspection of an already approved saved binary; no plan/init/apply.
+# Run from a clean checkout matching after_inputs.config.release_sha.
+python3 infra/scripts/qa_oidc.py --request "$QA_DIR/oidc-request.json" \
+  --predecessor "$QA_DIR/accepted-unit4.json" --saved-plan "$QA_DIR/oidc.tfplan" \
+  --terraform "$TERRAFORM_1_13_3" --ruleset-id "$QA_MAIN_RULESET_ID" \
+  > "$QA_DIR/oidc-owner-draft.json"
+```
+
+The inspector binds the embedded configuration and provider lock to clean source,
+uses a private mode-0600 binary copy and a sterile `terraform show -json`, checks
+binary/tool content and canonical-path stability, and emits only public summary
+fields. Caller plan JSON is not supported as binary evidence. The packet's apply
+**draft** uses the inspected canonical binary and tool paths. No raw plan/state
+is printed or copied into it. All source, input, predecessor, tool, configuration,
+lock, plan, manifest, receipt and operation-time bindings need separate owner review.
+
+#### Exact seven-create oracle and computed values
+
+The 17 existing resources must be no-op except the optional exact RG source tag.
+`join_role` already exists and must retain only
+`Microsoft.App/managedEnvironments/join/action`, no dataActions or wildcards.
+The only creates are:
+
+| Address | Exact object / permission |
+| --- | --- |
+| `azapi_resource.deployer["enabled"]` | `tonyai-staging-release`, Sweden Central, no tags or body additions |
+| `azapi_resource.federation["enabled"]` | `github-staging`, parent = new release identity |
+| `azapi_resource.grant["registry_push"]` | AcrPush on the existing ACR only |
+| `azapi_resource.grant["identity-api"]` | Managed Identity Operator on the existing API identity only |
+| `azapi_resource.grant["identity-web"]` | Managed Identity Operator on the existing web identity only |
+| `azapi_resource.grant["environment_read"]` | Reader on the existing ACA environment only |
+| `azapi_resource.join_grant[0]` | Existing custom join role on that environment only |
+
+Federation issuer is exactly `https://token.actions.githubusercontent.com`, subject
+`repo:tonyaiukco/TonyAI-mono-repo:environment:staging`, and audiences exactly
+`["api://AzureADTokenExchange"]`. The ID is a child resource:
+`<release-identity-id>/federatedIdentityCredentials/github-staging`, not a nested
+`/providers/Microsoft.ManagedIdentity/userAssignedIdentities/...` extension.
+All five assignments belong to the new release principal. The oracle separately
+pins scope and role IDs and source-defined UUID naming. Owner/Contributor,
+role-assignment write, vault/secret/app permissions, extra federation, SMTP,
+replace/delete/import/move, drift, partial/deferred/errored plans and unexpected
+provider options refuse. Existing API runtime-secret and API/web pull grants stay exact.
+
+Actual installed Terraform 1.13.3/AzAPI 2.6.1 mock output establishes only narrow
+source-bound unknown exceptions: release `output`, new resource `id`, inert
+provider defaults, omitted location/tags, federation `parent_id`, and five grant
+`name`/`body.properties.principalId` leaves. A whole body, identity or reference
+tree cannot be unknown. Known wrong values never receive an unknown exemption.
+`application_contract` stays no-op; `oidc_client_id` is null → release client ID.
+Public after observations resolve principal/client IDs, reject collisions with
+API/web/owner IDs, and tie every assignment and the child federation to the identity.
+
+#### GitHub prerequisite projection contract
+
+The environment subject **does not itself restrict the branch to main**.
+`qa_oidc_github.py manifest --request ... --plan-sha256 ... --ruleset-id ...`
+prepares fixed read-only `gh api --include` commands and exact jq projections.
+This command does not contact GitHub. The existing live admin helper delegates
+to the same pure environment validation, with its behavior/security rules intact.
+
+Each receipt has `source_sha`, `request_sha256`, `plan_sha256`, `ruleset_id`,
+`manifest_sha256`, `started_at`, `completed_at`, and `records`. Each record is
+`{key, complete: true, pages: [...]}`. Each page retains `argv_sha256`,
+`projection_sha256`, zero `exit_code`, `http_status: 200`, page start/completion,
+projected `result`, `result_sha256`, and `next_link` from the response Link header
+(null only on the final page). Apply only the manifest projection to the JSON
+body; do not retain request headers, tokens or full API responses. Follow every
+exact same-endpoint numbered page. Missing/unreadable admin settings, failed
+requests, omitted pages, foreign links or stale receipts refuse.
+
+`qa_oidc_github.py verify --request ... --plan-sha256 ... --receipt ...
+--not-before ...` replays these projections through the pure policy: staging
+required reviewers, prevent-self-review, no admin bypass, one main branch policy
+(no tags/wildcards), active exact-main ruleset without bypass actors, PR review,
+stale-review dismissal, last-push approval and strict required checks from GitHub
+Actions, `ephemeral-jit`, and approval for all outside contributors. Collection
+starts after plan completion, lasts at most 30 minutes and is at most one hour old.
+The workflow's `GITHUB_TOKEN` is not admin preflight. A real independent human
+reviewer and fresh JIT host provisioning/destruction remain separate external
+proofs; runner labels, variables, REST metadata and reviewing agents cannot prove them.
+
+#### Public Azure readback and blocked packet
+
+`qa_oidc_receipt.py manifest --request ... --predecessor ... --plan-sha256 ...
+--phase before|after` prepares secret-free commands, never executes them. Receipts
+use the Unit 4 envelope/page format, binding source, request, predecessor, plan,
+phase, manifest, page command/result hashes and ordered UTC times. Each snapshot
+contains the existing foundation resource projections including the custom role,
+complete subscription resource/assignment pages, RG managed identity principal/
+client/tenant fields and complete API/web federation lists. Before must prove
+release identity absence from successful complete inventories; 403/404 is not
+absence. After also reads the release identity's federation list and requires
+exactly its one expected credential. Public identifiers tolerate UUID/ARM-ID case.
+Subscription-root assignments are valid snapshot entries and must be preserved.
+
+Both before and after are fresh: collected after plan completion / apply completion,
+within the same 30-minute collection and one-hour age limits. The after comparison
+requires the inspector packet via `--packet` (its public `binding` is revalidated),
+correlates every known plan principal/client ID, and resolves computed IDs from
+the after snapshot. Missing known top-level inventory resources refuse even if
+both snapshots omit them. The comparison requires exactly the release identity,
+credential and five-grant delta and preserves
+every existing assignment and inventory row. It never infers effective/inherited
+permissions from direct-role snapshots. Receipt hashes are consistency bindings,
+not authenticated Azure/GitHub provenance.
+
+Optional inspector `--observations` contains `{plan_completed_at, receipt,
+github_receipt}` for fresh before checks. The output always has `unit: 5`,
+`status: "BLOCKED_DRAFT"`, `authorization: false`, `live_acceptance: false`,
+and false Azure/GitHub provenance/effective-permission flags, even when all
+synthetic evidence matches. It includes the full 24-resource action list, exact
+seven additions, hashes, both manifests, saved-plan apply/readback command drafts,
+external prerequisites and failure/recovery boundaries. A refused, failed, partial
+or interrupted live attempt consumes its approval. Stop and preserve private
+state/evidence; no automatic retry, re-plan, federation deletion or grant revocation.
+Recovery needs newly approved reads, a fresh exact plan and separate owner approval.
+
+The test fixtures in `infra/tests/qa_oidc_fixtures.py` are secret-free synthetic
+examples with invented public UUIDs and hashes, never execution inputs. For example,
+a fully populated packet still reports:
+
+```json
+{"unit":5,"status":"BLOCKED_DRAFT","authorization":false,"live_acceptance":false,
+ "authenticated_azure_provenance":false,"authenticated_github_provenance":false,
+ "effective_permissions_proven":false}
+```
+
+Run `qa_oidc_mock.py --terraform /absolute/path/to/terraform` with installed providers.
+It mock-applies the 17-resource predecessor and mock-plans the 24-resource transition
+in a sterile disposable copy, removing only five prevent-destroy guards for teardown.
+The absent saved-plan envelope/prior-state wrapper is explicitly synthetic; actual
+provider `change.before/after` and unknown masks are checked unchanged. Keep
+`TERRAFORM_TEST_BINARY` **unset** in offline-only sessions to skip the existing optional
+real-plan archive test. No init, real plan/apply, cloud discovery or token exchange
+is needed. Required Claude Code cross-lane review and owner acceptance stay external.
+
 ### Offline Unit 7 tools
 
 This preparation does not close R3, R4/PD-3 or any deployment acceptance gate.
-Units 4/5/8 RBAC transitions and a Sweden cloud smoke adapter are separate work.
+Units 4 and 5 now have separate offline transition tools above; live acceptance,
+Unit 8 validation and a Sweden cloud smoke adapter remain separate work.
 The initial foundation still requires all four readiness flags false. None of
 these tools performs init/reconfigure, remote state reads, plan, drain or apply.
 Only the explicitly requested `--github-run-id` option makes a GitHub read.
