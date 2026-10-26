@@ -141,6 +141,25 @@ Signed-By: http://azure.archive.ubuntu.com/ubuntu/
         self.assertEqual(mirror.primary_archive(unrelated), unrelated)
         self.assertNotIn('AllowUnauthenticated', mirror.OPTIONS)
 
+    def test_mirror_list_stanza_of_current_runner_images_is_rewritten(self):
+        # ubuntu-24.04 runner images route the archive through a mirror list
+        # whose first entry is azure.archive.ubuntu.com.
+        source = '''Types: deb
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
+Suites: noble noble-updates noble-backports noble-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+'''
+        expected = source.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu/')
+        self.assertEqual(mirror.primary_archive(source), expected)
+        self.assertEqual(mirror.primary_archive(expected), expected)
+        unrelated = '''# URIs: mirror+file:/etc/apt/apt-mirrors.txt
+URIs: mirror+file:/etc/apt/apt-mirrors.txt.d/other
+URIs: mirror+file:/tmp/apt-mirrors.txt
+Signed-By: mirror+file:/etc/apt/apt-mirrors.txt
+'''
+        self.assertEqual(mirror.primary_archive(unrelated), unrelated)
+
     def test_bounded_install_keeps_dependency_and_image_smoke_checks(self):
         job = workflow('ci.yml')['jobs']['docker-build']
         steps = job['steps']
