@@ -16,10 +16,16 @@ def check(path):
     inputs = plan['output_changes']['reviewed_inputs']['after']
     if inputs['release'].get('mail') is None:
         inputs['release'].pop('mail', None)
+    plan.update(timestamp='2000-01-01T00:00:00Z', terraform_version='1.13.3', format_version='1.2', complete=True, errored=False, applyable=True)
     plan['variables'] = {key: {'value': value} for key, value in inputs.items()}
     # The legacy-derived synthetic fixture explicitly clears hold. This only
     # tests a mock plan; the owner execution gate still defaults to refusal.
-    check_plan(plan, inputs, acknowledge_clear_hold=True)
+    from copy import deepcopy
+    plan['variables'] = deepcopy(plan['variables'])
+    plan['variables']['release']['value']['mail'] = inputs['release'].get('mail')
+    plan['output_changes']['reviewed_inputs']['after'] = deepcopy(inputs)
+    plan['output_changes']['reviewed_inputs']['after']['release']['mail'] = inputs['release'].get('mail')
+    check_plan(plan, inputs, acknowledge_clear_hold=True, source_bound=True)
 
 
 if __name__ == '__main__':

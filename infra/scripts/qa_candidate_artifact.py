@@ -16,12 +16,12 @@ def gh(path, binary=False):
     return result.stdout if binary else json.loads(result.stdout)
 
 
-def download(repo, sha, run_id, read=gh):
+def download(repo, sha, run_id, read=gh, *, with_provenance=False):
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo) or not re.fullmatch(r'[1-9][0-9]*', run_id):
         raise SafeFailure('Invalid candidate run identity.')
     base = f'repos/{repo}/actions'
     run = read(base + '/runs/' + run_id)
-    if (run.get('path') != '.github/workflows/qa-candidate.yml' or run.get('head_sha') != sha
+    if (run.get('id') != int(run_id) or run.get('path') != '.github/workflows/qa-candidate.yml' or run.get('head_sha') != sha
             or run.get('head_branch') != 'main' or run.get('event') != 'workflow_dispatch'
             or run.get('head_repository', {}).get('full_name') != repo
             or run.get('status') != 'completed' or run.get('conclusion') != 'success'):
@@ -40,7 +40,16 @@ def download(repo, sha, run_id, read=gh):
     with zipfile.ZipFile(io.BytesIO(archive)) as source:
         if source.namelist() != ['qa-candidate.json'] or source.getinfo('qa-candidate.json').file_size > 250_000:
             raise SafeFailure('Unexpected candidate artifact entries.')
-        return json.loads(source.read('qa-candidate.json'))
+        content = source.read('qa-candidate.json')
+        candidate = json.loads(content)
+        if not with_provenance:
+            return candidate
+        return candidate, {
+            'verification': 'github_api_run_and_archive_digest', 'repository': repo,
+            'source_sha': sha, 'run_id': run_id, 'artifact_id': artifact['id'],
+            'archive_sha256': hashlib.sha256(archive).hexdigest(),
+            'candidate_file_sha256': hashlib.sha256(content).hexdigest(),
+        }
 
 
 if __name__ == '__main__':

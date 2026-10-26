@@ -1,8 +1,7 @@
 """Exact initial-foundation JSON policy; computed references need bound source."""
-from qa_contract import GROUP, SUBNET, SUBSCRIPTION, fields, match, require
+from qa_contract import GROUP, SUBNET, SUBSCRIPTION, fields, match, require, has_unknown
 from qa_foundation_expected import expected
 from qa_foundation_inputs import initial_inputs, UUID
-from qa_release import has_unknown
 
 DEFAULT_OPTIONS = dict(ignore_casing=False, ignore_missing_property=True,
                        ignore_null_property=False, schema_validation_enabled=True)

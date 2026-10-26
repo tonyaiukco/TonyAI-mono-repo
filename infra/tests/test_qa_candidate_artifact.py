@@ -17,7 +17,7 @@ class ArtifactTests(unittest.TestCase):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w') as target: target.writestr('qa-candidate.json', json.dumps({'proof':'built'}))
         archive = stream.getvalue()
-        run = {'path':'.github/workflows/qa-candidate.yml', 'head_sha':'a'*40, 'head_branch':'main',
+        run = {'id':1, 'path':'.github/workflows/qa-candidate.yml', 'head_sha':'a'*40, 'head_branch':'main',
                'event':'workflow_dispatch', 'head_repository':{'full_name':'owner/repo'},
                'status':'completed', 'conclusion':'success'}
         artifact = {'expired':False, 'name':'qa-candidate-'+'a'*40, 'id':123,
@@ -27,7 +27,7 @@ class ArtifactTests(unittest.TestCase):
     def test_success_and_every_run_or_artifact_trust_boundary(self):
         good_run, good_artifact, archive = self.fixture()
         cases = [('none',None,None)]
-        cases += [('run',field,value) for field,value in [('path','.github/workflows/ci.yml'),('head_sha','b'*40),
+        cases += [('run',field,value) for field,value in [('id',2),('path','.github/workflows/ci.yml'),('head_sha','b'*40),
                   ('head_branch','feature'),('event','pull_request'),('head_repository',{'full_name':'foreign/repo'}),
                   ('status','in_progress'),('conclusion','failure')]]
         cases += [('artifact',field,value) for field,value in [('expired',True),('name','foreign'),('id','123'),
@@ -41,9 +41,16 @@ class ArtifactTests(unittest.TestCase):
                 if '/artifacts?' in path: return {'total_count':1, 'artifacts':[artifact]}
                 return run
             with self.subTest(kind=kind,field=field):
-                if kind == 'none': self.assertEqual(download('owner/repo','a'*40,'1',read),{'proof':'built'})
+                if kind == 'none':
+                    self.assertEqual(download('owner/repo','a'*40,'1',read),{'proof':'built'})
+                    value, proof = download('owner/repo','a'*40,'1',read, with_provenance=True)
+                    self.assertEqual(value, {'proof':'built'})
+                    self.assertEqual(proof['run_id'], '1')
+                    self.assertEqual(proof['artifact_id'], 123)
+                    self.assertEqual(proof['archive_sha256'], hashlib.sha256(archive).hexdigest())
+                    self.assertEqual(proof['candidate_file_sha256'], hashlib.sha256(json.dumps(value).encode()).hexdigest())
                 else:
-                    with self.assertRaises(SafeFailure): download('owner/repo','a'*40,'1',read)
+                    with self.assertRaises(SafeFailure): download('owner/repo','a'*40,'1',read, with_provenance=True)
 
     def test_archive_count_compressed_length_entries_and_expansion_are_independent(self):
         for defect in ('count', 'list', 'length', 'entries', 'expanded'):

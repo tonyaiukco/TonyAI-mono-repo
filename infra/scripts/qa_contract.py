@@ -113,3 +113,10 @@ def release(value, image_candidate, root=ROOT):
     require(limits['DB_CONNECTION_LIMIT'] == 5)
     validate_mail(rel)
     return value
+
+def has_unknown(value):
+    if isinstance(value, dict):
+        return any(has_unknown(v) for v in value.values())
+    if isinstance(value, list):
+        return any(has_unknown(v) for v in value)
+    return value is True

@@ -105,6 +105,17 @@ it never initializes a backend or applies. See runbook 08's
 [offline Unit 0–2 tools](runbooks/08-qa-application.md#offline-unit-02-tools)
 for schemas, commands, computed-field constraints and remaining owner gates.
 
+Unit 7 uses `qa_application.py` to derive JSON privately from the exact saved
+application binary, retain the two-app body oracle and bind source/configuration,
+provider lock, inputs and candidate hashes. `qa_application_receipt.py` prepares
+read manifests and checks their source/release/plan/time binding, complete approved
+revision sets and zero outgoing replicas. `qa_owner_packet.py` emits only a
+`BLOCKED_DRAFT`: no offline receipt authenticates Azure and no local candidate
+file authenticates GitHub. Optional `--github-run-id` explicitly performs the
+existing authenticated GitHub artifact lookup; it is not part of offline tests.
+See [offline Unit 7 tools](runbooks/08-qa-application.md#offline-unit-7-tools).
+There is no apply executor, automatic promotion, retry or acceptance claim.
+
 ## Historical hosted reference (00–06)
 
 1. [Restore a safe session](runbooks/00-session.md).
