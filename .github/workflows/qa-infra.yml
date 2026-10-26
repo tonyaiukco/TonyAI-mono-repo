@@ -24,7 +24,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/qa-tests"
           "$RUNNER_TEMP/qa-tests/bin/python" -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
           python3 infra/scripts/qa_policy.py
-          "$RUNNER_TEMP/qa-tests/bin/python" -m unittest discover -s infra/tests -p 'test_qa_*.py' -v
+          TERRAFORM_TEST_BINARY="$(command -v terraform)" "$RUNNER_TEMP/qa-tests/bin/python" -m unittest discover -s infra/tests -p 'test_qa_*.py' -v
       - name: Credential-free QA Terraform checks
         run: |
           for root in foundation/qa application/qa; do
@@ -34,4 +34,6 @@ jobs:
           done
           terraform -chdir=infra/terraform/application/qa test -json -verbose > "$RUNNER_TEMP/qa-plan.jsonl"
           python3 infra/scripts/qa_plan_contract.py "$RUNNER_TEMP/qa-plan.jsonl"
+          terraform -chdir=infra/terraform/foundation/qa test -json -verbose > "$RUNNER_TEMP/qa-foundation-plan.jsonl"
+          python3 infra/scripts/qa_foundation_mock.py "$RUNNER_TEMP/qa-foundation-plan.jsonl"
           terraform fmt -check -recursive infra/terraform

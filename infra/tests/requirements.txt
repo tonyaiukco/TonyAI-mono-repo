@@ -1,3 +1,6 @@
+# Offline Azure projection tests (same JMESPath language used by Azure CLI).
+jmespath==1.0.1 \
+    --hash=sha256:02e2e4cc71b5bcab88332eebf907519190dd9e6e82107fa7f83b1003a6252980
 # Workflow structure tests; all published PyYAML 6.0.3 distributions pinned.
 PyYAML==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \

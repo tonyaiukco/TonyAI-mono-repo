@@ -399,8 +399,11 @@ not a completed asymmetric API-key migration or production approval.
 The [Sweden QA application integration runbook](infra/runbooks/08-qa-application.md)
 specifies separate foundation/application writers, creation-time subnet binding,
 private database TLS with bounded Prisma pooling, credential separation and an
-immutable build/release contract. An offline network preflight is available;
-the new deployment roots and live application connection remain unimplemented.
+immutable build/release contract. QA preparation includes an r02 three-subnet
+preflight, nonsecret discovery/readback command manifests and an exact initial
+foundation saved-plan checker. These tools validate offline evidence only;
+R3/R4 acceptance, approved backend initialization and a separately approved
+foundation apply remain prerequisites. The application is not deployed.
 JWT issuer enforcement was integrated by #180; deployed selfhost issuer/JWKS and
 exact-candidate acceptance remain to be verified. SMTP provider/data location
 is undecided (ACS Email and Resend references must be reconciled before setup);
