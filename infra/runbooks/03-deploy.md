@@ -388,7 +388,7 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
   `STAGING_SUPABASE_PUBLIC_KEY` (publishable/anon only), `STAGING_BACKEND_JSON`
   (the validated backend config, identifiers and IPs only). This historical hosted
   workflow binds Supabase Frankfurt and Azure Germany West Central; current
-  Sweden QA uses the separate integration path in runbook 08. No backend key, DB URL, password,
+  Sweden QA uses runbook 08 and `qa-candidate.yml` instead. No backend key, DB URL, password,
   refresh token or Terraform state belongs in a workflow input/variable/artifact.
 
 ### Candidate → migration → approval → deployment
