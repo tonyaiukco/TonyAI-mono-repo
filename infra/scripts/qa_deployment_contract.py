@@ -29,15 +29,22 @@ def transition(request):
 
 def predecessor(request, evidence, *, now=None):
     before, after = transition(request)
-    fields(evidence, 'unit5 unit7')
     require(digest(evidence) == request['predecessor_sha256'])
+    context = accepted_history(evidence, now=now)
+    require(before == context['before'])
+    return {**context, 'after': after}
+
+
+def accepted_history(evidence, *, now=None):
+    """Shared Unit 5/7 historical consistency; never grants operation authority."""
+    fields(evidence, 'unit5 unit7')
     now = now or datetime.now(timezone.utc)
     unit = evidence['unit5']
     fields(unit, 'oidc_request runtime_predecessor saved_plan before_receipt after_receipt '
            'plan_completed_at apply_started_at apply_completed_at owner_acceptance')
     req, previous, report = (unit[k] for k in ('oidc_request', 'runtime_predecessor', 'saved_plan'))
     _, accepted, data, principals = oidc_predecessor(req, previous, now=now)
-    require(before == accepted)
+    before = accepted
     # Every historical root is read from its own commit, not caller hashes or today's checkout.
     for binding in (previous['initial_predecessor']['initial_plan'], previous['saved_plan'], report):
         with historical_source(binding['source_sha']) as root:
@@ -57,5 +64,5 @@ def predecessor(request, evidence, *, now=None):
     inputs, names, app_accepted_at = application(evidence['unit7'], foundation, accepted_at,
         previous['runtime_request']['secret_versions'], snapshot, now=now)
     require(unit['owner_acceptance']['decision_sha256'] != evidence['unit7']['owner_acceptance']['decision_sha256'])
-    return dict(before=before, after=after, data=data, principals=principals, snapshot=snapshot,
+    return dict(before=before, data=data, principals=principals, snapshot=snapshot,
                 inputs=inputs, revision_names=names, accepted_at=app_accepted_at)

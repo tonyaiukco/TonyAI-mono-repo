@@ -419,6 +419,13 @@ on the already accepted API/web apps. Separate historical Unit 5/7 source chains
 fresh unchanged-app snapshots and exact assignment deltas remain a permanently
 `BLOCKED_DRAFT` owner packet. This permission can replace API code and indirectly
 access runtime secrets; no automatic deployment executor is enabled.
+The separate [Sweden smoke adapter](infra/runbooks/08-qa-application.md#sweden-smoke-adapter)
+is prepared and tested offline. It reuses the browser/export/two-tenant journey,
+authenticates the candidate through the existing GitHub artifact reader, checks
+the same Unit 7 release before/after, and takes the owner fixture DB URL through
+a hidden terminal prompt outside the runtime vault. Preparing an ID journal is
+`BLOCKED_DRAFT`, never permission to run. Auth-only cleanup retains application
+and audit rows; no live smoke or full QA/UAT acceptance is established here.
 R3/R4 acceptance, approved backend initialization and a separately approved
 foundation apply remain prerequisites. The application is not deployed.
 JWT issuer enforcement was integrated by #180; deployed selfhost issuer/JWKS and

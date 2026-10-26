@@ -1177,8 +1177,9 @@ is needed. Required Claude Code cross-lane review and owner acceptance stay exte
 ### Offline Unit 7 tools
 
 This preparation does not close R3, R4/PD-3 or any deployment acceptance gate.
-Units 4 and 5 now have separate offline transition tools above; live acceptance,
-Unit 8 has its separate offline contract below; a Sweden cloud smoke adapter remains separate work.
+Units 4 and 5 now have separate offline transition tools above; live acceptance
+remains separate. Unit 8 has its separate offline contract below; the
+[Sweden smoke adapter](#sweden-smoke-adapter) is prepared and tested offline.
 The initial foundation still requires all four readiness flags false. None of
 these tools performs init/reconfigure, remote state reads, plan, drain or apply.
 Only the explicitly requested `--github-run-id` option makes a GitHub read.
@@ -1540,3 +1541,166 @@ python3 infra/scripts/qa_foundation_mock.py "$TMPDIR/qa-foundation-plan.jsonl"
 
 These mock/synthetic checks use no R3 host or local Supabase stack and do not
 prove live networking, TLS, effective Azure grants or tenant isolation.
+
+### Sweden smoke adapter
+
+`qa_cloud_smoke.py` adapts the existing browser login/download, PDF/XLSX/CSV and
+positive/negative two-tenant API/PostgREST smoke. It adds no roles, application
+routes, schema, host provisioning or deployment behavior. The Germany hosted
+`cloud_smoke.py` and `ci-local` contract remain separate. This narrow smoke is
+not four-role lifecycle QA/UAT, TLS-negative qualification, recovery proof or
+operational acceptance.
+
+The live critical path remains **accepted R3 → full R4/PD-3 → foundation →
+TLS/schema/runtime/secrets → federation/candidate → application release →
+separately approved smoke and operational acceptance**. This preparation ran no
+cloud smoke and established none of those gates. Unit 6's release-client identity
+follow-up is separate and unchanged.
+
+#### Inputs, custody and approval
+
+Use the existing Unit 8 predecessor format `{unit5, unit7}` (see above), including
+its separately accepted historical application release. The shared history
+validator reuses each historical Git source for lockfile/migration/configuration
+bindings. The helper checkout SHA is independently reviewed and may be newer than
+the candidate SHA. No historical receipt is relabeled as a fresh observation.
+The owner must review/custody this evidence and pin its canonical JSON digest out
+of band. A hash, acceptance reference or a `BLOCKED_DRAFT` packet authenticates
+neither the owner nor Azure/GitHub and cannot authorize execution.
+
+Offline preparation needs only public evidence and those historical Git objects:
+
+```sh
+# Set QA_DIR to a private owner-controlled directory outside the repository.
+# REQUIRED_* values must come from owner-reviewed evidence; never guess them.
+python3 infra/scripts/qa_cloud_smoke.py prepare \
+  --evidence "$QA_DIR/accepted-unit5-unit7.json" \
+  --accepted-evidence-sha256 REQUIRED_ACCEPTED_EVIDENCE_SHA256 \
+  --journal "$QA_DIR/smoke-ids.json"
+```
+
+This creates two new synthetic identity intents, with exclusive mode-0600 file
+creation and fsync. The response is always `BLOCKED_DRAFT`, `authorization=false`,
+`authenticated_provenance=false`. Keep its `journal_sha256` separately in owner
+custody before approving the run. Digests use the existing `qa_discovery.digest`
+canonical JSON definition; they are not raw-file SHA256s. Neither this command nor
+its output permits Auth or DB mutations.
+
+Future owner-run invocation draft, **not authorized by this documentation**:
+
+```sh
+python3 infra/scripts/qa_cloud_smoke.py run \
+  --evidence "$QA_DIR/accepted-unit5-unit7.json" \
+  --accepted-evidence-sha256 REQUIRED_ACCEPTED_EVIDENCE_SHA256 \
+  --journal "$QA_DIR/smoke-ids.json" \
+  --journal-sha256 REQUIRED_CUSTODIED_JOURNAL_SHA256 \
+  --helper-source-sha REQUIRED_REVIEWED_HELPER_SHA \
+  --public-db-ca "$QA_DIR/accepted-public-db-ca.crt" \
+  --approved-smoke
+```
+
+The explicit flag represents the separately granted owner decision; it is never
+inferred from a packet. Use a clean, reviewed helper checkout, Node 22 with the
+installed Prisma client and Playwright Chromium, Python test/runtime dependencies,
+GitHub access to the exact successful candidate artifact, owner Azure read access
+to the fixed application/environment/revision/replica projections and read access
+to the selected backend-key version. The candidate downloader rechecks the exact
+successful main workflow run and archive digest; caller JSON alone cannot pass.
+No security discovery, OIDC exchange, image build/push, apply or deployment runs.
+
+A private network vantage must resolve `db.qa.tonyai.internal` to the accepted QA
+DB and reach port 5432. Supply the already accepted public CA and anon key; their
+hashes must match the candidate. The terminal prompts hide both the public anon
+key and the owner DB URL and refuse an echoing fallback. The DB URL must use the
+existing `qa_database_url.validate(owner=True)` contract: `postgres`, exact host,
+port/database and strict TLS query, including the container CA path. Only the
+fixture child rewrites that path to a temporary copy of the hash-bound public CA.
+The URL never comes from the application runtime vault or identity, is never an
+argv value or journal/report field, and is never sent to the browser. No owner DB
+credential is requested for cleanup. The service-role key is read in memory from
+the selected application vault version, used only for exact Auth operations and
+never given to either child. Do not put credential values in shell commands,
+environment files, packets or logs.
+
+#### Ordering, allowed writes and failure behavior
+
+Target/history/journal checks and authenticated candidate lookup precede fresh
+Unit 7 public readback; readback precedes credentials. Another readback after the
+interactive prompts must match before writing. Each readback uses the existing
+body/image/revision/traffic/configuration oracle, checks app principal/client IDs
+against accepted history and enumerates all revisions and outgoing replicas.
+Only replica membership of the two intended revisions is excluded from snapshot
+equality: the web may legitimately wake from zero replicas. Outgoing replicas
+must still be absent. The browser result is separate evidence: public ARM data cannot prove startup,
+login, TLS or tenant isolation. Public projections are compared after the browser
+and again after cleanup; a changed projection or failed readback prevents a pass.
+Keep deployment/configuration writers frozen for the entire approved window.
+Discrete readbacks cannot detect a change restored between samples or hidden
+control-plane fields; this tool does not claim continuous monitoring.
+
+An exclusive `.attempt.json` is durable before the first Auth POST. Permitted
+writes are two exact synthetic Auth creates, the unchanged single Prisma fixture
+transaction (two organisations, subsidiaries and super-admin profiles, one audit
+row per application write), browser sessions/logout and exact Auth deletions.
+There is no factor import, demo seed, broad prefix delete, application-row delete,
+audit deletion or reset. The Sweden browser blocks service workers and refuses every HTTP redirect before
+forwarding a login body or token; only the three bound origins may be contacted.
+Credentials/child diagnostics are withheld from output.
+
+A first/second Auth failure, lost response, wrong returned identity, transaction
+failure, browser timeout, interruption, readback drift or cleanup error fails the
+run. Timeout/SIGTERM/KeyboardInterrupt terminate the smoke child process group
+before cleanup is attempted. SIGKILL, host loss or a second interruption can still
+prevent cleanup; retain both journal and attempt. Exact-ID cleanup reads each Auth
+user and matches ID, email and organisation metadata before deletion, confirms
+absence, and attempts the other independent ID when one fails. A lost Auth POST
+may still finish remotely after an absent read; reconciliation after network
+ambiguity remains an owner obligation. A pass cannot resolve such an ambiguous
+failed attempt.
+
+Only Auth users are deleted. The Prisma transaction is atomic, but committed
+organisations, subsidiaries, profiles and append-only audit rows remain even on
+success. Browser sessions may remain after abrupt failure until expiry/revocation.
+This is not full cleanup; keep retained synthetic rows in the operational record.
+No failed or partial run emits `.passed.json`. Existing attempt/pass paths refuse
+reuse; there is no automatic retry, deployment retry, rollback, revoke or recovery.
+
+Future separately approved cleanup uses the same exact evidence, journal and
+custodied hash, plus its matching attempt file. It reauthenticates the candidate
+and verifies the currently running release before reading the backend key:
+
+```sh
+python3 infra/scripts/qa_cloud_smoke.py cleanup \
+  --evidence "$QA_DIR/accepted-unit5-unit7.json" \
+  --accepted-evidence-sha256 REQUIRED_ACCEPTED_EVIDENCE_SHA256 \
+  --journal "$QA_DIR/smoke-ids.json" \
+  --journal-sha256 REQUIRED_CUSTODIED_JOURNAL_SHA256 \
+  --helper-source-sha REQUIRED_REVIEWED_HELPER_SHA \
+  --approved-cleanup
+```
+
+A missing/tampered journal, missing attempt, unavailable candidate artifact or
+changed release blocks this cleanup path before any secret read or write. A
+separately reviewed owner recovery is then needed; do not weaken bindings or
+invent replacement IDs. Cleanup-only never emits smoke acceptance.
+
+Offline validation uses disposable directories, synthetic credentials and fake
+I/O; it does not start/reset/seed local Supabase:
+
+```sh
+# Python environment must contain infra/tests/requirements.txt dependencies.
+unset TERRAFORM_TEST_BINARY
+python3 -m unittest discover -s infra/tests -p 'test_qa_*.py'
+python3 -m unittest discover -s infra/tests -p 'test_cloud_smoke.py'
+node --test infra/tests/*smoke*.test.mjs
+pnpm lint
+pnpm typecheck
+pnpm build
+pnpm test
+```
+
+The optional test that invokes a real Terraform plan remains skipped here.
+A successful live `.passed.json`, if later produced under separate approval, binds
+source/release/digests, journal/evidence and public readback hash; it explicitly
+has `authorization=false` and scope `narrow-smoke-only`. It is evidence for owner
+review, never permission for another operation or closure of R3/R4/PD-3/G2.
