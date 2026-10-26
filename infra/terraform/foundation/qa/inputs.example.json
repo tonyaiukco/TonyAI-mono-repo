@@ -1,0 +1,14 @@
+{
+  "config": {
+    "subscription_id": "cb7efc2f-37a7-4672-b62c-93c207bcd33d",
+    "tenant_id": "REQUIRED_OWNER_TENANT_UUID",
+    "owner_object_id": "REQUIRED_OWNER_OBJECT_UUID",
+    "registry_name": "REQUIRED_UNIQUE_ACR_NAME",
+    "vault_name": "REQUIRED_UNIQUE_APP_VAULT_NAME",
+    "release_sha": "REQUIRED_REVIEWED_MAIN_SHA",
+    "runtime_secrets_ready": false,
+    "smtp_secret_ready": false,
+    "apps_ready": false,
+    "oidc_enabled": false
+  }
+}

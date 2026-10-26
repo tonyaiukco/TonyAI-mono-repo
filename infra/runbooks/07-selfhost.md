@@ -13,7 +13,7 @@ blocked until owned-domain integration, recovery acceptance and the legacy-key
 decision are complete; the currently executable bootstrap is QA-only. `deployment-policy.json` blocks the
 legacy hosted/Germany foundation and application roots for this subscription,
 in both Python and direct Terraform validation. Keep that legacy gate intact;
-use the separate reviewed Sweden integration path described in runbook 08. The planning file and
+use the separate Sweden QA application roots described in runbook 08. The planning file and
 CLAUDE.md are updated by the other lane after owner merge, not by this worktree. Pilot maintenance windows are acceptable.
 Recovery targets are RPO 15 minutes and RTO 4 hours for **database and uploaded
 bytes**, including evidence and import sources. Neither target is proven here.

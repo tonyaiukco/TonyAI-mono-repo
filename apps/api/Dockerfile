@@ -60,6 +60,19 @@ COPY --from=builder --chown=node:node /app/packages/shared-types/package.json ./
 COPY --from=builder --chown=node:node /app/packages/shared-types/dist ./packages/shared-types/dist
 COPY --from=builder --chown=node:node /app/infra/certs/prod-ca-2021.crt ./infra/certs/prod-ca-2021.crt
 
+# QA supplies only its public DB CA through BuildKit, outside the build context.
+# The dedicated QA builder validates/hash-binds this certificate before building.
+# Existing local/hosted builds do not supply this optional mount.
+ARG QA_DB_CA_SHA256=
+RUN --mount=type=secret,id=qa_db_ca \
+    if [ -f /run/secrets/qa_db_ca ]; then \
+      test -n "$QA_DB_CA_SHA256" \
+      && printf '%s  %s\n' "$QA_DB_CA_SHA256" /run/secrets/qa_db_ca | sha256sum -c - \
+      && cp /run/secrets/qa_db_ca /app/infra/certs/qa-db-ca.crt \
+      && chmod 0444 /app/infra/certs/qa-db-ca.crt; \
+    else test -z "$QA_DB_CA_SHA256"; \
+    fi
+
 USER node
 WORKDIR /app/apps/api
 EXPOSE 3001

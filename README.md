@@ -392,8 +392,8 @@ The runbook separates the reviewed host-upgrade procedure from local evidence;
 live rollout and acceptance require the owner's separate approval.
 Auth IP rate limits, ten-digit OTPs, narrow case-sensitive edge routes and
 negative live tests are required before exposure. The selected subscription is
-blocked from the legacy Germany app roots. Sweden application integration
-requires its own reviewed path; keep the legacy gate intact. Legacy HS256 service-key compatibility remains documented; it is
+blocked from the legacy Germany app roots. The separate Sweden QA roots
+implement the application preparation; this never removes the legacy gate. Legacy HS256 service-key compatibility remains documented; it is
 not a completed asymmetric API-key migration or production approval.
 
 The [Sweden QA application integration runbook](infra/runbooks/08-qa-application.md)
@@ -626,10 +626,16 @@ requires hosted ban/refresh-AMR/collation evidence and first-organisation provis
 CI already excludes mailpit and onboarding integration tests use an in-memory mail
 transport; delivered email remains an owner-run staging/production check.
 
-The **active application/data region is Azure Sweden Central**. Follow the
-[Sweden QA integration design](infra/runbooks/08-qa-application.md) for application
-preparation, credential boundaries and owner approval gates. R3/R4, private DB
-TLS, runtime/schema/bucket checks and live acceptance remain prerequisites.
+The **active application/data region is Azure Sweden Central**. The additive
+QA roots in `infra/terraform/foundation/qa` and `infra/terraform/application/qa`
+prepare the VNet-bound environment, ACR, Key Vault, Log Analytics, scoped identities,
+private r02 DNS and digest/version-pinned API/web applications. The manual
+`qa-candidate.yml` pipeline binds source, origins and a public DB CA to its image
+candidate, with BuildKit provenance/SBOM. The independent public release/plan and
+ARM-projection validators support owner review; they do not authorize execution.
+Follow [runbook 08](infra/runbooks/08-qa-application.md#application-preparation-and-owner-execution)
+for placeholders, approval units, migration separation, draining and acceptance.
+R3/R4, private PostgreSQL TLS, role/bucket checks and live acceptance remain prerequisites.
 The [retained hosted implementation](infra/README.md#historical-hosted-reference-0006)
 is historical Germany/Frankfurt compatibility code; never use it as a current
 QA or production deployment route. Its explicit Sweden rejection remains intact.

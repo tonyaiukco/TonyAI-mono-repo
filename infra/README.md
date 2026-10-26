@@ -78,6 +78,22 @@ is used. Hosted helper secrets stay in memory and Key Vault. Self-hosted service
 also require protected root-only runtime files as described in runbook 07.
 Secret payloads never enter tfvars, state, plan files, logs, repository files or chat.
 
+## Sweden QA application preparation
+
+The additive `terraform/foundation/qa` and `terraform/application/qa` roots are
+independent from the retained hosted roots and from the Claude-owned R3 host.
+The environment binds the existing app subnet at creation; private DB DNS points
+only to r02. Workloads receive exact Key Vault runtime references, never the
+migration owner or recovery escrow. OIDC starts disabled. The manual
+`qa-candidate.yml` and `qa_*` helpers bind source, public inputs, provenance,
+image digests and independent plan/readback policy. `qa-infra.yml` exercises both
+new roots and their tests without cloud credentials.
+
+See [runbook 08](runbooks/08-qa-application.md#application-preparation-and-owner-execution)
+for the required placeholders and exact approval units. R3/R4, private DB TLS,
+schema/runtime privileges and live acceptance are still required. No live step
+is authorized by these files or by passing mock tests.
+
 ## Historical hosted reference (00–06)
 
 1. [Restore a safe session](runbooks/00-session.md).
