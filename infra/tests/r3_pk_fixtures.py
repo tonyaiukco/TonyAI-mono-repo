@@ -67,11 +67,20 @@ def unit_text(units):
 class Host:
     """One synthetic masked host. Tests mutate `root`, `units`, `outputs` or `reviewed`."""
     def __init__(self, test=None):
-        # AF_UNIX paths are short (104 bytes on macOS); /tmp exists on both platforms.
-        self.root = Path(tempfile.mkdtemp(prefix='r3p-', dir='/tmp')).resolve()
+        # AF_UNIX paths are short (104 bytes on macOS); /tmp exists on both platforms. The mutation
+        # runner points R3_PK_FIXTURE_ROOT at a short per-worker directory it sweeps after every mutant.
+        self.root = Path(tempfile.mkdtemp(prefix='r3p-', dir=os.environ.get('R3_PK_FIXTURE_ROOT') or '/tmp')).resolve()
         self.servers = []
         if test is not None:
             test.addCleanup(self.close)
+        try:
+            self.setup()
+        except BaseException:
+            if test is None:  # nobody else will remove it (shared_host registers atexit only afterwards)
+                self.close()
+            raise
+
+    def setup(self):
         info = os.stat(self.root)
         self.owner = (info.st_uid, info.st_gid)
         self.clk_tck = os.sysconf('SC_CLK_TCK')

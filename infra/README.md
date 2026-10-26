@@ -202,7 +202,11 @@ and Node baselines and the mutants on a shared pool; each mutant is applied only
 in the copy its worker holds, runs its mapped suites with a 60-second timeout and
 is restored there. The report lists results in registry order whatever order they
 finished in, and is written only when both baselines pass and every copy still
-hashes as it did before the run.
+hashes as it did before the run. Each worker also gets a short private fixture root
+(`/tmp/r3mw-*/<n>`, passed as `R3_PK_FIXTURE_ROOT` to `r3_pk_fixtures.Host`) that the
+runner sweeps after every run, a timed-out one included, so a killed suite leaves no
+synthetic host behind (it refuses to sweep a root that is no longer its own real directory); a SIGTERM to the runner unwinds like Ctrl-C and removes the
+worker copies and fixture roots.
 
 For a checkout already bound to a live backend, run offline init/validate/test
 in a disposable source copy with a separate local `TF_DATA_DIR` and

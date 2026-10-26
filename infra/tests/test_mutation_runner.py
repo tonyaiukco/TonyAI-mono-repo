@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -11,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import r3_mutations as runner
 
 FAKE = 'infra/scripts/fake.py'
-SCRIPT = "BARRIER = ''\nDELAY = 0.0\nKILL = 1\nKEEP = 1\nLEFT = 1\nRIGHT = 1\nDRIFT = False\n"
+SCRIPT = "BARRIER = ''\nDELAY = 0.0\nKILL = 1\nKEEP = 1\nLEFT = 1\nRIGHT = 1\nDRIFT = False\nLEAK = 0\n"
 # The only R3 test in the synthetic tree. Each run logs the values it saw once it finishes;
 # mutants sharing a BARRIER group wait until both run at once, each in its own copy.
 TEST = '''import os, sys, time, unittest
@@ -22,6 +23,35 @@ import fake
 class Fake(unittest.TestCase):
     def test_fake(self):
         log = Path(os.environ['FAKE_LOG'])
+        # Each run starts from an empty private fixture root; a leaking mutant leaves a locked tree there.
+        fixtures = Path(os.environ['R3_PK_FIXTURE_ROOT'])
+        self.assertEqual(sorted(fixtures.iterdir()), [], 'the previous run was not swept')
+        if fake.LEAK == 7:  # the per-run base swapped for a link to a look-alike tree: refuse too
+            outside = Path(os.environ['FAKE_OUTSIDE'])
+            with open(os.environ['FAKE_LEAKS'], 'a') as stream: stream.write(f'{fixtures} {Path.cwd()}\\n')
+            base = fixtures.parent
+            base.rename(str(base) + '.moved')
+            (outside / fixtures.name).mkdir(parents=True)
+            (outside / fixtures.name / 'file').write_text('kept')
+            base.symlink_to(outside)
+            return
+        if fake.LEAK == 6:  # the fixture root itself swapped for a link: the runner must refuse to sweep
+            with open(os.environ['FAKE_LEAKS'], 'a') as stream: stream.write(f'{fixtures} {Path.cwd()}\\n')
+            fixtures.rmdir()
+            fixtures.symlink_to(os.environ['FAKE_OUTSIDE'])
+            return
+        if fake.LEAK == 5:  # links out of the fixture root, top-level and nested: removed, never followed
+            (fixtures / 'r3p-link').symlink_to(os.environ['FAKE_OUTSIDE'])
+            (fixtures / 'r3p-leak5').mkdir()
+            (fixtures / 'r3p-leak5' / 'nested').symlink_to(os.environ['FAKE_OUTSIDE'] + '/keep')
+        if fake.LEAK:
+            top = fixtures / ('r3p-leak%d' % fake.LEAK)
+            locked = top / 'locked'
+            locked.mkdir(parents=True)
+            (locked / 'file').write_text('x')
+            locked.chmod(0)
+            top.chmod(0)
+            with open(os.environ['FAKE_LEAKS'], 'a') as stream: stream.write(f'{fixtures} {Path.cwd()}\\n')
         if fake.BARRIER:
             (log.parent / f'{fake.BARRIER}.{os.getpid()}').touch()
             deadline = time.monotonic() + 20
@@ -48,7 +78,8 @@ class MutationRunner(unittest.TestCase):
         (self.source / 'infra/tests/test_r3_fake.py').write_text(TEST)
         (self.source / 'infra/tests/selfhost_init_entry.test.mjs').write_text("import test from 'node:test';\ntest('fake', () => {});\n")
         (self.source / '.github/workflows/fake.yml').write_text('name: fake\n')
-        environment = patch.dict(os.environ, {'FAKE_LOG': str(self.log)})
+        self.leaks = Path(work.name) / 'leaks.log'
+        environment = patch.dict(os.environ, {'FAKE_LOG': str(self.log), 'FAKE_LEAKS': str(self.leaks)})
         environment.start(); self.addCleanup(environment.stop)
 
     def run_mutations(self, mutations, workers=3):
@@ -135,6 +166,92 @@ class MutationRunner(unittest.TestCase):
                     self.run_mutations([('survivor', 'KEEP = 1', 'KEEP = 2')])
                 self.assertFalse(self.output.exists())
                 broken.write_text(original)
+
+    def leaked(self):
+        return [line.split() for line in self.leaks.read_text().splitlines()] if self.leaks.exists() else []
+
+    def test_every_run_gets_a_private_fixture_root_swept_after_it(self):
+        # One worker: the second leaking mutant passes only if the first one's tree was swept.
+        mutations = [('leak-a', 'LEAK = 0', 'LEAK = 1'), ('leak-b', 'LEAK = 0', 'LEAK = 2')]
+        self.assertTrue(self.run_mutations(mutations, workers=1))
+        self.assertEqual([r['result'] for r in json.loads(self.output.read_text())['mutations']], ['SURVIVED', 'SURVIVED'])
+        leaked = self.leaked()
+        self.assertEqual(len(leaked), 2)
+        for fixtures, _copy in leaked:
+            self.assertRegex(fixtures, r'^/tmp/r3mw-[^/]+/[0-9]+$')  # short: AF_UNIX paths stay under 104 bytes
+            self.assertFalse(Path(fixtures).parent.exists())  # this run's own base, not other runners'
+
+    def test_a_leaked_link_is_removed_without_touching_its_target(self):
+        outside = Path(self.log.parent) / 'outside'
+        (outside / 'keep').mkdir(parents=True)
+        (outside / 'keep' / 'file').write_text('kept')
+        (outside / 'keep').chmod(0o755)
+        with patch.dict(os.environ, {'FAKE_OUTSIDE': str(outside)}):
+            self.run_mutations([('leak-link', 'LEAK = 0', 'LEAK = 5')], workers=1)
+        self.assertEqual(json.loads(self.output.read_text())['mutations'][0]['result'], 'SURVIVED')
+        self.assertEqual((outside / 'keep' / 'file').read_text(), 'kept')
+        self.assertEqual((outside / 'keep').stat().st_mode & 0o777, 0o755)  # the nested link was not chmod-ed through
+        self.assertFalse(Path(self.leaked()[0][0]).exists())
+
+    def test_a_fixture_root_swapped_for_a_link_is_never_swept(self):
+        outside = Path(self.log.parent) / 'outside'
+        outside.mkdir()
+        (outside / 'file').write_text('kept')
+        with patch.dict(os.environ, {'FAKE_OUTSIDE': str(outside)}), self.assertRaisesRegex(RuntimeError, 'fixture root replaced'):
+            self.run_mutations([('swap', 'LEAK = 0', 'LEAK = 6')], workers=1)
+        self.assertEqual((outside / 'file').read_text(), 'kept')
+        self.assertFalse(Path(self.leaked()[0][0]).parent.exists())
+        self.assertFalse(self.output.exists())
+
+    def test_a_base_swapped_for_a_link_is_never_swept(self):
+        outside = Path(self.log.parent) / 'outside'
+        with patch.dict(os.environ, {'FAKE_OUTSIDE': str(outside)}), self.assertRaisesRegex(RuntimeError, 'fixture root replaced'):
+            self.run_mutations([('swap-base', 'LEAK = 0', 'LEAK = 7')], workers=1)
+        fixtures = Path(self.leaked()[0][0])
+        moved = Path(str(fixtures.parent) + '.moved')
+        self.addCleanup(runner.wipe, moved)
+        self.assertEqual((outside / fixtures.name / 'file').read_text(), 'kept')
+        self.assertFalse(os.path.lexists(fixtures.parent))  # the link itself is removed, its target kept
+
+    def test_a_fixture_root_owned_by_someone_else_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner.owned_directory(directory)
+            with patch.object(runner.os, 'geteuid', return_value=os.geteuid() + 1), \
+                 self.assertRaisesRegex(RuntimeError, 'fixture root replaced'):
+                runner.owned_directory(directory)
+
+    def test_the_command_line_entry_installs_the_sigterm_handler(self):
+        import ast
+        tree = ast.parse(Path(runner.__file__).read_text())
+        entry = next(n for n in tree.body if isinstance(n, ast.If) and ast.unparse(n.test) == "__name__ == '__main__'")
+        calls = [ast.unparse(n.func) for n in ast.walk(entry) if isinstance(n, ast.Call)]
+        self.assertLess(calls.index('install_sigterm'), calls.index('main'))
+
+    def test_a_timed_out_run_leaves_nothing_behind(self):
+        with patch.object(runner, 'MUTANT_TIMEOUT', 2), self.assertRaises(runner.subprocess.TimeoutExpired):
+            self.run_mutations([('slow-leak', 'LEAK = 0', 'LEAK = 3; DELAY = 8.0')], workers=1)
+        self.assertEqual(len(self.leaked()), 1)
+        self.assertFalse(Path(self.leaked()[0][0]).parent.exists())
+
+    def test_sigterm_unwinds_and_removes_the_copies(self):
+        code = ('import sys; sys.path.insert(0, %r); import r3_mutations as r; r.install_sigterm(); '
+                'r.main(%r, 1, r.Path(%r), [(%r, "slow-leak", "LEAK = 0", "LEAK = 4; DELAY = 4.0")])'
+                % (str(Path(runner.__file__).parent), str(self.output), str(self.source), FAKE))
+        child = runner.subprocess.Popen([sys.executable, '-B', '-c', code], stdout=runner.subprocess.DEVNULL,
+                                        stderr=runner.subprocess.PIPE)
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        deadline = time.monotonic() + 30
+        while not self.leaked():
+            self.assertIsNone(child.poll(), child.poll() is not None and child.stderr.read().decode()[-800:])
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.05)
+        child.send_signal(runner.signal.SIGTERM)
+        self.assertEqual(child.wait(timeout=30), 143)
+        fixtures, copy = self.leaked()[0]
+        self.assertFalse(Path(fixtures).exists())
+        self.assertFalse(Path(copy).parent.exists())  # the r3-mutants-* worker copies
+        self.assertFalse(Path(fixtures).parent.exists())
+        self.assertFalse(self.output.exists())
 
     def test_at_least_one_worker(self):
         with self.assertRaisesRegex(ValueError, 'At least one mutation worker'):
