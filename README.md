@@ -401,7 +401,10 @@ specifies separate foundation/application writers, creation-time subnet binding,
 private database TLS with bounded Prisma pooling, credential separation and an
 immutable build/release contract. QA preparation includes an r02 three-subnet
 preflight, nonsecret discovery/readback command manifests and an exact initial
-foundation saved-plan checker. Unit 7 also has an application binary/source/lock
+foundation saved-plan checker. Unit 4 has a separate runtime-secret transition
+inspector: two exact API secret-name grants, a narrowly bounded source-tag update,
+public version/role metadata receipts and a permanently blocked owner draft.
+It preserves the initial four-false/15-create policy. Unit 7 also has an application binary/source/lock
 inspector, complete revision receipts and a secret-free `BLOCKED_DRAFT` owner
 packet; local candidate JSON and offline receipts do not authenticate live
 provenance. These tools validate offline evidence only;

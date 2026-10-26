@@ -826,6 +826,178 @@ field or effective inherited permission; source-plan review and live acceptance
 remain separate. A failed/partial apply consumes approval; no tool here retries,
 destroys, repairs state or changes DNS.
 
+### Offline Unit 4 tools
+
+This package validates only `runtime_secrets_ready=false` → `true`, with
+`oidc_enabled`, `smtp_secret_ready` and `apps_ready` explicitly false on both
+sides. It does not transfer/read secret values, choose an SMTP provider, validate
+Units 5/8, build images or deploy applications. Existing `access.tf` grants are
+unchanged. Initial foundation inspection still requires four false flags, empty
+prior state and exactly 15 creates.
+
+#### Transition and historical predecessor
+
+`qa_runtime.py` takes a public request, a public predecessor packet, a saved
+binary and an absolute trusted Terraform 1.13.3 path. There is no plan-JSON input.
+The request has exactly these fields:
+
+- `before_inputs`: the initial foundation `{ "config": ... }` input, including
+  all four explicit false flags and its original `release_sha`.
+- `after_inputs`: the same input with only runtime readiness true and optionally
+  a new reviewed `release_sha`. Tenant, subscription, owner, registry, vault,
+  region, resource group, subnet, repository and identity selection cannot change.
+- `predecessor_sha256`: canonical JSON SHA256 of the supplied predecessor.
+- `secret_versions`: exactly `database-url` and `supabase-service-role-key`, each
+  with its selected 32-character lowercase hexadecimal version ID. No values.
+
+The predecessor contains exactly `initial_plan` (the complete initial inspector
+CLI report), `readback` (the complete initial foundation public receipt) and
+`owner_acceptance_sha256` (the separate owner acceptance record's hash). The
+report binds normalized before inputs, old source, binary, lock and original
+input-file hash. The historical receipt is validated against its own collection
+window and the old manifest; its identity principals, resource IDs/bodies and
+required three grants are checked. Its age is not a claim of current readiness.
+The owner must authenticate the historical report, original input bytes,
+accepted initial-plan/readback association and decision out of band. Local
+hashes and a caller-supplied decision hash are not signatures or Azure provenance.
+
+A fresh **before** receipt after the new plan must re-establish this foundation,
+including the same API/web principals and environment domain. Unknown/missing
+predecessors, already-true before inputs, reverse/skipped transitions, existing
+runtime grants and state containing extra resources refuse. Reusing an old
+packet cannot authorize a second live attempt; external owner attempt tracking
+is still required, and a replay against post-transition state refuses.
+
+#### Saved binary and exact changes
+
+```bash
+# Offline inspection only, in a clean checkout at after_inputs.config.release_sha.
+python3 infra/scripts/qa_runtime.py --request "$QA_DIR/runtime-request.json" \
+  --predecessor "$QA_DIR/runtime-predecessor.json" \
+  --saved-plan "$QA_DIR/runtime.tfplan" --terraform "$TERRAFORM_1_13_3" \
+  > "$QA_DIR/runtime-owner-draft.json"
+```
+
+The inspector binds embedded configuration and provider lock to clean source,
+uses a private `0600` binary copy with a sterile `terraform show -json`, checks
+input variables and rechecks binary/tool/source afterward. It exports only
+public expectations and hashes, never raw plan/state. The report includes the
+17 addresses/IDs/actions, old/new input hashes, source/config/lock/tool/binary
+hashes, predecessor/previous-plan/previous-receipt hashes and plan timestamp.
+The CLI also binds exact request/predecessor/observation file bytes.
+
+The independent policy requires these two creates, using the existing API
+principal and the deterministic assignment UUID:
+
+| Address | Scope | Role |
+| --- | --- | --- |
+| `azapi_resource.grant["secret-database-url"]` | Exact app vault ID + `/secrets/database-url` | Key Vault Secrets User, `4633458b-17de-408a-b874-0445c86b69e6` |
+| `azapi_resource.grant["secret-supabase-service-role-key"]` | Exact app vault ID + `/secrets/supabase-service-role-key` | Same role |
+
+RBAC scope is the **secret name**, not a version. Versions are separate release
+metadata references. Vault/RG/subscription-wide runtime grants, web access,
+owner/recovery/SMTP secret access, federation and app grants refuse. Existing
+15 resources must match the independent initial oracle and prior state. With
+unchanged source all 15 are no-op. With new source only `azapi_resource.group`
+may update `tags.releaseSha` from the exact old SHA to the exact new SHA; all
+other request fields/tags, including ignored OIDC recovery markers, must match.
+No new recovery markers are accepted. An empty group output may recompute;
+request bodies, references, scopes, principal IDs and assignment names cannot.
+Only the new grants' ID/output/inert defaults may be computed, as exercised by
+the installed-provider mock. Delete/replace/import/move, drift, incomplete,
+deferred, errored plans, extra resources and request extensions refuse.
+
+#### Secret-free metadata and readback
+
+Each generated manifest includes the foundation's exact public projections,
+account tenant/subscription, a fully paginated subscription role snapshot, and
+`az keyvault secret list-versions` for the two names. That API returns metadata;
+no `secret show`, value, transfer or data-plane secret GET is generated. CLI
+pagination must complete. Selected version IDs must match the exact vault/name,
+be enabled, not future-dated and not expired. UTC metadata timestamps accept
+`Z` or `+00:00`; receipt boundaries use strict `YYYY-MM-DDTHH:MM:SSZ`.
+
+A receipt contains `source_sha`, `request_sha256`, `predecessor_sha256`,
+`plan_sha256`, `phase`, `manifest_sha256`, `started_at`, `completed_at` and
+`records`. Records/pages use the Unit 0–2 complete/argv/result hash and exit-code
+schema. Every expected command and all pages are required; permission/network
+errors, omissions and partial results never prove absence or readiness. Both
+receipts must be at most one hour old and complete within 30 minutes. Ordering
+is plan creation ≤ plan completion ≤ before collection ≤ apply start ≤ apply
+completion ≤ after collection. A long attempt therefore requires new evidence
+and a new approval, not relaxation of freshness.
+
+```bash
+# These commands generate/verify JSON only. They do not execute the manifest.
+python3 infra/scripts/qa_runtime_receipt.py manifest \
+  --request "$QA_DIR/runtime-request.json" --predecessor "$QA_DIR/runtime-predecessor.json" \
+  --plan-sha256 "$QA_RUNTIME_PLAN_SHA256" --phase before
+# Repeat with --phase after for the post-apply command manifest.
+python3 infra/scripts/qa_runtime_receipt.py verify \
+  --request "$QA_DIR/runtime-request.json" --predecessor "$QA_DIR/runtime-predecessor.json" \
+  --plan-sha256 "$QA_RUNTIME_PLAN_SHA256" --plan-created-at "$QA_PLAN_CREATED_AT" \
+  --plan-completed-at "$QA_PLAN_COMPLETED_AT" --apply-started-at "$QA_APPLY_STARTED_AT" \
+  --apply-completed-at "$QA_APPLY_COMPLETED_AT" \
+  --before "$QA_DIR/runtime-before.json" --after "$QA_DIR/runtime-after.json"
+```
+
+After must preserve **every** before assignment exactly and add only the two
+expected assignment IDs/scopes/principals/roles. Required existing owner and
+API/web pull grants are independently verified. Extra observed assignments to
+either workload identity refuse, including case-varied UUIDs. Unrelated
+assignments may remain unchanged. This subscription projection cannot prove all
+inherited/management-group/effective permissions; a partial snapshot cannot
+establish a safe effective permission set. Offline receipts never authenticate
+Azure provenance.
+
+#### Owner draft and failure boundary
+
+Optional `--observations` supplies `{ "plan_completed_at": "...", "receipt":
+{...before receipt...} }`. The packet contains public readback manifests and
+shell-quoted saved-plan apply/hash/readback command drafts. Run those drafts only
+from the reviewed repository root after a **separate exact owner approval**
+binds all final paths, hashes, source/tool identity, backend/default workspace,
+no competing writer and UTC boundaries. Missing live observations leave the
+before observation null. Even complete local JSON leaves the packet blocked.
+
+Abbreviated synthetic example (not live identifiers or execution authority):
+
+```json
+{
+  "schema": 1,
+  "unit": 4,
+  "status": "BLOCKED_DRAFT",
+  "authorization": false,
+  "live_acceptance": false,
+  "authenticated_azure_provenance": false,
+  "effective_permissions_proven": false,
+  "before_observation": null,
+  "secret_versions": {
+    "database-url": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "supabase-service-role-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}
+```
+
+Any refused, failed, partial or interrupted live attempt consumes approval.
+Stop and preserve evidence/state; do not retry, re-plan, finish a partially
+created pair, revoke grants or rotate secrets automatically. Uncertain state
+needs separately approved reads, then a new exact recovery plan and owner
+approval. R3, full R4/PD-3, historical foundation acceptance and required
+cross-lane review remain external. Offline success is not effective-permission,
+foundation-apply, image-build or deployment acceptance.
+
+`qa_runtime_mock.py --terraform /absolute/path/to/terraform` uses only installed
+providers in a sterile disposable copy. Its fixture performs a mock apply of
+the 15-resource predecessor then a mock transition plan. Only five
+`prevent_destroy` guards are removed **in that copy**, for mock teardown; no
+grant/request definition changes. The adapter supplies the test JSON's missing
+saved-plan metadata/prior-state envelope synthetically and checks real
+`change.before/after` and computed masks. It does not claim saved-binary evidence.
+Keep `TERRAFORM_TEST_BINARY` unset when real `terraform plan` calls are prohibited;
+that existing optional archive test is then explicitly skipped. No init is
+needed when the required provider is already installed.
+
 ### Offline Unit 7 tools
 
 This preparation does not close R3, R4/PD-3 or any deployment acceptance gate.

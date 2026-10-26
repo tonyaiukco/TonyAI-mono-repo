@@ -105,6 +105,18 @@ it never initializes a backend or applies. See runbook 08's
 [offline Unit 0–2 tools](runbooks/08-qa-application.md#offline-unit-02-tools)
 for schemas, commands, computed-field constraints and remaining owner gates.
 
+Unit 4 uses `qa_runtime.py` with a separate `qa_runtime_plan.py` policy: exactly
+15 existing foundation resources plus two API Secrets User creates on
+`database-url` and `supabase-service-role-key`. Only the RG's exact old/new
+`releaseSha` tag may update; other gates stay false. `qa_runtime_receipt.py`
+prepares public metadata queries and checks complete fresh observations, exact
+version metadata and the two-assignment delta. `qa_runtime_packet.py` always
+returns `BLOCKED_DRAFT`, never live authority. No Terraform grant definition or
+initial policy changed. See [offline Unit 4 tools](runbooks/08-qa-application.md#offline-unit-4-tools).
+`qa_runtime_mock.py` rehearses the transition with installed mock providers in
+a disposable copy; it removes only the five prevent-destroy guards for mock
+teardown and does not initialize a backend or run a real plan/apply.
+
 Unit 7 uses `qa_application.py` to derive JSON privately from the exact saved
 application binary, retain the two-app body oracle and bind source/configuration,
 provider lock, inputs and candidate hashes. `qa_application_receipt.py` prepares
