@@ -564,7 +564,10 @@ encrypted evidence; format 1 documents and their context stay valid.
 Evidence format 3 adds option C's PackageKit sections (the same reads the installer's
 facts make) and reports `DISCOVERY_ONLY` - complete, never a policy input - until the
 packaged-unit index is reviewed; formats 1 and 2 keep their meaning
-(`predicate_contract: legacy`).
+(`predicate_contract: legacy`). PR-C1b grows format 3 in place: snapd's D-Bus servicedir,
+evidence sections for the open O7/O11/O12 obligations (deb-systemd-helper state,
+needrestart, session bus, root's user manager), discovery md5sums for the future
+packaged-unit index and a path-free error locus; a PR-C1-shaped document is refused.
 Source verification refuses Git filter/include/diff configuration, redirected or
 partial-clone worktrees, and nonempty or symlinked Git info attributes before
 status/object reads; lazy object fetching is disabled. Index or HEAD gitlinks

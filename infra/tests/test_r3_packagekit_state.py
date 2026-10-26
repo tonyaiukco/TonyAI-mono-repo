@@ -136,6 +136,30 @@ def times(early_start=False, early_exec_start=False):
     return change
 
 
+def pin_member(directory, name, body):
+    """Pin a configuration member's bytes in the profile, so C9.dir holds and only C9.servicedirs judges it."""
+    def change(value):
+        allow = value['profiles'][0]['allow']
+        members = {key: dict(item) for key, item in allow['config_members'].items()}
+        members[directory][name] = digest(body)
+        allow['config_members'] = members
+    return change
+
+
+def snapd_conf(body):
+    """snapd's include with a different body, pinned as reviewed (C9.servicedirs must still refuse it)."""
+    data = b'<busconfig>\n' + body + b'\n</busconfig>\n'
+    return write(state.SNAPD_INCLUDE, data), pin_member('/usr/share/dbus-1/system.d', 'snapd.system-services.conf', data)
+
+
+def section_error(name):
+    return lambda raw: raw.__setitem__(name, {'state': 'error', 'error': 'OSError'})
+
+
+SNAPD = state.SNAPD_SERVICE_DIR
+OFFLINE_LINK = '/usr/lib/systemd/system/system-update.target.wants/packagekit-offline-update.service'
+
+
 def several(*changes):
     def change(target):
         for item in changes:
@@ -183,6 +207,14 @@ TRUTH = [
     ('C2.no-other-registration:/usr/lib/dbus-1/system-services', False,
      write('/usr/lib/dbus-1/system-services/pk.service', b'[D-BUS Service]\nName=org.freedesktop.packagekit\n'),
      allow_service('pk.service', '/usr/lib/dbus-1/system-services'), None),
+    ('C2.no-other-registration:' + SNAPD, False, write(SNAPD + '/snap.pk.service', fx.REGISTRATION_BODY),
+     allow_service('snap.pk.service', SNAPD), None),
+    ('C2.parents', False, chmod('/var/lib/snapd', 0o777), None, None),
+    # An absent parent under a writable ancestor: anyone could create it later (QA P1).
+    ('C2.parents', False, several(lambda h: __import__('shutil').rmtree(h.path('/var/lib/snapd/dbus-1')),
+                                  chmod('/var/lib/snapd', 0o777)), None, None),
+    ('C2.parents', False, None, None, raw_value('dbus-config', lambda v: v['parents']['/var/lib/snapd/dbus-1'].update(uid=1234))),
+    ('C2.parents', False, None, None, raw_value('dbus-config', lambda v: v['parents']['/usr/share/dbus-1']['parents'][1].update(mode=0o775))),
     # C3 mask link
     ('C3.link', False, remove(state.MASK_PATH), None, None),
     ('C3.link', False, several(remove(state.MASK_PATH), write(state.MASK_PATH, b'')), None, None),
@@ -216,6 +248,8 @@ TRUTH = [
     ('C5.no-override', False, write('/usr/lib/systemd/system/packagekit.service.d/x.conf', b'[Service]\n'), None, None),
     ('C5.no-override', False, link('/etc/systemd/system/dbus-org.freedesktop.PackageKit.service', 'packagekit.service'), None, None),
     ('C5.no-override', False, write('/usr/lib/systemd/system/packagekit@.service', b'[Service]\n'), None, None),
+    ('C5.no-override', False, write('/etc/systemd/system/packagekit-.service.d/x.conf', b'[Service]\n'), None, None),
+    ('C5.no-override', False, write('/run/systemd/system/dbus-org.freedesktop.PackageKit.service.d/x.conf', b'[Service]\n'), None, None),
     ('C5.no-override', False, several(remove(state.VENDOR_FRAGMENT), link(state.VENDOR_FRAGMENT, '/dev/null')), None, None),
     ('C5.unit-path', None, lambda h: h.outputs.update(manager=('UnitPath=/opt/units ' + ' '.join(state.UNIT_ROOTS)
                                                                 + '\nVersion=' + fx.VERSION + '\n').encode()), None, None),
@@ -267,6 +301,17 @@ TRUTH = [
     ('C9.dir:/etc/dbus-1/system.d', None, write('/etc/dbus-1/system.d/z.conf', b'<busconfig><policy/></busconfig>\n'), None, None),
     ('C9.dir:/usr/share/dbus-1/system.d', False, chmod('/usr/share/dbus-1/system.d', 0o777), None, None),
     ('C9.selinux', None, write('/sys/fs/selinux/enforce', b'1\n'), None, None),
+    ('C9.servicedirs', False, *snapd_conf(b'<servicedir>/var/lib/snapd/dbus-1/system-services/</servicedir>'
+                                          b'<servicedir>/opt/bus</servicedir>'), None),
+    ('C9.servicedirs', False, *snapd_conf(b'<servicedir>/var/lib/snapd/dbus-1</servicedir>'), None),
+    ('C9.servicedirs', False, *snapd_conf(b'<servicedir>/var/lib/snapd/dbus-1/system-services/../x</servicedir>'), None),
+    ('C9.servicedirs', False, *snapd_conf(b'<servicedir>var/lib/snapd/dbus-1/system-services</servicedir>'), None),
+    ('C9.servicedirs', False, write('/etc/dbus-1/system.d/x.conf', b'<busconfig><servicedir>' + SNAPD.encode() + b'</servicedir></busconfig>'),
+     pin_member('/etc/dbus-1/system.d', 'x.conf', b'<busconfig><servicedir>' + SNAPD.encode() + b'</servicedir></busconfig>'), None),
+    ('C9.servicedirs', None, *snapd_conf(b'<servicedir>&#47;var/lib/snapd/dbus-1/system-services</servicedir>'), None),
+    ('C9.servicedirs', None, *snapd_conf(b'<servicedir><![CDATA[/opt/bus]]></servicedir>'), None),
+    ('C9.servicedirs', None, *snapd_conf(b'<servicedir >/var/lib/snapd/dbus-1/system-services</servicedir>'), None),
+    ('C9.servicedirs', None, *snapd_conf(b'<!DOCTYPE busconfig [<!ENTITY d "&#60;servicedir>/opt/bus&#60;/servicedir>">]>&d;'), None),
     ('C9.selinux', None, None, allow_with(selinux_rule=None), None),
     # C10 /var, /var/run, socket and listener
     ('C10.var', False, chmod('/var', 0o777), None, None),
@@ -307,6 +352,12 @@ TRUTH = [
     ('C13.other-activators', False, link('/etc/systemd/system/multi-user.target.wants/packagekit.service', state.VENDOR_FRAGMENT), None, None),
     ('C13.other-activators', False, link('/etc/systemd/system/packagekit-helper.service', '/usr/lib/systemd/system/ssh.service'), None, None),
     ('C13.other-activators', None, link('/etc/systemd/system/foo.service', '/opt/units/foo.service'), None, None),
+    # The packaged offline-update link (K1): an activator unless reviewed and its target indexed.
+    ('C13.other-activators', False, link(OFFLINE_LINK, '../packagekit-offline-update.service'), None, None),
+    ('C13.other-activators', False, link(OFFLINE_LINK, '../packagekit-offline-update.service'),
+     allow_with(link_targets={OFFLINE_LINK: '../packagekit-offline-update.service.x'}), None),
+    ('C13.other-activators', None, link('/etc/systemd/system/foo.service', '/opt/units/foo.service'),
+     allow_with(link_targets={'/etc/systemd/system/foo.service': '/opt/units/foo.service'}), None),
     ('C13.other-activators', None, nested_directory, None, None),
     # systemd follows links before `..`: /opt/l -> /srv/x makes this load /srv's file, not local.service.
     ('C13.other-activators', None, several(lambda h: h.path('/srv/x/y').mkdir(parents=True), link('/opt/l', '/srv/x/y'),
@@ -361,6 +412,10 @@ TRUTH = [
     # C16 offline-update boot path
     ('C16.system-update', False, link('/system-update', '/var/lib/PackageKit'), None, None),
     ('C16.system-update', False, write('/etc/system-update', b''), None, None),
+    # G7 the O7/O11/O12 evidence sections
+    *[('G7.evidence', None, None, None, section_error(name)) for name in state.EVIDENCE_SECTIONS],
+    ('G7.evidence', None, lambda h: os.link(h.path('/etc/needrestart/needrestart.conf'), h.path('/etc/needrestart/copy')), None, None),
+    ('G7.evidence', None, None, None, raw_value('user-manager', lambda v: v.update(extra=1))),
 ]
 
 
@@ -408,7 +463,9 @@ class Baseline(unittest.TestCase):
                     norm = state.normalize(raw)
                     self.assertIsNone(state.evaluate(norm))
                     self.assertEqual(raw['unit-universe']['value']['mode'], 'discovery')
-                    self.assertEqual(raw['dpkg-md5sums']['value'], {'mode': 'discovery'})
+                    sums = raw['dpkg-md5sums']['value']
+                    self.assertEqual((sums['mode'], sums['scanned'], set(sums['files'])), ('discovery', 1, {'openssh-server.md5sums'}))
+                    self.assertEqual(set(sums['files']['openssh-server.md5sums']['lines']), {'/usr/lib/systemd/system/ssh.service'})
                     self.assertTrue(state.discovery(raw))
                     self.assertIsNone(norm['c13_verdict'])
                     self.assertRegex(norm['unit_universe_digest'], '^[a-f0-9]{64}$')
@@ -574,6 +631,8 @@ class Leaf(unittest.TestCase):
             for path in paths:
                 if path[-1] == 'state' and len(path) == 2:
                     continue
+                if path[0] in state.EVIDENCE_SECTIONS and len(path) > 1 and path[-2] == 'names' and type(path[-1]) is int:
+                    continue  # one name fewer is still a well-formed evidence listing; G7 binds only its shape
                 with self.subTest(leaf=path):
                     self.assertIsNot(state.evaluate(state.normalize(without(raw, path))), False)
             for name in raw:
@@ -658,7 +717,7 @@ class Domain(DomainPaths, unittest.TestCase):
             view = state.facts_view(state.normalize(state.raw_from_sections(doc['sections'])))
         self.assertEqual(checked['status'], 'COLLECTED_REVIEW_REQUIRED')
         self.assertIs(checked['packagekit_activation_possible'], False)
-        self.assertEqual(checked['predicate_contract'], 'option-c/' + state.REVIEWED['proof_id'])
+        self.assertEqual(checked['predicate_contract'], 'option-c/' + state.REVIEWED['proof_id'] + '/r2')
         sections = doc['sections']
         facts = {'files': {key[5:]: {k: v for k, v in value['value'].items() if k != 'body'} for key, value in sections.items()
                            if key.startswith('file:') and key[5:] not in evidence.EXTRA_FILES},
@@ -706,7 +765,8 @@ class Domain(DomainPaths, unittest.TestCase):
         self.assertEqual((checked['status'], checked['policy_input_hashes']), ('DISCOVERY_ONLY', {}))
         # The two sections disagree, or name another profile: never full.
         with host.active():
-            for name, change in (('dpkg-md5sums', lambda v: v.clear() or v.update(mode='discovery')),
+            for name, change in (('dpkg-md5sums', lambda v: v.clear() or v.update(
+                    mode='discovery', files={}, scanned=0, bytes=0, digest=digest(encoded([])))),
                                  ('unit-universe', lambda v: v.update(profile='other-target'))):
                 with self.subTest(section=name):
                     bad = copy.deepcopy(doc)
@@ -745,6 +805,8 @@ class Domain(DomainPaths, unittest.TestCase):
                 value['target'] = '/srv'
             if name == 'dbus-daemon-proc' and calls[name] == 2:
                 value['cmdline'] = capture.blob(b'@dbus-daemon\0--system\0')
+            if name == 'needrestart-config' and calls[name] == 2:
+                value['files']['/etc/needrestart/needrestart.conf']['body'] = capture.blob(b'$nrconf{restart} = "a";\n')
             return value
         with host.active():
             from test_r3_policy_evidence import BINDING, META, apt_scope, unit_scope, command, snap_record
@@ -759,6 +821,7 @@ class Domain(DomainPaths, unittest.TestCase):
                 doc = json.loads(encoded(evidence.collect(BINDING)))
             self.assertEqual(doc['sections']['link:/var/run']['error'], 'CHANGED')
             self.assertEqual(doc['sections']['dbus-daemon-proc']['error'], 'CHANGED')
+            self.assertEqual(doc['sections']['needrestart-config']['error'], 'CHANGED')  # evidence drifts too
             self.assertEqual(validator.validate(encoded(doc), BINDING)['status'], 'PARTIAL_REVIEW_REQUIRED')
             # Every re-read section was read twice; the process identity alone is compared.
             self.assertEqual({n for n, c in calls.items() if c == 2}, set(state.REREAD))
@@ -821,7 +884,7 @@ class DomainCases(DomainPaths, unittest.TestCase):
                 self.assertIs(controller, facts['evaluated'])
                 self.assertIsNone(facts['packagekit_activation_possible'])  # not wired before PR-C2
                 self.assertEqual(state.facts_view(collected), facts['packagekit'])
-                self.assertEqual(checked['predicate_contract'], 'option-c/' + state.REVIEWED['proof_id'])
+                self.assertEqual(checked['predicate_contract'], 'option-c/' + state.REVIEWED['proof_id'] + '/r2')
 
 
 class ClockBoundaries(unittest.TestCase):
@@ -863,30 +926,54 @@ class Frozen(unittest.TestCase):
             'pk-package-metadata': ['dpkg-query', '-W',
                                     '-f=${binary:Package}\\t${Version}\\t${source:Package}\\t${source:Version}\\t${db:Status-Status}\\n',
                                     'dbus*', 'libdbus-1-3*', 'systemd', 'systemd-sysv', 'libsystemd-shared', 'libsystemd0*',
-                                    'libglib2.0*', 'packagekit*', 'init-system-helpers', 'needrestart', 'linux-image-*']})
+                                    'libglib2.0*', 'packagekit*', 'init-system-helpers', 'needrestart', 'polkitd',
+                                    'libpolkit-gobject-1-0*', 'snapd', 'linux-image-*']})
         self.assertEqual(evidence.C_COMMANDS, {'pk-dpkg-index': ['dpkg-query', '-L', 'packagekit', 'dbus-daemon',
             'dbus-system-bus-common', 'dbus-user-session', 'libsystemd-shared', 'libglib2.0-0t64']})
         self.assertEqual(state.SECTION_NAMES, (
             'pk-units', 'manager', 'pk-package-metadata', 'link:/etc/systemd/system/packagekit.service', 'link:/var/run',
             'link:/lib', 'dir-meta:/var', 'device:/dev/null', 'dbus-socket', 'unit-candidates', 'unit-universe',
             'dpkg-md5sums', 'pk-fragments', 'dbus-service-dirs', 'dbus-config', 'dbus-daemon-proc', 'pk-binaries',
-            'pk-processes'))
+            'pk-processes', 'dsh-state', 'needrestart-config', 'dbus-session-config', 'user-manager'))
         self.assertEqual(state.REREAD, (
             'link:/etc/systemd/system/packagekit.service', 'link:/var/run', 'link:/lib', 'dir-meta:/var',
             'device:/dev/null', 'unit-candidates', 'unit-universe', 'dpkg-md5sums', 'pk-fragments', 'dbus-service-dirs',
-            'dbus-config', 'dbus-daemon-proc', 'pk-binaries'))
+            'dbus-config', 'dbus-daemon-proc', 'pk-binaries', 'dsh-state', 'needrestart-config', 'dbus-session-config'))
+        self.assertEqual(state.EVIDENCE_SECTIONS, ('dsh-state', 'needrestart-config', 'dbus-session-config', 'user-manager'))
+        self.assertEqual(state.DSH_DIRS, ('/var/lib/systemd/deb-systemd-helper-enabled', '/var/lib/systemd/deb-systemd-helper-masked'))
+        self.assertEqual((state.NEEDRESTART, state.NEEDRESTART_FILES, state.NEEDRESTART_DIRS), (
+            '/etc/needrestart', ('/etc/needrestart/needrestart.conf', '/etc/needrestart/notify.conf', '/etc/needrestart/iucode.sh'),
+            ('/etc/needrestart/conf.d', '/etc/needrestart/hook.d', '/etc/needrestart/notify.d', '/etc/needrestart/restart.d')))
+        self.assertEqual((state.SESSION_CONFIG_FILES, state.SESSION_CONFIG_DIRS), (
+            ('/usr/share/dbus-1/session.conf', '/etc/dbus-1/session.conf', '/etc/dbus-1/session-local.conf'),
+            ('/usr/share/dbus-1/session.d', '/etc/dbus-1/session.d')))
+        self.assertEqual(state.USER_MANAGER, ('/var/lib/systemd/linger', '/run/user/0', '/run/systemd/users'))
+        self.assertEqual(state.SNAPD_INCLUDE, '/usr/share/dbus-1/system.d/snapd.system-services.conf')
+        self.assertEqual(state.MD5SUMS_DIR, '/var/lib/dpkg/info')
+        self.assertEqual(state.MD5SUMS_DISCOVERY, {'files': 4096, 'bytes': 33554432, 'lines': 8192, 'names': 32768})
+        self.assertEqual(state.MD5SUMS_PREFIXES, tuple(r + '/' for r in (*state.UNIT_ROOTS, *state.USER_ROOTS,
+                                                                         '/lib/systemd/system', '/lib/systemd/user')))
+        self.assertEqual(state.SERVICEDIR_OPEN.pattern, rb'<\s*servicedir\b')
+        self.assertEqual(state.SERVICEDIR.pattern, rb'<servicedir>([^<&]*)</servicedir>')
+        self.assertEqual(state.ENTITY_DECL.pattern, rb'<!\s*ENTITY\b')
+        self.assertEqual(state.ITEMS['unit-universe'], (*state.UNIT_ROOTS, *state.USER_ROOTS))
+        self.assertEqual(state.ITEMS['dbus-config'], (*state.CONFIG_FILES, *state.CONFIG_DIRS, *state.DBUS_PARENTS,
+                                                      '/sys/fs/selinux'))
+        self.assertEqual(set(state.ITEMS), {'unit-candidates', 'unit-universe', 'pk-fragments', 'pk-binaries',
+                                            'dbus-service-dirs', 'dbus-config', *state.EVIDENCE_SECTIONS})
         self.assertEqual(state.UNIT_ROOTS, (
             '/etc/systemd/system.control', '/run/systemd/system.control', '/run/systemd/transient',
             '/run/systemd/generator.early', '/etc/systemd/system', '/etc/systemd/system.attached', '/run/systemd/system',
             '/run/systemd/system.attached', '/run/systemd/generator', '/usr/local/lib/systemd/system',
             '/usr/lib/systemd/system', '/run/systemd/generator.late'))
         self.assertEqual(state.SERVICE_DIRS, ('/usr/local/share/dbus-1/system-services', '/usr/share/dbus-1/system-services',
-                                              '/usr/lib/dbus-1/system-services'))
+                                              '/usr/lib/dbus-1/system-services', '/var/lib/snapd/dbus-1/system-services'))
         self.assertEqual(state.CONFIG_FILES, ('/usr/share/dbus-1/system.conf', '/etc/dbus-1/system.conf',
                                               '/etc/dbus-1/system-local.conf'))
         self.assertEqual(state.CONFIG_DIRS, ('/usr/share/dbus-1/system.d', '/etc/dbus-1/system.d'))
         self.assertEqual(state.C5_NAMES, ('packagekit.service', 'packagekit.service.d', 'packagekit@.service',
-                                          'packagekit@.service.d', 'dbus-org.freedesktop.PackageKit.service'))
+                                          'packagekit@.service.d', 'dbus-org.freedesktop.PackageKit.service',
+                                          'dbus-org.freedesktop.PackageKit.service.d', 'packagekit-.service.d'))
         self.assertEqual(state.C14_NAMES, ('packagekit.socket', 'packagekit.path', 'packagekit.timer', 'packagekit@.socket'))
         self.assertEqual(state.VENDOR_FRAGMENT, '/usr/lib/systemd/system/packagekit.service')
         self.assertEqual(state.USER_ROOTS, (
@@ -899,11 +986,12 @@ class Frozen(unittest.TestCase):
         self.assertEqual(state.SESSION_DIRS, ('/root/.local/share/dbus-1/services', '/usr/local/share/dbus-1/services',
                                               '/usr/share/dbus-1/services', '/var/lib/snapd/desktop/dbus-1/services',
                                               '/run/user/0/dbus-1/services'))
-        self.assertEqual(state.DBUS_PARENTS, ('/usr/share/dbus-1', '/etc/dbus-1', '/usr/local/share/dbus-1', '/usr/lib/dbus-1'))
+        self.assertEqual(state.DBUS_PARENTS, ('/usr/share/dbus-1', '/etc/dbus-1', '/usr/local/share/dbus-1', '/usr/lib/dbus-1',
+                                              '/var/lib/snapd/dbus-1'))
         self.assertEqual(state.C12_FILES, (
             '/usr/libexec/packagekitd', '/usr/bin/dbus-daemon', '/usr/lib/dbus-1.0/dbus-daemon-launch-helper',
             '/usr/lib/systemd/systemd', '/usr/lib/x86_64-linux-gnu/systemd/libsystemd-shared-255.so',
-            '/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0'))
+            '/usr/lib/x86_64-linux-gnu/libgio-2.0.so.0.8000.0', '/usr/bin/gdbus'))
         self.assertEqual(state.PK_FRAGMENTS, (
             '/usr/lib/systemd/system/dbus.service', '/usr/lib/systemd/system/dbus.socket',
             '/usr/lib/systemd/system/packagekit.service', '/usr/lib/systemd/system/packagekit-offline-update.service'))
@@ -979,6 +1067,7 @@ class Frozen(unittest.TestCase):
             'unit_roots': state.UNIT_ROOTS, 'dev_null': (1, 3), 'o10_ok': False, 'o13_mode': 'ctime_rule',
             'discovery_caps': {'entries': 2048}, 'profiles': ()})
         self.assertEqual(state.OWNER, (0, 0))
+        self.assertEqual(state.PREDICATE_REVISION, 2)
         self.assertEqual(state.UNIVERSE_BODY_LIMIT, 65536)
 
     def test_profile_shape_rules(self):
@@ -1195,13 +1284,15 @@ class Universe(unittest.TestCase):
         reviewed['profiles'][0]['allow']['lib_alias'] = 'usr/lib64'
         self.assertIsNone(host.evaluate(reviewed))
 
-    def test_reviewed_out_of_root_link_literal(self):
+    def test_a_reviewed_link_literal_never_clears_an_unread_target(self):
+        """PR-C1 follow-up (3): a link_targets literal binds the target's bytes through the index,
+        so a target outside the scanned roots stays not classifiable even when reviewed."""
         host = Host(self)
         link('/etc/systemd/system/foo.service', '/opt/units/foo.service')(host)
         reviewed = copy.deepcopy(host.reviewed)
         self.assertIsNone(host.evaluate(reviewed))
         reviewed['profiles'][0]['allow']['link_targets'] = {'/etc/systemd/system/foo.service': '/opt/units/foo.service'}
-        self.assertIs(host.evaluate(reviewed), False)
+        self.assertIsNone(host.evaluate(reviewed))
 
 
 class FixtureCleanup(unittest.TestCase):
@@ -1350,6 +1441,398 @@ class SymlinkedRoot(unittest.TestCase):
             value['roots'][self.XDG] = forged
             with self.subTest(forged=forged), self.assertRaises(ValueError):
                 state.check('unit-universe', value)
+
+
+class PrC1b(unittest.TestCase):
+    """PR-C1b: snapd's servicedir (C2/C9), the reviewed-link rule (K1), the evidence sections
+    (G7), discovery md5sums (U1) and the path-free error locus (K3)."""
+    def results(self, host, reviewed=None):
+        return host.checks(reviewed)
+
+    def test_snapd_servicedir_is_last_and_the_registration_is_read_only_from_usr_share(self):
+        self.assertEqual(state.SERVICE_DIRS[-1], SNAPD)
+        self.assertEqual(state.SERVICE_DIRS.index('/usr/share/dbus-1/system-services'), 1)
+        self.assertTrue(state.REGISTRATION.startswith('/usr/share/dbus-1/system-services/'))
+        # A same-named copy in snapd's directory is a second registration, never the reviewed one.
+        host = Host(self)
+        host.write(SNAPD + '/org.freedesktop.PackageKit.service', fx.REGISTRATION_BODY)
+        results, result = host.checks(self.reviewed(host, allow_service('org.freedesktop.PackageKit.service', SNAPD)))
+        self.assertIs(results['C2.no-other-registration:' + SNAPD], False)
+        self.assertIs(results['C1.reviewed'], True)
+        self.assertIs(result, True)
+
+    def reviewed(self, host, *changes):
+        value = copy.deepcopy(host.reviewed)
+        for change in changes:
+            change(value)
+        return value
+
+    def test_snapd_members(self):
+        host = Host(self)
+        host.write(SNAPD + '/io.snapcraft.Foo.service', b'[D-BUS Service]\nName=io.snapcraft.Foo\nExec=/snap/bin/foo\n')
+        self.assertIs(host.evaluate(), None)  # unreviewed member
+        reviewed = self.reviewed(host, allow_service('io.snapcraft.Foo.service', SNAPD))
+        self.assertIs(host.evaluate(reviewed), False)
+        # A member under any name declaring PackageKit shadows nothing earlier but is still a registration.
+        host.write(SNAPD + '/io.snapcraft.Foo.service', b'[D-BUS Service]\nName=org.freedesktop.PackageKit\nExec=/snap/bin/pk\n')
+        results, result = host.checks(reviewed)
+        self.assertIs(results['C2.no-other-registration:' + SNAPD], False)
+        self.assertIs(result, True)
+
+    def test_without_snapds_include_the_directory_is_still_checked(self):
+        host = Host(self)
+        os.unlink(host.path(state.SNAPD_INCLUDE))
+        results, result = host.checks()
+        self.assertIs(results['C9.servicedirs'], True)
+        self.assertIs(result, False)
+        host.write(SNAPD + '/x.service', b'[D-BUS Service]\nName=org.example.X\n')
+        self.assertIsNone(host.evaluate())
+
+    def test_the_servicedir_value_without_its_trailing_slash_holds(self):
+        host = Host(self)
+        tree, reviewed_change = snapd_conf(b'<servicedir>' + SNAPD.encode() + b'</servicedir>')
+        tree(host)
+        results, result = host.checks(self.reviewed(host, reviewed_change))
+        self.assertIs(results['C9.servicedirs'], True)
+        self.assertIs(result, False)
+        self.assertEqual(state.config_servicedirs({'files': {}, 'dirs': {}}), [])
+
+    def test_a_reviewed_hash_never_admits_another_servicedir(self):
+        """Defense in depth: a profile that pins a wrong body still cannot clear C9.servicedirs."""
+        host = Host(self)
+        body = fx.SNAPD_CONF.replace(b'</busconfig>', b'<servicedir>/opt/bus</servicedir></busconfig>')
+        host.write(state.SNAPD_INCLUDE, body)
+        results, result = host.checks(self.reviewed(host, pin_member('/usr/share/dbus-1/system.d',
+                                                                      'snapd.system-services.conf', body)))
+        self.assertIs(results['C9.dir:/usr/share/dbus-1/system.d'], True)
+        self.assertIs(results['C9.servicedirs'], False)
+        self.assertIs(result, True)
+        # Unreviewed, the same body also fails C9.dir (it is risky).
+        results, _ = host.checks()
+        self.assertIs(results['C9.dir:/usr/share/dbus-1/system.d'], False)
+
+    def test_a_pinned_chain_file_declaring_a_servicedir_fails(self):
+        """QA P2-1: the rule reads the configuration files too, not only the system.d members."""
+        host = Host(self)
+        body = b'<busconfig>\n<servicedir>/opt/bus</servicedir>\n</busconfig>\n'
+        host.write('/etc/dbus-1/system-local.conf', body)
+        def pin(value):
+            allow = value['profiles'][0]['allow']
+            allow['config_files'] = {**allow['config_files'], '/etc/dbus-1/system-local.conf': digest(body)}
+        results, result = host.checks(self.reviewed(host, pin))
+        self.assertIs(results['C9.file:/etc/dbus-1/system-local.conf'], True)
+        self.assertIs(results['C9.servicedirs'], False)
+        self.assertIs(result, True)
+
+    def test_a_utf16_body_is_never_read_as_declaring_nothing(self):
+        """Security P2-1: expat auto-detects UTF-16 under dbus' UTF-8 protocol encoding, so a pinned UTF-16
+        body declaring another servicedir must not pass the byte patterns as empty."""
+        text = '<busconfig>\n<servicedir>/opt/bus</servicedir>\n</busconfig>\n'
+        for body in (b'\xff\xfe' + text.encode('utf-16-le'), b'\xfe\xff' + text.encode('utf-16-be'), text.encode('utf-16-le')):
+            with self.subTest(body=body[:4]):
+                host = Host(self)
+                host.write(state.SNAPD_INCLUDE, body)
+                results, result = host.checks(self.reviewed(host, pin_member('/usr/share/dbus-1/system.d',
+                                                                              'snapd.system-services.conf', body)))
+                self.assertIs(results['C9.dir:/usr/share/dbus-1/system.d'], True)
+                self.assertIsNone(results['C9.servicedirs'])
+                self.assertIsNone(result)
+
+    def test_a_linked_snapd_directory_or_parent_is_never_cleared(self):
+        host = Host(self)
+        os.rmdir(host.path(SNAPD))
+        host.path('/srv/services').mkdir(parents=True)
+        host.link(SNAPD, '/srv/services')
+        with host.active():
+            raw = host.observe()
+        self.assertEqual(raw['dbus-service-dirs']['state'], 'error')
+        self.assertIsNone(state.evaluate(state.normalize(raw)))
+        host = Host(self)
+        os.rename(host.path('/var/lib/snapd/dbus-1'), host.path('/var/lib/snapd/real'))
+        host.link('/var/lib/snapd/dbus-1', 'real')
+        results, result = host.checks()
+        self.assertIs(results['C2.parents'], False)
+        self.assertIsNone(result)  # the service-directory section errors too, so the registration is unknown
+
+    def test_a_present_service_directory_needs_its_parent_recorded_as_a_directory(self):
+        """Security P3-5: a document recording the parent absent while a child service directory is listed fails."""
+        host = Host(self)
+        _r, _raw, _n, results, result = run_case(host, None, None, raw_value('dbus-config', lambda v: v['parents'].update(
+            {'/var/lib/snapd/dbus-1': {'type': 'absent', 'parents': v['parents']['/var/lib/snapd/dbus-1']['parents']}})))
+        self.assertIs(results['C2.parents'], False)
+        self.assertIs(result, True)
+        host = Host(self)
+        os.rmdir(host.path(SNAPD))
+        os.rmdir(host.path('/var/lib/snapd/dbus-1'))
+        self.assertIs(host.checks()[0]['C2.parents'], True)  # both absent: nothing to protect
+
+    def test_a_snapd_member_changed_after_dbus_started_is_not_established(self):
+        host = Host(self)
+        _r, _raw, _n, results, result = run_case(host, write(SNAPD + '/x.service', b'[D-BUS Service]\nName=org.example.X\n'),
+                                                 allow_service('x.service', SNAPD),
+                                                 raw_value('dbus-service-dirs', lambda v: v['system'][SNAPD]['members'][
+                                                     'x.service'].update(ctime_ns=2**62)))
+        self.assertIsNone(results['C15.cache'])
+        self.assertIsNone(result)
+
+    def test_the_reviewed_offline_update_link(self):
+        """K1: the packaged system-update.target.wants link clears C13 only when reviewed literally and
+        its target is an indexed file this scan read; nothing else about it changes."""
+        host = Host(self)
+        link(OFFLINE_LINK, '../packagekit-offline-update.service')(host)
+        self.assertIs(host.evaluate(), True)
+        for target in ('../packagekit-offline-update.service', '/usr/lib/systemd/system/packagekit-offline-update.service'):
+            with self.subTest(target=target):
+                host = Host(self)
+                link(OFFLINE_LINK, target)(host)
+                self.assertIs(host.evaluate(self.reviewed(host, allow_with(link_targets={OFFLINE_LINK: target}))), False)
+        # Reviewed, but the target is known and not indexed: the PackageKit name rule applies again.
+        host = Host(self)
+        path = '/etc/systemd/system/multi-user.target.wants/packagekit-x.service'
+        link(path, '/etc/systemd/system/local.service')(host)
+        self.assertIs(host.evaluate(self.reviewed(host, allow_with(link_targets={path: '/etc/systemd/system/local.service'}))), True)
+        # Reviewed, but the target escapes through `..` after a named component: not resolvable, so the name rule.
+        host = Host(self)
+        link(OFFLINE_LINK, '../../system/packagekit-offline-update.service')(host)
+        self.assertIs(host.evaluate(self.reviewed(host, allow_with(
+            link_targets={OFFLINE_LINK: '../../system/packagekit-offline-update.service'}))), True)
+        # Reviewed and indexed, but the target was never read by this scan (absent): never cleared.
+        host = Host(self)
+        ghost = '/usr/lib/systemd/system/packagekit-ghost.service'
+        link(OFFLINE_LINK, ghost)(host)
+        reviewed = self.reviewed(host, allow_with(link_targets={OFFLINE_LINK: ghost}))
+        reviewed['profiles'][0]['allow']['unit_index'][ghost] = {'package': 'test', 'sha256': 'a' * 64, 'md5sums': None,
+                                                                 'listed': ghost}
+        self.assertIs(host.evaluate(reviewed), True)
+        # A reviewed link with one of PackageKit's own unit names is never cleared (security P3-2).
+        host = Host(self)
+        own = '/etc/systemd/system/multi-user.target.wants/packagekit.service'
+        link(own, state.VENDOR_FRAGMENT)(host)
+        self.assertIs(host.evaluate(self.reviewed(host, allow_with(link_targets={own: state.VENDOR_FRAGMENT}))), True)
+        instance = '/etc/systemd/system/multi-user.target.wants/packagekit@x.service'
+        link(instance, state.VENDOR_FRAGMENT)(host)
+        self.assertIs(host.evaluate(self.reviewed(host, allow_with(link_targets={own: state.VENDOR_FRAGMENT,
+                                                                                 instance: state.VENDOR_FRAGMENT}))), True)
+        os.unlink(host.path(own))
+        self.assertIs(host.evaluate(self.reviewed(host, allow_with(link_targets={instance: state.VENDOR_FRAGMENT}))), True)
+        # The mask link itself is still governed by C3 alone.
+        self.assertIn(state.MASK_PATH, state.LINKS)
+
+    def test_the_evidence_sections(self):
+        host = Host(self)
+        with host.active():
+            raw = host.observe()
+        dsh = raw['dsh-state']['value']
+        self.assertEqual(set(dsh['/var/lib/systemd/deb-systemd-helper-enabled']['entries']),
+                         {'ssh.service.dsh-also', 'multi-user.target.wants'})
+        self.assertEqual(dsh['/var/lib/systemd/deb-systemd-helper-masked'], {'absent': True})
+        self.assertNotIn('body', json.dumps(dsh))
+        needrestart = raw['needrestart-config']['value']
+        self.assertEqual(needrestart['names'], {'names': ['conf.d', 'hook.d', 'needrestart.conf']})
+        self.assertEqual(needrestart['files']['/etc/needrestart/notify.conf'], {'absent': True})
+        self.assertEqual(base64_body(needrestart['files']['/etc/needrestart/needrestart.conf']), fx.NEEDRESTART_CONF)
+        self.assertEqual(set(needrestart['dirs']['/etc/needrestart/hook.d']['members']), {'10-dpkg'})
+        session = raw['dbus-session-config']['value']
+        self.assertEqual(base64_body(session['files']['/usr/share/dbus-1/session.conf']), fx.SESSION_CONF)
+        self.assertEqual(session['dirs']['/usr/share/dbus-1/session.d']['members'], {})
+        self.assertEqual(session['dirs']['/etc/dbus-1/session.d'], {'absent': True})
+        users = raw['user-manager']['value']
+        self.assertEqual((users['linger'], users['run_user_0']['type'], users['users']),
+                         ({'names': []}, 'absent', {'absent': True}))
+        host.write('/var/lib/systemd/linger/root', b'')
+        host.path('/run/user/0').mkdir(parents=True)
+        with host.active():
+            again = host.observe()['user-manager']['value']
+        self.assertEqual((again['linger'], again['run_user_0']['type']), ({'names': ['root']}, 'directory'))
+        # A deeper deb-systemd-helper directory is named, never walked.
+        host.path('/var/lib/systemd/deb-systemd-helper-enabled/a.wants/deeper').mkdir(parents=True)
+        with host.active():
+            item = host.observe()['dsh-state']['value']['/var/lib/systemd/deb-systemd-helper-enabled']['entries']['a.wants']
+        self.assertEqual(item, {'type': 'directory', 'entries': {'deeper': {'type': 'directory'}}})
+
+    def test_the_evidence_schemas_are_strict(self):
+        host = Host(self)
+        with host.active():
+            raw = host.observe()
+        for name, change in (('user-manager', lambda v: v['linger'].update(names=[1, 'a'])),
+                             ('user-manager', lambda v: v['linger'].update(names=[[1]])),
+                             ('needrestart-config', lambda v: v['names'].update(names=[2, 'x']))):
+            with self.subTest(section=name, typed=True):
+                bad = copy.deepcopy(raw[name]['value'])
+                change(bad)
+                with self.assertRaises(ValueError):  # a refusal, never a TypeError (security P3-1)
+                    state.check(name, bad)
+        cases = {
+            'dsh-state': lambda v: v.update(extra={'absent': True}),
+            'needrestart-config': lambda v: v['names'].update(names=['b', 'a']),
+            'dbus-session-config': lambda v: v['files'].pop('/etc/dbus-1/session.conf'),
+            'user-manager': lambda v: v['run_user_0'].update(type='nonsense'),
+            'needrestart-config.dup': lambda v: v['names'].update(names=['a', 'a']),
+            'needrestart-config.cap': lambda v: v['names'].update(names=sorted('n%03d' % i for i in range(257))),
+            'needrestart-config.name': lambda v: v['names'].update(names=['a/b']),
+            'user-manager.linger': lambda v: v.update(linger={'names': 'root'}),
+            'dsh-state.meta': lambda v: v['/var/lib/systemd/deb-systemd-helper-enabled'].update(mode=-1),
+            'dsh-state.cap': lambda v: v['/var/lib/systemd/deb-systemd-helper-enabled']['entries'].update(
+                {'x%04d' % i: {'type': 'other'} for i in range(1024)}),
+        }
+        for case, change in cases.items():
+            name = case.split('.')[0]
+            with self.subTest(case=case):
+                bad = copy.deepcopy(raw[name]['value'])
+                state.check(name, copy.deepcopy(raw[name]['value']))
+                change(bad)
+                with self.assertRaises(ValueError):
+                    state.check(name, bad)
+        self.assertIs(state.normalize(raw)['pk_core']['evidence'], True)
+
+    def test_discovery_md5sums(self):
+        host = Host(self)
+        host.write('/var/lib/dpkg/info/base-files.md5sums', ('b' * 32 + '  usr/bin/x\n').encode())
+        host.write('/var/lib/dpkg/info/legacy.md5sums', ('c' * 32 + '  lib/systemd/system/legacy.service\n'
+                                                         + 'd' * 32 + '  usr/lib/systemd/user/u.service\n').encode())
+        host.write('/var/lib/dpkg/info/legacy.list', b'/lib/systemd/system/legacy.service\n')
+        with patch.object(state, 'OWNER', host.owner), patch.object(state, 'lstat_at', host.lstat_at):
+            value = host.observe()['dpkg-md5sums']['value']
+            self.assertEqual((value['mode'], value['scanned']), ('discovery', 3))
+            self.assertEqual(set(value['files']), {'openssh-server.md5sums', 'legacy.md5sums'})  # base-files lists no unit
+            self.assertEqual(value['files']['legacy.md5sums']['lines'], {'/lib/systemd/system/legacy.service': 'c' * 32,
+                                                                         '/usr/lib/systemd/user/u.service': 'd' * 32})
+            first = value['digest']
+            data = host.path('/var/lib/dpkg/info/legacy.md5sums').read_bytes()
+            every = sorted([name, digest(host.path('/var/lib/dpkg/info/' + name).read_bytes())]
+                           for name in ('base-files.md5sums', 'legacy.md5sums', 'openssh-server.md5sums'))
+            self.assertEqual(value['files']['legacy.md5sums']['sha256'], digest(data))  # QA P2-2: the index's inputs
+            self.assertEqual(value['digest'], digest(encoded(every)))
+            self.assertEqual(value['bytes'], sum(len(host.path('/var/lib/dpkg/info/' + n).read_bytes()) for n, _ in every))
+            host.write('/var/lib/dpkg/info/base-files.md5sums', ('e' * 32 + '  usr/bin/x\n').encode())
+            self.assertNotEqual(host.observe()['dpkg-md5sums']['value']['digest'], first)  # every file is bound
+            for limits, data in (({'files': 2}, None), ({'lines': 2}, None), ({'bytes': 100}, None),
+                                 ({}, b'not a line\n'), ({}, b'XYZ  usr/lib/systemd/system/a\n'),
+                                 ({}, ('f' * 32 + '  usr/lib/systemd/system/a\n').encode() * 2)):
+                with self.subTest(limits=limits, data=data):
+                    if data is not None:
+                        host.write('/var/lib/dpkg/info/bad.md5sums', data)
+                    with patch.dict(state.MD5SUMS_DISCOVERY, limits):
+                        self.assertEqual(host.observe()['dpkg-md5sums'], {'state': 'error', 'error': 'ValueError'})
+                    if data is not None:
+                        os.unlink(host.path('/var/lib/dpkg/info/bad.md5sums'))
+            os.mkfifo(host.path('/var/lib/dpkg/info/fifo.md5sums'))  # never opened (security P3-4)
+            with patch.object(state, 'read_at', wraps=state.read_at) as spy:
+                self.assertEqual(host.observe()['dpkg-md5sums'], {'state': 'error', 'error': 'ValueError'})
+            self.assertNotIn('fifo.md5sums', [call.args[1] for call in spy.call_args_list])
+            os.unlink(host.path('/var/lib/dpkg/info/fifo.md5sums'))
+            good = host.observe()['dpkg-md5sums']['value']
+        for change in (lambda v: v.clear() or v.update(mode='discovery'),  # the PR-C1 shape
+                       lambda v: v.update(scanned=state.MD5SUMS_DISCOVERY['files'] + 1),
+                       lambda v: v.update(bytes=state.MD5SUMS_DISCOVERY['bytes'] + 1),
+                       lambda v: v.update(digest='A' * 64),
+                       lambda v: v['files']['legacy.md5sums']['lines'].update(
+                           {'/usr/lib/systemd/system/x%05d' % i: 'a' * 32 for i in range(state.MD5SUMS_DISCOVERY['lines'])}),
+                       lambda v: v['files']['legacy.md5sums']['lines'].update({'/usr/bin/y': 'a' * 32}),
+                       lambda v: v['files']['legacy.md5sums'].update(lines={}),
+                       lambda v: v.update(scanned=1),
+                       lambda v: v['files'].update({'x.list': v['files']['legacy.md5sums']})):
+            bad = copy.deepcopy(good)
+            change(bad)
+            with self.subTest(bad=str(bad)[:80]), self.assertRaises(ValueError):
+                state.check('dpkg-md5sums', bad)
+
+    def test_an_item_failure_names_its_index_and_errno_never_its_path(self):
+        import errno
+        host = Host(self)
+        os.rmdir(host.path(SNAPD))
+        host.link(SNAPD, '/srv')
+        with host.active():
+            raw = host.observe()
+        self.assertEqual(set(raw['dbus-service-dirs']), {'state', 'error', 'locus'})
+        self.assertEqual((raw['dbus-service-dirs']['error'], raw['dbus-service-dirs']['locus']['item']), ('OSError', 3))
+        self.assertIn(raw['dbus-service-dirs']['locus']['errno'], (errno.ELOOP, errno.ENOTDIR))  # O_NOFOLLOW|O_DIRECTORY
+        self.assertEqual(state.ITEMS['dbus-service-dirs'][3], SNAPD)
+        self.assertNotIn('snapd', json.dumps(raw['dbus-service-dirs']))
+        self.assertEqual(state.error_record(ValueError('/private/path')), {'state': 'error', 'error': 'ValueError'})
+        self.assertEqual(state.error_record(state.ItemError(2, ValueError('LIMIT'))),
+                         {'state': 'error', 'error': 'ValueError', 'locus': {'item': 2, 'errno': None}})
+        self.assertEqual(state.error_record(state.ItemError(0, OSError(99999, 'x')))['locus'], {'item': 0, 'errno': None})
+        self.assertEqual(state.error_record(state.ItemError(0, OSError(0, 'x')))['locus'], {'item': 0, 'errno': None})
+        self.assertEqual(state.error_record(state.ItemError(0, OSError(4095, 'x')))['locus'], {'item': 0, 'errno': 4095})
+        self.assertEqual(evidence.operation(lambda: state.each(('/a', '/b'), lambda p: 1 / (p == '/a')))['locus'],
+                         {'item': 1, 'errno': None})
+
+    def test_every_reader_walks_its_items_in_order(self):
+        """QA P2-3: `locus.item` indexes exactly the paths each reader passes to `each`."""
+        host = Host(self)
+        seen, real = {}, state.each
+        def spy(paths, function):
+            seen.setdefault(tuple(paths), 0)
+            seen[tuple(paths)] += 1
+            return real(paths, function)
+        with host.active(), patch.object(state, 'each', side_effect=spy):
+            host.observe()
+        self.assertEqual(set(seen), {tuple(items) for items in state.ITEMS.values()})
+
+    def test_the_validator_accepts_only_a_bounded_locus(self):
+        host = Host(self)
+        with host.active():
+            doc, binding = collect_on(host)
+            for name, items in state.ITEMS.items():
+                with self.subTest(section=name):
+                    good = copy.deepcopy(doc)
+                    good['sections'][name] = {'state': 'error', 'error': 'OSError', 'locus': {'item': len(items) - 1, 'errno': 62}}
+                    self.assertEqual(validator.validate(encoded(good), binding)['status'], 'PARTIAL_REVIEW_REQUIRED')
+            for name, record in (
+                    ('unit-universe', {'state': 'error', 'error': 'OSError', 'locus': {'item': len(state.ITEMS['unit-universe']), 'errno': 62}}),
+                    ('unit-universe', {'state': 'error', 'error': 'OSError', 'locus': {'item': 0, 'errno': 0}}),
+                    ('unit-universe', {'state': 'error', 'error': 'OSError', 'locus': {'item': 0, 'errno': None, 'path': '/x'}}),
+                    ('unit-universe', {'state': 'error', 'error': 'CHANGED', 'locus': {'item': 0, 'errno': None}}),
+                    ('unit-universe', {'state': 'error', 'error': 'OSError', 'locus': {'item': True, 'errno': None}}),
+                    ('unit-universe', {'state': 'error', 'error': 'OSError', 'locus': {'item': -1, 'errno': None}}),
+                    ('unit-universe', {'state': 'error', 'error': 'OSError', 'locus': {'item': 0, 'errno': 4096}}),
+                    ('unit-universe', {'state': 'error', 'error': 'OSError', 'locus': {'item': 0, 'errno': 1.5}}),
+                    ('pk-processes', {'state': 'error', 'error': 'OSError', 'locus': {'item': 0, 'errno': None}})):
+                with self.subTest(name=name, record=record):
+                    bad = copy.deepcopy(doc)
+                    bad['sections'][name] = record
+                    with self.assertRaises(ValueError):
+                        validator.validate(encoded(bad), binding)
+
+    def test_a_pr_c1_shaped_document_is_refused(self):
+        """Owner K2: format 3 grows in place; a document without the new sections is refused at this source."""
+        host = Host(self)
+        with host.active():
+            doc, binding = collect_on(host)
+            self.assertEqual(validator.validate(encoded(doc), binding)['status'], 'COLLECTED_REVIEW_REQUIRED')
+            for name in state.EVIDENCE_SECTIONS:
+                with self.subTest(section=name):
+                    bad = copy.deepcopy(doc)
+                    del bad['sections'][name]
+                    with self.assertRaises(ValueError):
+                        validator.validate(encoded(bad), binding)
+            bad = copy.deepcopy(doc)
+            bad['sections']['dpkg-md5sums']['value'] = {'mode': 'discovery'}
+            with self.assertRaises(ValueError):
+                validator.validate(encoded(bad), binding)
+
+    def test_profile_rules_for_the_new_keys(self):
+        host = Host(self)
+        good = host.reviewed['profiles'][0]
+        missing = copy.deepcopy(good)
+        missing['allow']['service_members'] = {k: v for k, v in good['allow']['service_members'].items() if k != SNAPD}
+        self.assertEqual(state.profile_errors({'profiles': (missing,)}), [(good['id'], 'service_members')])
+        extra = copy.deepcopy(good)
+        extra['allow']['service_members'] = {**good['allow']['service_members'], '/opt/services': ()}
+        self.assertEqual(state.profile_errors({'profiles': (extra,)}), [(good['id'], 'service_members')])
+        unset = copy.deepcopy(good)
+        unset['allow']['service_members'] = None
+        self.assertEqual(state.profile_errors({'profiles': (unset,)}), [])
+        no_gdbus = copy.deepcopy(good)
+        no_gdbus['code']['files'].pop('/usr/bin/gdbus')
+        self.assertEqual(state.profile_errors({'profiles': (no_gdbus,)}), [(good['id'], 'code')])
+        self.assertIn('/usr/bin/gdbus', good['code']['files'])
+
+
+def base64_body(item):
+    import base64
+    return base64.b64decode(item['body']['base64'])
 
 
 class Volatile(unittest.TestCase):

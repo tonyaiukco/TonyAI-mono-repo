@@ -1543,7 +1543,8 @@ proof-bound non-activation predicate. PR-C1 adds only the predicate side,
   with their reviewed allowances merged (`profile_errors`). The validator decides
   `DISCOVERY_ONLY` from its own selection over the document's package and manager sections,
   never from the document's declared mode alone. As shipped `o10_ok` is false and no profile
-  exists.
+  exists; PR-C1b ships none either (owner K6): A's profile follows LIVE-A1b, whose discovery
+  md5sums give its packaged-unit index.
 - **Not wired to the gate.** `r3_install_policy.PACKAGEKIT_GATE_WIRED` is `False`: the
   installer's facts carry `None` on every host whatever the reviewed values say, so a filled
   `REVIEWED` (PR-C1b) cannot pass preflight before PR-C2's mask-record, continuity and
@@ -1559,22 +1560,35 @@ proof-bound non-activation predicate. PR-C1 adds only the predicate side,
 - **Recorded deviations from design03, for review** (each fail-closed or stricter):
   - C5 permits the package's own `/usr/lib/systemd/system/packagekit.service` as a regular
     file (the `/etc` mask shadows it, O14) and C13 binds its bytes; C5 and C14 also name the
-    template, alias and type-level drop-in candidates (O14 gaps), C7 checks `dbus.service.d`
+    template, alias and type-level drop-in candidates (O14 gaps), and since PR-C1b the alias's
+    own `dbus-org.freedesktop.PackageKit.service.d` and the `packagekit-.service.d` prefix
+    drop-in that systemd 255 applies to `packagekit-offline-update.service`; C7 checks `dbus.service.d`
     at every root, C14 requires the three trigger units `not-found`, and C16 also checks
     `/etc/system-update`.
   - An absent bus socket gives `None`, not `True`.
   - C12 binds the dpkg rows of `dbus*`, `libdbus-1-3*`, `systemd`, `systemd-sysv`,
     `libsystemd-shared`, `libsystemd0*`, `libglib2.0*`, `packagekit*`,
-    `init-system-helpers` and `needrestart`, and only the running kernel's
-    `linux-image-<release>` row and release (security H2); other installed kernels are
-    not code identity.
+    `init-system-helpers`, `needrestart`, and since PR-C1b `polkitd`,
+    `libpolkit-gobject-1-0*` and `snapd` (owner K5: polkitd authorizes PackageKit's methods,
+    snapd ships the C9 include), and only the running kernel's `linux-image-<release>` row and
+    release (security H2); other installed kernels are not code identity. A pattern that
+    matches no installed package makes `dpkg-query` exit 1, so that section is partial and
+    the predicate `None`. C12's files include `/usr/bin/gdbus` (the hook's client, O8).
   - C15 uses only the ctime rule (O13 proved `reload_on_lookup` fails for this build), also
     against dbus.service's recorded `ExecMainStartTimestamp` (H2, hence `--timestamp=unix`),
     and its path set includes the parents `/usr/share/dbus-1`, `/etc/dbus-1`,
-    `/usr/local/share/dbus-1` and `/usr/lib/dbus-1`.
-  - C13: a symlink must resolve to a classified in-root entry or a reviewed literal (H1);
-    a target containing `..` resolves only as `../<name>` from a scanned directory, since
-    systemd follows links before `..`. Packaged units are bound by SHA256 where the index has
+    `/usr/local/share/dbus-1`, `/usr/lib/dbus-1` and `/var/lib/snapd/dbus-1`. A first-boot
+    host whose snapd creates its servicedir after dbus started is therefore `None` (fail
+    closed; LIVE-A1b shows whether A does).
+  - C13: a symlink must resolve to a classified in-root entry (H1); a target containing `..`
+    resolves only as `../<name>` from a scanned directory, since systemd follows links before
+    `..`. A `link_targets` literal (owner K1) clears a link, even a PackageKit-named one such as
+    the packaged `system-update.target.wants/packagekit-offline-update.service`, only when the
+    link's target equals the literal and resolves to a file this scan read that the reviewed
+    `unit_index` binds, and never for a link named like one of PackageKit's own units (`C5_NAMES`,
+    `C14_NAMES`, any `packagekit@` instance), whose safety would otherwise rest on the mask alone; it no longer clears an out-of-root target by path alone (PR-C1
+    follow-up 3). Otherwise a PackageKit-named link is an activator (design03 C13(b)); C16's
+    `/system-update` absence is what keeps the reviewed offline-update link inert. Packaged units are bound by SHA256 where the index has
     it and by dpkg MD5 otherwise (H4). A non-packaged unit is an activator if its body or its
     name contains `packagekit` (any case; stricter than `Exec*=`/`BusName=` only), and not
     classifiable if an `Exec*=` value uses specifiers, variables, globs or a shell `-c` flag
@@ -1582,11 +1596,50 @@ proof-bound non-activation predicate. PR-C1 adds only the predicate side,
     body of the service and configuration directories is read (not only reviewed ones), and
     the scan adds `/run/user/0/dbus-1/services` and `/var/lib/snapd/desktop/systemd/user`.
   - Per-section caps replace design03 4.1's 512-record collector counter.
-- **Open design items before PR-C1b** (owner or security decision): a packaged,
-  PackageKit-named symlink such as an offline-update `system-update.target.wants` link
-  always gives C13 `True` (design03 C13(b)), so a stock host could never be `False` if the
-  package ships one (to be checked against the packagekit .deb); `pk-mask-record` arrives
-  with PR-C2 as evidence document format 4, and format 3 stays frozen; PR-C2 replaces the
+- **PR-C1b (owner decisions K1-K6, 2026-10-26).**
+  - **snapd's servicedir (C2/C9).** LIVE-A1a-2 found `/usr/share/dbus-1/system.d/snapd.system-services.conf`
+    declaring `<servicedir>/var/lib/snapd/dbus-1/system-services/</servicedir>`. dbus appends an
+    included servicedir after the standard ones and activation takes the first matching `Name=`
+    in that order (o9-o12 review), so `SERVICE_DIRS` ends with it and C2's owner, member,
+    regular and no-other-registration sub-clauses cover it. `C2.parents` requires every present
+    `DBUS_PARENTS` entry to be a directory and it and its chain to be root-owned and not group- or
+    world-writable; a parent recorded absent while a service directory below it is listed fails.
+    `C9.servicedirs` holds only when every `<servicedir>` in the C9 chain is in snapd's include
+    and equals that directory (one trailing `/` allowed); any other declaration fails, whatever
+    hash a profile pins. A declaration in another spelling (attributes, spaces, CDATA, a
+    character reference), any `<!ENTITY` declaration, or a body with a NUL byte (expat
+    auto-detects UTF-16 even under dbus' UTF-8 protocol encoding) is not established, since
+    expat would decode or expand it. The profile's `service_members` must name every service directory.
+  - **Evidence for open obligations (`G7.evidence`).** `dsh-state` (both deb-systemd-helper
+    state directories to depth 1: names, types, sizes and link targets, never a body; O7), `needrestart-config` (`needrestart.conf`,
+    `notify.conf`, `iucode.sh`, the four `.d` directories with bodies, and the names in
+    `/etc/needrestart`; O11), `dbus-session-config` (the session.conf trio and both `session.d`
+    directories; O12's session half) and `user-manager` (`/var/lib/systemd/linger` and
+    `/run/systemd/users` names, `/run/user/0`'s entry; O12's user half). `needrestart-config` reads
+    every member body of the `.d` directories, so admin data such as notification recipients and
+    linger's user names enter the encrypted evidence (never facts). No conjunct reads their
+    values; each must be collected and schema-valid or the predicate is `None`. `user-manager`
+    is not re-read for drift (a login changes it).
+  - **Discovery md5sums (owner K4, U1).** Without a reviewed index, `dpkg-md5sums` reads every
+    `/var/lib/dpkg/info/*.md5sums` (at most 4096 files, 32 MiB, 8192 kept lines), keeps each
+    file's SHA256 and its lines under a unit root or its `/lib/systemd/` spelling, and binds the
+    complete (name, SHA256) list in `digest` (checkable only against the host's own list). These are the inputs for a reviewed `unit_index`;
+    never a policy input themselves.
+  - **Error locus (owner K3).** A failure inside one of a section's fixed items (`ITEMS`) adds
+    `locus`: the item's index and the errno (1-4095, else null), never a path or message. The
+    validator accepts it only for those sections, with the index in range and an error other
+    than `CHANGED`.
+  - **Format 3 grows in place (owner K2).** The four sections and the discovery md5sums shape
+    are part of format 3 at this source; a document collected by the PR-C1 source (A1a,
+    A1a-2) is refused by this validator. Its own private validators remain the record of it.
+    `predicate_contract` names the revision (`r2`); any further in-place change of format 3 needs
+    its own owner decision, as K2 was.
+  - **Blocker before any profile lands or `o10_ok` flips:** the evidence sections are bound for
+    shape only. O11 (needrestart's hook and configuration bodies) and O12's session half (a
+    `<servicedir>` declared in the session configuration chain, which root's user manager would
+    use) must first be bound as conjuncts or reviewed literals in `pk_core`.
+- **Open design items** (owner or security decision): `pk-mask-record` arrives
+  with PR-C2 as evidence document format 4; PR-C2 replaces the
   installer's and guest's plain `facts() == policy_facts` re-checks with the baseline-aware,
   phase-aware compare and retains each phase's full projected universe (QA M3), because the
   isolation masks, the Docker masks and the pinned unit files all change the stable-root
@@ -1658,12 +1711,14 @@ Format 3 (option C, [R3-POLICY-01-C1](#r3-policy-01-c1-shared-packagekit-state-o
 adds the shared PackageKit sections - `pk-units`, `manager`, `pk-package-metadata`,
 `link:` (the mask path, `/var/run`, `/lib`), `dir-meta:/var`, `device:/dev/null`,
 `dbus-socket`, `unit-candidates`, `unit-universe`, `dpkg-md5sums`, `pk-fragments`,
-`dbus-service-dirs`, `dbus-config`, `dbus-daemon-proc`, `pk-binaries`, `pk-processes` -
-plus `pk-units-after` (the unit block read again and compared field by field) and
+`dbus-service-dirs`, `dbus-config`, `dbus-daemon-proc`, `pk-binaries`, `pk-processes`, and
+since PR-C1b the evidence sections `dsh-state`, `needrestart-config`, `dbus-session-config`
+and `user-manager` - plus `pk-units-after` (the unit block read again and compared field by field) and
 `pk-dpkg-index` (a discovery index, never a read list or a completeness input). Each
-file-backed section is re-read for drift; `dbus-daemon-proc` compares only its process
-identity. Caps are module literals (unit roots: 2048 entries each, 128 bodies of at most
-64 KiB and 8 MiB in all, 4096 packaged hashes, depth 1; md5sums 16 MiB and 512 files);
+file-backed section except `user-manager` is re-read for drift; `dbus-daemon-proc`
+compares only its process identity. Caps are module literals (unit roots: 2048 entries each, 128 bodies of at most
+64 KiB and 8 MiB in all, 4096 packaged hashes, depth 1; md5sums 16 MiB and 512 files in full
+mode, 32 MiB, 4096 files and 8192 kept lines in discovery mode);
 an overflow is an error section, never truncation. Without a reviewed packaged-unit
 index the unit universe holds names, types, sizes and link targets only and the
 validator reports `DISCOVERY_ONLY`. A unit root reached through a symlink (Noble packages
@@ -1676,7 +1731,8 @@ through a component that may itself be a link). LIVE-A1a (run
 the whole `unit-universe` section on that link (ELOOP). A discovery collection is a
 complete, sealed run (the guest and controllers exit 0) that never yields policy-input
 hashes. The validator reports
-`predicate_contract`: `option-c` for format 3, `legacy` for formats 1 and 2, which keep
+`predicate_contract`: `option-c/<proof_id>/r<PREDICATE_REVISION>` for format 3 (`r2` since PR-C1b; PR-C1 emitted
+`option-c/<proof_id>`), `legacy` for formats 1 and 2, which keep
 their status, hashes and registration-and-socket predicate. The 240-second budget is
 unchanged until measured (D22).
 
