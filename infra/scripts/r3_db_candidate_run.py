@@ -127,7 +127,12 @@ def validate_lock(lock, root=ROOT):
         raise ValueError('Candidate lock shape differs')
     if lock['candidate_dir'] != CANDIDATE or lock['root'] != str(FIXED_ROOT) or lock['endpoint_port'] != 55432:
         raise ValueError('Candidate lock location differs')
-    names = sorted(p.name for p in (root / CANDIDATE).iterdir())
+    # The interpreter's own (gitignored) bytecode cache is not a candidate file; anything else must be one.
+    entries = [p for p in (root / CANDIDATE).iterdir()
+               if not (p.name == '__pycache__' and p.is_dir() and not p.is_symlink())]
+    if any(p.is_symlink() or not p.is_file() for p in entries):
+        raise ValueError('Candidate files differ from the lock manifest')
+    names = sorted(p.name for p in entries)
     manifest = lock['source_manifest']
     if names != sorted(manifest) or any(file_hash(root / CANDIDATE / n) != manifest[n] for n in names):
         raise ValueError('Candidate files differ from the lock manifest')

@@ -788,6 +788,8 @@ DW = '.github/workflows/r3-db-candidate.yml'
 add(DR, 'db-run-rerun', "env.get('GITHUB_RUN_ATTEMPT') != '1'", 'False')
 add(DR, 'db-run-workflow-ref', "or env.get('GITHUB_WORKFLOW_REF') != env.get('GITHUB_REPOSITORY', '') + '/' + WORKFLOW + '@' + ref):", 'or False):')
 add(DR, 'db-run-tracked-bytes', "        if hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\\0' + data).hexdigest() != blob.decode():", '        if False:')
+add(DR, 'db-run-lock-regular-files', '    if any(p.is_symlink() or not p.is_file() for p in entries):', '    if False:')
+add(DR, 'db-run-lock-cache-symlink', "if not (p.name == '__pycache__' and p.is_dir() and not p.is_symlink())]", "if not (p.name == '__pycache__' and p.is_dir())]")
 add(DR, 'db-run-lock-file-hashes', 'if names != sorted(manifest) or any(file_hash(root / CANDIDATE / n) != manifest[n] for n in names):', 'if names != sorted(manifest):')
 add(DR, 'db-run-lock-manifest-hash', "    if lock['source_manifest_sha256'] != canonical_sha(manifest):", '    if False:')
 add(DR, 'db-run-generated-pin', "        if prisma['generated'][name] != {'sha256': digest(data), 'bytes': len(data)}:", '        if False:')
