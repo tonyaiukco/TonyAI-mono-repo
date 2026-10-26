@@ -20,7 +20,10 @@ import ci_database_image as image
 class CommandDiagnosticsTests(unittest.TestCase):
     def test_command_failure_reports_only_fixed_stage_and_reason(self):
         for stderr, reason in [('private-output', 'command refused'),
-                               ('private-output: Data limit exceeded', 'registry request limit')]:
+                               ('private-output: Data limit exceeded', 'registry data-transfer limit'),
+                               ('toomanyrequests: Data limit exceeded', 'registry data-transfer limit'),
+                               ('private-output: toomanyrequests: retry later', 'registry request-rate limit'),
+                               ('private-output: 429 Too Many Requests', 'registry request-rate limit')]:
             result = subprocess.CompletedProcess([], 1, 'private-stdout', stderr)
             with patch.object(image.subprocess, 'run', return_value=result):
                 with self.assertRaises(image.QualificationFailure) as raised:
@@ -46,6 +49,8 @@ class DatabaseImageTests(unittest.TestCase):
         self.container_data = {'id': self.policy['config_digest'], 'reference': image.REGISTRY + '/' + self.policy['image_tag'], 'running': True}
         self.cli_version = self.policy['cli_version']
         self.existing = ''
+        self.cached = False  # the reviewed image already loaded from the Actions cache
+        self.pulled = False
         env = patch.dict(os.environ, {'CI': 'true', 'GITHUB_ACTIONS': 'true',
                                      'PATH': os.environ.get('PATH', ''),
                                      'SUPABASE_INTERNAL_IMAGE_REGISTRY': image.REGISTRY}, clear=True)
@@ -60,11 +65,16 @@ class DatabaseImageTests(unittest.TestCase):
         if argv[:2] == ('docker', 'ps'):
             return self.existing
         if argv[:3] == ('docker', 'image', 'inspect'):
+            if argv[3] == self.policy['config_digest'] and not (self.cached or self.pulled):
+                raise image.QualificationFailure('image metadata query failed (command refused); diagnostics withheld.')
             return json.dumps(self.image_data)
         if argv[:3] == ('docker', 'container', 'inspect'):
             self.assertEqual(argv[3], 'supabase_db_fixture')
             return json.dumps(self.container_data)
-        if argv[:2] in [('docker', 'pull'), ('docker', 'tag')]:
+        if argv[:2] == ('docker', 'pull'):
+            self.pulled = True
+            return ''
+        if argv[:2] == ('docker', 'tag'):
             return ''
         self.fail('Unexpected command: ' + repr(argv))
 
@@ -72,10 +82,35 @@ class DatabaseImageTests(unittest.TestCase):
         image.prepare(self.root)
         pull = ('docker', 'pull', '--platform', 'linux/amd64', image.REGISTRY + '/' + self.policy['image'])
         tag = ('docker', 'tag', image.REGISTRY + '/' + self.policy['image'], image.REGISTRY + '/' + self.policy['image_tag'])
+        self.assertIn(pull, self.calls)  # an assertion, never a ValueError from index (check_mutations)
+        self.assertIn(tag, self.calls)
         self.assertLess(self.calls.index(pull), self.calls.index(tag))
         image.verify(self.root)
         self.assertIn(('docker', 'image', 'inspect', self.policy['config_digest'], '--format',
             '{"id":{{json .Id}},"os":{{json .Os}},"architecture":{{json .Architecture}}}'), self.calls)
+
+    def test_a_cached_reviewed_image_is_used_by_its_digest_without_a_pull(self):
+        self.cached = True
+        image.prepare(self.root)
+        self.assertFalse(any(argv[:2] == ('docker', 'pull') for argv in self.calls))
+        self.assertIn(('docker', 'tag', self.policy['config_digest'], image.REGISTRY + '/' + self.policy['image_tag']), self.calls)
+        inspected = [argv[3] for argv in self.calls if argv[:3] == ('docker', 'image', 'inspect')]
+        self.assertEqual(inspected, [self.policy['config_digest'], image.REGISTRY + '/' + self.policy['image_tag']])
+        image.verify(self.root)
+
+    def test_a_cached_image_that_is_not_the_reviewed_content_is_never_tagged(self):
+        """A wrong platform under the reviewed ID (or any mismatch) falls back to the digest pull, and a
+        pulled image that still differs refuses before the tag."""
+        self.cached = True
+        self.image_data = {**self.image_data, 'architecture': 'arm64'}
+        with self.assertRaises(ValueError): image.prepare(self.root)
+        self.assertIn(('docker', 'pull', '--platform', 'linux/amd64', image.REGISTRY + '/' + self.policy['image']), self.calls)
+        self.assertFalse(any(argv[:2] == ('docker', 'tag') for argv in self.calls))
+
+    def test_without_a_cached_image_the_reviewed_digest_is_pulled(self):
+        image.prepare(self.root)
+        self.assertEqual([argv for argv in self.calls if argv[:2] == ('docker', 'pull')],
+                         [('docker', 'pull', '--platform', 'linux/amd64', image.REGISTRY + '/' + self.policy['image'])])
 
     def test_non_ci_or_wrong_registry_refuses_before_any_command(self):
         self.assertEqual(image.REGISTRY, 'ghcr.io')
@@ -188,6 +223,108 @@ class DatabaseImageTests(unittest.TestCase):
         self.assertLess(prepare, start); self.assertLess(start, verify); self.assertLess(verify, migrate)
         for index in (prepare, start, verify):
             self.assertEqual(steps[index]['env']['SUPABASE_INTERNAL_IMAGE_REGISTRY'], image.REGISTRY)
+
+    def test_action_caches_only_the_reviewed_database_image_around_the_identity_checks(self):
+        """Loaded before prepare (which accepts it only by its reviewed digest), saved only after verify on a
+        cache miss and only the reviewed tag (no other stack image, which would run before verify), a partial
+        archive never uploaded, a cache failure non-fatal, and the cache actions pinned."""
+        action = yaml.load((ROOT / '.github/actions/supabase-stack/action.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = action['runs']['steps']
+        index = {step.get('name'): i for i, step in enumerate(steps)}
+        restore, load = steps[index['Restore the cached database image']], steps[index['Load the cached database image']]
+        save, upload = steps[index['Save the database image for later runs']], steps[index['Cache the database image']]
+        prepare = index['Prepare the reviewed database image']
+        verify = index['Verify the running database image before migrations']
+        migrate = index['Migrate and seed']
+        self.assertEqual(restore['uses'], 'actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830')
+        self.assertEqual(upload['uses'], 'actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830')
+        self.assertLess(index['Restore the cached database image'], index['Load the cached database image'])
+        self.assertLess(index['Load the cached database image'], prepare)
+        self.assertLess(verify, index['Save the database image for later runs'])
+        self.assertLess(index['Cache the database image'], migrate)
+        self.assertEqual(restore['with']['key'],
+                         "supabase-db-image-v1-${{ runner.os }}-${{ hashFiles('infra/selfhost/database-image-policy.json') }}")
+        self.assertEqual(set(restore['with']), {'path', 'key'})  # no restore-keys, no fail-on-cache-miss
+        for path in re.findall(r"hashFiles\('([^']+)'\)", restore['with']['key']):
+            self.assertTrue((ROOT / path).is_file(), path)  # hashFiles silently ignores a missing path
+        self.assertEqual(upload['with']['key'], '${{ steps.image-cache.outputs.cache-primary-key }}')
+        self.assertEqual(load['if'], "steps.image-cache.outputs.cache-hit == 'true'")
+        self.assertEqual(save['if'], "steps.image-cache.outputs.cache-hit != 'true'")
+        self.assertEqual(upload['if'], "steps.image-cache.outputs.cache-hit != 'true' && steps.image-save.outcome == 'success'")
+        self.assertEqual((save['continue-on-error'], upload['continue-on-error']), ('true', 'true'))
+        self.assertEqual(restore['with']['path'], upload['with']['path'])
+        self.assertNotIn('docker ps', save['run'])
+        cleanup = steps[index['Remove the image archive']]
+        self.assertEqual(cleanup['if'], 'always()')
+        self.assertEqual(cleanup['run'], 'rm -f "$RUNNER_TEMP/supabase-db-image.tar" "$RUNNER_TEMP/supabase-db-image.partial"')
+        self.assertLess(index['Cache the database image'], index['Remove the image archive'])
+        self.assertLess(index['Remove the image archive'], index['Export Supabase env'])
+
+    def run_load(self, load_status, after_extra=(), before=('node:22 sha256:aa',), after_drop=()):
+        """The load step under GitHub's composite shell, with a fake docker whose `image ls` changes after `load`."""
+        action = yaml.load((ROOT / '.github/actions/supabase-stack/action.yml').read_text(), Loader=yaml.BaseLoader)
+        script = next(step for step in action['runs']['steps'] if step.get('name') == 'Load the cached database image')['run']
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        bin_dir, runner, work = Path(temp.name) / 'bin', Path(temp.name) / 'runner', Path(temp.name) / 'work'
+        bin_dir.mkdir(); runner.mkdir(); (work / 'infra/selfhost').mkdir(parents=True)
+        (work / 'infra/selfhost/database-image-policy.json').write_text(json.dumps(self.policy))
+        (runner / 'supabase-db-image.tar').write_bytes(b'archive')
+        reviewed = image.REGISTRY + '/' + self.policy['image_tag'] + ' ' + self.policy['config_digest']
+        after = [line for line in before if line not in after_drop] + ([reviewed] if load_status == 0 else []) + list(after_extra)
+        (runner / 'before').write_text(''.join(line + '\n' for line in before))
+        (runner / 'after').write_text(''.join(line + '\n' for line in after))
+        fake = bin_dir / 'docker'
+        fake.write_text('#!/bin/bash\nif [ "$1" = image ]; then cat "$RUNNER_TEMP/$(cat "$RUNNER_TEMP/state" 2>/dev/null || echo before)"; exit 0; fi\n'
+                        'if [ "$1" = load ]; then echo "$@" > "$RUNNER_TEMP/argv"; echo after > "$RUNNER_TEMP/state"; exit "$FAKE_LOAD"; fi\nexit 9\n')
+        fake.chmod(0o755)
+        result = subprocess.run(['bash', '--noprofile', '--norc', '-eo', 'pipefail', '-c', script], cwd=work,
+            capture_output=True, text=True, env={'PATH': str(bin_dir) + ':' + os.environ['PATH'],
+            'RUNNER_TEMP': str(runner), 'FAKE_LOAD': str(load_status)})
+        self.assertFalse((runner / 'supabase-db-image.tar').exists())
+        self.assertEqual((runner / 'argv').read_text().split(), ['load', '--quiet', '--input', str(runner / 'supabase-db-image.tar')])
+        return result
+
+    def test_a_clean_cached_archive_loads_and_a_failed_load_falls_back_to_the_pull(self):
+        """QA P2-1: composite bash runs with -e; a load that fails must warn and continue, never fail the job."""
+        result = self.run_load(0)
+        self.assertEqual((result.returncode, '::warning::' in result.stdout), (0, False))
+        result = self.run_load(1)
+        self.assertEqual((result.returncode, '::warning::' in result.stdout), (0, True))
+
+    def test_a_cached_archive_changing_any_other_tag_is_refused(self):
+        """Security delta P2: `docker load` restores every tag an archive holds; a crafted entry must not shadow a
+        stack image the CLI would then run without pulling, before verify."""
+        for case in ({'after_extra': ('ghcr.io/supabase/vector:v0 sha256:bb',)},
+                     {'after_extra': ('<none>:<none> sha256:cc',)},
+                     {'after_drop': ('node:22 sha256:aa',), 'after_extra': ('node:22 sha256:dd',)},
+                     {'load_status': 1, 'after_extra': ('ghcr.io/supabase/kong:2 sha256:ee',)},
+                     # Only a removal: the reviewed tag existed with other content and the load re-pointed it.
+                     {'before': ('node:22 sha256:aa', 'ghcr.io/' + self.policy['image_tag'] + ' sha256:ff'),
+                      'after_drop': ('ghcr.io/' + self.policy['image_tag'] + ' sha256:ff',)}):
+            with self.subTest(case=case):
+                result = self.run_load(case.pop('load_status', 0), **case)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('::error::', result.stdout)
+
+    def test_save_step_saves_only_the_reviewed_tag_and_never_a_partial_archive(self):
+        action = yaml.load((ROOT / '.github/actions/supabase-stack/action.yml').read_text(), Loader=yaml.BaseLoader)
+        script = next(step for step in action['runs']['steps'] if step.get('name') == 'Save the database image for later runs')['run']
+        for save_status, archived in ((0, True), (1, False)):
+            with self.subTest(save_status=save_status), tempfile.TemporaryDirectory() as temp:
+                bin_dir, runner, work = Path(temp) / 'bin', Path(temp) / 'runner', Path(temp) / 'work'
+                bin_dir.mkdir(); runner.mkdir()
+                (work / 'infra/selfhost').mkdir(parents=True)
+                (work / 'infra/selfhost/database-image-policy.json').write_text(json.dumps(self.policy))
+                fake = bin_dir / 'docker'
+                fake.write_text('#!/bin/bash\nif [ "$1" = save ]; then echo "$@" > "$RUNNER_TEMP/saved"; printf partial > "$3"; '
+                                'exit "$FAKE_SAVE"; fi\nexit 9\n')
+                fake.chmod(0o755)
+                result = subprocess.run(['bash', '-c', script], cwd=work, capture_output=True, text=True, env={
+                    'PATH': str(bin_dir) + ':' + os.environ['PATH'], 'RUNNER_TEMP': str(runner), 'FAKE_SAVE': str(save_status)})
+                self.assertEqual(result.returncode == 0, archived)
+                self.assertEqual((runner / 'supabase-db-image.tar').exists(), archived)
+                self.assertEqual((runner / 'saved').read_text().split(), ['save', '--output', str(runner / 'supabase-db-image.partial'),
+                                                                          image.REGISTRY + '/' + self.policy['image_tag']])
 
     def test_disposable_fixture_password_meets_unchanged_auth_policy(self):
         action = yaml.load((ROOT / '.github/actions/supabase-stack/action.yml').read_text(), Loader=yaml.BaseLoader)
