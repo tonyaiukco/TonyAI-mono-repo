@@ -78,6 +78,17 @@ is used. Hosted helper secrets stay in memory and Key Vault. Self-hosted service
 also require protected root-only runtime files as described in runbook 07.
 Secret payloads never enter tfvars, state, plan files, logs, repository files or chat.
 
+## Sweden QA application foundation
+
+`terraform/foundation/qa` is an additive QA-only root. It creates the app resource
+group, ACR, Log Analytics, VNet-bound Container Apps environment, application
+vault, API/web identities and private r02 DNS. It references the existing app
+subnet and never writes the data VNet, NSG or VM. OIDC and runtime/app secret
+grants start disabled; each requires a later reviewed owner approval. The
+`qa-infra.yml` workflow validates and mock-tests this root without cloud credentials.
+Application release and candidate preparation follow separately; live R3/R4,
+TLS and application acceptance remain required. See runbook 08.
+
 ## Historical hosted reference (00–06)
 
 1. [Restore a safe session](runbooks/00-session.md).

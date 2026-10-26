@@ -3,8 +3,9 @@
 This is the integration design and approval boundary for the existing self-hosted
 QA host. The **offline network creation preflight** and a **locally tested dashboard
 rotation helper** are implemented by this change; neither authorizes live execution.
-The Sweden application foundation, release writer, image build and
-private database TLS path remain to be implemented and reviewed. This runbook is
+The additive `foundation/qa` application foundation is prepared and mock-tested;
+the release writer, image build and private database TLS path remain separate
+implementation/review work. OIDC and runtime/app grants start disabled. This runbook is
 not an apply command, an approval, or evidence that the application is deployed.
 Use [runbook 07](07-selfhost.md) for existing host ownership and runtime recovery.
 
@@ -42,7 +43,7 @@ the owner; do not switch regions. Provider registration is not SKU/capacity proo
 | Surface | Proposed owner / location / state boundary |
 | --- | --- |
 | Existing VM, VNet and both subnets, NSG, IPs, disks, recovery vault | Existing `selfhost` root; Sweden Central; existing `foundation/staging-selfhost.tfstate`, unchanged |
-| Managed environment, ACR Basic, app Key Vault, API/web identities, Log Analytics and scoped RBAC | New, additive `selfhost-foundation` root; proposed group `tonyai-staging-apps`; Sweden Central |
+| Managed environment, ACR Basic, app Key Vault, API/web identities, Log Analytics and scoped RBAC | Additive `foundation/qa` root; proposed group `tonyai-staging-apps`; Sweden Central |
 | API and web Container Apps, revisions, ingress and runtime references | New, additive `selfhost-application` root; Sweden Central; one writer for release, rotation and rollback |
 | Private DNS zone, VNet link and records | Nonregional Azure Private DNS resources, owned by the new foundation; group metadata location Sweden Central |
 | Entra tenant, service principals, role definitions/assignments; GitHub and Namecheap DNS | Directory/control-plane or external global services, not Sweden regional workloads; separate residency/processor decisions apply |
@@ -428,3 +429,32 @@ Do not turn this integration into their cleanup. Obtain independent security/QA
 review of this boundary and the other lane's security review before merging
 executable secrets/auth integration. The B9 handoff records evidence and proposed
 ledger updates; the central roadmap remains the sole planning/status file.
+
+
+## Additive QA application foundation preparation
+
+The prepared root is `infra/terraform/foundation/qa`; use its invalid-placeholder
+`inputs.example.json` only as a template for owner-selected nonsecret identifiers.
+It is QA-only in Sweden Central. The first environment PUT carries the exact
+reserved app subnet and Consumption profile. Private DNS maps
+`db.qa.tonyai.internal` to the accepted r02 address `10.80.1.4`, never the old host.
+The existing selfhost root remains the only VNet/subnet/NSG/VM writer.
+
+No live unit is authorized. Before any state initialization or plan/apply,
+require accepted R3/R4/PD-3, fresh resource/subnet/backend inventory, approved
+state keys and capacity/cost review. The separate DNS creation needs explicit
+approval. First foundation inputs keep `oidc_enabled`, `runtime_secrets_ready`,
+`smtp_secret_ready` and `apps_ready` false. Runtime grants can later name only the
+API's exact app-vault secrets; DIRECT_URL and recovery escrow never reach workloads.
+Federation requires the existing full owner/admin GitHub preflight, independent
+reviewer and verified ephemeral JIT host destruction. Production is not supported
+by this QA-only root. The final execution sequence follows with the release/image
+preparation; do not use the legacy hosted apply helpers for this root.
+
+Offline checks only:
+
+```bash
+terraform -chdir=infra/terraform/foundation/qa init -backend=false -input=false -lockfile=readonly
+terraform -chdir=infra/terraform/foundation/qa validate
+terraform -chdir=infra/terraform/foundation/qa test
+```

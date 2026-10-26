@@ -1,0 +1,29 @@
+name: Sweden QA preparation
+on:
+  pull_request:
+    paths: ['infra/**', '.github/workflows/qa-*.yml', 'apps/api/Dockerfile']
+  push:
+    branches: [main]
+    paths: ['infra/**', '.github/workflows/qa-*.yml', 'apps/api/Dockerfile']
+permissions:
+  contents: read
+jobs:
+  qa-infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.13.3
+          terraform_wrapper: false
+      - name: Credential-free QA Terraform checks
+        run: |
+          for root in foundation/qa; do
+            terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="infra/terraform/$root" validate -no-color
+            terraform -chdir="infra/terraform/$root" test -no-color
+          done
+          terraform fmt -check -recursive infra/terraform

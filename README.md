@@ -630,6 +630,12 @@ The **active application/data region is Azure Sweden Central**. Follow the
 [Sweden QA integration design](infra/runbooks/08-qa-application.md) for application
 preparation, credential boundaries and owner approval gates. R3/R4, private DB
 TLS, runtime/schema/bucket checks and live acceptance remain prerequisites.
+The additive QA application foundation is now prepared in
+`infra/terraform/foundation/qa`: the managed environment binds the existing app
+subnet at creation, with Sweden ACR/Key Vault/Log Analytics, scoped identities and
+private DNS for r02. OIDC starts disabled. The application release writer and
+candidate image pipeline follow in separate preparation changes. No live
+resource creation or R3/R4 acceptance is implied.
 The [retained hosted implementation](infra/README.md#historical-hosted-reference-0006)
 is historical Germany/Frankfurt compatibility code; never use it as a current
 QA or production deployment route. Its explicit Sweden rejection remains intact.
