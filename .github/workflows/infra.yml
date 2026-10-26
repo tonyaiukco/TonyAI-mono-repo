@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 jobs:
-  infra:
+  validation:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -34,7 +34,6 @@ jobs:
         run: |
           node --test infra/tests/selfhost_init_entry.test.mjs infra/tests/selfhost_init.test.mjs infra/tests/selfhost_smoke_expectations.test.mjs
           python3 infra/tests/check_selfhost_runtime_mutations.py
-          python3 infra/tests/r3_mutations.py --output "$RUNNER_TEMP/r3-mutations.json"
       - name: Regression mutation checks
         run: python3 infra/tests/check_mutations.py
       - name: State security and writer policy
@@ -58,3 +57,50 @@ jobs:
         run: python3 infra/tests/check_selfhost_mutations.py
       - name: Docker context excludes infrastructure secrets and state
         run: python3 infra/tests/check_docker_context.py
+
+  mutation-shards:
+    name: R3 mutations (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install the pinned workflow parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/infra-tests"
+          "$RUNNER_TEMP/infra-tests/bin/python" -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
+          echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
+      - name: Run and verify the complete mutation shard
+        env:
+          MUTATION_SHARD: ${{ matrix.shard }}
+        run: python3 infra/scripts/ci_mutation_shard.py --shard "$MUTATION_SHARD" --output "$RUNNER_TEMP/r3-mutations.json"
+
+  # Preserve the required check name; failed/cancelled/skipped prerequisites
+  # must never turn a partial run into a green Infrastructure check.
+  infra:
+    if: ${{ always() }}
+    needs: [validation, mutation-shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every infrastructure job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          if set(results) != {'validation', 'mutation-shards'} or any(
+              job['result'] != 'success' for job in results.values()
+          ):
+              raise SystemExit('Infrastructure validation or mutation shards did not succeed.')
+          PYTHON

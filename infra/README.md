@@ -249,6 +249,15 @@ runner sweeps after every run, a timed-out one included, so a killed suite leave
 synthetic host behind (it refuses to sweep a root that is no longer its own real directory); a SIGTERM to the runner unwinds like Ctrl-C and removes the
 worker copies and fixture roots.
 
+Infrastructure CI calls the unchanged R3 runner through
+`ci_mutation_shard.py --shard 0..3 --output <report.json>`. The four strided
+partitions cover every registered mutant exactly once; each shard verifies its
+complete ordered result set and retains both baselines. These jobs run alongside
+the remaining checks. The final `infra` check requires successful validation and
+all matrix jobs, including when a prerequisite fails, is cancelled or is skipped.
+No successful test results are cached. This trades additional concurrent runner
+capacity and repeated baselines for shorter elapsed time.
+
 For a checkout already bound to a live backend, run offline init/validate/test
 in a disposable source copy with a separate local `TF_DATA_DIR` and
 `-backend=false`; preserve the original backend metadata and remote state.
