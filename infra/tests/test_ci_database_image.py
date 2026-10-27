@@ -217,7 +217,7 @@ class DatabaseImageTests(unittest.TestCase):
         self.assertEqual(action['inputs']['cli-version']['default'], self.policy['cli_version'])
         steps = action['runs']['steps']
         prepare = next(i for i,s in enumerate(steps) if s.get('run') == 'python3 infra/scripts/ci_database_image.py prepare')
-        start = next(i for i,s in enumerate(steps) if s.get('run', '').startswith('supabase start '))
+        start = next(i for i,s in enumerate(steps) if s.get('run') == 'python3 infra/scripts/ci_supabase_start.py')
         verify = next(i for i,s in enumerate(steps) if s.get('run') == 'python3 infra/scripts/ci_database_image.py verify')
         migrate = next(i for i,s in enumerate(steps) if 'pnpm --filter @tonyai/db run deploy' in s.get('run', ''))
         self.assertLess(prepare, start); self.assertLess(start, verify); self.assertLess(verify, migrate)

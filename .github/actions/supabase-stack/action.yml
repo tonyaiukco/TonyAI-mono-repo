@@ -74,7 +74,8 @@ runs:
       shell: bash
       env:
         SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
-      run: supabase start -x studio,mailpit,realtime,edge-runtime,supavisor
+      # Retries only a registry-throttled start (GHCR `toomanyrequests`), with backoff.
+      run: python3 infra/scripts/ci_supabase_start.py
 
     - name: Verify the running database image before migrations
       shell: bash
