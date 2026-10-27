@@ -26,7 +26,9 @@ def binary(mutation=None):
     if mutation=='module':files['tfconfig/m-child/main.tf']=b'foreign'
     stream=io.BytesIO()
     with zipfile.ZipFile(stream,'w') as archive:
-        for name,value in files.items():archive.writestr(name,value)
+        # A fixed timestamp keeps two builds byte-identical; the current time made the
+        # private-copy comparison fail when they straddled a second boundary.
+        for name,value in files.items():archive.writestr(zipfile.ZipInfo(name,(1980,1,1,0,0,0)),value)
     return stream.getvalue()
 
 
