@@ -1,39 +1,71 @@
 #!/usr/bin/env python3
-"""Start the CI Supabase stack, retrying only when the registry throttles image pulls."""
+"""Start the CI Supabase stack, finishing registry-throttled image pulls before retrying."""
+import re
 import subprocess
 import sys
 import time
 
 COMMAND = ['supabase', 'start', '-x', 'studio,mailpit,realtime,edge-runtime,supavisor']
 STOP = ['supabase', 'stop', '--no-backup']
-# Seconds before attempts 2-4. The CLI's own pull retries give up within seconds while
-# GHCR answers `toomanyrequests` (#251); layers already pulled stay, so each retry pulls less.
-DELAYS = (30, 90, 180)
 THROTTLED = 'toomanyrequests'
+# Only the exact GHCR Supabase images the CLI itself failed to pull are pulled again. The
+# reviewed database image is never pulled here: prepare tags it by digest and verify checks it.
+FAILED_IMAGE = re.compile(
+    r'failed to pull docker image from all registries: '
+    r'(ghcr\.io/supabase/[a-z0-9][a-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*)\s')
+DATABASE_REPOSITORY = 'ghcr.io/supabase/postgres:'
+# GHCR's `toomanyrequests` carries a retry-after of microseconds (#251, runs 40586552198 and
+# 40586552375): it refuses individual blob requests at saturated instants rather than for a
+# window. Many short pull tries per image beat a few long sleeps; pulled layers persist.
+STARTS = 6
+PULL_TRIES = 15
+PULL_PAUSE = 4
+START_PAUSE = (10, 20, 40, 60, 60)
+DEADLINE = 600  # seconds of retrying, inside api-integration's 20-minute job bound
 
 
 def run(command):
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    throttled = False
+    lines = []
     for line in process.stdout:
         sys.stdout.write(line)
         sys.stdout.flush()
-        throttled = throttled or THROTTLED in line
-    return process.wait(), throttled
+        lines.append(line)
+    return process.wait(), ''.join(lines)
 
 
-def main(run=run, sleep=time.sleep):
+def failed_images(output):
+    return [image for image in dict.fromkeys(FAILED_IMAGE.findall(output))
+            if not image.startswith(DATABASE_REPOSITORY)]
+
+
+def pull(image, run, sleep, expired):
+    for attempt in range(1, PULL_TRIES + 1):
+        code, output = run(['docker', 'pull', image])
+        # A refusal that is not throttling is left for the next start to report.
+        if code == 0 or THROTTLED not in output or expired():
+            return code == 0
+        print(f'GHCR throttled {image}; pull try {attempt + 1} of {PULL_TRIES} in {PULL_PAUSE}s.', flush=True)
+        sleep(PULL_PAUSE)
+    return False
+
+
+def main(run=run, sleep=time.sleep, clock=time.monotonic):
+    started = clock()
+    expired = lambda: clock() - started > DEADLINE
     code = 1
-    for attempt, delay in enumerate((0,) + DELAYS, 1):
-        if delay:
-            print(f'Registry throttled the image pulls; retrying in {delay}s '
-                  f'(attempt {attempt} of {len(DELAYS) + 1}).', flush=True)
-            sleep(delay)
-        code, throttled = run(COMMAND)
+    for attempt in range(1, STARTS + 1):
+        code, output = run(COMMAND)
         # Any other failure is real: report it at once instead of retrying it away.
-        if code == 0 or not throttled:
+        if code == 0 or THROTTLED not in output or attempt == STARTS or expired():
             return code
         run(STOP)  # remove the partial stack; pulled images stay for the next attempt
+        for image in failed_images(output):
+            pull(image, run, sleep, expired)
+        pause = START_PAUSE[attempt - 1]
+        print(f'Registry throttled the stack start; starting again in {pause}s '
+              f'(attempt {attempt + 1} of {STARTS}).', flush=True)
+        sleep(pause)
     return code
 
 
