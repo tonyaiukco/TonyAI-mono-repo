@@ -173,6 +173,10 @@ def main():
     print('START: full unmodified infrastructure baseline', flush=True)
     result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(INFRA / 'tests')], capture_output=True)
     if result.returncode:
+        # Name what failed: a bare FAIL hid a baseline-only failure that the earlier full run passed.
+        report = result.stderr.decode(errors='replace').splitlines()
+        failed = [line for line in report if line.startswith(('FAIL: ', 'ERROR: '))]
+        print('\n'.join(failed[:20] + ['--- baseline output, last 80 lines ---'] + report[-80:]), file=sys.stderr, flush=True)
         sys.exit('FAIL: unmodified tests do not pass; mutation evidence is invalid.')
     print(f'PASS: full baseline ({time.monotonic() - started:.2f}s)', flush=True)
     for number, (name, filename, before, after) in enumerate(MUTANTS, 1):
