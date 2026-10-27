@@ -1,11 +1,14 @@
 # 5. Rotation, rollback and recovery
 
-> **Historical hosted reference, not a deployment route for current QA or production.**
-> Active application/data resources use **Azure Sweden Central** and self-hosted
-> Supabase. Use [runbook 08](08-qa-application.md) for application preparation and
-> [runbook 07](07-selfhost.md) for host ownership. The Germany/Frankfurt commands
-> below describe the retained legacy implementation only; do not run them for
-> Sweden or bypass their subscription/project checks.
+> **The QA and pilot deployment route (owner decision 2026-10-28).** The hosted phase
+> builds this path **from scratch**: Supabase Cloud (Pro) in **North EU — Stockholm
+> (`eu-north-1`)** and Azure Container Apps in **Sweden Central (`swedencentral`)**, in the
+> paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
+> prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
+> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
+> changes the code and WP-3 re-checks these runbooks against it.
 
 Use a private owner session restored through runbook 00. Keep the last verified
 release manifest and DB/schema compatibility evidence. **Every application
@@ -29,7 +32,7 @@ it is never a workload secret or an application environment variable.
 
 1. Before applying the LP1-03 migration, use the owner-only helper below from a
    clean reviewed checkout. It resolves the exact `direct-url` version from Key
-   Vault into psql's libpq environment, verifies the Frankfurt/project/owner/TLS
+   Vault into psql's libpq environment, verifies the region/project/owner/TLS
    contract, disables psql startup files/history, and never puts a password or
    URL in argv or prints it. A private interactive terminal and psql are required.
    The freshly generated owner password need not be retrieved or reset manually.
@@ -82,10 +85,11 @@ it is never a workload secret or an application environment variable.
    complete runtime URL from this template (all query parameters are required):
 
    ```text
-   postgresql://tonyai_runtime.<project-ref>:<64-character-hex-password>@aws-N-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true
+   postgresql://tonyai_runtime.<project-ref>:<64-character-hex-password>@aws-N-eu-north-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true
    ```
 
-   Use the project's actual Frankfurt pooler host. Store the URL through hidden
+   Use the project's actual Stockholm (`eu-north-1`) pooler host (the checkers accept
+   it once WP-2 merges). Store the URL through hidden
    input below; this validates its structure, not a login, because the role does
    not exist until migration.
 
@@ -151,8 +155,8 @@ Require both commands to pass. Attach full stdout **and stderr**, including ever
 PUBLIC warning, plus source SHA, deployed release and exact secret version IDs
 (never values). Clear `DATABASE_URL` afterwards. Repeat after restoration or grant
 changes. LP1-03 is DONE only after the deployed identity and privilege evidence
-and required security review close. Hardening the DB checker itself belongs to
-the Claude Code lane; this PR does not modify `packages/db`.
+and required security review close. Hardening the DB checker itself is a separate
+PR; this one does not modify `packages/db`.
 
 Under this runtime URL `check` also prints `! the library's record was not
 reconciled: tonyai_runtime cannot read factor_release_events …`. That line is
@@ -275,10 +279,10 @@ ALTER ROLE tonyai_factor_loader LOGIN;
 Never use a cleartext `ALTER ROLE … PASSWORD` statement. Store this session URL:
 
 ```text
-postgresql://tonyai_factor_loader.<project-ref>:<64-character-hex-password>@aws-N-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=<absolute-repository-path>/infra/certs/prod-ca-2021.crt&connection_limit=1&connect_timeout=15
+postgresql://tonyai_factor_loader.<project-ref>:<64-character-hex-password>@aws-N-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=<absolute-repository-path>/infra/certs/prod-ca-2021.crt&connection_limit=1&connect_timeout=15
 ```
 
-Use the actual project's Frankfurt pooler host and URL-encode the absolute CA
+Use the actual project's Stockholm (`eu-north-1`) pooler host and URL-encode the absolute CA
 path if needed. The private workstation checker deliberately accepts only that
 local CA, session port 5432, the exact project-qualified username and these five
 query parameters. No `host`, `options`, `pgbouncer` or TLS downgrade is accepted.
@@ -528,7 +532,7 @@ The owner `direct-url` stays unchanged. Follow this order:
     psql's hidden `-W` prompt (the arguments below contain no secret):
 
     ```bash
-    PGSSLMODE=verify-full PGSSLROOTCERT="$PWD/infra/certs/prod-ca-2021.crt" psql -X -W -h 'aws-N-eu-central-1.pooler.supabase.com' -p 6543 -U "tonyai_runtime.$SUPABASE_PROJECT_REF" -d postgres -c 'SELECT current_user, session_user'
+    PGSSLMODE=verify-full PGSSLROOTCERT="$PWD/infra/certs/prod-ca-2021.crt" psql -X -W -h 'aws-N-eu-north-1.pooler.supabase.com' -p 6543 -U "tonyai_runtime.$SUPABASE_PROJECT_REF" -d postgres -c 'SELECT current_user, session_user'
     ```
 
     Require an explicit authentication refusal, not a network/TLS failure; prove

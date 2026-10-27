@@ -32,7 +32,9 @@ def registry():
 
 class MutationShardTests(unittest.TestCase):
     def test_real_workflow_partitions_entire_registry_exactly_once(self):
-        jobs = workflow('infra.yml')['jobs']
+        # Paused with the self-hosted work (2026-10-28): the shards run only
+        # from the dispatch-only selfhost-checks.yml, still complete.
+        jobs = workflow('selfhost-checks.yml')['jobs']
         matrix = jobs['mutation-shards']
         self.assertNotIn('if', matrix)
         self.assertNotIn('continue-on-error', matrix)
@@ -49,7 +51,7 @@ class MutationShardTests(unittest.TestCase):
         step = matrix['steps'][-1]
         self.assertEqual(step['env'], {'MUTATION_SHARD': '${{ matrix.shard }}'})
         self.assertEqual(step['run'], 'python3 infra/scripts/ci_mutation_shard.py --shard "$MUTATION_SHARD" --output "$RUNNER_TEMP/r3-mutations.json"')
-        for job in (matrix, jobs['validation']):
+        for job in (matrix, jobs['selfhost-validation'], workflow('infra.yml')['jobs']['validation']):
             for step in job['steps']:
                 self.assertNotIn('continue-on-error', step)
                 self.assertNotIn('if', step)
@@ -62,18 +64,65 @@ class MutationShardTests(unittest.TestCase):
             shard.select([], 0)
 
     def test_required_gate_rejects_every_partial_result(self):
-        job = workflow('infra.yml')['jobs']['infra']
-        self.assertEqual(job['if'], '${{ always() }}')
-        self.assertEqual(set(job['needs']), {'validation', 'mutation-shards'})
-        step = job['steps'][0]
-        self.assertEqual(step['env'], {'RESULTS': '${{ toJSON(needs) }}'})
-        outcomes = ('success', 'failure', 'cancelled', 'skipped')
-        for pair in itertools.product(outcomes, repeat=2):
-            results = dict(zip(job['needs'], ({'result': value} for value in pair)))
-            self.check_gate(step['run'], results, pair == ('success', 'success'))
-        self.check_gate(step['run'], {}, False)
-        self.check_gate(step['run'], {'validation': {'result': 'success'}}, False)
-        self.check_gate(step['run'], {key: {'result': 'success'} for key in (*job['needs'], 'extra')}, False)
+        for name, gate, needs in (('infra.yml', 'infra', ('validation',)),
+                                  ('selfhost-checks.yml', 'selfhost-checks', ('selfhost-validation', 'mutation-shards'))):
+            with self.subTest(workflow=name):
+                job = workflow(name)['jobs'][gate]
+                self.assertEqual(job['if'], '${{ always() }}')
+                self.assertEqual(set(job['needs']), set(needs))
+                step = job['steps'][0]
+                self.assertEqual(step['env'], {'RESULTS': '${{ toJSON(needs) }}'})
+                outcomes = ('success', 'failure', 'cancelled', 'skipped')
+                for combo in itertools.product(outcomes, repeat=len(needs)):
+                    results = dict(zip(job['needs'], ({'result': value} for value in combo)))
+                    self.check_gate(step['run'], results, set(combo) == {'success'})
+                self.check_gate(step['run'], {}, False)
+                self.check_gate(step['run'], {needs[0]: {'result': 'failure'}}, False)
+                if len(needs) > 1:
+                    self.check_gate(step['run'], {needs[0]: {'result': 'success'}}, False)
+                self.check_gate(step['run'], {key: {'result': 'success'} for key in (*job['needs'], 'extra')}, False)
+
+    def test_paused_selfhost_gates_are_kept_whole_and_run_only_by_hand(self):
+        # Pausing must not lose a gate: every self-hosted check that left
+        # infra.yml is in selfhost-checks.yml, and neither paused workflow
+        # runs on pull requests or pushes.
+        for name in ('selfhost-checks.yml', 'qa-infra.yml'):
+            self.assertEqual(set(workflow(name)['on']), {'workflow_dispatch'})
+        paused = '\n'.join(step.get('run', '') for job in workflow('selfhost-checks.yml')['jobs'].values()
+                           for step in job['steps'])
+        for command in ('node --test infra/tests/selfhost_init_entry.test.mjs infra/tests/selfhost_init.test.mjs infra/tests/selfhost_smoke_expectations.test.mjs',
+                        'python3 infra/tests/check_selfhost_runtime_mutations.py',
+                        'terraform -chdir=infra/terraform/selfhost validate -no-color',
+                        'terraform -chdir=infra/terraform/selfhost test -no-color',
+                        'python3 infra/tests/check_replacement_plan_policy.py',
+                        'python3 infra/tests/check_selfhost_mutations.py',
+                        'python3 infra/scripts/ci_mutation_shard.py'):
+            self.assertIn(command, paused)
+        self.assertEqual(set(workflow('selfhost-checks.yml')['jobs']),
+                         {'selfhost-validation', 'mutation-shards', 'selfhost-checks'})
+        active = workflow('infra.yml')
+        self.assertEqual(set(active['jobs']), {'validation', 'infra'})
+        for event in ('pull_request', 'push'):
+            self.assertIn('infra/**', active['on'][event]['paths'])
+            self.assertIn('.github/workflows/**', active['on'][event]['paths'])
+        for job in active['jobs'].values():
+            self.assertNotIn('continue-on-error', job)
+        validation = active['jobs']['validation']['steps']
+        self.assertTrue(any(step.get('uses', '').startswith('hashicorp/setup-terraform@') for step in validation))
+        commands = '\n'.join(step.get('run', '') for step in validation)
+        for command in ('python3 -m unittest discover -s infra/tests -v', 'python3 infra/tests/check_mutations.py',
+                        'python3 infra/scripts/check_terraform_policy.py',
+                        'terraform fmt -check -recursive infra/terraform',
+                        'for root in foundation application; do',
+                        'terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly',
+                        'terraform -chdir="infra/terraform/$root" validate -no-color',
+                        'terraform -chdir="infra/terraform/$root" test -no-color',
+                        'python3 infra/tests/check_runtime_terraform_mutations.py',
+                        'python3 infra/tests/check_grant_mutations.py', 'python3 infra/tests/check_docker_context.py'):
+            self.assertIn(command, commands)
+        everything = '\n'.join(step.get('run', '') for job in active['jobs'].values() for step in job['steps'])
+        for paused in ('selfhost', 'ci_mutation_shard', 'replacement'):
+            self.assertNotIn(paused, everything)
 
     def check_gate(self, command, results, success):
         completed = subprocess.run(['bash', '-eu', '-c', command], capture_output=True,

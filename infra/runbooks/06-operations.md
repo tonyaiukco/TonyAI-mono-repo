@@ -1,11 +1,14 @@
 # 6. LP2-03 operational acceptance (owner-run)
 
-> **Historical hosted reference, not a deployment route for current QA or production.**
-> Active application/data resources use **Azure Sweden Central** and self-hosted
-> Supabase. Use [runbook 08](08-qa-application.md) for application preparation and
-> [runbook 07](07-selfhost.md) for host ownership. The Germany/Frankfurt commands
-> below describe the retained legacy implementation only; do not run them for
-> Sweden or bypass their subscription/project checks.
+> **The QA and pilot deployment route (owner decision 2026-10-28).** The hosted phase
+> builds this path **from scratch**: Supabase Cloud (Pro) in **North EU — Stockholm
+> (`eu-north-1`)** and Azure Container Apps in **Sweden Central (`swedencentral`)**, in the
+> paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
+> prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
+> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
+> changes the code and WP-3 re-checks these runbooks against it.
 
 These steps are procedures, **not evidence of cloud execution**. Record each
 result against source SHA, API/web digests, migration hashes, environment, UTC

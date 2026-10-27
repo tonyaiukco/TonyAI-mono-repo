@@ -65,7 +65,7 @@ Ben (Ana Yapay Zeka / Tech Lead) takımın lideri olarak görev yapıyorum. Sade
 *   **Ne İş Yapar?**
     Sistemin kurulacağı bulut altyapısını hazırlar. Kodların güvenle depolanmasını, otomatik test edilmesini ve kullanıcıların erişebileceği canlı internet ortamına (production) veya test ortamına (staging) otomatik olarak yüklenmesini (deploy) sağlar.
 *   **Bizim Projedeki Sorumluluğu:**
-    Use local Supabase for development and Azure Sweden Central for separate QA and planned production application/data resources. Prepare Docker images, protected GitHub Actions delivery and scoped identities; live provisioning/deployment requires explicit owner approval. Privacy/processor acceptance is separate from regional placement. See [runbook 08](../../infra/runbooks/08-qa-application.md).
+    Use local Supabase for development. For QA and the pilot (decided 2026-10-28): the web and API on Azure Container Apps in Sweden Central (`swedencentral`) and the database, Auth and Storage on Supabase Cloud (Pro) in North EU — Stockholm (`eu-north-1`), with separate QA and production resources; the self-hosted Supabase route on Azure is paused until after the pilot. Prepare Docker images, protected GitHub Actions delivery and scoped identities; live provisioning/deployment requires explicit owner approval. Privacy/processor acceptance is separate from regional placement. See the [hosted-phase plan](../TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md) and runbooks 00–06.
 *   **Çıktısı (Ürettiği Şey):** Canlıda sorunsuz, hızlı çalışan, siber saldırılara karşı korunaklı, yedekleme ve altyapı kurulumları tamamlanmış sunucu sistemleri.
 
 ---

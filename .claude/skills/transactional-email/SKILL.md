@@ -69,8 +69,9 @@ kind is a product decision first (workflow notifications are LP7-05).
   (`AuditService.recordSystem`).
 - **Transport.** nodemailer over SMTP (`readMailConfig`): `SMTP_HOST`, `MAIL_FROM`,
   `APP_URL` together or not at all; STARTTLS required off loopback. Locally the
-  Supabase stack's mailpit (SMTP 54325, UI http://127.0.0.1:54324); staging and
-  production get LP2-04's provider through the same variables.
+  Supabase stack's mailpit (SMTP 54325, UI http://127.0.0.1:54324); QA and
+  production use Azure Communication Services Email (`smtp.azurecomm.net:587`,
+  STARTTLS; decided 2026-10-27) through the same variables.
 
 ## Steps
 1. **Decide the trigger and its durable state** — which row records that the

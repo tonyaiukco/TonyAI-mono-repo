@@ -1,11 +1,14 @@
 # 4. Acceptance evidence, recreation and recovery
 
-> **Historical hosted reference, not a deployment route for current QA or production.**
-> Active application/data resources use **Azure Sweden Central** and self-hosted
-> Supabase. Use [runbook 08](08-qa-application.md) for application preparation and
-> [runbook 07](07-selfhost.md) for host ownership. The Germany/Frankfurt commands
-> below describe the retained legacy implementation only; do not run them for
-> Sweden or bypass their subscription/project checks.
+> **The QA and pilot deployment route (owner decision 2026-10-28).** The hosted phase
+> builds this path **from scratch**: Supabase Cloud (Pro) in **North EU — Stockholm
+> (`eu-north-1`)** and Azure Container Apps in **Sweden Central (`swedencentral`)**, in the
+> paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
+> prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
+> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
+> changes the code and WP-3 re-checks these runbooks against it.
 
 First [restore the session](00-session.md). The owner records each actual result in the PR's B9 handoff, including integrated
 SHA, timestamp, environment/project ref, command/scenario, result and a sanitized
@@ -22,7 +25,7 @@ az containerapp secret list -g "$RESOURCE_GROUP" -n "$PREFIX-staging-web" --quer
 az role assignment list --scope "$(foundation_output vaultId)" --all --query '[].{role:roleDefinitionName,scope:scope,principal:principalId}'
 ```
 
-**Historical hosted expectation only:** Germany West Central; ACR Basic/admin false; Key Vault RBAC/purge
+**Expected:** Sweden Central (Germany West Central until WP-2); ACR Basic/admin false; Key Vault RBAC/purge
 protection true; API's two database/backend **references**, plus `smtp-password` when configured, with API identity; no web secrets.
 Inspect the secret-level role assignments in the portal as well: API has Secrets
 User on the two runtime secrets and, when enabled, `smtp-password` only; `direct-url` has no API/web/deployer grant.
@@ -492,7 +495,7 @@ either into this document, a command argument or a JWT inspection website.
 
 ### First organisation and delivered mail
 
-After the processor decision, runbook 03's mail wiring, migrations and the checks
+After ACS Email is provisioned (hosted-phase plan L1b, L3, L7), runbook 03's mail wiring, migrations and the checks
 above succeed, follow README [Account lifecycle](../../README.md#account-lifecycle-lp4-01).
 On Node 22, in a private owner shell at the deployed source SHA, load the selected
 **owner session** URL using runbook 05's

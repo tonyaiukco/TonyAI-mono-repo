@@ -86,7 +86,7 @@ Verileri asla kaybetmemek ve hızlıca bulmak için kullandığımız teknolojil
 ### DevOps, Canlı Yayın (Azure) ve Dijital DevOps Ajanımız
 *   **Nedir?** Yazılım kodlarımızın güvenle depolandığı merkez ve bu kodları alıp internette kurumsal standartlarda canlı yayına alan bulut altyapısıdır. Bu süreci yönetmek ve hatasız sürdürmek için ekibimize **The DevOps & Cloud Engineer** adında otonom bir yapay zeka ajanı katılmıştır.
 *   **Neden Seçtik?** Altyapıyı otomatik kurabilmek, geliştirme-test-canlı ortamlarını birbirine karıştırmadan yönetmek ve Azure gibi kurumsal bulut sağlayıcılarının gücünden yararlanmak için (sağlayıcı kararı 2026-07-29: Azure — Container Apps). DevOps ajanımız sayesinde sunucu yönetimi insansız ve kesintisiz yürütülür.
-*   **Hosting and privacy boundary:** QA and planned production application/data resources use **Azure Sweden Central**, with self-hosted Supabase and separate environments. Regional placement does not establish KVKK/GDPR compliance; processor/legal review and recovery acceptance remain separate. See [the active application runbook](../../infra/runbooks/08-qa-application.md).
+*   **Hosting and privacy boundary:** For QA and the pilot (decided 2026-10-28, about two to three months) the web and API run on **Azure Container Apps in Sweden Central** and the database, Auth and Storage on **Supabase Cloud (Pro)** in North EU (Stockholm) — see the [hosted-phase plan](../TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md). After the pilot launch the data layer moves to self-hosted Supabase in **Azure Sweden Central**, with separate environments (the paused self-hosted route). Regional placement does not establish KVKK/GDPR compliance; processor/legal review and recovery acceptance remain separate.
 
 ---
 

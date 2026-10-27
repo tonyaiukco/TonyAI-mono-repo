@@ -7,6 +7,10 @@ on:
     paths: ['scripts/rls-probes.mjs', 'infra/**', '.github/actions/supabase-stack/**', '.github/workflows/**', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
 permissions:
   contents: read
+# The self-hosted Supabase checks (selfhost root, its mutations and the R3
+# mutation shards) are paused while QA and the pilot run on Supabase Cloud
+# (owner decision 2026-10-28). They moved, unchanged, to the dispatch-only
+# selfhost-checks.yml; move them back here when the self-hosted work resumes.
 jobs:
   validation:
     runs-on: ubuntu-latest
@@ -30,10 +34,6 @@ jobs:
           echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
       - name: Infrastructure unit and failure-path tests
         run: python3 -m unittest discover -s infra/tests -v
-      - name: Selfhost initializer and destructive-path mutations
-        run: |
-          node --test infra/tests/selfhost_init_entry.test.mjs infra/tests/selfhost_init.test.mjs infra/tests/selfhost_smoke_expectations.test.mjs
-          python3 infra/tests/check_selfhost_runtime_mutations.py
       - name: Regression mutation checks
         run: python3 infra/tests/check_mutations.py
       - name: State security and writer policy
@@ -42,53 +42,23 @@ jobs:
         shell: bash
         run: |
           terraform fmt -check -recursive infra/terraform
-          for root in foundation application selfhost; do
+          for root in foundation application; do
             terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
             terraform -chdir="infra/terraform/$root" validate -no-color
             terraform -chdir="infra/terraform/$root" test -no-color
           done
-          terraform -chdir=infra/terraform/selfhost test -json -verbose > "$RUNNER_TEMP/replacement-plan.jsonl"
-          python3 infra/tests/check_replacement_plan_policy.py "$RUNNER_TEMP/replacement-plan.jsonl"
       - name: Terraform runtime budget mutation checks
         run: python3 infra/tests/check_runtime_terraform_mutations.py
       - name: Terraform secret grant mutation checks
         run: python3 infra/tests/check_grant_mutations.py
-      - name: Terraform selfhost security mutation checks
-        run: python3 infra/tests/check_selfhost_mutations.py
       - name: Docker context excludes infrastructure secrets and state
         run: python3 infra/tests/check_docker_context.py
-
-  mutation-shards:
-    name: R3 mutations (${{ matrix.shard }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-      - name: Install the pinned workflow parser
-        run: |
-          python3 -m venv "$RUNNER_TEMP/infra-tests"
-          "$RUNNER_TEMP/infra-tests/bin/python" -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
-          echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
-      - name: Run and verify the complete mutation shard
-        env:
-          MUTATION_SHARD: ${{ matrix.shard }}
-        run: python3 infra/scripts/ci_mutation_shard.py --shard "$MUTATION_SHARD" --output "$RUNNER_TEMP/r3-mutations.json"
 
   # Preserve the required check name; failed/cancelled/skipped prerequisites
   # must never turn a partial run into a green Infrastructure check.
   infra:
     if: ${{ always() }}
-    needs: [validation, mutation-shards]
+    needs: [validation]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -99,8 +69,8 @@ jobs:
           python3 - <<'PYTHON'
           import json, os
           results = json.loads(os.environ['RESULTS'])
-          if set(results) != {'validation', 'mutation-shards'} or any(
+          if set(results) != {'validation'} or any(
               job['result'] != 'success' for job in results.values()
           ):
-              raise SystemExit('Infrastructure validation or mutation shards did not succeed.')
+              raise SystemExit('Infrastructure validation did not succeed.')
           PYTHON

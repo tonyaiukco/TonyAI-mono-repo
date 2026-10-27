@@ -1,10 +1,13 @@
-name: Sweden QA preparation
+name: Sweden QA preparation (paused)
+# Paused, not removed (owner decision 2026-10-28): the self-hosted Sweden QA
+# roots wait until the self-hosted work resumes after the pilot launch. Run by
+# hand (with selfhost-checks.yml) before merging any change to infra/scripts,
+# infra/tests, infra/terraform, infra/config or infra/selfhost; restore the
+# pull_request/push triggers
+#   pull_request/push: paths ['infra/**', '.github/workflows/qa-*.yml', 'apps/api/Dockerfile']
+# when the work resumes.
 on:
-  pull_request:
-    paths: ['infra/**', '.github/workflows/qa-*.yml', 'apps/api/Dockerfile']
-  push:
-    branches: [main]
-    paths: ['infra/**', '.github/workflows/qa-*.yml', 'apps/api/Dockerfile']
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

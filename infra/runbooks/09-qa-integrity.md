@@ -1,5 +1,12 @@
 # QA credential containment and clean rebuild after dashboard exposure
 
+> **Paused 2026-10-28 (owner decision) — kept, not retired.** QA and the pilot run on
+> Supabase Cloud (Pro) + Azure Container Apps for the next two to three months; the
+> self-hosted route resumes on the owner's word after the pilot launch. Run nothing in
+> this runbook until then. See
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> and the paused plan [`docs/roadmap_docs/Azure_roadmap_plan.md`](../../docs/roadmap_docs/Azure_roadmap_plan.md).
+
 Use this procedure before connecting applications or introducing real data when
 PD-3 generation provenance is unresolved. A successful dashboard credential
 rotation addresses only that dashboard credential. It neither revokes other

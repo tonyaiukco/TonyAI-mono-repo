@@ -1,11 +1,14 @@
 # 3. One versioned application deployment path
 
-> **Historical hosted reference, not a deployment route for current QA or production.**
-> Active application/data resources use **Azure Sweden Central** and self-hosted
-> Supabase. Use [runbook 08](08-qa-application.md) for application preparation and
-> [runbook 07](07-selfhost.md) for host ownership. The Germany/Frankfurt commands
-> below describe the retained legacy implementation only; do not run them for
-> Sweden or bypass their subscription/project checks.
+> **The QA and pilot deployment route (owner decision 2026-10-28).** The hosted phase
+> builds this path **from scratch**: Supabase Cloud (Pro) in **North EU — Stockholm
+> (`eu-north-1`)** and Azure Container Apps in **Sweden Central (`swedencentral`)**, in the
+> paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
+> prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
+> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
+> changes the code and WP-3 re-checks these runbooks against it.
 
 Restore the session/project variables (runbook 00). Keep infrastructure and image
 source SHAs distinct. First create is owner-run; app-scoped OIDC deployment starts
@@ -386,9 +389,10 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
   `AZURE_SUBSCRIPTION_ID`, `STAGING_PREFIX`, `STAGING_ACA_DEFAULT_DOMAIN`,
   `STAGING_ACR_NAME`, `STAGING_RESOURCE_GROUP`, `STAGING_SUPABASE_PROJECT_REF`,
   `STAGING_SUPABASE_PUBLIC_KEY` (publishable/anon only), `STAGING_BACKEND_JSON`
-  (the validated backend config, identifiers and IPs only). This historical hosted
-  workflow binds Supabase Frankfurt and Azure Germany West Central; current
-  Sweden QA uses runbook 08 and `qa-candidate.yml` instead. No backend key, DB URL, password,
+  (the validated backend config, identifiers and IPs only). This workflow binds
+  Supabase `eu-north-1` (Stockholm) and Azure Sweden Central once WP-2 and WP-6
+  merge (until then it still binds Frankfurt / Germany West Central). The paused
+  self-hosted route's `qa-candidate.yml` is not used. No backend key, DB URL, password,
   refresh token or Terraform state belongs in a workflow input/variable/artifact.
 
 ### Candidate → migration → approval → deployment
@@ -550,10 +554,14 @@ and [fork approval API](https://docs.github.com/en/rest/actions/permissions#get-
 
 ## 3.5 API SMTP parameters (LP4-01; production preparation for LP2-04)
 
-**Dependency: the owner must select the SMTP processor under LP0-02.** No provider
-is selected here. After that decision the owner verifies its sending domain and
-sender (SPF/DKIM/DMARC as required by that provider), obtains SMTP credentials,
-and confirms the provider's supported TLS port. Supabase does not deliver the
+**Provider: Azure Communication Services Email** (decided 2026-10-27; data location
+Europe). Host `smtp.azurecomm.net`, port `587`, `secure: false` (STARTTLS; the API
+enforces `requireTLS`), `user` = the ACS SMTP Username (bound to an Entra application
+whose client secret is the password), `from` = the sending domain's sender address — an
+Azure-managed `*.azurecomm.net` domain for QA's first days (5/min, 10/h, not raisable),
+then a verified custom domain (SPF/DKIM/DMARC). The ACS resources are created by the
+foundation root after WP-2; the Entra application and its secret are created by the
+owner outside Terraform (hosted-phase plan, L1b). Supabase does not deliver the
 pilot's invitation/reset templates: the API uses `generateLink` and its TR/EN
 renderer (K5). Do not enter these credentials into Supabase SMTP settings.
 
@@ -562,7 +570,7 @@ all-or-none. Replace every placeholder with the selected provider's public
 `host`, integer `port`, boolean `secure`, `user`, `from`, and exact
 `password_secret_version`. `user` must be a nonsecret username: the manifest is
 shown to release reviewers. Passwords belong only in Key Vault. Remove the entire
-`mail` object until the processor is approved; no SMTP or `APP_URL` environment
+`mail` object until the ACS resources and the `smtp-password` secret exist; no SMTP or `APP_URL` environment
 field is then emitted, and API invitation/reset attempts fail observably with
 `mail_not_configured`. That state does **not** pass onboarding acceptance.
 

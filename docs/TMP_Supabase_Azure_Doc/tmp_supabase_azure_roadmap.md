@@ -1,311 +1,309 @@
-# TEMPORARY — QA on Supabase Cloud (Stockholm) + Azure Sweden Central
+# TEMPORARY — Supabase Cloud + Azure through QA and the pilot, run by Codex
 
-> **Temporary document.** A time-boxed bridge so the QA team can start while the
-> self-hosted Sweden QA (R3 → R4 → application) continues in the Codex lane. It
-> lives until **(1)** the first QA handover on the bridge is done and **(2)** the
-> self-hosted Supabase on Azure has replaced the bridge; then the bridge is torn
-> down and this folder is deleted (section 11). It is not a second status file:
-> `docs/roadmap_docs/project_status_roadmap_phases.md` stays the one planning
-> record (Decisions 2026-10-26, the bridge; ledger row LP2-QT).
+> **Temporary document — the hosted phase.** For roughly the next two to three
+> months QA and the pilot run the database, Auth and Storage on **Supabase Cloud
+> (Pro)** and the web and API on **Azure Container Apps**. After the pilot launch
+> the Supabase side moves to Azure (the self-hosted route, paused today, resumes
+> on the owner's word), the Supabase Cloud projects are closed and this folder is
+> deleted (section 9). After the production launch, on-premises preparation
+> follows. `docs/roadmap_docs/project_status_roadmap_phases.md` stays the one
+> planning record (Decisions 2026-10-28; ledger row LP2-HQ). The paused
+> self-hosted plan is [`Azure_roadmap_plan.md`](../roadmap_docs/Azure_roadmap_plan.md).
 
 | | |
 |---|---|
-| Created | 2026-10-26 (from a read-only drift check of `main` @ `fa620e6`; re-based on `42f5c07`, #248, on 2026-10-27) |
-| Implementer | **Claude Code** (this lane). Codex continues R3, R4 and the self-hosted application path and never edits the bridge files |
-| Target handover to QA | **2026-10-30** (Day 1 = 10-27, Day 2 = 10-28 half day, Day 3 = 10-30; 10-29 is off the owner's calendar) |
-| Supabase | Supabase Cloud, **North EU — Stockholm (`eu-north-1`)**, Pro plan, PostgreSQL 17 |
-| Azure | **Sweden Central (`swedencentral`)**, the **same subscription** as the self-hosted QA |
-| Data | **Synthetic only.** No customer data, ever |
+| Created | 2026-10-26 as the temporary QA bridge (PR-T0, #249); **re-scoped 2026-10-28** (owner, in chat): it now carries QA **and the pilot**, and Codex runs it |
+| Runs it | **Codex** — every work package, PR, CI change and the status file. The owner reviews, merges and runs or approves every live cloud operation |
+| Starting point | **Built from scratch.** Nothing of the hosted path has ever been applied: no Supabase Cloud schema, no hosted-phase Azure resource, no Terraform state. Every resource is created by the steps in section 5 |
+| Database + Auth + Storage | **Supabase Cloud, Pro** (bought by the owner), region **North EU — Stockholm, Sweden (`eu-north-1`)** — decided 2026-10-28. PostgreSQL 17 expected; the version and project ref are read back at L1 |
+| Web + API | **Azure Container Apps**, **Sweden Central (`swedencentral`)** — decided 2026-10-28; the same subscription as the paused self-hosted resources, fenced into its own groups |
+| Email | Azure Communication Services Email over SMTP (decided 2026-10-27) |
+| Data | QA: synthetic only. Pilot production: the pilot holding's real data from G5 — which is why the later move to Azure is a real data migration (section 9) |
+| Targets | QA handover **2026-11-06** (proposed; G2 stays 2026-11-15) · pilot **2027-02-01** (stretch 01-25, fallback 02-15) · migration to self-hosted Azure: after the pilot launch, on the owner's word |
 
-## 1. Why, and what does not change
+## 1. What changed on 2026-10-28, and what does not
 
-The self-hosted route still needs about 28–42 working days against a 2026-11-15
-QA target. The repo already holds a reviewed, never-applied **hosted-Supabase
-path** (LP2-01…LP2-03, #139/#141/#143/#145; runbooks 00–05;
-`infra/terraform/foundation` + `infra/terraform/application` — the legacy roots,
-not their `qa/` subfolders; `bootstrap_backend.py`, `supabase_setup.py`,
-`cloud_ops.py`, `build-images.sh`, `candidate.py`, `deploy-apps.sh`,
-`release_secrets.py`, `cloud_smoke.py`). It already supports an **owner-run
-first deployment from the owner's machine** (runbook 03); CI, GitHub OIDC, the
-protected `staging` environment and the JIT runner are only for later deploys and
-are skipped (`deployer_object_id` empty, `apps_ready=false`). The bridge
-re-targets this path to Stockholm and Sweden Central and applies it.
-
-**Unchanged — non-negotiable:**
-
-- R3, R4 and their gates continue in parallel (Codex lane). Nothing here touches
-  `r3_*`, `qa_*`, `selfhost_*`, `replacement_*`, runbooks 07/08/10, the r02
-  host, the self-host VNet/subnets (including the delegated `10.80.2.0/23`), its
-  NSGs, private DNS, its backend storage account or its Terraform state.
-- `infra/config/deployment-policy.json` is **not edited** — its sha256 is bound
-  into Codex's QA receipts — and `deployment_policy.py:9` stays verbatim (a
-  mutation test pins it).
-- Tenant isolation, RLS (enabled, never `FORCE`d), the `tonyai_runtime` login for
-  the API, the append-only `audit_log`, RBAC, JWT verification (ES256 over JWKS)
-  are exactly as in local and CI. `ALLOW_INSECURE_LOCAL_AUTH` is never set.
-- The seed never runs against the cloud (`seed-guards.ts` refuses it, by design).
-- No secret enters git or chat: secrets are typed at hidden prompts and live in
-  the owner's password manager and the bridge's Key Vault.
+- **Hosted for QA and the pilot.** The bridge was a QA stopgap; it now carries the
+  pilot too, so it needs a production project as well (section 7) and a planned
+  exit (section 9).
+- **The self-hosted route is paused, not removed.** R3, R4, the self-hosted
+  application path (runbook 08 Units 0–8), the clean replacement (runbooks
+  09/10), their code, workflows, runbooks, Terraform roots and Azure resources
+  all stay. Nothing is deleted. Only their CI runs on every change stopped
+  (section 3). They resume when the owner says so — after the pilot launch, to
+  move the Supabase side to Azure, then towards on-premises servers after the
+  production launch.
+- **Codex runs everything.** The two-tool split of 2026-09-27 ends: Codex is the
+  only implementer and the only writer of the status file. Claude Code joins only
+  when the owner opens a session for it (section 8).
+- **Unchanged — non-negotiable:** tenant isolation (the API guard and
+  `accessibleSubsidiaryIds`), RLS enabled and never `FORCE`d, the `tonyai_runtime`
+  login for the running API (never the owner `DIRECT_URL`), the append-only
+  `audit_log`, RBAC, JWT verification (ES256 over JWKS), the seed never running
+  against the cloud (`seed-guards.ts`), factors arriving only through the
+  factor-release loader, no secret in git, chat, Terraform state or logs.
+  `ALLOW_INSECURE_LOCAL_AUTH` and `ALLOW_PLACEHOLDER_FACTORS` are never set in the
+  cloud (the API refuses the latter off loopback — `factor-policy.ts`), so under K3 the
+  cloud prices **only authoritative** factor releases — QA calculates no figure until LP4-02's release (O6). **`infra/config/deployment-policy.json` is not edited** — its sha256 is
+  bound into the self-hosted QA receipts that resume later — and
+  `deployment_policy.py:9` stays verbatim (a mutation test pins it). Nothing here
+  touches the self-hosted resources, their VNet/subnets (including the delegated
+  `10.80.2.0/23`), NSGs, private DNS, backend storage account or Terraform state.
 
 ## 2. Target architecture
 
 ```
-QA testers ──HTTPS──▶ ACA app: <prefix>-staging-web (Next.js, NEXT_PUBLIC_* baked at build)
-                         │
-                         ▼
-                      ACA app: <prefix>-staging-api (NestJS)
-                         ├─ Supavisor pooler (IPv4) ─▶ Postgres 17 (Supabase, eu-north-1)
-                         ├─ Supabase Auth (ES256 JWKS)
-                         ├─ Supabase Storage: evidence · import-sources · report-artifacts (private)
-                         └─ SMTP: Azure Communication Services Email relay (smtp.azurecomm.net:587, STARTTLS)
+Users ──HTTPS──▶ ACA app: <prefix>-staging-web (Next.js, NEXT_PUBLIC_* baked at build)
+                   │
+                   ▼
+                 ACA app: <prefix>-staging-api (NestJS, /api/v1)
+                   ├─ Supavisor pooler (IPv4) ─▶ Postgres 17   ┐
+                   ├─ Supabase Auth (ES256, JWKS)              │ Supabase Cloud, Pro
+                   ├─ Supabase Storage: evidence · import-sources · report-artifacts (private)
+                   └─ SMTP: ACS Email (smtp.azurecomm.net:587, STARTTLS)
 
-Azure, Sweden Central, same subscription — bridge resources only:
-  tonyai-qatmp-tfstate  → its OWN backend storage account (Terraform state)
-  tonyai-qatmp-apps     → ACR · Log Analytics · ACA environment (Consumption, NO VNet)
-                          · Key Vault · managed identities · the two apps
-                          · Email Communication Service + Communication Services (data location Europe)
-                            + SMTP Username — Terraform (AzAPI), foundation root
-
-Outside Azure Terraform (section 4): the Entra application that owns the SMTP
-identity and its client secret; the Supabase Cloud project (reviewed scripts).
+Azure, Sweden Central, same subscription — hosted-phase resources only:
+  tonyai-qatmp-tfstate → its OWN backend storage account (Terraform state)
+  tonyai-qatmp-apps    → ACR · Log Analytics · ACA environment (Consumption, NO VNet)
+                         · Key Vault · managed identities · the two apps
+                         · ACS Email (data location Europe) + SMTP Username
+Supabase Cloud: the QA project now; a separate pilot production project at LP2-04
 ```
 
-- **Separate Terraform backend.** The legacy roots write `foundation/staging.tfstate`
-  and `application/staging.tfstate`. The self-host's backend account must not get
-  them (`qa_network.py` forbids extra blobs there) and `bootstrap_backend.py`
-  would otherwise adopt any `purpose=terraform-state` account and rewrite its
-  firewall. So the bridge bootstraps its own backend group and account, and a
-  guard pins `bootstrap_backend.py` to exactly that pair.
-- **No VNet.** The legacy foundation's ACA environment has no `vnetConfiguration`;
-  `selfhost_app_network.py` refuses only environments on the QA subnet or in
-  `tonyai-staging-apps`, so a non-VNet environment in another group passes.
-- **Names are fixed by the path:** the environment is `staging` and the apps are
-  `<prefix>-staging-api` / `<prefix>-staging-web`. The prefix must **not** be
-  `tonyai` (that is the self-hosted application's); proposed `tonyaiqt`.
-- **Database connections go through the Supavisor pooler** (ACA egress is IPv4;
-  Supabase's direct host is IPv6-only). `pooler.py` builds the URLs; the running
-  API gets only the runtime `DATABASE_URL`, never the owner `DIRECT_URL`.
-- **Default ACA hostnames** with managed TLS; no custom domain.
+- **Separate Terraform backend.** The self-hosted backend account must not get the
+  hosted roots' state (`qa_network.py` forbids extra blobs there) and
+  `bootstrap_backend.py` would otherwise adopt any `purpose=terraform-state`
+  account and rewrite its firewall, so the hosted phase bootstraps its own backend
+  group and account, and a guard pins `bootstrap_backend.py` to exactly that pair.
+- **No VNet**, private endpoint or self-hosted runner: every dependency is a
+  public, TLS-authenticated endpoint. `selfhost_app_network.py` refuses only
+  environments on the QA subnet or in `tonyai-staging-apps`, so a non-VNet
+  environment in another group passes.
+- **Names (D1, 2026-10-27):** groups `tonyai-qatmp-tfstate` / `tonyai-qatmp-apps`,
+  prefix `tonyaiqt` — never `tonyai` (the self-hosted application's). The path
+  fixes the environment name `staging` and the apps `<prefix>-staging-api` /
+  `<prefix>-staging-web`.
+- **Database connections go through the Supavisor pooler**: ACA egress is IPv4 and
+  Supabase's direct host is IPv6-only. `pooler.py` builds the URLs; the running API
+  gets only the runtime `DATABASE_URL`.
+- **Terraform scope stays option A (2026-10-27):** every Azure resource through
+  AzAPI under `check_terraform_policy.py` (reviewed types only, no secret in
+  state). Supabase Cloud stays on the reviewed Management API scripts: the official
+  provider keeps the database password in state and cannot create buckets,
+  signing keys or database roles.
+- **Default ACA hostnames** for QA; custom domains with managed TLS for the pilot
+  production (LP2-04).
 
-## 3. Isolation inside the shared subscription
+### Isolation inside the shared subscription
 
 | Fence | Rule |
 |---|---|
-| Resource groups | `tonyai-qatmp-tfstate` (backend) and `tonyai-qatmp-apps` (everything else). Never `tonyai-staging-apps` or `tonyai-staging-data*` |
+| Resource groups | `tonyai-qatmp-tfstate` and `tonyai-qatmp-apps`. Never `tonyai-staging-apps` or `tonyai-staging-data*` |
 | Name prefix | `tonyaiqt` — never `tonyai`; ACR and Key Vault names globally unique |
-| Terraform state | The bridge's own backend account; the self-host account is never written or adopted |
+| Terraform state | The hosted phase's own backend account; the self-hosted account is never written or adopted |
 | Network | No VNet, subnet, NSG, route table, private endpoint or private DNS zone |
-| Role assignments | Scoped to the bridge groups and their resources; never at subscription scope |
-| Subscription gate | **Narrowed by a new file**, `infra/config/hosted-qa-exception.json` (`subscription`, `resource_group`, `prefix`, `backend_resource_group`, `backend_storage_account`). `require_hosted_target(subscription, resource_group, prefix)` keeps line 9 verbatim and admits the listed subscription only on an exact match with the exception, never for the `tonyai-staging-*` groups or the `tonyai` prefix; the two legacy `variables.tf` validations mirror it; negative tests prove the self-host targets are still refused |
-| Cost | A subscription budget alert covering the bridge |
+| Role assignments | Scoped to the hosted groups and their resources; never at subscription scope |
+| Subscription gate | **Narrowed by a new file**, `infra/config/hosted-qa-exception.json` (`subscription`, `resource_group`, `prefix`, `backend_resource_group`, `backend_storage_account`). `require_hosted_target(subscription, resource_group, prefix)` keeps line 9 verbatim and admits the listed subscription only on an exact match, never for the `tonyai-staging-*` groups or the `tonyai` prefix; the two legacy `variables.tf` validations mirror it; negative tests prove the self-hosted targets are still refused |
+| Cost | A subscription budget alert covering the hosted phase |
 
-## 4. Terraform scope (owner decision D5 = A, 2026-10-27)
+## 3. CI review and the pause (2026-10-28)
 
-**Every Azure resource of the bridge is Terraform-managed through AzAPI**, inside
-the existing legacy foundation and application roots and under
-`check_terraform_policy.py`'s rule that only reviewed `azapi_resource` types enter
-state and **no secret enters state**. The Supabase Cloud side stays on the
-reviewed scripts: the official `supabase/supabase` provider (1.11.0) covers only
-the project and its settings, stores the database password in state (not
-write-only), cannot create buckets, signing keys or database roles, and would be
-thrown away with the bridge — the permanent QA and production use self-hosted
-Supabase, which that provider does not manage.
+`main` has no branch protection on this plan (rulesets return 403), so moving a
+check breaks no merge gate. `infra/config/main-ruleset.json`,
+`github_environment.py:29` and `release_checks.py:17` name only `build`,
+`docker-build`, `rls-probe` (ci.yml) and green `ci.yml`, `e2e.yml`,
+`integration.yml` runs — none of which changed.
 
-| Managed by Terraform (AzAPI) | Outside Terraform, and why |
+**The unnecessary runs were the self-hosted gates firing on every
+infrastructure change**: `infra.yml`'s four R3 mutation shards (up to 20 minutes
+each — they ran even on the docs-only #249), its self-hosted steps, and the whole
+`qa-infra.yml`. **Done in the 2026-10-28 change, nothing deleted:**
+
+| Workflow | Before | Now |
+|---|---|---|
+| `infra.yml` | every `infra/**`, `.github/**`, Dockerfile change: unit tests, hosted and self-hosted Terraform, self-host mutations, 4 R3 mutation shards | same triggers, **hosted checks only**: unit tests, `check_mutations.py`, Terraform policy, the `foundation` and `application` roots, runtime/grant mutations, Docker context. The `infra` aggregator name is kept |
+| `selfhost-checks.yml` *(new)* | — | **dispatch only**: the self-hosted steps and the R3 mutation shards moved unchanged from `infra.yml`, with their own aggregator |
+| `qa-infra.yml` | every `infra/**` change | **dispatch only**; the old triggers are kept in a comment |
+| `qa-candidate.yml`, five `r3-*.yml` | dispatch only | unchanged |
+| `ci.yml`, `integration.yml`, `e2e.yml`, `candidate.yml`, `deploy-staging.yml` | — | unchanged (the last two change in WP-6) |
+
+`infra/tests/test_ci_durations.py` pins the pause: both paused workflows are
+dispatch-only, every check that left `infra.yml` is in `selfhost-checks.yml`, and
+`infra.yml` keeps its hosted checks and runs no self-hosted step. **While paused,
+run `selfhost-checks.yml` and `qa-infra.yml` by hand** (Actions → Run workflow, on
+the PR's branch) before merging any change to `infra/scripts/**`, `infra/tests/**`, `infra/terraform/**`, `infra/config/**`, `infra/selfhost/**` or these two workflows —
+the self-hosted scripts import most hosted modules (`pooler`, `bootstrap_backend`, …),
+so WP-2 and WP-3 dispatch both. App-only and docs-only PRs do not. The selfhost
+root's `terraform fmt` and its `check_terraform_policy.py` lane still run in
+`infra.yml`. **To resume:** move the jobs back into `infra.yml`, restore
+`qa-infra.yml`'s triggers from its comment, update that test, and add
+`selfhost-checks.yml` to the bound sources in `infra/scripts/replacement_bundle.py`
+(it hashes `infra.yml`, so a bundle bound before 2026-10-28 is stale).
+
+The CI database image pin stays in `infra/selfhost/database-image-policy.json`
+(read by `.github/actions/supabase-stack/action.yml`,
+`infra/scripts/ci_database_image.py` and `integration.yml`'s paths); its
+PostgreSQL major should match the Supabase Cloud project's (O1).
+
+## 4. Work packages (Codex)
+
+Every package: a feature branch from current `main`, green CI, a PR, the owner
+merges, the status file updated in the same PR. Packages marked **review** get the
+independent fresh-eyes pass of section 8 before the PR opens.
+
+| WP | Branch | Scope | Review | Size |
+|---|---|---|---|---|
+| **WP-0** | `docs/supabase-cloud-codex-handover` | This re-scope; the CI pause (section 3); single-tool mode, the decision and the ledger in the status file; `CLAUDE.md`, `AGENTS.md`, `README.md`, `infra/README.md` pointers; "paused" banners on the self-hosted plan and runbooks 07–10. *Claude Code's last PR* | — | done in this change |
+| **WP-2** | `feat/hosted-qa-retarget` | Dispatch `selfhost-checks.yml` + `qa-infra.yml` before merge (section 3). The bridge's PR-T1: regions to `eu-north-1` / `swedencentral` wherever the code still pins `eu-central-1` / `germanywestcentral` (inventory on `1063104`, outside the paused self-hosted files: `infra/scripts/{bootstrap_backend,candidate,check_browser_key,pooler,runtime_urls,session_resources,supabase_auth,supabase_project,supabase_setup,terraform_run}.py`, `loader-identity.mjs`, `smoke-contract.mjs`; `infra/terraform/{foundation,application}/{variables.tf,security.tftest.hcl}`, `application/main.tf`; `infra/config/{application,supabase}.example.json` (their `*.germanywestcentral.azurecontainerapps.io` origins are validated by `application/variables.tf` and read by `test_candidate_path.py` / `test_review_boundaries.py`); 27 files under `infra/tests/` — re-run `git grep -E 'eu-central-1|germanywestcentral|Frankfurt'` to confirm none is left); the hosted-QA exception file, `require_hosted_target`, the mirrored `variables.tf` validations, the `bootstrap_backend.py` pin, negative tests (self-hosted subscription without the exception, `tonyai-staging-*` groups, `tonyai` prefix, the self-hosted backend account — all refused; the line-9 mutant still killed); the ACS Email AzAPI resources in the foundation root (inputs: Entra client ID, service-principal object ID, tenant ID, optional custom domain; outputs: SMTP username, sender address) with their policy allow-list entries and `security.tftest.hcl` cases (data location Europe, nothing secret in state or outputs, the role scoped to the Communication Services resource); hosted-phase example inputs — `infra/config/hosted-qa-exception.example.json`, and backend/foundation/application/supabase examples carrying `tonyai-qatmp-tfstate` / `tonyai-qatmp-apps`, prefix `tonyaiqt`, `location: swedencentral`, the `tonyaiqt-staging-web` origin and the ACS mail block (`smtp.azurecomm.net`, `587`, `secure: false`, `<ACS SMTP Username>`); no project-adoption path (O1: `supabase_setup.py` creates the project; runbook 02) | **review** (deployment gate, auth, secrets) | 1–1.5 days |
+| **WP-3** | `feat/hosted-qa-handover` | Dispatch `selfhost-checks.yml` + `qa-infra.yml` before merge (section 3). The `report-artifacts` bucket (20 MiB, PDF only) in `cloud_ops.py` with tests; the hosted `staging` smoke fixtures re-checked against the current schema (`smoke-fixtures.mjs` / `smoke-contract.mjs` are shared with the paused Sweden adapter — keep its `qa-sweden` target intact); runbooks 00–06 re-read for the new regions; the ACS Email owner steps written into runbooks 01/03 (L1b: Entra application + service principal, client secret ≤ 90 days straight into Key Vault as `smtp-password`; the domain's sender address; custom-domain DNS at Namecheap); new `infra/runbooks/11-qa-hosted.md` (URLs, account issuance, known limitations, reset policy, bug reporting) | review (storage) | 0.5–1 day |
+| **WP-4** | — | **Not needed (O6):** QA follows K3 and calculates no figure until LP4-02's authoritative UK/TR release; that release reaches QA through the factor-release loader (dry run, then `--apply` as `tonyai_factor_loader`) when LP4-02 delivers it. D3's placeholder release is superseded | — | 0 |
+| *Live* | — | Section 5, L1–L10 — owner-run, Codex prepares each command and reads the output with the owner | — | 2–3 days |
+| **WP-5** | `fix/hosted-qa-*` | Fixes found during the live steps, if any | as the fix needs | — |
+| **WP-6** | `feat/ci-deploy-oidc` | Later deploys from CI: GitHub OIDC federated credential (no client secret), the protected `staging` environment, `candidate.yml` and `deploy-staging.yml` able to run on a GitHub-hosted runner, `release_checks.py` still requiring green `ci.yml` / `e2e.yml` / `integration.yml` at the exact SHA; Log Analytics alerts on API 5xx and restarts | **review** | 1 day |
+| **WP-8** | LP2-04 | Pilot production on the hosted route (section 7) | **review** | 2–3 days |
+
+*(WP-1 — the CI pause — was done in WP-0. There is no WP-7: nothing is retired.)*
+
+## 5. Live operations — QA (owner-run, each approved)
+
+Codex prepares the exact command, its dry run and what to read in the output; the
+owner runs it from a clean checkout on their machine, enters secrets at hidden
+prompts and keeps them in the password manager. Codex never asks for a secret in
+chat and never stores one in the repository.
+
+| # | Operation | Go / no-go |
+|---|---|---|
+| L1 | Supabase project: confirm it is in `eu-north-1`, read back its PostgreSQL version and project ref; read the **exact pooler host** from the dashboard's *Connect* panel (`aws-<n>-eu-north-1.pooler.supabase.com`; `pooler.py` accepts any `aws-<n>` prefix and WP-2 changes only its region from `eu-central-1`); compare its PostgreSQL version with CI's pin (`infra/selfhost/database-image-policy.json`, `supabase/postgres:17.11.0.004`) and record any minor-version gap; confirm no dashboard-made project remains (O1 — the project is created by `supabase_setup.py` at L4); confirm the bundled `prod-ca-2021.crt` accepts that pooler; the **runbook 05 privilege probe** (`rolcreaterole`, `rolbypassrls`, storage USAGE/SELECT, `CREATE ROLE lp1_probe BYPASSRLS` inside a rolled-back transaction) | **The go/no-go.** If Supabase Cloud refuses the probe we stop and decide with Supabase support — RLS and the tenant guard are never weakened to pass |
+| L1b | SMTP Entra application (`az ad app create`, `az ad sp create`) + client secret (expiry ≤ 90 days) — outside Terraform, written straight into Key Vault as `smtp-password` once the vault exists | — |
+| L2 | Terraform backend bootstrap (`bootstrap_backend.py`, `location: swedencentral`, the hosted backend pair, the owner's /32) | backend pinned to the hosted pair |
+| L3 | Foundation plan + apply (`runtime_secrets_ready=false`), ACS Email included — read the plan first | only hosted-phase resources in the plan |
+| L4 | `supabase_setup.py`: project reconcile, Key Vault entries, `direct-url`, the three buckets, Auth policy (public sign-up off), ES256 signing key | — |
+| L5 | Runtime secret (`openssl rand -hex 32`, `release_secrets.py store`), images (`build-images.sh`, local Supabase stack stopped first on the 16 GB machine; `az acr build` if too slow), `candidate.py`, release manifest with `storage_cleanup_hold: true` | — |
+| L6 | Migrations (`cloud_ops.py migrate` at the release's `source_sha`), then `\password tonyai_runtime`, `ALTER ROLE … LOGIN`, `runtime-role.mjs check` | `check` passes |
+| L7 | SMTP secret into Key Vault; foundation re-apply with `runtime_secrets_ready=true`, `smtp_secret_ready=true` | — |
+| L8 | `release_secrets.py verify`, `deploy-apps.sh` | apps healthy on `/api/v1/health` |
+| L9 | No factor release yet (O6) — LP4-02's authoritative release is loaded the same way (dry run, then `--apply` as `tonyai_factor_loader`) when it exists; `pnpm onboarding provision --apply --allow-remote` for one synthetic holding and its first `super_admin`, who invites the second `super_admin`, `data_entry`, `consultant` and `executive_viewer` | invitation emails arrive |
+| L10 | Smoke: `cloud_ops.py probe-storage`, `cloud_smoke.py`; by hand — login per role; create → submit → approve by the other `super_admin`; evidence upload and signed download; PDF and Excel export; a period-lock refusal; a cross-tenant read refused; one `audit_log` row per mutation; viewer and consultant cannot mutate; TR and EN render. Then monitoring (Supabase daily backups confirmed; a Log Analytics alert on API 5xx and restarts) and the **QA handover** with runbook 11 | QA starts |
+
+**Tell QA:** no emission figure is calculated until the authoritative factor release arrives (entries show "Not calculated" / `no_factor`) — test the lifecycle, roles, evidence, locks, exports and TR/EN, not the numbers;
+default Azure hostnames; the environment may be reset with notice.
+
+## 6. The paused self-hosted route
+
+- Its code, tests, workflows, Terraform roots, runbooks 07–10, the plan
+  [`Azure_roadmap_plan.md`](../roadmap_docs/Azure_roadmap_plan.md) and the
+  continuation checkpoint [`Azure_roadmap_to_qa.md`](../roadmap_docs/Azure_roadmap_to_qa.md)
+  stay as they are, marked paused. R3 and CL-P2-3 stay OPEN; no gate is waived.
+- No R3/R4 work, dispatch or apply runs while paused. A change to the
+  self-hosted files during the pause runs `selfhost-checks.yml` and `qa-infra.yml`
+  by hand before merge.
+- The Azure resources it created (the deallocated old QA VM, the R2 replacement
+  generation of 2026-10-18 with its disks, network, recovery vault, Key Vault
+  escrow and locks) stay. Stopping their compute spend for the months of the pause
+  — for example deallocating a VM, which keeps its disks — is the owner's call
+  (O3); nothing is deleted.
+- The private R3 evidence outside the repository (`/private/tmp`,
+  `~/.codex/worktrees`) is kept — `/private/tmp` does not survive a reboot, so
+  the owner may want it copied somewhere durable (O3).
+
+## 7. Pilot production (LP2-04, feeds G5 — 2027-01-22)
+
+- A **separate Supabase Cloud project** (same organisation and region, Pro), with
+  the PITR add-on decided against LP5-03's recovery target (O5); the same scripts,
+  runbook 05 handoff and checks as QA.
+- Separate Azure groups, Key Vault, identities and apps from the same Terraform
+  roots with production parameters and its own names and exception entry (O2);
+  custom domains with managed TLS for web and API; uptime monitors on
+  `/api/v1/health` and `/login`.
+- ACS Email on a verified custom sending domain (SPF/DKIM/DMARC; the
+  Azure-managed domain's 5/min and 10/h are QA-only), data location Europe; the
+  DPAs and subprocessor entries (Supabase, Microsoft) recorded with the lawyer
+  (long-lead 2).
+- Migrations and reviewed factor releases only — no demo tenants, users or
+  `DEMO_SOURCE` rows; the RLS probes run against production with dedicated
+  synthetic tenants.
+- Restore drill (LP5-03) on the production project's backups before G5.
+- **Residency and transfers:** both projects and every Azure resource stay in the EU
+  (Stockholm, Sweden Central); ACS Email's data location is Europe. The pilot holding's
+  data leaves Türkiye for the EU, so the KVKK cross-border transfer basis (and the UK
+  GDPR position for UK data) must be cleared by the lawyer (long-lead 2) **before G5
+  loads real data** — QA stays synthetic. Sentry stays off (`SENTRY_DSN` and
+  `NEXT_PUBLIC_SENTRY_DSN` unset) until an EU-region Sentry organisation and its DPA
+  are approved.
+- **Sizing and spend (O7):** compute size, spend cap and backup retention per project
+  (Pro includes daily backups kept 7 days; PITR is an add-on).
+- **Design for the exit (section 9):** nothing in the pilot may depend on a
+  Supabase-Cloud-only feature that the self-hosted stack lacks.
+
+## 8. How Codex works here
+
+- **Read first:** `AGENTS.md`, `CLAUDE.md` (the rulebook for every agent), Part A
+  of the status file, this plan, then the task card.
+- **Single-tool mode:** Codex owns every file, the local Supabase stack, CI and the
+  status file (its update rules 1–6; rule 7 now records single-tool mode). Shared
+  files, migrations and contracts no longer need a slot — but a contract or
+  migration change still merges alone and first, and every generated migration is
+  inspected for the spurious `DROP INDEX activity_records_reporting_entity_period_category_key`.
+- **Independent review is still mandatory** for the calc path, factor immutability,
+  RLS/auth, tenant isolation, the record lifecycle, CI gates, the deployment gate
+  and secrets handling (`CLAUDE.md`, *Working mode*). Codex runs it as separate,
+  fresh review sessions that did not write the change, briefed from
+  `.claude/agents/security-rls.md`, `qa-auditor.md`, `architect.md` (schema or
+  shared-types contract), `devops-cloud.md` (infrastructure) and
+  `data-factors.md` (factor data), each reporting what it verified. The owner may
+  ask Claude Code for a seat instead.
+- **Skills:** `.claude/skills/*/SKILL.md` and `infra/azure-deploy/SKILL.md` are the
+  house recipes — follow them rather than re-deriving.
+- **Live cloud operations** are owner-run or owner-approved per operation. A
+  merged PR or a passing mock never authorizes an apply, a deploy or a deletion.
+
+## 9. Exit — moving the Supabase side to Azure (after the pilot launch)
+
+Starts only on the owner's word. Then:
+
+1. Resume the self-hosted route where it paused (R3 → R4 → the application path),
+   with `selfhost-checks.yml` and `qa-infra.yml` back on every change and
+   `replacement_bundle.py`'s bound sources updated (section 3).
+2. Plan the **data migration** from the Supabase Cloud pilot project to the
+   self-hosted stack — real pilot data by then: the database (schema, data,
+   `_prisma_migrations`, roles and grants), Auth users with their password hashes
+   and identities, Storage objects with their metadata and the storage intents,
+   the JWT signing-key continuity (or a planned forced re-login), and a
+   maintenance window with a verified rollback. Proven first on a copy.
+3. Cut over, verify, keep the Supabase Cloud project read-only for the agreed
+   period, then close the projects; revoke the Management API token; remove the
+   hosted-QA exception file and the hosted-phase resources; delete this folder and
+   its pointers (`CLAUDE.md`, `README.md`, `infra/README.md`).
+4. After the production launch: on-premises preparation (a separate plan).
+
+## 10. Owner decisions
+
+All decided. **O1–O7 as recommended (owner, in chat, 2026-10-28).**
+
+| # | Decision |
 |---|---|
-| Resource groups, ACR, Log Analytics, ACA environment, Key Vault, managed identities, role assignments (foundation root) | **Bridge Terraform backend** — `bootstrap_backend.py` creates the state account before any state exists |
-| Container Apps `api` and `web`, their secrets references, probes, ingress (application root) | **Entra application + client secret** for the SMTP identity — a Microsoft Graph object, not an ARM resource; AzAPI cannot create it and a Terraform-made secret would sit in state. The owner creates it once (`az ad app create`, `az ad sp create`) and writes the secret straight into Key Vault as `smtp-password`; Terraform takes only the non-secret application (client) ID, service-principal object ID and tenant ID as inputs |
-| **ACS Email:** `Microsoft.Communication/emailServices` (data location Europe), `emailServices/domains` (`AzureManaged`; a `CustomerManaged` domain when D2 adds one), `communicationServices` (data location Europe, `linkedDomains`), `communicationServices/smtpUsernames` (username, Entra application ID, tenant ID), the role assignment of the Entra service principal on the Communication Services resource — API `2026-03-18` | **Custom-domain DNS records** (verification TXT, SPF, DKIM, DMARC) — the domain's DNS lives at Namecheap, not Azure DNS; the owner publishes what the domain resource reports, then verification is triggered |
-| | **Supabase Cloud** — project, Auth policy, buckets, ES256 key: `supabase_setup.py` / `cloud_ops.py` over the Management API (reviewed, journalled); database roles and passwords: runbook 05 |
-| | **Data and releases** — Prisma migrations (`cloud_ops.py migrate`), onboarding, factor loading, image builds (`build-images.sh`): application operations, never infrastructure state |
+| D1, D2, D4, D5 | 2026-10-27: names `tonyai-qatmp-*` / `tonyaiqt`; ACS Email (sending domain: Azure-managed to start, a verified custom domain as soon as its DNS verifies); `build-images.sh`; Terraform scope A |
+| D3 | 2026-10-27: a labelled placeholder release for QA — **superseded by O6**, because the cloud API prices only authoritative releases (K3) |
+| O1 | Supabase `eu-north-1` (Stockholm) + Azure `swedencentral`. **`supabase_setup.py` creates the project from scratch** in `eu-north-1`; a project already made in the dashboard, if empty, is deleted by the owner first (no adoption path is built) |
+| O2 | Pilot production's Azure names are chosen in LP2-04, in the same pattern (e.g. `tonyai-pilottmp-*`, prefix `tonyaipt`) |
+| O3 | The paused self-hosted Azure resources and the private R3 evidence are **kept**. The owner may deallocate the self-hosted VMs for the pause (disks stay) and copies the `/private/tmp` R3 evidence somewhere durable |
+| O4 | Claude Code has no role by default; a review seat only when the owner opens one |
+| O5 | Pilot production's PITR add-on is decided in LP2-04 against LP5-03's recovery target |
+| O6 | **QA calculates no figure until LP4-02's authoritative UK/TR release is loaded** (K3 unchanged; no placeholder exception, no WP-4 code). Until then entries answer `no_factor` / "Not calculated"; the release is loaded through the factor-release loader the moment it exists |
+| O7 | QA: the Pro plan's included compute with the spend cap on; pilot production: compute size and PITR decided in LP2-04 with LP5-03's load and recovery results |
 
-The ACS resources hold no secret: an SMTP Username stores only the username and
-the Entra IDs, and the sender address is read back from the domain's
-`mailFromSenderDomain`. New AzAPI types are added to the policy allow-list with
-tests, in PR-T1.
+## 11. Owner prerequisites
 
-## 5. Findings that shape the plan (drift check, 2026-10-26)
-
-| # | Finding | Consequence |
-|---|---|---|
-| F1 | ~13 hosted scripts and Terraform files pin Frankfurt (`eu-central-1`) / Germany West Central, plus ~20 test files and two `security.tftest.hcl` | PR-T1, mechanical but wide (~40 files) |
-| F2 | The subscription gate refuses the shared subscription; the policy JSON is hash-bound into Codex receipts | PR-T1, the exception file above — never the policy JSON |
-| F3 | Hosted setup creates only `evidence` and `import-sources`; the app also needs `report-artifacts` (20 MiB, PDF only) | PR-T2 |
-| F4 | `runtime-role.mjs provision` refuses remote databases; the hosted handoff is runbook 05 (`CREATE ROLE … BYPASSRLS` privilege probe, then `\password tonyai_runtime`, `ALTER ROLE … LOGIN`, `runtime-role.mjs check`) | Works as designed; **the probe on Supabase Cloud is the go/no-go** (Day 1) |
-| F5 | The seed refuses the cloud; the first super_admin comes from `pnpm onboarding provision --apply --allow-remote`, everyone else by **emailed invitation** | **SMTP is required** before QA accounts exist — Azure Communication Services Email, Terraform-managed (section 4) |
-| F6 | Factors arrive only through the factor-release loader as `tonyai_factor_loader`; **no release file is in the repo** | QA starts with an empty library unless a release is loaded (section 7, D3) |
-| F7 | `smoke-fixtures.mjs` writes `DE` geography; #248 (merged 10-26) narrowly changed it and `smoke-contract.mjs` for its separate `qa-sweden` target, keeping the hosted `staging` target distinct | PR-T2 re-checks the hosted `staging` target against the current schema; both files are now shared with Codex's Sweden adapter — one-slot shared files, changed only with the owner's slot |
-| F8 | The legacy RG, environment and apps carry `prevent_destroy` | Teardown is a manual owner deletion (section 11) |
-| F9 | Not provable from the repo: `eu-north-1` offered by the Management API for this org; the bundled `prod-ca-2021.crt` covering that region's pooler | Checked on Day 1 before anything else is built on it |
-
-## 6. Work packages (PRs)
-
-All PRs: a feature branch, green CI, the owner merges. PR-T1 touches the
-deployment gate and the infrastructure path, so it gets the mandatory fresh-eyes
-pass (`security-rls` + `qa-auditor` + `devops-cloud`) before it opens.
-
-| PR | Branch | Scope | Size |
-|---|---|---|---|
-| **PR-T0** | `chore/qatmp-decision` | This document; the decision, lane split, ledger row and Next up in the status file; pointers in `CLAUDE.md`, `README.md`, `infra/README.md` | done in this change |
-| **PR-T1** | `feat/qatmp-hosted-retarget` | F1 + F2 + ACS: regions to `eu-north-1` / `swedencentral` across the hosted scripts, Terraform, examples and tests; the ACS Email AzAPI resources of section 4 in the foundation root (inputs: Entra client ID, service-principal object ID, tenant ID, optional custom domain; outputs: SMTP username, sender address) with their policy allow-list entries and `security.tftest.hcl` cases (data location Europe, no secret in state or outputs, role scoped to the Communication Services resource only); the hosted-QA exception file, `require_hosted_target`, the mirrored `variables.tf` validations, the `bootstrap_backend.py` pin; negative tests (self-host subscription without the exception, `tonyai-staging-*` groups, `tonyai` prefix, the self-host backend account — all refused; the line-9 mutant still killed) | 1–1.5 days |
-| **PR-T2** | `feat/qatmp-handover` | F3 + F7: the `report-artifacts` bucket in `cloud_ops.py` with tests; smoke fixtures re-checked; runbook banners pointing at the bridge; the QA handover runbook `infra/runbooks/11-qa-temporary-hosted.md` (URLs, account issuance, known limitations, reset, teardown) | 0.5 day |
-| **PR-T3** *(D3 = a)* | `feat/qatmp-placeholder-factors` | A QA-only factor release file in the import contract's shape, built from the placeholder library and **labelled placeholder / not authoritative** in its source and version; `data-factors` + `qa-auditor` seats; loaded with the loader's dry run first | 0.5 day |
-| PR-T4 *(only if needed)* | `fix/qatmp-*` | Fixes found during the live steps | — |
-
-Total: **4 PRs** (T0–T3; T4 only if live steps need fixes), plus about **10 owner-run live operations** (section 9).
-
-## 7. Owner decisions
-
-| # | Decision | Recommendation |
-|---|---|---|
-| D1 | ~~Names~~ **Decided 2026-10-27:** groups `tonyai-qatmp-tfstate` / `tonyai-qatmp-apps`, prefix `tonyaiqt` | — |
-| D2 | ~~SMTP provider~~ **Decided 2026-10-27: Azure Communication Services Email** (section 4; step 6a). Still open: the sending domain — an Azure-managed `*.azurecomm.net` domain (instant, but 5 emails/min and 10/hour per subscription, not raisable) or a verified custom domain (DNS records; 30/min and 100/hour, raisable) | Azure-managed domain to start on Day 2; add the custom domain as soon as its DNS verifies and switch `MAIL_FROM` to it |
-| D3 | ~~Factors for QA~~ **Decided 2026-10-27: (a)** — a QA-only placeholder release (PR-T3), labelled placeholder / not authoritative in its source and version and on screen; replaced by the authoritative UK/TR release (LP4-02) when it exists | — |
-| D5 | ~~Terraform scope~~ **Decided 2026-10-27: A** — all Azure resources, ACS Email included, in Terraform (AzAPI); Supabase Cloud stays on the reviewed scripts (section 4) | — |
-| D4 | ~~Image build~~ **Decided 2026-10-27:** the existing, reviewed `build-images.sh` (local Docker buildx; amd64 emulation on Apple Silicon is slow and heavy on 16 GB, so stop the local Supabase stack first); `az acr build` only if the build proves too slow | — |
-
-## 8. Step by step
-
-**Owner** = consoles, credentials, applies (from the owner's machine). **Agent** =
-Claude Code: code, PRs, dry runs, reading outputs with the owner.
-
-### Day 0 — owner prerequisites (section 10)
-
-### Day 1 (10-27) — code, Supabase project, go/no-go
-
-1. **Agent — PR-T0** (this record). Owner merges.
-2. **Agent — PR-T1** (retarget + exception), seats, then open; owner merges.
-3. **Owner — Supabase project** in **North EU (Stockholm)**, Pro. Confirm F9
-   (region offered; pooler TLS chain accepted by the bundled CA).
-4. **Owner + Agent — the runbook 05 privilege probe** on the new project
-   (`rolcreaterole`, `rolbypassrls`, storage USAGE/SELECT,
-   `CREATE ROLE lp1_probe BYPASSRLS` inside a rolled-back transaction).
-   **Go/no-go:** if Supabase Cloud refuses it, the bridge stops here and we decide
-   with Supabase support — RLS and the tenant guard are never weakened to pass.
-5. **Agent — PR-T2** (bucket, smoke, runbook 11), and PR-T3 (the labelled placeholder factor release).
-
-### Day 2 (10-28, half day) — Azure, database, release
-
-6a. **Owner — the SMTP Entra application** (once, outside Terraform — section 4;
-    can start on Day 1):
-    1. `az ad app create --display-name tonyai-qatmp-smtp`, then
-       `az ad sp create --id <appId>`; record the application (client) ID, the
-       service-principal object ID and the tenant ID for the foundation inputs.
-    2. Create a client secret (expiry ≤ 90 days, noted for rotation) and write it
-       **straight into the bridge Key Vault** as `smtp-password` once the vault
-       exists (step 12) — password manager in between, never chat, never Terraform.
-    3. Everything else — the Email Communication Service, the Azure-managed (and
-       optional custom) domain, the Communication Services resource with its linked
-       domain, the SMTP Username and the role assignment — is created by the
-       foundation apply (step 7).
-    4. For a custom domain: publish the verification, SPF and DKIM records the
-       domain resource reports at Namecheap, then trigger verification and switch
-       the release's sender to that domain.
-    5. The release's `mail` block (step 10): host `smtp.azurecomm.net`, port `587`,
-       `secure: false` (STARTTLS — the API enforces `requireTLS`), user = the SMTP
-       Username output, from = the sender-address output.
-
-6. **Owner — backend bootstrap**: `bootstrap_backend.py` with `location:
-   swedencentral`, the bridge backend group and account, the owner's /32.
-7. **Owner — foundation plan/apply** (legacy foundation root,
-   `runtime_secrets_ready=false`), now including the ACS Email resources; read the
-   plan first — only bridge resources. Save the contract output (with the SMTP
-   Username and sender address).
-8. **Owner — `supabase_setup.py`**: reconciles the project, Key Vault entries,
-   `direct-url`, the three buckets, the Auth policy (public sign-up off) and the
-   ES256 signing key. Management API token at the hidden prompt.
-9. **Owner — runtime secret**: generate the runtime password
-   (`openssl rand -hex 32`), `release_secrets.py store --project-ref …`.
-10. **Owner — images**: `build-images.sh` (publishable key at the hidden prompt),
-    `candidate.py`, then `release-r001.json` with `storage_cleanup_hold: true`.
-11. **Owner — migrations**: `cloud_ops.py migrate` from a clean checkout at the
-    release's `source_sha`; then `\password tonyai_runtime`, `ALTER ROLE … LOGIN`,
-    `runtime-role.mjs check` against the runtime URL.
-12. **Owner — SMTP secret** (the Entra application's client secret from step 6a, written directly, not through Terraform) into Key Vault as `smtp-password`; foundation re-apply
-    with `runtime_secrets_ready=true` and `smtp_secret_ready=true`.
-13. **Owner — deploy**: `release_secrets.py verify`, then `deploy-apps.sh`
-    (interactive `yes`).
-
-### Day 3 (10-30) — data, verification, handover
-
-14. **Owner — factors** (PR-T3's release): loader dry run, then `--apply`, as
-    `tonyai_factor_loader` (runbook 02's loader login).
-15. **Owner — QA organisation**: `pnpm onboarding provision --apply --allow-remote`
-    for one synthetic holding and its first `super_admin`; that admin invites the
-    second `super_admin` (nobody approves their own record), `data_entry`,
-    `consultant` and `executive_viewer` from the UI. Real tester emails; synthetic
-    company data only.
-16. **Owner + Agent — smoke**: `cloud_ops.py probe-storage`, `cloud_smoke.py`, then
-    by hand: login per role; record create → submit → approve by the other
-    `super_admin`; evidence upload and signed download; PDF and Excel export; a
-    period-lock refusal; a cross-tenant read refused; an `audit_log` row per
-    mutation; viewer and consultant cannot mutate; TR and EN render.
-17. **Owner — monitoring**: a Log Analytics alert on api 5xx and restarts; Supabase
-    daily backups (Pro) confirmed.
-18. **Owner — handover to QA** with runbook 11: URLs, how accounts arrive, known
-    limitations, bug reporting, the reset policy.
-
-**Known limitations to tell QA:** factors are placeholders and are
-labelled so — results are not authoritative; default Azure hostnames; the
-environment may be reset with notice; it will be replaced by the Sweden
-self-hosted QA and QA data will not be migrated.
-
-## 9. Live operations (each owner-run and owner-approved)
-
-| # | Operation | Day |
-|---|---|---|
-| L1 | Supabase project + F9 checks + runbook 05 probe | 1 |
-| L1b | SMTP Entra application + client secret (step 6a; the ACS resources come with L3) | 1–2 |
-| L2 | Backend bootstrap | 2 |
-| L3 | Foundation apply (secrets not ready; ACS Email included) | 2 |
-| L4 | `supabase_setup.py` | 2 |
-| L5 | Runtime secret store + images + candidate | 2 |
-| L6 | Migrations + runtime login + `check` | 2 |
-| L7 | SMTP secret + foundation re-apply | 2 |
-| L8 | Deploy | 2 |
-| L9 | Factors (PR-T3's release) + QA organisation + invitations | 3 |
-| L10 | Smoke + monitoring + handover | 3 |
-
-## 10. Owner prerequisites (before Day 1)
-
-1. ~~Decisions~~ all decided on 2026-10-27 (section 7).
-2. **Supabase:** MFA on the account; the organisation's **ID and slug**; the **Pro
-   plan** with billing approved (~$25/month); a **Management API personal access
-   token** in the password manager. Do not create the project yet — Day 1 does it
-   in **North EU (Stockholm)** together with the checks.
-3. **Azure (same subscription):**
-   - Tenant ID, subscription ID and the owner's **object ID**; the account holds
-     **Owner**, or **Contributor + User Access Administrator**, on the subscription.
-   - Register the providers `Microsoft.App`, `Microsoft.OperationalInsights`,
-     `Microsoft.ContainerRegistry`, `Microsoft.KeyVault`,
-     `Microsoft.ManagedIdentity`, `Microsoft.Storage`, `Microsoft.Communication`.
-   - Permission to create a Microsoft Entra **app registration** in the tenant
-     (for the SMTP identity).
-   - Sweden Central Container Apps capacity in the subscription.
-   - A budget alert.
-   - The owner's public IPv4 (for the backend firewall /32).
-4. **Email (D2):** decide the sending domain — Azure-managed to start, and, if a
-   custom domain is wanted, DNS access to publish its verification, SPF and DKIM
-   records. No third-party account is needed: everything is Azure Communication
-   Services in the same subscription, created by Terraform (section 4).
-5. **Local tools** (runbook 00): `az` logged in and `az account set` to the
-   subscription; Terraform **1.13.3**; Node **22**; pnpm **11.9.0**; Python
-   **3.10+**; Docker with buildx; `psql`.
-6. **QA team inputs:** testers' names and emails and the role each needs.
-
-## 11. Retirement
-
-When the Sweden self-hosted QA (Codex lane) has passed R3, R4 and its application
-acceptance and QA has moved:
-
-1. Announce the cut-over date; no data migration.
-2. Delete the bridge by hand (F8): the apps, the ACA environment, the ACS Email
-   resources, Key Vault (and purge), ACR, Log Analytics, then the groups
-   `tonyai-qatmp-apps` and `tonyai-qatmp-tfstate`; delete the SMTP Entra
-   application.
-3. Pause, then delete the Supabase project; revoke the Management API token; rotate
-   anything else that was shared.
-4. Remove the hosted-QA exception file and its code path, or keep the hosted path
-   only if the owner decides it stays as a fallback.
-5. Record the retirement in the status file; delete `docs/TMP_Supabase_Azure_Doc/`
-   and the pointers to it (`CLAUDE.md`, `README.md`, `infra/README.md`).
+1. **Supabase:** MFA on the account; the organisation ID and slug; the Pro project
+   (O1); a Management API personal access token in the password manager.
+2. **Azure:** tenant ID, subscription ID, the owner's object ID with Owner (or
+   Contributor + User Access Administrator) on the subscription; providers
+   `Microsoft.App`, `Microsoft.OperationalInsights`, `Microsoft.ContainerRegistry`,
+   `Microsoft.KeyVault`, `Microsoft.ManagedIdentity`, `Microsoft.Storage`,
+   `Microsoft.Communication` registered; permission to create an Entra app
+   registration; a budget alert; the owner's public IPv4.
+3. **Email:** the sending domain — Azure-managed to start; a custom domain needs
+   DNS access at Namecheap for its verification, SPF and DKIM records.
+4. **Local tools** (runbook 00): `az` on the subscription, Terraform 1.13.3,
+   Node 22, pnpm 11.9.0, Python 3.10+, Docker with buildx, `psql`.
+5. **QA team:** testers' names, emails and the role each needs.

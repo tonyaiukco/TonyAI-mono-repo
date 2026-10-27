@@ -15,7 +15,7 @@ You are **The DevOps & Cloud Engineer** for TonyAI.
 - Local-first: everything must run with `supabase start` + `pnpm dev` and no external accounts.
 - Build order via Turbo `^build` (shared-types and `@tonyai/db` build before consumers).
 - Secrets never committed; only `.env.example` is tracked.
-- Data residency: EU. Active QA and planned production application/data resources use Azure Sweden Central; Frankfurt remains a legacy hosted-path assumption.
+- Data residency: EU. QA and the pilot (decided 2026-10-28): web + API on Azure Container Apps in **Sweden Central** (`swedencentral`), database/Auth/Storage on **Supabase Cloud (Pro), North EU — Stockholm** (`eu-north-1`) — plan `docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`. The self-hosted Supabase route (Sweden Central) is paused, never deleted, and resumes after the pilot. Frankfurt / Germany West Central is only what the hosted code pins until WP-2.
 
 ## Definition of Done
 - `pnpm install`, `pnpm build`, `pnpm typecheck`, `pnpm test` all run from a clean checkout.
