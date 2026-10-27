@@ -21,7 +21,9 @@ STARTS = 6
 PULL_TRIES = 15
 PULL_PAUSE = 4
 START_PAUSE = (10, 20, 40, 60, 60)
-DEADLINE = 600  # seconds of retrying, inside api-integration's 20-minute job bound
+# Seconds of retrying. Checked after every start and pull and before every pause, so a
+# throttled run ends with this message instead of api-integration's 20-minute job timeout.
+DEADLINE = 480
 
 
 def run(command):
@@ -43,7 +45,7 @@ def pull(image, run, sleep, expired):
     for attempt in range(1, PULL_TRIES + 1):
         code, output = run(['docker', 'pull', image])
         # A refusal that is not throttling is left for the next start to report.
-        if code == 0 or THROTTLED not in output or expired():
+        if code == 0 or THROTTLED not in output or attempt == PULL_TRIES or expired():
             return code == 0
         print(f'GHCR throttled {image}; pull try {attempt + 1} of {PULL_TRIES} in {PULL_PAUSE}s.', flush=True)
         sleep(PULL_PAUSE)
@@ -61,7 +63,12 @@ def main(run=run, sleep=time.sleep, clock=time.monotonic):
             return code
         run(STOP)  # remove the partial stack; pulled images stay for the next attempt
         for image in failed_images(output):
+            if expired():
+                break
             pull(image, run, sleep, expired)
+        if expired():
+            print('Registry throttling outlasted the retry deadline.', flush=True)
+            return code
         pause = START_PAUSE[attempt - 1]
         print(f'Registry throttled the stack start; starting again in {pause}s '
               f'(attempt {attempt + 1} of {STARTS}).', flush=True)

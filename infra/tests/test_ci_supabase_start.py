@@ -22,15 +22,17 @@ THROTTLED_PULL = 'Error response from daemon: toomanyrequests: retry-after: 86.2
 class Fake:
     """Scripted outcomes for `supabase start` and `docker pull`, with a clock that sleeps advance."""
 
-    def __init__(self, starts, pulls=None, start_seconds=0):
+    def __init__(self, starts, pulls=None, start_seconds=0, pull_seconds=0):
         self.starts, self.pulls = list(starts), {k: list(v) for k, v in (pulls or {}).items()}
-        self.calls, self.sleeps, self.now, self.start_seconds = [], [], 0.0, start_seconds
+        self.calls, self.sleeps, self.now = [], [], 0.0
+        self.start_seconds, self.pull_seconds = start_seconds, pull_seconds
 
     def run(self, command):
         self.calls.append(command)
         if command == start.STOP:
             return 0, ''
         if command[:2] == ['docker', 'pull']:
+            self.now += self.pull_seconds
             outcomes = self.pulls.get(command[2], [])
             return outcomes.pop(0) if outcomes else (0, 'Status: Downloaded newer image\n')
         self.now += self.start_seconds
@@ -81,6 +83,8 @@ class SupabaseStartTests(unittest.TestCase):
         fake = Fake([(1, THROTTLED_START), (0, 'Started\n')], {image: [(1, THROTTLED_PULL)] * (start.PULL_TRIES + 5)})
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.pulled().count(image), start.PULL_TRIES)
+        # No pause after the last try: the next start follows at once.
+        self.assertEqual(fake.sleeps.count(start.PULL_PAUSE), start.PULL_TRIES - 1)
 
     def test_a_pull_refused_for_another_reason_is_not_retried(self):
         image = 'ghcr.io/supabase/storage-api:v1.82.1'
@@ -101,15 +105,25 @@ class SupabaseStartTests(unittest.TestCase):
         self.assertEqual(fake.calls.count(start.STOP), start.STARTS - 1)
 
     def test_the_deadline_ends_retrying(self):
-        image = 'ghcr.io/supabase/storage-api:v1.82.1'
-        fake = Fake([(1, THROTTLED_START)] * start.STARTS, {image: [(1, THROTTLED_PULL)] * 1000}, start_seconds=120)
+        images = [f'ghcr.io/supabase/image{n}:v1' for n in range(7)]
+        output = ''.join(f'failed to pull docker image from all registries: {i} attempt 1: x\n' for i in images) + THROTTLED_PULL
+        fake = Fake([(1, output)] * start.STARTS, {i: [(1, THROTTLED_PULL)] * 1000 for i in images},
+                    start_seconds=20, pull_seconds=10)
         self.assertEqual(self.main(fake), 1)
         self.assertLess(fake.calls.count(start.COMMAND), start.STARTS)
-        # Retrying stops at the first check past the deadline: at most one start, pull pause or start pause beyond it.
-        self.assertLessEqual(fake.now, start.DEADLINE + 120 + max(start.START_PAUSE) + start.PULL_PAUSE)
+        # Every operation is followed by a check, so at most one pull or one pause and start run past it.
+        self.assertLessEqual(fake.now, start.DEADLINE + max(start.PULL_PAUSE + 10, max(start.START_PAUSE) + 20))
+
+    def test_the_deadline_also_ends_a_single_image_pull_loop(self):
+        image = 'ghcr.io/supabase/storage-api:v1.82.1'
+        fake = Fake([(1, THROTTLED_START)] * start.STARTS, {image: [(1, THROTTLED_PULL)] * 1000}, pull_seconds=100)
+        self.assertEqual(self.main(fake), 1)
+        self.assertLess(fake.pulled().count(image), start.PULL_TRIES)
+        self.assertLessEqual(fake.now, start.DEADLINE + 100 + start.PULL_PAUSE)
 
     def test_real_output_is_streamed_and_captured(self):
-        code, output = start.run([sys.executable, '-c', 'print("toomanyrequests: retry-after: 1ms"); raise SystemExit(1)'])
+        # The CLI reports pull refusals on stderr: they must reach the throttle check too.
+        code, output = start.run([sys.executable, '-c', 'import sys; print("toomanyrequests: retry-after: 1ms", file=sys.stderr); raise SystemExit(1)'])
         self.assertEqual(code, 1)
         self.assertIn(start.THROTTLED, output)
 
