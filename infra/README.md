@@ -80,22 +80,45 @@ Host/runtime acceptance, including the 2026-10-15 corrections and normal reboot,
 does not close LP2-01, LP2-02 or LP2-03; DONE requires application integration,
 migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence.
 
-The **hosted reference** below (runbooks 00–06) is the hosted phase's deployment
-route for QA and the pilot. Its code still pins Azure Germany West Central and
-Supabase Frankfurt (`eu-central-1`), and the foundation and application roots are
-blocked for the selected subscription; WP-2 re-targets it to Sweden Central and
-North EU — Stockholm (`eu-north-1`) and narrows the gate through the hosted-QA
-exception file. Do not remove that gate or substitute region text by hand. Generic
-example inputs remain placeholders, not live contracts.
+The **hosted reference** below (runbooks 00–06) targets Azure Sweden Central
+(`swedencentral`) and Supabase North EU — Stockholm (`eu-north-1`). WP-2 adds the
+exact hosted-QA exception and ACS Email foundation resources. Runbooks are updated
+separately in WP-3; their historical region instructions are not live authority.
+Example inputs remain placeholders, not live contracts.
 
 **Hosted phase (owner decision 2026-10-26, extended to the pilot on 2026-10-28; Codex).**
-The hosted reference is being re-targeted to Supabase North EU — Stockholm and Azure
-Sweden Central, in the self-hosted QA's subscription but in its own resource groups
-(`tonyai-qatmp-*`), prefix and Terraform backend account, with no VNet. The gate is
-narrowed only by a new hosted-QA exception file; `config/deployment-policy.json` is
-never edited (its hash is bound into the paused self-hosted QA receipts). Until that
-change (WP-2) merges, the paragraph above still holds. Plan:
+The lane uses `tonyai-qatmp-apps`, `tonyai-qatmp-tfstate`, prefix `tonyaiqt` and
+environment `staging`, with no VNet. `config/hosted-qa-exception.json` is a fail-closed
+template: the owner must supply the confirmed subscription and dedicated, globally
+unique backend account (a `tonyaiqt` name, at most 24 characters) before live use.
+Both hosted Terraform roots and the Python entrypoints check the same exact tuple;
+backend bootstrap and hosted Terraform invocation also bind the backend group/account.
+The paused backend's shared shape validator remains available, but the hosted writer
+refuses to adopt or reconfigure that backend. `config/deployment-policy.json` and the
+original subscription-refusal condition stay unchanged. Plan:
 [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md).
+
+Foundation's `email` block accepts only the owner's existing Entra client ID,
+service-principal object ID and tenant ID, plus optional domain settings. ACS Email
+and Communication Services use `location = global`, `dataLocation = Europe`.
+`email_contract` outputs the public SMTP username, sender and STARTTLS settings
+(`smtp.azurecomm.net:587`); it never outputs credentials. The owner creates the
+Entra client secret separately and stores it directly as Key Vault `smtp-password`.
+The SMTP role has only the [three documented authentication actions](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication)
+and is assignable and assigned only on the hosted Communication resource, never the
+subscription or group. Azure supports [resource-instance assignable scopes](https://learn.microsoft.com/azure/role-based-access-control/role-definitions#assignablescopes);
+this single-purpose role deliberately uses that narrow scope.
+Start with the Azure-managed sender. To add a custom domain, set `custom_domain`,
+create it through the separately approved foundation operation, complete DNS
+verification, then set `custom_domain_verified = true` in a reviewed follow-up input.
+The service also enforces verification when linking; an unverified domain remains
+unlinked. Entra provisioning, DNS and every cloud operation remain owner-run.
+
+Offline checks include `python3 infra/tests/check_hosted_terraform.py` after both
+hosted roots have been initialized with `-backend=false`: it tests the exact target,
+six wrong-target cases per root and ACS residency/RBAC mutations in disposable copies.
+`selfhost-checks.yml` and `qa-infra.yml` still require manual runs on the pushed PR
+branch before merge; local mocks do not replace them or establish cloud acceptance.
 
 Use Terraform **1.13.3**, AzAPI **2.6.1**, Node **22**, pnpm **11.9.0**, Python **3.10+**,
 Azure CLI, GitHub CLI (`gh`) and Docker/buildx. Run from a clean, reviewed checkout. Terraform provider

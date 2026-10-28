@@ -2,9 +2,12 @@
   "subscription_id": "<subscription-uuid>",
   "tenant_id": "<tenant-uuid>",
   "environment": "staging",
-  "resource_group": "tonyai-staging-state",
-  "storage_account": "<globally-unique-staging-account>",
+  "resource_group": "tonyai-qatmp-tfstate",
+  "storage_account": "<owner-confirmed-tonyaiqt-account>",
   "owner_object_id": "<signed-in-owner-object-uuid>",
   "application_object_id": "",
-  "allowed_ipv4": ["<owner-public-ipv4>/32"]
+  "allowed_ipv4": [
+    "<owner-public-ipv4>/32"
+  ],
+  "location": "swedencentral"
 }

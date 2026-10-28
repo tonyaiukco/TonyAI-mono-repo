@@ -78,7 +78,7 @@ def run(args):
         signing = ensure_signing_key(api, ref, journal)
         configure_auth(api, ref, config['web_origin'], public, signing)
         journal.set(versions=versions, configured=True)
-        print('PASS: Frankfurt project, private buckets, Auth/JWKS and vault bindings reconciled.')
+        print('PASS: Stockholm project, private buckets, Auth/JWKS and vault bindings reconciled.')
         print('Project reference: ' + ref + '; version IDs are in the nonsecret journal.')
     finally:
         journal.close()

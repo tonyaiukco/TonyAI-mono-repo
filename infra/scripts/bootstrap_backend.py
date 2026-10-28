@@ -16,7 +16,7 @@ def validate(config):
                 'owner_object_id', 'application_object_id', 'allowed_ipv4'}
     if set(config) - {'location'} != required or config['environment'] not in ('staging', 'production'):
         raise SafeFailure('Backend configuration fields or environment are invalid.')
-    if config.get('location', 'germanywestcentral') not in ('germanywestcentral', 'swedencentral'):
+    if config.get('location', 'swedencentral') != 'swedencentral':
         raise SafeFailure('Backend location must be a reviewed Azure region.')
     for name in ('subscription_id', 'tenant_id', 'owner_object_id'):
         UUID(config[name])
@@ -26,7 +26,10 @@ def validate(config):
             raise SafeFailure('Application identity must differ from the foundation owner.')
     if not re.fullmatch(r'[a-z0-9]{3,24}', config['storage_account']):
         raise SafeFailure('Invalid backend account name.')
-    if not re.fullmatch(r'[A-Za-z0-9_-]+', config['resource_group']) or config['environment'] not in config['resource_group']:
+    if config['resource_group'] == 'tonyai-qatmp-tfstate':
+        from hosted_target import require_hosted_backend
+        require_hosted_backend(config)
+    elif not re.fullmatch(r'[A-Za-z0-9_-]+', config['resource_group']) or config['environment'] not in config['resource_group']:
         raise SafeFailure('Use an environment-specific backend resource group.')
     if not config['allowed_ipv4']:
         raise SafeFailure('At least one explicit owner/runner public IPv4 is required.')
@@ -38,7 +41,9 @@ def validate(config):
 
 def bootstrap(config, arm):
     validate(config)
-    location = config.get('location', 'germanywestcentral')
+    from hosted_target import require_hosted_backend
+    require_hosted_backend(config)
+    location = config.get('location', 'swedencentral')
     subscription = '/subscriptions/' + config['subscription_id']
     group = subscription + '/resourceGroups/' + config['resource_group']
     account = group + '/providers/Microsoft.Storage/storageAccounts/' + config['storage_account']
@@ -109,6 +114,8 @@ def main():
     args = parser.parse_args()
     config = json.load(open(args.config))
     validate(config)
+    from hosted_target import require_hosted_backend
+    require_hosted_backend(config)
     # Verify CLI tenant/subscription; never change the owner's ambient account silently.
     from configure_oidc import az
     account = az('account', 'show')

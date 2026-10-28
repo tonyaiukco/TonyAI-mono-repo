@@ -8,8 +8,8 @@ def validate_project(project, target):
     ref = project.get('ref') or project.get('id', '')
     if (not re.fullmatch(r'[a-z]{20}', ref) or project.get('name') != target['name']
             or project.get('organization_id') != target['organization_id']
-            or project.get('region') != 'eu-central-1'):
-        raise SafeFailure('Project identity, organization or Frankfurt region does not match.')
+            or project.get('region') != 'eu-north-1'):
+        raise SafeFailure('Project identity, organization or Stockholm region does not match.')
     return ref
 
 
@@ -42,7 +42,7 @@ def ensure_project(api, vault, journal):
     journal.set(project_pending=True)  # Persist BEFORE the non-idempotent request.
     project = api('/v1/projects', 'POST', {
         'name': target['name'], 'organization_slug': target['organization_slug'],
-        'region_selection': {'type': 'specific', 'code': 'eu-central-1'},
+        'region_selection': {'type': 'specific', 'code': 'eu-north-1'},
         'db_pass': password['value'],
     })
     ref = validate_project(project, target)

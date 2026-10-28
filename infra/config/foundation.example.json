@@ -3,8 +3,8 @@
     "subscription_id": "<subscription-uuid>",
     "tenant_id": "<tenant-uuid>",
     "environment": "staging",
-    "prefix": "tonyai",
-    "resource_group": "tonyai-staging",
+    "prefix": "tonyaiqt",
+    "resource_group": "tonyai-qatmp-apps",
     "registry_name": "<globally-unique-registry>",
     "vault_name": "<globally-unique-vault>",
     "repository": "tonyaiukco/TonyAI-mono-repo",
@@ -13,6 +13,13 @@
     "deployer_object_id": "",
     "runtime_secrets_ready": false,
     "apps_ready": false,
-    "smtp_secret_ready": false
+    "smtp_secret_ready": false,
+    "email": {
+      "client_id": "<smtp-entra-client-uuid>",
+      "principal_id": "<smtp-service-principal-object-uuid>",
+      "tenant_id": "<tenant-uuid>",
+      "custom_domain": null,
+      "custom_domain_verified": false
+    }
   }
 }

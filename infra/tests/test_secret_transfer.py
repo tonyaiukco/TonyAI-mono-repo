@@ -23,7 +23,7 @@ class TransferTests(unittest.TestCase):
         vault=Mock();vault.get.return_value={'value':'synthetic@:/password'}; vault.identifier.return_value='https://vault.vault.azure.net/secrets/bootstrap-db-password/'+'b'*32
         vault.put.side_effect=lambda name,value,tags: 'https://vault.vault.azure.net/secrets/'+name+'/'+'a'*32
         keys=[{'name':role,'api_key':key(role)} for role in ('anon','service_role')]
-        poolers=[{'database_type':'PRIMARY','connection_string':'postgres://postgres.'+REF+':placeholder@aws-0-eu-central-1.pooler.supabase.com:6543/postgres'}]
+        poolers=[{'database_type':'PRIMARY','connection_string':'postgres://postgres.'+REF+':placeholder@aws-0-eu-north-1.pooler.supabase.com:6543/postgres'}]
         api=Mock(side_effect=[keys,poolers])
         journal=Mock(); journal.data={}
         with patch('supabase_setup.provision_buckets') as buckets, patch('supabase_keys.request', side_effect=[(200,b'[]'),(401,b''),(200,b'{}')]):
@@ -46,7 +46,7 @@ class TransferTests(unittest.TestCase):
             vault.put.assert_not_called()
 
     def test_foreign_or_ambiguous_pooler_never_stores_database_urls(self):
-        for hosts in (['aws-0-us-east-1.pooler.supabase.com'],['aws-0-eu-central-1.pooler.supabase.com','aws-1-eu-central-1.pooler.supabase.com']):
+        for hosts in (['aws-0-us-east-1.pooler.supabase.com'],['aws-0-eu-north-1.pooler.supabase.com','aws-1-eu-north-1.pooler.supabase.com']):
             keys=[{'name':role,'api_key':key(role)} for role in ('anon','service_role')]
             rows=[{'database_type':'PRIMARY','connection_string':'postgres://user:placeholder@'+host+':6543/postgres'} for host in hosts]
             api=Mock(side_effect=[keys,rows]);vault=Mock();vault.put.return_value='id'

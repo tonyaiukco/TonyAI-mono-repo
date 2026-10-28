@@ -18,7 +18,7 @@ TAGS = {'application':'TonyAI','environment':'staging','githubRepository':'owner
 class ResourceTrustTests(unittest.TestCase):
     def setUp(self):
         self.resources = [dict(type=kind, name=name, id=GROUP+'/providers/'+kind+'/'+name,
-                               location='germanywestcentral', tags=TAGS.copy())
+                               location='swedencentral', tags=TAGS.copy())
                           for kind, name in [('Microsoft.ContainerRegistry/registries','registry'),
                               ('Microsoft.KeyVault/vaults','vault'),
                               ('Microsoft.App/managedEnvironments','tonyai-staging-env'),
@@ -35,13 +35,13 @@ class ResourceTrustTests(unittest.TestCase):
         if args[:2] == ('resource','list'): return self.resources
         if args[:2] == ('acr','show'): return {'loginServer':'registry.azurecr.io'}
         if args[:3] == ('containerapp','env','show'):
-            return {'properties':{'defaultDomain':'real.germanywestcentral.azurecontainerapps.io'}}
+            return {'properties':{'defaultDomain':'real.swedencentral.azurecontainerapps.io'}}
         if args[:2] == ('account','show'): return {'tenantId':'tenant'}
         self.fail('Unexpected resource call: '+str(args))
 
     def test_resources_override_forged_outputs_and_keep_rollback_separate_from_candidates(self):
         with patch.object(session, 'az', side_effect=self.az): env = session.restore('sub','staging')
-        self.assertEqual(env['API_ORIGIN'],'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io')
+        self.assertEqual(env['API_ORIGIN'],'https://tonyai-staging-api.real.swedencentral.azurecontainerapps.io')
         self.assertNotIn('API_DIGEST', env)
         self.assertNotIn('CANDIDATE_API_DIGEST', env)
         self.assertEqual(env['SUPABASE_PROJECT_REF'], '')

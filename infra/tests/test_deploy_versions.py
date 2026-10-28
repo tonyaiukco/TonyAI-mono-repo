@@ -17,7 +17,7 @@ def inputs():
     return {'foundation': {'subscription_id':'00000000-0000-0000-0000-000000000001',
             'tenant_id':'00000000-0000-0000-0000-000000000002', 'environment':'staging',
             'resource_group':'staging', 'prefix':'tonyai', 'registry_name':'registry',
-            'vault_name':'vault', 'default_domain':'real.germanywestcentral.azurecontainerapps.io'},
+            'vault_name':'vault', 'default_domain':'real.swedencentral.azurecontainerapps.io'},
             'release': {'source_sha':'a'*40,'release_id':'r001','supabase_project_ref':'abcdefghijklmnopqrst',
             'api_digest':'sha256:'+'a'*64,'web_digest':'sha256:'+'b'*64,
             'database_secret_version':'a'*32,'backend_secret_version':'b'*32, 'storage_cleanup_hold':False, 'storage_sweep_interval_seconds':300}}

@@ -28,7 +28,7 @@ MUTANTS = [
     ('child working directory', 'loader-command.mjs', "new URL('../../apps/api/', import.meta.url)", "new URL('../../../apps/api/', import.meta.url)"),
     ('host start anchor', 'loader-identity.mjs', '/^aws-', '/aws-'),
     ('host end anchor', 'loader-identity.mjs', r'\.com$/', r'\.com/'),
-    ('host dot escaping', 'loader-identity.mjs', r'eu-central-1\.pooler\.supabase\.com', 'eu-central-1.pooler.supabase.com'),
+    ('host dot escaping', 'loader-identity.mjs', r'eu-north-1\.pooler\.supabase\.com', 'eu-north-1.pooler.supabase.com'),
     ('success would_load', 'loader-command.mjs', "'would_load'", "'unsupported_would_load'"),
     ('success loaded', 'loader-command.mjs', "'loaded'", "'unsupported_loaded'"),
     ('success already_loaded', 'loader-command.mjs', "'already_loaded'", "'unsupported_already_loaded'"),

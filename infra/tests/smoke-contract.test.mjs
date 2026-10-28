@@ -5,8 +5,8 @@ import { validateSmoke } from '../scripts/smoke-contract.mjs';
 
 const fixture = () => ({
   mode: 'staging', sourceSha: 'a'.repeat(40), projectRef: 'abcdefghijklmnopqrst',
-  web: 'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io',
-  api: 'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io/api/v1',
+  web: 'https://tonyai-staging-web.real.swedencentral.azurecontainerapps.io',
+  api: 'https://tonyai-staging-api.real.swedencentral.azurecontainerapps.io/api/v1',
   supabase: 'https://abcdefghijklmnopqrst.supabase.co',
   tenants: [0, 1].map(() => {
     const organisationId = randomUUID();

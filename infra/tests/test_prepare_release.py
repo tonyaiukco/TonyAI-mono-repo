@@ -21,7 +21,7 @@ def fixture():
     contract = inputs()
     f, r = contract['foundation'], contract['release']
     f.update(resource_group='preview-staging', prefix='preview', registry_name='previewregistry',
-             vault_name='preview-vault', default_domain='review.germanywestcentral.azurecontainerapps.io')
+             vault_name='preview-vault', default_domain='review.swedencentral.azurecontainerapps.io')
     r.update(source_sha='01'*20, release_id='preview-r027',
              api_digest='sha256:'+'12'*32, web_digest='sha256:'+'34'*32,
              database_secret_version='56'*16,

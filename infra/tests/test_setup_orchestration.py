@@ -145,7 +145,7 @@ class JournalSessionTests(unittest.TestCase):
     def test_session_uses_completed_bound_journal_and_ignores_obsolete_tags(self):
         fixture=test_resource_trust.ResourceTrustTests();fixture.setUp()
         fixture.tags['supabaseProjectRef']='z'*20
-        valid={'target':{'vault':'vault','web_origin':'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io'},'project_ref':REF,'configured':True}
+        valid={'target':{'vault':'vault','web_origin':'https://tonyai-staging-web.real.swedencentral.azurecontainerapps.io'},'project_ref':REF,'configured':True}
         with tempfile.TemporaryDirectory() as directory, patch.object(session_resources,'az',side_effect=fixture.az):
             path=Path(directory)/'j.json';path.write_text(json.dumps(valid))
             env=session_resources.restore('sub','staging',path)

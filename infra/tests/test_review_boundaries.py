@@ -125,6 +125,7 @@ class HelperGuardTests(unittest.TestCase):
         config=json.loads((Path(__file__).resolve().parents[1]/'config/foundation.example.json').read_text())
         config['config']['owner_object_id']='00000000-0000-0000-0000-000000000003'
         config['config']['deployer_object_id']=config['config']['owner_object_id']
+        config['config'].update(resource_group='tonyai-staging', prefix='tonyai', email=None)
         # Ensure no unrelated invalid placeholder is responsible for the rejection.
         config['config'].update(subscription_id='00000000-0000-0000-0000-000000000001',tenant_id='00000000-0000-0000-0000-000000000002',release_sha='a'*40,repository='owner/repo',registry_name='registry',vault_name='vault')
         with self.assertRaisesRegex(SafeFailure,'owner and deployer'): validate_foundation(config)

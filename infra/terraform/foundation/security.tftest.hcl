@@ -1,7 +1,7 @@
 mock_provider "azapi" {
   mock_resource "azapi_resource" {
     defaults = {
-      output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }
+      output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }
     }
   }
 }
@@ -73,49 +73,49 @@ run "foundation_security_contract" {
 override_resource {
   override_during = plan
   target          = azapi_resource.group
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging" }
 }
 
 override_resource {
   override_during = plan
   target          = azapi_resource.registry
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.ContainerRegistry/registries/tonyaistaging" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.ContainerRegistry/registries/tonyaistaging" }
 }
 
 override_resource {
   override_during = plan
   target          = azapi_resource.logs
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.OperationalInsights/workspaces/tonyai-staging-logs" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.OperationalInsights/workspaces/tonyai-staging-logs" }
 }
 
 override_resource {
   override_during = plan
   target          = azapi_resource.environment
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.App/managedEnvironments/tonyai-staging-env" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.App/managedEnvironments/tonyai-staging-env" }
 }
 
 override_resource {
   override_during = plan
   target          = azapi_resource.vault
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.KeyVault/vaults/tonyai-staging-kv" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.KeyVault/vaults/tonyai-staging-kv" }
 }
 
 override_resource {
   override_during = plan
   target          = azapi_resource.identity["api"]
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.ManagedIdentity/userAssignedIdentities/tonyai-staging-api" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.ManagedIdentity/userAssignedIdentities/tonyai-staging-api" }
 }
 
 override_resource {
   override_during = plan
   target          = azapi_resource.identity["web"]
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000006", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.ManagedIdentity/userAssignedIdentities/tonyai-staging-web" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000006", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.ManagedIdentity/userAssignedIdentities/tonyai-staging-web" }
 }
 
 override_resource {
   override_during = plan
   target          = azapi_resource.join_role
-  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000099" }
+  values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.swedencentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000099" }
 }
 
 run "scheduled_verification_operator_contract" {
@@ -193,4 +193,113 @@ run "sweden_subscription_cannot_create_legacy_foundation" {
     config = merge(var.config, { subscription_id = "cb7efc2f-37a7-4672-b62c-93c207bcd33d" })
   }
   expect_failures = [var.config]
+}
+run "acs_email_security_contract" {
+  command = plan
+  variables {
+    config = merge(var.config, { email = {
+      client_id    = "00000000-0000-0000-0000-000000000010"
+      principal_id = "00000000-0000-0000-0000-000000000011"
+      tenant_id    = "00000000-0000-0000-0000-000000000002"
+    } })
+  }
+  override_resource {
+    override_during = plan
+    target          = azapi_resource.communication["enabled"]
+    values          = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Communication/communicationServices/tonyai-staging-communication" }
+  }
+  override_resource {
+    override_during = plan
+    target          = azapi_resource.email_domain["enabled"]
+    values          = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Communication/emailServices/tonyai-staging-email/domains/AzureManagedDomain", output = { properties = { mailFromSenderDomain = "synthetic.azurecomm.net" } } }
+  }
+  override_resource {
+    override_during = plan
+    target          = azapi_resource.smtp_role["enabled"]
+    values          = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000012" }
+  }
+  assert {
+    condition     = azapi_resource.email["enabled"].location == "global" && azapi_resource.communication["enabled"].location == "global" && azapi_resource.email["enabled"].body.properties.dataLocation == "Europe" && azapi_resource.communication["enabled"].body.properties.dataLocation == "Europe"
+    error_message = "ACS is global with European data residency."
+  }
+  assert {
+    condition     = azapi_resource.email_domain["enabled"].body.properties.domainManagement == "AzureManaged" && azapi_resource.email_domain["enabled"].body.properties.userEngagementTracking == "Disabled" && length(azapi_resource.email_custom_domain) == 0 && azapi_resource.communication["enabled"].body.properties.linkedDomains == [azapi_resource.email_domain["enabled"].id]
+    error_message = "Start with only the managed domain, without tracking."
+  }
+  assert {
+    condition     = azapi_resource.smtp_grant["enabled"].parent_id == azapi_resource.communication["enabled"].id && azapi_resource.smtp_grant["enabled"].body.properties.principalId == "00000000-0000-0000-0000-000000000011" && azapi_resource.smtp_grant["enabled"].body.properties.principalType == "ServicePrincipal" && azapi_resource.smtp_grant["enabled"].body.properties.roleDefinitionId == azapi_resource.smtp_role["enabled"].id && azapi_resource.smtp_role["enabled"].body.properties.assignableScopes == [azapi_resource.communication["enabled"].id]
+    error_message = "Only the SMTP principal gets the role, only on the hosted Communication resource."
+  }
+  assert {
+    condition     = jsonencode(azapi_resource.smtp_role["enabled"].body.properties.permissions) == jsonencode([{ actions = ["Microsoft.Communication/CommunicationServices/Read", "Microsoft.Communication/CommunicationServices/Write", "Microsoft.Communication/EmailServices/write"], notActions = [], dataActions = [], notDataActions = [] }])
+    error_message = "SMTP must have only the three documented actions, no wildcard or data-plane grants."
+  }
+  assert {
+    condition     = azapi_resource.smtp_username["enabled"].body.properties.entraApplicationId == "00000000-0000-0000-0000-000000000010" && azapi_resource.smtp_username["enabled"].body.properties.tenantId == var.config.tenant_id && toset(keys(azapi_resource.smtp_username["enabled"].body.properties)) == toset(["entraApplicationId", "tenantId", "username"]) && output.email_contract.enabled.username == "tonyai-staging-smtp" && output.email_contract.enabled.sender == "DoNotReply@synthetic.azurecomm.net" && output.email_contract.enabled.host == "smtp.azurecomm.net" && output.email_contract.enabled.port == 587 && !output.email_contract.enabled.secure
+    error_message = "Publish public STARTTLS SMTP settings and sender; never a credential."
+  }
+}
+run "acs_custom_domain_waits_for_verification" {
+  command = plan
+  variables {
+    config = merge(var.config, { email = {
+      client_id     = "00000000-0000-0000-0000-000000000010"
+      principal_id  = "00000000-0000-0000-0000-000000000011"
+      tenant_id     = "00000000-0000-0000-0000-000000000002"
+      custom_domain = "mail.example.invalid"
+    } })
+  }
+  assert {
+    condition     = length(azapi_resource.email_custom_domain) == 1 && azapi_resource.email_custom_domain["enabled"].body.properties.domainManagement == "CustomerManaged" && length(azapi_resource.communication["enabled"].body.properties.linkedDomains) == 1
+    error_message = "An unverified custom domain must not be linked."
+  }
+}
+run "acs_rejects_foreign_tenant" {
+  command = plan
+  variables {
+    config = merge(var.config, { email = {
+      client_id    = "00000000-0000-0000-0000-000000000010"
+      principal_id = "00000000-0000-0000-0000-000000000011"
+      tenant_id    = "00000000-0000-0000-0000-000000000099"
+    } })
+  }
+  expect_failures = [var.config]
+}
+run "acs_rejects_owner_as_smtp_principal" {
+  command = plan
+  variables {
+    config = merge(var.config, { email = {
+      client_id    = "00000000-0000-0000-0000-000000000010"
+      principal_id = var.config.owner_object_id
+      tenant_id    = var.config.tenant_id
+    } })
+  }
+  expect_failures = [var.config]
+}
+run "acs_verified_custom_domain" {
+  command = plan
+  variables {
+    config = merge(var.config, { email = {
+      client_id              = "00000000-0000-0000-0000-000000000010"
+      principal_id           = "00000000-0000-0000-0000-000000000011"
+      tenant_id              = "00000000-0000-0000-0000-000000000002"
+      custom_domain          = "mail.example.invalid"
+      custom_domain_verified = true
+    } })
+  }
+  override_resource {
+    target          = azapi_resource.email_custom_domain["enabled"]
+    override_during = plan
+    values = {
+      id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Communication/emailServices/tonyai-staging-email/domains/mail.example.invalid"
+      output = { properties = {
+        mailFromSenderDomain = "mail.example.invalid"
+        verificationRecords  = {}
+      } }
+    }
+  }
+  assert {
+    condition     = length(azapi_resource.communication["enabled"].body.properties.linkedDomains) == 2 && output.email_contract.enabled.sender == "DoNotReply@mail.example.invalid"
+    error_message = "Verified custom domain must be linked and become sender."
+  }
 }

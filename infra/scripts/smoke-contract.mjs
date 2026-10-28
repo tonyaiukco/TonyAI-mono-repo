@@ -11,7 +11,7 @@ export function validateSmoke(target) {
   }
   const sweden = target.mode === 'qa-sweden';
   const hosted = target.mode === 'staging' && /^[a-z]{20}$/.test(target.projectRef)
-      && /^https:\/\/[a-z0-9]{3,12}-staging-web\.[a-z0-9-]+\.germanywestcentral\.azurecontainerapps\.io$/.test(target.web)
+      && /^https:\/\/[a-z0-9]{3,12}-staging-web\.[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io$/.test(target.web)
       && target.supabase === `https://${target.projectRef}.supabase.co`;
   const qa = sweden && !Object.hasOwn(target, 'projectRef')
       && /^https:\/\/tonyai-staging-web\.[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io$/.test(target.web)

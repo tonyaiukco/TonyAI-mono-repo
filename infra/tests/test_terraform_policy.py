@@ -17,6 +17,8 @@ class PolicyTests(unittest.TestCase):
             ('foundation/main.tf','Microsoft.OperationalInsights/workspaces','Microsoft.KeyVault/vaults/secrets'),
             ('foundation/main.tf','response_export_values = []','response_export_values = ["*"]'),
             ('application/versions.tf','disable_default_output = true','disable_default_output = false'),
+            ('foundation/email.tf','Microsoft.Communication/emailServices@','Microsoft.KeyVault/vaults/secrets@'),
+            ('foundation/email.tf','"properties.mailFromSenderDomain"','"properties.primaryKey"'),
         ]:
             with self.subTest(filename=filename),tempfile.TemporaryDirectory() as d:
                 root=Path(d)/'terraform';shutil.copytree(ROOT,root,ignore=shutil.ignore_patterns('.terraform'))
