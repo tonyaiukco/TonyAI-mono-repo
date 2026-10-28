@@ -81,9 +81,9 @@ does not close LP2-01, LP2-02 or LP2-03; DONE requires application integration,
 migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence.
 
 The **hosted reference** below (runbooks 00–06) targets Azure Sweden Central
-(`swedencentral`) and Supabase North EU — Stockholm (`eu-north-1`). WP-2 adds the
-exact hosted-QA exception and ACS Email foundation resources. Runbooks are updated
-separately in WP-3; their historical region instructions are not live authority.
+(`swedencentral`) and Supabase North EU — Stockholm (`eu-north-1`). WP-2 (#253) added the
+exact hosted-QA exception and ACS Email foundation. WP-3 prepares all three private
+buckets, hosted smoke fixtures and runbooks 00–06/11; cloud acceptance remains owner-run.
 Example inputs remain placeholders, not live contracts.
 
 **Hosted phase (owner decision 2026-10-26, extended to the pilot on 2026-10-28; Codex).**
@@ -219,16 +219,25 @@ on Node 22. No live TLS, database, browser or Azure verification follows from th
 
 ## Hosted route for QA and the pilot (00–06)
 
-Supabase Cloud `eu-north-1` + Azure `swedencentral`, built from scratch; run nothing
-before WP-2 merges (the code still pins Frankfurt / Germany West Central until then).
+Supabase Cloud `eu-north-1` + Azure `swedencentral`, built from scratch. WP-2 is merged; WP-3 is local preparation, not live evidence.
+Follow the hosted plan's L1–L10 dependency order: project creation at L4, actual
+privilege/readback go/no-go at L4a, then migrations/deploy. Entra IDs precede
+foundation; SMTP secret storage follows vault creation.
 
 1. [Restore a safe session](runbooks/00-session.md).
-2. [Bootstrap backend, apply foundation, establish OIDC](runbooks/01-azure.md).
+2. [Prepare SMTP identities, bootstrap backend and apply foundation; OIDC deferred to WP-6](runbooks/01-azure.md).
 3. [Create/resume Supabase, configure Auth/JWKS and private buckets](runbooks/02-supabase.md).
 4. [Build immutable images, migrate, deploy one release](runbooks/03-deploy.md).
 5. [Collect live acceptance and fresh-recreation evidence; restore a database](runbooks/04-verify.md).
 6. [Rotate, roll back or recover state/vault; run the owner reconciliation check](runbooks/05-rotation.md).
 7. [Prove readiness, alert delivery and staging acceptance](runbooks/06-operations.md).
+8. [Issue QA access and record hosted acceptance](runbooks/11-qa-hosted.md).
+
+Provisioning/readback, readiness and scheduled verification cover `evidence`
+(10 MiB), `import-sources` (2 MiB) and `report-artifacts` (20 MiB, PDF only).
+The first two probes use CSV; the report probe uses PDF. All buckets are private.
+Smoke uses two synthetic super_admin tenants with canonical hosted geography;
+all-role, factorless lifecycle and retained-PDF acceptance are separate owner checks.
 
 ## Authoritative writers: the hosted path
 
@@ -333,7 +342,7 @@ applies resources. D22 keeps per-PR E2E nongating; full release-candidate E2E an
 flow-changing manual runs remain required elsewhere.
 
 See [provider/state security review](terraform/README.md). API `/health` is process liveness after Nest startup; `/health/ready` checks
-bounded DB connectivity and both private Storage buckets. `/health/synthetic`
+bounded DB connectivity and all three private Storage buckets. `/health/synthetic`
 requires a real authenticated profile. Full lifecycle acceptance remains owner-run. The included CA under
 `infra/certs/` remains in the API Docker context; other infra files and all
 Terraform/owner artifacts are excluded.

@@ -28,7 +28,7 @@ export function validateSmoke(target) {
   const ids = [];
   for (const tenant of target.tenants) {
     if (!uuid.test(tenant.userId) || !uuid.test(tenant.organisationId) || !uuid.test(tenant.subsidiaryId)
-        || (sweden && tenant.email !== `lp2-smoke-${tenant.userId}@tonyai.test`)
+        || tenant.email !== `lp2-smoke-${tenant.userId}@tonyai.test`
         || !/^lp2-smoke-[a-z0-9-]+@tonyai\.test$/.test(tenant.email)
         || tenant.name !== `LP2 smoke ${tenant.organisationId}`) throw new Error('Invalid synthetic tenant');
     ids.push(tenant.userId, tenant.organisationId, tenant.subsidiaryId);

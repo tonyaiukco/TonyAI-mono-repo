@@ -18,6 +18,7 @@ XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 BUCKETS = {
     'evidence': (10 * 1024 * 1024, ['application/pdf', 'image/jpeg', 'image/png', XLSX, 'text/csv']),
     'import-sources': (2 * 1024 * 1024, ['text/csv', XLSX]),
+    'report-artifacts': (20 * 1024 * 1024, ['application/pdf']),
 }
 
 
@@ -107,10 +108,13 @@ def provision_buckets(base, key):
 
 def probe_buckets(base, key):
     for name in BUCKETS:
-        path = 'lp2-foundation-probe/' + str(uuid4()) + '.csv'
-        payload = b'purpose\nLP2-01 storage probe\n'
+        pdf = name == 'report-artifacts'
+        path = 'lp2-foundation-probe/' + str(uuid4()) + ('.pdf' if pdf else '.csv')
+        payload = (b'%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+                   b'2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\n'
+                   b'trailer<</Root 1 0 R>>\n%%EOF\n') if pdf else b'purpose\nLP2-01 storage probe\n'
         require_success(request(base + '/object/' + name + '/' + path,
-                                'POST', key, payload, 'text/csv'))
+                                'POST', key, payload, 'application/pdf' if pdf else 'text/csv'))
         try:
             public_status, _ = request(base + '/object/public/' + name + '/' + path)
             if public_status not in (400, 401, 403, 404):

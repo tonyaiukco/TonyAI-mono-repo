@@ -93,7 +93,7 @@ def validate_cleanup_target(target, candidate, release):
         if any(not isinstance(value, str) or not re.fullmatch(uuid_pattern, value) for value in ids):
             raise SafeFailure('Invalid cleanup tenant identifiers.')
         if (not isinstance(tenant.get('email'), str)
-                or not re.fullmatch(r'lp2-smoke-[a-z0-9-]+@tonyai\.test', tenant['email'])
+                or tenant['email'] != 'lp2-smoke-' + tenant['userId'] + '@tonyai.test'
                 or tenant.get('name') != 'LP2 smoke ' + tenant['organisationId']):
             raise SafeFailure('Invalid synthetic cleanup identity.')
         identifiers.extend(ids)

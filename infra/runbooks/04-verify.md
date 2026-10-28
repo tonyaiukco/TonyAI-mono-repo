@@ -6,9 +6,8 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
-> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
-> changes the code and WP-3 re-checks these runbooks against it.
+> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> operation still needs its own owner approval. WP-6 CI deployment is deferred.
 
 First [restore the session](00-session.md). The owner records each actual result in the PR's B9 handoff, including integrated
 SHA, timestamp, environment/project ref, command/scenario, result and a sanitized
@@ -25,7 +24,7 @@ az containerapp secret list -g "$RESOURCE_GROUP" -n "$PREFIX-staging-web" --quer
 az role assignment list --scope "$(foundation_output vaultId)" --all --query '[].{role:roleDefinitionName,scope:scope,principal:principalId}'
 ```
 
-**Expected:** Sweden Central (Germany West Central until WP-2); ACR Basic/admin false; Key Vault RBAC/purge
+**Expected:** Sweden Central; ACR Basic/admin false; Key Vault RBAC/purge
 protection true; API's two database/backend **references**, plus `smtp-password` when configured, with API identity; no web secrets.
 Inspect the secret-level role assignments in the portal as well: API has Secrets
 User on the two runtime secrets and, when enabled, `smtp-password` only; `direct-url` has no API/web/deployer grant.
@@ -89,7 +88,7 @@ secret-resolution/image-pull failures privately; do not publish raw logs.
 | Idempotence | Repeat foundation plan/apply and the bucket command below; stable resource identities/origins and same private settings. |
 | No demo credentials | `verify.sql` counts, no `@tonyai.local` Auth users; before onboarding, zero Auth/factor rows, and the owner reconciliation check prints no placeholder or fixture release line. Inspect ACA env names: no `ALLOW_INSECURE_LOCAL_AUTH`, no `SUPABASE_JWT_SECRET`, JWKS pinned. |
 | Auth confinement | Run the public-key `/auth/v1/settings` probe (signup/unused providers disabled) and separately verify the dashboard redirect list; in a private owner test, signup is refused. Never post passwords/tokens as evidence. |
-| Storage works privately | Both bucket probes pass; SQL confirms default-deny policies. Also test authenticated browser direct read/write denial with a controlled user when onboarding exists. |
+| Storage works privately | All three bucket probes pass; SQL confirms default-deny policies. Also test authenticated browser direct read/write denial with a controlled user when onboarding exists. |
 | No exposed service keys | Compare deployment secret references and RBAC scopes; in private DevTools confirm web requests use only public browser credentials. No service key in assets/build settings/GitHub. |
 | Web environment binding | Browser login contacts the exact staging Supabase host and API URL; record public hosts and image digest. |
 | Federation | Subject/audience/issuer plus protected environment settings now; successful and denied OIDC exchanges from LP2-02 workflow later. |
@@ -140,7 +139,7 @@ secure secret recovery/rotation procedures. Use this order for backup/restore; t
    Verify `STORAGE_CLEANUP_HOLD=1` on **every API process/active revision** and any
    manually running sweeper. A new revision alone is insufficient while old replicas
    are draining: wait until no old unheld process remains. Set the hold before backup
-   begins and keep it throughout DB and both-bucket restoration.
+   begins and keep it throughout DB and all-three-bucket restoration.
 2. In the private shell running the matching API image/tool, also run
    `export STORAGE_CLEANUP_HOLD=1`. After the DB (through the
    [restore procedure below](#database-restore-procedure-and-lp5-03-drill)) and
@@ -168,7 +167,7 @@ objects and never replaces the private post-restore report review.
 
 A logical restore never goes into a database that already holds data. The target
 is a newly created, isolated Supabase project in the source's region, prepared through runbook 02
-(including both buckets from its reconciliation) and migrated through runbook 03
+(including all three buckets from its reconciliation) and migrated through runbook 03
 §3.2 **at the dump's own migration head**, using the source SHA recorded when the
 dump was taken, not today's latest schema. Its schema comes only from that
 committed migration chain, never from a dump. Nothing else may write to it before

@@ -48,7 +48,7 @@ describe('health boundaries', () => {
     await expect(guard.canActivate(context)).rejects.toMatchObject({ status: 401 });
   });
 
-  it('checks both private buckets and only runtime-safe SQL, with bounded calls', async () => {
+  it('checks all three private buckets and only runtime-safe SQL, with bounded calls', async () => {
     const { health, transaction, query, fetch, response } = setup();
     expect(await health.ready(response)).toEqual({ status: 'ready' });
     expect(transaction.mock.calls[0][1]).toEqual({ maxWait: 500, timeout: 1500 });
@@ -58,6 +58,7 @@ describe('health boundaries', () => {
     expect(fetch.mock.calls.map((call) => call[0])).toEqual([
       'https://synthetic.supabase.co/storage/v1/bucket/evidence',
       'https://synthetic.supabase.co/storage/v1/bucket/import-sources',
+      'https://synthetic.supabase.co/storage/v1/bucket/report-artifacts',
     ]);
     expect(fetch.mock.calls[0][1]).toMatchObject({ redirect: 'error', signal: expect.any(AbortSignal) });
   });
@@ -124,8 +125,8 @@ describe('health boundaries', () => {
     expect(health.check().status).toBe('ok');
   });
 
-  it.each(['public', 'wrong-id', 'missing-public', '401', '404', '500', 'throw'])('refuses Storage %s independently for either bucket', async (failure) => {
-    for (const failedBucket of ['evidence', 'import-sources']) {
+  it.each(['public', 'wrong-id', 'missing-public', '401', '404', '500', 'throw'])('refuses Storage %s independently for every bucket', async (failure) => {
+    for (const failedBucket of ['evidence', 'import-sources', 'report-artifacts']) {
       const { health, fetch, response } = setup();
       fetch.mockImplementation(async (url: string) => {
         const id = url.split('/').pop();

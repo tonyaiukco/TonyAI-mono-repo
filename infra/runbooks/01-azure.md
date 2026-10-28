@@ -6,14 +6,22 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
-> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
-> changes the code and WP-3 re-checks these runbooks against it.
+> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> operation still needs its own owner approval. WP-6 CI deployment is deferred.
 > **Section 1.1 here bootstraps the hosted phase's own backend** (`tonyai-qatmp-tfstate`,
 > pinned by WP-2) — never the paused self-hosted backend account.
 
 The owner approves subscription, Sweden capacity, budget/alerts and billing
 before provisioning. No budget ceiling or provisioning approval is implied.
+
+Before L2, reconcile the exact hosted exception in
+`infra/config/hosted-qa-exception.json` with the reviewed nonsecret inputs:
+the real subscription, `tonyai-qatmp-apps`, prefix `tonyaiqt`, environment
+`staging`, `tonyai-qatmp-tfstate` and its dedicated globally unique backend
+account. The foundation and application writers use separate state containers;
+the application consumes only `application_contract`, never foundation state.
+Placeholders must fail closed. Never use the paused backend or alter
+`deployment-policy.json` / the frozen subscription refusal to make a target pass.
 
 ## 1.1 Bootstrap the Entra-only backend
 
@@ -21,8 +29,8 @@ Fill `backend.json`: distinct staging account, owner object ID, explicit public
 owner egress IPv4 (`/32`), empty `application_object_id` until OIDC is established.
 No broad firewall range, trusted-service bypass or storage keys.
 
-Explicitly set backend `location` to `swedencentral`. The helper still defaults
-to `germanywestcentral` until WP-2; never inherit that default.
+Set backend `location` to `swedencentral`, matching the code default and
+foundation contract.
 Existing backend resources cannot be relocated by changing this field.
 
 ```bash
@@ -42,8 +50,10 @@ wait and rerun, never enable Shared Key as a workaround.
 
 Start with `runtime_secrets_ready=false`, `apps_ready=false`, and an empty
 deployer ID. Select globally unique names. Record the reviewed infrastructure
-SHA in `release_sha`. The region is fixed by code: `germanywestcentral`
-(`terraform/foundation/variables.tf`) until WP-2 changes it to `swedencentral`.
+SHA in `release_sha`. The region is fixed by code to `swedencentral`
+(`terraform/foundation/variables.tf`). Complete section 1.4 identity preparation
+before planning: SMTP Entra IDs are foundation inputs. Keep
+`smtp_secret_ready=false` until the vault secret exists.
 
 ```bash
 python3 infra/scripts/terraform_run.py foundation plan --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
@@ -60,7 +70,11 @@ owns the RG and shared resources; do not edit them with alternate templates.
 Copy the **public** contract into `release-r001.json.foundation`; verify names
 against restoration. Never give the deployer access to foundation state.
 
-## 1.3 GitHub/Entra federation
+## 1.3 GitHub/Entra federation (deferred to WP-6)
+
+Do not execute this section during WP-3 or the initial owner-run L1–L10.
+The current JIT-only workflow contract remains enforced until WP-6 changes and
+qualifies it; it is not a prerequisite for owner-run deployment.
 
 Complete [runbook 03’s one-time GitHub/main/JIT setup](03-deploy.md#one-time-owner-setup)
 before this step. Before federation: verify the GitHub plan actually enforces `staging` environment
@@ -111,3 +125,73 @@ The `infra.yml` workflow is validation-only. LP2-02 wires deployment with
 serialized deployment. Backend firewall must admit the approved runner's fixed
 egress (or an owner-managed private runner); never open all addresses for a hosted
 runner. Do not grant the workflow foundation permissions to bypass bootstrap.
+
+## 1.4 ACS Email identity and domain preparation
+
+**L1b, before foundation:** in the approved tenant, the owner creates a dedicated
+SMTP Entra application and service principal, separate from any OIDC deployer.
+These commands create identities and each needs live approval; they do not
+create a password:
+
+```bash
+az ad app create --display-name '<owner-selected-hosted-SMTP-name>' --query appId -o tsv
+az ad sp create --id '<returned-application-client-id>' --query id -o tsv
+az ad app show --id '<returned-application-client-id>' --query '{clientId:appId,objectId:id}' -o json
+az ad sp show --id '<returned-application-client-id>' --query '{clientId:appId,principalId:id,tenant:appOwnerOrganizationId}' -o json
+```
+
+Record only these public identifiers. Put the application **client ID** in
+`config.email.client_id`, the **service-principal object ID** in `principal_id`
+and the verified tenant ID in `tenant_id`. Never substitute the application
+object ID for either. An ambiguous create outcome requires owner reconciliation
+before retrying; do not create duplicate identities. The foundation owns the
+Communication-resource-scoped SMTP role, username and ACS resources, with data
+location Europe. Do not add subscription-wide mail roles in the portal.
+
+**L3:** start with `custom_domain=null`, `custom_domain_verified=false` and
+`smtp_secret_ready=false`. Foundation creates the Azure-managed domain and vault.
+Read the public output after apply:
+
+```bash
+terraform -chdir=infra/terraform/foundation output -json email_contract
+```
+
+`enabled.username` and `enabled.sender` are the actual SMTP username and sender;
+never guess the generated domain. `host`, `port` and `secure` must be
+`smtp.azurecomm.net`, `587` and `false` (mandatory STARTTLS). This is public
+configuration, not a password. Confirm the SMTP username is ready in ACS.
+
+**L7, only after the vault and valid release manifest exist:** use Entra's
+Certificates & secrets page to create a client secret with a custom expiry
+**no more than 90 days** after creation. In a private unrecorded session, save
+the value directly to the owner's password manager, then enter it at runbook
+03 §3.5's hidden `smtp-password` prompt. Never use a CLI command that prints
+the generated password, put it in argv, JSON, Terraform, a screenshot, a log or
+chat. Record only credential ID/expiry and the returned vault version; schedule
+owner rotation before expiry. Terraform must never create/read that secret.
+
+### Optional custom sending domain (Namecheap)
+
+This is a separately approved DNS/foundation change; the Azure-managed sender
+can be used for initial QA. Set the actual `config.email.custom_domain`, leave
+`custom_domain_verified=false`, then review/apply foundation to create the domain
+without linking it. Read `email_contract.enabled.custom_domain_verification` and
+the ACS domain's verification page. In Namecheap, confirm authoritative DNS is
+hosted there, then Domain List → Manage → Advanced DNS → Host Records. Copy the
+**actual ACS record types, hosts and values** for domain verification, SPF and
+both DKIM selectors. Use relative hosts in Namecheap (do not append the domain
+twice); merge an existing SPF record instead of creating a second one. Preserve
+unrelated DNS/MX records. Configure the owner's DMARC policy for this sending
+domain; do not invent DNS values or a policy on the owner's behalf.
+
+Wait for DNS propagation and trigger ACS verification for ownership, SPF and
+DKIM/DKIM2. Only after every required status succeeds, set
+`custom_domain_verified=true` and review/apply foundation. The flag is an owner
+attestation, not a DNS verifier. Read back the linked domain and new public
+sender, update a new release's `mail.from`, then perform §3.5's SMTP acceptance.
+Keep the Azure-managed domain; do not delete it during transition. If verification
+fails, keep the flag false and the existing sender. If delivery fails after
+cutover, use a new owner-reviewed release with the previously qualified sender.
+
+References: [ACS SMTP authentication](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication)
+and [Namecheap host record types](https://www.namecheap.com/support/knowledgebase/article.aspx/579/2237/which-record-type-option-should-i-choose-for-the-information-im-about-to-enter/).

@@ -6,9 +6,8 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
-> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
-> changes the code and WP-3 re-checks these runbooks against it.
+> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> operation still needs its own owner approval. WP-6 CI deployment is deferred.
 
 Use a private owner session restored through runbook 00. Keep the last verified
 release manifest and DB/schema compatibility evidence. **Every application
@@ -30,7 +29,8 @@ Storage key. `storage:reconcile` needs only the runtime role. `direct-url` reach
 only owner tooling (migrations, private psql and synthetic fixtures);
 it is never a workload secret or an application environment variable.
 
-1. Before applying the LP1-03 migration, use the owner-only helper below from a
+1. **L4a go/no-go: after script-created project setup, before any migration or
+   deployment.** Before applying the LP1-03 migration, use the owner-only helper below from a
    clean reviewed checkout. It resolves the exact `direct-url` version from Key
    Vault into psql's libpq environment, verifies the region/project/owner/TLS
    contract, disables psql startup files/history, and never puts a password or
@@ -88,8 +88,7 @@ it is never a workload secret or an application environment variable.
    postgresql://tonyai_runtime.<project-ref>:<64-character-hex-password>@aws-N-eu-north-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true
    ```
 
-   Use the project's actual Stockholm (`eu-north-1`) pooler host (the checkers accept
-   it once WP-2 merges). Store the URL through hidden
+   Use the project's actual Stockholm (`eu-north-1`) pooler host (validated by the checkers). Store the URL through hidden
    input below; this validates its structure, not a login, because the role does
    not exist until migration.
 
@@ -581,7 +580,7 @@ Each store prints only a validated Key Vault version ID; copy it into the new
 manifest before verification. Strict URL checks reject wrong roles, projects,
 regions, ports, query keys, TLS settings and CA paths. Backend keys require a live
 exact-project probe. New release IDs create fresh revisions even with unchanged
-images. Verify login, authenticated requests/new DB connections, both bucket
+images. Verify login, authenticated requests/new DB connections, all three bucket
 probes and the browser build; update the scheduled job through runbook 06 before
 revoking old provider keys or disabling vault versions. Key-only rotation applies
 no migrations. A legacy JWT/anon-key rotation changes compiled browser inputs:

@@ -27,21 +27,24 @@ export function fixtureDatabaseUrl(target, url) {
   return checked.stdout;
 }
 
-export async function provision(target) {
+export async function provision(target, Client = PrismaClient) {
   validateSmoke(target);
   if (!['staging', 'qa-sweden'].includes(target.mode)) throw new Error('Staging fixtures only');
-  const prisma = new PrismaClient({ datasourceUrl: fixtureDatabaseUrl(target, process.env.DIRECT_URL ?? ''), log: [] });
+  const prisma = new Client({ datasourceUrl: fixtureDatabaseUrl(target, process.env.DIRECT_URL ?? ''), log: [] });
+  // Keep the paused adapter's historical fixture; hosted QA uses the app vocabulary.
+  const geographyCode = target.mode === 'staging' ? 'UK' : 'DE';
   try {
     // Single transaction: an interrupted prepare leaves all or none of these rows.
     await prisma.$transaction(async (tx) => {
       for (const tenant of target.tenants) {
         const mutations = [
           ['organisation', tenant.organisationId, () => tx.organisation.create({ data: {
-            id: tenant.organisationId, legalName: tenant.name, country: 'DE', geographyCode: 'DE',
+            id: tenant.organisationId, legalName: tenant.name,
+            country: target.mode === 'staging' ? 'UK' : 'DE', geographyCode,
           } })],
           ['subsidiary', tenant.subsidiaryId, () => tx.subsidiary.create({ data: {
             id: tenant.subsidiaryId, organisationId: tenant.organisationId,
-            legalName: tenant.name, geographyCode: 'DE',
+            legalName: tenant.name, geographyCode,
           } })],
           ['profile', tenant.userId, () => tx.profile.create({ data: {
             id: tenant.userId, email: tenant.email, fullName: 'LP2 synthetic smoke',

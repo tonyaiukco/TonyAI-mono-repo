@@ -6,13 +6,14 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
-> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
-> changes the code and WP-3 re-checks these runbooks against it.
+> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> operation still needs its own owner approval. WP-6 CI deployment is deferred.
 
 Restore the session/project variables (runbook 00). Keep infrastructure and image
 source SHAs distinct. First create is owner-run; app-scoped OIDC deployment starts
-only after both apps exist and runbook 01 grants their exact scopes.
+only after WP-6 and its protection/runner acceptance, both apps exist and
+runbook 01 grants their exact scopes. Sections 3.1–3.3 and the owner smoke below
+are the initial hosted path; section 3.4's CI dispatch sequence is deferred.
 
 ## 3.1 Build and verify immutable images
 
@@ -57,6 +58,7 @@ cannot clear an incident hold. Preserve the hold during rollback and rotation.
 
 ## 3.2 Deploy migrations separately
 
+**First require L4a / runbook 05's real owner privilege probe to pass.**
 Run migrations from the clean checkout at the manifest’s image `source_sha`. The
 helper checks HEAD and refuses a different chain. Node 22 and pnpm must be on PATH. Review the committed migration chain and compatibility with the
 previous images before applying. No reset, seed, `migrate dev`, or down migration.
@@ -297,8 +299,8 @@ or use `az containerapp update/secret set/revision activate`: Terraform is the s
 application writer, except the reviewed deploy tool’s drain step, which deactivates
 outgoing API revisions before applying the saved plan. Never manually activate
 a revision. Runbook 05 handles rotation/rollback with another manifest.
-After the first creation, enable foundation `apps_ready` and apply the exact-app
-OIDC grants per runbook 01. Preserve manifest, provider locks, infrastructure SHA,
+Leave the deployer unset during owner-only rollout. In WP-6, after the first
+creation, enable foundation `apps_ready` and apply the exact-app OIDC grants. Preserve manifest, provider locks, infrastructure SHA,
 image-source SHA, migration evidence and ready revision IDs for the release.
 
 A successful Terraform apply is not a DB-backed smoke pass. Run runbook 04 and
@@ -390,8 +392,7 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
   `STAGING_ACR_NAME`, `STAGING_RESOURCE_GROUP`, `STAGING_SUPABASE_PROJECT_REF`,
   `STAGING_SUPABASE_PUBLIC_KEY` (publishable/anon only), `STAGING_BACKEND_JSON`
   (the validated backend config, identifiers and IPs only). This workflow binds
-  Supabase `eu-north-1` (Stockholm) and Azure Sweden Central once WP-2 and WP-6
-  merge (until then it still binds Frankfurt / Germany West Central). The paused
+  Supabase `eu-north-1` (Stockholm) and Azure Sweden Central (WP-2 merged; WP-6 must qualify the runner/deployment adaptation). The paused
   self-hosted route's `qa-candidate.yml` is not used. No backend key, DB URL, password,
   refresh token or Terraform state belongs in a workflow input/variable/artifact.
 
@@ -498,6 +499,13 @@ authenticated PDF/XLSX/CSV bytes, own-tenant positive reads and foreign-tenant
 negative reads via **both API and PostgREST**. The PDF starts Chromium inside the
 actual API image. The web exercise tests its compiled project/API URLs and CORS.
 This is smoke coverage, not the complete table-by-table RLS or lifecycle suite.
+Hosted fixture geographies use `UK`, in the current `UK/TR/EU` vocabulary;
+the paused `qa-sweden` fixture remains unchanged. Both profiles are active
+English-language super_admin users, not the QA team's role accounts. Empty-tenant
+exports exercise the current report query/byte contract, not factorless record
+content or retained report-artifact storage. Runbook 06's Water / Electricity
+journey and runbook 11's four-role and retained-PDF checks close those separate
+acceptance items. Do not claim this smoke establishes them.
 
 The ID-only journal is written **before** Auth creation. Each run closes browser
 sessions, deletes only its exact Auth IDs after matching email and synthetic
@@ -560,7 +568,7 @@ enforces `requireTLS`), `user` = the ACS SMTP Username (bound to an Entra applic
 whose client secret is the password), `from` = the sending domain's sender address — an
 Azure-managed `*.azurecomm.net` domain for QA's first days (5/min, 10/h, not raisable),
 then a verified custom domain (SPF/DKIM/DMARC). The ACS resources are created by the
-foundation root after WP-2; the Entra application and its secret are created by the
+foundation root (#253); the Entra application and its secret are created by the
 owner outside Terraform (hosted-phase plan, L1b). Supabase does not deliver the
 pilot's invitation/reset templates: the API uses `generateLink` and its TR/EN
 renderer (K5). Do not enter these credentials into Supabase SMTP settings.
@@ -575,6 +583,13 @@ field is then emitted, and API invitation/reset attempts fail observably with
 `mail_not_configured`. That state does **not** pass onboarding acceptance.
 
 Owner sequence, after foundation creation and before an SMTP-enabled release:
+
+Complete [runbook 01 §1.4](01-azure.md#14-acs-email-identity-and-domain-preparation):
+Entra app/SP before foundation, actual public `email_contract` readback after
+foundation, then a client secret with expiry at most 90 days. The vault must
+already exist. The initial managed domain needs no Namecheap DNS; the optional
+custom sender requires DNS verification and the owner-reviewed
+`custom_domain_verified` transition before selecting its `mail.from`.
 
 1. Store the password through a private interactive terminal, using an existing
    valid release manifest without `mail` for initial storage:
@@ -598,7 +613,15 @@ Owner sequence, after foundation creation and before an SMTP-enabled release:
    deploy through this runbook's existing path with a new `release_id`. Independent
    ARM readback requires all seven mail env fields, no inline password, the exact
    vault version and API identity, and no mail env fields on web.
-4. Run runbook 04's invitation/reset smoke and retain sanitised delivery evidence.
+4. With separate owner approval to send mail, run runbook 04's invitation/reset
+   acceptance against controlled QA recipients. Require an invitation and password
+   reset to arrive from the selected sender, valid links on this release's web
+   origin, TR/EN rendering, successful acceptance/reset and durable delivery status.
+   Confirm TLS/STARTTLS and the ACS username/domain status; a nonempty vault secret
+   or a successful TCP connection is not SMTP authentication/delivery acceptance.
+   Retain only time, release/digest, sender domain and pass/fail (never links,
+   tokens, addresses or raw provider messages). Repeat after a custom-domain
+   change or secret rotation; failure blocks QA account handover.
 
 Container parameters are `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
 `SMTP_PASSWORD` (a Key Vault reference), `MAIL_FROM`, and `APP_URL` (derived from
