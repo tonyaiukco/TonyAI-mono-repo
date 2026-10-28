@@ -1,5 +1,13 @@
 # Azure delivery plan: trusted QA, recovery, then production
 
+> **PAUSED 2026-10-28 (owner decision) — kept, not superseded.** QA and the pilot run on
+> Supabase Cloud (Pro) + Azure Container Apps for the next two to three months
+> ([`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)).
+> This self-hosted plan resumes on the owner's word after the pilot launch, to move the
+> Supabase side to Azure (then on-premises preparation after the production launch).
+> Until then nothing here is executed; its CI gates run only by hand
+> (`selfhost-checks.yml`, `qa-infra.yml`).
+
 Forecast dated **2026-10-17**, with **2026-10-18 R2/R3 reconciliation** against source baseline **`d8b7df87a97150db8d60c2385812abf4e970fe63`** (#187–#189). The original dates remain forecasts; this reconciliation does not re-baseline them. Dates use Europe/Istanbul. This is the owner's requested supplementary plan, not a ledger or authorization to execute. If it disagrees with the [canonical roadmap's Part A](project_status_roadmap_phases.md#part-a--working-set), Part A wins until the owner records a decision there. Detailed file ownership and accepted milestones do not change through this file; the owner's delivery instruction is recorded at the end of section 9.
 
 ## 0. Installation-first execution revision — 2026-10-23

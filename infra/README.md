@@ -1,13 +1,27 @@
 # TonyAI cloud foundation (LP2-01)
 
-The active QA and planned production direction is **Azure Sweden Central** for
-both application and data layers, with self-hosted Supabase. Start with the
-[self-hosted host/runtime runbook](runbooks/07-selfhost.md). QA comes first; no
-production resources are authorized. QA target: **2026-11-15**. The former
-TRY 10,000 monthly cap is removed; the reported USD 25,000 credit allocation's
-activation, eligibility, expiry and balance remain unverified.
+**Hosted phase (owner decision 2026-10-28).** For the next two to three months QA and
+the pilot run the database, Auth and Storage on **Supabase Cloud (Pro), North EU —
+Stockholm (`eu-north-1`)** and the web and API on **Azure Container Apps in Sweden Central
+(`swedencentral`)**, built from scratch through the reviewed hosted
+path (runbooks 00–06; the `terraform/foundation` and `terraform/application` roots, not
+their `qa/` subfolders). Codex runs it; every live operation is owner-run or
+owner-approved. Plan, work packages and live operations:
+[`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md).
+**The self-hosted route described below is paused, not removed:** nothing in it is
+executed until the owner resumes it after the pilot launch (to move the Supabase side
+to Azure). Its CI gates run only by hand — `selfhost-checks.yml` and `qa-infra.yml`
+(Actions → Run workflow); run them before merging any change to `scripts/`, `tests/`,
+`terraform/`, `config/` or `selfhost/` here — the self-hosted scripts import most hosted modules.
 
-The existing QA host, network, disks, recovery vault and runtime must be discovered
+**Paused self-hosted route — as it stood on 2026-10-28.** It uses **Azure Sweden
+Central** for both application and data layers, with self-hosted Supabase; start with
+the [self-hosted host/runtime runbook](runbooks/07-selfhost.md) when it resumes. No
+production resources are authorized. The former TRY 10,000 monthly cap is removed; the
+owner's planning assumption for internal-QA credit is USD 5,000 (2026-10-18), its
+balance, eligibility and expiry unverified.
+
+When it resumes, the existing QA host, network, disks, recovery vault and runtime must be discovered
 and reconciled before further rollout. Reuse the verified deployment contract,
 backend and SSH host keys; never assume an empty subscription or initialize a
 parallel state. Application integration is still unimplemented: the Sweden
@@ -22,7 +36,8 @@ existing reserved subnet against nonsecret ARM projections; it neither deploys
 nor initializes state; that helper retains the historical two-subnet host contract.
 The new deployment roots are offline preparation. API issuer
 enforcement was integrated by #180. Deployment binding and live acceptance of the
-selfhost issuer/JWKS remain open, alongside SMTP provider/residency, PD-3 and
+selfhost issuer/JWKS remain open, alongside the self-hosted SMTP binding (the
+provider is ACS Email, data location Europe — decided 2026-10-27), PD-3 and
 recovery acceptance.
 
 Runbook 08 also defines the dashboard-only credential transaction. Its separately
@@ -65,20 +80,21 @@ Host/runtime acceptance, including the 2026-10-15 corrections and normal reboot,
 does not close LP2-01, LP2-02 or LP2-03; DONE requires application integration,
 migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence.
 
-The **historical hosted reference** below is not a current QA or production
-deployment route. Active application preparation uses [runbook 08](runbooks/08-qa-application.md). The retained implementation uses Azure Germany West Central and Supabase
-Management API operations for Frankfurt. Its region/project checks remain intact;
-the foundation and application roots are blocked for the selected self-host
-subscription. Do not remove that gate or substitute region text to deploy the
-application. Generic example inputs remain placeholders, not live contracts.
+The **hosted reference** below (runbooks 00–06) is the hosted phase's deployment
+route for QA and the pilot. Its code still pins Azure Germany West Central and
+Supabase Frankfurt (`eu-central-1`), and the foundation and application roots are
+blocked for the selected subscription; WP-2 re-targets it to Sweden Central and
+North EU — Stockholm (`eu-north-1`) and narrows the gate through the hosted-QA
+exception file. Do not remove that gate or substitute region text by hand. Generic
+example inputs remain placeholders, not live contracts.
 
-**Temporary hosted QA bridge (owner decision 2026-10-26; Claude Code lane).** The
-hosted reference is being re-targeted to Supabase North EU — Stockholm and Azure
-Sweden Central for a temporary QA, in the self-hosted QA's subscription but in its
-own resource groups (`tonyai-qatmp-*`), prefix and Terraform backend account, with
-no VNet. The gate is narrowed only by a new hosted-QA exception file;
-`config/deployment-policy.json` is never edited (its hash is bound into the QA
-receipts). Until that change (PR-T1) merges, the paragraph above still holds. Plan:
+**Hosted phase (owner decision 2026-10-26, extended to the pilot on 2026-10-28; Codex).**
+The hosted reference is being re-targeted to Supabase North EU — Stockholm and Azure
+Sweden Central, in the self-hosted QA's subscription but in its own resource groups
+(`tonyai-qatmp-*`), prefix and Terraform backend account, with no VNet. The gate is
+narrowed only by a new hosted-QA exception file; `config/deployment-policy.json` is
+never edited (its hash is bound into the paused self-hosted QA receipts). Until that
+change (WP-2) merges, the paragraph above still holds. Plan:
 [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md).
 
 Use Terraform **1.13.3**, AzAPI **2.6.1**, Node **22**, pnpm **11.9.0**, Python **3.10+**,
@@ -88,10 +104,10 @@ is used. Hosted helper secrets stay in memory and Key Vault. Self-hosted service
 also require protected root-only runtime files as described in runbook 07.
 Secret payloads never enter tfvars, state, plan files, logs, repository files or chat.
 
-## Sweden QA application preparation
+## Sweden QA application preparation (paused)
 
 The additive `terraform/foundation/qa` and `terraform/application/qa` roots are
-independent from the retained hosted roots and from the Claude-owned R3 host.
+independent from the hosted roots and from the paused R3 host.
 The environment binds the existing app subnet at creation; private DB DNS points
 only to r02. Workloads receive exact Key Vault runtime references, never the
 migration owner or recovery escrow. OIDC starts disabled. The manual
@@ -166,8 +182,8 @@ can replace API code and indirectly access runtime secrets. No live grant, autom
 deployment workflow or operational acceptance follows from offline success.
 See [offline Unit 8 tools](runbooks/08-qa-application.md#offline-unit-8-tools).
 
-`qa_cloud_smoke.py` is the separate Sweden smoke adapter; legacy hosted staging
-and loopback CI remain distinct. Offline `prepare` binds the accepted Unit 5/7
+`qa_cloud_smoke.py` is the separate (paused) Sweden smoke adapter; the hosted
+`staging` smoke (`cloud_smoke.py`) and loopback CI remain distinct. Offline `prepare` binds the accepted Unit 5/7
 history and creates only an ID journal with a `BLOCKED_DRAFT` response. A separately
 approved owner run reauthenticates the candidate and collects fresh Unit 7 public
 readbacks before any credential read or fixture write. Owner DB input uses a hidden
@@ -178,7 +194,10 @@ Offline checks: `python3 -m unittest discover -s infra/tests -p 'test_qa_*.py'`
 with `TERRAFORM_TEST_BINARY` unset, and `node --test infra/tests/*smoke*.test.mjs`
 on Node 22. No live TLS, database, browser or Azure verification follows from these tests.
 
-## Historical hosted reference (00–06)
+## Hosted route for QA and the pilot (00–06)
+
+Supabase Cloud `eu-north-1` + Azure `swedencentral`, built from scratch; run nothing
+before WP-2 merges (the code still pins Frankfurt / Germany West Central until then).
 
 1. [Restore a safe session](runbooks/00-session.md).
 2. [Bootstrap backend, apply foundation, establish OIDC](runbooks/01-azure.md).
@@ -188,13 +207,13 @@ on Node 22. No live TLS, database, browser or Azure verification follows from th
 6. [Rotate, roll back or recover state/vault; run the owner reconciliation check](runbooks/05-rotation.md).
 7. [Prove readiness, alert delivery and staging acceptance](runbooks/06-operations.md).
 
-## Authoritative writers: shared backend and legacy hosted path
+## Authoritative writers: the hosted path
 
-For self-host writers and their boundaries, use [runbook 07](runbooks/07-selfhost.md#state-inputs-and-commands).
+For the paused self-host writers and their boundaries, use [runbook 07](runbooks/07-selfhost.md#state-inputs-and-commands).
 
 | Surface | Sole writer | Access |
 |---|---|---|
-| Shared backend (Sweden self-host and legacy hosted): group/account, firewall, containers, recovery/lock and backend RBAC | `bootstrap_backend.py` | Owner only; no Terraform state needed |
+| The hosted phase's own backend (`tonyai-qatmp-tfstate` and its account — never the paused self-hosted backend account): group/account, firewall, containers, recovery/lock and backend RBAC | `bootstrap_backend.py` (pinned to that pair by WP-2) | Owner only; no Terraform state needed |
 | Azure resource group, registry, logs, environment, diagnostics, vault, managed identities, Azure role assignments | `terraform/foundation` | Owner; `foundation` blob container only |
 | Scheduled verification job and operator alert delivery | `terraform/foundation` optional `config.monitoring` | Owner only; pinned runtime image/secret references, no deployer grant |
 | Entra app/SP/federation and RG `githubClientId`/`githubPrincipalId` recovery markers | Reviewed `configure_oidc.py` | Owner Graph access; these two tag fields are explicitly excluded from Terraform ownership |
@@ -214,10 +233,10 @@ independently and disable historical owner-backed runtime versions. Enforced Git
 
 Bicep is retired from the active tree. Its reviewed baseline remains in Git at
 `40ed0f9` (#139); there is no second Azure writer to apply. The original Bicep-to-Terraform transition was designed for an empty legacy
-state; that historical assumption does not describe current self-hosted QA. Its
-existing state is `foundation/staging-selfhost.tfstate` in the verified backend.
-Do not import arbitrary existing resources, replace state or reinitialize against
-a new backend; inspect ownership and provider read behavior first.
+state. **The hosted phase starts from that empty state** in its own new backend
+account. The paused self-hosted QA's state (`foundation/staging-selfhost.tfstate` in
+its verified backend) is never imported, replaced or reinitialized against another
+backend; inspect ownership and provider read behavior first when it resumes.
 
 ## Offline validation
 

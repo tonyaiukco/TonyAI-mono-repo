@@ -88,8 +88,8 @@ then `pnpm storage:reconcile --verify` (exit 0). Re-run `pnpm db:seed` and confi
   (`storage-intents.service.ts`) counts the owner tables by regclass in SQL — add the new table there and raise the
   count, or every removal in every bucket fails closed (`RowsHiddenError`). Also: the `RowsHiddenError` text, the
   reconcile CLI's `--bucket` doc, `tenantPrefixes` in `test/int/storage.ts`, `supabase/config.toml`, the seed.
-- **Infra lists live outside this repo's lane:** the hosted bucket list (`infra/scripts/cloud_ops.py`,
-  `infra/supabase/verify.sql`) and the readiness probe (`apps/api/src/health-readiness.ts`) are Codex's — hand the
-  new bucket over in Open questions; the hosted bucket must exist before an API that writes to it is deployed.
+- **Add the bucket to the hosted lists in the same PR:** the hosted bucket list (`infra/scripts/cloud_ops.py`,
+  `infra/supabase/verify.sql`) and the readiness probe (`apps/api/src/health-readiness.ts`) — the hosted bucket
+  must exist before an API that writes to it is deployed.
 - **An organisation's deletion cascades the owning rows below the API**, so their objects become orphans for
   `storage:reconcile --reclaim-orphans` — test it (`report-issuance.int.spec.ts`).

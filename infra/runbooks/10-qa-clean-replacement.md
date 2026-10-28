@@ -1,5 +1,12 @@
 # Sweden QA clean replacement preparation and execution gates
 
+> **Paused 2026-10-28 (owner decision) — kept, not retired.** QA and the pilot run on
+> Supabase Cloud (Pro) + Azure Container Apps for the next two to three months; the
+> self-hosted route resumes on the owner's word after the pilot launch. Run nothing in
+> this runbook until then. See
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> and the paused plan [`docs/roadmap_docs/Azure_roadmap_plan.md`](../../docs/roadmap_docs/Azure_roadmap_plan.md).
+
 This is the design and locally implemented preparation following
 [PD-3 remediation](09-qa-integrity.md), not an approved live apply package.
 The owner authorized preparation after #181 merged

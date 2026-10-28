@@ -3,7 +3,8 @@ name: azure-deploy
 description: Prepare or review TonyAI Azure Container Apps staging configuration and owner-run deployment evidence. Use for this repository's infra foundation and cloud recreation, not local Supabase setup.
 ---
 
-Read the repository AGENTS.md, task reservation and roadmap card before acting.
+Read the repository AGENTS.md, Part A of the status file, the hosted-phase plan
+(`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`) and the task card before acting.
 The task's cloud authorization controls execution; this recipe grants none.
 
 Use [infra/README.md](../README.md) to choose the relevant numbered runbook.
@@ -34,5 +35,5 @@ Preserve these project-specific traps:
 Validate both Terraform roots and their mock-provider tests locally, run the credential-free Python
 tests and required repository checks, then request the required independent
 reviews. Report actual SHA/environment/results and unexecuted cloud steps in the
-PR's B9 handoff. Leave roadmap edits to the Claude Code lane. Local mocks and
+PR's B9 handoff and update the status file in the same PR (Codex, rule 7). Local mocks and
 compiled templates never establish LP2-01 cloud acceptance.

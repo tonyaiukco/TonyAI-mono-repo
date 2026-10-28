@@ -1,10 +1,16 @@
 # 1. Backend and Azure foundation
 
-> **Active region: Azure Sweden Central.** Reuse the existing verified backend;
-> follow [runbook 08](08-qa-application.md) for the new QA application roots.
-> Section 1.1 is a shared backend reference and requires its own owner approval.
-> Sections 1.2 onward and [session setup](00-session.md) describe historical
-> Germany/hosted tooling, not an alternative current deployment route.
+> **The QA and pilot deployment route (owner decision 2026-10-28).** The hosted phase
+> builds this path **from scratch**: Supabase Cloud (Pro) in **North EU — Stockholm
+> (`eu-north-1`)** and Azure Container Apps in **Sweden Central (`swedencentral`)**, in the
+> paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
+> prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
+> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
+> changes the code and WP-3 re-checks these runbooks against it.
+> **Section 1.1 here bootstraps the hosted phase's own backend** (`tonyai-qatmp-tfstate`,
+> pinned by WP-2) — never the paused self-hosted backend account.
 
 The owner approves subscription, Sweden capacity, budget/alerts and billing
 before provisioning. No budget ceiling or provisioning approval is implied.
@@ -15,18 +21,16 @@ Fill `backend.json`: distinct staging account, owner object ID, explicit public
 owner egress IPv4 (`/32`), empty `application_object_id` until OIDC is established.
 No broad firewall range, trusted-service bypass or storage keys.
 
-For current QA and planned production, explicitly set backend `location` to
-`swedencentral`. The retained helper defaults to `germanywestcentral` for legacy
-compatibility only; never inherit that default for current work.
+Explicitly set backend `location` to `swedencentral`. The helper still defaults
+to `germanywestcentral` until WP-2; never inherit that default.
 Existing backend resources cannot be relocated by changing this field.
 
 ```bash
 python3 infra/scripts/bootstrap_backend.py --config .infra-local/staging/backend.json
 ```
 
-Expected `PASS`: account in the verified backend configuration's region
-(Sweden Central for active self-host QA; Germany West Central for the legacy
-hosted path), two private containers
+Expected `PASS`: account in Sweden Central (the configured `location`), two
+private containers
 (`foundation`, `application`), Entra-only data plane, deny-default IP firewall,
 versioning and 30-day deletion retention, deletion lock. A timeout is resumable
 with the same config/IDs. The bootstrap checks ownership tags and readbacks;
@@ -34,11 +38,12 @@ inspect inherited Azure roles and record least-privilege evidence separately.
 Do not use a shared production account. Storage RBAC propagation may take time;
 wait and rerun, never enable Shared Key as a workaround.
 
-## 1.2 Legacy foundation apply reference
+## 1.2 Foundation apply
 
 Start with `runtime_secrets_ready=false`, `apps_ready=false`, and an empty
 deployer ID. Select globally unique names. Record the reviewed infrastructure
-SHA in `release_sha`. The region is fixed by code.
+SHA in `release_sha`. The region is fixed by code: `germanywestcentral`
+(`terraform/foundation/variables.tf`) until WP-2 changes it to `swedencentral`.
 
 ```bash
 python3 infra/scripts/terraform_run.py foundation plan --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
@@ -55,7 +60,7 @@ owns the RG and shared resources; do not edit them with alternate templates.
 Copy the **public** contract into `release-r001.json.foundation`; verify names
 against restoration. Never give the deployer access to foundation state.
 
-## 1.3 Legacy GitHub/Entra federation reference
+## 1.3 GitHub/Entra federation
 
 Complete [runbook 03’s one-time GitHub/main/JIT setup](03-deploy.md#one-time-owner-setup)
 before this step. Before federation: verify the GitHub plan actually enforces `staging` environment

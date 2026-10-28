@@ -1,11 +1,14 @@
-# 2. Legacy hosted Supabase setup (historical reference)
+# 2. Supabase Cloud setup (North EU — Stockholm)
 
-> **Historical hosted reference, not a deployment route for current QA or production.**
-> Active application/data resources use **Azure Sweden Central** and self-hosted
-> Supabase. Use [runbook 08](08-qa-application.md) for application preparation and
-> [runbook 07](07-selfhost.md) for host ownership. The Germany/Frankfurt commands
-> below describe the retained legacy implementation only; do not run them for
-> Sweden or bypass their subscription/project checks.
+> **The QA and pilot deployment route (owner decision 2026-10-28).** The hosted phase
+> builds this path **from scratch**: Supabase Cloud (Pro) in **North EU — Stockholm
+> (`eu-north-1`)** and Azure Container Apps in **Sweden Central (`swedencentral`)**, in the
+> paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
+> prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
+> [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
+> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
+> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
+> changes the code and WP-3 re-checks these runbooks against it.
 
 First restore the owner session. Complete `supabase.json` with organization ID
 **and slug**, a unique staging/recreation name, the foundation vault and exact
@@ -13,7 +16,8 @@ First restore the owner session. Complete `supabase.json` with organization ID
 session; never save it in the repository or Terraform/GitHub inputs. Billing is
 organization-level; selecting a `plan` on project creation is deprecated/ignored.
 The owner approves budget/Pro during UAT separately. The helper requests the exact
-`eu-central-1` region, not a broad smart-region group.
+`eu-north-1` region (North EU — Stockholm; `eu-central-1` until WP-2), not a broad
+smart-region group.
 
 ```bash
 python3 infra/scripts/supabase_setup.py --config .infra-local/staging/supabase.json --journal .infra-local/staging/supabase-journal.json --foundation .infra-local/staging/foundation.json --billing-approved
@@ -24,7 +28,7 @@ Enter the token at the hidden prompt. The helper:
 1. Generates a DB bootstrap password and transfers it directly to owner-only
    Key Vault `bootstrap-db-password` before project creation.
 2. Saves nonsecret creation intent before POST. On retry, a unique project with
-   matching name, organization and Frankfurt region is recovered. Existing
+   matching name, organization and region (`eu-north-1`) is recovered. Existing
    unrecorded projects, duplicate matches and unknown outcomes stop safely.
 3. Waits for `ACTIVE_HEALTHY` by returning a resumable message; rerun the **same**
    command/journal after provisioning finishes. It does not create a second project.
@@ -36,7 +40,7 @@ Enter the token at the hidden prompt. The helper:
    Its literal `[YOUR-PASSWORD]` marker is normalized only for host discovery;
    the stored owner URL uses the bootstrap password read privately from Key Vault.
 5. Stores only owner `direct-url` (session 5432, `postgres.<ref>`), with
-   Frankfurt/project binding, `/postgres`, strict CA verification and an allowlist
+   region/project binding (`eu-north-1`), `/postgres`, strict CA verification and an allowlist
    of query parameters. It never writes an owner credential to `database-url`.
    The journal checkpoints `direct_url_version` before disabling the bootstrap
    password version. On interruption it reuses that exact owner URL and repeats
@@ -112,7 +116,7 @@ satisfies the session-based TA013 guard. The migration creates it NOLOGIN and
 NOBYPASSRLS. Never run the loopback-only `provision-loader` helper against hosted
 projects or a tunnel to one.
 
-Use the project's Frankfurt **session pooler, port 5432**, with user
+Use the project's Stockholm (`eu-north-1`) **session pooler, port 5432**, with user
 `tonyai_factor_loader.<project-ref>` and the same strict CA verification as the
 runtime URL. Qualify the chosen endpoint with runbook 05's read-only transaction
 lasting at least 300 seconds through many short statements, recording statement,

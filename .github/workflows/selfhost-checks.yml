@@ -1,0 +1,97 @@
+name: Self-hosted checks (paused)
+# Paused, not removed (owner decision 2026-10-28): QA and the pilot run on
+# Supabase Cloud + Azure for the next months, and the self-hosted Supabase work
+# resumes after the pilot launch. These are the self-hosted gates that used to
+# run on every infrastructure change in infra.yml, moved here (the selfhost
+# root's Terraform commands are spelled out; its fmt check and its lane in
+# check_terraform_policy.py stay in infra.yml). The self-hosted scripts import
+# most hosted modules (pooler, bootstrap_backend, ...), so run this and
+# qa-infra.yml by hand (Actions -> Run workflow) before merging any change to
+# infra/scripts, infra/tests, infra/terraform, infra/config or infra/selfhost.
+# Move them back into infra.yml when the work resumes.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  selfhost-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.13.3
+          terraform_wrapper: false
+      - name: Install the pinned workflow parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/infra-tests"
+          "$RUNNER_TEMP/infra-tests/bin/python" -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
+          echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
+      - name: Selfhost initializer and destructive-path mutations
+        run: |
+          node --test infra/tests/selfhost_init_entry.test.mjs infra/tests/selfhost_init.test.mjs infra/tests/selfhost_smoke_expectations.test.mjs
+          python3 infra/tests/check_selfhost_runtime_mutations.py
+      - name: Validate the selfhost Terraform root without a backend or cloud credentials
+        shell: bash
+        run: |
+          terraform -chdir=infra/terraform/selfhost init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/terraform/selfhost validate -no-color
+          terraform -chdir=infra/terraform/selfhost test -no-color
+          terraform -chdir=infra/terraform/selfhost test -json -verbose > "$RUNNER_TEMP/replacement-plan.jsonl"
+          python3 infra/tests/check_replacement_plan_policy.py "$RUNNER_TEMP/replacement-plan.jsonl"
+      - name: Terraform selfhost security mutation checks
+        run: python3 infra/tests/check_selfhost_mutations.py
+
+  mutation-shards:
+    name: R3 mutations (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install the pinned workflow parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/infra-tests"
+          "$RUNNER_TEMP/infra-tests/bin/python" -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
+          echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
+      - name: Run and verify the complete mutation shard
+        env:
+          MUTATION_SHARD: ${{ matrix.shard }}
+        run: python3 infra/scripts/ci_mutation_shard.py --shard "$MUTATION_SHARD" --output "$RUNNER_TEMP/r3-mutations.json"
+
+  # Failed/cancelled/skipped prerequisites must never turn a partial run
+  # into a green check.
+  selfhost-checks:
+    if: ${{ always() }}
+    needs: [selfhost-validation, mutation-shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every self-hosted job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          if set(results) != {'selfhost-validation', 'mutation-shards'} or any(
+              job['result'] != 'success' for job in results.values()
+          ):
+              raise SystemExit('Self-hosted validation or mutation shards did not succeed.')
+          PYTHON

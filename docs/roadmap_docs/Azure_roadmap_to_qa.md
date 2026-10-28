@@ -1,5 +1,13 @@
 # Azure delivery to QA — Claude Code continuation
 
+> **PAUSED 2026-10-28 (owner decision) — kept, not superseded.** QA and the pilot run on
+> Supabase Cloud (Pro) + Azure Container Apps for the next two to three months
+> ([`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)).
+> This self-hosted plan resumes on the owner's word after the pilot launch, to move the
+> Supabase side to Azure (then on-premises preparation after the production launch).
+> Until then nothing here is executed; its CI gates run only by hand
+> (`selfhost-checks.yml`, `qa-infra.yml`).
+
 Owner-requested handoff, 2026-10-24 (Europe/Istanbul). The owner stopped Codex work because approximately 2% usage remained and explicitly requested this file. Continue in Claude Code. This is a continuation checkpoint, not R3 acceptance or a publication request.
 
 ## Start here
