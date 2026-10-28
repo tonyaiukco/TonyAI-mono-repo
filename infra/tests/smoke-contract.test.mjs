@@ -10,8 +10,9 @@ const fixture = () => ({
   supabase: 'https://abcdefghijklmnopqrst.supabase.co',
   tenants: [0, 1].map(() => {
     const organisationId = randomUUID();
-    return { userId: randomUUID(), organisationId, subsidiaryId: randomUUID(),
-      email: `lp2-smoke-${randomUUID()}@tonyai.test`, name: `LP2 smoke ${organisationId}` };
+    const userId = randomUUID();
+    return { userId, organisationId, subsidiaryId: randomUUID(),
+      email: `lp2-smoke-${userId}@tonyai.test`, name: `LP2 smoke ${organisationId}` };
   }),
 });
 
@@ -31,6 +32,8 @@ test('accepts dedicated disjoint staging tenants; rejects production, redirects 
   }
   const duplicate = fixture(); duplicate.tenants[1] = duplicate.tenants[0];
   assert.throws(() => validateSmoke(duplicate));
+  const wrongEmail = fixture(); wrongEmail.tenants[0].email = wrongEmail.tenants[1].email;
+  assert.throws(() => validateSmoke(wrongEmail));
 });
 
 test('local demo mode requires CI and three exact loopback origins', () => {

@@ -120,7 +120,7 @@ class CloudSmokeTests(unittest.TestCase):
         candidate, contract = fixture()
         for defect in ('none', 'candidate', 'sourceSha', 'projectRef', 'web', 'api', 'supabase', 'mode',
                        'tenants-missing', 'tenants-count', 'userId', 'organisationId', 'subsidiaryId',
-                       'duplicate-across', 'duplicate-within', 'email', 'name'):
+                       'duplicate-across', 'duplicate-within', 'email', 'email-identity', 'name'):
             target = target_for(candidate)
             journal = {'candidate': candidate, 'target': target}
             if defect=='candidate': journal['candidate'] = {**candidate, 'source_sha':'b'*40}
@@ -128,6 +128,7 @@ class CloudSmokeTests(unittest.TestCase):
             elif defect == 'tenants-count': target['tenants'] = target['tenants'][:1]
             elif defect in ('userId', 'organisationId', 'subsidiaryId', 'email', 'name'):
                 target['tenants'][0][defect] = 'foreign'
+            elif defect == 'email-identity': target['tenants'][0]['email'] = target['tenants'][1]['email']
             elif defect == 'duplicate-across': target['tenants'][1]['userId'] = target['tenants'][0]['userId']
             elif defect == 'duplicate-within': target['tenants'][0]['subsidiaryId'] = target['tenants'][0]['userId']
             elif defect!='none': target[defect] = 'https://foreign.invalid' if defect=='supabase' else 'foreign'

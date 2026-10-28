@@ -6,9 +6,8 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
-> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
-> changes the code and WP-3 re-checks these runbooks against it.
+> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> operation still needs its own owner approval. WP-6 CI deployment is deferred.
 
 First restore the owner session. Complete `supabase.json` with organization ID
 **and slug**, a unique staging/recreation name, the foundation vault and exact
@@ -16,7 +15,7 @@ First restore the owner session. Complete `supabase.json` with organization ID
 session; never save it in the repository or Terraform/GitHub inputs. Billing is
 organization-level; selecting a `plan` on project creation is deprecated/ignored.
 The owner approves budget/Pro during UAT separately. The helper requests the exact
-`eu-north-1` region (North EU — Stockholm; `eu-central-1` until WP-2), not a broad
+`eu-north-1` region (North EU — Stockholm), not a broad
 smart-region group.
 
 ```bash
@@ -47,7 +46,8 @@ Enter the token at the hidden prompt. The helper:
    the disable without reading the disabled password or making replacement URLs.
    This disables a vault copy, not the owner's database password. Runtime login
    setup and independent rotation are in runbook 05.
-6. Reconciles both private buckets (`evidence`, `import-sources`), limits/MIME types
+6. Reconciles all three private buckets (`evidence`: 10 MiB, `import-sources`: 2 MiB,
+   `report-artifacts`: 20 MiB, PDF only), limits/MIME types
    and readback. Disables signup/anonymous/phone/SAML/passkeys/unused providers,
    keeps the email provider enabled for password sign-in, sets the LP4-01 password/
    link/email policy, and pins site URL and redirects to `WEB_ORIGIN`,
@@ -71,7 +71,18 @@ Do not delete `project_pending` or `signing_before_ids` simply to retry. If the
 journal is lost, stop automatic creation/adoption and reconstruct IDs/ownership
 from provider evidence. No automated project/key deletion is implemented.
 
-Restore public project variables using runbook 00. Keep foundation
+The script creates this project from scratch; there is no dashboard-project
+adoption path. Recovery of its own journaled creation intent is not adoption.
+If a dashboard-made empty project exists, stop for the owner's separately approved
+resolution; do not delete or adopt it automatically.
+
+**L4a go/no-go, after creation:** restore public project variables using runbook 00.
+Read back the project ref, Stockholm region, PostgreSQL 17 version and exact
+`aws-<n>-eu-north-1.pooler.supabase.com` host from Connect; compare with CI's
+`infra/selfhost/database-image-policy.json` pin and record any minor-version gap.
+Use runbook 05's owner-psql session to prove the bundled CA and rolled-back
+privilege probe. These are not pre-creation facts. Failure stops L5–L10; resolve
+with Supabase support, never weaken RLS, runtime isolation or migration guards. Keep foundation
 `runtime_secrets_ready=false` until the runtime handoff in runbooks 03/05 is complete.
 Record `versions.direct_url_version` for owner migrations and fixtures and
 `versions.backend_secret_version` for the release. Runbook 05 prepares the
@@ -92,7 +103,8 @@ python3 infra/scripts/cloud_ops.py probe-storage --vault "$VAULT_NAME" --project
 Use `versions.backend_secret_version` from the completed setup journal, or the
 backend version from the selected release after rotation; never select latest.
 
-Expected for both buckets: upload, public denial, 60-second signed download byte
+Expected for all three buckets (CSV probes for evidence/import-sources, PDF for
+report-artifacts): upload, public denial, 60-second signed download byte
 match, and a deletion acknowledgment for the exact probe prefix. This is an API
 acknowledgment, not an independent absence readback. In the Storage dashboard
 confirm no objects remain under `lp2-foundation-probe/` before recording cleanup
@@ -100,7 +112,8 @@ evidence; inspect/remove only these synthetic probes if cleanup was interrupted.
 migrations: no demo users/tenants/factors; private buckets and expected RLS. Never
 run local seed or local RLS/E2E fixtures against cloud. Assess Supabase network
 restrictions against actual ACA egress; don't claim a fixed egress allowlist on
-plain Consumption. SMTP/invitation and production PITR are LP2-04.
+plain Consumption. SMTP/invitation acceptance is required for hosted QA (runbooks 01/03/04);
+production PITR remains LP2-04.
 
 API contract reviewed against [Supabase Management API](https://supabase.com/docs/reference/api/introduction)
 and its public OpenAPI schema on 2026-10-03. Region availability, actual API

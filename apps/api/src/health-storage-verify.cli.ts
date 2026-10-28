@@ -1,6 +1,7 @@
 /** Scheduled reconciliation: never send raw paths or child stderr to cloud logs. */
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
+import { BUCKETS } from './storage/buckets';
 
 export const containsTruncation = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') return false;
@@ -12,7 +13,7 @@ export const classifyVerification = (exitCode: number, stdout: string): number =
   if (![0, 1].includes(exitCode)) return 2;
   try {
     const report = JSON.parse(stdout);
-    if (!report.buckets?.evidence || !report.buckets?.['import-sources']) return 2;
+    if (BUCKETS.some((bucket) => !report.buckets?.[bucket])) return 2;
     return exitCode === 1 || containsTruncation(report) ? 1 : 0;
   } catch {
     return 2;

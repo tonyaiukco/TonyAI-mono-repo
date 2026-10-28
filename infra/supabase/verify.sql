@@ -4,7 +4,8 @@ SELECT count(*) AS unfinished_migrations
 FROM public._prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL;
 SELECT id, public, file_size_limit, allowed_mime_types
 FROM storage.buckets ORDER BY id;
--- Expect exactly evidence + import-sources, both private; investigate any extra bucket.
+-- Expect exactly evidence (10 MiB), import-sources (2 MiB), report-artifacts
+-- (20 MiB, application/pdf only), all private; investigate any extra bucket.
 -- A fresh staging project must have no storage policies granting browser access.
 -- API service-role operations bypass RLS; app guards enforce tenant access.
 SELECT count(*) AS storage_object_policies

@@ -1,4 +1,5 @@
 import type { PrismaService } from './prisma/prisma.service';
+import { BUCKETS } from './storage/buckets';
 
 const TIMEOUT_MS = 2_000;
 const CACHE_MS = 5_000;
@@ -61,7 +62,7 @@ export class HealthReadiness {
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!origin || !key) throw new Error('Storage configuration unavailable');
     const signal = AbortSignal.timeout(TIMEOUT_MS);
-    await Promise.all(['evidence', 'import-sources'].map(async (bucket) => {
+    await Promise.all(BUCKETS.map(async (bucket) => {
       const response = await fetch(`${origin.replace(/\/$/, '')}/storage/v1/bucket/${bucket}`, {
         headers: { apikey: key, Authorization: `Bearer ${key}` },
         signal,

@@ -6,9 +6,8 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
-> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
-> changes the code and WP-3 re-checks these runbooks against it.
+> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> operation still needs its own owner approval. WP-6 CI deployment is deferred.
 
 These commands are for the owner after cloud/budget approval, not for the coding
 agent. Use Bash or zsh from the repository root, a private terminal without
@@ -35,7 +34,7 @@ On first setup only, replace placeholders using an editor. Subsequent sessions
 **do not copy templates over existing files**. These JSON files and the journal
 contain only public identifiers, digests and version IDs. Keep private backups
 of the nonsecret journal/release manifests outside Git; losing an intent journal
-makes automatic project adoption unsafe. Never fill a secret into a JSON input.
+requires owner recovery of creation provenance; it never authorizes project adoption. Never fill a secret into a JSON input.
 Use unique backend account, vault, registry, group and project names for each
 recreation. Production uses a separate backend account, RG, identities, vault,
 Supabase project and protected GitHub environment; LP2-04 completes its domain,
@@ -52,8 +51,8 @@ Expected: the reviewed tenant/subscription and owner object ID. Fill both Azure
 config files consistently. Owner has the necessary subscription/RG creation and
 RBAC administration rights plus permission to create the dedicated Entra app.
 Register `Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.KeyVault`,
-`Microsoft.ManagedIdentity`, `Microsoft.OperationalInsights`, `Microsoft.Insights`
-and `Microsoft.Storage` as the owner (`az provider register --namespace <name>
+`Microsoft.ManagedIdentity`, `Microsoft.OperationalInsights`, `Microsoft.Insights`,
+`Microsoft.Communication` and `Microsoft.Storage` as the owner (`az provider register --namespace <name>
 --wait`). Record each registration, not a claim based on these instructions.
 
 After foundation exists, this works in a fresh Bash/zsh terminal:
@@ -82,6 +81,6 @@ foreign, missing or incomplete journal fails without leaving stale exports.
 
 The application runner reinitializes its backend every time from explicit inputs,
 rejects target/environment mismatches and ambient `TF_VAR_*`, debug flags, CLI
-arguments, SAS/access keys and client secrets. It uses no saved plan file. Apply
-shows a fresh plan and asks for Terraform's normal confirmation. A failure is not
+arguments, SAS/access keys and client secrets. The deployment helper saves and displays its application plan, asks for approval
+before draining the API, then applies that same plan. A failure is not
 permission to paste provider output into chat; retain sanitized IDs/status only.

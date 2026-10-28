@@ -9,8 +9,9 @@ const fixture = () => ({
   supabase: 'https://abcdefghijklmnopqrst.supabase.co',
   tenants: [0, 1].map(() => {
     const organisationId = randomUUID();
-    return { userId: randomUUID(), organisationId, subsidiaryId: randomUUID(),
-      email: `lp2-smoke-${randomUUID()}@tonyai.test`, name: `LP2 smoke ${organisationId}` };
+    const userId = randomUUID();
+    return { userId, organisationId, subsidiaryId: randomUUID(),
+      email: `lp2-smoke-${userId}@tonyai.test`, name: `LP2 smoke ${organisationId}` };
   }),
 });
 

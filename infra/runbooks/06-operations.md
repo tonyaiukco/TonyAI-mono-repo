@@ -6,9 +6,8 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. **Run nothing here before WP-2 merges:** until then the scripts still pin
-> Frankfurt (`eu-central-1`) / Germany West Central and refuse the subscription; WP-2
-> changes the code and WP-3 re-checks these runbooks against it.
+> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> operation still needs its own owner approval. WP-6 CI deployment is deferred.
 
 These steps are procedures, **not evidence of cloud execution**. Record each
 result against source SHA, API/web digests, migration hashes, environment, UTC
@@ -136,7 +135,7 @@ named operator. Do not paste DSNs or event tenant data.
 Exercise [runbook 05](05-rotation.md) in the isolated staging rehearsal: record
 old references, store new versions, retain deployed image digests, verify exact
 versions, deploy a new revision, update the scheduled job, then run readiness,
-synthetic login and both bucket checks. Only then revoke old provider keys and
+synthetic login and all three bucket checks. Only then revoke old provider keys and
 disable old Vault versions. Prove revoked credentials fail using a private
 provider probe. Exercise an interruption after storing/validating the new URL but **before**
 changing the PostgreSQL password: the old release and password remain usable;
@@ -152,7 +151,7 @@ to their separate roles.
 ## Migration compatibility, rollback and full staging journey
 
 1. Retain the previous qualified manifest, schema/migration hashes, enabled secret
-   references and a consistent DB+both-bucket backup. Use runbook 04's hold and
+   references and a consistent DB+all-three-bucket backup. Use runbook 04's hold and
    post-restore sequence. Record the compatibility decision for **each migration**.
 2. On an isolated representative previous database, run the new migration chain
    with the owner-only migration credential. Keep previous binaries running and
@@ -174,10 +173,13 @@ to their separate roles.
      that carries `reasonCode: "no_emission_factor"` and no tCO₂e figure.
    - Upload genuine valid evidence and submit. Then log in as a **different**
      super_admin to review and approve.
-   - Download the PDF, XLSX and CSV and reconcile each one against the entry. Its
-     row is present with tCO₂e "Not calculated", with an empty factor standing in
-     the CSV and XLSX. The PDF also notes the record as carrying no emissions
-     figure.
+   - Download the live PDF, XLSX and CSV and verify the current Scope 1/2
+     boundary. Water is Scope 3: it is excluded from the live ledger, totals and
+     CSV rows, with Scope 3 "Not covered" disclosure in PDF/XLSX. It must not
+     become a zero-emissions Scope 1/2 row. "Not calculated" remains the Water
+     record's application state; do not expect that row in the live export.
+     Covered factorless rows, where present, retain "Not calculated" markers;
+     never insert a forged Scope 1/2 snapshot just to test this display.
    - Request a calculation in a category that needs a factor, e.g.
      `POST /api/v1/calculations/preview` for Electricity. Expect `404` with body
      `code` `"no_factor"` and a `coverage` object, and nothing persisted. `code`

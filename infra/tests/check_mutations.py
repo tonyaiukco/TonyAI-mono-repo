@@ -64,7 +64,7 @@ MUTANTS = [
     ('cleanup tenant count removed', 'cloud_smoke.py', 'len(tenants) != 2', 'False'),
     ('cleanup canonical UUID guard removed', 'cloud_smoke.py', 'if any(not isinstance(value, str) or not re.fullmatch(uuid_pattern, value) for value in ids):', 'if False:'),
     ('cleanup distinct tenant IDs removed', 'cloud_smoke.py', 'if len(set(identifiers)) != len(identifiers):', 'if False:'),
-    ('cleanup synthetic email guard removed', 'cloud_smoke.py', "not re.fullmatch(r'lp2-smoke-[a-z0-9-]+@tonyai\\.test', tenant['email'])", 'False'),
+    ('cleanup synthetic email guard removed', 'cloud_smoke.py', "tenant['email'] != 'lp2-smoke-' + tenant['userId'] + '@tonyai.test'", 'False'),
     ('cleanup synthetic name guard removed', 'cloud_smoke.py', "tenant.get('name') != 'LP2 smoke ' + tenant['organisationId']", 'False'),
     ('cleanup in-process validation skipped', 'cloud_smoke.py', '        validate_cleanup_target(target, candidate, r)', '        pass'),
     ('last push approval requirement removed', 'github_environment.py', "pull.get('require_last_push_approval') is not True", 'False'),

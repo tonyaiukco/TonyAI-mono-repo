@@ -85,7 +85,7 @@ class CloudOpsTests(unittest.TestCase):
         with patch.object(ops, 'request', side_effect=request), contextlib.redirect_stdout(io.StringIO()):
             ops.provision_buckets(BASE, 'synthetic-key')
             ops.provision_buckets(BASE, 'synthetic-key')
-        self.assertEqual(sum(method == 'POST' for method, _, _ in calls), 1)
+        self.assertEqual(sum(method == 'POST' for method, _, _ in calls), 2)
         for name, (limit, mimes) in ops.BUCKETS.items():
             self.assertIs(state[name]['public'], False)
             self.assertEqual(state[name]['file_size_limit'], limit)
