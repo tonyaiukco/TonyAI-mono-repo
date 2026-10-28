@@ -92,7 +92,8 @@ class CandidateTests(unittest.TestCase):
             foundation = json.loads((ROOT/'infra/config/foundation.example.json').read_text())
             foundation['config'].update(subscription_id=config()['subscription_id'], tenant_id=config()['tenant_id'],
                 owner_object_id=config()['owner_object_id'], deployer_object_id=config()['application_object_id'],
-                release_sha='a'*40, repository='owner/repo', registry_name='registry', vault_name='vault')
+                release_sha='a'*40, repository='owner/repo', registry_name='registry', vault_name='vault',
+                resource_group='tonyai-staging', prefix='tonyai', email=None)
             from foundation_contract import validate_foundation
             validate_foundation(foundation)
             release.write_text(json.dumps(foundation))

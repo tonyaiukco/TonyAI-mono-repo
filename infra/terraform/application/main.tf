@@ -6,7 +6,7 @@ resource "azapi_resource" "app" {
   type      = "Microsoft.App/containerApps@2025-01-01"
   name      = "${local.stem}-${each.key}"
   parent_id = local.group_id
-  location  = "germanywestcentral"
+  location  = "swedencentral"
   tags      = { application = "TonyAI", environment = var.foundation.environment, task = "LP2-01", release = var.release.release_id, source = var.release.source_sha }
   identity {
     type         = "UserAssigned"

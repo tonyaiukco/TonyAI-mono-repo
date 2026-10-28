@@ -29,7 +29,7 @@ BASE = 'https://' + PROJECT + '.supabase.co/storage/v1'
 class CloudOpsTests(unittest.TestCase):
     def test_pooler_requires_correct_project_tls_and_mode(self):
         # Synthetic password only, never a real credential.
-        url = 'postgresql://tonyai_runtime.' + PROJECT + ':synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true'
+        url = 'postgresql://tonyai_runtime.' + PROJECT + ':synthetic@aws-0-eu-north-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true'
         ops.validate_pooler(url, PROJECT, 6543)
         for bad in [url.replace(PROJECT, 'wrongproject'), url.replace('6543', '5432'),
                     url.replace('sslmode=require', 'sslmode=disable'),
@@ -49,8 +49,8 @@ class CloudOpsTests(unittest.TestCase):
 
     def test_migrations_get_secrets_via_environment_not_arguments(self):
         values = {
-            'database-url': f'postgresql://tonyai_runtime.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true',
-            'direct-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt',
+            'database-url': f'postgresql://tonyai_runtime.{PROJECT}:synthetic@aws-0-eu-north-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true',
+            'direct-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt',
         }
         with patch.object(ops, 'secret', side_effect=lambda vault, name, version: values[name]), patch.object(ops, 'command') as command, contextlib.redirect_stdout(io.StringIO()):
             ops.migrate('test-vault', PROJECT, 'b'*32)

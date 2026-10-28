@@ -16,7 +16,7 @@ export const loaderUrl = (env) => {
   ]);
   if (url.protocol !== 'postgresql:' || url.username !== `${ROLE}.${project}` ||
       !/^[a-f0-9]{64}$/.test(url.password) ||
-      !/^aws-\d+-eu-central-1\.pooler\.supabase\.com$/.test(url.hostname) ||
+      !/^aws-\d+-eu-north-1\.pooler\.supabase\.com$/.test(url.hostname) ||
       url.port !== '5432' || url.pathname !== '/postgres' || url.hash ||
       [...url.searchParams].length !== params.size ||
       [...params].some(([key, expected]) => url.searchParams.get(key) !== expected)) {

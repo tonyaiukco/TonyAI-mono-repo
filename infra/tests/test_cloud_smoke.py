@@ -67,9 +67,9 @@ class CloudSmokeTests(unittest.TestCase):
         from test_deploy_versions import inputs
         contract = inputs()
         candidate = {'source_sha':'a'*40, 'supabase_project_ref':'abcdefghijklmnopqrst',
-                     'api_origin':'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io',
-                     'web_origin':'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io'}
-        database = 'postgresql://postgres.abcdefghijklmnopqrst:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt'
+                     'api_origin':'https://tonyai-staging-api.real.swedencentral.azurecontainerapps.io',
+                     'web_origin':'https://tonyai-staging-web.real.swedencentral.azurecontainerapps.io'}
+        database = 'postgresql://postgres.abcdefghijklmnopqrst:synthetic@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt'
         for failure in ('none','fixture','browser','cleanup','readback','created-id','created-email'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 journal = Path(directory)/'journal.json'

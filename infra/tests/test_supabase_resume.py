@@ -15,8 +15,8 @@ from supabase_auth import ensure_signing_key, configure_auth
 from secure_transport import Vault, json_request
 
 REF = 'abcdefghijklmnopqrst'
-TARGET = {'name':'tonyai-staging-rehearsal','organization_id':'org','organization_slug':'slug','vault':'vault','web_origin':'https://tonyai-staging-web.example.germanywestcentral.azurecontainerapps.io'}
-PROJECT = {'id':REF,'name':TARGET['name'],'organization_id':'org','region':'eu-central-1'}
+TARGET = {'name':'tonyai-staging-rehearsal','organization_id':'org','organization_slug':'slug','vault':'vault','web_origin':'https://tonyai-staging-web.example.swedencentral.azurecontainerapps.io'}
+PROJECT = {'id':REF,'name':TARGET['name'],'organization_id':'org','region':'eu-north-1'}
 
 
 class ResumeTests(unittest.TestCase):
@@ -28,7 +28,7 @@ class ResumeTests(unittest.TestCase):
             def api(path, method='GET', body=None):
                 if method == 'POST':
                     self.assertTrue(json.loads(journal.path.read_text())['project_pending'])
-                    self.assertEqual(body['region_selection'],{'type':'specific','code':'eu-central-1'})
+                    self.assertEqual(body['region_selection'],{'type':'specific','code':'eu-north-1'})
                     posts.append(body); state.append(PROJECT)
                     raise SafeFailure('Interrupted.')
                 return state if path == '/v1/projects' else PROJECT

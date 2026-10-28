@@ -9,7 +9,7 @@ from runtime_urls import transfer_urls
 from pooler import SafeFailure, validate_pooler
 
 REF = 'abcdefghijklmnopqrst'
-HOST = 'aws-0-eu-central-1.pooler.supabase.com'
+HOST = 'aws-0-eu-north-1.pooler.supabase.com'
 DSN = 'postgresql://postgres.' + REF + ':[YOUR-PASSWORD]@' + HOST + ':6543/postgres'
 
 
@@ -42,7 +42,7 @@ class ProviderPoolerTests(unittest.TestCase):
 
     def test_invalid_foreign_missing_or_ambiguous_primary_metadata_stops_before_vault(self):
         invalid = [None, 'postgresql://user:[broken@host/postgres', 'not-a-url',
-                   DSN.replace('eu-central-1', 'us-east-1'), DSN.replace(HOST, HOST+'.evil.invalid')]
+                   DSN.replace('eu-north-1', 'us-east-1'), DSN.replace(HOST, HOST+'.evil.invalid')]
         inventories = [[{'database_type':'PRIMARY', 'connection_string':dsn}] for dsn in invalid]
         inventories += [[], [{'database_type':'REPLICA', 'connection_string':DSN}],
                         [{'database_type':'PRIMARY'}],

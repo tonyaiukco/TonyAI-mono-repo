@@ -8,7 +8,7 @@ variables {
     prefix          = "tonyai"
     registry_name   = "tonyaistaging"
     vault_name      = "tonyai-staging-kv"
-    default_domain  = "example.germanywestcentral.azurecontainerapps.io"
+    default_domain  = "example.swedencentral.azurecontainerapps.io"
   }
   release = {
     source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -44,7 +44,7 @@ run "application_security_contract" {
 run "runtime_auth_and_origin_pins" {
   command = plan
   assert {
-    condition     = { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.value, "") }["SUPABASE_JWT_SCHEME"] == "jwks" && { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.value, "") }["WEB_ORIGIN"] == "https://tonyai-staging-web.example.germanywestcentral.azurecontainerapps.io"
+    condition     = { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.value, "") }["SUPABASE_JWT_SCHEME"] == "jwks" && { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.value, "") }["WEB_ORIGIN"] == "https://tonyai-staging-web.example.swedencentral.azurecontainerapps.io"
     error_message = "Cloud JWKS scheme and exact CORS origin must be pinned."
   }
   assert {
@@ -321,7 +321,7 @@ run "mail_api_only_exact_reference" {
     }
   }
   assert {
-    condition     = alltrue([for k, v in { SMTP_HOST = "smtp.example.invalid", SMTP_PORT = "587", SMTP_SECURE = "false", SMTP_USER = "synthetic-user", MAIL_FROM = "sender@example.invalid", APP_URL = "https://tonyai-staging-web.example.germanywestcentral.azurecontainerapps.io" } : lookup({ for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.name => try(e.value, "") }, k, "missing") == v])
+    condition     = alltrue([for k, v in { SMTP_HOST = "smtp.example.invalid", SMTP_PORT = "587", SMTP_SECURE = "false", SMTP_USER = "synthetic-user", MAIL_FROM = "sender@example.invalid", APP_URL = "https://tonyai-staging-web.example.swedencentral.azurecontainerapps.io" } : lookup({ for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.name => try(e.value, "") }, k, "missing") == v])
     error_message = "All plain mail settings must reach the API together, bound to its web origin."
   }
   assert {

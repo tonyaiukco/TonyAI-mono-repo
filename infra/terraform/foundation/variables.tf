@@ -1,9 +1,26 @@
 variable "config" {
   validation {
-    condition     = !contains(jsondecode(file("${path.module}/../../config/deployment-policy.json")).selfhost_sweden_subscriptions, lower(var.config.subscription_id))
-    error_message = "Sweden selfhost subscriptions require the pending VNet/application integration; legacy Germany foundation is blocked."
+    condition = (
+      !contains(jsondecode(file("${path.module}/../../config/deployment-policy.json")).selfhost_sweden_subscriptions, lower(var.config.subscription_id)) &&
+      !startswith(lower(var.config.resource_group), "tonyai-qatmp") && lower(var.config.prefix) != "tonyaiqt"
+      ) || (local.hosted_exception_valid && try(
+        var.config.subscription_id == local.hosted_exception.subscription &&
+        var.config.resource_group == local.hosted_exception.resource_group &&
+      var.config.prefix == local.hosted_exception.prefix && var.config.environment == "staging", false)
+    )
+    error_message = "Hosted QA requires the exact reviewed subscription, group, prefix and staging exception."
   }
   description = "Nonsecret owner configuration. Use a distinct group and backend account per environment."
+  validation {
+    condition = var.config.email == null ? var.config.prefix != "tonyaiqt" : (
+      alltrue([for id in [var.config.email.client_id, var.config.email.principal_id, var.config.email.tenant_id] : can(regex("^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$", id)) && id != "00000000-0000-0000-0000-000000000000"]) &&
+      var.config.email.tenant_id == var.config.tenant_id &&
+      !contains([var.config.owner_object_id, var.config.deployer_object_id], var.config.email.principal_id) &&
+      (!var.config.email.custom_domain_verified || var.config.email.custom_domain != null) &&
+      (var.config.email.custom_domain == null ? true : length(var.config.email.custom_domain) <= 253 && can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", var.config.email.custom_domain)))
+    )
+    error_message = "Hosted QA needs nonsecret ACS identities in this tenant, a separate SMTP principal and an optional verified DNS domain."
+  }
   type = object({
     subscription_id       = string
     tenant_id             = string
@@ -19,6 +36,11 @@ variable "config" {
     runtime_secrets_ready = optional(bool, false)
     smtp_secret_ready     = optional(bool, false)
     apps_ready            = optional(bool, false)
+    email = optional(object({
+      client_id              = string, principal_id = string, tenant_id = string
+      custom_domain          = optional(string)
+      custom_domain_verified = optional(bool, false)
+    }))
     monitoring = optional(object({
       operator_name           = string, operator_email = string,
       api_digest              = string, supabase_project_ref = string,
@@ -47,7 +69,7 @@ variable "config" {
 
 }
 locals {
-  location   = "germanywestcentral"
+  location   = "swedencentral"
   stem       = "${var.config.prefix}-${var.config.environment}"
   group_id   = "/subscriptions/${var.config.subscription_id}/resourceGroups/${var.config.resource_group}"
   tags       = { application = "TonyAI", environment = var.config.environment, task = "LP2-01" }

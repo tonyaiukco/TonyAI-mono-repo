@@ -31,19 +31,19 @@ if args[:2]==['group','show']:
       'apiDigest':'sha256:'+'a'*64,'webDigest':'sha256:'+'b'*64}}))
 elif args[:2]==['resource','list']:
     print(json.dumps([{'type':kind,'name':name,'id':'/subscriptions/sub/resourceGroups/staging/providers/'+kind+'/'+name,
-      'location':'germanywestcentral','tags':{'application':'TonyAI','environment':'staging','githubRepository':'owner/repo','task':'LP2-01'}}
+      'location':'swedencentral','tags':{'application':'TonyAI','environment':'staging','githubRepository':'owner/repo','task':'LP2-01'}}
       for kind,name in [('Microsoft.ContainerRegistry/registries','registry'),('Microsoft.KeyVault/vaults','vault'),
         ('Microsoft.App/managedEnvironments','tonyai-staging-env'),
         ('Microsoft.ManagedIdentity/userAssignedIdentities','tonyai-staging-api'),
         ('Microsoft.OperationalInsights/workspaces','tonyai-staging-logs')]]))
 elif args[:2]==['acr','show']: print(json.dumps({'loginServer':'registry.azurecr.io'}))
-elif args[:3]==['containerapp','env','show']: print(json.dumps({'properties':{'defaultDomain':'example.germanywestcentral.azurecontainerapps.io'}}))
+elif args[:3]==['containerapp','env','show']: print(json.dumps({'properties':{'defaultDomain':'example.swedencentral.azurecontainerapps.io'}}))
 elif args[:2]==['account','show']: print(json.dumps({'tenantId':'tenant'}))
 elif args[:2]!=['account','set']: sys.exit(99)
 ''')
             path.chmod(0o755)
             journal = Path(directory) / 'journal.json'
-            journal.write_text(json.dumps({'target': {'vault': 'vault', 'web_origin': 'https://tonyai-staging-web.example.germanywestcentral.azurecontainerapps.io'}, 'project_ref': 'abcdefghijklmnopqrst', 'configured': True}))
+            journal.write_text(json.dumps({'target': {'vault': 'vault', 'web_origin': 'https://tonyai-staging-web.example.swedencentral.azurecontainerapps.io'}, 'project_ref': 'abcdefghijklmnopqrst', 'configured': True}))
             script = '''before="$SHELLOPTS"
 source "$1" sub staging "$2" || exit 1
 test "$SHELLOPTS" = "$before" || exit 2

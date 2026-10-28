@@ -36,7 +36,7 @@ def ensure_signing_key(api, ref, journal):
 
 
 def configure_auth(api, ref, origin, public_key, signing_id):
-    if not re.fullmatch(r'https://[a-z0-9-]+\.[a-z0-9-]+\.germanywestcentral\.azurecontainerapps\.io', origin):
+    if not re.fullmatch(r'https://[a-z0-9-]+\.[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io', origin):
         raise SafeFailure('Expected an exact HTTPS Azure staging origin.')
     path = '/v1/projects/' + ref + '/config/auth'
     current = api(path)  # May contain secrets: stays in process memory, never saved.

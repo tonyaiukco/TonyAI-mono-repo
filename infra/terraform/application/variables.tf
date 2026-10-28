@@ -1,7 +1,14 @@
 variable "foundation" {
   validation {
-    condition     = !contains(jsondecode(file("${path.module}/../../config/deployment-policy.json")).selfhost_sweden_subscriptions, lower(var.foundation.subscription_id))
-    error_message = "Sweden selfhost subscriptions require the pending VNet/application integration; legacy Germany application is blocked."
+    condition = (
+      !contains(jsondecode(file("${path.module}/../../config/deployment-policy.json")).selfhost_sweden_subscriptions, lower(var.foundation.subscription_id)) &&
+      !startswith(lower(var.foundation.resource_group), "tonyai-qatmp") && lower(var.foundation.prefix) != "tonyaiqt"
+      ) || (local.hosted_exception_valid && try(
+        var.foundation.subscription_id == local.hosted_exception.subscription &&
+        var.foundation.resource_group == local.hosted_exception.resource_group &&
+      var.foundation.prefix == local.hosted_exception.prefix && var.foundation.environment == "staging", false)
+    )
+    error_message = "Hosted QA requires the exact reviewed subscription, group, prefix and staging exception."
   }
   type = object({
     subscription_id = string, tenant_id = string, environment = string,
@@ -9,7 +16,7 @@ variable "foundation" {
     vault_name      = string, default_domain = string
   })
   validation {
-    condition     = contains(["staging", "production"], var.foundation.environment) && can(regex("^[a-z0-9-]+\\.germanywestcentral\\.azurecontainerapps\\.io$", var.foundation.default_domain)) && can(regex("^[a-z0-9]{3,12}$", var.foundation.prefix)) && can(regex("^[a-z0-9]{5,50}$", var.foundation.registry_name)) && can(regex("^[a-z][a-z0-9-]{1,22}[a-z0-9]$", var.foundation.vault_name))
+    condition     = contains(["staging", "production"], var.foundation.environment) && can(regex("^[a-z0-9-]+\\.swedencentral\\.azurecontainerapps\\.io$", var.foundation.default_domain)) && can(regex("^[a-z0-9]{3,12}$", var.foundation.prefix)) && can(regex("^[a-z0-9]{5,50}$", var.foundation.registry_name)) && can(regex("^[a-z][a-z0-9-]{1,22}[a-z0-9]$", var.foundation.vault_name))
     error_message = "Application must target the reviewed EU foundation contract."
   }
 }

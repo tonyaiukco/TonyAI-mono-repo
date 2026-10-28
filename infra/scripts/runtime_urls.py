@@ -22,8 +22,8 @@ def transfer_urls(api, vault, ref, journal):
                      for p in poolers if p.get('database_type') == 'PRIMARY'}
         except (KeyError, TypeError, AttributeError, ValueError):
             raise SafeFailure('Malformed provider pooler metadata; connection details withheld.') from None
-        if len(hosts) != 1 or not re.fullmatch(r'aws-[0-9]+-eu-central-1\.pooler\.supabase\.com', next(iter(hosts)) or ''):
-            raise SafeFailure('No unambiguous Frankfurt primary pooler host.')
+        if len(hosts) != 1 or not re.fullmatch(r'aws-[0-9]+-eu-north-1\.pooler\.supabase\.com', next(iter(hosts)) or ''):
+            raise SafeFailure('No unambiguous Stockholm primary pooler host.')
         password = vault.get('bootstrap-db-password')
         if not password or not password.get('value'):
             raise SafeFailure('Missing bootstrap DB password; recover it securely before URL setup.')

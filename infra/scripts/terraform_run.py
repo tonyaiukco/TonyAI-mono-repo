@@ -29,7 +29,8 @@ def validate_release(inputs):
     if set(inputs) != {'foundation', 'release'}:
         raise SafeFailure('Application input must contain only foundation and release.')
     foundation, release = inputs['foundation'], inputs['release']
-    require_hosted_target(foundation.get('subscription_id'))
+    require_hosted_target(foundation.get('subscription_id'), foundation.get('resource_group'),
+                          foundation.get('prefix'), foundation.get('environment'))
     expected = {'subscription_id', 'tenant_id', 'environment', 'resource_group', 'prefix', 'registry_name', 'vault_name', 'default_domain'}
     if set(foundation) != expected or foundation['environment'] not in ('staging', 'production'):
         raise SafeFailure('Unexpected foundation contract.')
@@ -37,7 +38,7 @@ def validate_release(inputs):
         'subscription_id': r'[a-f0-9-]{36}', 'tenant_id': r'[a-f0-9-]{36}',
         'resource_group': r'[A-Za-z0-9_-]+', 'prefix': r'[a-z0-9]{3,12}',
         'registry_name': r'[a-z0-9]{5,50}', 'vault_name': r'[a-z][a-z0-9-]{1,22}[a-z0-9]',
-        'default_domain': r'[a-z0-9-]+\.germanywestcentral\.azurecontainerapps\.io',
+        'default_domain': r'[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io',
     }
     for key, pattern in patterns.items():
         if not isinstance(foundation[key], str) or not re.fullmatch(pattern, foundation[key]):
@@ -82,6 +83,9 @@ def invoke(lane, backend_path, inputs_path, action, before_apply=None):
         target = validate_foundation(inputs)
     if any(target[k] != backend[k] for k in ('subscription_id', 'tenant_id', 'environment')):
         raise SafeFailure('Backend and infrastructure environment identities differ.')
+    if lane != 'selfhost':
+        from hosted_target import require_hosted_backend
+        require_hosted_backend(backend)
     folder = ROOT / 'infra' / 'terraform' / lane
     # Never load .auto.tfvars, override files or environment settings from another session.
     if any(folder.glob('*.auto.tfvars*')) or any(folder.glob('*override.tf*')) or any((folder / name).exists() for name in ('terraform.tfvars', 'terraform.tfvars.json')):

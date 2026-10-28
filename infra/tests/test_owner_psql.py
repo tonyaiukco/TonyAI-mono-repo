@@ -44,7 +44,7 @@ class OwnerPsqlTests(unittest.TestCase):
         self.assertEqual(args, ['psql', '-X', '--no-password', '--set=ON_ERROR_STOP=1'])
         self.assertNotIn('synthetic', ' '.join(args))
         self.assertEqual(env, {**allowed, 'PGPASSWORD': 'synthetic%/#',
-                              'PGHOST': 'aws-0-eu-central-1.pooler.supabase.com',
+                              'PGHOST': 'aws-0-eu-north-1.pooler.supabase.com',
                               'PGPORT': '5432', 'PGUSER': 'postgres.'+PROJECT,
                               'PGDATABASE': 'postgres', 'PGSSLMODE': 'verify-full',
                               'PGSSLROOTCERT': str(ROOT / CA_RELATIVE_PATH),

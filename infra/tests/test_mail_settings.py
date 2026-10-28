@@ -28,7 +28,7 @@ class MailSettingsTests(unittest.TestCase):
             value = inputs(); value['foundation']['environment'] = environment; value['release']['mail'] = mail()
             validate_release(value)
             self.assertEqual(mail_environment(*[value[k] for k in ('foundation', 'release')])['APP_URL'],
-                             {'value': 'https://tonyai-' + environment + '-web.real.germanywestcentral.azurecontainerapps.io'})
+                             {'value': 'https://tonyai-' + environment + '-web.real.swedencentral.azurecontainerapps.io'})
         for field in mail():
             value = inputs(); value['release']['mail'] = mail(); del value['release']['mail'][field]
             with self.subTest(missing=field), self.assertRaises(SafeFailure): validate_release(value)

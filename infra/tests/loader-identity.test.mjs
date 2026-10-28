@@ -7,7 +7,7 @@ import { run as command, FAILURE } from '../scripts/loader-command.mjs';
 
 const project = 'abcdefghijklmnopqrst';
 const password = 'a'.repeat(64);
-const url = `postgresql://tonyai_factor_loader.${project}:${password}@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=${encodeURIComponent(CA_PATH)}&connection_limit=1&connect_timeout=15`;
+const url = `postgresql://tonyai_factor_loader.${project}:${password}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=${encodeURIComponent(CA_PATH)}&connection_limit=1&connect_timeout=15`;
 const env = { FACTOR_LOADER_DATABASE_URL: url, SUPABASE_PROJECT_REF: project, DATABASE_URL: 'runtime-secret', DIRECT_URL: 'owner-secret', NODE_OPTIONS: '--inspect' };
 const loader = { current_user: 'tonyai_factor_loader', session_user: 'tonyai_factor_loader' };
 
@@ -16,10 +16,10 @@ test('chosen endpoint requires project-bound loader session pooler and strict TL
   const changes = [
     ['postgresql:', 'http:'], ['tonyai_factor_loader.', 'postgres.'],
     ['tonyai_factor_loader.', 'tonyai_runtime.'], [project, 'z'.repeat(20)],
-    [password, 'weak'], ['eu-central-1', 'eu-west-1'], ['pooler.supabase.com', 'example.com'],
-    ['aws-0-eu-central-1.pooler.supabase.com', 'aws-0-eu-central-1.pooler.supabase.com.example.net'],
-    ['aws-0-eu-central-1.pooler.supabase.com', 'aws-0-eu-central-1.pooler-supabase.com'],
-    ['aws-0-eu-central-1.pooler.supabase.com', 'xaws-0-eu-central-1.pooler.supabase.com'],
+    [password, 'weak'], ['eu-north-1', 'eu-west-1'], ['pooler.supabase.com', 'example.com'],
+    ['aws-0-eu-north-1.pooler.supabase.com', 'aws-0-eu-north-1.pooler.supabase.com.example.net'],
+    ['aws-0-eu-north-1.pooler.supabase.com', 'aws-0-eu-north-1.pooler-supabase.com'],
+    ['aws-0-eu-north-1.pooler.supabase.com', 'xaws-0-eu-north-1.pooler.supabase.com'],
     [':5432/', ':6543/'], ['/postgres?', '/other?'], ['sslmode=require', 'sslmode=disable'],
     ['sslaccept=strict', 'sslaccept=accept_invalid_certs'],
     [encodeURIComponent(CA_PATH), encodeURIComponent('/untrusted/cert')],

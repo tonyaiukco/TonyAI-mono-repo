@@ -37,7 +37,7 @@ def create(sha, api_digest, web_digest, env=os.environ):
         raise SafeFailure('Build must return immutable image digests.')
     project, prefix, domain = (env.get(k, '') for k in ('SUPABASE_PROJECT_REF', 'PREFIX', 'ACA_DEFAULT_DOMAIN'))
     if (not re.fullmatch(r'[a-z]{20}', project) or not re.fullmatch(r'[a-z0-9]{3,12}', prefix)
-            or not re.fullmatch(r'[a-z0-9-]+\.germanywestcentral\.azurecontainerapps\.io', domain)
+            or not re.fullmatch(r'[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io', domain)
             or not re.fullmatch(r'[a-z0-9]{5,50}', env.get('ACR_NAME', ''))):
         raise SafeFailure('Invalid staging build contract.')
     origins = {kind + '_origin': 'https://' + prefix + '-staging-' + kind + '.' + domain for kind in ('api', 'web')}

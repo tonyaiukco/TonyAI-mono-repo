@@ -19,7 +19,7 @@ from scan_browser_assets import scan
 
 PROJECT = 'abcdefghijklmnopqrst'
 BASE = 'https://' + PROJECT + '.supabase.co/storage/v1'
-GOOD_URL = f'postgresql://tonyai_runtime.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert={CONTAINER_CA}&pgbouncer=true'
+GOOD_URL = f'postgresql://tonyai_runtime.{PROJECT}:synthetic@aws-0-eu-north-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert={CONTAINER_CA}&pgbouncer=true'
 AUTH = {'disable_signup': True, 'saml_enabled': False, 'external': {'email': True, 'phone': False, 'anonymous_users': False, 'github': False}}
 
 
@@ -75,7 +75,7 @@ class RequestTests(unittest.TestCase):
 class GuardTests(unittest.TestCase):
     def test_pooler_database_region_and_strict_certificate_required(self):
         validate_pooler(GOOD_URL, PROJECT, 6543)
-        bad_urls = [GOOD_URL.replace('/postgres?', '/other?'), GOOD_URL.replace('eu-central-1', 'us-east-1'),
+        bad_urls = [GOOD_URL.replace('/postgres?', '/other?'), GOOD_URL.replace('eu-north-1', 'us-east-1'),
                     GOOD_URL.replace('sslaccept=strict', 'sslaccept=accept_invalid_certs'),
                     GOOD_URL.replace('&sslaccept=strict', ''), GOOD_URL + '&sslaccept=accept_invalid_certs',
                     GOOD_URL.replace(CONTAINER_CA, '/wrong-ca'), GOOD_URL + '&sslrootcert=/wrong-ca']
@@ -176,8 +176,8 @@ class GuardTests(unittest.TestCase):
     def test_public_key_must_be_accepted_by_exact_project_and_urls(self):
         env = {'SUPABASE_PROJECT_REF':PROJECT, 'NEXT_PUBLIC_SUPABASE_ANON_KEY':'sb_publishable_synthetic',
                'NEXT_PUBLIC_SUPABASE_URL':'https://' + PROJECT + '.supabase.co',
-               'PREFIX':'tonyai', 'ACA_DEFAULT_DOMAIN':'example.germanywestcentral.azurecontainerapps.io',
-               'API_ORIGIN':'https://tonyai-staging-api.example.germanywestcentral.azurecontainerapps.io'}
+               'PREFIX':'tonyai', 'ACA_DEFAULT_DOMAIN':'example.swedencentral.azurecontainerapps.io',
+               'API_ORIGIN':'https://tonyai-staging-api.example.swedencentral.azurecontainerapps.io'}
         env['NEXT_PUBLIC_API_BASE_URL'] = env['API_ORIGIN'] + '/api/v1'
         with patch('check_browser_key.request', side_effect=[(401,b''),(200,json.dumps(AUTH).encode())]) as request:
             check_inputs(env)
@@ -185,7 +185,7 @@ class GuardTests(unittest.TestCase):
         with patch('check_browser_key.request', return_value=(401,b'')):
             with self.assertRaises(SafeFailure): check_inputs(env)
         with patch('check_browser_key.request') as request:
-            forged = 'https://tonyai-staging-api.evil.com.germanywestcentral.azurecontainerapps.io'
+            forged = 'https://tonyai-staging-api.evil.com.swedencentral.azurecontainerapps.io'
             with self.assertRaises(SafeFailure):
                 check_inputs({**env, 'API_ORIGIN':forged, 'NEXT_PUBLIC_API_BASE_URL':forged+'/api/v1'})
             request.assert_not_called()
@@ -197,8 +197,8 @@ class GuardTests(unittest.TestCase):
     def test_browser_build_rejects_open_auth_settings_and_missing_key_enforcement(self):
         env = {'SUPABASE_PROJECT_REF':PROJECT, 'NEXT_PUBLIC_SUPABASE_ANON_KEY':'sb_publishable_synthetic',
                'NEXT_PUBLIC_SUPABASE_URL':'https://' + PROJECT + '.supabase.co',
-               'PREFIX':'tonyai', 'ACA_DEFAULT_DOMAIN':'example.germanywestcentral.azurecontainerapps.io',
-               'API_ORIGIN':'https://tonyai-staging-api.example.germanywestcentral.azurecontainerapps.io'}
+               'PREFIX':'tonyai', 'ACA_DEFAULT_DOMAIN':'example.swedencentral.azurecontainerapps.io',
+               'API_ORIGIN':'https://tonyai-staging-api.example.swedencentral.azurecontainerapps.io'}
         env['NEXT_PUBLIC_API_BASE_URL'] = env['API_ORIGIN'] + '/api/v1'
         for field in ('disable_signup', 'phone', 'anonymous_users'):
             settings = json.loads(json.dumps(AUTH))

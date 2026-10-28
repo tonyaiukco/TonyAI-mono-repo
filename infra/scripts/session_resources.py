@@ -29,7 +29,7 @@ def restore(subscription, group, journal_path=None):
             raise SafeFailure('Foundation resource missing or ambiguous.')
         r = matches[0]
         expected = group_id + '/providers/' + kind + '/' + r['name']
-        if (r['id'].lower() != expected.lower() or r.get('location') != 'germanywestcentral'
+        if (r['id'].lower() != expected.lower() or r.get('location') != 'swedencentral'
                 or any(r.get('tags', {}).get(k) != v for k, v in
                        {'application':'TonyAI', 'environment':'staging', 'task':'LP2-01'}.items())):
             raise SafeFailure('Foundation resource identity, region or tags mismatch.')
@@ -42,7 +42,7 @@ def restore(subscription, group, journal_path=None):
     registry_data = az('acr', 'show', '--ids', registry['id'])
     domain = az('containerapp', 'env', 'show', '--ids', environment['id'])['properties']['defaultDomain']
     if (registry_data['loginServer'] != registry['name'] + '.azurecr.io'
-            or not re.fullmatch(r'[a-z0-9-]+\.germanywestcentral\.azurecontainerapps\.io', domain)):
+            or not re.fullmatch(r'[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io', domain)):
         raise SafeFailure('Unexpected registry host or environment domain.')
     env = {'AZURE_SUBSCRIPTION_ID':subscription, 'RESOURCE_GROUP':group, 'GROUP_ID':data['id'],
            'PREFIX':prefix, 'RELEASE_SHA':tags['releaseSha'], 'GITHUB_REPOSITORY':tags['githubRepository'],

@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto';
 
 const fixture = () => ({
   mode: 'staging', sourceSha: 'a'.repeat(40), projectRef: 'abcdefghijklmnopqrst',
-  web: 'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io',
-  api: 'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io/api/v1',
+  web: 'https://tonyai-staging-web.real.swedencentral.azurecontainerapps.io',
+  api: 'https://tonyai-staging-api.real.swedencentral.azurecontainerapps.io/api/v1',
   supabase: 'https://abcdefghijklmnopqrst.supabase.co',
   tenants: [0, 1].map(() => {
     const organisationId = randomUUID();
@@ -28,9 +28,9 @@ test('lint ignores worktree copies while application files remain checked', asyn
 test('fixture executable validates its own actual DB connection before Prisma can write', async () => {
   const { fixtureDatabaseUrl } = await import('../scripts/smoke-fixtures.mjs');
   const target = fixture();
-  const url = `postgresql://postgres.${target.projectRef}:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt`;
+  const url = `postgresql://postgres.${target.projectRef}:synthetic@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt`;
   assert.match(fixtureDatabaseUrl(target, url), /sslcert=/);
-  for (const invalid of [url.replace('postgres.', 'tonyai_runtime.'), url.replace('5432', '6543'), url.replace(target.projectRef, 'z'.repeat(20)), url.replace('eu-central-1', 'us-east-1'),
+  for (const invalid of [url.replace('postgres.', 'tonyai_runtime.'), url.replace('5432', '6543'), url.replace(target.projectRef, 'z'.repeat(20)), url.replace('eu-north-1', 'us-east-1'),
     url.replace('sslaccept=strict', 'sslaccept=accept_invalid_certs'), url + '&host=evil.test', 'postgresql://localhost/production']) {
     assert.throws(() => fixtureDatabaseUrl(target, invalid));
   }
