@@ -82,15 +82,18 @@ migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence
 
 The **hosted reference** below (runbooks 00–06) targets Azure Sweden Central
 (`swedencentral`) and Supabase North EU — Stockholm (`eu-north-1`). WP-2 (#253) added the
-exact hosted-QA exception and ACS Email foundation. WP-3 prepares all three private
+exact hosted-QA exception and ACS Email foundation. WP-3 (#254) supplies all three private
 buckets, hosted smoke fixtures and runbooks 00–06/11; cloud acceptance remains owner-run.
 Example inputs remain placeholders, not live contracts.
 
 **Hosted phase (owner decision 2026-10-26, extended to the pilot on 2026-10-28; Codex).**
 The lane uses `tonyai-qatmp-apps`, `tonyai-qatmp-tfstate`, prefix `tonyaiqt` and
-environment `staging`, with no VNet. `config/hosted-qa-exception.json` is a fail-closed
-template: the owner must supply the confirmed subscription and dedicated, globally
-unique backend account (a `tonyaiqt` name, at most 24 characters) before live use.
+environment `staging`, with no VNet. `config/hosted-qa-exception.json` binds the reviewed
+subscription to owner-selected dedicated backend `tonyaiqtqabe`. Its example file
+remains a fail-closed template. L1's read-only name-availability result is not a
+reservation; recheck before separately approved L2 provisioning. Follow
+[runbook 00's prerequisite checklist](runbooks/00-session.md#l1-prerequisite-evidence-before-provisioning)
+and close its owner-input blockers before requesting L1b approval.
 Both hosted Terraform roots and the Python entrypoints check the same exact tuple;
 backend bootstrap and hosted Terraform invocation also bind the backend group/account.
 The paused backend's shared shape validator remains available, but the hosted writer

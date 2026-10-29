@@ -1,7 +1,7 @@
 {
-  "subscription": "<owner-confirmed-subscription-uuid>",
+  "subscription": "cb7efc2f-37a7-4672-b62c-93c207bcd33d",
   "resource_group": "tonyai-qatmp-apps",
   "prefix": "tonyaiqt",
   "backend_resource_group": "tonyai-qatmp-tfstate",
-  "backend_storage_account": "<owner-confirmed-tonyaiqt-account>"
+  "backend_storage_account": "tonyaiqtqabe"
 }

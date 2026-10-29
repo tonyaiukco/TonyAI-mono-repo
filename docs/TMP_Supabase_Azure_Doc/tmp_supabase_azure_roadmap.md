@@ -192,7 +192,12 @@ default Azure hostnames; the environment may be reset with notice.
 **Dependency rule:** L1 → L1b → L2 → L3 → L4 → L4a → L5 → L6 → L7 → L8 → L9 → L10.
 The IDs in L1b precede foundation; secret generation/storage in L7 follows vault
 creation. Runbook numbers are topic references, not permission to bypass this
-order. No step in this preparation has been executed. WP-6 is not needed for
+order. L1 evidence and operation approvals are recorded in the central plan's
+LP2-HQ entry: the 2026-10-28 preflight includes one separately approved monthly
+GBP 1,000 subscription budget alert, verified by readback. L1b completed on 2026-10-29 after the owner reconciled
+the existing application provenance; its explicitly approved service principal
+was created and independently read back without credentials. L2–L10 have not
+been executed and need their own approvals. WP-6 is not needed for
 the initial owner-run deployment; its CI adaptation remains a later package.
 
 ## 6. The paused self-hosted route
@@ -307,7 +312,7 @@ All decided. **O1–O7 as recommended (owner, in chat, 2026-10-28).**
    Contributor + User Access Administrator) on the subscription; providers
    `Microsoft.App`, `Microsoft.OperationalInsights`, `Microsoft.ContainerRegistry`,
    `Microsoft.KeyVault`, `Microsoft.ManagedIdentity`, `Microsoft.Storage`,
-   `Microsoft.Communication` registered; permission to create an Entra app
+   `Microsoft.Communication`, `Microsoft.Insights` registered; permission to create an Entra app
    registration; a budget alert; the owner's public IPv4.
 3. **Email:** the sending domain — Azure-managed to start; a custom domain needs
    DNS access at Namecheap for its verification, SPF and DKIM records.
