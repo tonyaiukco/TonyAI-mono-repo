@@ -52,9 +52,10 @@ resource "azapi_resource" "communication" {
   lifecycle { prevent_destroy = true }
 }
 resource "azapi_resource" "smtp_username" {
-  for_each  = local.email
-  type      = "Microsoft.Communication/communicationServices/smtpUsernames@2024-09-01-preview"
-  name      = "${local.stem}-smtp"
+  for_each = local.email
+  type     = "Microsoft.Communication/communicationServices/smtpUsernames@2024-09-01-preview"
+  # ACS requires the ARM child name to differ from the public SMTP login.
+  name      = "${local.stem}-smtp-user"
   parent_id = azapi_resource.communication[each.key].id
   body = { properties = {
     entraApplicationId = each.value.client_id

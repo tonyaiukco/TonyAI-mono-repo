@@ -238,6 +238,10 @@ run "acs_email_security_contract" {
     condition     = azapi_resource.smtp_username["enabled"].body.properties.entraApplicationId == "00000000-0000-0000-0000-000000000010" && azapi_resource.smtp_username["enabled"].body.properties.tenantId == var.config.tenant_id && toset(keys(azapi_resource.smtp_username["enabled"].body.properties)) == toset(["entraApplicationId", "tenantId", "username"]) && output.email_contract.enabled.username == "tonyai-staging-smtp" && output.email_contract.enabled.sender == "DoNotReply@synthetic.azurecomm.net" && output.email_contract.enabled.host == "smtp.azurecomm.net" && output.email_contract.enabled.port == 587 && !output.email_contract.enabled.secure
     error_message = "Publish public STARTTLS SMTP settings and sender; never a credential."
   }
+  assert {
+    condition     = azapi_resource.smtp_username["enabled"].name == "tonyai-staging-smtp-user" && azapi_resource.smtp_username["enabled"].name != azapi_resource.smtp_username["enabled"].body.properties.username && output.email_contract.enabled.username == azapi_resource.smtp_username["enabled"].body.properties.username
+    error_message = "The ARM child name must differ from the SMTP login; the public contract publishes the login."
+  }
 }
 run "acs_custom_domain_waits_for_verification" {
   command = plan

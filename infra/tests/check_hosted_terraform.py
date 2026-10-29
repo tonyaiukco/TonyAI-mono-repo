@@ -65,6 +65,7 @@ def check():
                     ('US residency', 'dataLocation = "Europe"', 'dataLocation = "United States"'),
                     ('group-scoped SMTP grant', 'parent_id = azapi_resource.communication[each.key].id', 'parent_id = azapi_resource.group.id'),
                     ('wildcard SMTP actions', '"Microsoft.Communication/CommunicationServices/Read"', '"Microsoft.Communication/*"'),
+                    ('SMTP child name equals login', 'name = "${local.stem}-smtp-user"', 'name = "${local.stem}-smtp"'),
                 ]
                 # Format-independent substitutions still target the exact HCL attribute.
                 import re

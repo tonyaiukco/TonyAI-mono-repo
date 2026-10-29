@@ -91,9 +91,14 @@ The lane uses `tonyai-qatmp-apps`, `tonyai-qatmp-tfstate`, prefix `tonyaiqt` and
 environment `staging`, with no VNet. `config/hosted-qa-exception.json` binds the reviewed
 subscription to owner-selected dedicated backend `tonyaiqtqabe`. Its example file
 remains a fail-closed template. L1's read-only name-availability result is not a
-reservation; recheck before separately approved L2 provisioning. Follow
-[runbook 00's prerequisite checklist](runbooks/00-session.md#l1-prerequisite-evidence-before-provisioning)
-and close its owner-input blockers before requesting L1b approval.
+reservation; recheck before provisioning. L1/L1b and the owner-run L2 backend
+completed on 2026-10-29. L3's separately approved plan/apply was partial: 17
+resources exist, but ACS refused an ARM child name equal to the SMTP login.
+The child now uses `*-smtp-user`; the public login remains `*-smtp`. The owner
+accepted this naming choice; no retry is authorized by that choice. Session
+restoration reads ACR by verified subscription, group and registry name (the CLI
+requires `--name`). See [runbook 01's recovery boundary](runbooks/01-azure.md#12-foundation-apply)
+and the central LP2-HQ record before another operation.
 Both hosted Terraform roots and the Python entrypoints check the same exact tuple;
 backend bootstrap and hosted Terraform invocation also bind the backend group/account.
 The paused backend's shared shape validator remains available, but the hosted writer
