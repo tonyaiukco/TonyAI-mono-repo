@@ -36,7 +36,10 @@ elif args[:2]==['resource','list']:
         ('Microsoft.App/managedEnvironments','tonyai-staging-env'),
         ('Microsoft.ManagedIdentity/userAssignedIdentities','tonyai-staging-api'),
         ('Microsoft.OperationalInsights/workspaces','tonyai-staging-logs')]]))
-elif args[:2]==['acr','show']: print(json.dumps({'loginServer':'registry.azurecr.io'}))
+elif args[:2]==['acr','show']:
+    # Azure CLI requires a registry name; accepting arbitrary args hid the live failure.
+    if args[2:] != ['--subscription','sub','--resource-group','staging','--name','registry','--output','json','--only-show-errors']: sys.exit(98)
+    print(json.dumps({'loginServer':'registry.azurecr.io'}))
 elif args[:3]==['containerapp','env','show']: print(json.dumps({'properties':{'defaultDomain':'example.swedencentral.azurecontainerapps.io'}}))
 elif args[:2]==['account','show']: print(json.dumps({'tenantId':'tenant'}))
 elif args[:2]!=['account','set']: sys.exit(99)

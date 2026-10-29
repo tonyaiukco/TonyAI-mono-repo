@@ -39,7 +39,8 @@ def restore(subscription, group, journal_path=None):
     environment = resource('Microsoft.App/managedEnvironments', prefix + '-staging-env')
     api_identity = resource('Microsoft.ManagedIdentity/userAssignedIdentities', prefix + '-staging-api')
     logs = resource('Microsoft.OperationalInsights/workspaces', prefix + '-staging-logs')
-    registry_data = az('acr', 'show', '--ids', registry['id'])
+    registry_data = az('acr', 'show', '--subscription', subscription,
+                       '--resource-group', group, '--name', registry['name'])
     domain = az('containerapp', 'env', 'show', '--ids', environment['id'])['properties']['defaultDomain']
     if (registry_data['loginServer'] != registry['name'] + '.azurecr.io'
             or not re.fullmatch(r'[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io', domain)):

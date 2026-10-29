@@ -196,8 +196,15 @@ order. L1 evidence and operation approvals are recorded in the central plan's
 LP2-HQ entry: the 2026-10-28 preflight includes one separately approved monthly
 GBP 1,000 subscription budget alert, verified by readback. L1b completed on 2026-10-29 after the owner reconciled
 the existing application provenance; its explicitly approved service principal
-was created and independently read back without credentials. L2–L10 have not
-been executed and need their own approvals. WP-6 is not needed for
+was created and independently read back without credentials. L2 completed on
+2026-10-29 through the owner-run backend bootstrap and independent readback.
+L3's separately approved plan and apply on `ae21469` created 17 resources; the
+SMTP child failed because its ARM name equalled the login. State/ARM and the
+empty child list were reconciled, the lease was unlocked, and no retry ran.
+The local recovery fix separates the child name from the login and repairs the
+session-restoration ACR lookup; diagnostics destination and vault ACL readback
+remain explicit open findings in the central plan. A corrected-source plan and
+apply require fresh separate approvals. L4–L10 have not run. WP-6 is not needed for
 the initial owner-run deployment; its CI adaptation remains a later package.
 
 ## 6. The paused self-hosted route

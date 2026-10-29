@@ -382,7 +382,13 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > requires its own approval after L1 closes. L1b completed on 2026-10-29 after
 > the owner reconciled the existing application provenance: the approved service
 > principal was created and both identities were verified without credentials.
-> L2 backend provisioning still requires separate approval. No app rollout is implied.
+> L2 completed and was independently read back on 2026-10-29. Separately approved
+> L3 plan/apply created 17 foundation resources; SMTP username creation failed because
+> its ARM child name equalled its login. The recovery fix separates `*-smtp-user`
+> from the unchanged `*-smtp` login and repairs ACR lookup in session restoration.
+> L3 remains partial: a corrected-source plan and apply each need fresh approval;
+> diagnostic destination and vault network-ACL readback differences remain open.
+> No app rollout is implied.
 > See [the hosted configuration contract](infra/README.md).
 
 **Paused self-hosted route (kept; resumes after the pilot launch).** The text from here to

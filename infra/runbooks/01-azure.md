@@ -70,6 +70,35 @@ owns the RG and shared resources; do not edit them with alternate templates.
 Copy the **public** contract into `release-r001.json.foundation`; verify names
 against restoration. Never give the deployer access to foundation state.
 
+Foundation `plan` does not save a binary plan. A separately approved `apply`
+replans and asks for `yes`; compare its complete actions and outputs with the
+reviewed plan before answering. Stop on any scope or security-setting change.
+A successful plan does not establish that Azure will accept every create.
+
+**Partial-apply recovery:** preserve the same backend, state and private inputs.
+Read back the state resource set, actual ARM resources and lease status before
+requesting another operation. Do not destroy, import, adopt or rename existing
+resources to work around a failed create. The 2026-10-29 L3 attempt created 17
+resources but ACS rejected the SMTP child because its resource name equalled
+its login. The owner-approved correction uses `tonyaiqt-staging-smtp-user` for
+the missing ARM child and retains login `tonyaiqt-staging-smtp`. The child list
+was empty, state contained no SMTP child, and the lease was unlocked. A corrected
+source still needs its own reviewed plan and separately approved apply; review
+all updates, including any explicit provenance-tag change, rather than assuming
+only one create. Record the execution SHA separately from the RG's initial
+`releaseSha` provenance. No email contract is accepted until the actual SMTP
+child and its client/tenant/username have been read back.
+
+ARM may return canonical subscription-level custom-role definition IDs while
+assignments remain resource-scoped; verify the role GUID, subscription,
+permissions and actual assignment/assignable scopes. On this L3 readback,
+console/system logging was enabled for the intended workspace, but
+`logAnalyticsDestinationType` returned `null` instead of requested `Dedicated`;
+the vault was public/RBAC-enabled but returned no `networkAcls` object. Keep
+these exact-value differences open; do not claim explicit `Dedicated` or
+`AzureServices` readback or silently rewrite the desired security policy.
+Verify actual log ingestion/table routing at the later workload acceptance gate.
+
 ## 1.3 GitHub/Entra federation (deferred to WP-6)
 
 Do not execute this section during WP-3 or the initial owner-run L1–L10.
@@ -208,8 +237,11 @@ Read the public output after apply:
 terraform -chdir=infra/terraform/foundation output -json email_contract
 ```
 
-`enabled.username` and `enabled.sender` are the actual SMTP username and sender;
-never guess the generated domain. `host`, `port` and `secure` must be
+The ARM child name (`${prefix}-${environment}-smtp-user`) differs from the SMTP
+login (`${prefix}-${environment}-smtp`); ACS rejects equality. `enabled.username`
+and `enabled.sender` are public configuration, not proof that creation succeeded:
+read back the SMTP child and managed domain before accepting them. Never guess
+the generated domain. `host`, `port` and `secure` must be
 `smtp.azurecomm.net`, `587` and `false` (mandatory STARTTLS). This is public
 configuration, not a password. Confirm the SMTP username is ready in ACS.
 
