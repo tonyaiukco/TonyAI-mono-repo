@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Credential-free direct Terraform target attacks and ACS assertion mutations."""
+"""Credential-free Terraform target attacks and ACS/diagnostics mutations."""
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +18,25 @@ def run(folder, *args):
                                 k: v for k, v in os.environ.items()
                                 if not k.startswith(('TF_', 'ARM_', 'AZAPI_'))})
     return result
+
+
+def check_mutations(folder, filename, mutations):
+    path = folder / filename
+    original = path.read_text()
+    try:
+        for label, before, after in mutations:
+            pattern = re.escape(before).replace(r'\ ', r'\s+')
+            mutated, count = re.subn(pattern, lambda _: after, original)
+            if count == 0:
+                raise RuntimeError('Missing mutation anchor: ' + label)
+            path.write_text(mutated)
+            result = run(folder, 'test', '-no-color')
+            errors = [line for line in (result.stderr + result.stdout).splitlines() if line.startswith('Error:')]
+            if result.returncode != 1 or not errors or any(line != 'Error: Test assertion failed' for line in errors):
+                raise RuntimeError('Mutation did not fail by assertion: ' + label + '\n' + result.stdout + result.stderr)
+            print('KILLED: ' + label)
+    finally:
+        path.write_text(original)
 
 
 def check():
@@ -59,27 +79,27 @@ def check():
                 raise RuntimeError(result.stdout + result.stderr)
             print(lane + ': exact exception accepted; six wrong-target attacks refused.')
             if lane == 'foundation':
-                email_path = folder / 'email.tf'
-                original = email_path.read_text()
-                mutations = [
+                canonical_role = '"/subscriptions/${var.config.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${azapi_resource.smtp_role[each.key].name}"'
+                check_mutations(folder, 'email.tf', [
                     ('US residency', 'dataLocation = "Europe"', 'dataLocation = "United States"'),
                     ('group-scoped SMTP grant', 'parent_id = azapi_resource.communication[each.key].id', 'parent_id = azapi_resource.group.id'),
                     ('wildcard SMTP actions', '"Microsoft.Communication/CommunicationServices/Read"', '"Microsoft.Communication/*"'),
                     ('SMTP child name equals login', 'name = "${local.stem}-smtp-user"', 'name = "${local.stem}-smtp"'),
-                ]
-                # Format-independent substitutions still target the exact HCL attribute.
-                import re
-                for label, before, after in mutations:
-                    pattern = re.escape(before).replace(r'\ ', r'\s+')
-                    mutated, count = re.subn(pattern, lambda _: after, original)
-                    if count == 0:
-                        raise RuntimeError('Missing mutation anchor: ' + label)
-                    email_path.write_text(mutated)
-                    result = run(folder, 'test', '-no-color')
-                    if result.returncode == 0 or 'Test assertion failed' not in result.stderr + result.stdout:
-                        raise RuntimeError('Mutation did not fail by assertion: ' + label + '\n' + result.stdout + result.stderr)
-                    print('KILLED: ' + label)
-                email_path.write_text(original)
+                    ('RG-qualified SMTP role reference', canonical_role, 'azapi_resource.smtp_role[each.key].id'),
+                    ('wrong SMTP role UUID', canonical_role, canonical_role.replace('${azapi_resource.smtp_role[each.key].name}', '00000000-0000-0000-0000-000000000099')),
+                    ('foreign SMTP subscription', canonical_role, canonical_role.replace('${var.config.subscription_id}', '00000000-0000-0000-0000-000000000099')),
+                ])
+                enabled = 'enabled = contains(["ContainerAppConsoleLogs", "ContainerAppSystemLogs"], category)'
+                check_mutations(folder, 'main.tf', [
+                    ('unrequested log collection', enabled, 'enabled = true'),
+                    ('lost System logs', enabled, 'enabled = category == "ContainerAppConsoleLogs"'),
+                    ('missing disabled ARM category', '"ContainerAppSystemLogs", "ContainerAppHTTPLogs",', '"ContainerAppSystemLogs",'),
+                    ('missing ARM categoryGroup default', 'categoryGroup = null', ''),
+                    ('missing ARM retention default', 'retentionPolicy = { days = 0, enabled = false }', ''),
+                    ('changed retention policy', 'retentionPolicy = { days = 0, enabled = false }', 'retentionPolicy = { days = 30, enabled = true }'),
+                    ('wrong diagnostics workspace', 'workspaceId = azapi_resource.logs.id', 'workspaceId = "/subscriptions/foreign/workspaces/other"'),
+                    ('lost dedicated log destination', 'logAnalyticsDestinationType = "Dedicated"', 'logAnalyticsDestinationType = null'),
+                ])
 
 
 if __name__ == '__main__':

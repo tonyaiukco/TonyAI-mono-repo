@@ -87,9 +87,10 @@ resource "azapi_resource" "smtp_grant" {
   name      = uuidv5("url", "${local.group_id}/smtp-send/${each.value.principal_id}")
   parent_id = azapi_resource.communication[each.key].id
   body = { properties = {
-    principalId      = each.value.principal_id
-    principalType    = "ServicePrincipal"
-    roleDefinitionId = azapi_resource.smtp_role[each.key].id
+    principalId   = each.value.principal_id
+    principalType = "ServicePrincipal"
+    # ARM returns the canonical subscription path even for a role created at RG scope.
+    roleDefinitionId = "/subscriptions/${var.config.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${azapi_resource.smtp_role[each.key].name}"
   } }
   response_export_values = []
 }

@@ -52,7 +52,18 @@ resource "azapi_resource" "diagnostics" {
   body = { properties = {
     workspaceId                 = azapi_resource.logs.id
     logAnalyticsDestinationType = "Dedicated"
-    logs                        = [for category in ["ContainerAppConsoleLogs", "ContainerAppSystemLogs"] : { category = category, enabled = true }]
+    # Match the ARM readback shape without suppressing changes to log collection.
+    # Azure returns disabled categories and retention defaults even when omitted.
+    logs = [for category in [
+      "ContainerAppConsoleLogs", "ContainerAppSystemLogs", "ContainerAppHTTPLogs",
+      "AppEnvSpringAppConsoleLogs", "AppEnvSessionConsoleLogs",
+      "AppEnvSessionPoolEventLogs", "AppEnvSessionLifeCycleLogs"
+      ] : {
+      category        = category
+      categoryGroup   = null
+      enabled         = contains(["ContainerAppConsoleLogs", "ContainerAppSystemLogs"], category)
+      retentionPolicy = { days = 0, enabled = false }
+    }]
   } }
   response_export_values = []
 }
