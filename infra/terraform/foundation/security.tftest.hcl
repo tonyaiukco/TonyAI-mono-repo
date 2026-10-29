@@ -29,8 +29,23 @@ run "foundation_security_contract" {
     error_message = "ACR must use Basic with no admin keys."
   }
   assert {
-    condition     = azapi_resource.environment.body.properties.appLogsConfiguration.destination == "azure-monitor" && !can(azapi_resource.environment.body.properties.appLogsConfiguration.logAnalyticsConfiguration) && azapi_resource.diagnostics.body.properties.workspaceId == azapi_resource.logs.id
+    condition     = azapi_resource.environment.body.properties.appLogsConfiguration.destination == "azure-monitor" && !can(azapi_resource.environment.body.properties.appLogsConfiguration.logAnalyticsConfiguration) && azapi_resource.diagnostics.body.properties.workspaceId == azapi_resource.logs.id && azapi_resource.diagnostics.body.properties.logAnalyticsDestinationType == "Dedicated"
     error_message = "Logging must route by resource ID without any workspace keys."
+  }
+  assert {
+    condition = try(
+      length(azapi_resource.diagnostics.body.properties.logs) == 7 &&
+      toset([for log in azapi_resource.diagnostics.body.properties.logs : log.category]) == toset([
+        "ContainerAppConsoleLogs", "ContainerAppSystemLogs", "ContainerAppHTTPLogs",
+        "AppEnvSpringAppConsoleLogs", "AppEnvSessionConsoleLogs",
+        "AppEnvSessionPoolEventLogs", "AppEnvSessionLifeCycleLogs"
+      ]) &&
+      toset([for log in azapi_resource.diagnostics.body.properties.logs : log.category if log.enabled]) == toset(["ContainerAppConsoleLogs", "ContainerAppSystemLogs"]) &&
+      alltrue([for log in azapi_resource.diagnostics.body.properties.logs :
+        toset(keys(log)) == toset(["category", "categoryGroup", "enabled", "retentionPolicy"]) &&
+        log.categoryGroup == null && jsonencode(log.retentionPolicy) == jsonencode({ days = 0, enabled = false })
+    ]), false)
+    error_message = "Match the seven ARM log categories and retention defaults; enable only Console and System."
   }
   assert {
     condition     = azapi_resource.vault.body.properties.enableRbacAuthorization && azapi_resource.vault.body.properties.enablePurgeProtection && azapi_resource.vault.body.properties.softDeleteRetentionInDays == 90
@@ -227,8 +242,12 @@ run "acs_email_security_contract" {
     error_message = "Start with only the managed domain, without tracking."
   }
   assert {
-    condition     = azapi_resource.smtp_grant["enabled"].parent_id == azapi_resource.communication["enabled"].id && azapi_resource.smtp_grant["enabled"].body.properties.principalId == "00000000-0000-0000-0000-000000000011" && azapi_resource.smtp_grant["enabled"].body.properties.principalType == "ServicePrincipal" && azapi_resource.smtp_grant["enabled"].body.properties.roleDefinitionId == azapi_resource.smtp_role["enabled"].id && azapi_resource.smtp_role["enabled"].body.properties.assignableScopes == [azapi_resource.communication["enabled"].id]
+    condition     = azapi_resource.smtp_grant["enabled"].parent_id == azapi_resource.communication["enabled"].id && azapi_resource.smtp_grant["enabled"].body.properties.principalId == "00000000-0000-0000-0000-000000000011" && azapi_resource.smtp_grant["enabled"].body.properties.principalType == "ServicePrincipal" && azapi_resource.smtp_grant["enabled"].body.properties.roleDefinitionId == "/subscriptions/00000000-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bced5d70-36b2-5080-a19c-a9631e8dd0fc" && azapi_resource.smtp_role["enabled"].body.properties.assignableScopes == [azapi_resource.communication["enabled"].id]
     error_message = "Only the SMTP principal gets the role, only on the hosted Communication resource."
+  }
+  assert {
+    condition     = azapi_resource.smtp_role["enabled"].name == "bced5d70-36b2-5080-a19c-a9631e8dd0fc" && azapi_resource.smtp_role["enabled"].parent_id == azapi_resource.group.id && azapi_resource.smtp_grant["enabled"].name == uuidv5("url", "${local.group_id}/smtp-send/00000000-0000-0000-0000-000000000011")
+    error_message = "Canonicalizing the reference must preserve the role UUID, creation scope and assignment identity."
   }
   assert {
     condition     = jsonencode(azapi_resource.smtp_role["enabled"].body.properties.permissions) == jsonencode([{ actions = ["Microsoft.Communication/CommunicationServices/Read", "Microsoft.Communication/CommunicationServices/Write", "Microsoft.Communication/EmailServices/write"], notActions = [], dataActions = [], notDataActions = [] }])

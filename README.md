@@ -387,9 +387,16 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > its ARM child name equalled its login. The recovery fix separates `*-smtp-user`
 > from the unchanged `*-smtp` login and repairs ACR lookup in session restoration.
 > The separately approved recovery completed L3 (18 resources); L4/L4a and L5
-> are verified. L6 stopped at Prisma TLS and is undergoing a local transport
-> repair. Diagnostic destination and vault network-ACL findings remain open.
-> No app rollout is implied.
+> are verified. L6 completed after the transport repair (#257): all 42 migrations
+> and the strict-TLS owner/runtime checks passed. L7's owner-run SMTP credential
+> creation and Key Vault storage completed; the separate `r002` manifest preserves
+> the immutable application candidate. The first runtime-grant PLAN was rejected:
+> two intended grants plus two unexpected normalization updates, with no APPLY.
+> The local foundation fix models Azure's seven returned log categories (only
+> Console/System enabled) and references the unchanged SMTP role UUID through its
+> canonical subscription path. A new PLAN needs separate approval and must show
+> only the two runtime grants. Diagnostic destination and vault network-ACL
+> findings remain open. Runtime/SMTP/app readiness is still false; no app rollout.
 > See [the hosted configuration contract](infra/README.md).
 
 **Paused self-hosted route (kept; resumes after the pilot launch).** The text from here to

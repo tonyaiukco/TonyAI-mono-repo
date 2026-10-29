@@ -181,7 +181,7 @@ chat and never stores one in the repository.
 | L4a | **After L4, before L5/L6 or deployment:** read back `eu-north-1`, project ref and PostgreSQL 17 version; compare CI's `infra/selfhost/database-image-policy.json` pin and record any minor-version gap. Read the exact `aws-<n>-eu-north-1.pooler.supabase.com` host from Connect, verify the bundled CA through owner-psql, then run runbook 05's `rolcreaterole` / `rolbypassrls`, owner Storage USAGE/SELECT and rolled-back `CREATE ROLE lp1_probe BYPASSRLS` probe | **Mandatory go/no-go.** On failure stop and resolve with Supabase support; never weaken RLS, tenant guards or migration privileges |
 | L5 | Runtime secret (`openssl rand -hex 32`, `release_secrets.py store`), images (`build-images.sh`, local Supabase stack stopped first on the 16 GB machine; `az acr build` if too slow), `candidate.py`, release manifest with `storage_cleanup_hold: true` | — |
 | L6 | `hosted_migrate.py verify` with separate helper/application SHAs; separately approved `probe`, then `migrate`; owner reconciliation, saved-password `\password tonyai_runtime` / LOGIN and runtime checks are separate approvals | Strict TLS, exact migration history and owner/runtime checks pass |
-| L7 | With the L3 vault and valid L5 release manifest present, owner creates the Entra client secret (expiry ≤ 90 days), saves it in the password manager and enters it directly through the hidden `smtp-password` prompt; select the exact returned vault version and public ACS username/sender (runbooks 01/03); foundation re-apply with `runtime_secrets_ready=true`, `smtp_secret_ready=true` | — |
+| L7 | With the L3 vault and valid L5 release manifest present, owner creates the Entra client secret (expiry ≤ 90 days) and transfers it directly to `smtp-password` without exposing the value; select the exact returned vault version and public ACS username/sender in a new release manifest (runbooks 01/03). Separately approve the runtime-grant PLAN (exactly two creates), then its APPLY; separately approve the SMTP-grant PLAN (one create), then its APPLY. Keep `apps_ready=false` | Exact plan deltas accepted; no automatic readiness transition or app rollout |
 | L8 | `release_secrets.py verify`, `deploy-apps.sh` | apps healthy on `/api/v1/health` |
 | L9 | No factor release yet (O6) — LP4-02's authoritative release is loaded the same way (dry run, then `--apply` as `tonyai_factor_loader`) when it exists; `pnpm onboarding provision --apply --allow-remote` for one synthetic holding and its first `super_admin`, who invites the second `super_admin`, `data_entry`, `consultant` and `executive_viewer` | invitation emails arrive |
 | L10 | Smoke: `cloud_ops.py probe-storage`, `cloud_smoke.py`; by hand — login per role; create → submit → approve by the other `super_admin`; evidence upload and signed download; PDF and Excel export; a period-lock refusal; a cross-tenant read refused; one `audit_log` row per mutation; viewer and consultant cannot mutate; TR and EN render. Then monitoring (Supabase daily backups confirmed; a Log Analytics alert on API 5xx and restarts) and the **QA handover** with runbook 11 | QA starts |
@@ -203,14 +203,22 @@ recovery on `6bceba82` completed (18 resources, unlocked lease); diagnostics
 destination `null` and missing vault `networkAcls` remain open. L4 and L4a were
 verified, including the real PostgreSQL 17.11 owner privilege/TLS probe. L5's
 owner-approved build/secret preparation completed with immutable image digests
-and candidate binding; runtime login was not activated. The first approved L6
-migration stopped, and subsequent read-only inspection found no application
-schema. Native Prisma TLS trust and CLI secret-argv handling prompted the local
-transport repair in runbook 03 §3.2. Its local Linux proof does not authorize a
-live retry: a separately approved read-only probe must pass before a separately
-approved migration, owner/runtime gates and L7–L10. Reuse the saved L5 runtime
-password. The central plan holds the reconciled status and private evidence
-references; no seed or deployment has run. WP-6 is not needed for
+and candidate binding. The initial L6 TLS failure led to the transport repair
+(#257, merged as `afe55152`). Separately approved L6 operations subsequently
+passed strict TLS, all 42 migrations and owner/runtime checks; the owner accepted
+the recorded platform-default privilege findings. The saved L5 runtime password
+and immutable `6bceba82` application candidate remain unchanged.
+L7's owner-run SMTP credential creation and separate Key Vault write completed;
+the verified `r002` release adds only the mail block. The first runtime-grant PLAN
+returned 2 creates/2 updates/0 destroys and was rejected without APPLY. The local
+`fix/hosted-foundation-drift` patch normalizes the seven diagnostic log entries
+and canonical SMTP role reference without ignoring drift or changing permissions.
+It does not resolve the diagnostic destination or vault network-ACL findings.
+Local mocks cannot establish convergence: a newly approved PLAN must contain
+only the two named runtime secret grants before a separate APPLY is considered.
+All three applied readiness flags remain false. The central plan holds the
+reconciled status and private evidence references; no seed or deployment has run.
+WP-6 is not needed for
 the initial owner-run deployment; its CI adaptation remains a later package.
 
 ## 6. The paused self-hosted route
