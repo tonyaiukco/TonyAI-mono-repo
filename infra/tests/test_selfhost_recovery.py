@@ -27,21 +27,31 @@ SUB = 'cb7efc2f-37a7-4672-b62c-93c207bcd33d'
 
 class RecoveryTests(unittest.TestCase):
     def test_sweden_legacy_roots_fail_before_any_cloud_call(self):
-        for sub in (SUB, SUB.upper()):
-            foundation = {'config': {'subscription_id': sub}}
-            release = release_inputs(); release['foundation']['subscription_id'] = sub
-            for data, validate in ((foundation, validate_foundation), (release, validate_release)):
-                with self.assertRaisesRegex(SafeFailure, 'Sweden'): validate(data)
-            with tempfile.TemporaryDirectory() as directory:
-                backend = Path(directory, 'backend.json'); inputs = Path(directory, 'inputs.json')
-                config = backend_config(); config['subscription_id'] = SUB
-                backend.write_text(json.dumps(config))
-                for lane, data in (('foundation', foundation), ('application', release)):
-                    inputs.write_text(json.dumps(data))
-                    for action in ('plan', 'apply'):
-                        with patch('terraform_run.subprocess.run') as run, self.assertRaisesRegex(SafeFailure, 'Sweden'):
-                            invoke(lane, backend, inputs, action)
-                        run.assert_not_called()
+        # Both an unbound checkout and a reviewed hosted exception must keep
+        # the paused legacy targets closed, independent of the deployed tuple.
+        exception = dict(subscription=SUB, resource_group='tonyai-qatmp-apps',
+                         prefix='tonyaiqt', backend_resource_group='tonyai-qatmp-tfstate',
+                         backend_storage_account='tonyaiqtteststate')
+        with tempfile.TemporaryDirectory() as directory:
+            exception_path = Path(directory, 'exception.json')
+            backend = Path(directory, 'backend.json'); inputs = Path(directory, 'inputs.json')
+            config = backend_config(); config['subscription_id'] = SUB
+            backend.write_text(json.dumps(config))
+            for binding, refusal in (({}, 'reviewed exact exception'),
+                                     (exception, 'must match exactly')):
+                exception_path.write_text(json.dumps(binding))
+                with patch('hosted_target.EXCEPTION_PATH', exception_path):
+                    for sub in (SUB, SUB.upper()):
+                        foundation = {'config': {'subscription_id': sub}}
+                        release = release_inputs(); release['foundation']['subscription_id'] = sub
+                        for data, validate in ((foundation, validate_foundation), (release, validate_release)):
+                            with self.assertRaisesRegex(SafeFailure, refusal): validate(data)
+                        for lane, data in (('foundation', foundation), ('application', release)):
+                            inputs.write_text(json.dumps(data))
+                            for action in ('plan', 'apply'):
+                                with patch('terraform_run.subprocess.run') as run, self.assertRaisesRegex(SafeFailure, refusal):
+                                    invoke(lane, backend, inputs, action)
+                                run.assert_not_called()
 
     def test_runtime_guard_rejects_missing_or_wrong_disk_before_firewall(self):
         for mounted, actual in ((False, 'database'), (True, 'foreign')):

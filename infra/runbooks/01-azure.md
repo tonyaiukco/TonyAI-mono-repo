@@ -6,7 +6,7 @@
 > paused self-hosted QA's subscription but in its own resource groups (`tonyai-qatmp-*`),
 > prefix (`tonyaiqt`) and Terraform backend. Order and approvals:
 > [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md)
-> section 5. WP-2 merged as #253; WP-3 prepares this procedure. Each live
+> section 5. WP-2 merged as #253; WP-3 merged as #254. Each live
 > operation still needs its own owner approval. WP-6 CI deployment is deferred.
 > **Section 1.1 here bootstraps the hosted phase's own backend** (`tonyai-qatmp-tfstate`,
 > pinned by WP-2) — never the paused self-hosted backend account.
@@ -130,21 +130,73 @@ runner. Do not grant the workflow foundation permissions to bypass bootstrap.
 
 **L1b, before foundation:** in the approved tenant, the owner creates a dedicated
 SMTP Entra application and service principal, separate from any OIDC deployer.
-These commands create identities and each needs live approval; they do not
-create a password:
+Prepare the packet only after L1's required inputs are verified or explicitly
+accepted by the owner. Bind it to the exact tenant, subscription, signed-in owner
+object ID and owner-selected display name. The owner approves **both named
+identity creations** for L1b; approval does not include any other cloud operation.
+Use a clean reviewed checkout, no tracing/debug/transcript, and preserve only
+public IDs, operation time and nonsecret readback in the private owner record.
+
+The L1 prepared hosted-QA packet (2026-10-28) has these public inputs; they are
+not an approval or evidence that the identities exist:
+
+| Input | Exact value |
+|---|---|
+| Tenant | `7fbd1f02-0b21-492b-a23c-4b46ce9d0d22` |
+| Subscription | `cb7efc2f-37a7-4672-b62c-93c207bcd33d` |
+| Signed-in owner object ID | `9d92febc-c0da-46e2-9498-a3d6c1829c48` |
+| SMTP application display name | `tonyaiqt-staging-smtp` |
+
+Compare all three identity/context readbacks below with this table immediately
+before creation. Backend `tonyaiqtqabe` is the L2 target, not an L1b side effect.
+
+Before either create, read the active context and check for name collisions:
 
 ```bash
-az ad app create --display-name '<owner-selected-hosted-SMTP-name>' --query appId -o tsv
-az ad sp create --id '<returned-application-client-id>' --query id -o tsv
-az ad app show --id '<returned-application-client-id>' --query '{clientId:appId,objectId:id}' -o json
-az ad sp show --id '<returned-application-client-id>' --query '{clientId:appId,principalId:id,tenant:appOwnerOrganizationId}' -o json
+az account show --query '{subscription:id,tenant:tenantId}' -o json
+az ad signed-in-user show --query id -o tsv
+az ad app list --display-name 'tonyaiqt-staging-smtp' \
+  --query '[].{clientId:appId,objectId:id,displayName:displayName}' -o json
+az ad sp list --display-name 'tonyaiqt-staging-smtp' \
+  --query '[].{clientId:appId,principalId:id,displayName:displayName}' -o json
 ```
 
-Record only these public identifiers. Put the application **client ID** in
+Stop on an identity/context mismatch, failed read or any same-name candidate.
+An empty successful inventory is required for a new creation, but is not a
+concurrency lock: use one owner session and prohibit parallel creation. Azure AD
+commands use the active **tenant**; `--subscription` alone does not bind Graph.
+If needed, the owner signs in to the exact tenant and selects the subscription,
+then repeats these reads. Do not paste the following as an unattended batch:
+inspect and record the application result before creating its service principal.
+Neither command creates a password:
+
+```bash
+az ad app create --display-name 'tonyaiqt-staging-smtp' --sign-in-audience AzureADMyOrg --query '{clientId:appId,objectId:id}' -o json
+az ad sp create --id '<returned-application-client-id>' --query id -o tsv
+az ad app show --id '<returned-application-client-id>' --query '{clientId:appId,objectId:id,displayName:displayName,audience:signInAudience,passwordCount:length(passwordCredentials),certificateCount:length(keyCredentials),apiPermissionCount:length(requiredResourceAccess)}' -o json
+az ad sp show --id '<returned-application-client-id>' --query '{clientId:appId,principalId:id,tenant:appOwnerOrganizationId,passwordCount:length(passwordCredentials),certificateCount:length(keyCredentials)}' -o json
+az ad app owner list --id '<returned-application-client-id>' --query '[].id' -o json
+az ad sp owner list --id '<returned-application-client-id>' --query '[].id' -o json
+```
+
+Expected: one single-tenant application and one service principal in the approved
+tenant; matching client IDs, distinct object IDs, zero credentials and zero app
+API permissions. Review owner IDs against the intended owner; an unexpected or
+empty owner list requires reconciliation, not an automatic owner/role mutation.
+No ACS resource, RBAC role, federation, consent, backend, secret, DNS change or
+email is part of L1b. Record only these public identifiers. Put the application **client ID** in
 `config.email.client_id`, the **service-principal object ID** in `principal_id`
 and the verified tenant ID in `tenant_id`. Never substitute the application
 object ID for either. An ambiguous create outcome requires owner reconciliation
-before retrying; do not create duplicate identities. The foundation owns the
+before retrying; do not create duplicate identities. On an app timeout, stop all
+writes, retain the attempted name/time and rerun only the inventory above.
+Reconcile the exact app through Entra audit/provenance and owner metadata; a
+matching name alone is not ownership proof. If the app is known but SP creation
+is uncertain, use `az ad sp show --id '<recorded-client-id>'`. An error is not
+proof of absence: allow for visibility/permission failures and obtain owner
+reconciliation before another create. Never automatically adopt/delete a
+candidate, choose a different name to retry, or use `create-for-rbac` or
+credential-reset commands. The foundation owns the
 Communication-resource-scoped SMTP role, username and ACS resources, with data
 location Europe. Do not add subscription-wide mail roles in the portal.
 
