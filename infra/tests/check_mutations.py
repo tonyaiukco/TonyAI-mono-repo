@@ -134,8 +134,10 @@ MUTANTS = [
     ('build Auth validation removed', 'check_browser_key.py', '    validate_auth_settings(settings)', '    pass'),
     ('redirect handler removed', 'cloud_ops.py', 'build_opener(NoRedirect)', 'build_opener()'),
     ('public readback check removed', 'cloud_ops.py', "actual.get('public') is not False or ", ''),
-    ('migration URL validation skipped', 'cloud_ops.py',
-     '    validate_pooler(direct, project, 5432)\n', ''),
+    ('migration URL validation skipped', 'hosted_migrate.py',
+     '        validate_pooler(direct, project, 6543 if runtime else 5432)\n', ''),
+    ('legacy migration refusal removed', 'cloud_ops.py',
+     "    raise SafeFailure('Legacy Prisma CLI migration is disabled: it exposes the URL in child argv. Use reviewed hosted_migrate.py and runbook 03.')", '    return'),
     ('signed bytes comparison removed', 'cloud_ops.py',
      'if require_success(request(base + signed)) != payload:', 'if False:'),
     ('cleanup prefix emptied', 'cloud_ops.py', "{'prefixes': [path]}", "{'prefixes': []}"),
@@ -204,6 +206,7 @@ def main():
                         'build-images.sh':'test_build_images.py',
                         'release_secrets.py':'test_rotation_rehearsal.py',
                         'cloud_ops.py':'test_security_failures.py',
+                        'hosted_migrate.py':'test_hosted_migration.py',
                         'supabase_auth.py':'test_auth_lifecycle_settings.py',
                         'supabase_setup.py':'test_setup_orchestration.py',
                         'github_environment.py':'test_github_policy.py',
@@ -222,6 +225,7 @@ def main():
             # Keep a full suite control above; run each mutant against its direct
             # negative assertions so local launcher subprocesses do not dominate CI.
             overrides = {
+                'legacy migration refusal removed': 'test_cloud_ops.py',
                 'rotation project binding removed': 'test_review_boundaries.py',
                 'migration project binding removed': 'test_secret_transfer.py',
                 'migration HEAD comparison alone removed': 'test_secret_transfer.py',

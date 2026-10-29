@@ -77,7 +77,14 @@ it is never a workload secret or an application environment variable.
    Record the server version and probe output. If the probe fails, roll back or
    exit the session; never drop an existing role named `lp1_probe`. Stop and
    resolve with the platform owner on failure; do not weaken the migration or grant wider runtime privileges.
-2. Generate the runtime password using `openssl rand -hex 32` in the private,
+2. **Resuming an existing L5 release:** if its runtime password was already saved
+   in the owner's password manager and its exact `database-url` version selected,
+   skip generation and storage below. Reuse that **same saved password** at the
+   later hidden `\password` prompts; never rotate it merely to resume L6. No URL
+   or password belongs in chat. The initial-generation instructions below apply
+   only when no runtime credential has been prepared.
+
+   Generate the runtime password using `openssl rand -hex 32` in the private,
    unrecorded owner terminal, and save the 64-character hex string in the password
    manager. Do not use symbols, percent-encoding or a password-manager substitute:
    use this exact hex string for both the URL and psql's hidden `\password` prompts.
@@ -100,7 +107,14 @@ it is never a workload secret or an application environment variable.
    a release manifest or an existing runtime version. Put the returned version ID and runbook 02's backend version in the initial
    release manifest. This allows a complete immutable manifest before migration;
    the migration helper does not read or connect through the runtime URL.
-3. Apply the reviewed migration chain using runbook 03 §3.2 and the explicit
+3. For L6 on the repaired Linux transport, follow runbook 03's separately approved
+   `owner-check` before activation and `runtime-check` after activation. These use
+   the selected source's checker in a read-only transaction and hide credentials
+   from Docker metadata/argv. A nonzero platform-default finding count still
+   needs owner review; runtime's library skip is covered only by the owner check.
+   The macOS Prisma TLS path is not assumed to work because psql succeeds.
+
+   Apply the reviewed migration chain using runbook 03 §3.2 and the explicit
    owner secret version. Reconnect using the `owner-psql` command above with the same selected owner version.
    Use the same saved runtime password at both hidden prompts:
 

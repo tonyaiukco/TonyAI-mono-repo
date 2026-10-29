@@ -386,8 +386,9 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > L3 plan/apply created 17 foundation resources; SMTP username creation failed because
 > its ARM child name equalled its login. The recovery fix separates `*-smtp-user`
 > from the unchanged `*-smtp` login and repairs ACR lookup in session restoration.
-> L3 remains partial: a corrected-source plan and apply each need fresh approval;
-> diagnostic destination and vault network-ACL readback differences remain open.
+> The separately approved recovery completed L3 (18 resources); L4/L4a and L5
+> are verified. L6 stopped at Prisma TLS and is undergoing a local transport
+> repair. Diagnostic destination and vault network-ACL findings remain open.
 > No app rollout is implied.
 > See [the hosted configuration contract](infra/README.md).
 
@@ -708,7 +709,17 @@ The [hosted implementation](infra/README.md#hosted-route-for-qa-and-the-pilot-00
 hosted phase's route for QA and the pilot: Sweden Central and `eu-north-1`, dedicated
 `tonyai-qatmp-*` groups and `tonyaiqt` prefix, with a separate backend and ACS Email
 in Europe. WP-2's exception checks reject the paused self-hosted targets. WP-3's
-bucket/smoke/runbook work and owner-run acceptance are still pending.
+bucket/smoke/runbook implementation merged as #254; hosted rollout and owner-run
+acceptance remain pending.
+
+Hosted migration tooling now uses the separately reviewed Linux schema-engine
+transport in [runbook 03 §3.2](infra/runbooks/03-deploy.md#32-deploy-migrations-separately).
+It preserves the selected application's source/candidate binding while pinning a
+newer helper independently. The old `cloud_ops.py migrate` path is disabled because
+Prisma CLI preflights expose the URL in child arguments. Local verification,
+read-only hosted connection, migration, owner reconciliation, runtime activation
+and runtime privilege verification are separate steps;
+only the first is offline. Saved L5 runtime credentials are reused when resuming.
 
 Cloud execution is performed by the project owner and remains required evidence: generated templates do not establish a working staging environment. Never run the local demo seed or demo-account RLS probes against cloud; the demo RLS harness now rejects non-loopback targets. The [LP2-02 release instructions](infra/runbooks/03-deploy.md#34-lp2-02-release-sequence-d22d23) describe the hosted implementation of exact-SHA CI/full-E2E/PostgreSQL-integration gates, environment-bound candidate images, migration/lockfile fingerprints, protected staging OIDC workflows, saved-plan Terraform application and owner-run browser/export/API/PostgREST smoke with two dedicated synthetic tenants. Workflow deployment reads back image/secret identities but stays **smoke pending** until the exact deployed digests pass the owner-run check and exact-ID Auth cleanup. No cloud execution is implied by these tools. A fresh single-job JIT runner with EU static egress, a protected main ruleset and an independent staging reviewer are owner prerequisites; the [LP2-03 operations reference](infra/runbooks/06-operations.md) separates process liveness
 (`/api/v1/health`), bounded DB/private-Storage readiness (`/health/ready`) and an

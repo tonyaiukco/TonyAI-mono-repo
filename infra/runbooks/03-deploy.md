@@ -59,19 +59,115 @@ cannot clear an incident hold. Preserve the hold during rollback and rotation.
 ## 3.2 Deploy migrations separately
 
 **First require L4a / runbook 05's real owner privilege probe to pass.**
-Run migrations from the clean checkout at the manifest’s image `source_sha`. The
-helper checks HEAD and refuses a different chain. Node 22 and pnpm must be on PATH. Review the committed migration chain and compatibility with the
-previous images before applying. No reset, seed, `migrate dev`, or down migration.
+Keep the reviewed **helper SHA** separate from the immutable application's
+`source_sha`. `hosted_migrate.py` requires both checkouts clean, binds the candidate
+against the application's exact commit, and copies only committed Git-object
+bytes (schema, migrations, lockfile and CA). A tooling repair does not rebuild or
+relabel the selected images. Never reset, seed, run `migrate dev`, or apply down
+migrations against the hosted project.
+
+**Why a separate transport:** Prisma 6.19.3's `migrate deploy/status` preflights
+put the resolved URL in a schema-engine `--datasource` argument, even when the
+caller supplies environment variables. The legacy `cloud_ops.py migrate` path
+is therefore disabled. The replacement calls the same pinned schema-engine's
+internal JSON-RPC methods; this is a version-bound interface, not a stable public
+Prisma API. A dependency/engine upgrade requires fresh compatibility qualification.
+
+The runner uses the already-cached selected **linux/amd64 API image digest**,
+Node 22, and the matching `debian-openssl-3.0.x` schema-engine. It never pulls an
+image automatically. The helper requires a local Unix Docker socket and pins it
+for inspect/run/cleanup; remote Docker contexts are refused. Its container has
+read-only public mounts, disabled health checks/log storage, no capabilities and
+no host socket mount. The URL enters through stdin, then only the engine's memory
+environment; neither Docker metadata nor process arguments contain it. The CA is
+copied from the selected source and only its container path changes. Strict TLS
+and hostname verification remain enabled. Linux/OpenSSL is qualified locally;
+a passing local test does **not** establish hosted certificate compatibility.
+
+Prepare the public engine once outside tracked files. Use the official artifact
+for commit `c2990dca591cba766e3b7ef5d9e8a84796e47ab7`, platform
+`debian-openssl-3.0.x`, from `https://binaries.prisma.sh/all_commits/`.
+The unpacked `schema-engine` SHA-256 must be
+`5d42b181631fd20bb0ecc5abcdba72575e7f467a0d52f4d5ef1ff28f0c74e6e9`.
+The helper checks the copied bytes before secret access. Keep the binary outside
+git and preserve its public download/checksum receipt.
+
+From the clean reviewed helper checkout, populate these **public identifiers and
+paths**, never a URL/password. The exact owner version must match the canonical
+setup journal and the separately approved operation packet. The helper checks
+configured status, project, owner version and backend version without rewriting
+the journal:
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm db:generate
-python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --inputs .infra-local/staging/release-r001.json --direct-secret-version '<selected-direct-url-version>'
+HELPER_SHA='<reviewed-helper-full-sha>'
+MIGRATION_SOURCE='<clean-checkout-at-selected-image-source-sha>'
+RELEASE='<existing-immutable-release-json>'
+CANDIDATE='<existing-immutable-candidate-json>'
+JOURNAL='<existing-canonical-supabase-journal-json>'
+ENGINE='<absolute-path-to-verified-linux-schema-engine>'
+OWNER_VERSION='<selected-direct-url-version>'
+
+python3 infra/scripts/hosted_migrate.py verify --source-sha "$HELPER_SHA" \
+  --migration-source "$MIGRATION_SOURCE" --inputs "$RELEASE" --candidate "$CANDIDATE" \
+  --engine-file "$ENGINE" --journal "$JOURNAL" --direct-secret-version "$OWNER_VERSION"
 ```
+
+`verify` is local only. **Approval unit 1 — connection:** after explicit approval,
+run the same command with `probe` in place of `verify`. It reads only that exact
+owner secret and executes `BEGIN READ ONLY; SELECT 1; ROLLBACK;`. Require
+`READ_ONLY_QUERY_SUCCEEDED`. Any refusal stops: never change CA, hostname,
+`sslaccept`, password or source as a fallback. No migration is attempted.
+
+**Approval unit 2 — migrations:** after a successful probe, renew the L4a,
+maintenance-window and applicable data preconditions below; obtain separate
+approval and run the same command with `migrate`. It refuses failed, edited,
+divergent or out-of-order history, applies only the expected pending suffix once,
+and requires exact applied names plus clean final history. Successful output is
+`MIGRATIONS_CURRENT` and the applied count. An empty database has no automatic
+create-database fallback. Complete runbook 05's owner reconciliation and runtime
+privilege checks as separately approved operations before enabling traffic.
+
+**Approval unit 3 — owner reconciliation:** after successful migrations, run the
+same command with `owner-check` only under its own approval. It reads the same
+journal-bound owner secret, requires both current and session user `postgres`,
+and invokes the selected source's `runtime-role.mjs` checker inside a read-only
+transaction. Problems, PUBLIC exposures, factor-library notices and incomplete
+owner reconciliation fail. The helper prints fixed status/counts only.
+
+**Approval units 4 and 5 — runtime activation and checks:** use runbook 05's
+private owner terminal steps to set the **same saved L5 password** and enable only
+the runtime role, under a separate approval. Then approve the same helper command
+with `runtime-check`. This mode reads only the immutable release's exact
+`database-url` version, validates the runtime role on transaction port 6543, and
+requires both current/session identity `tonyai_runtime`. It does not read the
+owner secret or activate/rotate either role. A runtime library-reconciliation skip
+must be paired with the successful owner check.
+
+`PRIVILEGES_CHECKED` means the hard checks passed, not that all findings are
+accepted. Nonzero `platform_default_findings` requires separate owner review of
+the actual grants; an equal count does not establish equal grants or close the
+gate. Do not infer hosted password authentication or transaction-pooler behaviour
+from the local trust/direct-connection fixture. The checker version, migration
+SQL and CA come from the immutable application source; the credential transport
+comes from the separately reviewed helper.
+
+**Stop and recovery limits:** timeout, SIGINT or SIGTERM attempts to remove only
+the generated `tonyai-migration-<uuid>` container and kill its client. A cleanup
+failure, SIGKILL, Docker-daemon loss or interrupted result is **unknown outcome**:
+inspect that container and migration history through a separately approved owner
+session before any retry. Earlier committed migrations remain committed; an
+explicit SQL transaction can roll back only its own migration. Prisma can retain
+a failed row and may return no structured P-code after a transaction abort.
+Neither a generic failure nor a missing P-code proves that nothing ran. There is
+no automatic retry, `resolve`, manual DDL repair or schema reset in this helper.
+Never expose raw engine output while diagnosing hosted failures. The recovery
+examples below describe existing migration semantics; they do not authorize
+running an old CLI recovery command after this transport incident. Prepare and
+review a credential-safe, migration-specific recovery packet first.
 
 **LP3-03 preflight (independent review F4).** While the target has not applied
 `20261004120000_lp3_03_factor_model`, run this read-only check in an `owner-psql`
-session (runbook 05) before `cloud_ops.py migrate`. Skip it on initial setup: a new
+session (runbook 05) before `hosted_migrate.py migrate`. Skip it on initial setup: a new
 project has no tables yet, and the query errors.
 
 ```sql
@@ -175,7 +271,8 @@ mark these failed migrations applied or bypass their preconditions.
   UPDATE profiles SET email = lower(btrim(email)) WHERE email <> lower(btrim(email));
   ```
 
-  Repeat `cloud_ops.py migrate` normally from the reviewed source SHA. A lock-only
+  After separate recovery approval and verification, use the reviewed
+  `hosted_migrate.py migrate` path with the unchanged selected application source. A lock-only
   failure still needs `resolve --rolled-back` before retry; no normalisation is
   needed when the second query is zero. Initial empty projects have no tables
   before their first deploy: skip only these preflight queries there, never the

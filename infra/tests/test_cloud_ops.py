@@ -47,19 +47,12 @@ class CloudOpsTests(unittest.TestCase):
     def test_no_credential_forwarding_on_redirect(self):
         self.assertIsNone(ops.NoRedirect().redirect_request(None, None, 302, '', {}, 'https://attacker.invalid'))
 
-    def test_migrations_get_secrets_via_environment_not_arguments(self):
-        values = {
-            'database-url': f'postgresql://tonyai_runtime.{PROJECT}:synthetic@aws-0-eu-north-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true',
-            'direct-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt',
-        }
-        with patch.object(ops, 'secret', side_effect=lambda vault, name, version: values[name]), patch.object(ops, 'command') as command, contextlib.redirect_stdout(io.StringIO()):
-            ops.migrate('test-vault', PROJECT, 'b'*32)
-        self.assertEqual(command.call_count, 2)
-        self.assertEqual(command.call_args_list[0].args[0], ['pnpm', 'db:deploy'])
-        for call in command.call_args_list:
-            self.assertNotIn('synthetic', ' '.join(call.args[0]))
-            self.assertEqual(call.args[1]['DIRECT_URL'], ops.local_ca_url(values['direct-url']))
-            self.assertEqual(call.args[1]['DATABASE_URL'], ops.local_ca_url(values['direct-url']))
+    def test_legacy_migration_cli_is_closed_before_secret_access(self):
+        with patch.object(ops, 'secret') as secret, patch.object(ops, 'command') as command:
+            with self.assertRaisesRegex(ops.SafeFailure, 'Legacy Prisma CLI migration is disabled'):
+                ops.migrate('test-vault', PROJECT, 'b' * 32)
+        secret.assert_not_called()
+        command.assert_not_called()
 
     def test_failed_bucket_list_must_not_create_or_update(self):
         with patch.object(ops, 'request', return_value=(403, b'')) as request:

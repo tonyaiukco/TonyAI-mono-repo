@@ -92,13 +92,15 @@ environment `staging`, with no VNet. `config/hosted-qa-exception.json` binds the
 subscription to owner-selected dedicated backend `tonyaiqtqabe`. Its example file
 remains a fail-closed template. L1's read-only name-availability result is not a
 reservation; recheck before provisioning. L1/L1b and the owner-run L2 backend
-completed on 2026-10-29. L3's separately approved plan/apply was partial: 17
-resources exist, but ACS refused an ARM child name equal to the SMTP login.
-The child now uses `*-smtp-user`; the public login remains `*-smtp`. The owner
-accepted this naming choice; no retry is authorized by that choice. Session
-restoration reads ACR by verified subscription, group and registry name (the CLI
-requires `--name`). See [runbook 01's recovery boundary](runbooks/01-azure.md#12-foundation-apply)
-and the central LP2-HQ record before another operation.
+completed on 2026-10-29. L3's first apply stopped at the SMTP child-name
+collision. Its separately approved recovery on `6bceba82` completed with
+18 resources and an unlocked lease; `*-smtp-user` is distinct from the public
+`*-smtp` login. L4/L4a and L5 completed. L6's first migration stopped at Prisma
+TLS; the local Linux transport repair is not a live retry. Session restoration
+uses verified subscription/group/registry identifiers. Diagnostics destination
+and vault ACL findings remain open. Follow the central LP2-HQ record and
+[runbook 03](runbooks/03-deploy.md#32-deploy-migrations-separately) for separate
+probe, migration and owner/runtime approvals.
 Both hosted Terraform roots and the Python entrypoints check the same exact tuple;
 backend bootstrap and hosted Terraform invocation also bind the backend group/account.
 The paused backend's shared shape validator remains available, but the hosted writer
@@ -510,3 +512,11 @@ PR-C1b adds snapd's servicedir (`C2`, `C9.servicedirs`), the reviewed offline-up
 rule (`C13`), four evidence sections that must be collected (`G7.evidence`), discovery
 md5sums and a path-free `locus` on item errors; still no profile. No mask, stop or unmask exists in this code. See
 [R3-POLICY-01-C1](runbooks/10-qa-clean-replacement.md#r3-policy-01-c1-shared-packagekit-state-option-c).
+
+Hosted migration transport is documented in [runbook 03 §3.2](runbooks/03-deploy.md#32-deploy-migrations-separately).
+`hosted_migrate.py` separates reviewed helper SHA from immutable application SHA,
+uses a checksum-pinned Linux schema-engine over memory-only JSON-RPC, and refuses
+remote Docker endpoints. `verify` is offline; `probe`, `migrate`, `owner-check` and
+`runtime-check` each require separate live approval. Both checkers use the selected
+source inside a read-only transaction; platform-default findings need owner review. The legacy `cloud_ops.py migrate` refuses before secret
+access. No local proof authorizes hosted migration, runtime activation or deploy.
