@@ -180,7 +180,7 @@ chat and never stores one in the repository.
 | L4 | `supabase_setup.py`: create a fresh project from its journaled intent (resume only that creation; no dashboard adoption), Key Vault entries, `direct-url`, the three buckets, Auth policy (public sign-up off), ES256 signing key | completed creation journal and public project ref |
 | L4a | **After L4, before L5/L6 or deployment:** read back `eu-north-1`, project ref and PostgreSQL 17 version; compare CI's `infra/selfhost/database-image-policy.json` pin and record any minor-version gap. Read the exact `aws-<n>-eu-north-1.pooler.supabase.com` host from Connect, verify the bundled CA through owner-psql, then run runbook 05's `rolcreaterole` / `rolbypassrls`, owner Storage USAGE/SELECT and rolled-back `CREATE ROLE lp1_probe BYPASSRLS` probe | **Mandatory go/no-go.** On failure stop and resolve with Supabase support; never weaken RLS, tenant guards or migration privileges |
 | L5 | Runtime secret (`openssl rand -hex 32`, `release_secrets.py store`), images (`build-images.sh`, local Supabase stack stopped first on the 16 GB machine; `az acr build` if too slow), `candidate.py`, release manifest with `storage_cleanup_hold: true` | — |
-| L6 | Migrations (`cloud_ops.py migrate` at the release's `source_sha`), then `\password tonyai_runtime`, `ALTER ROLE … LOGIN`, `runtime-role.mjs check` | `check` passes |
+| L6 | `hosted_migrate.py verify` with separate helper/application SHAs; separately approved `probe`, then `migrate`; owner reconciliation, saved-password `\password tonyai_runtime` / LOGIN and runtime checks are separate approvals | Strict TLS, exact migration history and owner/runtime checks pass |
 | L7 | With the L3 vault and valid L5 release manifest present, owner creates the Entra client secret (expiry ≤ 90 days), saves it in the password manager and enters it directly through the hidden `smtp-password` prompt; select the exact returned vault version and public ACS username/sender (runbooks 01/03); foundation re-apply with `runtime_secrets_ready=true`, `smtp_secret_ready=true` | — |
 | L8 | `release_secrets.py verify`, `deploy-apps.sh` | apps healthy on `/api/v1/health` |
 | L9 | No factor release yet (O6) — LP4-02's authoritative release is loaded the same way (dry run, then `--apply` as `tonyai_factor_loader`) when it exists; `pnpm onboarding provision --apply --allow-remote` for one synthetic holding and its first `super_admin`, who invites the second `super_admin`, `data_entry`, `consultant` and `executive_viewer` | invitation emails arrive |
@@ -198,13 +198,19 @@ GBP 1,000 subscription budget alert, verified by readback. L1b completed on 2026
 the existing application provenance; its explicitly approved service principal
 was created and independently read back without credentials. L2 completed on
 2026-10-29 through the owner-run backend bootstrap and independent readback.
-L3's separately approved plan and apply on `ae21469` created 17 resources; the
-SMTP child failed because its ARM name equalled the login. State/ARM and the
-empty child list were reconciled, the lease was unlocked, and no retry ran.
-The local recovery fix separates the child name from the login and repairs the
-session-restoration ACR lookup; diagnostics destination and vault ACL readback
-remain explicit open findings in the central plan. A corrected-source plan and
-apply require fresh separate approvals. L4–L10 have not run. WP-6 is not needed for
+L3's first apply on `ae21469` stopped at the SMTP child. The separately approved
+recovery on `6bceba82` completed (18 resources, unlocked lease); diagnostics
+destination `null` and missing vault `networkAcls` remain open. L4 and L4a were
+verified, including the real PostgreSQL 17.11 owner privilege/TLS probe. L5's
+owner-approved build/secret preparation completed with immutable image digests
+and candidate binding; runtime login was not activated. The first approved L6
+migration stopped, and subsequent read-only inspection found no application
+schema. Native Prisma TLS trust and CLI secret-argv handling prompted the local
+transport repair in runbook 03 §3.2. Its local Linux proof does not authorize a
+live retry: a separately approved read-only probe must pass before a separately
+approved migration, owner/runtime gates and L7–L10. Reuse the saved L5 runtime
+password. The central plan holds the reconciled status and private evidence
+references; no seed or deployment has run. WP-6 is not needed for
 the initial owner-run deployment; its CI adaptation remains a later package.
 
 ## 6. The paused self-hosted route

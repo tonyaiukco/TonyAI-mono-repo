@@ -56,13 +56,7 @@ def runtime_secret_id(vault, project, version):
 
 
 def migrate(vault, project, direct_version):
-    direct = secret(vault, 'direct-url', direct_version)
-    validate_pooler(direct, project, 5432)
-    env = {**os.environ, 'DATABASE_URL': local_ca_url(direct), 'DIRECT_URL': local_ca_url(direct)}
-    # Only deploy the committed migration chain. No reset, migrate dev or seed.
-    command(['pnpm', 'db:deploy'], env)
-    command(['pnpm', '--filter', '@tonyai/db', 'exec', 'prisma', 'migrate', 'status'], env)
-    print('PASS: committed migrations deployed; Prisma migration status is current.')
+    raise SafeFailure('Legacy Prisma CLI migration is disabled: it exposes the URL in child argv. Use reviewed hosted_migrate.py and runbook 03.')
 
 
 def request(url, method='GET', key=None, body=None, content_type='application/json'):
