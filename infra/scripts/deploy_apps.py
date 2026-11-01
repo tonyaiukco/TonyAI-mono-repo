@@ -64,7 +64,8 @@ def verify(inputs, read=az):
                 or configuration['ingress'].get('fqdn') != expected_fqdn
                 or properties.get('latestReadyRevisionName') != stem + '-' + kind + '--' + release['release_id']):
             raise SafeFailure('Selected HTTPS revision is not ready at the expected origin.')
-        actual = {item['name']: item for item in configuration.get('secrets', [])}
+        # ARM answers null, not an empty list, for an app with no secrets.
+        actual = {item['name']: item for item in configuration.get('secrets') or []}
         expected = {} if kind == 'web' else {
             'database-url': release['database_secret_version'],
             'supabase-service-role-key': release['backend_secret_version'],

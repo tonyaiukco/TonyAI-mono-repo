@@ -47,7 +47,7 @@ class DeploymentVersionTests(unittest.TestCase):
 
     def test_every_individual_reference_image_identity_origin_and_ready_revision(self):
         contract = inputs()
-        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness','liveness','startup','owner-env','owner-ref','inline-owner','ref-with-value'):
+        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','web-secrets-null','api-secrets-null','hold','interval','readiness','liveness','startup','owner-env','owner-ref','inline-owner','ref-with-value'):
             state = {kind:app(kind,contract) for kind in ('api','web')}
             api = state['api']['properties']; web = state['web']['properties']
             if defect == 'owner-env': api['template']['containers'][0]['env'].append({'name':'DIRECT_URL','secretRef':'direct-url'})
@@ -68,13 +68,18 @@ class DeploymentVersionTests(unittest.TestCase):
             if defect == 'http': api['configuration']['ingress']['allowInsecure'] = True
             if defect == 'not-ready': api['latestReadyRevisionName'] = 'old'
             if defect == 'web-secret': web['configuration']['secrets'] = [{'name':'unexpected'}]
+            if defect == 'web-secrets-null': web['configuration']['secrets'] = None
+            if defect == 'api-secrets-null': api['configuration']['secrets'] = None
             def read(*args):
                 if args[:3] == ('containerapp', 'revision', 'list'): return [{'name': 'tonyai-staging-api--r001', 'properties': {'active': True}}]
                 return state['api' if args[-1].endswith('-api') else 'web']
             with self.subTest(defect=defect), contextlib.redirect_stdout(io.StringIO()):
-                if defect == 'none': verify(contract, read)
-                else:
-                    with self.assertRaises(SafeFailure): verify(contract, read)
+                try:
+                    if defect in ('none', 'web-secrets-null'): verify(contract, read)
+                    else:
+                        with self.assertRaises(SafeFailure): verify(contract, read)
+                except TypeError as error:
+                    self.fail('Readback crashed instead of deciding: ' + str(error))
 
     def test_release_cannot_select_latest_cross_origin_or_include_secret_value(self):
         for section,field,value in [('release','api_digest','latest'),('release','database_secret_version','latest'),
