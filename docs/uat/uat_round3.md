@@ -5,6 +5,8 @@
 > expected outcome for every journey.
 > **Version:** 2026-10-25 · candidate = LP4-04 slice 2 PR C (`feat/lp4-04-localise-admin`)
 > on `main` @ `5e192a9`. **Write down the SHA you test** at the top of your sign-off (§11).
+> **Corrected 2026-11-01** from the agent pre-pass on `a9476eb`: see
+> [`uat_round3_results.md`](uat_round3_results.md). It does not replace §10 or §11.
 > **Scope under test:** pilot scope. Scope 1 & 2 on UK and Türkiye geographies, Turkish
 > and English UI, and two emails (invitation, password reset). Local environment only.
 > **Supersedes** [`uat_round2.md`](uat_round2.md) for this build. Round-2 cases that are
@@ -91,12 +93,12 @@ finding: quote the round-1 ID.
 | DE-1 | Long names overlap location | ✅ | ✅ closed | Create a subsidiary with a very long legal name, then select it in Data Entry. It truncates within its own column, in both languages. | |
 | DE-2 | Stay amber until all in | ✅ | ✅ closed | Round 2 GATE-01→04. A cell is green only when every entry in it is accepted. LP4-03 renamed the dashboard figure to *% data entry progress · %… veri girişi ilerlemesi*. Coverage against the boundary is now a separate card (§7.4). | |
 | DE-3 | "Standard cubic metres" | ✅ | ✅ unit offered · **calculation: Waits on LP4-02 PR C — do not accept** | Natural Gas → unit **Standard cubic metres — Sm³ · Standart metreküp — Sm³** is listed. Picking it refuses the calculation, because a sourced calorific value is missing (*Standart metreküpün kWh'ye çevrilmesi için kaynağı belli bir ısıl değer gerekir…*). | |
-| DE-4 | Refrigerants scope | ⏳ | ⏳ **Waits on LP4-02 PR C — do not accept** | The typed form exists: Refrigerants asks for a gas (R-32 … R-1234yf). With no gas chosen, the refusal reads *Choose the fuel or gas for this category. · Bu kategori için yakıt ya da gaz türünü seçin.* No authoritative refrigerant factor is loaded, so a result is a refusal (`no_factor` / `placeholder_refused`), never a figure. | |
+| DE-4 | Refrigerants scope | ⏳ | ⏳ **Waits on LP4-02 PR C — do not accept** | The typed form exists: Refrigerants asks for a gas (R-32 … R-1234yf). With no gas chosen, **Save draft** stays disabled, so no refusal sentence shows. A direct API call answers 400 `activity_type_required`. No authoritative refrigerant factor is loaded, so a result is a refusal (`no_factor` / `placeholder_refused`), never a figure. | |
 | DE-5 | Mobile combustion + on/off-road | ⏳ | ⏳ **Waits on LP4-02 PR C — do not accept** | Fuel offers **Diesel · Dizel** and **Gas oil (red diesel) · Gas oil (kırmızı dizel, yol dışı kullanım)** as different types. In one month and slot they stay two distinct rows in a bulk dry run (round 2 TYPE-01). Mobile Combustion asks for a type. The factor coverage is not loaded. | |
 | DE-6 | Turkey grid region | ✅ | ✅ region · **TR grid factor value: Waits on LP4-02 PR C — do not accept** | Data Entry shows a factor-geography line (`TR — Türkiye …`) and no grid picker. The TR factor behind it is a placeholder. | |
 | DE-7 | UK + Turkey only | ✅ | ✅ closed | Geography choices are **United Kingdom (UK)** and **Türkiye (TR)**. TonyAI Mfg keeps its stored **EU** and does not blank on save. | |
 | DE-8 | Turkish characters in evidence | ✅ | ✅ closed | Upload `Şubat-Faturası-İĞÜÖÇ.pdf`. The name stays intact in the vault, on download and in `/review`, in both UI languages. | |
-| DE-9 | Reporting years | ✅ (2015–2026) | ✅ selection · **factor years: Waits on LP4-02 PR C — do not accept** | Years now run **2100 → 2000** (newest first, default 2026). The same list appears on Data Entry, the period-lock drawer and the reporting-context bar. Factors exist for 2026 only, so another year answers *No emission factor covers this category… yet. · …henüz bir emisyon faktörü yok.* | |
+| DE-9 | Reporting years | ✅ (2015–2026) | ✅ selection · **factor years: Waits on LP4-02 PR C — do not accept** | Years now run **2100 → 2000** (newest first, default 2026). The same list appears on Data Entry, the period-lock drawer and the reporting-context bar. Factors exist for 2026 only, so another year answers, in EN, the server's sentence, for example *No emission factor found for category "Electricity", geography "TR", year 2019.*, and in TR *…henüz bir emisyon faktörü yok.* | |
 | DASH-1 | Locations count live | ✅ | ✅ closed | Add a location in a second tab, then return to the dashboard: **Locations · Konumlar** updates when the tab regains focus. | |
 | DASH-2 | Boxes clickable | ✅ | ✅ closed | Click a coloured matrix cell → Data Entry opens with that subsidiary, category and year selected. | |
 | DASH-3 | Per-location completeness | ✅ | ✅ closed | TonyAI Energy's cells show fractions (`3/24`). Its drawer shows the per-site, per-month grid with Turkish month names in TR. | |
@@ -160,7 +162,7 @@ super_admin who did not enter it (`b.admin` approves `b.entry`'s, `b.approver` a
 
 | ID | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| TB-05 | As `b.admin`: `/audit` | Tenant B's own rows only. The provisioning rows show the actor as **sistem / system** *(to confirm: that the operator's rows appear in Tenant B's trail)* | |
+| TB-05 | As `b.admin`: `/audit` | Tenant B's own rows only. The operator's provisioning rows appear in Tenant B's trail, with the actor **sistem / system** | |
 | TB-06 | As `admin@tonyai.local`: `/audit` | None of Tenant B's rows | |
 
 ### 4.4 After a reset
@@ -212,18 +214,18 @@ role. A screen a role may not use explains why on the screen; it does not hide.
 | ENT-06 | `/audit` | *Only a super_admin can read the audit trail · Denetim izini yalnızca bir süper yönetici okuyabilir* | | | | |
 | ENT-07 | `/users` | *Only a super admin manages users · Kullanıcıları yalnızca süper yöneticiler yönetir* … *Rolünüz: Veri girişi.* | | | | |
 | ENT-08 | `/reports` | Live preview of the granted subsidiaries. No export buttons, and the note *Your role can view report data but cannot generate or export reports. · Rolünüz rapor verilerini görebilir ancak rapor oluşturamaz veya dışa aktaramaz.* **Issued reports** tab: *Rolünüz kesinleştirilmiş raporları okumaz.* | | | | |
-| ENT-09 | `/inventory-boundary` | Read only: *Bir sınırı yalnızca bir süper yönetici beyan edebilir…* plus *Yalnızca erişiminiz olan bağlı şirketleri görüyorsunuz…* | | | | |
-| ENT-10 | API: `PATCH /api/v1/subsidiaries/<granted id>` with `{"legalName":"x"}` | **403**, code `forbidden` (a role-only refusal stays generic). Nothing changes | | | | |
+| ENT-09 | `/inventory-boundary` | Read only: *Bir sınırı yalnızca bir süper yönetici beyan edebilir…*. Once §7.4 has created a version the user can read, also *Yalnızca erişiminiz olan bağlı şirketleri görüyorsunuz…* | | | | |
+| ENT-10 | API: `PATCH /api/v1/subsidiaries/<granted id>` with `{"legalName":"New name"}` | **403**, code `forbidden` (a role-only refusal stays generic). Nothing changes. A one-letter name answers 400 `validation_failed` first | | | | |
 | ENT-11 | A record entered by someone else (as `admin@`, in a granted subsidiary) → open it in Data Entry | The evidence vault reads *Entered by someone else. · Başka biri tarafından girildi.* An edit is refused | | | | |
 
 ### 5.3 consultant: `review@` / `b.review`
 
 | ID | Steps | Expected | A·EN | A·TR | B·EN | B·TR |
 | --- | --- | --- | --- | --- | --- | --- |
-| CON-01 | Dashboard, `/subsidiaries`, `/emissions` | Whole organisation (A 5, B 2), read only. No write controls on Subsidiaries. Withdraw absent. **Add target** absent, with *Azaltım hedeflerini bir super_admin tanımlayabilir.* | | | | |
+| CON-01 | Dashboard, `/subsidiaries`, `/emissions` | Whole organisation (A 5, B 2), read only. No write controls on Subsidiaries. Withdraw absent. **Add target** absent. An organisation with no targets reads *Azaltım hedeflerini bir super_admin tanımlayabilir.*; Tenant A's seeded targets hide that line | | | | |
 | CON-02 | `/review` → a submitted record | **Start review · İncelemeye al** and **Reject · Reddet** present. **Approve** absent, with *Onay süper yöneticiye ayrılmıştır — danışman olarak bir kaydı incelemeye alabilir veya geri gönderebilirsiniz.* | | | | |
 | CON-03 | Reject with a reason | Reject needs a reason (*Gerekçe (reddetmek için zorunlu)*). Toast *Kayıt reddedildi — gerekçe artık gönderen tarafından görülebiliyor* | | | | |
-| CON-04 | Data Entry | The **Bulk upload · Toplu yükleme** card is absent. The evidence vault reads *Rolünüz kanıt ekleyemez.* **Save draft** is refused: *Your role may not create activity records. · Rolünüz faaliyet kaydı oluşturamaz.* | | | | |
+| CON-04 | Data Entry | The **Bulk upload · Toplu yükleme** card is absent. The evidence vault has no upload or remove control. **Save draft** is refused: *Your role may not create activity records. · Rolünüz faaliyet kaydı oluşturamaz.* | | | | |
 | CON-05 | `/reports` live | Generate and export allowed | | | | |
 | CON-06 | `/reports` → Issued, when the year's newest boundary version is still open | Capture is not offered for it: *Yılın en yeni sınır sürümü hâlâ açık: onu önce bir super_admin yakalayarak dondurur.* Once a super_admin has frozen it (§7.5), the consultant may capture and issue a **partial** report | | | | |
 | CON-07 | `/audit`, `/users`, `/inventory-boundary` | ENT-06/ENT-07 wording (role `consultant` / *Danışman*). The boundary is read only | | | | |
@@ -257,7 +259,7 @@ evidence, an issuance after §7.5).
 | ISO-04 | API `GET /subsidiaries/abc` | **400** `invalid_id` (*Bu bağlantı ya da kimlik geçerli değil.*) | | |
 | ISO-05 | `b.admin` → `/users` → invite `entry@tonyai.local` | Refused: *This email address already has an account. · Bu e-posta adresinin zaten bir hesabı var.* The response does not say which organisation holds it | | |
 | ISO-06 | `b.admin` API: invite a data_entry with `subsidiaryIds:[<A id>]`; `PATCH /users/<A user id>/role` | **404** `subsidiary_not_found`, then **404** `user_not_found`. Nothing written | | |
-| ISO-07 | `b.entry` → Data Entry → **Download template** → its Reference sheet; then upload a row naming an A subsidiary id | The Reference sheet lists Anadolu Enerji and its site only. The foreign row is refused as *Unknown reporting entity · Bilinmeyen raporlama birimi* | | |
+| ISO-07 | `b.entry` → Data Entry → **Download template** → its Reference sheet; then upload a row naming an A subsidiary id | The Reference sheet lists Anadolu Enerji and its site only. The whole file is refused, 400 `bad_request`: *Row(s) N name a reporting entity that does not exist or is not yours.*, in English under the Turkish title *İstek işlenemedi.* (§10.2). Nothing is imported | | |
 | ISO-08 | `admin@` (Tenant A): dashboard, `/audit`, `/users`, Reports totals | No Tenant B subsidiary, person, audit row or tonnage | | |
 
 ---
@@ -295,7 +297,7 @@ Natural Gas · Quarterly).
 | BLK-01 | CSV, `activityValue` = `1.234` | The dry run lists the row under **Accepted rows · Kabul edilen satırlar** with **Amount read · Okunan miktar** = EN `1.234 kWh`, TR `1,234 kWh`, under the note that a file always uses a point for decimals (*…dosyadaki 1.234, 1,234 olarak okunur (bin iki yüz otuz dört değil)…*) | | |
 | BLK-02 | XLSX with a **numeric** cell 1234.5 (Excel in Turkish shows `1234,5`) | Read as the number: EN `1,234.5 kWh`, TR `1.234,5 kWh` | | |
 | BLK-03 | CSV, quoted `"1.234,5"` and `"1,5"`; XLSX **text** cells `1.234,5` and `1,5` | Each row is refused under *Comma in a number · Sayıda virgül var*, with the per-row sentence in English (K5): *"1.234,5" uses a comma. Write the figure with a point for decimals…* Nothing is imported | | |
-| BLK-04 | A clean file → **Import · İçe aktar** → confirm | *N records imported as drafts…* / *N kayıt taslak olarak içe aktarıldı…*. The rows appear under **Recent imports · Son içe aktarmalar** with **Send N drafts for review · N taslağı incelemeye gönder**. Each amount is the same as the dry run showed | | |
+| BLK-04 | A clean file → **Import · İçe aktar** → confirm | *N records imported as drafts…* / *N kayıt taslak olarak içe aktarıldı…*. The rows appear under **Recent imports · Son içe aktarmalar** with **Send N drafts for review · N taslağı incelemeye gönder**. A category that requires evidence, such as Natural Gas above, first reads *1 draft needs an evidence file first… · 1 taslak önce bir kanıt dosyası gerektiriyor…*: attach the file, then send. Each amount is the same as the dry run showed | | |
 | BLK-05 | Pick a `.txt` file in the panel; then send it straight to the API (`POST /bulk-upload/activity-records`) | The panel refuses before upload: *Bir .csv veya .xlsx dosyası yükleyin.* The API answers 400 `bulk_file_type` (*Upload a .csv or .xlsx file.*) | | |
 | BLK-06 | CSV with **1,001** data rows | *The file has 1,001 rows; the limit is 1,000. Split it and upload the parts.* · *Dosyada 1.001 satır var; sınır 1.000. Dosyayı bölüp parçaları yükleyin.* (the counts are grouped per language) | | |
 | BLK-07 | CSV saved as Windows-1254 (Turkish ANSI) with `ş/ğ` in a cell | `bulk_file_encoding`: *Dosya UTF-8 metin değil. Excel'de "CSV UTF-8 (Virgülle ayrılmış)" olarak kaydedip yeniden yükleyin.* | | |
@@ -311,7 +313,7 @@ same slots.
 | --- | --- | --- | --- | --- |
 | EVI-01 | As entry: save drafts for **Q1** and **Q2** → **Previous submissions · Önceki gönderimler** → **Attach one file to several records · Tek dosyayı birden fazla kayda ekle** → tick both → choose a PDF → **Attach · Ekle** | The confirmation names both records (*…tek bir dosya olarak bu 2 kayda eklenecek. İnceleyiciler dosyanın desteklediği her kaydı görür.*). Toast *… artık 2 kaydı destekliyor.* | | |
 | EVI-02 | Open each record's evidence | The file is on both, with *Ayrıca 1 başka kaydı destekliyor: …*. The action reads **Remove from this record · Bu kayıttan kaldır** | | |
-| EVI-03 | Submit Q1. As admin approve it, then `/subsidiaries` → **Manage period locks · Dönem kilitlerini yönet** → Quarterly · Q1 · 2026 → **Lock period · Dönemi kilitle** | *1. çeyrek 2026 kilitlendi — bu dönemdeki kayıtlar artık donduruldu*. Q1 reads **Locked · Kilitli**. Its vault is read only: *1. çeyrek 2026 kilitli.* | | |
+| EVI-03 | Submit Q1. As admin approve it, then `/subsidiaries` → **Manage period locks · Dönem kilitlerini yönet** → Quarterly · Q1 · 2026 → **Lock period · Dönemi kilitle** | *1. çeyrek 2026 kilitlendi — bu dönemdeki kayıtlar artık donduruldu*. Q1 reads **Locked · Kilitli**. Its vault is read only: *Bu kayıt kilitli durumda ve artık düzenlenemez.* | | |
 | EVI-04 | As entry, API `DELETE /api/v1/evidence/<file id>` | **409** `evidence_backs_locked_records`. The screen wording is *Bu dosya artık değişemeyen 1 kaydı da destekliyor, bu yüzden silinemez…*. The file stays on both records | | |
 | EVI-05 | On Q2 → **Bu kayıttan kaldır** | *Bu kayıttan kaldırıldı — … hâlâ 1 başka kaydı destekliyor.* Q1 keeps the file and can still download it | | |
 | EVI-06 | Attach a file to Q2 again, submit it, then (admin) try to lock Quarterly · Q2 · 2026 before deciding it | Refused: *Bu dönemde 1 kayıt hâlâ inceleme bekliyor — kilitlemeden önce onaylayın veya reddedin.* | | |
@@ -349,15 +351,16 @@ removes it.
 ### 7.5 Issued reports (`/reports` → **Issued reports · Kesinleştirilmiş raporlar**)
 
 **On this build every issued report is partial.** The figures are on placeholder factors, so
-every dataset carries the gap *Figures not on an authoritative factor release · Yetkili bir
-faktör sürümüne dayanmayan rakamlar*. That is the correct outcome, not a defect.
+every dataset with counted records carries the gap *Figures not on an authoritative factor
+release · Yetkili bir faktör sürümüne dayanmayan rakamlar*. A dataset with only uncounted
+records shows coverage gaps and no tonnage instead. Both are the correct outcome, not a defect.
 
 | ID | Steps | Expected | EN | TR |
 | --- | --- | --- | --- | --- |
 | ISS-01 | Live tab, any role that can read it | Banner *Canlı önizleme — kesinleştirilmiş bir rapor değildir…*. Badge *Tüm kayıtlar onaylı* is a review status, not a certification. Live downloads are named `tonyai-live-…` | | |
 | ISS-02 | Issued tab before §7.4 | *2026 için beyan edilmiş bir envanter sınırı yok; bu yüzden yakalanacak bir şey yok.* | | |
 | ISS-03 | admin → **Envanteri yakala** | *Veri seti yakalandı*. An open version becomes *Donduruldu, onaylanmadı* on `/inventory-boundary` | | |
-| ISS-04 | **Kontrol et** on the dataset | *Kısmi — nihai raporu engelleyen eksikler: N.*, and the non-authoritative gap is listed | | |
+| ISS-04 | **Kontrol et** on the dataset | *Kısmi — nihai raporu engelleyen eksikler: N.*, and, on a dataset with counted records, the non-authoritative gap is listed | | |
 | ISS-05 | **Kesinleştir** → template *Yönetici özeti*, **Rapor dili: Türkçe** | *Kısmi rapor kesinleştirildi*. The list shows *Kısmi*, *Eksikler: N*, the template and the language | | |
 | ISS-06 | Download its **PDF / Excel / CSV** | The PDF and workbook are in Turkish. The CSV has English headers and dot decimals, and carries the issuance, dataset and fingerprint on every row. The three agree on totals | | |
 | ISS-07 | Issue the same dataset in **English**; then try the same language, template and options again | A second issuance with an English PDF. The repeat is not created: `report_already_issued` (*…zaten kesinleştirildi. Bunun yerine PDF dosyasını indirin.*) | | |
@@ -382,7 +385,7 @@ faktör sürümüne dayanmayan rakamlar*. That is the correct outcome, not a def
 1. §2.2 baseline → §3 close-out (read-only parts first).
 2. §4 Tenant B, which also exercises MAIL-01…06.
 3. §5 matrix, first in EN and then in TR, per tenant.
-4. §7.1, §7.2, §7.3. Then §7.4 before §7.5.
+4. §7.1, §7.2, §7.3. Then §7.4 before §7.5. Check ENT-09's grants note after §7.4: it needs a version the user can read.
 5. Last: anything that cannot be undone (withdrawals, confirmed versions, issuances), then MAIL-07…09.
 
 ---
