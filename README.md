@@ -52,6 +52,12 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 
 ## Project status
 
+**Hosted QA checkpoint (2026-11-01): L8 deployment/dependency acceptance is complete.**
+LC4 passed all10checks under explicit approval and independent outcome review.
+Next: L9 synthetic onboarding/invitations, then L10 smoke and QA handover.
+The known diagnostics/vault findings remain open; no numerical-emissions QA
+without authoritative factors. Earlier operation notes below are historical.
+
 **Phase 1 (Scope 1 & 2 core MVP) is complete** and running end‑to‑end on a local machine; UAT round 1 is closed, UAT round 2 ran on [`docs/uat/uat_round2.md`](docs/uat/uat_round2.md), and the **round-3 catalogue for the pilot candidate build** — four roles × two tenants × TR/EN — is [`docs/uat/uat_round3.md`](docs/uat/uat_round3.md) (LP4-04) and **Phase 3** is active — WP7 (audit viewer, reviewer UI, subsidiary edit), WP15 (UAT quick wins), WP16 (locations in the subsidiary flow), WP17 (completeness engine), WP18 (withdrawal + re-attribution), WP19 (the review gate on every cell), WP20 (report disclosure), WP21 (anomaly baseline provenance + recompute), WP22 (one column vocabulary behind all three report writers, and the names of who entered, decided and withdrew a record) and WP8 (bulk upload from CSV/XLSX with a dry run that provably writes nothing, plus bulk submit) have all shipped — as has the tooling around them: ESLint 9 gating CI, and a CI gate that runs the RLS containment probes on every PR with the full E2E suite nightly. Phase 2 (staging on Azure) has its credit approved and starts as LP2; its cloud‑independent prep is done. The launch plan — task cards, dates and task state — lives in [`docs/roadmap_docs/project_status_roadmap_phases.md`](docs/roadmap_docs/project_status_roadmap_phases.md).
 
 | Area | Status |
@@ -392,11 +398,241 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > creation and Key Vault storage completed; the separate `r002` manifest preserves
 > the immutable application candidate. The first runtime-grant PLAN was rejected:
 > two intended grants plus two unexpected normalization updates, with no APPLY.
-> The local foundation fix models Azure's seven returned log categories (only
+> The merged foundation fix (#258, `a9476eb`) models Azure's seven returned log categories (only
 > Console/System enabled) and references the unchanged SMTP role UUID through its
-> canonical subscription path. A new PLAN needs separate approval and must show
-> only the two runtime grants. Diagnostic destination and vault network-ACL
-> findings remain open. Runtime/SMTP/app readiness is still false; no app rollout.
+> canonical subscription path; automatic CI and both required manual workflows passed.
+> The separately approved runtime-grant PLAN/APPLY completed with two creates;
+> the separately approved SMTP-grant PLAN/APPLY then completed with one create.
+> Both APPLY runs matched their full refreshed plans before confirmation and exited
+> 0 with no updates/destroys. Exact grant IDs and unchanged public outputs matched.
+> Runtime/SMTP readiness is recorded applied; app readiness remains false. Protected
+> inputs and immutable candidate/releases are unchanged. No independent grant/lease
+> readback, secret-access or SMTP authentication/delivery test ran. Diagnostics
+> destination and vault network-ACL findings remain open. No deployment occurred;
+> L8 secret verification and deployment need separate preparation and approval.
+> Offline L8 review confirms that `release_secrets.py verify` reads three exact
+> secret values and uses the backend key for a Supabase Storage bucket-list GET;
+> it does not prove SMTP authentication/delivery or API managed-identity access.
+> Separately approved L8-M1 completed once: three exact ARM configuration GETs
+> (environment, diagnostic setting, vault), with owner-token acquisition. The
+> environment reports azure-monitor and the expected workspace/log categories;
+> diagnostic destination type remains explicitly null and vault networkAcls is
+> absent. Both findings remain open. Approval is consumed; no secret verification,
+> deployment or automatic continuation is authorized.
+> Separately approved L8-SV1 stopped with exit 1 before its first recorded GET.
+> The exact local/token/verifier failure phase is unknown; token acquisition may
+> have contacted Entra. Secret verification did not pass. No retry or deployment
+> followed; approval is consumed. The failed packet/attempt are preserved, both
+> findings stay open, and any token diagnostic or secret retry needs separate approval.
+> Separately approved L8-TD1 completed its token-only diagnostic: CLI returned
+> successfully, but the local audience comparison failed while tenant/owner/time
+> checks passed. Actual audience value/type was not retained. This current mismatch
+> does not establish SV1's original cause or justify widening the guard. No resource
+> API or secret verifier ran; approval is consumed and no retry is authorized.
+> Offline Microsoft documentation and installed CLI inspection support an exact
+> Key Vault API-ID audience alias. Separately approved L8-SV2 completed once:
+> all four GETs and source validators passed for the three exact secret versions
+> and authenticated bucket-list read. Values stayed in memory; approval is consumed.
+> Both findings remain open. Runtime identity access, SMTP authentication/delivery
+> and deployment acceptance remain unproven; no follow-on operation is authorized.
+> Separately approved L8-PRE1 collected four metadata observations: both app
+> endpoints returned ARM404, the application container returned 200 with an
+> available/unlocked lease, and the state blob returned 404/BlobNotFound.
+> No response/state body, Terraform or lease write; approval is consumed.
+> These observations support offline PLAN preparation only, not execution authority.
+> Separately approved L8-AP1 completed one remote init and saved PLAN attempt:
+> init0, plan2 and inspected exact two creates, zero updates/destroys. The accepted
+> plan and bounded outcome passed independent QA/DevOps review. The plan is retained
+> privately; new temporary work was removed. Backend blob HEAD
+> changed from404/BlobNotFound to200/unlocked/available. This does not independently
+> audit lease operations or prove unmanaged-app absence. Approval is consumed;
+> no APPLY/deployment ran or is authorized. Diagnostics/vault findings remain open.
+> L8-AA1 and a separately owner-requested byte-identical retry both stopped at
+> the GitHub gate while entering E2E fetch. CI passed in memory by sealed control
+> flow; no CI run ID/response remains. E2E completion and precise causes are unknown.
+> Neither attempt reached integration, Azure authentication, Terraform or APPLY.
+> Both approvals are consumed; the original failed journal remains intact.
+> L8-E2E-D1 was separately approved and collected once at 2026-11-01 00:15:16 UTC:
+> HTTP 200, zero returned/qualifying runs for exact candidate `6bceba82` on `main`.
+> The E2E gate is blocked by missing evidence; this is not a failed E2E test and
+> does not establish either historical fetch failure. Independent QA accepted
+> the bounded observation. Approval is consumed; no Azure/deployment followed.
+> The owner selected new-candidate qualification under the existing gates,
+> with offline preparation only. Separately approved L8-NC-G1 collected four
+> public metadata observations at 2026-11-01 01:47:59–01:48:00 UTC: `main` matched
+> `a9476eb`, CI and E2E were successful, but Integration returned zero runs for
+> that exact SHA/main. Integration evidence is the current missing gate.
+> Approval is consumed; no workflow, candidate, image build or deployment started.
+> L8-INT-D1 was separately approved with all three conditions and completed once:
+> Integration run `41293973321` / attempt1 succeeded at 2026-11-01 09:44:03 UTC
+> on exact `a9476eb`/`main`; the final list confirmed it as latest qualifying success.
+> One POST,19 total HTTP requests,13 run observations. Approval is consumed;
+> CI/E2E were not refreshed, so all current release gates are not newly accepted.
+> L8-IB1 was separately approved once, then stopped after the environment ARM
+> GET returned HTTP200 at 2026-11-01 10:18:05 UTC, before its binding receipt.
+> Fresh main/CI/E2E/Integration, token, group and registry checks passed.
+> The exact failure predicate is unretained; historical `Sweden Central` differs
+> from the packet's literal `swedencentral` check, but is not proof of this cause.
+> No Supabase key check, ACR login, build/push or new candidate/deployment followed.
+> L8-ED1 was separately approved and completed once at 2026-11-01 10:32:59 UTC:
+> one ARM token invocation and one environment GET200. Only the exact display
+> location `Sweden Central` differed; ID/tags/provisioning/domain matched.
+> The unchanged IB1 canonical-only guard rejects this current representation;
+> its earlier failure cause is still unproven. Independent outcome QA/DevOps passed.
+> L8-IB2 was separately approved and completed once; its outcome record was
+> written at 2026-11-01 10:46:14 UTC (exact promotion/exit time was not captured).
+> Both a9476eb images were built/pushed and exact-digest inspected; the browser
+> asset guard/limited secret-marker scan passed. A new mode0400 candidate-r002
+> was accepted, hash `e0dcf59698f7642b5c531c63caddf2bf5cb042c4f8f80c3208ab4a64a8cc86a8`.
+> Independent outcome QA/DevOps and post-outcome local checks passed.
+> IB2 approval is consumed. New release-r003 binds that candidate with only
+> release ID/source/two image digests changed and the same three secret versions.
+> SV3 was separately approved and completed once on 2026-11-01 at11:15:01–05 UTC:
+> observed runner exit0, one owner token and four HTTP200 GETs; original secret
+> validators passed. Three secret VALUES were read in memory and the backend
+> key authenticated the bucket-list GET; no raw values were persisted.
+> Independent SV3 outcome QA/DevOps and post-outcome Node22 checks passed.
+> AP2 was separately approved and completed once at2026-11-01 11:29:07–18 UTC,
+> observed executor exit0. New r003 saved plan contains exactly two app creates,
+> zero updates/destroys; init/plan/show returned0/2/0. Existing empty state identity
+> and full resource bodies passed the reviewed inspector. Final blob HEAD was
+> unlocked/available; only new temporary work was cleaned.
+> Independent outcome QA/DevOps and post-outcome Node22 checks passed
+> (eight lint warnings; other tasks cached).
+> AA2 was separately approved and attempted once. The observer recorded
+> 2026-11-01 11:48:19–12:05:36 UTC (17m17s), executor exit1. Fresh gates/inventory
+> passed; init/show/APPLY returned0. The API ARM GET returned200 and parsed, then
+> ARM_READBACK stopped before revisions/web; exact cause was not retained.
+> Deployment is INCOMPLETE, despite APPLY0. Temporary work was cleaned; no retry,
+> rollback or extra cloud query followed. Approval is consumed.
+> AD1 was separately approved and collected once, observed runner exit0 at
+> 2026-11-01 12:25:30–33UTC: one owner ARM token and one API GET200. Only the
+> canonical-location predicate differed: known display `Sweden Central` versus
+> the unchanged `swedencentral` guard. Other adapter predicates and the original
+> source prefix before revisions matched. This is a current diagnostic only;
+> the historical AA2 cause and full deployment acceptance remain unproven.
+> Approval consumed; no guard change, retry or further live operation followed.
+> AR1 was separately approved and attempted once at2026-11-01 12:39:51–56UTC.
+> One token and all three ordered API/revisions/web GETs succeeded (HTTP200),
+> with the exact display-region mapping for both apps. Overall runner exited1
+> at WEB_SOURCE, category SOURCE_SHAPE_OR_LOCAL_ERROR; exact field/exception
+> was not retained. ARM readback remains INCOMPLETE; no accepted result exists.
+> Approval consumed; no retry, mutation or further cloud query followed.
+> Diagnostics/vault and functional/log/SMTP acceptance remain open. Old artifacts
+> and the17 protected inputs stay intact; no seed, commit or push.
+> WD1 is now prepared offline as one ARM token and one exact web metadata GET
+> in `/private/tmp/tonyai-l8-web-diagnostic-plo9fupi`. Fixed field-shape categories
+> and independent safe predicates cannot reconstruct AR1 or accept deployment.
+> All 36 offline tests pass on Python 3.12/3.14; independent Security/QA/DevOps
+> core reviews and Node22 lint/typecheck/build/test passed (8 lint warnings;
+> typecheck/build/test cached). Final sealed packaging requires detached QA
+> acceptance before the exact owner approval request. No live operation is
+> approved or executed.
+
+> WD1 was then separately approved and collected once on 2026-11-01 at 14:41:33–14:41:37 UTC.
+> Runner/token exit0, all five claim guards true, one web GET200/parsed. Current
+> `configuration.secrets` is NULL; the empty-web-secret-set predicate is
+> NOT_EVALUABLE, while the other seven web predicates and six adapter predicates
+> pass. This is current diagnostic evidence only; AR1 historical cause and full
+> deployment/readback acceptance remain unproven. Nine original receipts are
+> frozen; independent QA/DevOps accepted bounded diagnostic collection only.
+> Post-outcome Node22 lint/typecheck/build/test passed (8 lint warnings; other
+> tasks cached); final evidence packaging audit is separate.
+> Approval consumed; no extra read, null repair, retry or mutation followed.
+
+> LC1 now combines the remaining L8 readback and HTTP acceptance offline:
+> one ARM token, three GETs, one exact-web listSecrets read action and six public
+> health/readiness/login/auth-CORS checks. Null is mapped only on a web response
+> copy after an independently confirmed empty inventory; original guards stay.
+> All41tests pass on Python3.12/3.14; Security/QA/DevOps core reviews and Node22
+> lint/typecheck/build/test passed (8 lint warnings; other tasks cached). Final
+> sealed packaging audit and one new exact owner approval are required. No redeployment, retry or live call occurred;
+> open vault/diagnostic findings and L9/L10 QA-handover obligations remain.
+
+> LC1 was approved once but stopped at web listSecrets HTTP415 after three
+> successful GETs. No inventory body, public checks or accepted readback followed.
+> QA/DevOps accepted failure evidence only; L8 remains open and approval consumed.
+> Offline urllib preprocessing reproduced implicit form Content-Type on the empty
+> POST. LC2 will set application/json explicitly and test the real request
+> preprocessing; the same acceptance scope needs a fresh exact approval.
+
+> LC2 is now prepared offline at `/private/tmp/tonyai-l8-closure2-ev4fytf5`: only
+> the exact POST media type changes to application/json; request body/scope and
+> guards stay fixed.43tests include real urllib preprocessing and the missing-
+> header regression on Python3.12/3.14. Security/QA/DevOps and Node22checks pass
+> (8 lint warnings; other tasks cached); final sealed packaging audit precedes
+> a fresh exact approval. No live retry or L8 acceptance. LC1 failure evidence and original receipts remain fixed.
+> LC2 subsequently passed metadata, empty inventory, liveness and readiness,
+> then stopped at web login without a response receipt. Overall acceptance failed;
+> exact transport cause is unknown. Its one-attempt approval is consumed.
+> LC3 preparation retains all checks with a 60-second public socket timeout
+> and safe error categories; L8 and QA handover remain unaccepted.
+> LC3 is prepared with the same ten checks and 60-second public socket timeout;
+> 48 offline tests pass on Python3.12/3.14. Security/QA/DevOps and Node22 checks
+> pass (8 lint warnings; other tasks cached). Final sealed packaging audit precedes
+> fresh one-attempt approval; no live retry has run.
+> LC3 subsequently received login HTTP200, but its blanket Link-header gate
+> refused the response before HTML validation. Actual Link content is unknown;
+> last three checks did not run. LC4 preparation will ignore Link only on the
+> fixed login check while still requiring200/text-html and never following links.
+> L8 remains incomplete; LC3 approval is consumed.
+> LC4 subsequently completed once with exit0: all10requests passed. Exact
+> source metadata, empty web inventory, SQL/three-bucket readiness, loginHTML,
+> unauthenticated401 and allowed/untrusted CORS passed independent outcome review.
+> L8 is complete for controlled synthetic QA; diagnostics/vault findings remain
+> open. L9 onboarding/email and L10 smoke/recovery/QA handover remain separate.
+> Node22 outcome lint/typecheck/build/test pass (8 lint warnings; other tasks
+> cached); final sealed evidence audit is recorded privately.
+> L9 binds the private QA roster and separates Auth prerequisites from onboarding
+> and SMTP inbox acceptance. A0R1's two unchanged Auth-policy rounds and owner/ICU
+> collation check are accepted. A1 then completed one approved nine-request
+> born-banned/two-refresh AMR probe and exact-ID deletion with absence confirmed;
+> recorded child exit0, no interruption or pending cleanup. Independent QA/DevOps
+> accepted the bounded outcome; both approvals are consumed. Original evidence
+> and the earlier failed A0 attempt remain preserved.
+> A2P1 then passed one read-only owner/collision snapshot: all10predicates true,
+> SQLexit0, no HTTP/write/email; independent outcome QA/DevOps accepted it.
+> Its approval is consumed and the snapshot is not a reservation.
+> A2 was approved once and stopped at DRY_RUN, child exit1, before any creation,
+> Auth or SMTP attempt. Four failure receipts are preserved; independent QA/DevOps
+> accepted this outcome. Its exception was discarded, so the cause is unknown.
+> Approval is consumed: do not rerun A2 or resend an invitation.
+> A2D1/D2 completed diagnostic collection but failed native macOS connection:
+> P1011, narrowed by D2 to TRUST_OR_VALIDITY. SQL was not reached; the category
+> does not identify the root cause. Receipts/outcome reviews are preserved and
+> approvals consumed. Offline public-CA import passed without trust changes.
+> A2L1 then passed strict Linux owner/read-only/profile-absence/source-dry-run
+> checks and exact local-container cleanup; 17 receipts and independent QA/DevOps
+> outcome acceptance are preserved. This is not a reservation or creation authority.
+> A2L2 then completed one approved first-admin/holding/invitation operation:
+> ten fresh preflight and thirteen exact-ID readback predicates passed, three Auth
+> calls succeeded, one TR SMTP submission was accepted, and local cleanup passed.
+> Twenty original receipts and independent QA/DevOps outcome acceptance are retained.
+> The owner reports inbox arrival, then successful A3 password save/fresh sign-in,
+> Turkish UI and no visible error. The dashboard shows subsidiaries, not the holding
+> name; an empty register is expected because A2L2 created no subsidiary. UI success
+> alone did not establish invitation/audit acceptance (known LP4-01 follow-up26).
+> A3R1 subsequently passed all fifteen exact-ID read-only predicates, including
+> correct tenant/profile and accepted invitation with its actor audit; disconnect
+> and local cleanup passed. Original fifteen receipts/outcome reviews are retained.
+> A4 owner reports successful subsidiary/site creation, four QA invitations,
+> one data_entry grant and five users without error. All four emails arrived by
+> owner report; second-admin Outlook delivery was in spam, an open quality finding.
+> A4R1 completed its read-only snapshot:21predicates passed and six differed.
+> Five profiles/roles, one subsidiary/site and the exact data_entry grant passed.
+> Owner reports later metadata/access changes and at least one recipient Continue
+> click; the clean initial-state baseline no longer describes all owner actions.
+> No creation/mail failure or complete state acceptance is inferred. Evidence kept.
+> Owner decision2026-11-02: Claude Code owns the next candidate/deploy from main
+> 7d3e2e9 (#259/#261). Codex continues read-only L9/infrastructure work and does not
+> touch application Terraform state/Container Apps. Recipient acceptance/resend/L10
+> wait for the new release name, digests and deployment evidence, then rebind to it.
+> If this docs PR moves main, Claude/owner recheck candidate source and exact-SHA
+> CI/E2E/Integration gates; stop for explicit source selection, without silent retarget.
+> Node 22 lint/typecheck/build/test passed for A4R1 preparation (eight existing lint
+> warnings; Turbo tasks cached). No new mirrored tests or live operation ran.
+> QA role/grant UI observations exist; remaining persisted-state classification,
+> recipient/reset/lifecycle/isolation and L10/QA handover stay open.
 > See [the hosted configuration contract](infra/README.md).
 
 **Paused self-hosted route (kept; resumes after the pilot launch).** The text from here to
