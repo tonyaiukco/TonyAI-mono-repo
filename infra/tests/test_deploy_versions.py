@@ -74,9 +74,12 @@ class DeploymentVersionTests(unittest.TestCase):
                 if args[:3] == ('containerapp', 'revision', 'list'): return [{'name': 'tonyai-staging-api--r001', 'properties': {'active': True}}]
                 return state['api' if args[-1].endswith('-api') else 'web']
             with self.subTest(defect=defect), contextlib.redirect_stdout(io.StringIO()):
-                if defect in ('none', 'web-secrets-null'): verify(contract, read)
-                else:
-                    with self.assertRaises(SafeFailure): verify(contract, read)
+                try:
+                    if defect in ('none', 'web-secrets-null'): verify(contract, read)
+                    else:
+                        with self.assertRaises(SafeFailure): verify(contract, read)
+                except TypeError as error:
+                    self.fail('Readback crashed instead of deciding: ' + str(error))
 
     def test_release_cannot_select_latest_cross_origin_or_include_secret_value(self):
         for section,field,value in [('release','api_digest','latest'),('release','database_secret_version','latest'),
