@@ -827,6 +827,44 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     expect(rows.map((r) => [r.userId, r.role, r.organisationId])).toEqual([[null, null, A.organisationId]]);
   });
 
+  it('someone who stopped before choosing a password gets back through a reset', async () => {
+    const invited = inbox();
+    const created = await invite(invited.transport);
+    const link = tokenIn(invited.sent[0], 'invite');
+    expect((await browser().auth.verifyOtp({ type: 'invite', token_hash: link })).error).toBeNull();
+    await services(null).lifecycle.accept(await asRequestUser(created.id));
+    // What `/auth/confirm` tells them about: a spent link, and no re-send to wait for.
+    expect((await browser().auth.verifyOtp({ type: 'invite', token_hash: link })).error).not.toBeNull();
+    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.superAdmin, created.id)).rejects.toMatchObject({
+      response: { code: 'invitation_closed' },
+    });
+
+    const { sent, transport } = inbox();
+    const resets = new PasswordResetService(runtime, new AuthAdminService(), new MailService(transport, MAIL), new AuditService(runtime), {} as never);
+    expect(await resets.run(created.email)).toBe('sent');
+    const session = await browser().auth.verifyOtp({ type: 'recovery', token_hash: tokenIn(sent[0], 'recovery') });
+    expect(session.error).toBeNull();
+    const holder = browser();
+    await holder.auth.setSession(session.data.session!);
+    expect((await holder.auth.updateUser({ password: 'their-own-pass-123' })).error).toBeNull();
+    expect((await browser().auth.signInWithPassword({ email: created.email, password: 'their-own-pass-123' })).error).toBeNull();
+  });
+
+  it('a reset link accepts an invitation its owner never opened, and closes it', async () => {
+    const created = await invite(inbox().transport);
+    const { sent, transport } = inbox();
+    const resets = new PasswordResetService(runtime, new AuthAdminService(), new MailService(transport, MAIL), new AuditService(runtime), {} as never);
+    expect(await resets.run(created.email)).toBe('sent');
+    const session = await browser().auth.verifyOtp({ type: 'recovery', token_hash: tokenIn(sent[0], 'recovery') });
+    expect(session.error).toBeNull();
+    await services(null).lifecycle.accept(await asRequestUser(created.id));
+    const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
+    expect(invitation.status).toBe(InvitationStatus.accepted);
+    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.superAdmin, created.id)).rejects.toMatchObject({
+      response: { code: 'invitation_closed' },
+    });
+  });
+
   it('a member of an offboarded organisation gets nothing', async () => {
     const created = await invite(inbox().transport);
     const { sent, transport } = inbox();

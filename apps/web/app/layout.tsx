@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import { createTranslator } from 'use-intl/core'
 import { Inter, JetBrains_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
 import { cookies, headers } from 'next/headers'
 import { Toaster } from 'sonner'
 import { I18nProvider } from '@/components/i18n/i18n-provider'
@@ -60,7 +59,6 @@ export default async function RootLayout({
           {children}
           <Toaster richColors position="bottom-right" />
         </I18nProvider>
-        <Analytics />
       </body>
     </html>
   )
