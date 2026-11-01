@@ -8,7 +8,7 @@ from configure_oidc import az
 from pooler import SafeFailure
 from terraform_run import invoke, validate_release
 from runtime_limits import expected_env, validate_limits
-from drain_api import drain, revisions
+from drain_api import drain, settle, revisions
 from mail_settings import verify_mail_environment
 
 
@@ -115,10 +115,12 @@ def main():
     if not args.verify_only:
         check_hold_transition(inputs, args.ack_clear_storage_hold)
         grace = validate_limits(inputs['release'].get('runtime_limits', {}))['SHUTDOWN_GRACE_MS']
+        attempts = (grace + 30000 + 1999) // 2000
         invoke('application', args.backend, args.inputs,
                'approved-apply' if args.approved_apply else 'apply',
                before_apply=lambda: drain(inputs['foundation'], inputs['release']['release_id'],
-                                          attempts=(grace + 30000 + 1999) // 2000))
+                                          attempts=attempts))
+        settle(inputs['foundation'], inputs['release']['release_id'], attempts=attempts)
     verify(inputs)
 
 

@@ -64,10 +64,19 @@ class RuntimeDeploymentTests(unittest.TestCase):
                 def invoke_mock(*args, **kwargs):
                     self.assertEqual(args[3], 'approved-apply' if approved else 'apply')
                     events.append('plan'); kwargs['before_apply'](); events.append('apply')
-                with patch('sys.argv', ['deploy_apps', '--backend', 'unused', '--inputs', str(release)] + (['--approved-apply'] if approved else [])), patch('deploy_apps.check_hold_transition'), patch('deploy_apps.verify'), patch('deploy_apps.invoke', side_effect=invoke_mock), patch('deploy_apps.drain', side_effect=lambda *a, **kw: events.append('drain')) as stopped:
+                with patch('sys.argv', ['deploy_apps', '--backend', 'unused', '--inputs', str(release)] + (['--approved-apply'] if approved else [])), patch('deploy_apps.check_hold_transition'), patch('deploy_apps.verify', side_effect=lambda *a, **kw: events.append('verify')), patch('deploy_apps.invoke', side_effect=invoke_mock), patch('deploy_apps.settle', side_effect=lambda *a, **kw: events.append('settle')) as settled, patch('deploy_apps.drain', side_effect=lambda *a, **kw: events.append('drain')) as stopped:
                     main()
-                self.assertEqual(events, ['plan', 'drain', 'apply'])
+                self.assertEqual(events, ['plan', 'drain', 'apply', 'settle', 'verify'])
+                self.assertGreaterEqual(settled.call_args.kwargs['attempts'] * 2, 150)
                 self.assertGreaterEqual(stopped.call_args.kwargs['attempts'] * 2, 150)
+
+    def test_verify_only_observes_without_waiting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory) / 'release.json'; release.write_text(json.dumps(inputs()))
+            with patch('sys.argv', ['deploy_apps', '--backend', 'unused', '--inputs', str(release), '--verify-only']), patch('deploy_apps.verify') as verified, patch('deploy_apps.settle') as settled:
+                main()
+            settled.assert_not_called()
+            verified.assert_called_once()
 
     def test_readback_checks_every_runtime_setting_and_accepts_arm_extra_fields(self):
         defects = ['none', 'cpu', 'cpu-bool', 'memory', 'min', 'max', 'grace', 'mode', 'containers', 'revision'] + list(expected_env(inputs()['release']))

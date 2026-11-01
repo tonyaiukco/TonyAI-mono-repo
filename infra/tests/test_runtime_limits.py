@@ -9,7 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'infra/scripts'))
 from runtime_limits import DEFAULTS, validate_limits
-from drain_api import drain, revisions
+from drain_api import drain, settle, revisions
 from pooler import SafeFailure
 from test_deploy_versions import inputs
 
@@ -46,6 +46,34 @@ class RuntimeLimitTests(unittest.TestCase):
         drain(inputs()['foundation'], 'next', read=read, sleep=lambda _: None)
         self.assertEqual(polls, 2)
         self.assertIn(('containerapp', 'revision', 'deactivate'), calls)
+
+    def test_settle_waits_out_a_drained_revision_azure_restarted(self):
+        rows = {'old': True, 'next': True}
+        polls = []
+        replicas = [[{'name': 'old'}], []]
+        def read(*args):
+            if args[:3] == ('containerapp', 'replica', 'list'):
+                self.assertEqual(args[-1], 'tonyai-staging-api--old')
+                return replicas.pop(0)
+            polls.append(dict(rows))
+            view = [{'name': 'tonyai-staging-api--' + name, 'properties': {'active': active}} for name, active in rows.items()]
+            rows['old'] = False
+            return view
+        sleeps = []
+        settle(inputs()['foundation'], 'next', read=read, sleep=sleeps.append)
+        self.assertEqual(len(polls), 3)
+        self.assertEqual(len(sleeps), 2)
+
+    def test_settle_fails_closed(self):
+        def rows(old, target):
+            return [{'name': 'tonyai-staging-api--old', 'properties': {'active': old}},
+                    {'name': 'tonyai-staging-api--next', 'properties': {'active': target}}]
+        cases = {'old stays active': (rows(True, True), []), 'target never active': (rows(False, False), []),
+                 'old never stops': (rows(False, True), [{'name': 'old'}]), 'unknown replicas': (rows(False, True), None)}
+        for label, (view, replicas) in cases.items():
+            with self.subTest(label), self.assertRaises(SafeFailure):
+                settle(inputs()['foundation'], 'next', sleep=lambda _: None, attempts=2,
+                       read=lambda *args: replicas if args[:3] == ('containerapp', 'replica', 'list') else view)
 
     def test_drain_fails_closed_on_unknown_state_or_remaining_replicas(self):
         for bad in ({}, None, [{'name': 'foreign--revision', 'properties': {'active': True}}]):

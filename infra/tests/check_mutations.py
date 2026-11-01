@@ -27,7 +27,12 @@ MUTANTS = [
 
     ('runtime drain callback skipped', 'terraform_run.py', '                before_apply()', '                pass'),
     ('runtime confirmation skipped', 'terraform_run.py', "            if action != 'approved-apply':", '            if False:'),
-    ('runtime deploy drain skipped', 'deploy_apps.py', "before_apply=lambda: drain(inputs['foundation'], inputs['release']['release_id'],\n                                          attempts=(grace + 30000 + 1999) // 2000)", 'before_apply=lambda: None'),
+    ('runtime deploy drain skipped', 'deploy_apps.py', "before_apply=lambda: drain(inputs['foundation'], inputs['release']['release_id'],\n                                          attempts=attempts)", 'before_apply=lambda: None'),
+    ('runtime post-apply rollover wait skipped', 'deploy_apps.py', "        settle(inputs['foundation'], inputs['release']['release_id'], attempts=attempts)\n", ''),
+    ('runtime rollover wait accepts a second active revision', 'drain_api.py', "if [row['name'] for row in rows if row['properties']['active']] == [intended]:", "if intended in [row['name'] for row in rows if row['properties']['active']]:"),
+    ('runtime rollover wait ignores outgoing replicas', 'drain_api.py', "            if not any(outgoing):\n                return\n", "            return\n"),
+    ('runtime rollover wait ignores replica shape', 'drain_api.py', "            if any(not isinstance(replicas, list) for replicas in outgoing):", "            if False:"),
+    ('runtime rollover timeout passes', 'drain_api.py', "    raise SafeFailure('Outgoing API revisions stayed live after apply. Inspect both revisions before retrying.')", "    return"),
     ('runtime inactive revisions hidden', 'drain_api.py', "'revision', 'list', '--all', *scope", "'revision', 'list', *scope"),
     ('runtime inactive target reused', 'drain_api.py', "        if not target['properties']['active']:", '        if False:'),
     ('runtime overlap replicas ignored', 'drain_api.py', ' or replicas:', ':'),
