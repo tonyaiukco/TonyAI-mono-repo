@@ -117,6 +117,8 @@ MUTANTS = [
      "\n                    or user.get('app_metadata', {}).get('lp2_smoke') != tenant['organisationId']", ''),
     ('application state grant escapes its container', 'bootstrap_backend.py',
      "if lane == 'application' and config['application_object_id']:", "if config['application_object_id']:"),
+    ('null web secret list crashes the readback', 'deploy_apps.py',
+     "configuration.get('secrets') or []", "configuration.get('secrets', [])"),
     ('deployed secret identity readback removed', 'deploy_apps.py',
      " or actual[name].get('identity') != identity", ''),
     ('Auth exact-origin and lifecycle readback removed', 'supabase_auth.py',
