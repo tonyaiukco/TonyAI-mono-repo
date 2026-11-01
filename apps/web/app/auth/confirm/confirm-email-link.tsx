@@ -25,6 +25,8 @@ type State =
  * The token leaves the address bar as soon as it is read (no history entry,
  * no referrer — see `page.tsx`). A valid link signs the person in; an
  * invitation is then marked accepted, and both go on to choose a password.
+ * Someone who stops before choosing one holds a spent link and a closed
+ * invitation that cannot be re-sent, so a dead link always offers a reset.
  */
 export function ConfirmEmailLink() {
   const t = useTranslations("auth");
@@ -96,11 +98,9 @@ export function ConfirmEmailLink() {
                 </p>
               </div>
               <div className="flex flex-col gap-2">
-                {state.type !== "invite" && (
-                  <Button asChild variant="outline">
-                    <Link href="/forgot-password">{t("confirm.requestNew")}</Link>
-                  </Button>
-                )}
+                <Button asChild variant="outline">
+                  <Link href="/forgot-password">{t("confirm.requestNew")}</Link>
+                </Button>
                 <Button asChild variant="ghost">
                   <Link href="/login">{t("confirm.toSignIn")}</Link>
                 </Button>

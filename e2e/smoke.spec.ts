@@ -16,6 +16,27 @@ test.describe('Milestone-1 slice', () => {
     await expect(page.locator('body')).not.toContainText(PASSWORD);
   });
 
+  // Proves something only on the production build CI runs: that build fetched
+  // the analytics script from the app's own path, and off Vercel the answer was
+  // HTML, parsed as script. A local dev server would pass either way.
+  test('the login page raises no uncaught error', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto('/login', { waitUntil: 'networkidle' });
+    await expect(page.locator('#email')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // Continue spends an invitation and closes it, so a re-send is refused: the
+  // reset is the way back for someone who stopped before choosing a password.
+  test('a dead invitation link offers a reset', async ({ page }) => {
+    await page.goto(`/auth/confirm?token_hash=${'a'.repeat(32)}&type=invite`);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page.getByText('This link no longer works')).toBeVisible();
+    await expect(page.getByText('If you have not set a password yet, request a new link below.')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Request a new link' })).toHaveAttribute('href', '/forgot-password');
+  });
+
   test.describe('before the login page hydrates', () => {
     let release: () => void;
 
