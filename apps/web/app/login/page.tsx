@@ -33,8 +33,8 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useTranslations("auth");
-  const [email, setEmail] = useState("admin@tonyai.local");
-  const [password, setPassword] = useState("TonyAI!2026");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const reason = searchParams.get("reason");
 
@@ -113,7 +113,6 @@ function LoginForm() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? t("signIn.submitting") : t("signIn.submit")}
             </Button>
-            <p className="text-center text-xs text-muted-foreground">{t("signIn.seedHint")}</p>
           </form>
         </CardContent>
       </Card>

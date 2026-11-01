@@ -7,6 +7,13 @@ import {
 } from './helpers';
 
 test.describe('Milestone-1 slice', () => {
+  test('the login page offers no credentials', async ({ page }) => {
+    await page.goto('/login');
+    await expect(page.locator('#email')).toHaveValue('');
+    await expect(page.locator('#password')).toHaveValue('');
+    await expect(page.locator('body')).not.toContainText('@tonyai.local');
+  });
+
   test('admin: login -> dashboard KPI -> subsidiaries CRUD', async ({ page }) => {
     await login(page, ADMIN_EMAIL);
 
