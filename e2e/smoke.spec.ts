@@ -4,9 +4,50 @@ import {
   subsidiaryRows,
   ADMIN_EMAIL,
   ENTRY_EMAIL,
+  PASSWORD,
 } from './helpers';
 
 test.describe('Milestone-1 slice', () => {
+  test('the login page offers no credentials', async ({ page }) => {
+    await page.goto('/login');
+    await expect(page.locator('#email')).toHaveValue('');
+    await expect(page.locator('#password')).toHaveValue('');
+    await expect(page.locator('body')).not.toContainText('@tonyai.local');
+    await expect(page.locator('body')).not.toContainText(PASSWORD);
+  });
+
+  test.describe('before the login page hydrates', () => {
+    let release: () => void;
+
+    test.beforeEach(async ({ page }) => {
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      await page.route('**/_next/static/**', async (route) => {
+        if (route.request().resourceType() === 'script') await held;
+        await route.continue();
+      });
+      await page.goto('/login', { waitUntil: 'commit' });
+      await page.locator('#email').fill(ADMIN_EMAIL);
+      await page.locator('#password').fill(PASSWORD);
+    });
+
+    test('a filled form still signs in once it has', async ({ page }) => {
+      release();
+      // React has taken the form over: its props sit on the DOM node once hydrated.
+      await page.waitForFunction(() => Object.keys(document.querySelector('form') ?? {}).some((key) => key.startsWith('__reactProps')));
+      await page.locator('button[type=submit]').click();
+      await page.waitForURL((url) => url.pathname === '/');
+      await expect(page.getByTestId('dashboard-title')).toBeVisible();
+    });
+
+    test('a click is a native submit that sends nothing in the URL', async ({ page }) => {
+      const navigation = page.waitForURL((url) => url.search !== '' || url.href.endsWith('?'), { waitUntil: 'commit' });
+      await page.locator('button[type=submit]').click();
+      await navigation;
+      expect(new URL(page.url()).search).toBe('');
+      release();
+    });
+  });
+
   test('admin: login -> dashboard KPI -> subsidiaries CRUD', async ({ page }) => {
     await login(page, ADMIN_EMAIL);
 

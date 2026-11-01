@@ -33,8 +33,6 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useTranslations("auth");
-  const [email, setEmail] = useState("admin@tonyai.local");
-  const [password, setPassword] = useState("TonyAI!2026");
   const [loading, setLoading] = useState(false);
   const reason = searchParams.get("reason");
 
@@ -46,8 +44,15 @@ function LoginForm() {
     if (reason === "session_revoked") toast.error(t("signIn.sessionRevoked"), { id: "login-reason", duration: 10_000 });
   }, [reason, t]);
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Read from the inputs, not from state: a password manager or a quick typist
+    // can fill them before hydration, and React state never hears about that.
+    // By id on purpose: until hydration a click is a native GET submit, and a
+    // `name` attribute would put the password in the URL.
+    const { elements } = e.currentTarget;
+    const email = (elements.namedItem("email") as HTMLInputElement).value;
+    const password = (elements.namedItem("password") as HTMLInputElement).value;
     setLoading(true);
     const supabase = getSupabaseBrowserClient();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -85,8 +90,6 @@ function LoginForm() {
               <Input
                 id="email"
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
               />
@@ -104,8 +107,6 @@ function LoginForm() {
               <Input
                 id="password"
                 type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
               />
@@ -113,7 +114,6 @@ function LoginForm() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? t("signIn.submitting") : t("signIn.submit")}
             </Button>
-            <p className="text-center text-xs text-muted-foreground">{t("signIn.seedHint")}</p>
           </form>
         </CardContent>
       </Card>
