@@ -12,7 +12,7 @@ import sys
 import uuid
 from candidate import bind
 from check_browser_key import check_inputs
-from cloud_ops import secret, request
+from cloud_ops import secret, request, write_private_journal
 from deploy_apps import verify
 from pooler import SafeFailure, validate_pooler
 from terraform_run import ROOT
@@ -112,6 +112,8 @@ def run(candidate, inputs, journal_path, cleanup_only=False, direct_secret_versi
         validate_cleanup_target(target, candidate, r)
         key = secret(f['vault_name'], 'supabase-service-role-key', r['backend_secret_version'])
         cleanup(target, key)
+        if any(not item.get('matches_intent') for item in journal.get('auth_create_observations', [])):
+            raise SafeFailure('Unexpected Auth create response requires owner review; cleanup covers intended IDs only.')
         return
     if not re.fullmatch(r'[a-f0-9]{32}', direct_secret_version or ''):
         raise SafeFailure('Fixture provisioning requires an exact --direct-secret-version.')
@@ -126,16 +128,27 @@ def run(candidate, inputs, journal_path, cleanup_only=False, direct_secret_versi
                   'NEXT_PUBLIC_SUPABASE_URL': 'https://' + r['supabase_project_ref'] + '.supabase.co'})
     target = target_for(candidate)
     # Intent is durable before any Auth POST; no passwords/tokens in this file.
-    with open(journal_path, 'x') as stream:
-        json.dump({'candidate': candidate, 'target': target}, stream, indent=2)
+    journal = {'candidate': candidate, 'target': target, 'auth_create_observations': []}
+    write_private_journal(journal_path, journal, exclusive=True)
     passwords = [secrets.token_urlsafe(32), secrets.token_urlsafe(32)]
     try:
         for tenant, password in zip(target['tenants'], passwords):
             created = auth_call(target['supabase'], key, 'POST', '', {
                 'id': tenant['userId'], 'email': tenant['email'], 'password': password,
                 'email_confirm': True, 'app_metadata': {'lp2_smoke': tenant['organisationId']}})
-            if created.get('id') != tenant['userId'] or created.get('email') != tenant['email']:
-                raise SafeFailure('Created identity differs from recorded intent.')
+            response_id = created.get('id') if isinstance(created, dict) else None
+            valid_id = isinstance(response_id, str) and re.fullmatch(
+                r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', response_id)
+            matches = (isinstance(created, dict) and response_id == tenant['userId']
+                       and created.get('email') == tenant['email'])
+            # Preserve a returned unexpected ID without ever authorizing its deletion.
+            # Never persist the raw response (which may carry credentials/metadata).
+            journal['auth_create_observations'].append({
+                'intended_id': tenant['userId'], 'response_id': response_id if valid_id else None,
+                'response_id_valid': bool(valid_id), 'matches_intent': matches})
+            write_private_journal(journal_path, journal)
+            if not matches:
+                raise SafeFailure('Created identity differs from recorded intent; preserve the journal for owner review.')
         env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH')}
         env['SMOKE_TARGET_JSON'] = json.dumps(target)
         child('smoke-fixtures.mjs', {**env, 'DIRECT_URL': database})

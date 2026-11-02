@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -100,16 +101,53 @@ def provision_buckets(base, key):
         print('PASS: private bucket settings reconciled: ' + name)
 
 
-def probe_buckets(base, key):
-    for name in BUCKETS:
+def write_private_journal(path, data, exclusive=False):
+    """Persist intent/observations without truncating a previous durable receipt."""
+    payload = json.dumps(data, indent=2).encode()
+    path = Path(path)
+    if exclusive:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return
+    # Updates replace atomically; a failed write leaves the preceding intent.
+    fd, temporary = tempfile.mkstemp(prefix='.journal-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def probe_buckets(base, key, journal_path=None):
+    if journal_path is None:
+        journal_path = Path(tempfile.mkdtemp(prefix='tonyai-storage-probe-')) / 'objects.json'
+    objects = [{'bucket': name,
+                'path': 'lp2-foundation-probe/' + str(uuid4()) + ('.pdf' if name == 'report-artifacts' else '.csv'),
+                'upload_attempted': False, 'cleanup_attempted': False,
+                'deletion_acknowledged': False} for name in BUCKETS]
+    journal = {'storage_origin': base, 'objects': objects,
+               'absence_verified': False}
+    write_private_journal(journal_path, journal, exclusive=True)
+    print('Private exact-object journal: ' + str(journal_path))
+    for entry in objects:
+        name, path = entry['bucket'], entry['path']
         pdf = name == 'report-artifacts'
-        path = 'lp2-foundation-probe/' + str(uuid4()) + ('.pdf' if pdf else '.csv')
         payload = (b'%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
                    b'2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\n'
                    b'trailer<</Root 1 0 R>>\n%%EOF\n') if pdf else b'purpose\nLP2-01 storage probe\n'
-        require_success(request(base + '/object/' + name + '/' + path,
-                                'POST', key, payload, 'application/pdf' if pdf else 'text/csv'))
+        entry['upload_attempted'] = True
+        write_private_journal(journal_path, journal)
         try:
+            # A lost upload acknowledgement may still have committed the bytes.
+            require_success(request(base + '/object/' + name + '/' + path,
+                                    'POST', key, payload, 'application/pdf' if pdf else 'text/csv'))
             public_status, _ = request(base + '/object/public/' + name + '/' + path)
             if public_status not in (400, 401, 403, 404):
                 raise SafeFailure('Public object access was not denied.')
@@ -122,9 +160,17 @@ def probe_buckets(base, key):
                 raise SafeFailure('Signed download did not return the uploaded bytes.')
             print('PASS: upload, public denial, 60-second signed download bytes: ' + name)
         finally:
-            require_success(request(base + '/object/' + name, 'DELETE', key,
-                                    json.dumps({'prefixes': [path]}).encode()))
-            print('PASS: deletion acknowledged for the exact probe prefix: ' + name)
+            entry['cleanup_attempted'] = True
+            try:
+                write_private_journal(journal_path, journal)
+            finally:
+                # The already durable upload intent still identifies exact cleanup
+                # even if recording the cleanup attempt fails (e.g. disk full).
+                require_success(request(base + '/object/' + name, 'DELETE', key,
+                                        json.dumps({'prefixes': [path]}).encode()))
+                entry['deletion_acknowledged'] = True
+                write_private_journal(journal_path, journal)
+            print('PASS: deletion acknowledged for the exact probe path: ' + name)
 
 
 def migration_release(inputs, vault, project):
@@ -147,6 +193,7 @@ def main():
     parser.add_argument('--secret-version', help='Exact selected version for non-migration operations.')
     parser.add_argument('--direct-secret-version', help='Exact owner session URL version for migrations or owner-psql.')
     parser.add_argument('--inputs', help='Required for migrations: selected application release manifest.')
+    parser.add_argument('--journal', help='New private exact-object journal for probe-storage; never reuse an old receipt.')
     args = parser.parse_args()
     if not re.fullmatch(r'[a-z]{20}', args.project_ref):
         raise SafeFailure('Use the 20-letter hosted Supabase project ref, not a URL.')
@@ -185,7 +232,7 @@ def main():
     if args.operation == 'buckets':
         provision_buckets(base, key)
     else:
-        probe_buckets(base, key)
+        probe_buckets(base, key, args.journal)
 
 
 if __name__ == '__main__':

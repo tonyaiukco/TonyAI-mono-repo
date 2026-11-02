@@ -52,9 +52,11 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 
 ## Project status
 
-**Hosted QA checkpoint (2026-11-01): L8 deployment/dependency acceptance is complete.**
-LC4 passed all10checks under explicit approval and independent outcome review.
-Next: L9 synthetic onboarding/invitations, then L10 smoke and QA handover.
+**Hosted QA checkpoint (2026-11-02): L8 and L9 onboarding are complete; L10 is open.**
+The fixed runtime is r004/source `7d3e2e9`; #265 merged at `1530dba`.
+The [consolidated L10 acceptance package](infra/runbooks/11-qa-hosted.md#r004-consolidated-l10-acceptance-package-prepared-2026-11-02)
+records the live scopes, mutation/cleanup limits, missing inputs and operational
+blockers. It is prepared, not approved or executed; QA handover remains blocked.
 The known diagnostics/vault findings remain open; no numerical-emissions QA
 without authoritative factors. Earlier operation notes below are historical.
 
@@ -648,7 +650,20 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > Prior 88b80b4 Node 22 lint/typecheck/build/test and 22 offline infra tests passed
 > (8 existing lint warnings; Turbo cached). Additional 350 existing mock tests passed
 > for an unexecuted Water-draft L10 proposal, not a L9 gate. No agent live operation
-> ran; documentation publication is now owner-authorized.
+> ran. #265 is merged; the owner has authorized this preparation diff to be committed/pushed and the
+> two manual infrastructure workflows to run; no live cloud action is authorized.
+> The consolidated L10 package in runbook 11 includes exact-release smoke, Water,
+> Storage/retained-report effects, separate disposable mail/lifecycle identities
+> and explicit blocked operational drills. Independent review found local helper
+> custody/cleanup defects: unexpected Auth IDs are now retained without deletion
+> authority, and Storage probes journal paths before upload and clean up after a
+> lost response. `probe-storage --journal <new-private-path>` selects the receipt;
+> omission creates a private temporary journal. Delete acknowledgement does not
+> prove absence. Helper publication/manual CI results are tracked in the central plan. The Linux launcher, supplemental
+> Storage adapter, existing boundaryId and disposable recipients remain blockers.
+> Current ARM readback is not inferred
+> from owner continuity. Auth-sync fault recovery and authoritative numeric QA
+> remain separate blockers. No working QA account is a lifecycle test target.
 > Allowed evidence backup refreshed; previously forbidden private IB1 area excluded.
 > See [the hosted configuration contract](infra/README.md).
 
