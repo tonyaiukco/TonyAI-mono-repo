@@ -36,6 +36,49 @@ creates two random-ID super_admin tenants itself; it does **not** issue QA team
 accounts or prove the four-role matrix. Its Auth accounts are removed after each
 run; application rows and append-only audit remain labelled smoke evidence.
 
+## Functional QA intake — 2026-11-02
+
+**Available for functional QA on the owner's expedited handover decision; L10
+acceptance remains OPEN.** The owner approved the consolidated package, then
+asked to deliver tonight with general verification and let QA return its bug
+list. This releases the existing synthetic QA cohort to continue testing; it
+never marks unexecuted acceptance controls as passed or authorizes arbitrary
+QA tenant reset, factor loading or cloud operations.
+
+Verified live web: https://tonyaiqt-staging-web.nicefield-3f0ba1ab.swedencentral.azurecontainerapps.io/login
+API: https://tonyaiqt-staging-api.nicefield-3f0ba1ab.swedencentral.azurecontainerapps.io/api/v1
+The live release remains **r004/source7d3e2e9**, with the exact digests below.
+No r005/r006 deployment occurred. Keep the five existing individual QA accounts
+and their current data; the owner distributes credentials privately.
+
+| Observed control | Result / scope |
+|---|---|
+| Current ARM application binding | PASS: API/web images, source/revisions, HTTPS origins, runtime secret references and hold=true match r004 |
+| Public web/API | PASS: login200, liveness200/ok, readiness200/ready, protected health endpoint401/unauthorized |
+| Browser entry | PASS: empty login fields and Forgot password screen render; no reset submitted |
+| Monitoring foundation | Applied exact saved plan:5creates only, no other changes; all5live readbacks match |
+| Native API rules | Requests5xx and cumulative RestartCount rules enabled, exact API scope/operator routing verified |
+| Operator Test | Owner confirms Test received; client request outcome was unconfirmed, so no duplicate was sent; exact delivery time not supplied |
+| Scheduled verifier | Baseline job started once and observed Succeeded; hold=true/read-only verify. Structured Log Analytics matching returned0rows after3bounded queries: ingestion/alert chain remains unaccepted |
+| Exact-source helper qualification | Clean cfb75e6 Linux Node22/Prisma/CA with network disabled PASS; not an application login smoke |
+| A/D fixture and lifecycle journeys | NOT_RUN: owner-version metadata preflight unconfirmed; no retry, owner DB read or fixture creation followed |
+| Workflow/Storage boundaries/reports/mail/rollback | Remain QA/owner acceptance work; no new records, application emails, lifecycle changes or maintenance deployments were executed |
+| Backup metadata / wider recovery | NOT_RUN / OPEN; no Management token or recent backup result observed; no restore claim |
+
+QA should start with its existing role accounts: sign-in and company list,
+Water/evidence/author-submit/other-admin-approve, role refusals, period lock,
+TR/EN exports and own-company access in their existing synthetic holding.
+Discriminating cross-tenant isolation remains BLOCKED until an approved second
+tenant and known existing foreign-object positive controls are available; a
+random-ID404 is not isolation evidence.
+Do not run disable/enable/reset or invitation experiments on the protected five
+accounts. The automated A–F proposal below remains a distinct owner-operated
+acceptance scope; its new lifecycle tenant was not created.
+Occupied/locked November2026 still means STOP, not another month/unlock/retry.
+Authoritative numeric emissions are excluded. Record defects using the existing
+Reporting a defect section; no secrets or reset/signed links in bug reports.
+The PR is [#266](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/266); owner merges.
+
 ## Acceptance checklist
 
 Record source SHA, release ID, both image digests, timestamps and operator against
@@ -43,7 +86,7 @@ each result. An unchecked item is an open gate, not an assumed pass.
 
 - [ ] L4a proves project region/version/pooler/CA and owner privileges before migration;
   post-migration owner reconciliation and runtime-role checks pass.
-- [ ] `/api/v1/health` liveness and `/api/v1/health/ready` readiness pass; readiness
+- [x] `/api/v1/health` liveness and `/api/v1/health/ready` readiness pass; readiness
   includes all three private buckets. Liveness alone is insufficient.
 - [ ] Exact-release `cloud_smoke.py` passes both tenants' login, own/foreign API
   and PostgREST reads, PDF/XLSX/CSV and browser download, final ARM readback and
@@ -110,10 +153,12 @@ this does not close the wider G2 recovery/recreation gates or approve production
 
 ## R004 consolidated L10 acceptance package (prepared 2026-11-02)
 
-This is one reviewable owner batch: **NOT RUN / NOT APPROVED**. L9 remains
+The owner approved this bounded batch. **Execution is partial; full L10 remains
+OPEN.** Current observations and expedited functional QA disposition are above. L9 remains
 COMPLETE; Water W1 is superseded as an execution proposal and its old evidence
-stays intact. The owner selected current-host maintenance as a design, not as
-live approval. Stop the affected subpackage on an unexpected result, changed
+stays intact. The owner first selected current-host maintenance as a design, then approved
+the bounded batch. Maintenance was not executed after its fixture prerequisites
+stopped; the healthy r004 release remains live. Stop the affected subpackage on an unexpected result, changed
 release, collision, timeout, ambiguous commit or unresolved cleanup. No retry,
 alternate month, resend, unlock or repair is implicit. Expected negative tests
 are planned observations. Exact mandatory cleanup/retirement below remains in
@@ -151,7 +196,8 @@ scope after a failure; it never grants foreign or broad deletion authority.
 
 ### Acceptance matrix
 
-No hosted row below has passed in this preparation. Every observation must bind
+The matrix below distinguishes actual observations from unfinished acceptance.
+Every observation must bind
 UTC and Europe/Istanbul time, operation, exact actor/target, release/source/digests
 and the underlying response. Prior successful exact-source CI/E2E/Integration
 41356114363/41356234839/41356114333 are attributed evidence, not new runs.
@@ -159,13 +205,13 @@ and the underlying response. Prior successful exact-source CI/E2E/Integration
 | Control | Current state | Required hosted result |
 |---|---|---|
 | L9 / offline r004 manifest binding | PASS (prior) | Preserve original evidence; current ARM still required |
-| A exact-release two-tenant smoke | NOT_RUN | ARM match, own reads, foreign API/PostgREST confinement, exports/browser downloads, exact Auth absence |
+| A exact-release two-tenant smoke | BLOCKED (owner-version metadata) | ARM match, own reads, foreign API/PostgREST confinement, exports/browser downloads, exact Auth absence |
 | B workflow/RBAC/lock/audit | NOT_RUN | Synthetic Water lifecycle, independent approval, valid-body denials, period inventory and immutable snapshot |
 | C Storage/evidence/TR-EN reports | NOT_RUN | Boundary/MIME/absence, signed expiry, foreign denial, partial retained output identity |
-| D mail/recovery/revocation/retirement | NOT_RUN | Two real inboxes, seven-attempt ceiling, natural reset expiry/replay, old-session denial, scoped retirement |
+| D mail/recovery/revocation/retirement | BLOCKED (no fixture creation) | Two real inboxes, seven-attempt ceiling, natural reset expiry/replay, old-session denial, scoped retirement |
 | D failure recovery | NOT_RUN | Explicit compiled-service fault seam, real DB pending, real Auth reconcile, API refusal |
 | E no-factor/localisation | NOT_RUN | No numeric fallback; remaining TR/EN UI/email/export observations |
-| F monitoring/backup/maintenance | NOT_RUN | Recent backup metadata, active routed rules, actual operator acknowledgement, job chain, rollback and return |
+| F monitoring/backup/maintenance | PARTIAL:5resources/readbacks, Test acknowledgement, verifier Succeeded; logs0rows; backup/maintenance not run | Recent backup metadata, active routed rules, actual operator acknowledgement, job chain, rollback and return |
 | Numerical emissions | BLOCKED O6/LP4-02 | Authoritative factors/golden results; no synthetic substitute |
 | Full G2/production recovery | OPEN | Consistent DB+Storage restore, isolated outages/hung flights, rotation/Sentry and wider production gates |
 
@@ -406,8 +452,9 @@ failure stops handover and requires new recovery approval; preserve evidence.
 
 ### Handover and wider gates
 
-Controlled synthetic QA may be handed over only when the above mandatory
-observations pass and the owner explicitly accepts the disclosed boundary:
+Full L10 sign-off requires the above mandatory observations and explicit owner
+acceptance of the disclosed boundary. The expedited functional QA intake above
+is a separate, partial owner disposition, not that sign-off. Boundaries remain:
 no authoritative numerical acceptance; full DB+three-bucket consistent disaster
 restore/recreation, isolated DB/Storage outages/hung flights, provider credential
 rotation and Sentry delivery remain wider G2/LP5 work. Three-bucket restoration
@@ -460,10 +507,22 @@ harness's three fake-project/synthetic-token worker attempts with unobserved
 HTTP outcome) remain in the private envelope; no real credential/tenant was
 used in those attempts and they are not called zero-network proofs.
 
-API integration/RLS and full infrastructure/manual workflow suites were not run
-for this current diff; no runtime API path or schema was changed. The focused
+API integration/RLS were not run locally; no runtime API path or schema changed.
+The full offline Python infrastructure baseline was subsequently run and passed
+for the test-only follow-up; the two updated identity mutants were killed.
+The full129mutant run remains CI work, not claimed from that targeted result. The focused
 source/helper checks above do not substitute for CI/manual checks at publication.
 Both `selfhost-checks.yml` and `qa-infra.yml` must be dispatched on the newly
 published branch before merge, even though the live self-hosted route is paused.
-Current-diff publication/PR and all live operations need the final concrete owner
-batch approval; owner merges. No local/mock PASS closes L10.
+Owner approval was received and cfb75e6 published in PR266; clean committed
+runtime qualification passed. Required manual workflows at that source passed:
+[selfhost41513559838](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41513559838)
+and [qa-infra41513565589](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41513565589).
+PR CI exposed two test-harness defects: a late rejection observer in the new
+Storage deadline test and stale ID/email mutation anchors from the earlier
+positive-predicate refactor. Both are corrected without production changes or
+weakened gates. Independent Security/QA reviews accept these fixes; the full
+local Python infrastructure baseline passes and both updated mutants are killed
+by assertion failures, with no test errors. Final CI/manual results must be tied
+to the next published commit, not inferred from these older runs. Owner merges.
+No local/mock PASS closes L10.

@@ -165,11 +165,19 @@ test('response body stalls remain abortable after headers and never reach SDK co
     const guarded = guardedFetch(selected.origin, entries, async (_url, init) => {
       signal = init.signal;
       return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 200 });
-    }, 20);
+    }, manual ? 30000 : 20);
     const pending = guarded.fetch(selected.origin + '/storage/v1/object/evidence/' + entries[0].path);
-    await new Promise((resolve) => setImmediate(resolve));
-    if (manual) guarded.abort();
-    await assert.rejects(pending);
+    // Observe rejection before yielding: a busy CI loop can fire the deadline first.
+    const rejected = assert.rejects(pending);
+    if (manual) {
+      await new Promise((resolve) => setImmediate(resolve));
+      guarded.abort();
+      assert.equal(signal.aborted, true);
+    } else {
+      // Deliberately let the deadline expire before awaiting its observed rejection.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    await rejected;
     assert.equal(signal.aborted, true); assert.equal(cancelled, true);
   }
 });

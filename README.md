@@ -52,16 +52,20 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 
 ## Project status
 
-**Hosted QA checkpoint (2026-11-02): L8 and L9 onboarding are complete; L10 is open.**
-The fixed runtime is r004/source `7d3e2e9`; #265 merged at `1530dba`.
-The [consolidated L10 acceptance package](infra/runbooks/11-qa-hosted.md#r004-consolidated-l10-acceptance-package-prepared-2026-11-02)
-records synthetic fixtures, seven real email attempts, exact cleanup/retirement,
-monitoring and the owner-selected r005 rollback/r006 return design. Two private
-recipients are bound; no seed or authoritative factor is loaded. This larger
-batch is not approved or executed; QA handover remains blocked. The proposed
-final r006 preserves r004 source/digests under an explicit release-ID exception.
-The known diagnostics/vault findings remain open; no numerical-emissions QA
-without authoritative factors. Earlier operation notes below are historical.
+**Hosted QA (2026-11-02): available for functional testing; L10 acceptance remains open.**
+The owner requested expedited QA intake tonight and a follow-up bug list. Live
+r004/source`7d3e2e9` is ARM-verified; login/liveness/readiness return200 and the
+protected endpoint401. Existing five-person QA accounts/data are preserved;
+no application deployment, fixture creation or application email was performed.
+[QA access, results and remaining tests](infra/runbooks/11-qa-hosted.md#functional-qa-intake--2026-11-02)
+record exact scope. Five monitoring resources were applied/read back; the owner
+acknowledged the Test and a baseline verifier execution Succeeded. Log ingestion
+and alert-chain acceptance remain open (three bounded queries returned0rows).
+Owner-version metadata was unconfirmed, so dependent fixture/lifecycle work
+stopped without retry. Full L10, authoritative numerical QA and wider G2 recovery
+remain open. [PR266](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/266)
+contains reviewed helpers/monitoring and CI harness fixes; owner merges.
+Earlier operation notes below are historical.
 
 **Phase 1 (Scope 1 & 2 core MVP) is complete** and running end‑to‑end on a local machine; UAT round 1 is closed, UAT round 2 ran on [`docs/uat/uat_round2.md`](docs/uat/uat_round2.md), and the **round-3 catalogue for the pilot candidate build** — four roles × two tenants × TR/EN — is [`docs/uat/uat_round3.md`](docs/uat/uat_round3.md) (LP4-04) and **Phase 3** is active — WP7 (audit viewer, reviewer UI, subsidiary edit), WP15 (UAT quick wins), WP16 (locations in the subsidiary flow), WP17 (completeness engine), WP18 (withdrawal + re-attribution), WP19 (the review gate on every cell), WP20 (report disclosure), WP21 (anomaly baseline provenance + recompute), WP22 (one column vocabulary behind all three report writers, and the names of who entered, decided and withdrew a record) and WP8 (bulk upload from CSV/XLSX with a dry run that provably writes nothing, plus bulk submit) have all shipped — as has the tooling around them: ESLint 9 gating CI, and a CI gate that runs the RLS containment probes on every PR with the full E2E suite nightly. Phase 2 (staging on Azure) has its credit approved and starts as LP2; its cloud‑independent prep is done. The launch plan — task cards, dates and task state — lives in [`docs/roadmap_docs/project_status_roadmap_phases.md`](docs/roadmap_docs/project_status_roadmap_phases.md).
 
