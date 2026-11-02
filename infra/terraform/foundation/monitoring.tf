@@ -82,3 +82,54 @@ resource "azapi_resource" "storage_verify_alert" {
   } }
   response_export_values = []
 }
+
+# Native ACA metrics do not depend on diagnostic-log ingestion.
+# https://learn.microsoft.com/azure/azure-monitor/reference/supported-metrics/microsoft-app-containerapps-metrics
+locals {
+  api_metric_alerts = var.config.monitoring == null ? {} : {
+    http_5xx = {
+      suffix     = "http-5xx", metric = "Requests", aggregation = "Total"
+      dimensions = [{ name = "statusCodeCategory", operator = "Include", values = ["5xx"] }]
+    }
+    restarts = {
+      suffix     = "restarts", metric = "RestartCount", aggregation = "Maximum"
+      dimensions = []
+    }
+  }
+}
+
+resource "azapi_resource" "api_metric_alert" {
+  for_each  = local.api_metric_alerts
+  type      = "Microsoft.Insights/metricAlerts@2018-03-01"
+  name      = "${local.stem}-api-${each.value.suffix}"
+  parent_id = azapi_resource.group.id
+  location  = "global"
+  tags      = local.tags
+  body = { properties = {
+    description          = "API ${each.value.metric} requires the named operator. Follow runbook 06."
+    enabled              = true
+    severity             = 1
+    evaluationFrequency  = "PT1M"
+    windowSize           = "PT5M"
+    autoMitigate         = true
+    scopes               = ["${azapi_resource.group.id}/providers/Microsoft.App/containerApps/${local.stem}-api"]
+    targetResourceType   = "Microsoft.App/containerApps"
+    targetResourceRegion = local.location
+    criteria = {
+      "odata.type" = "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria"
+      allOf = [{
+        name                 = each.key
+        criterionType        = "StaticThresholdCriterion"
+        metricNamespace      = "Microsoft.App/containerapps"
+        metricName           = each.value.metric
+        timeAggregation      = each.value.aggregation
+        operator             = "GreaterThan"
+        threshold            = 0
+        dimensions           = each.value.dimensions
+        skipMetricValidation = false
+      }]
+    }
+    actions = [{ actionGroupId = azapi_resource.operator["enabled"].id }]
+  } }
+  response_export_values = []
+}

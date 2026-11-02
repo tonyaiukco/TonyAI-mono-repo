@@ -85,7 +85,7 @@ class CloudSmokeTests(unittest.TestCase):
                     # Durable ID intent must precede every POST; password is not persisted.
                     self.assertTrue(journal.exists())
                     self.assertNotIn('password',journal.read_text())
-                    return {'id':'foreign' if failure=='created-id' else body['id'], 'email':'foreign' if failure=='created-email' else body['email']}
+                    return {'id':'11111111-1111-1111-1111-111111111111' if failure=='created-id' else body['id'], 'email':'foreign' if failure=='created-email' else body['email'], 'password':'must-not-persist', 'action_link':'must-not-persist'}
                 stack.enter_context(patch('cloud_smoke.auth_call',side_effect=auth))
                 clean = stack.enter_context(patch('cloud_smoke.cleanup'))
                 if failure == 'cleanup': clean.side_effect = SafeFailure('cleanup')
@@ -110,8 +110,33 @@ class CloudSmokeTests(unittest.TestCase):
                     with self.assertRaises(SafeFailure): run(candidate,contract,journal,direct_secret_version='c'*32)
                 clean.assert_called_once()
                 self.assertEqual(Path(str(journal)+'.passed.json').exists(),failure=='none')
-                if failure in ('created-id','created-email'): self.assertEqual(calls,[])
+                if failure in ('created-id','created-email'):
+                    self.assertEqual(calls,[])
+                    observed = json.loads(journal.read_text())['auth_create_observations']
+                    self.assertEqual(len(observed), 1)
+                    self.assertFalse(observed[0]['matches_intent'])
+                    self.assertNotIn('must-not-persist', journal.read_text())
+                    if failure == 'created-id':
+                        self.assertEqual(observed[0]['response_id'], '11111111-1111-1111-1111-111111111111')
+                        self.assertNotIn(observed[0]['response_id'], [t['userId'] for t in json.loads(journal.read_text())['target']['tenants']])
                 if failure == 'fixture': self.assertEqual(calls,['smoke-fixtures.mjs'])
+
+    def test_cleanup_only_cannot_accept_unresolved_unexpected_create_response(self):
+        import tempfile
+        from cloud_smoke import run
+        from test_prepare_release import fixture
+        candidate, contract = fixture()
+        journal = {'candidate': candidate, 'target': target_for(candidate),
+                   'auth_create_observations': [{'matches_intent': False,
+                       'response_id': '11111111-1111-1111-1111-111111111111'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'journal.json'
+            path.write_text(json.dumps(journal))
+            with patch('cloud_smoke.bind'), patch('cloud_smoke.secret', return_value='synthetic'), patch('cloud_smoke.cleanup') as cleanup:
+                with self.assertRaises(SafeFailure): run(candidate, contract, path, cleanup_only=True)
+            cleanup.assert_called_once_with(journal['target'], 'synthetic')
+            self.assertEqual(json.loads(path.read_text()), journal)
+            self.assertFalse(Path(str(path) + '.passed.json').exists())
 
     def test_cleanup_only_checks_journal_candidate_and_every_target_binding(self):
         import tempfile

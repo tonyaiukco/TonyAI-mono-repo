@@ -36,6 +36,49 @@ creates two random-ID super_admin tenants itself; it does **not** issue QA team
 accounts or prove the four-role matrix. Its Auth accounts are removed after each
 run; application rows and append-only audit remain labelled smoke evidence.
 
+## Functional QA intake — 2026-11-02
+
+**Available for functional QA on the owner's expedited handover decision; L10
+acceptance remains OPEN.** The owner approved the consolidated package, then
+asked to deliver tonight with general verification and let QA return its bug
+list. This releases the existing synthetic QA cohort to continue testing; it
+never marks unexecuted acceptance controls as passed or authorizes arbitrary
+QA tenant reset, factor loading or cloud operations.
+
+Verified live web: https://tonyaiqt-staging-web.nicefield-3f0ba1ab.swedencentral.azurecontainerapps.io/login
+API: https://tonyaiqt-staging-api.nicefield-3f0ba1ab.swedencentral.azurecontainerapps.io/api/v1
+The live release remains **r004/source7d3e2e9**, with the exact digests below.
+No r005/r006 deployment occurred. Keep the five existing individual QA accounts
+and their current data; the owner distributes credentials privately.
+
+| Observed control | Result / scope |
+|---|---|
+| Current ARM application binding | PASS: API/web images, source/revisions, HTTPS origins, runtime secret references and hold=true match r004 |
+| Public web/API | PASS: login200, liveness200/ok, readiness200/ready, protected health endpoint401/unauthorized |
+| Browser entry | PASS: empty login fields and Forgot password screen render; no reset submitted |
+| Monitoring foundation | Applied exact saved plan:5creates only, no other changes; all5live readbacks match |
+| Native API rules | Requests5xx and cumulative RestartCount rules enabled, exact API scope/operator routing verified |
+| Operator Test | Owner confirms Test received; client request outcome was unconfirmed, so no duplicate was sent; exact delivery time not supplied |
+| Scheduled verifier | Baseline job started once and observed Succeeded; hold=true/read-only verify. Structured Log Analytics matching returned0rows after3bounded queries: ingestion/alert chain remains unaccepted |
+| Exact-source helper qualification | Clean cfb75e6 Linux Node22/Prisma/CA with network disabled PASS; not an application login smoke |
+| A/D fixture and lifecycle journeys | NOT_RUN: owner-version metadata preflight unconfirmed; no retry, owner DB read or fixture creation followed |
+| Workflow/Storage boundaries/reports/mail/rollback | Remain QA/owner acceptance work; no new records, application emails, lifecycle changes or maintenance deployments were executed |
+| Backup metadata / wider recovery | NOT_RUN / OPEN; no Management token or recent backup result observed; no restore claim |
+
+QA should start with its existing role accounts: sign-in and company list,
+Water/evidence/author-submit/other-admin-approve, role refusals, period lock,
+TR/EN exports and own-company access in their existing synthetic holding.
+Discriminating cross-tenant isolation remains BLOCKED until an approved second
+tenant and known existing foreign-object positive controls are available; a
+random-ID404 is not isolation evidence.
+Do not run disable/enable/reset or invitation experiments on the protected five
+accounts. The automated A–F proposal below remains a distinct owner-operated
+acceptance scope; its new lifecycle tenant was not created.
+Occupied/locked November2026 still means STOP, not another month/unlock/retry.
+Authoritative numeric emissions are excluded. Record defects using the existing
+Reporting a defect section; no secrets or reset/signed links in bug reports.
+The PR is [#266](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/266); owner merges.
+
 ## Acceptance checklist
 
 Record source SHA, release ID, both image digests, timestamps and operator against
@@ -43,7 +86,7 @@ each result. An unchecked item is an open gate, not an assumed pass.
 
 - [ ] L4a proves project region/version/pooler/CA and owner privileges before migration;
   post-migration owner reconciliation and runtime-role checks pass.
-- [ ] `/api/v1/health` liveness and `/api/v1/health/ready` readiness pass; readiness
+- [x] `/api/v1/health` liveness and `/api/v1/health/ready` readiness pass; readiness
   includes all three private buckets. Liveness alone is insufficient.
 - [ ] Exact-release `cloud_smoke.py` passes both tenants' login, own/foreign API
   and PostgREST reads, PDF/XLSX/CSV and browser download, final ARM readback and
@@ -107,3 +150,387 @@ the owner immediately, stop that test and preserve minimal sanitized evidence.
 
 The owner signs QA availability only after L10 evidence and open-gate disposition;
 this does not close the wider G2 recovery/recreation gates or approve production.
+
+## R004 consolidated L10 acceptance package (prepared 2026-11-02)
+
+The owner approved this bounded batch. **Execution is partial; full L10 remains
+OPEN.** Current observations and expedited functional QA disposition are above. L9 remains
+COMPLETE; Water W1 is superseded as an execution proposal and its old evidence
+stays intact. The owner first selected current-host maintenance as a design, then approved
+the bounded batch. Maintenance was not executed after its fixture prerequisites
+stopped; the healthy r004 release remains live. Stop the affected subpackage on an unexpected result, changed
+release, collision, timeout, ambiguous commit or unresolved cleanup. No retry,
+alternate month, resend, unlock or repair is implicit. Expected negative tests
+are planned observations. Exact mandatory cleanup/retirement below remains in
+scope after a failure; it never grants foreign or broad deletion authority.
+
+### Fixed target and custody
+
+- Initial release `r004`, application source `7d3e2e9c70846ed76d677fe72cff8ab831924192`.
+- API `sha256:4126b6ce156625b987886884971183cdd83208c91d83dfe0fd1865fed1d27b68`;
+  web `sha256:ded9a4f423a73388b8d4035b09f41c3ccd799187424327a50a5ef0a36db6a33f`.
+- Original manifest SHA256 `bc2ec4e7c4a9c7e0c47766990d6a1496d444960aeadda266e34cb9f28904e667`;
+  candidate SHA256 `472296c27c6be86c17ba721671d823c358c0db8ac567ad6600f304b5135b55a0`.
+  Historical `candidate-r003.json` contains r004, not rollback bytes.
+- Private envelope `/private/tmp/tonyai-r004-l10-acceptance/` is owner-only.
+  The two real TR/EN inboxes are bound in `lifecycle-owner-targets.json` (0600),
+  independently checked against the protected five-person QA cohort. No new
+  address, alias or password is invented. The monitoring target is privately
+  bound to the owner-selected operator; it is not a disposable lifecycle user.
+- Application source remains a separate clean pinned checkout. `hosted_smoke.py`
+  requires a clean reviewed **helper commit**, independently prepares the exact
+  application/candidate fingerprint and inspects the cached Linux image before
+  credentials. No monkeypatch, dirty-source bypass, native Prisma or image pull
+  is permitted by this probe preparation. Node22/Prisma6.19.3/strict bundled CA
+  must pass `--verify-only` with network disabled at the published helper SHA.
+- One preflight metadata-only GET lists versions of **direct-url only** in the
+  manifest-bound vault (no secret values, no nextLink). Require exactly one
+  enabled version, record its immutable ID privately, and pass that explicit
+  version to every owner read. Multiple/absent versions stop owner-DB work; never
+  select latest or fall back. Backend/runtime versions remain release-pinned.
+- Preserve `storage_cleanup_hold=true` throughout. Secrets enter hidden prompts
+  or exact-version Key Vault reads and child stdin; never chat, argv, receipts,
+  git, Terraform input/state or raw logs. Private receipts contain exact IDs,
+  hashes and bounded observations, never passwords/tokens/action/signed URLs.
+  Preserve all L9 originals and never access the excluded IB1 directory.
+
+### Acceptance matrix
+
+The matrix below distinguishes actual observations from unfinished acceptance.
+Every observation must bind
+UTC and Europe/Istanbul time, operation, exact actor/target, release/source/digests
+and the underlying response. Prior successful exact-source CI/E2E/Integration
+41356114363/41356234839/41356114333 are attributed evidence, not new runs.
+
+| Control | Current state | Required hosted result |
+|---|---|---|
+| L9 / offline r004 manifest binding | PASS (prior) | Preserve original evidence; current ARM still required |
+| A exact-release two-tenant smoke | BLOCKED (owner-version metadata) | ARM match, own reads, foreign API/PostgREST confinement, exports/browser downloads, exact Auth absence |
+| B workflow/RBAC/lock/audit | NOT_RUN | Synthetic Water lifecycle, independent approval, valid-body denials, period inventory and immutable snapshot |
+| C Storage/evidence/TR-EN reports | NOT_RUN | Boundary/MIME/absence, signed expiry, foreign denial, partial retained output identity |
+| D mail/recovery/revocation/retirement | BLOCKED (no fixture creation) | Two real inboxes, seven-attempt ceiling, natural reset expiry/replay, old-session denial, scoped retirement |
+| D failure recovery | NOT_RUN | Explicit compiled-service fault seam, real DB pending, real Auth reconcile, API refusal |
+| E no-factor/localisation | NOT_RUN | No numeric fallback; remaining TR/EN UI/email/export observations |
+| F monitoring/backup/maintenance | PARTIAL:5resources/readbacks, Test acknowledgement, verifier Succeeded; logs0rows; backup/maintenance not run | Recent backup metadata, active routed rules, actual operator acknowledgement, job chain, rollback and return |
+| Numerical emissions | BLOCKED O6/LP4-02 | Authoritative factors/golden results; no synthetic substitute |
+| Full G2/production recovery | OPEN | Consistent DB+Storage restore, isolated outages/hung flights, rotation/Sentry and wider production gates |
+
+### One approval envelope, separately bounded operations
+
+**A — one exact-r004 smoke invocation.** `hosted_smoke.py` uses the existing
+smoke core with separate helper/application provenance and the Linux fixture
+transaction. It creates two no-mail synthetic Auth users, two organisations,
+two subsidiaries and two profiles (six application rows/six create audits).
+One browser login per fixture proves `/me`, own/foreign subsidiary reads/list
+confinement, PostgREST row confinement, API PDF/XLSX/CSV and browser PDF downloads.
+The six direct exports and two browser PDFs add eight generate/report audits.
+Before/after ARM verifies API/web and API revision inventory. Auth cleanup is
+mandatory: exact journalled ID/email/metadata match, delete and readback absence.
+Application/audit rows remain. An unexpected returned UUID is preserved but never
+deleted; intended-user absence cannot resolve that discrepancy. No cleanup-only
+rerun is automatically authorized. Allow at most three verification rounds
+(before/after A and before maintenance); no listSecrets or unrelated ARM access.
+
+**D0 — one no-mail lifecycle bootstrap, before B/C.**
+`hosted_lifecycle_bootstrap.py` creates one random Auth identity with confirmed
+synthetic `tonyai.test` address and a durable ban, then one new synthetic holding
+and its super_admin profile with two audits in one transaction. It unbans only
+its exact metadata-matched identity after commit/readback. Lost acknowledgement
+never authorizes deletion: failure quarantine targets only the intended identity,
+uses the established `876000h` ban and a new unknown password, then validates
+ID/email/metadata and future ban. Unexpected response IDs remain unresolved.
+This is an explicit owner/bootstrap write, not the cloud seed or an invitation.
+One bootstrap password is owner-created in the password manager and entered
+privately. Only the new tenant is a lifecycle mutation target.
+
+Invite two real inboxes through the r004 API: TR super_admin (independent
+approver) and EN consultant. Accept/set passwords/fresh sign-in and test used-link
+replay. Create exactly two synthetic UK subsidiaries, no sites: primary for
+November workflow/reporting; secondary for positive data_entry and maintenance
+journeys. No working QA account is reset, disabled, edited or offboarded. One
+existing protected consultant may sign in **read-only**, verify its own `/me` and
+company list, then request the known synthetic record/evidence/dataset/issuance
+IDs for foreign API404 and direct PostgREST zero-row checks. Its credentials do
+not enter the fixture/operator container.
+
+**B — four predeclared synthetic Water slots, never fallback slots.** Primary
+`2026/monthly/November/Water`, secondary September (data_entry), October (r005)
+and November (r006), all `locationId:null`, value100, unit`cubic_metres`,
+activityType null. Before **each** create verify that exact slot is empty and
+unlocked. Collision/lock stops its subpackage; no alternative date or unlock.
+Every create must be201/draft/Scope3/no_emission_factor/no numeric tCO2e. Four
+small valid synthetic CSV evidence files are retained, one per accepted record.
+
+For primary, bootstrap author creates/uploads; TR admin's non-author submit
+must403/record_author_forbidden. EN consultant and later EN viewer each attempt
+one valid scoped create/submit/approve/evidence-upload/period-lock (ten expected
+role refusals). Consultant review/reject/dataset/partial-issuance rights are not
+blanket mutation denials. After author submit200, author self-approve must
+403/self_approval_forbidden and TR admin approve200. Enumerate **all** primary
+November records/pagination before locking; require this approved Water to be
+the only affected record. One lock must lock exactly one record, preserve its
+snapshot and produce recordsLocked1. Repeat the valid create once after lock:
+409/period_locked, before duplicate insertion. Leave record/evidence/lock intact.
+
+Change EN consultant→data_entry; grant only primary, verify fresh `/me`, own
+read and secondary refusal; add secondary grant, then EN creates/evidences/
+submits secondary September and TR admin approves. Change EN→executive_viewer
+and verify the source clears both grants with corresponding audited deletes.
+All denied writes use valid scoped IDs/bodies so schema/foreign404 cannot mask
+RBAC. No additional role, factor or record lifecycle repair is allowed.
+
+Reconcile complete exact-entity audit pagination/total after each stage: actor,
+action, timestamps/diff, snapshot and storage side effects. One audit per logical
+mutation, none for refusals; role and subsidiary_access audits share the EN profile ID: distinguish
+entity/action and reconcile diff.subsidiaryId for each grant. Evidence and
+period_lock use their own IDs. Do not assert a global audit count that ignores exports or conditional freeze.
+Never mutate audit to test append-only behavior.
+
+**C — private Storage and synthetic report boundary.** One
+`hosted_storage_probe.py` invocation checks all three private bucket settings
+(10/2/20MiB; documented PDF/image/XLSX/CSV allowlists). Twelve sequential unique
+paths total: small valid MIME, exactly-limit, limit+1 and wrong MIME per bucket;
+no upsert. Intent is persisted before any upload. Successful bytes/hash,
+anonymous and real-user non-signed denial, same-origin signed bytes, actual
+60-second expiry while service bytes still exist, and exact authenticated
+NoSuchKey absence are separate checks. Cleanup removes only the twelve exact
+probe paths, including lost upload ACK, and requires absence; generic404 is not
+proof. The probe buffers/deadlines whole bodies; no prefix/listing deletion.
+It validates Storage MIME rules, not PDF content validity.
+
+Against the primary draft, one mismatched-content and one malformed-PDF API
+upload must leave no metadata/audit/owned bytes. Valid evidence URL must have
+expiresIn60 and matching bytes; after65s require signed denial with adopted
+bytes still present. Preserve adopted evidence and issued PDFs.
+
+Generate live PDF/XLSX/CSV once per language (six exports) and observe browser
+downloads. Scope3 Water is excluded from Scope1/2 totals and the emissions CSV;
+PDF/XLSX show the actual TR/EN Not covered disclosure. Uncalculated is never
+measured zero; CSV machine headers stay English. Live generate/report audit rows
+have entityId:null: filter actor/action/entity/time plus company/year/template/
+format, reconcile all pages. Do not use an entityId filter that hides them.
+
+Create exactly one new2026 inventory boundary, configure **primary only** for
+November, no sites/sources; the five Scope1/2 category applicability entries are
+explicitly undetermined with a synthetic-QA reason. Do not confirm the boundary.
+Capture one primary-only dataset after reviewing its DTO selection; capture may
+commit a freeze before subsequent assembly fails. No retry/unfreeze. Require
+issuance-preview partial with boundary_unconfirmed/applicability_undetermined;
+if final/unclear, stop before issue. Issue at most one partial PDF per language
+(two issuances). Download each PDF twice and compare bytes/hash with stored
+fingerprint/size; download each retained XLSX/CSV once and reconcile to its dataset.
+These exports are generated from retained data, not stored-byte guarantees.
+Foreign evidence/dataset/issuance refusals use the protected read-only consultant
+before retirement. Owning rows/objects remain permanent synthetic artefacts.
+
+**D — seven real email attempts maximum; one natural expiry wait.**
+Two invitation sends above; two initial password-reset emails (TR+EN) left unused
+until after their observed one-hour expiry; then one actual expiry attempt each.
+Do not mint fresh links before this check: supersession is not expiry. Two new
+reset emails recover both users; prove replay refusal/new-password fresh login.
+One final EN reset follows disable→enable and the durable300s cooldown. No resend,
+SMTP/429 retry or policy/time modification. Seven is a ceiling, not permission
+to repeat failed sends. Natural unused **invitation** expiry is not newly proved
+by this design; prior dead-link observations remain attributed evidence.
+Delivery requires actual inbox/spam kind/language/sender/origin/time observations;
+202/audit alone is not arrival. Links/passwords enter private prompts, never chat.
+
+EN-only disable/enable: privately capture original access/refresh and one
+pre-disable refreshed access specimen; disable once, test password sign-in,
+API and refresh refusal; enable once, both old access specimens remain refused.
+Attempt the old refresh once after enable; if Auth mints a token, API must refuse
+session_revoked using earliest AMR; otherwise record Auth refusal, not a minted
+token claim. Both operations rotate the password, hence the seventh recovery
+email is required for fresh EN login. No unplanned password-change mail.
+
+After all EN journeys and maintenance, `hosted_lifecycle_operator.py` injects
+one `AuthAdminError('auth_unavailable')` at the compiled r004 `setBanned` service
+boundary **before provider HTTP**, EN only. Shipped AccessAdmin/Lifecycle/AuthSync
+services on the real owner connection must commit disable+audit and leave
+pending; real Auth still recognizes the captured token while ACA API refuses
+it. This is a compiled-service fault seam with real hosted DB, not a naturally
+failed ACA request/provider outage or runtime-role grant proof. Run shipped CLI
+reconcile dry then apply once for this exact pending EN ID; verify real Auth ban,
+cleared pending and no mail. Finish with shipped offboard dry/apply for only this
+new holding. Require offboardedAt, disabled exact member roster, authPending[]
+and token refusals. Retain Auth/application/evidence/report/audit rows (D17).
+The wrapper permits the exact journalled1–3member subset for early-failure
+retirement; unexpected members/IDs stop it. No repeated apply/reconcile or hard
+delete is implicit. Ambiguous membership needs review, not broader cleanup.
+
+**E — no-factor and localisation.** Two valid Electricity previews, one per
+language, must404/no_factor with appropriate coverage, no persisted calculation.
+Record remaining TR/EN role/error/data-entry/report/email observations in these
+journeys. No seed, factor load, demo factor, numeric fallback or numerical QA.
+
+**F — current-host monitoring and maintenance, a requested explicit exception.**
+First execute the private eight-GET ARM allowlist: exact job/action group/storage
+alert and resource-group metric/query-rule inventories; no nextLink traversal.
+The other three exact ACA environment/diagnostic/workspace metadata GETs
+bind job logs to the existing workspace; no listKeys/listSecrets. Run
+`hosted_backup_evidence.py` once with a hidden backups_read Management token:
+one pinned-project GET `/database/backups`, whole-request60s, no download/restore.
+Require an actual COMPLETED timestamp no older than36h; record latest seven
+COMPLETED backup inserted_at timestamps, region and WAL/PITR flags. This is recent-backup metadata,
+not independent daily-schedule, restore or Storage-byte proof. The Pro custom
+schedule endpoint is Enterprise-only and must not be called.
+
+Foundation state access is restricted to init/one saved plan/one saved apply for
+**monitoring only**, using existing backend and owner session. Populate the
+private monitoring input from exact r004 API/secret versions and the bound
+operator. Review `terraform show -json` privately before apply. Allow create/update
+only of storage_verify[enabled], operator[enabled], storage_verify_alert[enabled]
+and api_metric_alert[http_5xx|restarts]. Any other address, delete, replacement,
+import, grant, network/vault/diagnostic drift or unknown plan stops before apply;
+no `-target`, state edit or automatic repair. Apply that exact saved plan only.
+The two new native metric rules use Requests/Total/statusCodeCategory5xx and
+RestartCount/Maximum>0, exact API scope and existing action group. RestartCount
+is cumulative: no guaranteed five-minute clearing or new notice per restart.
+This replaces the proposed log-dependent API alarm implementation; it does not
+claim diagnostics ingestion is fixed.
+
+One action-group Test targets only the bound operator; require actual receipt
+and acknowledgement. Before fault injection, require baseline job exit0 ingested
+and the exact storage alert state Resolved; otherwise the chain stays BLOCKED,
+never attribute a prior/initial notification to the new fault. Allow at most six
+read-only alert-state inspections limited to this exact rule and test interval,
+without nextLink traversal or unrelated alert content. At most five starts of the exact storage-verification job,
+no retries: baseline; one at a time removal of exact retained synthetic evidence,
+new import-source probe and retained issued-PDF bytes; clean after restoration.
+Before each removal save/hash bytes privately; restore **that exact path and
+bytes**, preserve metadata, and require download/hash via owning evidence/issuance
+APIs after restoration. Import-source is explicitly an unowned synthetic probe,
+so it proves bucket restore only and cannot trigger an owning-row mismatch.
+Journal its exact thirteenth probe path before create; after restore/hash
+comparison, delete only that unowned path and require authenticated NoSuchKey
+absence before the final clean job. Adopted evidence/PDF never receive this cleanup.
+Use the evidence or issued-PDF mismatch to prove one real job exit1→log→alert→
+operator chain; bucket probe deletion must not be mislabeled as that trigger.
+If exit1 persists, restore bytes immediately before any further operation.
+If live ingestion/config is unsuitable, stop the alert chain; do not synthesize
+logs, change tables/queries or disable rules to get a green result. Bounded log
+queries: exact job, execution IDs, operation interval≤2h, at most10 queries,
+project only time/execution/event/exitCode. Retain received acknowledgement.
+A failed result keeps the rule fired for26h; later clean verification does not
+prove independent exit2 or elapsed26h outage delivery. Initial missing-result
+firing is not a post-success26h outage drill. No API crash/5xx injection is approved;
+read back both real metric rules/scopes/routing and provider metric definitions.
+
+Reserve one≤90min maintenance window on the existing QA API/web hosts; QA can
+be unavailable twice. Confirm r005 and r006 do not already exist; if either
+exists, STOP, never choose another ID. Preserve exact original manifests.
+Deploy r005 once carrying prior r003 bytes/source
+`a9476eb735cad53aa7091932dd02b38a4070cefb`, API
+`sha256:e9ba267817667e8580afc39bfd1ace12f62cf012e044abe77ba30f4d8446495d`, web
+`sha256:15f41c1b2cb86fbf357d8507e259a257cd04b1202a8215508cf3e9fd53b7a0f3`.
+API runtime/schema/migrations/shared contracts are identical across these sources;
+the38-line API difference is test-only. **Web differs**: known r003 login/link/
+analytics behaviors temporarily return. Restrict the test browser to approved
+origins; no ordinary QA use during maintenance. No migration/build/push.
+
+Use the reviewed deploy helper (including #264 drain/settle) with exact saved
+application plans and existing backend only. One rollback and one return apply;
+allow only API/web revision image/source/release changes, no credential/config/
+identity/network/grant changes. The two deploy invocations may list API revisions/replicas and deactivate only
+the outgoing API revisions captured immediately before that invocation; no
+revision deletion, unrelated app mutation or arbitrary activation. Record drain,
+settled active revisions/outgoing
+replica absence, readiness/liveness, synthetic login/read/write journey and RTO
+(actual measured, target≤10min each). Secondary October writer journey on r005;
+secondary November on r006, same evidence/independent-approval contract as B.
+Return once to **r006 with exact r004 source/digests**; only release ID differs
+from r004 input. After return, final ARM+browser acceptance must identify r006,
+not falsely claim r004 is still the live ID. Never clear hold. Failed rollback
+still permits the one preapproved r006 return; no further redeploy/rollback loop.
+
+Execution order: clean helper qualification→A→D0/invites→B/C/E, reset expiry wait
+in parallel→C foreign checks→monitoring/backup→r005/r006 maintenance→remaining
+D recovery/token/fault/reconcile→authenticated final r006 browser checks using
+the still-enabled TR admin→mandatory retirement→public browser/ARM r006 checks. Do not
+retire before writer/token tests need the identities. An unexpected r006 return
+failure stops handover and requires new recovery approval; preserve evidence.
+
+### Handover and wider gates
+
+Full L10 sign-off requires the above mandatory observations and explicit owner
+acceptance of the disclosed boundary. The expedited functional QA intake above
+is a separate, partial owner disposition, not that sign-off. Boundaries remain:
+no authoritative numerical acceptance; full DB+three-bucket consistent disaster
+restore/recreation, isolated DB/Storage outages/hung flights, provider credential
+rotation and Sentry delivery remain wider G2/LP5 work. Three-bucket restoration
+above is not a full DB restore. No data-loss/RPO claim follows from backup metadata.
+Sentry configuration is absent; never fabricate a receipt or enable a DSN without
+runbook06's privacy/review gate. Fresh unused-invitation expiry and delayed26h
+monitoring remain separately disclosed, not passed. If the owner requires these
+for QA too, retain QA handover BLOCKED and plan the wider rehearsal explicitly.
+
+Use this runbook and the single central planning file for the final QA entry,
+release binding, accepted limits, operator, defect reporting and evidence links;
+never create another status/roadmap/handoff file. Preserve approximately2m40s
+prior rollout outage/40s overlap and migration compatibility allowances. Existing
+diagnostics destination=null, vault networkAcls absence, Outlook spam, A4D1
+metadata/audit provenance and paused qa_* findings remain open without repair.
+The paused self-hosted route/resources/workflows are not resumed or deleted.
+
+### Local verification and review (not hosted acceptance)
+
+Earlier publication fa18ba3 and manual selfhost-checks41496050486 /
+qa-infra41496056240 passed; they do not validate this larger unpublished diff.
+Current preparation adds Linux adapters, exact fixture transaction reuse,
+Storage expiry/absence, no-mail bootstrap/quarantine, scoped service/CLI lifecycle,
+bounded backup metadata and two native API metric alerts. No application
+runtime, factor, schema or migration changes.
+
+At HEAD `629e3a9703a9441625464d3b628805da90c3b645` plus this working diff,
+in `/Users/denizb/.codex/worktrees/hosted-l9-diagnostic/TonyAI-mono-repo-codex`,
+Node22.23.3 `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` pass.
+Lint initially found four new Storage-helper errors; the empty catches now
+explain their safe handling and mandatory cleanup is extracted without changing
+its finally semantics. Rerun lint passes with eight existing warnings. Turbo
+replayed6/6 typecheck/test and4/4 build tasks; E2E TypeScript executed. The actual
+CI Node glob (`infra/tests/*.test.mjs`) independently passes548tests/23files after
+the cleanup refactor. Hosted Python pattern40tests and cloud-smoke9tests pass;
+Terraform policy, recursive fmt and diff check pass. Isolated backend-free
+foundation mock tests passed9/9 on the same Terraform changes; this is not an
+Azure plan. Cached exact-r004 Linux network-none runtime/receipt-IO probes passed,
+including UID1000 and host readback; they used a working public bundle and do
+not replace clean committed-helper qualification after publication.
+
+Fresh independent Security/RLS, QA and DevOps reviews accepted source/proposal
+boundaries with no remaining P0–P2. Review-discovered long-ban/password-rotation,
+identity readback, whole-body deadline, early-retirement subset and durable
+step/outcome-custody fixes have permanent regressions. QA also exercised actual
+compiled r004 service constructors with an in-memory transactional DB: one
+injected disable audit/pending state and zero provider requests. This is not a
+hosted injection result. Detailed review/check receipts (including the Security
+harness's three fake-project/synthetic-token worker attempts with unobserved
+HTTP outcome) remain in the private envelope; no real credential/tenant was
+used in those attempts and they are not called zero-network proofs.
+
+API integration/RLS were not run locally; no runtime API path or schema changed.
+The full offline Python infrastructure baseline was subsequently run and passed
+for the test-only follow-up; the two updated identity mutants were killed.
+The full129mutant run remains CI work, not claimed from that targeted result. The focused
+source/helper checks above do not substitute for CI/manual checks at publication.
+Both `selfhost-checks.yml` and `qa-infra.yml` must be dispatched on the newly
+published branch before merge, even though the live self-hosted route is paused.
+Owner approval was received and cfb75e6 published in PR266; clean committed
+runtime qualification passed. Required manual workflows at that source passed:
+[selfhost41513559838](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41513559838)
+and [qa-infra41513565589](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41513565589).
+PR CI exposed two test-harness defects: a late rejection observer in the new
+Storage deadline test and stale ID/email mutation anchors from the earlier
+positive-predicate refactor. Both are corrected without production changes or
+weakened gates. Independent Security/QA reviews accept these fixes; the full
+local Python infrastructure baseline passes and both updated mutants are killed
+by assertion failures, with no test errors. Final tested source `071e85340a492118faab189e9f38766148ee5574` passed all four:
+[CI41517516123](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517516123),
+[Infrastructure41517516061](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517516061),
+[selfhost41517591495](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517591495),
+[qa-infra41517596319](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517596319).
+Node22.23.3 lint/typecheck/build/test also pass directly at071e853 in the same
+worktree (cached application tasks; eight existing lint warnings). Clean final
+helper offline qualification passes. This closing results update changes docs
+only, preserving tested source/test/Terraform/workflow blobs; it does not claim a
+new code test run or close the remaining hosted L10 controls. Owner merges.
+No local/mock PASS closes L10.

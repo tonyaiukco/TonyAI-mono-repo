@@ -11,7 +11,7 @@ ALLOWED = {
         'Microsoft.Insights/diagnosticSettings', 'Microsoft.KeyVault/vaults',
         'Microsoft.ManagedIdentity/userAssignedIdentities', 'Microsoft.Authorization/roleAssignments',
         'Microsoft.Authorization/roleDefinitions', 'Microsoft.App/jobs',
-        'Microsoft.Insights/actionGroups', 'Microsoft.Insights/scheduledQueryRules',
+        'Microsoft.Insights/actionGroups', 'Microsoft.Insights/scheduledQueryRules', 'Microsoft.Insights/metricAlerts',
         'Microsoft.Communication/emailServices', 'Microsoft.Communication/emailServices/domains',
         'Microsoft.Communication/communicationServices', 'Microsoft.Communication/communicationServices/smtpUsernames'},
     'application': {'Microsoft.App/containerApps'},
