@@ -9,6 +9,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
+import tempfile
 import uuid
 from candidate import bind
 from check_browser_key import check_inputs
@@ -102,7 +103,24 @@ def validate_cleanup_target(target, candidate, release):
 
 
 def run(candidate, inputs, journal_path, cleanup_only=False, direct_secret_version=None):
-    bind(candidate, inputs, inputs['release']['source_sha'])
+    return execute(candidate, inputs, journal_path, cleanup_only, direct_secret_version)
+
+
+def execute(candidate, inputs, journal_path, cleanup_only=False, direct_secret_version=None,
+            fixture_runner=None, source_binding=None):
+    # Every entry to live execution proves provenance itself. No caller-supplied
+    # boolean or callback may stand in for the candidate/release/source checks.
+    if source_binding is None:
+        bind(candidate, inputs, inputs['release']['source_sha'])
+    else:
+        from migration_binding import clean, prepare
+        if (not isinstance(source_binding, tuple) or len(source_binding) != 2
+                or (not cleanup_only and not callable(fixture_runner))):
+            raise SafeFailure('Hosted execution requires both clean sources and its Linux fixture.')
+        helper_sha, application_source = source_binding
+        clean(ROOT, helper_sha)
+        with tempfile.TemporaryDirectory(prefix='tonyai-smoke-recheck-') as public:
+            prepare(Path(application_source).resolve(), inputs, candidate, Path(public))
     f, r = inputs['foundation'], inputs['release']
     if cleanup_only:
         journal = json.loads(Path(journal_path).read_text())
@@ -151,7 +169,10 @@ def run(candidate, inputs, journal_path, cleanup_only=False, direct_secret_versi
                 raise SafeFailure('Created identity differs from recorded intent; preserve the journal for owner review.')
         env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH')}
         env['SMOKE_TARGET_JSON'] = json.dumps(target)
-        child('smoke-fixtures.mjs', {**env, 'DIRECT_URL': database})
+        if fixture_runner is None:
+            child('smoke-fixtures.mjs', {**env, 'DIRECT_URL': database})
+        else:
+            fixture_runner(target, database)
         # The browser child never receives the DB URL or backend credential.
         browser_env = {k: v for k, v in env.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH', 'SMOKE_TARGET_JSON')}
         browser_env.update(SMOKE_PUBLIC_KEY=public, SMOKE_PASSWORD_1=passwords[0], SMOKE_PASSWORD_2=passwords[1])

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateSmoke } from './smoke-contract.mjs';
+import { provisionRows } from './smoke-fixture-transaction.mjs';
 const require = createRequire(new URL('../../apps/api/package.json', import.meta.url));
 const { PrismaClient } = require('@tonyai/db');
 
@@ -31,35 +32,8 @@ export async function provision(target, Client = PrismaClient) {
   validateSmoke(target);
   if (!['staging', 'qa-sweden'].includes(target.mode)) throw new Error('Staging fixtures only');
   const prisma = new Client({ datasourceUrl: fixtureDatabaseUrl(target, process.env.DIRECT_URL ?? ''), log: [] });
-  // Keep the paused adapter's historical fixture; hosted QA uses the app vocabulary.
-  const geographyCode = target.mode === 'staging' ? 'UK' : 'DE';
   try {
-    // Single transaction: an interrupted prepare leaves all or none of these rows.
-    await prisma.$transaction(async (tx) => {
-      for (const tenant of target.tenants) {
-        const mutations = [
-          ['organisation', tenant.organisationId, () => tx.organisation.create({ data: {
-            id: tenant.organisationId, legalName: tenant.name,
-            country: target.mode === 'staging' ? 'UK' : 'DE', geographyCode,
-          } })],
-          ['subsidiary', tenant.subsidiaryId, () => tx.subsidiary.create({ data: {
-            id: tenant.subsidiaryId, organisationId: tenant.organisationId,
-            legalName: tenant.name, geographyCode,
-          } })],
-          ['profile', tenant.userId, () => tx.profile.create({ data: {
-            id: tenant.userId, email: tenant.email, fullName: 'LP2 synthetic smoke',
-            organisationId: tenant.organisationId, role: 'super_admin',
-          } })],
-        ];
-        for (const [entity, entityId, mutate] of mutations) {
-          await mutate();
-          await tx.auditLog.create({ data: {
-            action: 'create', entity, entityId, organisationId: tenant.organisationId,
-            diff: { purpose: 'LP2-02 synthetic staging smoke; no customer inventory' },
-          } });
-        }
-      }
-    });
+    await provisionRows(target, prisma);
   } finally { await prisma.$disconnect(); }
 }
 

@@ -55,8 +55,11 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 **Hosted QA checkpoint (2026-11-02): L8 and L9 onboarding are complete; L10 is open.**
 The fixed runtime is r004/source `7d3e2e9`; #265 merged at `1530dba`.
 The [consolidated L10 acceptance package](infra/runbooks/11-qa-hosted.md#r004-consolidated-l10-acceptance-package-prepared-2026-11-02)
-records the live scopes, mutation/cleanup limits, missing inputs and operational
-blockers. It is prepared, not approved or executed; QA handover remains blocked.
+records synthetic fixtures, seven real email attempts, exact cleanup/retirement,
+monitoring and the owner-selected r005 rollback/r006 return design. Two private
+recipients are bound; no seed or authoritative factor is loaded. This larger
+batch is not approved or executed; QA handover remains blocked. The proposed
+final r006 preserves r004 source/digests under an explicit release-ID exception.
 The known diagnostics/vault findings remain open; no numerical-emissions QA
 without authoritative factors. Earlier operation notes below are historical.
 
@@ -640,31 +643,26 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > exports/audit/monitoring/handover remain L10/LP4-01 OPEN; LP2-HQ stays IN_PROGRESS.
 > No further L9 live test is required. Remaining work uses a consolidated bounded
 > checklist/batch for owner review, not per-role/per-click approval loops.
-> Later live actions/notifications/handover need explicit bounded owner approval. Next deploy
-> ownership is undecided; application state/Container Apps remain out of scope.
-> Drain caused about 2 min 40 s downtime and roughly 40 s old/new overlap; migration
-> compatibility must allow old code for about a minute (LP5-03 decision pending).
-> #264's bounded wait has not passed a real deploy; first exercise is next release.
-> verify-only does not wait and may fail transiently just after apply. Paused qa_*
-> fixes remain deferred. storage_cleanup_hold stays true; old r003 inputs preserved.
-> Prior 88b80b4 Node 22 lint/typecheck/build/test and 22 offline infra tests passed
-> (8 existing lint warnings; Turbo cached). Additional 350 existing mock tests passed
-> for an unexecuted Water-draft L10 proposal, not a L9 gate. No agent live operation
-> ran. #265 is merged; the owner has authorized this preparation diff to be committed/pushed and the
-> two manual infrastructure workflows to run; no live cloud action is authorized.
-> The consolidated L10 package in runbook 11 includes exact-release smoke, Water,
-> Storage/retained-report effects, separate disposable mail/lifecycle identities
-> and explicit blocked operational drills. Independent review found local helper
-> custody/cleanup defects: unexpected Auth IDs are now retained without deletion
-> authority, and Storage probes journal paths before upload and clean up after a
-> lost response. `probe-storage --journal <new-private-path>` selects the receipt;
-> omission creates a private temporary journal. Delete acknowledgement does not
-> prove absence. Helper publication/manual CI results are tracked in the central plan. The Linux launcher, supplemental
-> Storage adapter, existing boundaryId and disposable recipients remain blockers.
-> Current ARM readback is not inferred
-> from owner continuity. Auth-sync fault recovery and authoritative numeric QA
-> remain separate blockers. No working QA account is a lifecycle test target.
-> Allowed evidence backup refreshed; previously forbidden private IB1 area excluded.
+> The current runbook11 batch replaces the earlier blocked preparation. It uses
+> separate clean helper/application sources and cached Linux Prisma/strict CA,
+> a no-mail bootstrap plus two privately bound real inboxes (seven mail attempts),
+> two synthetic subsidiaries, four declared Water slots and one synthetic boundary.
+> It never seeds the cloud or substitutes demo factors. Protected QA accounts are
+> not lifecycle targets; one consultant read-only session supplies foreign denials.
+> The local Storage adapter proves authenticated absence and natural signed expiry;
+> the lifecycle adapter confines the compiled-service fault seam and shipped CLI
+> reconcile/offboard to the exact synthetic tenant, retaining its artefacts.
+> Owner-selected maintenance design: one r005 rollback to oldr003 bytes, one r006
+> return to exactr004 source/digests on the same QA hosts. QA may be unavailable;
+> old web regressions temporarily return. This requires explicit live approval.
+> Two native API metric rules and real operator/job delivery are proposed; backup
+> metadata does not prove full restore. Full G2/Sentry/rotation/numerical gates,
+> diagnostics/vault/spam/history/paused-route findings remain disclosed and open.
+> Earlier publication fa18ba3 and both manual infrastructure workflows passed;
+> this larger unpublished helper/Terraform diff needs new review/checks/publication
+> and both manual dispatches. No live operation or approval is inferred.
+> storage_cleanup_hold stays true; original r003/r004 and L9 evidence are preserved.
+> Allowed evidence backup excludes the forbidden IB1 area.
 > See [the hosted configuration contract](infra/README.md).
 
 **Paused self-hosted route (kept; resumes after the pilot launch).** The text from here to

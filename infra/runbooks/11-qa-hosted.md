@@ -110,289 +110,360 @@ this does not close the wider G2 recovery/recreation gates or approve production
 
 ## R004 consolidated L10 acceptance package (prepared 2026-11-02)
 
-This is the single remaining acceptance package, **NOT RUN / NOT APPROVED**.
-It incorporates the deferred Water W1 proposal; do not execute W1 separately.
-L9 onboarding is closed. Positive role reads do not prove write refusal or
-isolation. Existing login/dead-link observations need no gratuitous repeat.
-Preparation branch: `chore/hosted-r004-l10-acceptance`, base
-`1530dba767f30a9e62b9393e1c72ccf190171c30` (owner merged #265).
-Two local helper failure-path fixes were required by independent review: preserve unexpected Auth response IDs and journal exact Storage paths before uploads, including lost-response cleanup. No application, Terraform, migration, gate or factor change is proposed. The owner approved publication and both manual infrastructure workflows; their results are tracked in the central planning file. A clean reviewed launcher must still be bound.
+This is one reviewable owner batch: **NOT RUN / NOT APPROVED**. L9 remains
+COMPLETE; Water W1 is superseded as an execution proposal and its old evidence
+stays intact. The owner selected current-host maintenance as a design, not as
+live approval. Stop the affected subpackage on an unexpected result, changed
+release, collision, timeout, ambiguous commit or unresolved cleanup. No retry,
+alternate month, resend, unlock or repair is implicit. Expected negative tests
+are planned observations. Exact mandatory cleanup/retirement below remains in
+scope after a failure; it never grants foreign or broad deletion authority.
 
 ### Fixed target and custody
 
-- Release `r004`; application source
-  `7d3e2e9c70846ed76d677fe72cff8ab831924192`.
+- Initial release `r004`, application source `7d3e2e9c70846ed76d677fe72cff8ab831924192`.
 - API `sha256:4126b6ce156625b987886884971183cdd83208c91d83dfe0fd1865fed1d27b68`;
   web `sha256:ded9a4f423a73388b8d4035b09f41c3ccd799187424327a50a5ef0a36db6a33f`.
-- Existing r004 manifest SHA-256
-  `bc2ec4e7c4a9c7e0c47766990d6a1496d444960aeadda266e34cb9f28904e667`;
-  candidate SHA-256
-  `472296c27c6be86c17ba721671d823c358c0db8ac567ad6600f304b5135b55a0`.
-  `candidate-r003.json` contains the r004 source/digests; its filename is historical.
-- Exact-source successful CI/E2E/Integration runs 41356114363 / 41356234839 /
-  41356114333 are prior evidence, not freshly executed tests. Deploy helper
-  `c8ca4af` and preparation `88b80b4`/`1530dba` are not runtime source changes.
-- Preserve `storage_cleanup_hold=true`. No state access, apply, deploy, migration,
-  seed, reset, broad deletion or paused-route operation. The narrow ARM GET
-  exception in A is requested, not presumed. There is no image-attesting
-  application health or `/me` field. Manifest and owner continuity declarations
-  are not independent current ARM verification.
-- Private execution envelope: `/private/tmp/tonyai-r004-l10-acceptance/`.
-  Store target IDs, exact object keys, recipient bindings and receipts there,
-  owner-only. Never record passwords, tokens, action URLs or signed URLs in
-  receipts. Freeze each attempt's evidence; never rewrite original L9 receipts.
-  Do not access the excluded IB1 evidence directory.
+- Original manifest SHA256 `bc2ec4e7c4a9c7e0c47766990d6a1496d444960aeadda266e34cb9f28904e667`;
+  candidate SHA256 `472296c27c6be86c17ba721671d823c358c0db8ac567ad6600f304b5135b55a0`.
+  Historical `candidate-r003.json` contains r004, not rollback bytes.
+- Private envelope `/private/tmp/tonyai-r004-l10-acceptance/` is owner-only.
+  The two real TR/EN inboxes are bound in `lifecycle-owner-targets.json` (0600),
+  independently checked against the protected five-person QA cohort. No new
+  address, alias or password is invented. The monitoring target is privately
+  bound to the owner-selected operator; it is not a disposable lifecycle user.
+- Application source remains a separate clean pinned checkout. `hosted_smoke.py`
+  requires a clean reviewed **helper commit**, independently prepares the exact
+  application/candidate fingerprint and inspects the cached Linux image before
+  credentials. No monkeypatch, dirty-source bypass, native Prisma or image pull
+  is permitted by this probe preparation. Node22/Prisma6.19.3/strict bundled CA
+  must pass `--verify-only` with network disabled at the published helper SHA.
+- One preflight metadata-only GET lists versions of **direct-url only** in the
+  manifest-bound vault (no secret values, no nextLink). Require exactly one
+  enabled version, record its immutable ID privately, and pass that explicit
+  version to every owner read. Multiple/absent versions stop owner-DB work; never
+  select latest or fall back. Backend/runtime versions remain release-pinned.
+- Preserve `storage_cleanup_hold=true` throughout. Secrets enter hidden prompts
+  or exact-version Key Vault reads and child stdin; never chat, argv, receipts,
+  git, Terraform input/state or raw logs. Private receipts contain exact IDs,
+  hashes and bounded observations, never passwords/tokens/action/signed URLs.
+  Preserve all L9 originals and never access the excluded IB1 directory.
 
 ### Acceptance matrix
 
-These statuses describe hosted acceptance, not source/mock coverage. Only L9
-and offline target binding currently pass. Each live result needs UTC and
-Europe/Istanbul time, actor, release/source/digests, operation ID, exact private
-correlation and observed outcomes. An absent observation remains NOT_RUN.
+No hosted row below has passed in this preparation. Every observation must bind
+UTC and Europe/Istanbul time, operation, exact actor/target, release/source/digests
+and the underlying response. Prior successful exact-source CI/E2E/Integration
+41356114363/41356234839/41356114333 are attributed evidence, not new runs.
 
-| Control | PASS/FAIL/NOT_RUN/BLOCKED | Evidence / pass predicate | Remaining dependency |
-|---|---|---|---|
-| L9 synthetic onboarding | PASS | Combined assessment and later first-admin confirmation; five owner profile/login observations, four invited company reads | Outlook spam quality finding remains; no first-admin company-list proof |
-| Offline r004 binding | PASS | Manifest/candidate hashes above, selected source/digests and hold agree | Current ARM verification still requires A |
-| A: two-tenant exact-release smoke | BLOCKED | Before/after ARM match; own API/PostgREST controls and foreign denial; live PDF/XLSX/CSV and browser PDF downloads; exact Auth deletion plus absence | Fresh owner approval, published clean reviewed helper, Linux fixture/CA launcher and exact hidden owner/backend versions |
-| B: Water/evidence/roles/locks/audit | NOT_RUN | Exact November tuple, author submit, independent approval, discriminatory refusals and complete exact-ID audit reconciliation | Owner approval; slot empty/unlocked and no blocking period records |
-| C: private Storage and report outputs | BLOCKED | Size/MIME configuration, bounded object probes and absence, valid evidence, retained PDF identity, scope disclosures in TR/EN | Concrete boundary/MIME/absence probe adapter; existing exact inventory boundary ID; owner consent for committed freeze effects |
-| D: fresh TR/EN mail, recovery and revocation | BLOCKED | Real inbox receipts, expiry/replay refusal, fresh recovery/sign-in, disabled/old/refreshed-token refusal, dedicated tenant retirement | Dedicated temporary recipient roster and approval; one existing Auth-only probe address is allowed for mail targeting only |
-| D-failure: hosted Auth-sync recovery | BLOCKED | A controlled actual failure, pending state, bounded reconciliation and final Auth/app agreement | No safe hosted fault injection is approved; mock coverage does not close this row |
-| E: missing-factor and remaining localisation | NOT_RUN | Electricity `404 no_factor` with coverage; Water uncalculated; remaining TR/EN UI/error/email/export observations | Owner approval for live requests; D for email |
-| Numerical emissions | BLOCKED | Authoritative source/version and golden calculation acceptance | LP4-02 / O6; never load demo values or claim zero |
-| F-read: backup/monitoring inventory | BLOCKED | Current daily backup schedule plus successful backup metadata, three-bucket byte-backup inventory and existing alert/job configuration | Exact resource/method read allowlist or owner-provided offline exports; inventory alone is not a delivery/drill PASS |
-| F-live: alert delivery, recovery, maintenance, rollback | BLOCKED | Named operator receives end-to-end alerts; runbooks 04–06 operational evidence and compatible rollback/recovery | Isolated rehearsal and explicit cloud/network/job/deploy/rotation permissions; current constraints prohibit these operations |
-| QA handover | BLOCKED | Owner accepts exact results and reasoned dispositions, names remaining blockers | A–F results/dispositions; handover is separate from full G2 recreation/recovery and production approval |
+| Control | Current state | Required hosted result |
+|---|---|---|
+| L9 / offline r004 manifest binding | PASS (prior) | Preserve original evidence; current ARM still required |
+| A exact-release two-tenant smoke | NOT_RUN | ARM match, own reads, foreign API/PostgREST confinement, exports/browser downloads, exact Auth absence |
+| B workflow/RBAC/lock/audit | NOT_RUN | Synthetic Water lifecycle, independent approval, valid-body denials, period inventory and immutable snapshot |
+| C Storage/evidence/TR-EN reports | NOT_RUN | Boundary/MIME/absence, signed expiry, foreign denial, partial retained output identity |
+| D mail/recovery/revocation/retirement | NOT_RUN | Two real inboxes, seven-attempt ceiling, natural reset expiry/replay, old-session denial, scoped retirement |
+| D failure recovery | NOT_RUN | Explicit compiled-service fault seam, real DB pending, real Auth reconcile, API refusal |
+| E no-factor/localisation | NOT_RUN | No numeric fallback; remaining TR/EN UI/email/export observations |
+| F monitoring/backup/maintenance | NOT_RUN | Recent backup metadata, active routed rules, actual operator acknowledgement, job chain, rollback and return |
+| Numerical emissions | BLOCKED O6/LP4-02 | Authoritative factors/golden results; no synthetic substitute |
+| Full G2/production recovery | OPEN | Consistent DB+Storage restore, isolated outages/hung flights, rotation/Sentry and wider production gates |
 
 ### One approval envelope, separately bounded operations
 
-Approve only the named operations and the privately bound targets. There is no
-blanket live authority. Stop the affected subpackage on an unexpected result,
-ambiguous commit, collision, timeout, pending cleanup or changed deployment;
-no alternative month, unlock, edit, resend, retry or repair follows implicitly.
-Expected negative tests below are planned results, not an instruction to stop
-on the expected refusal. Mandatory **already approved exact-target cleanup**
-remains in scope on failure; never widen deletion to obtain a green result.
-Independent unrelated operations may proceed only within the same approval.
+**A — one exact-r004 smoke invocation.** `hosted_smoke.py` uses the existing
+smoke core with separate helper/application provenance and the Linux fixture
+transaction. It creates two no-mail synthetic Auth users, two organisations,
+two subsidiaries and two profiles (six application rows/six create audits).
+One browser login per fixture proves `/me`, own/foreign subsidiary reads/list
+confinement, PostgREST row confinement, API PDF/XLSX/CSV and browser PDF downloads.
+The six direct exports and two browser PDFs add eight generate/report audits.
+Before/after ARM verifies API/web and API revision inventory. Auth cleanup is
+mandatory: exact journalled ID/email/metadata match, delete and readback absence.
+Application/audit rows remain. An unexpected returned UUID is preserved but never
+deleted; intended-user absence cannot resolve that discrepancy. No cleanup-only
+rerun is automatically authorized. Allow at most three verification rounds
+(before/after A and before maintenance); no listSecrets or unrelated ARM access.
 
-**A — proposed `cloud_smoke.py`, one invocation after launcher qualification.** Use the frozen candidate and
-release, a new exclusive private journal, and the exact owner-session secret
-version (`--direct-secret-version`); do not select latest. The helper reads the
-exact owner URL/backend key from Key Vault, verifies strict project/pooler/TLS,
-then checks ARM before writing. The execution helper must be a clean reviewed source commit, distinct from r004 application source. Do not use this dirty preparation checkout or bypass source guards. Bind its hash, Node22/Playwright runtime and a known-working Linux Prisma/strict-CA fixture launcher before approval; previous native P1011 evidence prevents assuming the native fixture will work. Existing candidate.bind also requires the executing checkout to be the exact application source SHA: publishing later helper fixes alone does not satisfy r004. A separately reviewed helper/application-source binding adapter is still needed; never monkeypatch clean_source, edit the candidate, silently retarget r004 or deploy just to pass this guard. It creates two random synthetic Auth accounts
-(no email send), two organisations, two subsidiaries and two profiles with six
-create audits in one Prisma transaction. Browser credentials never receive the
-owner URL/backend key. The no-mail `tonyai.test` fixture addresses are built-in
-Auth fixtures, not invented delivery recipients.
+**D0 — one no-mail lifecycle bootstrap, before B/C.**
+`hosted_lifecycle_bootstrap.py` creates one random Auth identity with confirmed
+synthetic `tonyai.test` address and a durable ban, then one new synthetic holding
+and its super_admin profile with two audits in one transaction. It unbans only
+its exact metadata-matched identity after commit/readback. Lost acknowledgement
+never authorizes deletion: failure quarantine targets only the intended identity,
+uses the established `876000h` ban and a new unknown password, then validates
+ID/email/metadata and future ban. Unexpected response IDs remain unresolved.
+This is an explicit owner/bootstrap write, not the cloud seed or an invitation.
+One bootstrap password is owner-created in the password manager and entered
+privately. Only the new tenant is a lifecycle mutation target.
 
-The browser logs in once per fixture, checks `/me`, own/foreign subsidiary API
-reads, list confinement and own/foreign PostgREST result counts. It downloads
-PDF/XLSX/CSV over the API and a PDF through each browser download event. These
-GET exports generate audit rows too: six direct exports plus two browser PDFs
-mean eight `generate/report` audits, in addition to six provisioning audits.
-It repeats ARM verification and always attempts cleanup of its two journalled
-Auth IDs after matching ID/email/fixture metadata, then verifies absence. App,
-profile, subsidiary, organisation and append-only audit rows remain by design.
-No new `--cleanup-only` invocation is approved by an unsuccessful first run. The local fix stores only the returned UUID and match booleans before rejecting an unexpected create response; it never deletes an untrusted returned ID. Intended-ID cleanup does not resolve that discrepancy, and cleanup-only must not claim it does. Disk/journal or response ambiguity stops acceptance and preserves the prior intent.
+Invite two real inboxes through the r004 API: TR super_admin (independent
+approver) and EN consultant. Accept/set passwords/fresh sign-in and test used-link
+replay. Create exactly two synthetic UK subsidiaries, no sites: primary for
+November workflow/reporting; secondary for positive data_entry and maintenance
+journeys. No working QA account is reset, disabled, edited or offboarded. One
+existing protected consultant may sign in **read-only**, verify its own `/me` and
+company list, then request the known synthetic record/evidence/dataset/issuance
+IDs for foreign API404 and direct PostgREST zero-row checks. Its credentials do
+not enter the fixture/operator container.
 
-Requested ARM exception: only API/web `containerapp show` and API
-`containerapp revision list --all`, two rounds inside smoke plus one final round
-after the other approved tests (at most nine ARM requests). No `listSecrets`,
-replica listing, revision start/deactivate, Terraform state or mutation. This
-verifier checks active revisions; it does not prove all inactive outgoing
-processes are absent. A final mismatch invalidates exact-release acceptance.
+**B — four predeclared synthetic Water slots, never fallback slots.** Primary
+`2026/monthly/November/Water`, secondary September (data_entry), October (r005)
+and November (r006), all `locationId:null`, value100, unit`cubic_metres`,
+activityType null. Before **each** create verify that exact slot is empty and
+unlocked. Collision/lock stops its subpackage; no alternative date or unlock.
+Every create must be201/draft/Scope3/no_emission_factor/no numeric tCO2e. Four
+small valid synthetic CSV evidence files are retained, one per accepted record.
 
-**B — one Water record in the preserved QA holding.** Use existing private
-cohort bindings, first super_admin as author, second super_admin as independent
-approver, and consultant/viewer solely for planned role tests. Do not disable,
-reset, resend or offboard any of these five accounts. Preconditions: exact
-whole-company slot `2026/monthly/November/Water`, `locationId:null`, unoccupied
-and unlocked. Record value `100`, unit `cubic_metres`, activityType null; the
-quantity is synthetic activity, not a factor. Retain the existing W1 packet
-unchanged as historical deferred evidence.
+For primary, bootstrap author creates/uploads; TR admin's non-author submit
+must403/record_author_forbidden. EN consultant and later EN viewer each attempt
+one valid scoped create/submit/approve/evidence-upload/period-lock (ten expected
+role refusals). Consultant review/reject/dataset/partial-issuance rights are not
+blanket mutation denials. After author submit200, author self-approve must
+403/self_approval_forbidden and TR admin approve200. Enumerate **all** primary
+November records/pagination before locking; require this approved Water to be
+the only affected record. One lock must lock exactly one record, preserve its
+snapshot and produce recordsLocked1. Repeat the valid create once after lock:
+409/period_locked, before duplicate insertion. Leave record/evidence/lock intact.
 
-One `POST /activity-records` must return 201/draft/Scope 3,
-`calculation.reasonCode=no_emission_factor` and no numeric tCO2e. Upload one valid
-small synthetic CSV evidence file while draft. With valid scoped IDs and valid
-bodies, make exactly one non-author submit attempt (403
-`record_author_forbidden`), and one create/submit/approve/evidence-upload/lock
-attempt for each consultant and viewer (ten refusals; role guards must be the
-cause). Consultant can review/reject, capture datasets and issue partial reports:
-blanket consultant-mutation denial would contradict the shipped contract.
+Change EN consultant→data_entry; grant only primary, verify fresh `/me`, own
+read and secondary refusal; add secondary grant, then EN creates/evidences/
+submits secondary September and TR admin approves. Change EN→executive_viewer
+and verify the source clears both grants with corresponding audited deletes.
+All denied writes use valid scoped IDs/bodies so schema/foreign404 cannot mask
+RBAC. No additional role, factor or record lifecycle repair is allowed.
 
-Author submits once (200/submitted), then attempts self-approval once (403
-`self_approval_forbidden`); other super_admin approves once (200/approved).
-A review transition is optional in the product but is not in this operation's
-mutation budget. Before locking, enumerate the complete exact company/year/month period, not just Water or one page. Require B Water to be the only record the lock can change; any other record or incomplete inventory stops the lock substep. Super_admin locks this same period once only after this check; never resolve unrelated records. The source updates all approved records in that period to locked. Require the new Water status locked, lock audit recordsLocked=1, and one lock row/audit, preserving immutable calculation bytes.
-Repeat the valid Water create body once after locking: expect 409
-`period_locked`, checked before the duplicate insert. Editing an already
-approved record can fail another gate first and is not lock evidence. Leave
-this synthetic record/evidence/lock in place; no unlock/void/delete cleanup.
+Reconcile complete exact-entity audit pagination/total after each stage: actor,
+action, timestamps/diff, snapshot and storage side effects. One audit per logical
+mutation, none for refusals; role and subsidiary_access audits share the EN profile ID: distinguish
+entity/action and reconcile diff.subsidiaryId for each grant. Evidence and
+period_lock use their own IDs. Do not assert a global audit count that ignores exports or conditional freeze.
+Never mutate audit to test append-only behavior.
 
-For each stage, query `/audit?entity=...&entityId=<exact-private-id>` and page
-through the complete filtered result (`total` must reconcile). Expected base
-business audits: `create/activity_record`, `create/evidence`,
-`submit/activity_record`, `approve/activity_record`, `lock/period_lock`, one
-per successful logical mutation and none for the planned refused writes.
-Correlate actor/time/diff, snapshot identity and object/Storage-intent side
-effects; counts alone do not establish provenance. Use separate IDs for
-evidence and lock. Never PATCH/DELETE audit to test append-only semantics;
-source/local tests cover that invariant. UI page-local search is insufficient.
+**C — private Storage and synthetic report boundary.** One
+`hosted_storage_probe.py` invocation checks all three private bucket settings
+(10/2/20MiB; documented PDF/image/XLSX/CSV allowlists). Twelve sequential unique
+paths total: small valid MIME, exactly-limit, limit+1 and wrong MIME per bucket;
+no upsert. Intent is persisted before any upload. Successful bytes/hash,
+anonymous and real-user non-signed denial, same-origin signed bytes, actual
+60-second expiry while service bytes still exist, and exact authenticated
+NoSuchKey absence are separate checks. Cleanup removes only the twelve exact
+probe paths, including lost upload ACK, and requires absence; generic404 is not
+proof. The probe buffers/deadlines whole bodies; no prefix/listing deletion.
+It validates Storage MIME rules, not PDF content validity.
 
-**C — Storage and TR/EN live/retained exports.** Read all three exact bucket
-settings first: private; evidence 10 MiB with PDF/JPEG/PNG/XLSX/CSV; import-sources
-2 MiB with CSV/XLSX; report-artifacts 20 MiB with PDF only. The existing
-`cloud_ops.py probe-storage` performs one CSV/CSV/PDF upload, anonymous public
-read refusal, 60-second signed byte download and exact-path DELETE per bucket;
-it does not prove deletion absence, maximum-size rejection or invalid MIME
-rejection. The local fix adds a private exclusive `--journal` (auto-created in
-an owner-only temporary directory if omitted), records all exact paths before
-requests and places the upload inside cleanup's try/finally, including a lost
-upload acknowledgement. Deletion acknowledgement remains distinct from
-absence (`absence_verified=false`). Do not approve the old unjournalled helper;
-the new helper still needs publication/clean source and manual CI gates.
+Against the primary draft, one mismatched-content and one malformed-PDF API
+upload must leave no metadata/audit/owned bytes. Valid evidence URL must have
+expiresIn60 and matching bytes; after65s require signed denial with adopted
+bytes still present. Preserve adopted evidence and issued PDFs.
 
-The supplemental boundary/MIME/absence probe is a preparation-only specification, BLOCKED until a concrete tested adapter and payload bindings exist. It must not be included in live approval by describing behavior alone. Its journalled private namespace requires: per
-bucket at most four distinct paths (small valid object, exactly-limit valid
-MIME object, limit+1 object, wrong-MIME object). At most 12 upload attempts,
-no upsert, with exact-path cleanup only for this probe; absence checks use an
-exact authenticated object read, not a public read of a private bucket. Stop on
-unexpected acceptance/rejection. No listing/prefix deletion and no application
-owned evidence/import/report object deletion. Bucket MIME checks are separate
-from API file content checks: never claim arbitrary PDF bytes validated the
-API's genuine PDF/content rules. Check mismatch and malformed PDF with the
-API's existing refusal suites offline; live API negative probes, if approved,
-are one mismatched-content and one malformed-PDF evidence request against B's
-draft before submission, no metadata/audit/owned bytes on refusal. Size-limit
-probes are sequential and rate/quota bounded, never parallel load tests.
+Generate live PDF/XLSX/CSV once per language (six exports) and observe browser
+downloads. Scope3 Water is excluded from Scope1/2 totals and the emissions CSV;
+PDF/XLSX show the actual TR/EN Not covered disclosure. Uncalculated is never
+measured zero; CSV machine headers stay English. Live generate/report audit rows
+have entityId:null: filter actor/action/entity/time plus company/year/template/
+format, reconcile all pages. Do not use an entityId filter that hides them.
 
-Download the B evidence via `/evidence/:id/url`, verify `expiresIn:60` and byte
-hash; test own access, foreign-tenant API refusal, anonymous and authenticated
-non-signed direct Storage refusal, and signed expiry after 60 seconds. Never
-store the URL in receipts. Keep adopted B evidence and issued PDFs intact.
+Create exactly one new2026 inventory boundary, configure **primary only** for
+November, no sites/sources; the five Scope1/2 category applicability entries are
+explicitly undetermined with a synthetic-QA reason. Do not confirm the boundary.
+Capture one primary-only dataset after reviewing its DTO selection; capture may
+commit a freeze before subsequent assembly fails. No retry/unfreeze. Require
+issuance-preview partial with boundary_unconfirmed/applicability_undetermined;
+if final/unclear, stop before issue. Issue at most one partial PDF per language
+(two issuances). Download each PDF twice and compare bytes/hash with stored
+fingerprint/size; download each retained XLSX/CSV once and reconcile to its dataset.
+These exports are generated from retained data, not stored-byte guarantees.
+Foreign evidence/dataset/issuance refusals use the protected read-only consultant
+before retirement. Owning rows/objects remain permanent synthetic artefacts.
 
-After B, generate each live PDF/Excel/CSV once per language (six exports) as
-an authorized reader; record browser download events as well as API MIME/body.
-Water must not enter Scope 1/2 totals or the live CSV ledger; PDF/XLSX disclose
-Scope 3 as Not covered (with the catalogue's TR equivalent). Uncalculated Water
-is not a measured zero. CSV machine headers remain English as specified.
+**D — seven real email attempts maximum; one natural expiry wait.**
+Two invitation sends above; two initial password-reset emails (TR+EN) left unused
+until after their observed one-hour expiry; then one actual expiry attempt each.
+Do not mint fresh links before this check: supersession is not expiry. Two new
+reset emails recover both users; prove replay refusal/new-password fresh login.
+One final EN reset follows disable→enable and the durable300s cooldown. No resend,
+SMTP/429 retry or policy/time modification. Seven is a ceiling, not permission
+to repeat failed sends. Natural unused **invitation** expiry is not newly proved
+by this design; prior dead-link observations remain attributed evidence.
+Delivery requires actual inbox/spam kind/language/sender/origin/time observations;
+202/audit alone is not arrival. Links/passwords enter private prompts, never chat.
 
-For the exact QA organisation/year, first read an existing exact `boundaryId` for the QA organisation/year and capture preflight. No such boundary is established by L9 evidence. If absent or unsuitable, stop retained-output acceptance; creating/editing a boundary is not authorized. Capture one dataset only if the owner explicitly accepts its freeze effect: `POST /report-datasets` can freeze an open inventory boundary
-and adds `capture/report_dataset` plus conditional `freeze/inventory_boundary`. Freeze commits in its own transaction before dataset assembly/storage: a failed capture may still leave the boundary frozen, with no automatic unfreeze/repair. Read `/report-datasets/:id/issuance-preview` first, require server-derived `partial` and review the actual gaps; Water-only/excluded data and absent factors do not guarantee partial status. If preview is final or unclear, stop before issue. Issue at most one **partial** PDF per language (two `POST /report-issuances`,
-`issue/report_issuance` audits), not a falsely final numeric report. Retained
-records and objects are permanent acceptance artefacts; no cleanup. Download
-each issuance PDF twice and compare bytes/SHA with its stored metadata; XLSX
-and CSV once each must reconcile to that retained dataset. XLSX/CSV are produced
-on request, not stored-byte identity guarantees. Audit live export generation as well as retained mutations; the six C live exports add six generate audits. Live `generate/report` rows have entityId:null: filter entity/action plus private actor/time interval, reconcile all pages and diff company/year/template/exportType. Do not apply an exact entityId predicate to these null-ID generation rows. All entity mutations still require exact entityId.
-Foreign read probes use only the exact two A tenant IDs and the new B/C IDs,
-only for subsidiary isolation in A. Do not extend A credential lifetimes or
-recreate its deleted users. For B/C foreign record/evidence/dataset/issuance
-reads, use D's authenticated disposable EN viewer before its disable/retirement:
-first verify that viewer's own `/me` and own tenant dataset/issuance list succeed,
-then request the exact B/C IDs and require scoped refusal without content.
-Order: A; B draft; C API evidence negatives/download; B submit/approve/lock; C reports; D onboarding; C foreign negatives; D disable/retirement; final ARM. If D is blocked, these additional cross-tenant checks stay BLOCKED.
-A alone proves subsidiary isolation, not evidence/report isolation.
+EN-only disable/enable: privately capture original access/refresh and one
+pre-disable refreshed access specimen; disable once, test password sign-in,
+API and refresh refusal; enable once, both old access specimens remain refused.
+Attempt the old refresh once after enable; if Auth mints a token, API must refuse
+session_revoked using earliest AMR; otherwise record Auth refusal, not a minted
+token claim. Both operations rotate the password, hence the seventh recovery
+email is required for fresh EN login. No unplanned password-change mail.
 
-**D — separate temporary lifecycle tenant, not the QA cohort.** The owner has
-permitted the existing Auth-only probe address to be a mail target and supplied
-the monitoring recipient privately; neither statement approves a send. A full
-recipe needs a temporary bootstrap administrator plus distinct TR and EN API
-invitees (three privately selected, owner-controlled addresses). The probe
-address can fill one slot; two additional addresses remain unbound. Never
-invent aliases or reuse the working cohort. Bind the legal name/operator,
-roles (bootstrap super_admin, TR consultant, EN executive_viewer), exact
-targets and collision dry run before D can be executable.
+After all EN journeys and maintenance, `hosted_lifecycle_operator.py` injects
+one `AuthAdminError('auth_unavailable')` at the compiled r004 `setBanned` service
+boundary **before provider HTTP**, EN only. Shipped AccessAdmin/Lifecycle/AuthSync
+services on the real owner connection must commit disable+audit and leave
+pending; real Auth still recognizes the captured token while ACA API refuses
+it. This is a compiled-service fault seam with real hosted DB, not a naturally
+failed ACA request/provider outage or runtime-role grant proof. Run shipped CLI
+reconcile dry then apply once for this exact pending EN ID; verify real Auth ban,
+cleared pending and no mail. Finish with shipped offboard dry/apply for only this
+new holding. Require offboardedAt, disabled exact member roster, authPending[]
+and token refusals. Retain Auth/application/evidence/report/audit rows (D17).
+The wrapper permits the exact journalled1–3member subset for early-failure
+retirement; unexpected members/IDs stop it. No repeated apply/reconcile or hard
+delete is implicit. Ambiguous membership needs review, not broader cleanup.
 
-Proposed bounded recipe: one CLI dry run and one provision apply (bootstrap
-invitation); administrator accepts/sets password/signs in; two r004
-`POST /users/invitations` (TR/EN); retain one TR invitation unused for more than
-its observed one-hour expiry, prove refusal, resend **once** via
-`/users/:id/invitation/resend`, then accept and prove used-link replay refusal.
-For each TR/EN invitee, request one r004 `/auth/password-reset`; let the TR reset
-expire, prove refusal, request exactly one fresh TR reset, then recover TR with the fresh link; request the EN reset only after the TR expiry wait and consume it promptly. Prove replay refusal and fresh sign-in for each, without allowing the EN link to expire accidentally. Budget: at most eight email send attempts (bootstrap + TR/EN invitations + one planned resend + three initial/expiry-recovery resets + one EN reset after re-enable). Natural invitation and reset expiry requires one-hour waits; no Auth policy/time manipulation is approved. Space attempts to the actual ACS/r004 limits; 429/SMTP ambiguity stops,
-not retries. Real delivery records kind/language/sender/origin/times and inbox
-or spam classification; generic 202 and reset audit are not delivery proof.
+**E — no-factor and localisation.** Two valid Electricity previews, one per
+language, must404/no_factor with appropriate coverage, no persisted calculation.
+Record remaining TR/EN role/error/data-entry/report/email observations in these
+journeys. No seed, factor load, demo factor, numeric fallback or numerical QA.
 
-On the disposable EN invitee only: capture a pre-disable session/token privately,
-refresh once before disable to preserve a second stale-token specimen, disable
-once and verify sign-in/API refusal; enable once, verify both pre-disable token
-specimens stay refused after enable. After enable, attempt the old refresh token exactly once; if Auth issues a new access token, require API 401/session_revoked using earliest AMR; otherwise record Auth refusal without claiming a minted-token test. Both disable and enable rotate the password to an unusable value: request the budgeted fresh EN reset after enable, recover with a new password and prove fresh sign-in. The old password cannot be expected to work. Test a refresh
-attempt after disable as its own expected Auth result; do not infer refresh
-revocation solely from API refusal. Check no password-change email from ban
-sync. Read exact profile/invitation audits and Auth-sync state. No forced Auth
-failure is authorized; D-failure stays BLOCKED until an isolated approved method
-exists. One offboard dry run + one apply retires only this newly returned
-organisation, even after another D failure: require `applied=true`,
-`offboardedAt` and `authPending=[]`. It retains organisation/Auth/audit rows,
-disables members and revokes invites (D17). Nonempty pending is a stop requiring
-a separately bounded recovery, not implicit reconcile/retry authority.
+**F — current-host monitoring and maintenance, a requested explicit exception.**
+First execute the private eight-GET ARM allowlist: exact job/action group/storage
+alert and resource-group metric/query-rule inventories; no nextLink traversal.
+The other three exact ACA environment/diagnostic/workspace metadata GETs
+bind job logs to the existing workspace; no listKeys/listSecrets. Run
+`hosted_backup_evidence.py` once with a hidden backups_read Management token:
+one pinned-project GET `/database/backups`, whole-request60s, no download/restore.
+Require an actual COMPLETED timestamp no older than36h; record latest seven
+COMPLETED backup inserted_at timestamps, region and WAL/PITR flags. This is recent-backup metadata,
+not independent daily-schedule, restore or Storage-byte proof. The Pro custom
+schedule endpoint is Enterprise-only and must not be called.
 
-**E — no-factor and localisation.** One valid Electricity preview per language
-(two read-like POSTs, no persisted calculation) must yield 404 `no_factor` and
-correct coverage. A placeholder or numeric fallback is a finding. Observe
-remaining TR/EN data-entry/errors, role refusals, reports and D emails as part
-of the above journeys; keep previously observed login/dead-link screens as
-prior evidence. Do not repeat account onboarding to fill catalogue cells.
-Authoritative factor loading and numerical emissions remain LP4-02/O6 blocked.
+Foundation state access is restricted to init/one saved plan/one saved apply for
+**monitoring only**, using existing backend and owner session. Populate the
+private monitoring input from exact r004 API/secret versions and the bound
+operator. Review `terraform show -json` privately before apply. Allow create/update
+only of storage_verify[enabled], operator[enabled], storage_verify_alert[enabled]
+and api_metric_alert[http_5xx|restarts]. Any other address, delete, replacement,
+import, grant, network/vault/diagnostic drift or unknown plan stops before apply;
+no `-target`, state edit or automatic repair. Apply that exact saved plan only.
+The two new native metric rules use Requests/Total/statusCodeCategory5xx and
+RestartCount/Maximum>0, exact API scope and existing action group. RestartCount
+is cumulative: no guaranteed five-minute clearing or new notice per restart.
+This replaces the proposed log-dependent API alarm implementation; it does not
+claim diagnostics ingestion is fixed.
 
-**F — metadata inventory, unapproved; operational drills excluded.** The private
-`f-arm-metadata-allowlist.json` binds exactly five one-attempt ARM GETs to the
-frozen r004 subscription/resource group: the exact storage-verification job,
-operator action group and storage alert, plus the group's metric-alert and
-scheduled-query-rule metadata inventories. API versions follow the foundation
-contracts; no nextLink traversal (truncation is BLOCKED), raw output stays
-private. Security/RLS checked these bindings offline. This is a concrete
-F_ARM_METADATA proposal, not execution authority or alert delivery evidence.
-No log query, secrets call or execution-history traversal is included.
-Prefer owner-provided private offline Supabase daily-backup exports; no
-unbounded dashboard/Management API access is requested. Backup metadata must
-show schedule and an actual successful backup, not merely the Pro tier. The owner-selected
-operator's address stays private. No action-group Test, job start, alert-trigger
-mail, missing-byte injection, resource configuration, rotation or network rule
-change is included in this read scope. Check a successful daily DB backup;
-DB backups omit Storage bytes, so evidence/import-source/report-artifact byte
-recovery remains separate. Actual alert receipt/acknowledgement requires its own
-concrete notification target and test operation within a future approved batch.
+One action-group Test targets only the bound operator; require actual receipt
+and acknowledgement. Before fault injection, require baseline job exit0 ingested
+and the exact storage alert state Resolved; otherwise the chain stays BLOCKED,
+never attribute a prior/initial notification to the new fault. Allow at most six
+read-only alert-state inspections limited to this exact rule and test interval,
+without nextLink traversal or unrelated alert content. At most five starts of the exact storage-verification job,
+no retries: baseline; one at a time removal of exact retained synthetic evidence,
+new import-source probe and retained issued-PDF bytes; clean after restoration.
+Before each removal save/hash bytes privately; restore **that exact path and
+bytes**, preserve metadata, and require download/hash via owning evidence/issuance
+APIs after restoration. Import-source is explicitly an unowned synthetic probe,
+so it proves bucket restore only and cannot trigger an owning-row mismatch.
+Journal its exact thirteenth probe path before create; after restore/hash
+comparison, delete only that unowned path and require authenticated NoSuchKey
+absence before the final clean job. Adopted evidence/PDF never receive this cleanup.
+Use the evidence or issued-PDF mismatch to prove one real job exit1→log→alert→
+operator chain; bucket probe deletion must not be mislabeled as that trigger.
+If exit1 persists, restore bytes immediately before any further operation.
+If live ingestion/config is unsuitable, stop the alert chain; do not synthesize
+logs, change tables/queries or disable rules to get a green result. Bounded log
+queries: exact job, execution IDs, operation interval≤2h, at most10 queries,
+project only time/execution/event/exitCode. Retain received acknowledgement.
+A failed result keeps the rule fired for26h; later clean verification does not
+prove independent exit2 or elapsed26h outage delivery. Initial missing-result
+firing is not a post-success26h outage drill. No API crash/5xx injection is approved;
+read back both real metric rules/scopes/routing and provider metric definitions.
 
-Runbooks 04–06 also require bounded DB/Storage loss and hung-flight recovery,
-Sentry receipt, secret rotation, consistent DB+three-bucket byte recovery,
-maintenance and old/new migration-compatible rollback/redeploy. Their needed
-cloud mutation/deployment permissions conflict with this session's constraints;
-leave them BLOCKED and prepare an isolated rehearsal after the owner supplies
-its target, operator, RPO/RTO and permissions. No deploy merely to exercise #264.
-QA handover may occur only after explicit owner acceptance of the remaining
-dispositions; it never substitutes for full G2 recreation/recovery or production.
+Reserve one≤90min maintenance window on the existing QA API/web hosts; QA can
+be unavailable twice. Confirm r005 and r006 do not already exist; if either
+exists, STOP, never choose another ID. Preserve exact original manifests.
+Deploy r005 once carrying prior r003 bytes/source
+`a9476eb735cad53aa7091932dd02b38a4070cefb`, API
+`sha256:e9ba267817667e8580afc39bfd1ace12f62cf012e044abe77ba30f4d8446495d`, web
+`sha256:15f41c1b2cb86fbf357d8507e259a257cd04b1202a8215508cf3e9fd53b7a0f3`.
+API runtime/schema/migrations/shared contracts are identical across these sources;
+the38-line API difference is test-only. **Web differs**: known r003 login/link/
+analytics behaviors temporarily return. Restrict the test browser to approved
+origins; no ordinary QA use during maintenance. No migration/build/push.
 
-### Findings carried forward
+Use the reviewed deploy helper (including #264 drain/settle) with exact saved
+application plans and existing backend only. One rollback and one return apply;
+allow only API/web revision image/source/release changes, no credential/config/
+identity/network/grant changes. The two deploy invocations may list API revisions/replicas and deactivate only
+the outgoing API revisions captured immediately before that invocation; no
+revision deletion, unrelated app mutation or arbitrary activation. Record drain,
+settled active revisions/outgoing
+replica absence, readiness/liveness, synthetic login/read/write journey and RTO
+(actual measured, target≤10min each). Secondary October writer journey on r005;
+secondary November on r006, same evidence/independent-approval contract as B.
+Return once to **r006 with exact r004 source/digests**; only release ID differs
+from r004 input. After return, final ARM+browser acceptance must identify r006,
+not falsely claim r004 is still the live ID. Never clear hold. Failed rollback
+still permits the one preapproved r006 return; no further redeploy/rollback loop.
 
-Keep the approximately 2m40s deployment outage, roughly 40s observed overlap
-and one-minute old-binary migration-compatibility allowance under LP5-03.
-The #264 wait has no real-deployment proof; verify-only can transiently fail
-right after apply. The paused qa_* drain/readback/null-secret-list issue remains
-paused. Diagnostics destination=null, missing vault networkAcls, Outlook spam,
-A4D1 audit/metadata provenance and undecided next-deploy ownership remain open.
-No automatic repair or silent disposition is implied by this package.
+Execution order: clean helper qualification→A→D0/invites→B/C/E, reset expiry wait
+in parallel→C foreign checks→monitoring/backup→r005/r006 maintenance→remaining
+D recovery/token/fault/reconcile→authenticated final r006 browser checks using
+the still-enabled TR admin→mandatory retirement→public browser/ARM r006 checks. Do not
+retire before writer/token tests need the identities. An unexpected r006 return
+failure stops handover and requires new recovery approval; preserve evidence.
+
+### Handover and wider gates
+
+Controlled synthetic QA may be handed over only when the above mandatory
+observations pass and the owner explicitly accepts the disclosed boundary:
+no authoritative numerical acceptance; full DB+three-bucket consistent disaster
+restore/recreation, isolated DB/Storage outages/hung flights, provider credential
+rotation and Sentry delivery remain wider G2/LP5 work. Three-bucket restoration
+above is not a full DB restore. No data-loss/RPO claim follows from backup metadata.
+Sentry configuration is absent; never fabricate a receipt or enable a DSN without
+runbook06's privacy/review gate. Fresh unused-invitation expiry and delayed26h
+monitoring remain separately disclosed, not passed. If the owner requires these
+for QA too, retain QA handover BLOCKED and plan the wider rehearsal explicitly.
+
+Use this runbook and the single central planning file for the final QA entry,
+release binding, accepted limits, operator, defect reporting and evidence links;
+never create another status/roadmap/handoff file. Preserve approximately2m40s
+prior rollout outage/40s overlap and migration compatibility allowances. Existing
+diagnostics destination=null, vault networkAcls absence, Outlook spam, A4D1
+metadata/audit provenance and paused qa_* findings remain open without repair.
+The paused self-hosted route/resources/workflows are not resumed or deleted.
 
 ### Local verification and review (not hosted acceptance)
 
-At base `1530dba` plus the uncommitted preparation diff, in the reused
-hosted-l9-diagnostic worktree, Node 22.23.3 `pnpm lint`, `pnpm typecheck`,
-`pnpm build` and `pnpm test` exit 0. Lint has eight existing warnings; Turbo
-replayed six typecheck/test and four build tasks, while E2E TypeScript executed.
-Fresh offline helper checks: 61 Python tests and five Node smoke tests pass.
-The default lost-upload-response cleanup and unresolved Auth cleanup-only
-regressions fail behaviorally on archived `1530dba`; matching new tests pass.
-Security/RLS, QA and DevOps independently accepted the local helper fixes and
-corrected scope, with no remaining P0–P2 finding. They did not qualify live
-execution, the Linux launcher, supplemental probes or cloud recovery. Journal
-power-loss durability was not tested. Exact receipts/source hashes and review
-summaries are private under the execution envelope above.
+Earlier publication fa18ba3 and manual selfhost-checks41496050486 /
+qa-infra41496056240 passed; they do not validate this larger unpublished diff.
+Current preparation adds Linux adapters, exact fixture transaction reuse,
+Storage expiry/absence, no-mail bootstrap/quarantine, scoped service/CLI lifecycle,
+bounded backup metadata and two native API metric alerts. No application
+runtime, factor, schema or migration changes.
 
-No API data-path change: API integration/RLS were not run. Because infra/scripts
-and infra/tests changed, `selfhost-checks.yml` and `qa-infra.yml` must be dispatched
-on the eventual pushed PR branch before merge, even though that route remains
-paused. The owner has approved commit/push and both dispatches on this preparation
-branch. Record the tested SHA and run links in the central planning file;
-never substitute runs on old main. New helper
-publication does not authorize cloud execution, application deploy or migration.
+At HEAD `629e3a9703a9441625464d3b628805da90c3b645` plus this working diff,
+in `/Users/denizb/.codex/worktrees/hosted-l9-diagnostic/TonyAI-mono-repo-codex`,
+Node22.23.3 `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` pass.
+Lint initially found four new Storage-helper errors; the empty catches now
+explain their safe handling and mandatory cleanup is extracted without changing
+its finally semantics. Rerun lint passes with eight existing warnings. Turbo
+replayed6/6 typecheck/test and4/4 build tasks; E2E TypeScript executed. The actual
+CI Node glob (`infra/tests/*.test.mjs`) independently passes548tests/23files after
+the cleanup refactor. Hosted Python pattern40tests and cloud-smoke9tests pass;
+Terraform policy, recursive fmt and diff check pass. Isolated backend-free
+foundation mock tests passed9/9 on the same Terraform changes; this is not an
+Azure plan. Cached exact-r004 Linux network-none runtime/receipt-IO probes passed,
+including UID1000 and host readback; they used a working public bundle and do
+not replace clean committed-helper qualification after publication.
+
+Fresh independent Security/RLS, QA and DevOps reviews accepted source/proposal
+boundaries with no remaining P0–P2. Review-discovered long-ban/password-rotation,
+identity readback, whole-body deadline, early-retirement subset and durable
+step/outcome-custody fixes have permanent regressions. QA also exercised actual
+compiled r004 service constructors with an in-memory transactional DB: one
+injected disable audit/pending state and zero provider requests. This is not a
+hosted injection result. Detailed review/check receipts (including the Security
+harness's three fake-project/synthetic-token worker attempts with unobserved
+HTTP outcome) remain in the private envelope; no real credential/tenant was
+used in those attempts and they are not called zero-network proofs.
+
+API integration/RLS and full infrastructure/manual workflow suites were not run
+for this current diff; no runtime API path or schema was changed. The focused
+source/helper checks above do not substitute for CI/manual checks at publication.
+Both `selfhost-checks.yml` and `qa-infra.yml` must be dispatched on the newly
+published branch before merge, even though the live self-hosted route is paused.
+Current-diff publication/PR and all live operations need the final concrete owner
+batch approval; owner merges. No local/mock PASS closes L10.

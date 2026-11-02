@@ -25,6 +25,10 @@ variables {
 run "foundation_security_contract" {
   command = plan
   assert {
+    condition     = length(azapi_resource.api_metric_alert) == 0
+    error_message = "API alert resources require explicit named monitoring configuration."
+  }
+  assert {
     condition     = azapi_resource.registry.body.properties.adminUserEnabled == false && azapi_resource.registry.body.sku.name == "Basic"
     error_message = "ACR must use Basic with no admin keys."
   }
@@ -135,6 +139,13 @@ override_resource {
 
 run "scheduled_verification_operator_contract" {
   command = plan
+  override_resource {
+    target          = azapi_resource.operator["enabled"]
+    override_during = plan
+    values = {
+      id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Insights/actionGroups/tonyai-staging-operator"
+    }
+  }
   variables {
     config = {
       subscription_id       = "00000000-0000-0000-0000-000000000001"
@@ -174,6 +185,29 @@ run "scheduled_verification_operator_contract" {
   assert {
     condition     = alltrue([for secret in azapi_resource.storage_verify["enabled"].body.properties.configuration.secrets : !can(secret.value) && strcontains(secret.keyVaultUrl, "/secrets/")])
     error_message = "Job secrets must be exact Key Vault references, never values."
+  }
+  assert {
+    condition = length(azapi_resource.api_metric_alert) == 2 && alltrue([
+      for alert in azapi_resource.api_metric_alert :
+      alert.body.properties.enabled && alert.body.properties.severity == 1 &&
+      alert.body.properties.evaluationFrequency == "PT1M" && alert.body.properties.windowSize == "PT5M" &&
+      alert.body.properties.scopes == ["${azapi_resource.group.id}/providers/Microsoft.App/containerApps/tonyai-staging-api"] &&
+      alert.body.properties.actions[0].actionGroupId == azapi_resource.operator["enabled"].id &&
+      alert.body.properties.criteria.allOf[0].threshold == 0 &&
+      alert.body.properties.criteria.allOf[0].skipMetricValidation == false
+    ])
+    error_message = "Both API metric alerts must be enabled, exact-app scoped, validated and routed to the named operator."
+  }
+  assert {
+    condition = (
+      azapi_resource.api_metric_alert["http_5xx"].body.properties.criteria.allOf[0].metricName == "Requests" &&
+      azapi_resource.api_metric_alert["http_5xx"].body.properties.criteria.allOf[0].timeAggregation == "Total" &&
+      jsonencode(azapi_resource.api_metric_alert["http_5xx"].body.properties.criteria.allOf[0].dimensions) == jsonencode([{ name = "statusCodeCategory", operator = "Include", values = ["5xx"] }]) &&
+      azapi_resource.api_metric_alert["restarts"].body.properties.criteria.allOf[0].metricName == "RestartCount" &&
+      azapi_resource.api_metric_alert["restarts"].body.properties.criteria.allOf[0].timeAggregation == "Maximum" &&
+      length(azapi_resource.api_metric_alert["restarts"].body.properties.criteria.allOf[0].dimensions) == 0
+    )
+    error_message = "5xx must filter the native Requests metric; restart alert must observe nonzero RestartCount, not a fabricated event log."
   }
 }
 
