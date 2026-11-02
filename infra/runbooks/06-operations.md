@@ -211,8 +211,8 @@ Resource contracts: [Container Apps jobs](https://learn.microsoft.com/en-us/azur
 API quotas and admission are process-local. Keep the API at one serving replica;
 never scale out or reactivate an old revision while a replacement may be live.
 Use `deploy_apps.py`: it creates the reviewed plan, deactivates outgoing API
-revisions, waits for their replicas to disappear, then applies and verifies the
-candidate. Owner-run first creation requires a successful app inventory proving
+revisions, waits for their replicas to disappear, applies, waits for the rollover
+to finish and verifies the candidate. Owner-run first creation requires a successful app inventory proving
 the API is absent; a failed lookup alone never permits apply. This intentionally creates a maintenance interval. A failed drain or
 apply needs operator inspection; automatic reactivation could overlap a candidate
 whose apply acknowledgment was lost. An already active target (same-release
@@ -221,6 +221,14 @@ the target already exists but is inactive, the tool refuses: inspect both
 revision and replica lists, confirm no overlap, and explicitly recover the
 reviewed target before retrying. Rollback to an existing inactive revision also
 requires this owner recovery; do not assume a no-op Terraform apply activates it.
+
+**The drain shortens an overlap; it does not prevent one.** In Single mode Azure
+keeps traffic on the newest existing revision until the new one is ready, even a
+deactivated one. On `r004` (2026-11-01) it restarted the drained `r003`: both
+containers started at 23:38:07 UTC, traffic moved at 23:38:18, and `r003` stopped
+at about 23:38:49. Treat every release as one that may run briefly beside its
+predecessor, including across a migration. The tool waits for this rollover before
+verifying, and fails without retrying if an outgoing revision stays live.
 
 `release.runtime_limits` accepts registered integer settings only. See README's
 runtime table and `infra/config/runtime-limits.json`. Recheck API startup and

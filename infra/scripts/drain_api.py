@@ -66,3 +66,24 @@ def drain(foundation, release_id, read=az, sleep=time.sleep, attempts=75, expect
             return
         sleep(2)
     raise SafeFailure('Outgoing API replicas remain. Apply refused; maintenance may still be active.')
+
+
+def settle(foundation, release_id, read=az, sleep=time.sleep, attempts=75):
+    """Wait out the rollover that follows apply, which can restart a drained revision.
+
+    In Single mode Azure sends traffic to the newest existing revision until the
+    new one is ready, even if it was deactivated: r004's rollout started r003
+    again, and it stopped about a minute later. Verification stays strict after this.
+    """
+    intended = foundation['prefix'] + '-' + foundation['environment'] + '-api--' + release_id
+    for _ in range(attempts):
+        rows, scope = revisions(foundation, read)
+        if [row['name'] for row in rows if row['properties']['active']] == [intended]:
+            outgoing = [read('containerapp', 'replica', 'list', *scope, '--revision', row['name'])
+                        for row in rows if row['name'] != intended]
+            if any(not isinstance(replicas, list) for replicas in outgoing):
+                raise SafeFailure('Cannot establish outgoing replica count after apply.')
+            if not any(outgoing):
+                return
+        sleep(2)
+    raise SafeFailure('Outgoing API revisions stayed live after apply. Inspect both revisions before retrying.')
