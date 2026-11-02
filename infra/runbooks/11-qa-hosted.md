@@ -51,6 +51,9 @@ The live release remains **r004/source7d3e2e9**, with the exact digests below.
 No r005/r006 deployment occurred. Keep the five existing individual QA accounts
 and their current data; the owner distributes credentials privately.
 
+The table records the initial intake before the separately authorized onboarding
+operation below. Later provisioning does not close its unfinished acceptance tests.
+
 | Observed control | Result / scope |
 |---|---|
 | Current ARM application binding | PASS: API/web images, source/revisions, HTTPS origins, runtime secret references and hold=true match r004 |
@@ -65,19 +68,36 @@ and their current data; the owner distributes credentials privately.
 | Workflow/Storage boundaries/reports/mail/rollback | Remain QA/owner acceptance work; no new records, application emails, lifecycle changes or maintenance deployments were executed |
 | Backup metadata / wider recovery | NOT_RUN / OPEN; no Management token or recent backup result observed; no restore claim |
 
-QA should start with its existing role accounts: sign-in and company list,
-Water/evidence/author-submit/other-admin-approve, role refusals, period lock,
-TR/EN exports and own-company access in their existing synthetic holding.
-Discriminating cross-tenant isolation remains BLOCKED until an approved second
-tenant and known existing foreign-object positive controls are available; a
-random-ID404 is not isolation evidence.
-Do not run disable/enable/reset or invitation experiments on the protected five
-accounts. The automated A–F proposal below remains a distinct owner-operated
-acceptance scope; its new lifecycle tenant was not created.
-Occupied/locked November2026 still means STOP, not another month/unlock/retry.
-Authoritative numeric emissions are excluded. Record defects using the existing
-Reporting a defect section; no secrets or reset/signed links in bug reports.
-The PR is [#266](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/266); owner merges.
+The owner subsequently requested two clean-start QA holdings and supplied two
+new first-administrator targets privately. Both TR/TRY holdings now exist, each
+with exactly one first super_admin and one initial TR invitation submitted.
+Both read-only collision checks ran before writes; each target passed 13 strict
+postchecks, 3 Auth identity matches, 1 SMTP acceptance and exact local-container
+absence. Private evidence: `/private/tmp/tonyai-qa-two-holdings-1wlg2iy3/`.
+No subsidiaries, sites, extra users, grants, activity data or factors were loaded.
+The previous owner-connection precondition passed in this separate scoped
+operation; the unexecuted old automated A–F proposal was not resumed.
+
+The recipients now accept their invitations, choose their own passwords and
+verify their own empty holding. Then they create companies/sites, invite their
+role users and enter synthetic data from the UI. Invite a second super_admin
+for independent approval: an author cannot approve their own record. An email
+belongs to one holding; use distinct addresses for users in different tenants.
+The existing five-person QA cohort remains untouched and separate. Do not run
+account lifecycle experiments on those protected accounts or silently reset the
+new intended QA owners. SMTP acceptance is observed; inbox arrival and fresh
+sign-in await the recipients, not inferred from the sender's receipt.
+
+Both holdings can support actual cross-tenant acceptance once QA has signed in
+and created known owned objects in each; random-ID404s remain insufficient.
+Workflow/evidence/roles/locks, TR/EN reports and isolation remain tests to execute,
+not automatically passed by provisioning. Stop occupied/locked slots without
+fallback or unlock. Authoritative numerical emissions stay excluded. Record bugs
+using Reporting a defect; never include credentials or action/signed links.
+[PR #266](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/266) was owner-merged
+at `b59fac1`; main was synchronized and its merged branch deleted. This follow-up
+records the completed onboarding. Publishing these documents performs no deployment,
+account change or additional email submission.
 
 ## Acceptance checklist
 
@@ -474,9 +494,10 @@ The paused self-hosted route/resources/workflows are not resumed or deleted.
 
 ### Local verification and review (not hosted acceptance)
 
-Earlier publication fa18ba3 and manual selfhost-checks41496050486 /
-qa-infra41496056240 passed; they do not validate this larger unpublished diff.
-Current preparation adds Linux adapters, exact fixture transaction reuse,
+The following records historical preparation before PR #266, later owner-merged
+at `b59fac1`. Earlier publication fa18ba3 and manual selfhost-checks41496050486 /
+qa-infra41496056240 passed but did not validate the then-unpublished larger diff.
+That preparation added Linux adapters, exact fixture transaction reuse,
 Storage expiry/absence, no-mail bootstrap/quarantine, scoped service/CLI lifecycle,
 bounded backup metadata and two native API metric alerts. No application
 runtime, factor, schema or migration changes.
@@ -532,5 +553,6 @@ Node22.23.3 lint/typecheck/build/test also pass directly at071e853 in the same
 worktree (cached application tasks; eight existing lint warnings). Clean final
 helper offline qualification passes. This closing results update changes docs
 only, preserving tested source/test/Terraform/workflow blobs; it does not claim a
-new code test run or close the remaining hosted L10 controls. Owner merges.
+new code test run or close the remaining hosted L10 controls. The owner merged
+PR #266 at `b59fac1`; the current onboarding follow-up changes documentation only.
 No local/mock PASS closes L10.

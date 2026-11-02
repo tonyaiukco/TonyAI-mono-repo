@@ -52,19 +52,24 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 
 ## Project status
 
-**Hosted QA (2026-11-02): available for functional testing; L10 acceptance remains open.**
+**Hosted QA (2026-11-03): available for functional testing; L10 acceptance remains open.**
 The owner requested expedited QA intake tonight and a follow-up bug list. Live
-r004/source`7d3e2e9` is ARM-verified; login/liveness/readiness return200 and the
-protected endpoint401. Existing five-person QA accounts/data are preserved;
-no application deployment, fixture creation or application email was performed.
+r004/source `7d3e2e9` is ARM-verified; login/liveness/readiness return200 and the
+protected endpoint401. The existing five-person QA cohort is preserved. In a subsequent explicit owner
+request, two NEW empty TR/TRY QA holdings and their first super_admin profiles
+were created, with one initial TR invitation each accepted by SMTP. Both absence
+preflights and 26 postchecks passed; recipient inbox/acceptance/login remain to
+confirm. No subsidiaries, test data, factors or application deployment were added.
 [QA access, results and remaining tests](infra/runbooks/11-qa-hosted.md#functional-qa-intake--2026-11-02)
 record exact scope. Five monitoring resources were applied/read back; the owner
 acknowledged the Test and a baseline verifier execution Succeeded. Log ingestion
 and alert-chain acceptance remain open (three bounded queries returned0rows).
-Owner-version metadata was unconfirmed, so dependent fixture/lifecycle work
-stopped without retry. Full L10, authoritative numerical QA and wider G2 recovery
+The initial L10 owner-version lookup was unconfirmed, so that package stopped
+without retry. A later, separately scoped CLI preflight and the two requested
+first-admin provisions succeeded; the old A/D tests were not resumed. Full L10, authoritative numerical QA and wider G2 recovery
 remain open. [PR266](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/266)
-contains reviewed helpers/monitoring and CI harness fixes; owner merges.
+was owner-merged at `b59fac1`; it contains reviewed helpers/monitoring and CI
+harness fixes. The onboarding follow-up changes documentation only.
 Earlier operation notes below are historical.
 
 **Phase 1 (Scope 1 & 2 core MVP) is complete** and running end‑to‑end on a local machine; UAT round 1 is closed, UAT round 2 ran on [`docs/uat/uat_round2.md`](docs/uat/uat_round2.md), and the **round-3 catalogue for the pilot candidate build** — four roles × two tenants × TR/EN — is [`docs/uat/uat_round3.md`](docs/uat/uat_round3.md) (LP4-04) and **Phase 3** is active — WP7 (audit viewer, reviewer UI, subsidiary edit), WP15 (UAT quick wins), WP16 (locations in the subsidiary flow), WP17 (completeness engine), WP18 (withdrawal + re-attribution), WP19 (the review gate on every cell), WP20 (report disclosure), WP21 (anomaly baseline provenance + recompute), WP22 (one column vocabulary behind all three report writers, and the names of who entered, decided and withdrew a record) and WP8 (bulk upload from CSV/XLSX with a dry run that provably writes nothing, plus bulk submit) have all shipped — as has the tooling around them: ESLint 9 gating CI, and a CI gate that runs the RLS containment probes on every PR with the full E2E suite nightly. Phase 2 (staging on Azure) has its credit approved and starts as LP2; its cloud‑independent prep is done. The launch plan — task cards, dates and task state — lives in [`docs/roadmap_docs/project_status_roadmap_phases.md`](docs/roadmap_docs/project_status_roadmap_phases.md).
@@ -662,9 +667,10 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > Two native API metric rules and real operator/job delivery are proposed; backup
 > metadata does not prove full restore. Full G2/Sentry/rotation/numerical gates,
 > diagnostics/vault/spam/history/paused-route findings remain disclosed and open.
-> Earlier publication fa18ba3 and both manual infrastructure workflows passed;
-> this larger unpublished helper/Terraform diff needs new review/checks/publication
-> and both manual dispatches. No live operation or approval is inferred.
+> Historical preparation: fa18ba3 passed both manual infrastructure workflows.
+> The larger helper/Terraform package subsequently passed fresh review and all
+> four final gates at `071e853`, then merged in #266 at `b59fac1`. The current
+> follow-up changes documentation only; no live authorization is inferred.
 > storage_cleanup_hold stays true; original r003/r004 and L9 evidence are preserved.
 > Allowed evidence backup excludes the forbidden IB1 area.
 > See [the hosted configuration contract](infra/README.md).
