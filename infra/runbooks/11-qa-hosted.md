@@ -523,6 +523,14 @@ Storage deadline test and stale ID/email mutation anchors from the earlier
 positive-predicate refactor. Both are corrected without production changes or
 weakened gates. Independent Security/QA reviews accept these fixes; the full
 local Python infrastructure baseline passes and both updated mutants are killed
-by assertion failures, with no test errors. Final CI/manual results must be tied
-to the next published commit, not inferred from these older runs. Owner merges.
+by assertion failures, with no test errors. Final tested source `071e85340a492118faab189e9f38766148ee5574` passed all four:
+[CI41517516123](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517516123),
+[Infrastructure41517516061](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517516061),
+[selfhost41517591495](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517591495),
+[qa-infra41517596319](https://github.com/tonyaiukco/TonyAI-mono-repo/actions/runs/41517596319).
+Node22.23.3 lint/typecheck/build/test also pass directly at071e853 in the same
+worktree (cached application tasks; eight existing lint warnings). Clean final
+helper offline qualification passes. This closing results update changes docs
+only, preserving tested source/test/Terraform/workflow blobs; it does not claim a
+new code test run or close the remaining hosted L10 controls. Owner merges.
 No local/mock PASS closes L10.
