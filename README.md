@@ -623,16 +623,33 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 > Owner reports later metadata/access changes and at least one recipient Continue
 > click; the clean initial-state baseline no longer describes all owner actions.
 > No creation/mail failure or complete state acceptance is inferred. Evidence kept.
-> Owner decision2026-11-02: Claude Code owns the next candidate/deploy from main
-> 7d3e2e9 (#259/#261). Codex continues read-only L9/infrastructure work and does not
-> touch application Terraform state/Container Apps. Recipient acceptance/resend/L10
-> wait for the new release name, digests and deployment evidence, then rebind to it.
-> If this docs PR moves main, Claude/owner recheck candidate source and exact-SHA
-> CI/E2E/Integration gates; stop for explicit source selection, without silent retarget.
-> Node 22 lint/typecheck/build/test passed for A4R1 preparation (eight existing lint
-> warnings; Turbo tasks cached). No new mirrored tests or live operation ran.
-> QA role/grant UI observations exist; remaining persisted-state classification,
-> recipient/reset/lifecycle/isolation and L10/QA handover stay open.
+> Hosted QA is now r004 (owner/Claude deployment), fixed source 7d3e2e9 (#259/#261).
+> API digest 4126b6ce1566… and web ded9a4f423a7… bind later acceptance; exact values
+> and source/gate evidence are recorded in the existing hosted/status plans.
+> Deploy helper c8ca4af (#263) and preparation main 88b80b4 (#264) do not retarget images.
+> Prior evidence reports post-rollover verify-only/public/browser checks passed;
+> L9 synthetic onboarding is COMPLETE: one holding, five individual accounts,
+> delivered invitations and accepted recipients/correct data_entry access.
+> All five r004 login/profile observations are owner-reported; four invited
+> members also report company reads; no first-admin company-list proof is claimed.
+> First-admin identity match is closed by later owner confirmation, preserving
+> the original unobserved receipt. All role-attempt approvals are consumed.
+> Fresh r004 email/reset/TR–EN/lifecycle and full workflow/RBAC/isolation/Storage/
+> exports/audit/monitoring/handover remain L10/LP4-01 OPEN; LP2-HQ stays IN_PROGRESS.
+> No further L9 live test is required. Remaining work uses a consolidated bounded
+> checklist/batch for owner review, not per-role/per-click approval loops.
+> Later live actions/notifications/handover need explicit bounded owner approval. Next deploy
+> ownership is undecided; application state/Container Apps remain out of scope.
+> Drain caused about 2 min 40 s downtime and roughly 40 s old/new overlap; migration
+> compatibility must allow old code for about a minute (LP5-03 decision pending).
+> #264's bounded wait has not passed a real deploy; first exercise is next release.
+> verify-only does not wait and may fail transiently just after apply. Paused qa_*
+> fixes remain deferred. storage_cleanup_hold stays true; old r003 inputs preserved.
+> Prior 88b80b4 Node 22 lint/typecheck/build/test and 22 offline infra tests passed
+> (8 existing lint warnings; Turbo cached). Additional 350 existing mock tests passed
+> for an unexecuted Water-draft L10 proposal, not a L9 gate. No agent live operation
+> ran; documentation publication is now owner-authorized.
+> Allowed evidence backup refreshed; previously forbidden private IB1 area excluded.
 > See [the hosted configuration contract](infra/README.md).
 
 **Paused self-hosted route (kept; resumes after the pilot launch).** The text from here to
