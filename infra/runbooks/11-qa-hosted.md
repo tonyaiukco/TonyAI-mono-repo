@@ -265,7 +265,7 @@ secret is created.
    ACR='<foundation registry_name>'; VAULT='<foundation vault_name>'
    APP_ID=$(az ad app create --display-name tonyai-qa-github-deploy --query appId -o tsv)
    SP_ID=$(az ad sp create --id "$APP_ID" --query id -o tsv)
-   az ad app federated-credential create --id "$APP_ID" --parameters "{\"name\":\"github-qa\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:$REPO:environment:qa\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
+   az ad app federated-credential create --id "$APP_ID" --parameters "{\"name\":\"github-qa\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:${REPO}:environment:qa\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
    # Outside Terraform; record both. Only the migration secret, at secret scope:
    az role assignment create --assignee-object-id "$SP_ID" --assignee-principal-type ServicePrincipal \
      --role 'Key Vault Secrets User' \
