@@ -46,51 +46,54 @@ class WorkflowTests(unittest.TestCase):
                     self.assertNotIn('environment', job)
             self.assertTrue(any(j.get('permissions', {}).get('id-token') == 'write' for j in doc['jobs'].values()))
 
-    def test_qa_deploy_reaches_oidc_only_from_a_successful_push_to_main(self):
+    def test_qa_deploy_reaches_oidc_only_from_main_and_waits_for_ci_before_changes(self):
         doc = workflow('deploy-qa.yml')
-        self.assertEqual(set(doc['on']), {'workflow_run', 'workflow_dispatch'})
-        self.assertEqual(doc['on']['workflow_run'], {'workflows': ['CI'], 'types': ['completed'], 'branches': ['main']})
+        self.assertEqual(set(doc['on']), {'push', 'workflow_dispatch'})
+        self.assertEqual(doc['on']['push'], {'branches': ['main']})
         self.assertEqual(doc['permissions'], {'contents': 'read'})
         self.assertEqual(doc['concurrency'], {'group': 'qa-deploy', 'cancel-in-progress': 'false'})
         self.assertEqual(set(doc['jobs']), {'deploy'})
         job = doc['jobs']['deploy']
-        # workflow_run also fires for fork pull requests; each clause keeps them out.
+        condition = ' '.join(job['if'].split())
         for clause in ("github.repository == 'tonyaiukco/TonyAI-mono-repo'",
-                       "github.event.workflow_run.conclusion == 'success'",
-                       "github.event.workflow_run.event == 'push'",
-                       "github.event.workflow_run.head_branch == 'main'",
-                       'github.event.workflow_run.head_repository.full_name == github.repository',
-                       "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')"):
-            self.assertIn(clause, ' '.join(job['if'].split()))
+                       "github.ref == 'refs/heads/main'",
+                       "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"):
+            self.assertIn(clause, condition)
+        self.assertNotIn('||', condition.replace("(github.event_name == 'push' || github.event_name == 'workflow_dispatch')", ''))
         self.assertEqual(job['environment'], 'qa')
         self.assertEqual(job['runs-on'], 'ubuntu-latest')
-        self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
+        self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'read', 'id-token': 'write'})
         self.assertFalse(any('secrets.' in value for value in job['env'].values()))
+        self.assertEqual(job['env']['SOURCE_SHA'], '${{ github.sha }}')
         steps = job['steps']
         checkout = steps[0]
         self.assertTrue(checkout['uses'].startswith('actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'))
         self.assertEqual(checkout['with']['persist-credentials'], 'false')
-        self.assertEqual(checkout['with']['ref'], '${{ github.event.workflow_run.head_sha || github.sha }}')
-        head = steps[1]
-        self.assertEqual((head['id'], head['run']), ('head', 'python3 infra/scripts/qa_autodeploy.py head --sha "$SOURCE_SHA"'))
-        login = [i for i, s in enumerate(steps) if s.get('uses', '').startswith('azure/login@')]
-        self.assertEqual(login, [2])
-        self.assertEqual(steps[2]['uses'], 'azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6')
-        self.assertEqual(steps[2]['if'], "steps.head.outputs.current == 'true'")
+        self.assertEqual(checkout['with']['ref'], '${{ github.sha }}')
         for step in steps:
             self.assertNotIn('${{', step.get('run', ''))
             self.assertNotIn('az extension', step.get('run', ''))
-        plan = next(i for i, s in enumerate(steps) if s.get('id') == 'plan')
-        self.assertEqual(plan, 3)
-        self.assertEqual(steps[plan]['if'], "steps.head.outputs.current == 'true'")
-        gated = steps[plan + 1:]
-        self.assertTrue(gated)
-        for step in gated:
-            self.assertEqual(step['if'], "steps.plan.outputs.deploy == 'true'")
-        runs = [s.get('run', '') for s in gated]
-        order = [next(i for i, r in enumerate(runs) if marker in r)
-                 for marker in ('build-images.sh', 'qa_autodeploy.py migrate', 'qa_autodeploy.py rollout')]
-        self.assertEqual(order, sorted(order))
+        index = {key: next(i for i, s in enumerate(steps) if predicate(s)) for key, predicate in {
+            'head': lambda s: s.get('id') == 'head', 'plan': lambda s: s.get('id') == 'plan',
+            'build': lambda s: 'build-images.sh' in s.get('run', ''), 'ci': lambda s: s.get('id') == 'ci',
+            'migrate': lambda s: 'qa_autodeploy.py migrate' in s.get('run', ''),
+            'rollout': lambda s: 'qa_autodeploy.py rollout' in s.get('run', '')}.items()}
+        self.assertEqual(steps[index['head']]['run'], 'python3 infra/scripts/qa_autodeploy.py head --sha "$SOURCE_SHA"')
+        self.assertEqual(steps[index['ci']]['run'], 'python3 infra/scripts/qa_autodeploy.py wait-ci --sha "$SOURCE_SHA"')
+        self.assertEqual(steps[index['ci']]['env'], {'GH_TOKEN': '${{ github.token }}'})
+        self.assertEqual(steps[index['build']]['env'], {'BUILD_CACHE': "${{ github.event_name == 'push' && 'registry' || '' }}"})
+        self.assertEqual(list(index.values()), sorted(index.values()))
+        login = [i for i, s in enumerate(steps) if s.get('uses', '').startswith('azure/login@')]
+        self.assertEqual(len(login), 2)
+        self.assertTrue(index['head'] < login[0] < index['plan'] and index['ci'] < login[1] < index['migrate'])
+        for i in login:
+            self.assertEqual(steps[i]['uses'], 'azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6')
+        # Gates: head -> login/plan; plan -> buildx/build/CI wait; CI (re-checked head) -> everything that changes QA.
+        expected = {i: "steps.head.outputs.current == 'true'" for i in (login[0], index['plan'])}
+        expected.update({i: "steps.plan.outputs.deploy == 'true'" for i in range(index['plan'] + 1, index['ci'] + 1)})
+        expected.update({i: "steps.ci.outputs.current == 'true'" for i in range(index['ci'] + 1, len(steps))})
+        for i, condition in expected.items():
+            self.assertEqual(steps[i].get('if'), condition, steps[i].get('name') or steps[i].get('uses'))
         # The owner secret version is visible only to the step that reads the secret.
         self.assertNotIn('DIRECT_URL_SECRET_VERSION', job['env'])
         holders = [s for s in steps if 'DIRECT_URL_SECRET_VERSION' in s.get('env', {})]

@@ -12,6 +12,7 @@ Container Apps CLI extension is needed and before/after snapshots are comparable
 Subcommands, in workflow order:
   head            before Azure login: is this commit still main's head?
   plan            decide whether this commit deploys (image-relevant change)
+  wait-ci         after the images are built in parallel: CI must pass for this exact commit
   migrate         apply pending Prisma migrations, then the read-only owner privilege check
   rollout         drain API, update API then web, verify, smoke; roll back on failure
   check-github    owner preflight before federation: main ruleset + `qa` admits main only
@@ -443,6 +444,36 @@ def rollout(foundation, candidate, sha, rid, read, patch, owns, sleep=time.sleep
         raise SafeFailure('Deploy failed and was rolled back: ' + reason) from None
 
 
+# ---------------------------------------------------------------- CI gate
+
+def ci_state(sha, read):
+    """'success' | 'failed' | 'pending' for CI's latest push run of `sha` on main."""
+    data = read('repos/' + REPOSITORY + '/actions/workflows/ci.yml/runs?head_sha=' + sha
+                + '&event=push&branch=main&per_page=20')
+    runs = [run for run in data.get('workflow_runs') or []
+            if run.get('head_sha') == sha and run.get('event') == 'push' and run.get('head_branch') == 'main'
+            and str(run.get('path', '')).split('@')[0] == '.github/workflows/ci.yml'
+            and (run.get('head_repository') or {}).get('full_name') == REPOSITORY]
+    if not runs:
+        return 'pending'
+    latest = max(runs, key=lambda run: (run.get('run_number', 0), run.get('run_attempt', 0)))
+    if latest.get('status') != 'completed':
+        return 'pending'
+    return 'success' if latest.get('conclusion') == 'success' else 'failed'
+
+
+def wait_ci(sha, read, sleep=time.sleep, attempts=270):
+    """Nothing reaches the database or the apps until CI is green for this exact commit."""
+    for _ in range(attempts):
+        state = ci_state(sha, read)
+        if state == 'success':
+            return
+        if state == 'failed':
+            raise SafeFailure('CI failed for this commit; QA is not deployed.')
+        sleep(10)
+    raise SafeFailure('CI did not finish in time; QA is not deployed.')
+
+
 # ---------------------------------------------------------------- owner preflight
 
 def gh_api(path):
@@ -500,7 +531,7 @@ def interrupted(signum, frame):
 
 def main(argv=None, env=os.environ):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('operation', choices=['head', 'plan', 'migrate', 'rollout', 'check-github'])
+    parser.add_argument('operation', choices=['head', 'plan', 'wait-ci', 'migrate', 'rollout', 'check-github'])
     parser.add_argument('--sha')
     parser.add_argument('--candidate')
     parser.add_argument('--force', action='store_true')
@@ -515,6 +546,13 @@ def main(argv=None, env=os.environ):
         current = main_head() == args.sha
         write_output('current', 'true' if current else 'false', env)
         print('CURRENT: deploying candidate.' if current else 'SKIP: main has moved on; the newer commit deploys instead.')
+        return
+    if args.operation == 'wait-ci':
+        wait_ci(args.sha, gh_api)
+        # Re-check: a newer merge may have landed while this one waited; it deploys instead.
+        current = main_head() == args.sha
+        write_output('current', 'true' if current else 'false', env)
+        print('PASS: CI succeeded for this commit.' if current else 'SKIP: CI passed, but main has moved on.')
         return
     foundation = foundation_from_env(env)
     arm = Arm(foundation)

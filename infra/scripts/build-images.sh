@@ -8,6 +8,17 @@ test ! -e "$2"
 : "${SUPABASE_PROJECT_REF:?Complete Supabase setup first}"
 : "${ACR_HOST:?}" "${ACR_NAME:?}" "${API_ORIGIN:?}" "${RESOURCE_GROUP:?}"
 test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+# Opt-in layer cache in this registry (the automatic QA deploy sets BUILD_CACHE=registry).
+# Owner builds leave it unset and stay uncached. Image digests still come from this build.
+api_cache=(); web_cache=()
+if [[ -n "${BUILD_CACHE:-}" ]]; then
+  test "$BUILD_CACHE" = 'registry'
+  for kind in api web; do
+    ref="$ACR_HOST/tonyai/buildcache:$kind"
+    args=(--cache-from "type=registry,ref=$ref" --cache-to "type=registry,ref=$ref,mode=max,image-manifest=true,oci-mediatypes=true")
+    if [[ "$kind" = api ]]; then api_cache=("${args[@]}"); else web_cache=("${args[@]}"); fi
+  done
+fi
 test -z "$(git status --porcelain)"
 export NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL"
 export NEXT_PUBLIC_API_BASE_URL="$API_ORIGIN/api/v1"
@@ -32,8 +43,8 @@ cleanup() {
 }
 trap cleanup EXIT
 az acr login --name "$ACR_NAME" --output none
-docker buildx build --platform linux/amd64 --file apps/api/Dockerfile --label "org.opencontainers.image.revision=$RELEASE_SHA" --tag "$ACR_HOST/tonyai/api:$RELEASE_SHA" --metadata-file "$work_dir/api.json" --push .
-docker buildx build --platform linux/amd64 --file apps/web/Dockerfile --label "org.opencontainers.image.revision=$RELEASE_SHA" --tag "$ACR_HOST/tonyai/web:$RELEASE_SHA" --metadata-file "$work_dir/web.json" --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY --build-arg NEXT_PUBLIC_API_BASE_URL --push .
+docker buildx build --platform linux/amd64 --file apps/api/Dockerfile --label "org.opencontainers.image.revision=$RELEASE_SHA" --tag "$ACR_HOST/tonyai/api:$RELEASE_SHA" --metadata-file "$work_dir/api.json" ${api_cache[@]+"${api_cache[@]}"} --push .
+docker buildx build --platform linux/amd64 --file apps/web/Dockerfile --label "org.opencontainers.image.revision=$RELEASE_SHA" --tag "$ACR_HOST/tonyai/web:$RELEASE_SHA" --metadata-file "$work_dir/web.json" --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY --build-arg NEXT_PUBLIC_API_BASE_URL ${web_cache[@]+"${web_cache[@]}"} --push .
 unset NEXT_PUBLIC_SUPABASE_ANON_KEY
 # Digest comes from THIS build result, never a later lookup of the mutable tag.
 read_digest() {

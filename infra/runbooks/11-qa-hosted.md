@@ -152,9 +152,12 @@ Local tests do not establish cloud access, email delivery or recovery acceptance
 **Owner decision 2026-11-03:** QA is internal and fixes must reach it quickly, so
 every merge to `main` whose **CI** workflow passes deploys to hosted QA with no
 approval step, **migrations included**. E2E (nightly) and Integration
-(path-filtered) are not gates for QA. `.github/workflows/deploy-qa.yml` runs
-`infra/scripts/qa_autodeploy.py` on a GitHub-hosted runner in the `qa` environment.
-Every Azure call is `az rest` at API version `2025-01-01`, with no CLI extension.
+(path-filtered) are not gates for QA. `.github/workflows/deploy-qa.yml` starts on
+the push itself and runs `infra/scripts/qa_autodeploy.py` on a GitHub-hosted runner
+in the `qa` environment. It builds the images **while CI runs**, then waits for
+CI; nothing touches the database or the apps until CI has passed for that exact
+commit. Every Azure call is `az rest` at API version `2025-01-01`, with no CLI
+extension. Measured on 2026-11-03, CI on `main` takes 3–7 minutes.
 
 1. **head (before Azure login):** if a newer commit has reached `main`, the run
    stops without a token, because the newer commit deploys instead. If `main`'s head
@@ -163,22 +166,31 @@ Every Azure call is `az rest` at API version `2025-01-01`, with no CLI extension
    `source` tag; `git diff --no-renames`) is under `docs/`, `infra/` (except
    `infra/certs/`, which the API image copies), `e2e/`, `.github/`, `.claude/`,
    `.codex/` or a top-level `*.md`. A manual dispatch from `main` always deploys.
-3. **build:** `build-images.sh` builds, pushes and scans both images at that SHA.
-4. **migrate:** the same pinned schema-engine transport as `hosted_migrate.py`
+3. **build (in parallel with CI):** `build-images.sh` builds, pushes and scans
+   both images at that SHA. `BUILD_CACHE=registry` reuses layers from
+   `<registry>/tonyai/buildcache:{api,web}`; owner builds leave it unset. Image
+   digests still come from the build itself. A manual dispatch builds without the
+   cache. A red CI leaves pushed but never deployed images. To discard a suspect
+   cache, run
+   `az acr repository delete -n <registry> --repository tonyai/buildcache --yes`.
+4. **CI gate:** `wait-ci` polls CI's latest push run for this exact SHA on `main`
+   in this repository. Red stops the deploy; green re-checks that the commit is
+   still `main`'s head and logs in to Azure again for fresh tokens.
+5. **migrate:** the same pinned schema-engine transport as `hosted_migrate.py`
    (checksum-bound engine, read-only container, strict TLS). It reads **only**
    `direct-url`, at the exact version in `QA_DIRECT_URL_SECRET_VERSION`, then runs
    runbook 03's read-only `owner-check`. Any privilege problem, PUBLIC exposure or
    factor-library notice stops the deploy before rollout. The log reports
    platform-default findings for owner review. With no migration pending, zero are
    applied.
-5. **rollout:** drain the API (one process for process-local quotas, so expect a
+6. **rollout:** drain the API (one process for process-local quotas, so expect a
    1–2 minute API gap). JSON-merge-PATCH only the template (image digest and
    revision suffix `ci<run>-<attempt>`) and the `release`/`source` tags, then the web
    app. Each app must be ready on the new revision and identical to before apart
    from its image. Then the smoke check: liveness 200, readiness 200,
    `/api/v1/health/synthetic` 401, web `/login` 200. The forward rollout has a
    35-minute budget so the step keeps time to roll back.
-6. **rollback:** any rollout, verification, smoke, budget or cancel failure
+7. **rollback:** any rollout, verification, smoke, budget or cancel failure
    redeploys the previous images (web first, suffix `…-rb`) and smoke-checks
    again. The run fails either way. `ROLLBACK INCOMPLETE` in the log names the app
    that still needs attention; recover with **Run workflow** on `QA deploy` from

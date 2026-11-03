@@ -63,8 +63,9 @@ confirm. No subsidiaries, test data, factors or application deployment were adde
 [QA access, results and remaining tests](infra/runbooks/11-qa-hosted.md#functional-qa-intake--2026-11-02)
 record exact scope. **Deploys on merge:** after its one-time owner setup,
 `.github/workflows/deploy-qa.yml` deploys every `main` merge whose CI passes to
-hosted QA. It builds, migrates, rolls out API then web, smoke-checks, and rolls
-back on failure; docs- and infra-only merges skip it. See
+hosted QA. It builds cached images while CI runs, then waits for CI before it
+migrates, rolls out API then web, smoke-checks, and rolls back on failure;
+docs- and infra-only merges skip it. See
 [automatic deploy on merge](infra/runbooks/11-qa-hosted.md#automatic-deploy-on-merge). Five monitoring resources were applied/read back; the owner
 acknowledged the Test and a baseline verifier execution Succeeded. Log ingestion
 and alert-chain acceptance remain open (three bounded queries returned0rows).

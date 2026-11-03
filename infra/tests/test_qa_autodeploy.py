@@ -472,6 +472,50 @@ class RolloutTests(unittest.TestCase):
                          {STEM + '-api.qa.swedencentral.azurecontainerapps.io', STEM + '-web.qa.swedencentral.azurecontainerapps.io'})
 
 
+def ci_run(**changes):
+    run = {'head_sha': SHA, 'event': 'push', 'head_branch': 'main', 'path': '.github/workflows/ci.yml',
+           'head_repository': {'full_name': qa.REPOSITORY}, 'run_number': 10, 'run_attempt': 1,
+           'status': 'completed', 'conclusion': 'success'}
+    run.update(changes)
+    return run
+
+
+class CiGateTests(unittest.TestCase):
+    def state(self, *runs):
+        seen = []
+        result = qa.ci_state(SHA, lambda path: seen.append(path) or {'workflow_runs': list(runs)})
+        self.assertIn('head_sha=' + SHA, seen[0])
+        return result
+
+    def test_success_failure_and_pending(self):
+        self.assertEqual(self.state(ci_run()), 'success')
+        self.assertEqual(self.state(ci_run(conclusion='failure')), 'failed')
+        self.assertEqual(self.state(ci_run(conclusion='cancelled')), 'failed')
+        self.assertEqual(self.state(ci_run(status='in_progress', conclusion=None)), 'pending')
+        self.assertEqual(self.state(), 'pending')
+
+    def test_latest_run_decides(self):
+        self.assertEqual(self.state(ci_run(conclusion='failure'), ci_run(run_number=11)), 'success')
+        self.assertEqual(self.state(ci_run(run_number=11, conclusion='failure'), ci_run()), 'failed')
+
+    def test_runs_for_other_commits_events_branches_workflows_or_forks_are_ignored(self):
+        for other in (ci_run(head_sha=OLD), ci_run(event='pull_request'), ci_run(head_branch='feature'),
+                      ci_run(path='.github/workflows/e2e.yml'), ci_run(head_repository={'full_name': 'fork/TonyAI-mono-repo'})):
+            with self.subTest(other=other):
+                self.assertEqual(self.state(other), 'pending')
+
+    def test_wait_polls_until_green_and_stops_on_red_or_timeout(self):
+        answers = iter([{'workflow_runs': []}, {'workflow_runs': [ci_run(status='queued', conclusion=None)]},
+                        {'workflow_runs': [ci_run()]}])
+        sleeps = []
+        qa.wait_ci(SHA, lambda path: next(answers), sleep=sleeps.append)
+        self.assertEqual(sleeps, [10, 10])
+        with self.assertRaises(SafeFailure):
+            qa.wait_ci(SHA, lambda path: {'workflow_runs': [ci_run(conclusion='failure')]}, sleep=lambda s: None)
+        with self.assertRaises(SafeFailure):
+            qa.wait_ci(SHA, lambda path: {'workflow_runs': []}, sleep=lambda s: None, attempts=3)
+
+
 def ruleset(**changes):
     rules = [{'type': 'deletion'}, {'type': 'non_fast_forward'}, {'type': 'pull_request', 'parameters': {}},
              {'type': 'required_status_checks', 'parameters': {'required_status_checks': [
