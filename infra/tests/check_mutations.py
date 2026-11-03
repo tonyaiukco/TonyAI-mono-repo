@@ -121,6 +121,8 @@ MUTANTS = [
     ('qa deploy drift check removed', 'qa_autodeploy.py', '    if comparable(before) != comparable(after):', '    if False:'),
     ('qa deploy rollback removed', 'qa_autodeploy.py', '                update(foundation, kind, before[kind], previous, rid + \'-rb\', source, read, patch, sleep, attempts)\n', ''),
     ('qa deploy API drain removed', 'qa_autodeploy.py', '        drain(foundation, rid, read=read, sleep=sleep, attempts=attempts)\n', '        pass\n'),
+    ('qa deploy engine download sends the default User-Agent', 'qa_autodeploy.py', "opener(Request(ENGINE_URL, headers={'User-Agent': USER_AGENT}), timeout=120)", 'opener(ENGINE_URL, timeout=120)'),
+    ('qa deploy engine download failure not named', 'qa_autodeploy.py', "    except (OSError, EOFError, zlib.error):\n        raise SafeFailure('Schema-engine download failed or returned an unreadable archive.') from None\n", ''),
     ('qa deploy foreign vault accepted', 'qa_autodeploy.py', "        if not url.startswith(prefix) or not re.fullmatch(r'[a-f0-9]{32}', url[len(prefix):]):", '        if False:'),
     ('qa deploy engine checksum removed', 'qa_autodeploy.py', '    if hashlib.sha256(data).hexdigest() != ENGINE_SHA256:', '    if False:'),
     ('qa deploy rename detection removed', 'qa_autodeploy.py', "'--name-only', '--no-renames',", "'--name-only',"),

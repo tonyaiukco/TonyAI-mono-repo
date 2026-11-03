@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -48,6 +49,8 @@ REPOSITORY = 'tonyaiukco/TonyAI-mono-repo'
 API_VERSION = '2025-01-01'
 ENGINE_URL = ('https://binaries.prisma.sh/all_commits/' + ENGINE_COMMIT
               + '/debian-openssl-3.0.x/schema-engine.gz')
+# binaries.prisma.sh refuses urllib's default User-Agent (Cloudflare 403, error 1010).
+USER_AGENT = 'tonyai-qa-deploy'
 # A change confined to these paths cannot alter either image, so it does not redeploy QA.
 NON_IMAGE_PREFIXES = ('docs/', 'infra/', 'e2e/', '.github/', '.claude/', '.codex/')
 # ...except these, which .dockerignore admits and the API image copies.
@@ -260,8 +263,13 @@ def live_release(foundation, api, candidate, sha, rid, project):
 # ---------------------------------------------------------------- migrate
 
 def fetch_engine(destination, opener=urlopen):
-    with opener(ENGINE_URL, timeout=120) as response:
-        data = gzip.decompress(response.read())
+    try:
+        with opener(Request(ENGINE_URL, headers={'User-Agent': USER_AGENT}), timeout=120) as response:
+            data = gzip.decompress(response.read())
+    except HTTPError as error:
+        raise SafeFailure('Schema-engine download failed: HTTP ' + str(error.code) + '.') from None
+    except (OSError, EOFError, zlib.error):
+        raise SafeFailure('Schema-engine download failed or returned an unreadable archive.') from None
     if hashlib.sha256(data).hexdigest() != ENGINE_SHA256:
         raise SafeFailure('Downloaded schema-engine checksum differs from the reviewed Prisma build.')
     Path(destination).write_bytes(data)
@@ -350,7 +358,7 @@ def verify(foundation, kind, before, after, image, rid, read):
 
 def fetch_status(url, opener=urlopen):
     try:
-        with opener(Request(url, headers={'User-Agent': 'tonyai-qa-deploy'}), timeout=10) as response:
+        with opener(Request(url, headers={'User-Agent': USER_AGENT}), timeout=10) as response:
             return response.status
     except HTTPError as error:
         return error.code
