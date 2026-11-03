@@ -1,6 +1,7 @@
 """Parse real workflow YAML and pin the pre-authentication release boundary."""
 from pathlib import Path
 import unittest
+import json
 import os
 import subprocess
 import yaml
@@ -44,6 +45,70 @@ class WorkflowTests(unittest.TestCase):
                     self.assertFalse(login)
                     self.assertNotIn('environment', job)
             self.assertTrue(any(j.get('permissions', {}).get('id-token') == 'write' for j in doc['jobs'].values()))
+
+    def test_qa_deploy_reaches_oidc_only_from_main_and_waits_for_ci_before_changes(self):
+        doc = workflow('deploy-qa.yml')
+        self.assertEqual(set(doc['on']), {'push', 'workflow_dispatch'})
+        self.assertEqual(doc['on']['push'], {'branches': ['main']})
+        self.assertEqual(doc['permissions'], {'contents': 'read'})
+        self.assertEqual(doc['concurrency'], {'group': 'qa-deploy', 'cancel-in-progress': 'false'})
+        self.assertEqual(set(doc['jobs']), {'deploy'})
+        job = doc['jobs']['deploy']
+        condition = ' '.join(job['if'].split())
+        for clause in ("github.repository == 'tonyaiukco/TonyAI-mono-repo'",
+                       "github.ref == 'refs/heads/main'",
+                       "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"):
+            self.assertIn(clause, condition)
+        self.assertNotIn('||', condition.replace("(github.event_name == 'push' || github.event_name == 'workflow_dispatch')", ''))
+        self.assertEqual(job.get('environment'), 'qa')
+        self.assertEqual(job['runs-on'], 'ubuntu-latest')
+        self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'read', 'id-token': 'write'})
+        self.assertFalse(any('secrets.' in value for value in job['env'].values()))
+        self.assertEqual(job['env']['SOURCE_SHA'], '${{ github.sha }}')
+        steps = job['steps']
+        checkout = steps[0]
+        self.assertTrue(checkout['uses'].startswith('actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'))
+        self.assertEqual(checkout['with']['persist-credentials'], 'false')
+        self.assertEqual(checkout['with']['ref'], '${{ github.sha }}')
+        for step in steps:
+            self.assertNotIn('${{', step.get('run', ''))
+            self.assertNotIn('az extension', step.get('run', ''))
+        index = {key: next(i for i, s in enumerate(steps) if predicate(s)) for key, predicate in {
+            'head': lambda s: s.get('id') == 'head', 'plan': lambda s: s.get('id') == 'plan',
+            'build': lambda s: 'build-images.sh' in s.get('run', ''), 'ci': lambda s: s.get('id') == 'ci',
+            'migrate': lambda s: 'qa_autodeploy.py migrate' in s.get('run', ''),
+            'rollout': lambda s: 'qa_autodeploy.py rollout' in s.get('run', '')}.items()}
+        self.assertEqual(steps[index['head']]['run'], 'python3 infra/scripts/qa_autodeploy.py head --sha "$SOURCE_SHA"')
+        self.assertEqual(steps[index['ci']]['run'], 'python3 infra/scripts/qa_autodeploy.py wait-ci --sha "$SOURCE_SHA"')
+        self.assertEqual(steps[index['ci']]['env'], {'GH_TOKEN': '${{ github.token }}'})
+        self.assertEqual(steps[index['build']]['env'], {'BUILD_CACHE': "${{ github.event_name == 'push' && 'registry' || '' }}"})
+        self.assertEqual(list(index.values()), sorted(index.values()))
+        login = [i for i, s in enumerate(steps) if s.get('uses', '').startswith('azure/login@')]
+        self.assertEqual(len(login), 2)
+        self.assertTrue(index['head'] < login[0] < index['plan'] and index['ci'] < login[1] < index['migrate'])
+        for i in login:
+            self.assertEqual(steps[i]['uses'], 'azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6')
+        # Gates: head -> login/plan; plan -> buildx/build/CI wait; CI (re-checked head) -> everything that changes QA.
+        expected = {i: "steps.head.outputs.current == 'true'" for i in (login[0], index['plan'])}
+        expected.update({i: "steps.plan.outputs.deploy == 'true'" for i in range(index['plan'] + 1, index['ci'] + 1)})
+        expected.update({i: "steps.ci.outputs.current == 'true'" for i in range(index['ci'] + 1, len(steps))})
+        for i, condition in expected.items():
+            self.assertEqual(steps[i].get('if'), condition, steps[i].get('name') or steps[i].get('uses'))
+        # The owner secret version is visible only to the step that reads the secret.
+        self.assertNotIn('DIRECT_URL_SECRET_VERSION', job['env'])
+        holders = [s for s in steps if 'DIRECT_URL_SECRET_VERSION' in s.get('env', {})]
+        self.assertEqual(len(holders), 1)
+        self.assertIn('qa_autodeploy.py migrate', holders[0]['run'])
+
+    def test_only_the_qa_deploy_workflow_may_use_the_qa_environment(self):
+        users = set()
+        for path in [*(ROOT / '.github/workflows').glob('*.yml'), *(ROOT / '.github/workflows').glob('*.yaml')]:
+            for name, job in (workflow(path.name).get('jobs') or {}).items():
+                environment = job.get('environment')
+                self.assertNotIn('${{', json.dumps(environment), (path.name, name))
+                if (environment.get('name') if isinstance(environment, dict) else environment) == 'qa':
+                    users.add((path.name, name))
+        self.assertEqual(users, {('deploy-qa.yml', 'deploy')})
 
     def test_approval_waits_for_visible_manifest_and_hash(self):
         doc = workflow('deploy-staging.yml')

@@ -143,12 +143,177 @@ accept numerical emissions, factor standing or a factor appendix. Never enable
 placeholder factors or load the demo seed to fill this gap. Default ACA hostnames
 are intentional. Azure-managed mail has low service quotas; pace controlled
 invitations and confirm current limits before a batch. SMTP failure remains a
-failed onboarding result. CI OIDC adaptation is WP-6; initial rollout is owner-run.
+failed onboarding result. Application deploys run automatically on merge (next
+section); the staging/production CI path (WP-6) stays deferred.
 Local tests do not establish cloud access, email delivery or recovery acceptance.
+
+## Automatic deploy on merge
+
+**Owner decision 2026-11-03:** QA is internal and fixes must reach it quickly, so
+every merge to `main` whose **CI** workflow passes deploys to hosted QA with no
+approval step, **migrations included**. E2E (nightly) and Integration
+(path-filtered) are not gates for QA. `.github/workflows/deploy-qa.yml` starts on
+the push itself and runs `infra/scripts/qa_autodeploy.py` on a GitHub-hosted runner
+in the `qa` environment. It builds the images **while CI runs**, then waits for
+CI; nothing touches the database or the apps until CI has passed for that exact
+commit. Every Azure call is `az rest` at API version `2025-01-01`, with no CLI
+extension. Measured on 2026-11-03, CI on `main` takes 3–7 minutes.
+
+1. **head (before Azure login):** if a newer commit has reached `main`, the run
+   stops without a token, because the newer commit deploys instead. If `main`'s head
+   then fails CI, QA keeps the last deployed commit until the next green merge.
+2. **plan:** skip when every file changed since the deployed source (the apps'
+   `source` tag; `git diff --no-renames`) is under `docs/`, `infra/` (except
+   `infra/certs/`, which the API image copies), `e2e/`, `.github/`, `.claude/`,
+   `.codex/` or a top-level `*.md`. A manual dispatch from `main` always deploys.
+3. **build (in parallel with CI):** `build-images.sh` builds, pushes and scans
+   both images at that SHA. `BUILD_CACHE=registry` reuses layers from
+   `<registry>/tonyai/buildcache:{api,web}`; owner builds leave it unset. Image
+   digests still come from the build itself. A manual dispatch builds without the
+   cache. A red CI leaves pushed but never deployed images. To discard a suspect
+   cache, run
+   `az acr repository delete -n <registry> --repository tonyai/buildcache --yes`.
+4. **CI gate:** `wait-ci` polls CI's latest push run for this exact SHA on `main`
+   in this repository. Red stops the deploy; green re-checks that the commit is
+   still `main`'s head and logs in to Azure again for fresh tokens.
+5. **migrate:** the same pinned schema-engine transport as `hosted_migrate.py`
+   (checksum-bound engine, read-only container, strict TLS). It reads **only**
+   `direct-url`, at the exact version in `QA_DIRECT_URL_SECRET_VERSION`, then runs
+   runbook 03's read-only `owner-check`. Any privilege problem, PUBLIC exposure or
+   factor-library notice stops the deploy before rollout. The log reports
+   platform-default findings for owner review. With no migration pending, zero are
+   applied.
+6. **rollout:** drain the API (one process for process-local quotas, so expect a
+   1–2 minute API gap). JSON-merge-PATCH only the template (image digest and
+   revision suffix `ci<run>-<attempt>`) and the `release`/`source` tags, then the web
+   app. Each app must be ready on the new revision and identical to before apart
+   from its image. Then the smoke check: liveness 200, readiness 200,
+   `/api/v1/health/synthetic` 401, web `/login` 200. The forward rollout has a
+   35-minute budget so the step keeps time to roll back.
+7. **rollback:** any rollout, verification, smoke, budget or cancel failure
+   redeploys the previous images (web first, suffix `…-rb`) and smoke-checks
+   again. The run fails either way. `ROLLBACK INCOMPLETE` in the log names the app
+   that still needs attention; recover with **Run workflow** on `QA deploy` from
+   `main`. "Rollback applied but smoke is still failing" points at a shared
+   dependency such as Supabase. Every `az` call has a 3-minute timeout. Do not
+   cancel a running rollout step: GitHub kills the process within seconds, so a
+   cancel or a step timeout can leave the API drained, and only a re-run repairs
+   that.
+   Migrations are not rolled back, so keep them additive (expand first, contract
+   in a later release).
+
+Migrations that runbook 03 gives an owner `owner-psql` preflight (for example
+LP3-03) now apply without one. For such a migration, run its preflight before
+you merge.
+
+**Owner Terraform releases.** Terraform still owns every setting, but the live
+image, revision suffix and tags now drift from its state, and azapi shows them as
+an in-place update. Before you prepare or apply an owner application release,
+disable the workflow, and enable it again afterwards:
+
+```bash
+gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
+gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
+```
+
+That release takes its digests and `source_sha` from the live `source` tag or the
+latest `qa-candidate-<run>-<attempt>` artifact (public digests and migration
+hashes only), uses a fresh `release_id`, and should find no migration pending.
+
+**One-time owner setup — in this order.** The GitHub side needs a repository
+admin; the Azure side needs the subscription owner. No client secret or GitHub
+secret is created.
+
+1. **GitHub first: protect `main`, then create `qa`.** CI is now the only gate
+   between a push to `main` and QA, which includes migrations run as the database
+   owner. On 2026-11-03, `main` had no branch protection and no ruleset.
+   - Add an active ruleset on the default branch, with no bypass actors, that:
+     - requires a pull request;
+     - requires the CI jobs `build`, `docker-build`, `rls-probe` and
+       `migration-diff`;
+     - blocks deletion and force pushes.
+   - Then create the environment `qa` with a deployment-branch policy of exactly
+     `main` and no required reviewers. Do both before the federated credential
+     exists: GitHub creates a missing environment with no branch policy the first
+     time a workflow names it, and a branch workflow could then obtain the token.
+   - Verify both, signed in to `gh` as a repository admin. Only admins can see a
+     ruleset's bypass actors, so the check refuses anyone else.
+
+   ```bash
+   python3 infra/scripts/qa_autodeploy.py check-github
+   ```
+
+   The check asks GitHub which active rules actually apply to `main`
+   (`GET /repos/{repo}/rules/branches/main`). It never interprets a ruleset's
+   include or exclude patterns itself. Each required rule counts only when it
+   comes from a ruleset with no bypass actors. A ruleset that targets the default
+   branch but excludes `main` therefore fails the check.
+
+   Limits to know:
+   - A pull request with zero required approvals passes; PRs are required, not
+     reviews.
+   - A required check is matched by job name from any GitHub Actions workflow,
+     so a PR could add its own job named `build`. This is a GitHub-wide limit of
+     status-check rules.
+   - The check runs once, here. Run it again after any change to rulesets or to
+     the `qa` environment.
+
+2. **Azure identity.** Create the identity once `check-github` passes:
+
+   ```bash
+   SUB='cb7efc2f-37a7-4672-b62c-93c207bcd33d'; REPO='tonyaiukco/TonyAI-mono-repo'
+   ACR='<foundation registry_name>'; VAULT='<foundation vault_name>'
+   APP_ID=$(az ad app create --display-name tonyai-qa-github-deploy --query appId -o tsv)
+   SP_ID=$(az ad sp create --id "$APP_ID" --query id -o tsv)
+   az ad app federated-credential create --id "$APP_ID" --parameters "{\"name\":\"github-qa\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:${REPO}:environment:qa\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
+   # Outside Terraform; record both. Only the migration secret, at secret scope:
+   az role assignment create --assignee-object-id "$SP_ID" --assignee-principal-type ServicePrincipal \
+     --role 'Key Vault Secrets User' \
+     --scope "$(az keyvault show --subscription "$SUB" -n "$VAULT" --query id -o tsv)/secrets/direct-url"
+   # az acr login looks the registry up through ARM; AcrPush has no registries/read:
+   az role assignment create --assignee-object-id "$SP_ID" --assignee-principal-type ServicePrincipal \
+     --role Reader --scope "$(az acr show --subscription "$SUB" -n "$ACR" --query id -o tsv)"
+   ```
+
+3. **Foundation grants.** Set the foundation input `deployer_object_id` to `$SP_ID`
+   (it must be empty today; changing it moves every deployer grant) with
+   `apps_ready: true`, then PLAN/APPLY as usual. Expect grant creates only:
+   - AcrPush
+   - Managed Identity Operator on both app identities
+   - environment Reader and the custom join role
+   - Container Apps Contributor on the two apps
+
+   Container Apps may re-check the identity and environment links on a PATCH, so
+   keep all of them.
+
+4. **GitHub variables.** Add these environment variables to `qa`. They are public
+   identifiers, never secret values:
+   - `AZURE_CLIENT_ID` (`$APP_ID`)
+   - `AZURE_TENANT_ID`
+   - `AZURE_SUBSCRIPTION_ID`
+   - `QA_RESOURCE_GROUP`
+   - `QA_PREFIX` (`tonyaiqt`)
+   - `QA_ACA_DEFAULT_DOMAIN`
+   - `QA_ACR_NAME`
+   - `QA_VAULT_NAME`
+   - `QA_SUPABASE_PROJECT_REF`
+   - `QA_SUPABASE_PUBLIC_KEY` (the browser key, never `service_role`)
+   - `QA_DIRECT_URL_SECRET_VERSION`
+
+   Rotating `direct-url` means updating that last variable. The repository is
+   public, so run logs and the candidate artifact are public as well; they carry
+   identifiers only.
+
+5. **First run.** Click **Run workflow** on `QA deploy` from `main` and watch every
+   step. Three behaviours are proven only live: the PATCH body, `az acr login` and
+   web readiness. If the vault or the Supabase project restricts network access,
+   the run fails at **migrate**; decide on the rule explicitly. The plan step reads
+   `main` anonymously, so making the repository private needs a token there first.
 
 ## Reset, maintenance and announcements
 
-The owner approves each reset or deployment and names the affected environment,
+Application deploys follow the previous section and need no per-deploy approval;
+QA sees a short API gap on each one. For every other change, the owner approves each reset or deployment and names the affected environment,
 scope, window, retained evidence and recovery path. Notify QA through the agreed
 channel before the window and again when the exact release is accepted; pause
 submissions meanwhile. Preserve bug evidence and the selected release/journals.

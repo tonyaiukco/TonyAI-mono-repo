@@ -13,7 +13,7 @@ SCRIPT=ROOT/'infra/scripts/build-images.sh'
 
 class BuildTests(unittest.TestCase):
     def test_only_scanned_build_digests_are_recorded_and_no_foundation_mutation(self):
-        for mode in ('ok','dirty','bad-digest','privileged-assets','build-failure','invalid-provenance'):
+        for mode in ('ok','ok-cache','bad-cache','dirty','bad-digest','privileged-assets','build-failure','invalid-provenance'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as d:
                 directory=Path(d); log=directory/'calls.jsonl'; output=directory/'candidate.json'
                 def executable(name,source):
@@ -48,13 +48,24 @@ elif args[0]=='cp':
                      'WEB_ORIGIN':'https://tonyai-staging-web.real.swedencentral.azurecontainerapps.io','RESOURCE_GROUP':'staging',
                      'PREFIX':'tonyai','ACA_DEFAULT_DOMAIN':'real.swedencentral.azurecontainerapps.io'}
                 if mode=='invalid-provenance': env['WEB_ORIGIN']='https://foreign.invalid'
+                if mode=='ok-cache': env['BUILD_CACHE']='registry'
+                if mode=='bad-cache': env['BUILD_CACHE']='type=registry,ref=foreign.example/cache'
                 result=subprocess.run(['bash',str(SCRIPT),'a'*40,str(output)],cwd=ROOT,env=env,input='sb_publishable_synthetic\n',capture_output=True,text=True)
-                self.assertEqual(result.returncode==0,mode=='ok',result.stderr)
-                self.assertEqual(output.exists(),mode=='ok')
+                self.assertEqual(result.returncode==0,mode in ('ok','ok-cache'),result.stderr)
+                self.assertEqual(output.exists(),mode in ('ok','ok-cache'))
                 calls=[json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
                 self.assertFalse(any(call[:2]==['group','update'] for call in calls))
-                if mode=='invalid-provenance': self.assertEqual(calls, [])
-                if mode=='ok':
+                if mode in ('invalid-provenance','bad-cache'): self.assertEqual(calls, [])
+                builds=[call for call in calls if call[:2]==['buildx','build']]
+                for build in builds:
+                    kind='api' if 'apps/api/Dockerfile' in build else 'web'
+                    cache=[build[i+1] for i,arg in enumerate(build) if arg in ('--cache-from','--cache-to')]
+                    if mode=='ok-cache':
+                        ref='ref=registry.azurecr.io/tonyai/buildcache:'+kind
+                        self.assertEqual(cache,['type=registry,'+ref,'type=registry,'+ref+',mode=max,image-manifest=true,oci-mediatypes=true'])
+                    else:
+                        self.assertEqual(cache,[])
+                if mode in ('ok','ok-cache'):
                     actual=json.loads(output.read_text())
                     self.assertEqual(actual['api_digest'],'sha256:'+'a'*64)
                     self.assertEqual(actual['web_digest'],'sha256:'+'b'*64)
