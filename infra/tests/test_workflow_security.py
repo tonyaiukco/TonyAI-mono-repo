@@ -1,6 +1,7 @@
 """Parse real workflow YAML and pin the pre-authentication release boundary."""
 from pathlib import Path
 import unittest
+import json
 import os
 import subprocess
 import yaml
@@ -44,6 +45,67 @@ class WorkflowTests(unittest.TestCase):
                     self.assertFalse(login)
                     self.assertNotIn('environment', job)
             self.assertTrue(any(j.get('permissions', {}).get('id-token') == 'write' for j in doc['jobs'].values()))
+
+    def test_qa_deploy_reaches_oidc_only_from_a_successful_push_to_main(self):
+        doc = workflow('deploy-qa.yml')
+        self.assertEqual(set(doc['on']), {'workflow_run', 'workflow_dispatch'})
+        self.assertEqual(doc['on']['workflow_run'], {'workflows': ['CI'], 'types': ['completed'], 'branches': ['main']})
+        self.assertEqual(doc['permissions'], {'contents': 'read'})
+        self.assertEqual(doc['concurrency'], {'group': 'qa-deploy', 'cancel-in-progress': 'false'})
+        self.assertEqual(set(doc['jobs']), {'deploy'})
+        job = doc['jobs']['deploy']
+        # workflow_run also fires for fork pull requests; each clause keeps them out.
+        for clause in ("github.repository == 'tonyaiukco/TonyAI-mono-repo'",
+                       "github.event.workflow_run.conclusion == 'success'",
+                       "github.event.workflow_run.event == 'push'",
+                       "github.event.workflow_run.head_branch == 'main'",
+                       'github.event.workflow_run.head_repository.full_name == github.repository',
+                       "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')"):
+            self.assertIn(clause, ' '.join(job['if'].split()))
+        self.assertEqual(job['environment'], 'qa')
+        self.assertEqual(job['runs-on'], 'ubuntu-latest')
+        self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
+        self.assertFalse(any('secrets.' in value for value in job['env'].values()))
+        steps = job['steps']
+        checkout = steps[0]
+        self.assertTrue(checkout['uses'].startswith('actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'))
+        self.assertEqual(checkout['with']['persist-credentials'], 'false')
+        self.assertEqual(checkout['with']['ref'], '${{ github.event.workflow_run.head_sha || github.sha }}')
+        head = steps[1]
+        self.assertEqual((head['id'], head['run']), ('head', 'python3 infra/scripts/qa_autodeploy.py head --sha "$SOURCE_SHA"'))
+        login = [i for i, s in enumerate(steps) if s.get('uses', '').startswith('azure/login@')]
+        self.assertEqual(login, [2])
+        self.assertEqual(steps[2]['uses'], 'azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6')
+        self.assertEqual(steps[2]['if'], "steps.head.outputs.current == 'true'")
+        for step in steps:
+            self.assertNotIn('${{', step.get('run', ''))
+            self.assertNotIn('az extension', step.get('run', ''))
+        plan = next(i for i, s in enumerate(steps) if s.get('id') == 'plan')
+        self.assertEqual(plan, 3)
+        self.assertEqual(steps[plan]['if'], "steps.head.outputs.current == 'true'")
+        gated = steps[plan + 1:]
+        self.assertTrue(gated)
+        for step in gated:
+            self.assertEqual(step['if'], "steps.plan.outputs.deploy == 'true'")
+        runs = [s.get('run', '') for s in gated]
+        order = [next(i for i, r in enumerate(runs) if marker in r)
+                 for marker in ('build-images.sh', 'qa_autodeploy.py migrate', 'qa_autodeploy.py rollout')]
+        self.assertEqual(order, sorted(order))
+        # The owner secret version is visible only to the step that reads the secret.
+        self.assertNotIn('DIRECT_URL_SECRET_VERSION', job['env'])
+        holders = [s for s in steps if 'DIRECT_URL_SECRET_VERSION' in s.get('env', {})]
+        self.assertEqual(len(holders), 1)
+        self.assertIn('qa_autodeploy.py migrate', holders[0]['run'])
+
+    def test_only_the_qa_deploy_workflow_may_use_the_qa_environment(self):
+        users = set()
+        for path in [*(ROOT / '.github/workflows').glob('*.yml'), *(ROOT / '.github/workflows').glob('*.yaml')]:
+            for name, job in (workflow(path.name).get('jobs') or {}).items():
+                environment = job.get('environment')
+                self.assertNotIn('${{', json.dumps(environment), (path.name, name))
+                if (environment.get('name') if isinstance(environment, dict) else environment) == 'qa':
+                    users.add((path.name, name))
+        self.assertEqual(users, {('deploy-qa.yml', 'deploy')})
 
     def test_approval_waits_for_visible_manifest_and_hash(self):
         doc = workflow('deploy-staging.yml')
