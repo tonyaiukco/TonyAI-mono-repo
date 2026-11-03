@@ -482,26 +482,40 @@ def gh_api(path):
 
 # CI is the only gate between main and QA, so main must only change through a PR with these jobs green.
 REQUIRED_CI_JOBS = {'build', 'docker-build', 'rls-probe', 'migration-diff'}
+REQUIRED_RULES = ('pull_request', 'deletion', 'non_fast_forward', 'required_status_checks')
+GITHUB_ACTIONS_APP_ID = 15368
 
 
 def verify_main_ruleset(repo=REPOSITORY, read=gh_api):
+    """Main must be protected by rules nobody can bypass.
+
+    GitHub resolves which active rules apply to main (include and exclude
+    patterns, ~DEFAULT_BRANCH, every ruleset and level), so this never
+    interprets ruleset conditions itself. A required rule counts only when it
+    comes from a ruleset with no bypass actors; that list is visible to
+    repository admins only, so anyone else is refused.
+    """
     base = 'repos/' + repo
-    for summary in read(base + '/rulesets?per_page=100'):
-        if summary.get('target') != 'branch' or summary.get('enforcement') != 'active':
-            continue
-        ruleset = read(base + '/rulesets/' + str(summary['id']))
-        include = set(ruleset.get('conditions', {}).get('ref_name', {}).get('include', []))
-        if ruleset.get('enforcement') != 'active' or ruleset.get('bypass_actors') != [] \
-                or not include & {'refs/heads/main', '~DEFAULT_BRANCH'}:
-            continue
-        rules = {rule.get('type'): rule.get('parameters') or {} for rule in ruleset.get('rules', [])}
-        contexts = {check.get('context') for check in rules.get('required_status_checks', {}).get('required_status_checks', [])
-                    if check.get('integration_id') == 15368}  # GitHub Actions
-        if {'deletion', 'non_fast_forward', 'pull_request', 'required_status_checks'} <= rules.keys() \
-                and REQUIRED_CI_JOBS <= contexts:
-            return
-    raise SafeFailure('Main needs an active ruleset with no bypass actors that requires a pull request, '
-                      'the CI jobs ' + ', '.join(sorted(REQUIRED_CI_JOBS)) + ', and forbids deletion and force pushes.')
+    rules = read(base + '/rules/branches/main?per_page=100')
+    if not isinstance(rules, list) or len(rules) >= 100:
+        raise SafeFailure('Cannot read the complete set of rules that apply to main.')
+    clean = set()
+    for ruleset_id in {rule.get('ruleset_id') for rule in rules}:
+        if type(ruleset_id) is not int:
+            raise SafeFailure('A rule on main does not name its ruleset.')
+        ruleset = read(base + '/rulesets/' + str(ruleset_id))
+        if ruleset.get('enforcement') == 'active' and ruleset.get('bypass_actors') == []:
+            clean.add(ruleset_id)
+    enforced = [rule for rule in rules if rule.get('ruleset_id') in clean]
+    types = {rule.get('type') for rule in enforced}
+    contexts = {check.get('context') for rule in enforced if rule.get('type') == 'required_status_checks'
+                for check in (rule.get('parameters') or {}).get('required_status_checks', [])
+                if check.get('integration_id') == GITHUB_ACTIONS_APP_ID}
+    if not set(REQUIRED_RULES) <= types or not REQUIRED_CI_JOBS <= contexts:
+        raise SafeFailure('Main needs active rules, from rulesets with no bypass actors, that require a pull '
+                          'request and the CI jobs ' + ', '.join(sorted(REQUIRED_CI_JOBS)) + ' and forbid '
+                          'deletion and force pushes. Run this as a repository admin: only admins can see '
+                          'bypass actors.')
 
 
 def verify_qa_environment(repo=REPOSITORY, read=gh_api):

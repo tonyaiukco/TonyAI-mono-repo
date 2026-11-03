@@ -525,54 +525,86 @@ class CiGateTests(unittest.TestCase):
             qa.wait_ci(SHA, lambda path: {'workflow_runs': []}, sleep=lambda s: None, attempts=3)
 
 
-def ruleset(**changes):
-    rules = [{'type': 'deletion'}, {'type': 'non_fast_forward'}, {'type': 'pull_request', 'parameters': {}},
-             {'type': 'required_status_checks', 'parameters': {'required_status_checks': [
-                 {'context': c, 'integration_id': 15368} for c in ('build', 'docker-build', 'rls-probe', 'migration-diff')]}}]
-    data = {'id': 7, 'target': 'branch', 'enforcement': 'active', 'bypass_actors': [],
-            'conditions': {'ref_name': {'include': ['~DEFAULT_BRANCH'], 'exclude': []}}, 'rules': rules}
-    data.update(changes)
-    return data
+def main_rules(ruleset_id=7, drop=(), contexts=('build', 'docker-build', 'rls-probe', 'migration-diff'), app=15368):
+    """Rules as GET /repos/{repo}/rules/branches/main returns them: already resolved by GitHub."""
+    rules = [{'type': t, 'ruleset_id': ruleset_id, 'parameters': {}} for t in ('deletion', 'non_fast_forward', 'pull_request')]
+    rules.append({'type': 'required_status_checks', 'ruleset_id': ruleset_id, 'parameters': {
+        'required_status_checks': [{'context': c, 'integration_id': app} for c in contexts]}})
+    return [r for r in rules if r['type'] not in drop]
+
+
+def github(rules, rulesets=None, policy=None, branches=(('main', 'branch'),)):
+    rulesets = rulesets if rulesets is not None else {7: {'id': 7, 'enforcement': 'active', 'bypass_actors': []}}
+    paths = []
+    def read(path):
+        paths.append(path)
+        if path.endswith('/rules/branches/main?per_page=100'):
+            return rules
+        if '/rulesets/' in path:
+            return rulesets[int(path.rsplit('/', 1)[1])]
+        if path.endswith('/deployment-branch-policies'):
+            return {'total_count': len(branches), 'branch_policies': [{'name': n, 'type': t} for n, t in branches]}
+        if path.endswith('/environments/qa'):
+            return {'name': 'qa', 'deployment_branch_policy': policy if policy is not None
+                    else {'protected_branches': False, 'custom_branch_policies': True}}
+        raise AssertionError('unexpected GitHub read: ' + path)
+    read.paths = paths
+    return read
 
 
 class GitHubEnvironmentTests(unittest.TestCase):
-    def reader(self, policy, branches, main=None):
-        main = main if main is not None else ruleset()
-        def read(path):
-            if path.endswith('/rulesets?per_page=100'):
-                return [{'id': 7, 'target': main['target'], 'enforcement': main['enforcement']}]
-            if path.endswith('/rulesets/7'):
-                return main
-            if path.endswith('/deployment-branch-policies'):
-                return {'total_count': len(branches), 'branch_policies': [{'name': n, 'type': t} for n, t in branches]}
-            return {'name': 'qa', 'deployment_branch_policy': policy}
-        return read
+    def test_accepts_main_only_with_bypass_free_rules(self):
+        read = github(main_rules())
+        qa.verify_qa_environment(read=read)
+        # GitHub resolves which rules apply to main; ruleset conditions are never interpreted here.
+        self.assertTrue(all('/rulesets?' not in path for path in read.paths))
 
-    def test_accepts_main_only(self):
-        qa.verify_qa_environment(read=self.reader({'protected_branches': False, 'custom_branch_policies': True}, [('main', 'branch')]))
+    def test_accepts_rules_split_across_bypass_free_rulesets(self):
+        rules = main_rules(7, drop=('required_status_checks',)) + main_rules(8, drop=('deletion', 'non_fast_forward', 'pull_request'))
+        rulesets = {i: {'id': i, 'enforcement': 'active', 'bypass_actors': []} for i in (7, 8)}
+        qa.verify_main_ruleset(read=github(rules, rulesets))
 
-    def test_refuses_any_other_policy(self):
+    def test_a_bypass_free_copy_of_a_rule_is_enough(self):
+        rules = main_rules(7) + main_rules(9)
+        rulesets = {7: {'id': 7, 'enforcement': 'active', 'bypass_actors': []},
+                    9: {'id': 9, 'enforcement': 'active', 'bypass_actors': [{'actor_type': 'RepositoryRole'}]}}
+        qa.verify_main_ruleset(read=github(rules, rulesets))
+
+    def test_refuses_when_no_rule_applies_to_main(self):
+        # Codex P2 (PR #268): a ruleset on the default branch that excludes main, a
+        # pattern excluding it, or ~DEFAULT_BRANCH on another default branch all leave
+        # GitHub with no rule on main, so the check must refuse rather than read conditions.
+        with self.assertRaises(SafeFailure):
+            qa.verify_qa_environment(read=github([]))
+
+    def test_refuses_rules_that_can_be_bypassed_or_cannot_be_seen(self):
+        for ruleset in ({'id': 7, 'enforcement': 'active', 'bypass_actors': [{'actor_type': 'OrganizationAdmin'}]},
+                        {'id': 7, 'enforcement': 'active'},  # non-admin view: bypass actors hidden
+                        {'id': 7, 'enforcement': 'evaluate', 'bypass_actors': []}):
+            with self.subTest(ruleset=ruleset), self.assertRaises(SafeFailure):
+                qa.verify_main_ruleset(read=github(main_rules(), {7: ruleset}))
+
+    def test_refuses_each_missing_rule_or_ci_job(self):
+        weaker = [main_rules(drop=(kind,)) for kind in ('pull_request', 'deletion', 'non_fast_forward', 'required_status_checks')]
+        weaker += [main_rules(contexts=('build', 'docker-build', 'rls-probe')), main_rules(app=99999)]
+        for rules in weaker:
+            with self.subTest(rules=[r['type'] for r in rules]), self.assertRaises(SafeFailure):
+                qa.verify_main_ruleset(read=github(rules))
+
+    def test_refuses_truncated_or_anonymous_rule_lists(self):
+        anonymous = main_rules()
+        anonymous[0] = {**anonymous[0], 'ruleset_id': None}
+        for rules in (main_rules() * 25, anonymous, {'message': 'Not Found'}):
+            with self.subTest(size=len(rules)), self.assertRaises(SafeFailure):
+                qa.verify_main_ruleset(read=github(rules))
+
+    def test_refuses_any_other_environment_policy(self):
         custom = {'protected_branches': False, 'custom_branch_policies': True}
-        for policy, branches in ((None, []), ({'protected_branches': True, 'custom_branch_policies': False}, []),
+        for policy, branches in (({}, []), ({'protected_branches': True, 'custom_branch_policies': False}, []),
                                  (custom, []), (custom, [('main', 'branch'), ('*', 'branch')]),
                                  (custom, [('main', 'tag')]), (custom, [('ma*', 'branch')])):
             with self.subTest(policy=policy, branches=branches), self.assertRaises(SafeFailure):
-                qa.verify_qa_environment(read=self.reader(policy, branches))
-
-    def test_refuses_an_unprotected_or_bypassable_main(self):
-        custom = {'protected_branches': False, 'custom_branch_policies': True}
-        base = ruleset()
-        weaker = [ruleset(enforcement='evaluate'), ruleset(bypass_actors=[{'actor_type': 'RepositoryRole'}]),
-                  ruleset(conditions={'ref_name': {'include': ['refs/heads/dev'], 'exclude': []}}),
-                  ruleset(rules=[r for r in base['rules'] if r['type'] != 'pull_request']),
-                  ruleset(rules=[r for r in base['rules'] if r['type'] != 'non_fast_forward']),
-                  ruleset(rules=base['rules'][:3] + [{'type': 'required_status_checks', 'parameters': {
-                      'required_status_checks': [{'context': 'build', 'integration_id': 15368}]}}])]
-        for main in weaker:
-            with self.subTest(main=main), self.assertRaises(SafeFailure):
-                qa.verify_qa_environment(read=self.reader(custom, [('main', 'branch')], main))
-        with self.assertRaises(SafeFailure):
-            qa.verify_main_ruleset(read=lambda path: [])
+                qa.verify_qa_environment(read=github(main_rules(), policy=policy, branches=branches))
 
 
 if __name__ == '__main__':

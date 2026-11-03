@@ -133,6 +133,10 @@ MUTANTS = [
     ('qa deploy drains before checking the PATCH target', 'qa_autodeploy.py', "    if not all(owns(before[kind]) for kind in ('api', 'web')):", '    if False:'),
     ('qa deploy main ruleset unchecked', 'qa_autodeploy.py', '    verify_main_ruleset(repo, read)\n', ''),
     ('qa deploy rollback loses an app on a late signal', 'qa_autodeploy.py', '            except BaseException:  # a late signal', '            except Exception:  # a late signal'),
+    ('qa deploy bypassable ruleset trusted', 'qa_autodeploy.py', "        if ruleset.get('enforcement') == 'active' and ruleset.get('bypass_actors') == []:", '        if True:'),
+    ('qa deploy truncated rule list accepted', 'qa_autodeploy.py', '    if not isinstance(rules, list) or len(rules) >= 100:', '    if not isinstance(rules, list):'),
+    ('qa deploy non-Actions status check accepted', 'qa_autodeploy.py', "                if check.get('integration_id') == GITHUB_ACTIONS_APP_ID}", '                }'),
+    ('qa deploy CI job list unchecked', 'qa_autodeploy.py', '    if not set(REQUIRED_RULES) <= types or not REQUIRED_CI_JOBS <= contexts:', '    if not set(REQUIRED_RULES) <= types:'),
     ('qa deploy pooler contract removed', 'qa_autodeploy.py', '    validate_pooler(direct, project, 5432)\n', ''),
     ('build provenance before registry skipped', 'build-images.sh', "python3 - <<'PYVALIDATE'\nimport os,sys\nsys.path.insert(0, 'infra/scripts')\nfrom candidate import create\ncreate(os.environ['RELEASE_SHA'], 'sha256:'+'0'*64, 'sha256:'+'0'*64)\nPYVALIDATE\n", ''),
 

@@ -236,11 +236,27 @@ secret is created.
      `main` and no required reviewers. Do both before the federated credential
      exists: GitHub creates a missing environment with no branch policy the first
      time a workflow names it, and a branch workflow could then obtain the token.
-   - Verify both:
+   - Verify both, signed in to `gh` as a repository admin. Only admins can see a
+     ruleset's bypass actors, so the check refuses anyone else.
 
    ```bash
    python3 infra/scripts/qa_autodeploy.py check-github
    ```
+
+   The check asks GitHub which active rules actually apply to `main`
+   (`GET /repos/{repo}/rules/branches/main`). It never interprets a ruleset's
+   include or exclude patterns itself. Each required rule counts only when it
+   comes from a ruleset with no bypass actors. A ruleset that targets the default
+   branch but excludes `main` therefore fails the check.
+
+   Limits to know:
+   - A pull request with zero required approvals passes; PRs are required, not
+     reviews.
+   - A required check is matched by job name from any GitHub Actions workflow,
+     so a PR could add its own job named `build`. This is a GitHub-wide limit of
+     status-check rules.
+   - The check runs once, here. Run it again after any change to rulesets or to
+     the `qa` environment.
 
 2. **Azure identity.** Create the identity once `check-github` passes:
 
