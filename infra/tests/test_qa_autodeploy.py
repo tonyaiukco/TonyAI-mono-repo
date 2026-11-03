@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import candidate as candidate_module
@@ -326,6 +327,41 @@ class MigrationTests(unittest.TestCase):
                 patch.object(qa, 'ENGINE_SHA256', hashlib.sha256(b'not the engine').hexdigest()):
             target = qa.fetch_engine(Path(work) / 'engine', opener=opener)
             self.assertEqual(target.read_bytes(), b'not the engine')
+
+    def test_engine_download_does_not_send_the_default_user_agent(self):
+        # binaries.prisma.sh answers Python-urllib with Cloudflare 403 (error 1010).
+        seen = []
+        def opener(request, timeout):
+            seen.append(request)
+            return io.BytesIO(gzip.compress(b'engine'))
+        with tempfile.TemporaryDirectory() as work, \
+                patch.object(qa, 'ENGINE_SHA256', hashlib.sha256(b'engine').hexdigest()):
+            qa.fetch_engine(Path(work) / 'engine', opener=opener)
+        self.assertNotIsInstance(seen[0], str)
+        self.assertEqual(seen[0].full_url, qa.ENGINE_URL)
+        self.assertEqual(seen[0].get_header('User-agent'), 'tonyai-qa-deploy')
+
+    def test_engine_download_failure_names_itself(self):
+        def refused(request, timeout):
+            raise HTTPError(qa.ENGINE_URL, 403, 'Forbidden', None, None)
+        def unreachable(request, timeout):
+            raise URLError('down')
+        def truncated(request, timeout):
+            return io.BytesIO(gzip.compress(b'engine')[:-4])
+        def not_gzip(request, timeout):
+            return io.BytesIO(b'error code: 1010')
+        def outcome(opener):
+            with tempfile.TemporaryDirectory() as work:
+                try:
+                    qa.fetch_engine(Path(work) / 'engine', opener=opener)
+                except SafeFailure as error:
+                    return str(error)
+                except Exception as error:  # a bare traceback becomes "details withheld" in the run
+                    return 'escaped: ' + type(error).__name__
+            return 'no failure'
+        self.assertEqual(outcome(refused), 'Schema-engine download failed: HTTP 403.')
+        for opener in (unreachable, truncated, not_gzip):
+            self.assertIn('Schema-engine download failed', outcome(opener))
 
 
 class RolloutTests(unittest.TestCase):
