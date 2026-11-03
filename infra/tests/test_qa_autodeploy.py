@@ -297,8 +297,8 @@ class MigrationTests(unittest.TestCase):
     def test_migrates_then_checks_owner_privileges_with_the_exact_version(self):
         (applied, checked), seen = self.run_migrate()
         self.assertEqual(applied['applied_count'], 1)
-        self.assertEqual(checked['platform_default_findings'], 3)
         self.assertEqual(seen['operations'], ['migrate', 'owner-check'])
+        self.assertEqual(checked.get('platform_default_findings'), 3)
         self.assertEqual(seen['secret'], ('tonyaiqt-kv', 'direct-url', 'e' * 32))
         self.assertEqual(seen['pulled'], 'img@sha256:x')
         self.assertIn('sslcert=%2Fmigration%2Fca.crt', seen['url'])
@@ -340,6 +340,7 @@ class RolloutTests(unittest.TestCase):
         azure = FakeAzure()
         self.rollout(azure)
         self.assertEqual([k for k, _ in azure.patches], ['api', 'web'])
+        self.assertIn(('containerapp', 'revision', 'deactivate'), azure.calls)
         self.assertLess(azure.calls.index(('containerapp', 'revision', 'deactivate')), azure.calls.index(('PATCH', 'api')))
         self.assertLess(azure.calls.index(('PATCH', 'api')), azure.calls.index(('PATCH', 'web')))
         for kind, body in azure.patches:
@@ -428,7 +429,10 @@ class RolloutTests(unittest.TestCase):
             return original(app, body)
         azure.patch = patch
         with self.assertRaises(SafeFailure) as caught:
-            self.rollout(azure, fetch=statuses({'/login': 500}))
+            try:
+                self.rollout(azure, fetch=statuses({'/login': 500}))
+            except KeyboardInterrupt:
+                self.fail('a late signal hid which app was left')
         self.assertIn('ROLLBACK INCOMPLETE for web', str(caught.exception))
         self.assertIn(('SHIELD',), azure.calls)
         self.assertTrue(azure.apps['api']['properties']['template']['containers'][0]['image'].endswith(OLD_DIGEST['api']))
@@ -450,12 +454,17 @@ class RolloutTests(unittest.TestCase):
 
     def test_job_cancel_interrupt_still_rolls_back(self):
         azure = FakeAzure()
+        cancelled = []
         def fetch(url):
-            if not azure.patches[-1][1]['properties']['template']['revisionSuffix'].endswith('-rb'):
-                raise KeyboardInterrupt()
+            if not cancelled:
+                cancelled.append(url)
+                raise KeyboardInterrupt()  # the cancel lands once, during the forward smoke
             return statuses()(url)
         with self.assertRaises(SafeFailure) as caught:
-            self.rollout(azure, fetch=fetch)
+            try:
+                self.rollout(azure, fetch=fetch)
+            except KeyboardInterrupt:
+                self.fail('a cancel escaped the rollback')
         self.assertIn('was rolled back', str(caught.exception))
         self.assertEqual([k for k, _ in azure.patches][-2:], ['web', 'api'])
 

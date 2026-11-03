@@ -60,7 +60,7 @@ class WorkflowTests(unittest.TestCase):
                        "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"):
             self.assertIn(clause, condition)
         self.assertNotIn('||', condition.replace("(github.event_name == 'push' || github.event_name == 'workflow_dispatch')", ''))
-        self.assertEqual(job['environment'], 'qa')
+        self.assertEqual(job.get('environment'), 'qa')
         self.assertEqual(job['runs-on'], 'ubuntu-latest')
         self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'read', 'id-token': 'write'})
         self.assertFalse(any('secrets.' in value for value in job['env'].values()))
