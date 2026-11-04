@@ -32,7 +32,7 @@ Branch `chore/l10-acceptance-package-2`. Groups 1–6 are the Session 1 PR. Grou
 - [x] 6.2 Planning file: add a Decisions entry for 2026-11-04 covering the L10 scope, the evidence standard, the `direct-url` version, rollback option B with the same-image fallback and no r004, and the temporary single-writer handover (Claude Code writes until L10 closes; Codex reviews). Update Current status and Next up within the ten-entry cap. Add option D to Open questions. Verify the ten-entry and verbatim-archive rules hold.
 - [x] 6.3 README: mention the `inputs`, `rollback` and monitoring readback operations and the rollback workflow. Verify the README commands match `--help`.
 - [x] 6.4 Commit `openspec/config.yaml` and this change. Verify `openspec validate close-l10-hosted-acceptance` passes.
-- [ ] 6.5 Run Node 22 `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`, and `python3 -m unittest discover -s infra/tests`. Verify all exit 0 and record any pre-existing warnings.
+- [x] 6.5 Run Node 22 `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`, and `python3 -m unittest discover -s infra/tests`. Verify all exit 0 and record any pre-existing warnings.
 - [ ] 6.6 Run a fresh-eyes review with Codex (owner-requested reviewer) and `qa-auditor` in parallel on the diff, probing the rollback guards, workflow privilege and secret hygiene. Verify every blocker is fixed or answered in the PR. Open the PR with green CI; the owner merges after freezing "QA deploy".
 
 ## 7. Session 1 live acceptance (owner runs, Claude prepares and reads)
