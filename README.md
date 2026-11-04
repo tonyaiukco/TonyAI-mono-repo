@@ -85,7 +85,26 @@ remain open. [PR266](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/266)
 was owner-merged at `b59fac1`; it contains reviewed helpers/monitoring and CI
 harness fixes. PR #267 published the onboarding follow-up. The #268/#269 acceptance reconciliation
 changes documentation only.
-Earlier operation notes below are historical.
+
+**L10 closes on the live release (owner decision 2026-11-04).** It closes on functional and
+operational acceptance. Numerical emissions acceptance belongs to the LP4-02 gate, and full
+recovery to G2/LP5-03. Procedure, evidence rules and state are in
+[runbook 11, ci4-1 L10 acceptance](infra/runbooks/11-qa-hosted.md#ci4-1-l10-acceptance-from-2026-11-04);
+QA works through [`docs/uat/l10_hosted_acceptance.md`](docs/uat/l10_hosted_acceptance.md).
+The owner's tools:
+
+- `python3 infra/scripts/qa_autodeploy.py inputs --candidate <candidate.json> --out <new file>`
+  writes the live release binding that the hosted smoke, storage and backup probes read.
+  It is read-only.
+- `python3 infra/scripts/monitoring_readback.py` reports PASS/FAIL for each link of the
+  log → alert → operator chain. It is read-only.
+- The **QA rollback** workflow (`.github/workflows/rollback-qa.yml`, manual, `main` only)
+  serves the candidate an earlier successful QA deploy published, or redeploys the live
+  release. It is refused when the move would cross a migration
+  ([on-demand rollback](infra/runbooks/11-qa-hosted.md#on-demand-rollback)).
+
+Merges confined to `openspec/` (planning artifacts) do not redeploy QA. Earlier operation
+notes below are historical.
 
 **Phase 1 (Scope 1 & 2 core MVP) is complete** and running end‑to‑end on a local machine; UAT round 1 is closed, UAT round 2 ran on [`docs/uat/uat_round2.md`](docs/uat/uat_round2.md), and the **round-3 catalogue for the pilot candidate build** — four roles × two tenants × TR/EN — is [`docs/uat/uat_round3.md`](docs/uat/uat_round3.md) (LP4-04) and **Phase 3** is active — WP7 (audit viewer, reviewer UI, subsidiary edit), WP15 (UAT quick wins), WP16 (locations in the subsidiary flow), WP17 (completeness engine), WP18 (withdrawal + re-attribution), WP19 (the review gate on every cell), WP20 (report disclosure), WP21 (anomaly baseline provenance + recompute), WP22 (one column vocabulary behind all three report writers, and the names of who entered, decided and withdrew a record) and WP8 (bulk upload from CSV/XLSX with a dry run that provably writes nothing, plus bulk submit) have all shipped — as has the tooling around them: ESLint 9 gating CI, and a CI gate that runs the RLS containment probes on every PR with the full E2E suite nightly. Phase 2 (staging on Azure) has its credit approved and starts as LP2; its cloud‑independent prep is done. The launch plan — task cards, dates and task state — lives in [`docs/roadmap_docs/project_status_roadmap_phases.md`](docs/roadmap_docs/project_status_roadmap_phases.md).
 

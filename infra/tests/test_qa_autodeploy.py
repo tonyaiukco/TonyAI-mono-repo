@@ -129,6 +129,20 @@ class DecisionTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(qa.decide(SHA, SHA, OLD, ['docs/a.md', path])[0])
 
+    def test_openspec_only_changes_skip(self):
+        changed = ['openspec/config.yaml', 'openspec/changes/x/proposal.md', 'openspec/changes/x/specs/y/spec.md']
+        deploy, reason = qa.decide(SHA, SHA, OLD, changed)
+        self.assertFalse(deploy)
+        self.assertIn('no image-relevant change', reason)
+
+    def test_openspec_beside_application_counts_only_the_application(self):
+        self.assertEqual(qa.image_relevant(['openspec/changes/x/tasks.md', 'apps/api/src/x.ts']), ['apps/api/src/x.ts'])
+        self.assertEqual(qa.decide(SHA, SHA, OLD, ['openspec/changes/x/tasks.md', 'apps/api/src/x.ts']),
+                         (True, '1 image-relevant file(s) changed since the deployed source.'))
+
+    def test_certs_keep_precedence_over_non_image_prefixes(self):
+        self.assertTrue(qa.decide(SHA, SHA, OLD, ['openspec/config.yaml', 'infra/certs/prod-ca-2021.crt'])[0])
+
     def test_unknown_deployed_source_deploys_and_same_source_skips(self):
         self.assertTrue(qa.decide(SHA, SHA, None, None)[0])
         self.assertFalse(qa.decide(SHA, SHA, SHA, None)[0])
@@ -641,6 +655,363 @@ class GitHubEnvironmentTests(unittest.TestCase):
                                  (custom, [('main', 'tag')]), (custom, [('ma*', 'branch')])):
             with self.subTest(policy=policy, branches=branches), self.assertRaises(SafeFailure):
                 qa.verify_qa_environment(read=github(main_rules(), policy=policy, branches=branches))
+
+
+# ---------------------------------------------------------------- inputs export and rollback
+
+TARGET = 'e' * 40
+MIGRATION = 'packages/db/prisma/migrations/20261001000000_init/migration.sql'
+EXTRA_MIGRATION = 'packages/db/prisma/migrations/20261101000000_more/migration.sql'
+TREE = {'pnpm-lock.yaml': b'lockfile', MIGRATION: b'CREATE TABLE a ();\n',
+        'packages/db/prisma/migrations/migration_lock.toml': b'provider = "postgresql"\n'}
+
+
+def git_objects(trees):
+    """`git ls-tree` / `git show` over per-commit trees; unknown objects fail like git does."""
+    def read_git(*args):
+        if args[0] == 'ls-tree':
+            assert args[:4] == ('ls-tree', '-r', '-z', '--name-only'), args
+            if args[4] not in trees:
+                raise SafeFailure('Cannot read the source commit from git; fetch full history first.')
+            return '\0'.join(sorted(trees[args[4]])).encode()
+        if args[0] == 'show':
+            sha, path = args[1].split(':', 1)
+            if path not in trees.get(sha, {}):
+                raise SafeFailure('Cannot read the source commit from git; fetch full history first.')
+            return trees[sha][path]
+        raise AssertionError(args)
+    return read_git
+
+
+def candidate_for(sha, digests, tree=TREE):
+    origin = 'https://' + STEM + '-{}.' + QA_ENV['ACA_DEFAULT_DOMAIN']
+    return {'schema': 1, 'environment': 'staging', 'source_sha': sha,
+            'api_digest': digests['api'], 'web_digest': digests['web'],
+            'registry': 'tonyaiqtacr.azurecr.io', 'supabase_project_ref': PROJECT,
+            'api_origin': origin.format('api'), 'web_origin': origin.format('web'),
+            **qa.fingerprint_at(sha, git_objects({sha: tree}))}
+
+
+def with_release_settings(app, mail=True, smtp_url=None):
+    """The live API's mail and runtime-limit settings, as Terraform writes them."""
+    from runtime_limits import DEFAULTS
+    container = app['properties']['template']['containers'][0]
+    container['env'] += [{'name': k, 'value': str(v)} for k, v in DEFAULTS.items()]
+    if mail:
+        container['env'] += [{'name': 'SMTP_HOST', 'value': 'smtp.azurecomm.net'}, {'name': 'SMTP_PORT', 'value': '587'},
+                             {'name': 'SMTP_SECURE', 'value': 'false'}, {'name': 'SMTP_USER', 'value': 'tonyai-qa-smtp'},
+                             {'name': 'SMTP_PASSWORD', 'secretRef': 'smtp-password'},
+                             {'name': 'MAIL_FROM', 'value': 'DoNotReply@qa.example.azurecomm.net'},
+                             {'name': 'APP_URL', 'value': 'https://' + STEM + '-web.' + QA_ENV['ACA_DEFAULT_DOMAIN']}]
+        app['properties']['configuration']['secrets'].append(
+            {'name': 'smtp-password', 'keyVaultUrl': smtp_url or 'https://tonyaiqt-kv.vault.azure.net/secrets/smtp-password/' + '9' * 32})
+    return app
+
+
+class ProvenanceTests(unittest.TestCase):
+    def test_git_object_binding_equals_the_build_candidate(self):
+        """bind_at must expect exactly what build-images.sh (candidate.create) records."""
+        fingerprint = qa.fingerprint_at(SHA, git_objects({SHA: TREE}))
+        with patch.object(candidate_module, 'clean_source'), patch.object(candidate_module, 'fingerprint', return_value=fingerprint):
+            env = {'SUPABASE_PROJECT_REF': PROJECT, 'PREFIX': 'tonyaiqt', 'ACA_DEFAULT_DOMAIN': QA_ENV['ACA_DEFAULT_DOMAIN'],
+                   'ACR_NAME': 'tonyaiqtacr', 'ACR_HOST': 'tonyaiqtacr.azurecr.io',
+                   'API_ORIGIN': 'https://' + STEM + '-api.' + QA_ENV['ACA_DEFAULT_DOMAIN'],
+                   'WEB_ORIGIN': 'https://' + STEM + '-web.' + QA_ENV['ACA_DEFAULT_DOMAIN']}
+            built = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], env)
+        release = qa.live_release_fields(FOUNDATION, live_app('api'), built, SHA, 'ci42-1', PROJECT)
+        self.assertEqual(qa.bind_at(built, {'foundation': FOUNDATION, 'release': release}, SHA, git_objects({SHA: TREE})), built)
+
+    def test_git_objects_match_the_working_tree_fingerprint_of_this_repository(self):
+        import subprocess
+        dirty = subprocess.run(['git', 'status', '--porcelain', '--', 'packages/db/prisma/migrations', 'pnpm-lock.yaml'],
+                               cwd=qa.ROOT, capture_output=True, text=True)
+        if dirty.returncode or dirty.stdout.strip():
+            self.skipTest('migrations or lockfile differ from HEAD in this checkout')
+        self.assertEqual(qa.fingerprint_at('HEAD'), candidate_module.fingerprint())
+
+    def test_fingerprint_hashes_only_migration_sql_in_path_order(self):
+        tree = {**TREE, EXTRA_MIGRATION: b'ALTER TABLE a ADD b int;\n'}
+        names = [m['name'] for m in qa.fingerprint_at(SHA, git_objects({SHA: tree}))['migrations']]
+        self.assertEqual(names, ['20261001000000_init', '20261101000000_more'])
+
+    def test_missing_chain_or_unreadable_commit_refuses(self):
+        with self.assertRaises(SafeFailure):
+            qa.fingerprint_at(SHA, git_objects({SHA: {'pnpm-lock.yaml': b'x'}}))
+        with self.assertRaises(SafeFailure):
+            qa.fingerprint_at(SHA, git_objects({SHA: {MIGRATION: b'x'}}))
+
+
+class InputsExportTests(unittest.TestCase):
+    def setUp(self):
+        self.azure = FakeAzure()
+        for kind in ('api', 'web'):
+            self.azure.apps[kind] = live_app(kind, suffix='ci4-1', source=SHA)
+            self.azure.apps[kind]['properties']['template']['containers'][0]['image'] = IMAGE[kind]
+        with_release_settings(self.azure.apps['api'])
+        self.candidate = candidate_for(SHA, {'api': CANDIDATE['api_digest'], 'web': CANDIDATE['web_digest']})
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.out = str(Path(directory.name) / 'inputs.json')
+        self.verified = []
+
+    def export(self):
+        return qa.export_inputs(FOUNDATION, self.candidate, PROJECT, self.out, self.azure.read,
+                                verifier=lambda inputs, read: self.verified.append(inputs),
+                                read_git=git_objects({SHA: TREE}))
+
+    def test_consistent_live_state_writes_a_private_binding_the_verifier_accepted(self):
+        inputs = self.export()
+        self.assertEqual(self.verified, [inputs])
+        written = json.loads(Path(self.out).read_text())
+        self.assertEqual(written, inputs)
+        self.assertEqual(Path(self.out).stat().st_mode & 0o777, 0o600)
+        release = written['release']
+        self.assertEqual((release['source_sha'], release['release_id']), (SHA, 'ci4-1'))
+        self.assertEqual(release['mail'], {'host': 'smtp.azurecomm.net', 'port': 587, 'secure': False,
+                                           'user': 'tonyai-qa-smtp', 'from': 'DoNotReply@qa.example.azurecomm.net',
+                                           'password_secret_version': '9' * 32})
+        self.assertEqual(release['runtime_limits'], {})
+        qa.validate_release(written)
+
+    def test_binding_satisfies_the_verifiers_mail_and_runtime_checks(self):
+        from mail_settings import verify_mail_environment
+        from runtime_limits import expected_env
+        release = self.export()['release']
+        env = self.azure.apps['api']['properties']['template']['containers'][0]['env']
+        verify_mail_environment(env, FOUNDATION, release, 'api')
+        live = {item['name']: item.get('value') for item in env}
+        self.assertTrue(all(live.get(k) == v for k, v in expected_env(release).items()
+                            if k not in ('NODE_OPTIONS', 'PROXY_MODE', 'AZURE_INGRESS_ONLY')))
+
+    def test_binding_holds_version_identifiers_only(self):
+        self.export()
+        text = Path(self.out).read_text()
+        for forbidden in ('vault.azure.net', 'keyVaultUrl', 'secretRef', 'postgres', 'password"'):
+            self.assertNotIn(forbidden, text)
+
+    def test_live_override_of_a_runtime_limit_is_carried(self):
+        env = self.azure.apps['api']['properties']['template']['containers'][0]['env']
+        next(item for item in env if item['name'] == 'RATE_IP_PER_MINUTE')['value'] = '240'
+        self.assertEqual(self.export()['release']['runtime_limits'], {'RATE_IP_PER_MINUTE': 240})
+
+    def test_api_without_mail_omits_the_block(self):
+        api = live_app('api', suffix='ci4-1', source=SHA)
+        api['properties']['template']['containers'][0]['image'] = IMAGE['api']
+        self.azure.apps['api'] = with_release_settings(api, mail=False)
+        self.assertNotIn('mail', self.export()['release'])
+
+    def assert_refused_without_file(self, message=None):
+        with self.assertRaises(SafeFailure) as caught:
+            self.export()
+        self.assertFalse(Path(self.out).exists())
+        self.assertEqual(self.verified, [])
+        if message:
+            self.assertIn(message, str(caught.exception))
+
+    def test_apps_on_different_sources_or_revisions_refuse(self):
+        self.azure.apps['web']['tags']['source'] = OLD
+        self.assert_refused_without_file('different sources or revisions')
+        self.setUp()
+        self.azure.apps['web']['properties']['template']['revisionSuffix'] = 'ci3-1'
+        self.assert_refused_without_file('different sources or revisions')
+
+    def test_candidate_of_another_release_refuses(self):
+        self.candidate = candidate_for(SHA, OLD_DIGEST)
+        self.assert_refused_without_file('Live images differ from the candidate')
+
+    def test_malformed_or_foreign_smtp_reference_refuses(self):
+        for url in ('https://tonyaiqt-kv.vault.azure.net/secrets/smtp-password/latest',
+                    'https://tonyaiqt-xx.vault.azure.net/secrets/smtp-password/' + '9' * 32):
+            with self.subTest(url=url):
+                self.setUp()
+                secrets = self.azure.apps['api']['properties']['configuration']['secrets']
+                next(s for s in secrets if s['name'] == 'smtp-password')['keyVaultUrl'] = url
+                self.assert_refused_without_file('SMTP password reference')
+
+    def test_incomplete_mail_or_missing_runtime_limit_refuses(self):
+        env = self.azure.apps['api']['properties']['template']['containers'][0]['env']
+        env[:] = [item for item in env if item['name'] != 'MAIL_FROM']
+        self.assert_refused_without_file('mail settings are incomplete')
+        self.setUp()
+        env = self.azure.apps['api']['properties']['template']['containers'][0]['env']
+        env[:] = [item for item in env if item['name'] != 'SHUTDOWN_GRACE_MS']
+        self.assert_refused_without_file('runtime limits')
+
+    def test_never_overwrites_an_existing_file(self):
+        Path(self.out).write_text('{}')
+        with self.assertRaises(SafeFailure) as caught:
+            self.export()
+        self.assertIn('already exists', str(caught.exception))
+        self.assertEqual(Path(self.out).read_text(), '{}')
+
+
+class FetchCandidateTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.dir = directory.name
+        self.downloads = []
+
+    def run_record(self, **over):
+        return {'head_sha': TARGET, 'path': '.github/workflows/deploy-qa.yml@refs/heads/main', 'head_branch': 'main',
+                'event': 'push', 'status': 'completed', 'conclusion': 'success', 'run_number': 41, 'run_attempt': 2,
+                'repository': {'full_name': qa.REPOSITORY}, 'head_repository': {'full_name': qa.REPOSITORY}, **over}
+
+    def fetch(self, record, candidate=None, run_id='41738446426'):
+        def read(path):
+            self.assertEqual(path, 'repos/' + qa.REPOSITORY + '/actions/runs/' + run_id)
+            return record
+        def download(rid, name, directory):
+            self.downloads.append((rid, name))
+            if candidate is not None:
+                Path(directory, 'candidate.json').write_text(json.dumps(candidate))
+        return qa.fetch_candidate(run_id, self.dir, read=read, download=download)
+
+    def test_downloads_the_named_artifact_of_a_successful_main_deploy(self):
+        path = self.fetch(self.run_record(), {'source_sha': TARGET})
+        self.assertEqual(self.downloads, [('41738446426', 'qa-candidate-41-2')])
+        self.assertEqual(json.loads(path.read_text())['source_sha'], TARGET)
+
+    def test_refuses_runs_that_are_not_successful_main_deploys_before_download(self):
+        for over in ({'path': '.github/workflows/ci.yml'}, {'head_branch': 'feature'}, {'event': 'pull_request'},
+                     {'conclusion': 'failure'}, {'status': 'in_progress'}, {'head_repository': {'full_name': 'fork/x'}},
+                     {'repository': {'full_name': 'fork/x'}}, {'head_sha': 'main'}, {'run_number': '41'}):
+            with self.subTest(over=over), self.assertRaises(SafeFailure):
+                self.fetch(self.run_record(**over), {'source_sha': TARGET})
+        self.assertEqual(self.downloads, [])
+
+    def test_refuses_non_numeric_run_ids(self):
+        for run_id in ('', '0', '12;rm', '../1', None):
+            with self.subTest(run_id=run_id), self.assertRaises(SafeFailure):
+                qa.fetch_candidate(run_id, self.dir, read=lambda p: self.fail('read'), download=lambda *a: self.fail('download'))
+
+    def test_refuses_a_missing_or_foreign_candidate(self):
+        with self.assertRaises(SafeFailure):
+            self.fetch(self.run_record(), None)
+        with self.assertRaises(SafeFailure) as caught:
+            self.fetch(self.run_record(), {'source_sha': OLD})
+        self.assertIn('does not belong', str(caught.exception))
+
+
+class RollbackTests(unittest.TestCase):
+    """Live: source OLD with OLD_DIGEST images (FakeAzure). Target: an earlier/later main candidate."""
+    def run_rollback(self, candidate, mode='candidate', trees=None, ancestor=0, azure=None, fetch=None, rid='rb42-1'):
+        self.azure = azure or FakeAzure()
+        trees = trees or {OLD: TREE, TARGET: TREE}
+        self.fetched = []
+        def record(url):
+            self.fetched.append((len(self.azure.patches), url))
+            return (fetch or statuses())(url)
+        return qa.rollback(FOUNDATION, candidate, mode, rid, PROJECT, self.azure.read, self.azure.patch,
+                           qa.Arm(FOUNDATION).owns, run_git=git_fake(ancestor=ancestor), read_git=git_objects(trees),
+                           sleep=lambda s: None, fetch=record, log=lambda line: None,
+                           clock=lambda: 0.0, shield=lambda: None)
+
+    def assert_smoked_after(self, patch_count):
+        """Every smoke URL was fetched after the first `patch_count` PATCHes."""
+        paths = {url.split('/', 3)[3] for done, url in self.fetched if done >= patch_count}
+        self.assertEqual(paths, {'api/v1/health', 'api/v1/health/ready', 'api/v1/health/synthetic', 'login'})
+
+    def target(self, tree=TREE):
+        return candidate_for(TARGET, {'api': CANDIDATE['api_digest'], 'web': CANDIDATE['web_digest']}, tree)
+
+    def assert_untouched(self):
+        self.assertEqual(self.azure.patches, [])
+        self.assertNotIn(('containerapp', 'revision', 'deactivate'), self.azure.calls)
+
+    def test_rollback_id_marks_the_revision(self):
+        self.assertEqual(qa.rollback_id(QA_ENV), 'rb42-1')
+
+    def test_moves_both_apps_to_the_candidate_through_rollout(self):
+        self.assertEqual(self.run_rollback(self.target()), TARGET)
+        self.assertEqual([k for k, _ in self.azure.patches], ['api', 'web'])
+        for kind in ('api', 'web'):
+            app = self.azure.apps[kind]
+            self.assertEqual(app['properties']['template']['containers'][0]['image'], IMAGE[kind])
+            self.assertEqual(app['tags'], {'application': 'TonyAI', 'release': 'rb42-1', 'source': TARGET})
+        self.assert_smoked_after(2)
+
+    def test_return_forward_after_a_drill_serves_the_previous_release_again(self):
+        self.run_rollback(self.target())
+        azure = self.azure
+        self.run_rollback(candidate_for(OLD, OLD_DIGEST), azure=azure, rid='rb43-1')
+        for kind in ('api', 'web'):
+            app = azure.apps[kind]
+            self.assertTrue(app['properties']['template']['containers'][0]['image'].endswith(OLD_DIGEST[kind]))
+            self.assertEqual(app['tags'], {'application': 'TonyAI', 'release': 'rb43-1', 'source': OLD})
+        self.assert_smoked_after(4)
+
+    def test_one_source_under_different_suffixes_can_still_be_rolled_back(self):
+        """After a deploy failed at the API, only the API was restored (`<rid>-rb`)."""
+        azure = FakeAzure()
+        azure.apps['api']['properties']['template']['revisionSuffix'] = 'ci5-1-rb'
+        self.assertEqual(self.run_rollback(self.target(), azure=azure), TARGET)
+
+    def test_candidate_not_on_main_is_refused_before_drain(self):
+        with self.assertRaises(SafeFailure) as caught:
+            self.run_rollback(self.target(), ancestor=1)
+        self.assertIn('not on main', str(caught.exception))
+        self.assert_untouched()
+
+    def test_missing_or_malformed_candidate_is_refused_before_drain(self):
+        for candidate in ({}, {**self.target(), 'source_sha': 'main'}, []):
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(SafeFailure):
+                    self.run_rollback(candidate)
+                self.assert_untouched()
+
+    def test_migration_difference_is_refused_before_drain(self):
+        newer = {**TREE, EXTRA_MIGRATION: b'ALTER TABLE a ADD b int;\n'}
+        for trees, target_tree in (({OLD: newer, TARGET: TREE}, TREE), ({OLD: TREE, TARGET: newer}, newer)):
+            with self.subTest(live_has_extra=trees[OLD] is newer):
+                with self.assertRaises(SafeFailure) as caught:
+                    self.run_rollback(self.target(target_tree), trees=trees)
+                self.assertIn('cross a migration', str(caught.exception))
+                self.assert_untouched()
+
+    def test_provenance_mismatch_is_refused_before_drain(self):
+        with self.assertRaises(SafeFailure) as caught:
+            self.run_rollback({**self.target(), 'lockfile_sha256': '0' * 64})
+        self.assertIn('Candidate provenance differs', str(caught.exception))
+        self.assert_untouched()
+
+    def test_live_candidate_needs_same_image_mode(self):
+        live = candidate_for(OLD, OLD_DIGEST)
+        with self.assertRaises(SafeFailure) as caught:
+            self.run_rollback(live)
+        self.assertIn('already live', str(caught.exception))
+        self.assert_untouched()
+
+    def test_same_image_redeploys_under_a_new_suffix_only(self):
+        self.assertEqual(self.run_rollback(candidate_for(OLD, OLD_DIGEST), mode='same-image'), OLD)
+        for kind in ('api', 'web'):
+            app = self.azure.apps[kind]
+            self.assertTrue(app['properties']['template']['containers'][0]['image'].endswith(OLD_DIGEST[kind]))
+            self.assertEqual(app['tags'], {'application': 'TonyAI', 'release': 'rb42-1', 'source': OLD})
+            self.assertEqual(app['properties']['latestReadyRevisionName'], STEM + '-' + kind + '--rb42-1')
+
+    def test_same_image_refuses_another_candidate(self):
+        with self.assertRaises(SafeFailure) as caught:
+            self.run_rollback(self.target(), mode='same-image')
+        self.assertIn('needs the live release candidate', str(caught.exception))
+        self.assert_untouched()
+
+    def test_unknown_mode_is_refused(self):
+        with self.assertRaises(SafeFailure):
+            self.run_rollback(self.target(), mode='r004')
+
+    def test_failure_after_drain_restores_the_previous_release(self):
+        with self.assertRaises(SafeFailure) as caught:
+            self.run_rollback(self.target(), azure=FakeAzure(fail_ready={'api'}))
+        self.assertTrue(str(caught.exception).startswith('QA rollback to ' + TARGET + ' did not complete.'))
+        self.assertIn('was rolled back', str(caught.exception))
+        restored = [i for i, (_, body) in enumerate(self.azure.patches)
+                    if body['properties']['template']['revisionSuffix'].endswith('-rb')]
+        self.assertTrue(restored)
+        self.assert_smoked_after(restored[-1] + 1)
+        self.assertTrue(self.azure.apps['api']['properties']['template']['containers'][0]['image'].endswith(OLD_DIGEST['api']))
+        self.assertEqual(self.azure.apps['api']['tags']['source'], OLD)
+        self.assertEqual([k for k, _ in self.azure.patches if k == 'web'], [])
 
 
 if __name__ == '__main__':

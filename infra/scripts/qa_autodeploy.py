@@ -16,6 +16,15 @@ Subcommands, in workflow order:
   migrate         apply pending Prisma migrations, then the read-only owner privilege check
   rollout         drain API, update API then web, verify, smoke; roll back on failure
   check-github    owner preflight before federation: main ruleset + `qa` admits main only
+
+On demand (owner):
+  inputs          read-only: write the live release binding (--candidate of the live release,
+                  --out new 0600 file) for the hosted smoke/storage/backup probes
+  fetch-candidate download the candidate a successful QA deploy run on main published
+                  (--run-id, --out directory) and check it belongs to that run
+  rollback        from .github/workflows/rollback-qa.yml only: move QA to an earlier main
+                  candidate (--mode candidate) or redeploy the live one (--mode same-image)
+                  through `rollout`; refused when it would cross a migration
 """
 import argparse
 import copy
@@ -52,7 +61,9 @@ ENGINE_URL = ('https://binaries.prisma.sh/all_commits/' + ENGINE_COMMIT
 # binaries.prisma.sh refuses urllib's default User-Agent (Cloudflare 403, error 1010).
 USER_AGENT = 'tonyai-qa-deploy'
 # A change confined to these paths cannot alter either image, so it does not redeploy QA.
-NON_IMAGE_PREFIXES = ('docs/', 'infra/', 'e2e/', '.github/', '.claude/', '.codex/')
+# `e2e/` and `openspec/` reach the builder stage's context but never a final image, which
+# copies only build outputs (apps/*/Dockerfile).
+NON_IMAGE_PREFIXES = ('docs/', 'infra/', 'e2e/', 'openspec/', '.github/', '.claude/', '.codex/')
 # ...except these, which .dockerignore admits and the API image copies.
 IMAGE_INFRA_PREFIXES = ('infra/certs/',)
 SMOKE = (('api', '/api/v1/health', 200), ('api', '/api/v1/health/ready', 200),
@@ -235,6 +246,15 @@ def plan(sha, force, read, run_git=git, env=os.environ):
 
 def live_release(foundation, api, candidate, sha, rid, project):
     """Release fields for candidate/migration binding, read from the live API app."""
+    inputs = {'foundation': foundation, 'release': live_release_fields(foundation, api, candidate, sha, rid, project)}
+    validate_release(inputs)
+    # Candidate must be this exact commit, its migrations/lockfile and the QA origins.
+    bind(candidate, inputs, sha)
+    return inputs
+
+
+def live_release_fields(foundation, api, candidate, sha, rid, project):
+    """The release's required fields: live secret versions and storage settings, candidate digests."""
     secrets = {item.get('name'): item.get('keyVaultUrl', '')
                for item in api['properties'].get('configuration', {}).get('secrets') or []}
     versions = {}
@@ -253,11 +273,221 @@ def live_release(foundation, api, candidate, sha, rid, project):
                'api_digest': candidate.get('api_digest'), 'web_digest': candidate.get('web_digest'),
                **versions, 'storage_cleanup_hold': hold == '1',
                'storage_sweep_interval_seconds': int(interval)}
+    return release
+
+
+# ---------------------------------------------------------------- provenance from git objects
+# `candidate.bind` recomputes a candidate from a clean checkout of its source. The inputs
+# export and the rollback run from a checkout of later code, so they recompute the same
+# fields from the source commit's git objects instead (fetch-depth 0 in the workflow).
+
+MIGRATION_SQL = re.compile(r'packages/db/prisma/migrations/[^/]+/migration\.sql')
+
+
+def git_bytes(*args):
+    try:
+        return subprocess.check_output(['git', *args], cwd=ROOT, stderr=subprocess.DEVNULL, timeout=60)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        raise SafeFailure('Cannot read the source commit from git; fetch full history first.') from None
+
+
+def fingerprint_at(sha, read_git=git_bytes):
+    """candidate.fingerprint() for commit `sha`, read from git objects, not the working tree."""
+    # -z: NUL-separated, unquoted paths, so a non-ASCII directory name reads as git stores it.
+    listed = read_git('ls-tree', '-r', '-z', '--name-only', sha, '--', 'packages/db/prisma/migrations')
+    paths = sorted(p for p in listed.decode().split('\0') if MIGRATION_SQL.fullmatch(p))
+    if not paths:
+        raise SafeFailure('No committed migration chain at the source commit.')
+    def digest(path):
+        return hashlib.sha256(read_git('show', sha + ':' + path)).hexdigest()
+    return {'lockfile_sha256': digest('pnpm-lock.yaml'),
+            'migrations': [{'name': p.split('/')[-2], 'sha256': digest(p)} for p in paths]}
+
+
+def bind_at(candidate, inputs, sha, read_git=git_bytes):
+    """candidate.bind() without a checkout: the same expected candidate, from git objects."""
+    foundation, release = validate_release(inputs)
+    if foundation['environment'] != 'staging' or release['source_sha'] != sha:
+        raise SafeFailure('Only the selected staging source can be bound.')
+    origins = {kind + '_origin': 'https://' + foundation['prefix'] + '-staging-' + kind + '.'
+               + foundation['default_domain'] for kind in ('api', 'web')}
+    expected = {'schema': 1, 'environment': 'staging', 'source_sha': sha,
+                'api_digest': release['api_digest'], 'web_digest': release['web_digest'],
+                'registry': foundation['registry_name'] + '.azurecr.io',
+                'supabase_project_ref': release['supabase_project_ref'], **origins, **fingerprint_at(sha, read_git)}
+    if candidate != expected:
+        raise SafeFailure('Candidate provenance differs from source, migrations, lockfile or release target.')
+    return expected
+
+
+# ---------------------------------------------------------------- live inputs export
+
+def live_identity(foundation, apps, same_revision=True):
+    """The one source SHA (and revision suffix) both live apps serve, or a refusal.
+
+    A deploy that failed at the API restores only the API, under `<rid>-rb`, so the apps can
+    serve one source under different suffixes. A rollback needs only the source; the
+    inputs export needs both, because the probes verify one exact release.
+    """
+    sources = {(apps[kind].get('tags') or {}).get('source') for kind in ('api', 'web')}
+    suffixes = {apps[kind]['properties'].get('template', {}).get('revisionSuffix') for kind in ('api', 'web')}
+    if len(sources) != 1 or (same_revision and len(suffixes) != 1):
+        raise SafeFailure('Live API and web serve different sources or revisions; refused.')
+    sha, rid = sources.pop(), sorted(suffixes, key=str)[0]
+    if not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{40}', sha):
+        raise SafeFailure('Live source tag is missing or malformed; refused.')
+    if not isinstance(rid, str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,29}', rid):
+        raise SafeFailure('Live revision suffix is missing or malformed; refused.')
+    return sha, rid
+
+
+def live_images(foundation, apps):
+    return {kind: apps[kind]['properties']['template']['containers'][0].get('image') for kind in ('api', 'web')}
+
+
+def candidate_images(foundation, candidate):
+    registry = foundation['registry_name'] + '.azurecr.io/tonyai/'
+    return {kind: registry + kind + '@' + str(candidate.get(kind + '_digest')) for kind in ('api', 'web')}
+
+
+def live_env(api):
+    return {item.get('name'): item for item in api['properties']['template']['containers'][0].get('env') or []}
+
+
+def live_mail(foundation, api):
+    """The release `mail` block from live API settings, or None when the API sends no mail."""
+    from mail_settings import MAIL_ENV
+    env = live_env(api)
+    present = MAIL_ENV & set(env)
+    if not present:
+        return None
+    if present != MAIL_ENV:
+        raise SafeFailure('Live mail settings are incomplete; refused.')
+    secrets = {item.get('name'): item.get('keyVaultUrl', '')
+               for item in api['properties'].get('configuration', {}).get('secrets') or []}
+    prefix = 'https://' + foundation['vault_name'] + '.vault.azure.net/secrets/smtp-password/'
+    url = secrets.get('smtp-password', '')
+    if not url.startswith(prefix) or not re.fullmatch(r'[a-f0-9]{32}', url[len(prefix):]):
+        raise SafeFailure('Live SMTP password reference differs from the vault contract.')
+    port, secure = env['SMTP_PORT'].get('value'), env['SMTP_SECURE'].get('value')
+    if not re.fullmatch(r'[0-9]{1,5}', port or '') or secure not in ('true', 'false'):
+        raise SafeFailure('Live SMTP port or security setting is malformed.')
+    return {'host': env['SMTP_HOST'].get('value'), 'port': int(port), 'secure': secure == 'true',
+            'user': env['SMTP_USER'].get('value'), 'from': env['MAIL_FROM'].get('value'),
+            'password_secret_version': url[len(prefix):]}
+
+
+def live_runtime_limits(api):
+    """Overrides of the reviewed defaults, read from live API settings."""
+    from runtime_limits import DEFAULTS, validate_limits
+    env = live_env(api)
+    overrides = {}
+    for key, default in DEFAULTS.items():
+        value = env.get(key, {}).get('value')
+        if not isinstance(value, str) or not re.fullmatch(r'[1-9][0-9]{0,9}', value):
+            raise SafeFailure('Live runtime limits are missing or malformed.')
+        if int(value) != default:
+            overrides[key] = int(value)
+    validate_limits(overrides)
+    return overrides
+
+
+def write_private(path, data):
+    """Owner-only file; never overwrites, so a stale binding cannot be mistaken for a new one."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise SafeFailure('The output file already exists; choose a new path.') from None
+    with os.fdopen(fd, 'w') as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write('\n')
+
+
+def export_inputs(foundation, candidate, project, out, read, verifier=None, read_git=git_bytes):
+    """Write the complete live release binding that the hosted probes consume unchanged."""
+    apps = {kind: show(foundation, kind, read) for kind in ('api', 'web')}
+    sha, rid = live_identity(foundation, apps)
+    if live_images(foundation, apps) != candidate_images(foundation, candidate):
+        raise SafeFailure('Live images differ from the candidate; download the live release candidate.')
+    release = live_release_fields(foundation, apps['api'], candidate, sha, rid, project)
+    mail = live_mail(foundation, apps['api'])
+    if mail is not None:
+        release['mail'] = mail
+    release['runtime_limits'] = live_runtime_limits(apps['api'])
     inputs = {'foundation': foundation, 'release': release}
-    validate_release(inputs)
-    # Candidate must be this exact commit, its migrations/lockfile and the QA origins.
-    bind(candidate, inputs, sha)
+    bind_at(candidate, inputs, sha, read_git)
+    if verifier is None:
+        from deploy_apps import verify as verifier
+    verifier(inputs, read=read)
+    write_private(out, inputs)
     return inputs
+
+
+# ---------------------------------------------------------------- on-demand rollback
+
+def download_artifact(run_id, name, directory):
+    command(['gh', 'run', 'download', run_id, '-R', REPOSITORY, '-n', name, '-D', directory])
+
+
+def fetch_candidate(run_id, directory, read=None, download=download_artifact):
+    """The candidate a successful QA deploy from main published, checked against that run."""
+    read = read or gh_api
+    if not isinstance(run_id, str) or not re.fullmatch(r'[1-9][0-9]{0,19}', run_id):
+        raise SafeFailure('A numeric QA deploy run ID is required.')
+    run = read('repos/' + REPOSITORY + '/actions/runs/' + run_id)
+    sha = run.get('head_sha') if isinstance(run, dict) else None
+    if (not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{40}', sha)
+            or str(run.get('path', '')).split('@')[0] != '.github/workflows/deploy-qa.yml'
+            or run.get('head_branch') != 'main' or run.get('event') not in ('push', 'workflow_dispatch')
+            or run.get('status') != 'completed' or run.get('conclusion') != 'success'
+            or (run.get('repository') or {}).get('full_name') != REPOSITORY
+            or (run.get('head_repository') or {}).get('full_name') != REPOSITORY
+            or type(run.get('run_number')) is not int or type(run.get('run_attempt')) is not int):
+        raise SafeFailure('Run ' + run_id + ' is not a successful QA deploy from main; refused.')
+    # A deploy that skipped published nothing, so the download itself fails here.
+    download(run_id, 'qa-candidate-' + str(run['run_number']) + '-' + str(run['run_attempt']), directory)
+    path = Path(directory) / 'candidate.json'
+    try:
+        candidate = json.loads(path.read_text())
+    except (OSError, ValueError):
+        raise SafeFailure('The run published no readable candidate.') from None
+    if not isinstance(candidate, dict) or candidate.get('source_sha') != sha:
+        raise SafeFailure('The candidate does not belong to the run that published it.')
+    return path
+
+
+def rollback_id(env=os.environ):
+    return 'rb' + release_id(env)[len('ci'):]
+
+
+def rollback(foundation, candidate, mode, rid, project, read, patch, owns, run_git=git,
+             read_git=git_bytes, **rollout_options):
+    """Move QA to a previously deployed candidate (or redeploy the live one) via `rollout`."""
+    if mode not in ('candidate', 'same-image'):
+        raise SafeFailure('Rollback mode must be candidate or same-image.')
+    sha = candidate.get('source_sha') if isinstance(candidate, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{40}', sha):
+        raise SafeFailure('Candidate has no full source SHA; nothing was changed.')
+    if run_git('merge-base', '--is-ancestor', sha, main_head(run_git))[0] != 0:
+        raise SafeFailure('Candidate source is not on main; nothing was changed.')
+    apps = {kind: show(foundation, kind, read) for kind in ('api', 'web')}
+    live_sha, _ = live_identity(foundation, apps, same_revision=False)
+    same = live_images(foundation, apps) == candidate_images(foundation, candidate)
+    if mode == 'candidate' and same:
+        raise SafeFailure('Candidate is already live; use same-image mode to rehearse; nothing was changed.')
+    if mode == 'same-image' and (not same or sha != live_sha):
+        raise SafeFailure('Same-image mode needs the live release candidate; nothing was changed.')
+    release = live_release_fields(foundation, apps['api'], candidate, sha, rid, project)
+    bind_at(candidate, {'foundation': foundation, 'release': release}, sha, read_git)
+    # Migrations are never rolled back: old code must not meet a schema it does not know,
+    # and the forward return must not skip one either.
+    if fingerprint_at(live_sha, read_git)['migrations'] != candidate['migrations']:
+        raise SafeFailure('Rollback would cross a migration; nothing was changed.')
+    try:
+        rollout(foundation, candidate, sha, rid, read, patch, owns, **rollout_options)
+    except SafeFailure as error:
+        raise SafeFailure('QA rollback to ' + sha + ' did not complete. ' + str(error)) from None
+    return sha
 
 
 # ---------------------------------------------------------------- migrate
@@ -551,16 +781,54 @@ def interrupted(signum, frame):
     raise KeyboardInterrupt()
 
 
+def shield_signals():
+    """Once a rollback of a failed rollout starts, a second cancel signal must not stop it."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+
 def main(argv=None, env=os.environ):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('operation', choices=['head', 'plan', 'wait-ci', 'migrate', 'rollout', 'check-github'])
+    parser.add_argument('operation', choices=['head', 'plan', 'wait-ci', 'migrate', 'rollout', 'check-github',
+                                              'inputs', 'fetch-candidate', 'rollback'])
     parser.add_argument('--sha')
     parser.add_argument('--candidate')
     parser.add_argument('--force', action='store_true')
+    parser.add_argument('--out', help='inputs: new owner-only file; fetch-candidate: download directory')
+    parser.add_argument('--mode', choices=['candidate', 'same-image'], help='rollback: target kind')
+    parser.add_argument('--run-id', help='fetch-candidate: the QA deploy run that published the candidate')
     args = parser.parse_args(argv)
     if args.operation == 'check-github':
         verify_qa_environment()
         print('PASS: main is ruleset-protected and environment qa admits deployments from main only.')
+        return
+    if args.operation == 'fetch-candidate':
+        if not args.out:
+            raise SafeFailure('fetch-candidate needs --run-id and --out.')
+        path = fetch_candidate(args.run_id, args.out)
+        print('PASS: candidate of run ' + args.run_id + ' for source '
+              + json.loads(path.read_text())['source_sha'] + '.')
+        return
+    if args.operation in ('inputs', 'rollback'):
+        # The source comes from the live apps (inputs) or the candidate (rollback), never --sha.
+        if not args.candidate or (args.operation == 'inputs' and not args.out) or (
+                args.operation == 'rollback' and not args.mode):
+            raise SafeFailure('inputs needs --candidate and --out; rollback needs --candidate and --mode.')
+        foundation = foundation_from_env(env)
+        arm = Arm(foundation)
+        candidate = json.loads(Path(args.candidate).read_text())
+        project = env.get('SUPABASE_PROJECT_REF', '')
+        if args.operation == 'inputs':
+            inputs = export_inputs(foundation, candidate, project, args.out, arm)
+            release = inputs['release']
+            print('PASS: wrote ' + args.out + ' for source ' + release['source_sha'] + ', revision '
+                  + release['release_id'] + (', with mail' if 'mail' in release else ', no mail') + '.')
+            return
+        rid = rollback_id(env)
+        signal.signal(signal.SIGTERM, interrupted)
+        sha = rollback(foundation, candidate, args.mode, rid, project, arm, arm.patch, arm.owns,
+                       shield=shield_signals)
+        print('PASS: QA serves ' + sha + ' as revision suffix ' + rid + ' (' + args.mode + ').')
         return
     if not re.fullmatch(r'[a-f0-9]{40}', args.sha or ''):
         raise SafeFailure('A full source SHA is required.')
@@ -595,10 +863,7 @@ def main(argv=None, env=os.environ):
               + str(checked['platform_default_findings']) + '.')
         return
     signal.signal(signal.SIGTERM, interrupted)
-    def shield():
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    rollout(foundation, candidate, args.sha, rid, arm, arm.patch, arm.owns, shield=shield)
+    rollout(foundation, candidate, args.sha, rid, arm, arm.patch, arm.owns, shield=shield_signals)
     print('PASS: QA serves ' + args.sha + ' as revision suffix ' + rid + '.')
 
 

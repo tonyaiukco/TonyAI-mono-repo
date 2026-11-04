@@ -1,0 +1,72 @@
+name: QA rollback
+run-name: QA rollback to deploy run ${{ inputs.candidate_run_id }} (${{ inputs.mode }})
+# Dispatched by the owner (L10, owner decision 2026-11-04). Accepted boundary: like QA deploy,
+# any repository writer can dispatch it; nothing beyond main's candidates can be served. Moves hosted QA to the candidate
+# that an earlier successful QA deploy from main published, or redeploy the live one under
+# a new revision suffix (same-image). Images only, through the same rollout, verification,
+# smoke and automatic restore as deploy-qa.yml; refused before any change when the move
+# would cross a migration. Disabling "QA deploy" does not disable this workflow; both share
+# the qa-deploy concurrency group, so they never overlap.
+# Runbook: infra/runbooks/11-qa-hosted.md#on-demand-rollback.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Run ID of the successful QA deploy whose candidate to serve
+        required: true
+        type: string
+      mode:
+        description: candidate = serve that run's images; same-image = redeploy the live release
+        required: true
+        type: choice
+        options: [candidate, same-image]
+permissions:
+  contents: read
+concurrency:
+  group: qa-deploy
+  cancel-in-progress: false
+jobs:
+  rollback:
+    if: >-
+      github.repository == 'tonyaiukco/TonyAI-mono-repo'
+      && github.ref == 'refs/heads/main'
+      && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: qa
+    timeout-minutes: 130
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      MODE: ${{ inputs.mode }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      RESOURCE_GROUP: ${{ vars.QA_RESOURCE_GROUP }}
+      PREFIX: ${{ vars.QA_PREFIX }}
+      ACA_DEFAULT_DOMAIN: ${{ vars.QA_ACA_DEFAULT_DOMAIN }}
+      ACR_NAME: ${{ vars.QA_ACR_NAME }}
+      VAULT_NAME: ${{ vars.QA_VAULT_NAME }}
+      SUPABASE_PROJECT_REF: ${{ vars.QA_SUPABASE_PROJECT_REF }}
+    steps:
+      # Full history: the candidate's source and the live source are read from git objects.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # Before any Azure token exists: only a successful QA deploy from main is a target.
+      - name: Fetch and check the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 infra/scripts/qa_autodeploy.py fetch-candidate --run-id "$CANDIDATE_RUN_ID" --out "$RUNNER_TEMP/target"
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # Never cancel this step midway: a failure restores the previous images inside it.
+      - name: Serve the candidate (refused across a migration; restores on failure)
+        timeout-minutes: 110
+        run: python3 infra/scripts/qa_autodeploy.py rollback --candidate "$RUNNER_TEMP/target/candidate.json" --mode "$MODE"
