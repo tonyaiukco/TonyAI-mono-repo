@@ -100,6 +100,49 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(len(holders), 1)
         self.assertIn('qa_autodeploy.py migrate', holders[0]['run'])
 
+    def test_qa_rollback_is_owner_dispatched_from_main_and_checks_the_candidate_before_oidc(self):
+        doc = workflow('rollback-qa.yml')
+        self.assertEqual(set(doc['on']), {'workflow_dispatch'})
+        inputs = doc['on']['workflow_dispatch']['inputs']
+        self.assertEqual(set(inputs), {'candidate_run_id', 'mode'})
+        self.assertEqual(inputs['mode']['type'], 'choice')
+        self.assertEqual(inputs['mode']['options'], ['candidate', 'same-image'])
+        self.assertEqual(doc['permissions'], {'contents': 'read'})
+        # Same group as deploy-qa.yml: a rollback and a deploy never overlap.
+        self.assertEqual(doc['concurrency'], {'group': 'qa-deploy', 'cancel-in-progress': 'false'})
+        self.assertEqual(set(doc['jobs']), {'rollback'})
+        job = doc['jobs']['rollback']
+        condition = ' '.join(job['if'].split())
+        self.assertEqual(condition, "github.repository == 'tonyaiukco/TonyAI-mono-repo' && "
+                                    "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'")
+        self.assertEqual(job.get('environment'), 'qa')
+        self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'read', 'id-token': 'write'})
+        self.assertFalse(any('secrets.' in value for value in job['env'].values()))
+        self.assertNotIn('DIRECT_URL_SECRET_VERSION', json.dumps(doc))
+        # Dispatch inputs reach the scripts only through env, where they are validated.
+        self.assertEqual(job['env']['CANDIDATE_RUN_ID'], '${{ inputs.candidate_run_id }}')
+        self.assertEqual(job['env']['MODE'], '${{ inputs.mode }}')
+        steps = job['steps']
+        checkout = steps[0]
+        self.assertTrue(checkout['uses'].startswith('actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'))
+        self.assertEqual(checkout['with'], {'ref': '${{ github.sha }}', 'fetch-depth': '0', 'persist-credentials': 'false'})
+        for step in steps:
+            self.assertNotIn('${{', step.get('run', ''))
+            self.assertFalse(step.get('uses', '').startswith('actions/download-artifact'))
+        runs = [s.get('run', '') for s in steps]
+        fetch = next(i for i, r in enumerate(runs) if 'qa_autodeploy.py fetch-candidate' in r)
+        login = [i for i, s in enumerate(steps) if s.get('uses', '').startswith('azure/login@')]
+        change = next(i for i, r in enumerate(runs) if 'qa_autodeploy.py rollback' in r)
+        self.assertEqual(len(login), 1)
+        self.assertTrue(fetch < login[0] < change)
+        self.assertEqual(steps[login[0]]['uses'], 'azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6')
+        self.assertEqual(steps[fetch]['env'], {'GH_TOKEN': '${{ github.token }}'})
+        self.assertEqual(runs[change], 'python3 infra/scripts/qa_autodeploy.py rollback '
+                                       '--candidate "$RUNNER_TEMP/target/candidate.json" --mode "$MODE"')
+        # Only deploy-qa.yml migrates or builds; a rollback serves existing images.
+        for forbidden in ('migrate', 'build-images.sh', 'rollout'):
+            self.assertFalse(any(forbidden in r for r in runs), forbidden)
+
     def test_only_the_qa_deploy_workflow_may_use_the_qa_environment(self):
         users = set()
         for path in [*(ROOT / '.github/workflows').glob('*.yml'), *(ROOT / '.github/workflows').glob('*.yaml')]:
@@ -108,7 +151,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertNotIn('${{', json.dumps(environment), (path.name, name))
                 if (environment.get('name') if isinstance(environment, dict) else environment) == 'qa':
                     users.add((path.name, name))
-        self.assertEqual(users, {('deploy-qa.yml', 'deploy')})
+        self.assertEqual(users, {('deploy-qa.yml', 'deploy'), ('rollback-qa.yml', 'rollback')})
 
     def test_approval_waits_for_visible_manifest_and_hash(self):
         doc = workflow('deploy-staging.yml')

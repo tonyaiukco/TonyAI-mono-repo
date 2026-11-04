@@ -164,8 +164,8 @@ extension. Measured on 2026-11-03, CI on `main` takes 3–7 minutes.
    then fails CI, QA keeps the last deployed commit until the next green merge.
 2. **plan:** skip when every file changed since the deployed source (the apps'
    `source` tag; `git diff --no-renames`) is under `docs/`, `infra/` (except
-   `infra/certs/`, which the API image copies), `e2e/`, `.github/`, `.claude/`,
-   `.codex/` or a top-level `*.md`. A manual dispatch from `main` always deploys.
+   `infra/certs/`, which the API image copies), `e2e/`, `openspec/`, `.github/`,
+   `.claude/`, `.codex/` or a top-level `*.md`. A manual dispatch from `main` always deploys.
 3. **build (in parallel with CI):** `build-images.sh` builds, pushes and scans
    both images at that SHA. `BUILD_CACHE=registry` reuses layers from
    `<registry>/tonyai/buildcache:{api,web}`; owner builds leave it unset. Image
@@ -310,9 +310,93 @@ secret is created.
    the run fails at **migrate**; decide on the rule explicitly. The plan step reads
    `main` anonymously, so making the repository private needs a token there first.
 
+## On-demand rollback
+
+`.github/workflows/rollback-qa.yml` (**QA rollback**, owner decision 2026-11-04)
+moves QA to the candidate an earlier **successful** QA deploy from `main`
+published, or redeploys the live release under a new suffix. It changes images
+only, through the same `rollout` as a deploy: drain, API then web, verify,
+smoke, and automatic restore of the previous images on any failure. It never
+migrates or builds. Disabling `QA deploy` leaves it available; the shared
+`qa-deploy` concurrency group stops it from overlapping a deploy.
+
+**Who:** the owner dispatches it. The accepted boundary (owner decision 2026-11-04) is the
+same as `QA deploy`: any repository writer *can* dispatch it, but only main's own
+successful deploy candidates can be served.
+
+Dispatch it from `main` with the deploy **run ID** (the number in the run's URL,
+not the run number) and a mode:
+
+```bash
+gh workflow run "QA rollback" -R tonyaiukco/TonyAI-mono-repo -f candidate_run_id=<deploy run ID> -f mode=candidate
+```
+
+- `fetch-candidate` (before any Azure token) accepts only a completed, successful
+  `deploy-qa.yml` run on `main` of this repository and requires the downloaded
+  `qa-candidate-<number>-<attempt>` to name that run's commit. A run that skipped
+  published no candidate and is refused.
+- `rollback` refuses before draining when the candidate's source is not on `main`,
+  its provenance (migrations, lockfile, origins, registry) differs from its commit's
+  git objects, it is already live (`candidate` mode) or it is not the live release
+  (`same-image` mode), or **the migrations of the live source and the candidate
+  differ in either direction**. Migrations are never rolled back.
+- The new revision suffix is `rb<run number>-<attempt>`; the `source` tag names the
+  candidate's commit. A failed rollback leaves the previous release serving.
+- **Concurrency:** GitHub keeps at most one *pending* run per concurrency group.
+  When a rollback is dispatched while a deploy runs, it replaces any pending push
+  deploy, and a later push replaces a pending rollback. After a rollback, check the
+  `QA deploy` history: if a pending deploy was cancelled, dispatch `QA deploy` from
+  `main` once the drill is over. During acceptance `QA deploy` is frozen, so nothing
+  is pending.
+- The migration guard compares migration chains in **code** (live source against
+  candidate), not the database. If an earlier deploy migrated and then rolled its
+  images back, the database is already ahead of both. The guard does not make that
+  situation worse, and it does not detect it either. Check the deploy history before
+  a drill.
+
+**Drill (L10):** after a QA-fix release `ciN` deploys with no new migration,
+announce two API gaps of about 2.5 minutes, then dispatch with `ci4-1`'s deploy run
+(41738446426) and afterwards with `ciN`'s. Confirm each with `inputs` below. When
+no compatible later release exists, dispatch `mode=same-image` with the live
+release's run instead and record that a cross-version rollback was not rehearsed.
+Stop on the first failure; there is no automatic retry. Never target r004: it
+predates automatic deploys and has no candidate artifact.
+
+## Live release inputs and monitoring readback
+
+The hosted probes take an inputs file describing the live release. Never write it
+by hand; read it from ARM. Run as the owner after `az login`, from a clean checkout
+of `main`, with the QA variables of the `qa` environment exported. The variable names
+are the same as `deploy-qa.yml`'s job environment: `AZURE_SUBSCRIPTION_ID`,
+`AZURE_TENANT_ID`, `RESOURCE_GROUP`, `PREFIX`, `ACR_NAME`, `VAULT_NAME`,
+`ACA_DEFAULT_DOMAIN`, `SUPABASE_PROJECT_REF`. Then:
+
+```bash
+mkdir -m 700 -p ~/tonyai-evidence-backup/l10-ci4-1
+gh run download <deploy run ID> -R tonyaiukco/TonyAI-mono-repo -n qa-candidate-<number>-<attempt> -D ~/tonyai-evidence-backup/l10-ci4-1/candidate
+python3 infra/scripts/qa_autodeploy.py inputs --candidate ~/tonyai-evidence-backup/l10-ci4-1/candidate/candidate.json --out ~/tonyai-evidence-backup/l10-ci4-1/inputs-$(date -u +%Y%m%dT%H%M%SZ).json
+python3 infra/scripts/monitoring_readback.py --hours 26
+```
+
+`inputs` refuses unless both apps serve one source and one revision suffix and the
+images equal the candidate. It adds the live `mail` block (SMTP settings and the
+`smtp-password` version) and `runtime_limits`, recomputes the candidate from the
+source commit's git objects, and runs the read-only release verifier before it
+writes. The file is new (never overwritten) and mode 0600. It holds Key Vault
+version identifiers, never values. Rerun it before every probe: a merge while QA
+deploys are enabled moves the release.
+
+`monitoring_readback.py` reads the environment's log destination, the
+`container-logs` diagnostic setting, the console and system log row counts, the
+`storage_verify` results, whether the `storage-verify` job runs the live API image,
+the operator action group, and the three alert rules. It prints PASS/FAIL per link
+with counts only and exits 1 on any FAIL. It changes nothing. A FAIL is fixed only
+by an inspected foundation plan and owner apply (runbook 06). That same apply
+re-pins the job to the live API image.
+
 ## Reset, maintenance and announcements
 
-Application deploys follow the previous section and need no per-deploy approval;
+Application deploys follow [Automatic deploy on merge](#automatic-deploy-on-merge) and need no per-deploy approval;
 QA sees a short API gap on each one. For every other change, the owner approves each reset or deployment and names the affected environment,
 scope, window, retained evidence and recovery path. Notify QA through the agreed
 channel before the window and again when the exact release is accepted; pause
@@ -336,7 +420,91 @@ the owner immediately, stop that test and preserve minimal sanitized evidence.
 The owner signs QA availability only after L10 evidence and open-gate disposition;
 this does not close the wider G2 recovery/recreation gates or approve production.
 
-## R004 consolidated L10 acceptance package (prepared 2026-11-02)
+## ci4-1 L10 acceptance (from 2026-11-04)
+
+**This section governs L10.** The r004 package below is historical: keep its
+evidence, but do not resume it. Planning: `openspec/changes/close-l10-hosted-acceptance/`.
+
+**Scope (owner decision 2026-11-04).** L10 closes on functional and operational
+acceptance of the live release. **Numerical** emissions acceptance belongs to the
+LP4-02 gate. Consistent DB+Storage restore, secret rotation, Sentry and production
+recovery belong to G2/LP5-03. Neither is claimed here.
+
+**Evidence standard (owner decision 2026-11-04).** One owner approval covers the
+whole package inside a declared freeze window; per-step sealed packets are retired.
+Three rules still hold:
+
+- Stop on any unexpected result, with no automatic retry.
+- Keep secrets, passwords, tokens, invitation/reset links and signed URLs out of
+  every record.
+- Bind each result to UTC and Europe/Istanbul time, the source SHA, the release ID
+  and both digests.
+
+Receipts go to `~/tonyai-evidence-backup/l10-ci4-1/` (0700). The owner-DB version is
+the `qa` variable `QA_DIRECT_URL_SECRET_VERSION`, which deploy run 41738446426
+migrated with. The separate "single enabled version" metadata preflight is retired.
+
+**Target.** Source `bdf7646230cc194ab984cac01a48164a819552c3`, suffix `ci4-1`,
+API `sha256:efbbe12f092ab11c472e6e07751853491df412e7c731ebda11de78b0ec515c01`,
+web `sha256:73b68708a1ef1e8628ae7ffe7eaf0c1600c0399e4e7e946752f9a68c15bbbbff`,
+deploy run 41738446426 / artifact `qa-candidate-4-1`. Re-read it with `inputs`
+before every operation; stop if it moved.
+
+**Freeze.** Disable `QA deploy` before merging anything during acceptance, and
+re-enable it only for an intended fix release:
+
+```bash
+gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
+gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
+```
+
+**Session 1: automated probes (owner runs; helper SHA = the merged acceptance-tooling commit).**
+
+1. Write the inputs file and run the monitoring readback
+   ([previous section](#live-release-inputs-and-monitoring-readback)).
+2. Pull the ci4-1 API image by digest once, because the probes never pull. Use a
+   clean checkout of `bdf7646` as the application source.
+3. Run the probes:
+   - **A, two-tenant smoke:** `hosted_smoke.py --helper-sha <sha> --application-source <checkout> --candidate <candidate.json> --inputs <inputs.json> --journal <receipts>/smoke.json --direct-secret-version "$QA_DIRECT_URL_SECRET_VERSION"`.
+     Run `--verify-only` first.
+   - **C, Storage:** `hosted_storage_probe.py` with the same helper, source,
+     candidate and inputs, and `--journal <receipts>/storage.json`. Its hidden prompts
+     take the browser key and one owner-approved synthetic QA account's UUID and
+     fresh access token, held in memory only. The probe changes no account.
+   - **Backup metadata:** `hosted_backup_evidence.py` with the same flags and
+     `--receipt`. It needs a hidden `backups_read` Management token and records
+     metadata only; no restore is claimed.
+4. On a readback FAIL, inspect a foundation plan that fixes routing and re-pins
+   `storage-verify` to the live API image. Apply it only on the owner's word, then
+   read back again.
+5. Hand [the QA checklist](../../docs/uat/l10_hosted_acceptance.md) to QA with the
+   two new holdings and the window.
+
+**Session 2.** Triage QA results: correctness, security and data-integrity defects
+are fixed; the rest go under Open questions. Then:
+
+1. Run the [rollback drill](#on-demand-rollback).
+2. Run one controlled alert test, chosen from the readback, with operator
+   acknowledgement.
+3. Rerun A on the final release.
+4. Record the results below.
+
+| Control | State (2026-11-04) | Closing evidence |
+|---|---|---|
+| Live binding / ARM | PASS at deploy (run 41738446426) | `inputs` receipt before each operation |
+| A two-tenant smoke | NOT_RUN | smoke receipt + journal cleanup |
+| C Storage probe | NOT_RUN | storage receipt + exact-path cleanup |
+| Backup metadata | NOT_RUN | backup receipt (no restore claim) |
+| Log → alert chain | OPEN (0 rows seen 2026-11-02) | readback all PASS + controlled alert acknowledged |
+| QA checklist (lifecycle, roles, lock, audit, evidence, reports, TR/EN, no_factor, mail, isolation) | NOT_RUN | checklist rows PASS or dispositioned |
+| Rollback drill | NOT_RUN | two `QA rollback` runs + `inputs` after each |
+| Numerical emissions | Out of scope → LP4-02 | — |
+| Full recovery | Out of scope → G2/LP5-03 | — |
+
+## R004 consolidated L10 acceptance package (prepared 2026-11-02; historical)
+
+Superseded on 2026-11-04 by [ci4-1 L10 acceptance](#ci4-1-l10-acceptance-from-2026-11-04).
+Kept as history; do not resume or rerun it.
 
 The owner approved this bounded batch. **Execution is partial; full L10 remains
 OPEN.** Current observations and expedited functional QA disposition are above. L9 remains
