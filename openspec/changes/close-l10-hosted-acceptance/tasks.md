@@ -42,12 +42,12 @@ Branch `chore/l10-acceptance-package-2`. Groups 1–6 are the Session 1 PR. Grou
 - [x] 7.3 Pull the ci4-1 API image by digest. Run `hosted_smoke.py --verify-only`, then probe A (two tenants: login, own and foreign API/PostgREST confinement, exports, browser download, Auth absence). Verify PASS receipts are in `~/tonyai-evidence-backup/l10-ci4-1/` and the journal shows cleanup completed.
 - [x] 7.4 Run probe C (`hosted_storage_probe.py`: three private buckets, size limits, MIME types, signed expiry, foreign denial, exact cleanup). Verify a PASS receipt and the cleanup of the exact probe paths.
 - [x] 7.5 Run `hosted_backup_evidence.py` for recent backup metadata. Verify the receipt shows a backup inside the expected window. No restore is claimed.
-- [ ] 7.6 Run the monitoring readback. If any link fails, prepare the foundation plan that fixes routing and re-pins `storage-verify` to the ci4-1 digest; the owner applies it after the plan is inspected for changes beyond the known noise. Verify that a second readback passes every link.
-- [ ] 7.7 Hand the checklist to QA with the two holdings, the window and the defect process. Verify the handover is recorded in runbook 11.
+- [x] 7.6 Run the monitoring readback. If any link fails, prepare the foundation plan that fixes routing and re-pins `storage-verify` to the ci4-1 digest; the owner applies it after the plan is inspected for changes beyond the known noise. Verify that a second readback passes every link.
+- [x] 7.7 Hand the checklist to QA with the two holdings and the defect process (owner decision 2026-11-04: no window or sign-off date is recorded; QA reports its findings to the owner in its own format). Verify the handover is recorded in runbook 11.
 
 ## 8. Session 2: QA results, rollback drill, alert test
 
-- [ ] 8.1 Triage QA's results. Fix correctness, security or data-integrity defects in focused PRs; file the rest under Open questions. Verify every FAIL row has a disposition.
+- [ ] 8.1 Triage QA's results and map them to checklist row IDs, since QA reports in its own format. Fix correctness, security or data-integrity defects in focused PRs; file the rest under Open questions. Verify every FAIL row has a disposition and no in-scope row is left unmapped.
 - [ ] 8.2 Unfreeze for the fix merge, let ci5 deploy, then freeze again. Verify `inputs` shows ci5 and that `git diff` of the migrations between `bdf7646` and ci5's source is empty. If it is not empty, skip to 8.4.
 - [ ] 8.3 After announcing the outage to QA, dispatch `rollback-qa` with `qa-candidate-4-1`, then with ci5's candidate. Verify both runs pass smoke and `inputs` shows ci4-1 and then ci5.
 - [ ] 8.4 Fallback, only when 8.2 produced no compatible ci5: dispatch `rollback-qa` in `same-image` mode. Verify a new suffix, unchanged digests, and smoke PASS, and record that a cross-version rollback was not rehearsed.

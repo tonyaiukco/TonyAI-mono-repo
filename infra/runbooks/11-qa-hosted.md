@@ -498,10 +498,10 @@ with `--workflow deploy-qa.yml --all`.
    `storage-verify` to the live API image. Apply it only on the owner's word, then
    read back again.
 5. Hand [the QA checklist](../../docs/uat/l10_hosted_acceptance.md) to QA with the
-   two new holdings and the window.
+   two new holdings and the defect process.
 
-**Session 2.** Triage QA results: correctness, security and data-integrity defects
-are fixed; the rest go under Open questions. Then:
+**Session 2.** Map QA's report to the checklist's row IDs, then triage it: correctness,
+security and data-integrity defects are fixed; the rest go under Open questions. Then:
 
 1. Run the [rollback drill](#on-demand-rollback).
 2. Run one controlled alert test, chosen from the readback, with operator
@@ -515,8 +515,8 @@ are fixed; the rest go under Open questions. Then:
 | A two-tenant smoke | PASS on the second attempt; rerun on the final release in Session 2 | smoke receipt + journal cleanup |
 | C Storage probe | PASS | storage receipt + exact-path cleanup |
 | Backup metadata | PASS | backup receipt (no restore claim) |
-| Log → alert chain | OPEN: job re-pinned, rerun of the readback and the controlled alert pending | readback all PASS + controlled alert acknowledged |
-| QA checklist (lifecycle, roles, lock, audit, evidence, reports, TR/EN, no_factor, mail, isolation) | NOT_RUN | checklist rows PASS or dispositioned |
+| Log → alert chain | OPEN: readback all PASS from merged `main`; controlled alert pending | readback all PASS + controlled alert acknowledged |
+| QA checklist (lifecycle, roles, lock, audit, evidence, reports, TR/EN, no_factor, mail, isolation) | HANDED OVER, results pending | checklist rows PASS or dispositioned |
 | Rollback drill | NOT_RUN | two `QA rollback` runs + `inputs` after each |
 | Numerical emissions | Out of scope → LP4-02 | — |
 | Full recovery | Out of scope → G2/LP5-03 | — |
@@ -557,10 +557,14 @@ both digests above; times UTC / Europe/Istanbul; receipts in
   link. Its output did not print why; an ad hoc ARM GET and KQL count at about 17:21 UTC read
   a `null` destination type and 0 `AzureDiagnostics` rows. The corrected check, run from
   this branch before merge (17:36 / 20:36, `monitoring-branch-20261104T173627Z.txt`
-  `9fc32f88934c3443…`), prints both values and passes all 11 links. That is not the task 7.6
-  closure: rerun it from merged `main`. The one `storage_verify` result in its window came
-  from the job's r004 image; the first ci4-1 result is due after 02:00 UTC / 05:00
-  Europe/Istanbul.
+  `9fc32f88934c3443…`), prints both values and passes all 11 links. The rerun from merged
+  `main` `8f327c8` (20:28 / 23:28, `monitoring-20261104T202835Z.txt` `bacfdc5f59dda7c0…`), with
+  `inputs` matching ci4-1 just before it, also passes all 11 and closes task 7.6. The one
+  `storage_verify` result in that window came from the job's r004 image; the first ci4-1
+  result is due after 02:00 UTC / 05:00 Europe/Istanbul and is not yet observed.
+- **QA handover:** the owner sent the checklist and the defect process to QA on 2026-11-04.
+  The holdings are Arda Test Holding and Emre Test Holding. QA reports its findings to the
+  owner in its own format, and no window or sign-off date is recorded (owner decision).
 
 ## R004 consolidated L10 acceptance package (prepared 2026-11-02; historical)
 
