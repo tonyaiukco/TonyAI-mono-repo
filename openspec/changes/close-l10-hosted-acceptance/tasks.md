@@ -48,9 +48,9 @@ Branch `chore/l10-acceptance-package-2`. Groups 1–6 are the Session 1 PR. Grou
 ## 8. Session 2: QA results, rollback drill, alert test
 
 - [ ] 8.1 Triage QA's results and map them to checklist row IDs, since QA reports in its own format. Fix correctness, security or data-integrity defects in focused PRs; file the rest under Open questions. Verify every FAIL row has a disposition and no in-scope row is left unmapped.
-- [ ] 8.2 Unfreeze for the fix merge, let ci5 deploy, then freeze again. Verify `inputs` shows ci5 and that `git diff` of the migrations between `bdf7646` and ci5's source is empty. If it is not empty, skip to 8.4.
+- [ ] 8.2 The freeze was lifted on 2026-11-05 (owner decision; merges deploy as they land, LP4-02 migrations included). Identify the live release after QA's fixes merge, and map every QA finding to the release that was live when it was made. Verify `inputs` shows that release, and check whether `git diff` of the migrations between `bdf7646` and its source is empty. If it is not empty, skip to 8.4.
 - [ ] 8.3 After announcing the outage to QA, dispatch `rollback-qa` with `qa-candidate-4-1`, then with ci5's candidate. Verify both runs pass smoke and `inputs` shows ci4-1 and then ci5.
-- [ ] 8.4 Fallback, only when 8.2 produced no compatible ci5: dispatch `rollback-qa` in `same-image` mode. Verify a new suffix, unchanged digests, and smoke PASS, and record that a cross-version rollback was not rehearsed.
+- [ ] 8.4 Fallback, when 8.2 found no release compatible with ci4-1 (expected once an LP4-02 migration has deployed): dispatch `rollback-qa` in `same-image` mode. Verify a new suffix, unchanged digests, and smoke PASS, and record that a cross-version rollback was not rehearsed.
 - [ ] 8.5 Run the controlled alert test chosen from 7.6's readback. Verify the named operator acknowledges the notification and the readback shows the matching log rows.
 - [ ] 8.6 Re-run probe A on the final live release. Verify PASS.
 

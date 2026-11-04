@@ -346,8 +346,9 @@ gh workflow run "QA rollback" -R tonyaiukco/TonyAI-mono-repo -f candidate_run_id
   When a rollback is dispatched while a deploy runs, it replaces any pending push
   deploy, and a later push replaces a pending rollback. After a rollback, check the
   `QA deploy` history: if a pending deploy was cancelled, dispatch `QA deploy` from
-  `main` once the drill is over. During acceptance `QA deploy` is frozen, so nothing
-  is pending.
+  `main` once the drill is over. Since 2026-11-05 `QA deploy` runs on every merge
+  again (owner decision), so check that no deploy is running or pending before you
+  dispatch a drill.
 - The migration guard compares migration chains in **code** (live source against
   candidate), not the database. If an earlier deploy migrated and then rolled its
   images back, the database is already ahead of both. The guard does not make that
@@ -359,6 +360,9 @@ announce two API gaps of about 2.5 minutes, then dispatch with `ci4-1`'s deploy 
 (41738446426) and afterwards with `ciN`'s. Confirm each with `inputs` below. When
 no compatible later release exists, dispatch `mode=same-image` with the live
 release's run instead and record that a cross-version rollback was not rehearsed.
+Since the freeze was lifted on 2026-11-05, LP4-02's migrations deploy as they merge.
+Once one has deployed, no release is compatible with `ci4-1`, and the drill is
+`same-image` (owner decision 2026-11-05).
 Stop on the first failure; there is no automatic retry. Never target r004: it
 predates automatic deploys and has no candidate artifact.
 
@@ -500,7 +504,9 @@ with `--workflow deploy-qa.yml --all`.
 5. Hand [the QA checklist](../../docs/uat/l10_hosted_acceptance.md) to QA with the
    two new holdings and the defect process.
 
-**Session 2.** Map QA's report to the checklist's row IDs, then triage it: correctness,
+**Session 2.** Map QA's report to the checklist's row IDs. Since the freeze was lifted
+(2026-11-05), also map each finding to the release that was live when it was made
+(deploy run and revision suffix). Then triage it: correctness,
 security and data-integrity defects are fixed; the rest go under Open questions. Then:
 
 1. Run the [rollback drill](#on-demand-rollback).

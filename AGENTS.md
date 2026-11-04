@@ -28,7 +28,7 @@ Owner-run from the owner's machine, or run by you only with the owner's explicit
 
 ## Non-negotiables (summary — CLAUDE.md is authoritative)
 
-- **English** for everything in the repository: code, identifiers, comments, docs, commit messages, UI copy. The only exception is the values of the `tr` i18n catalogue and Turkish test fixtures.
+- **English** for everything in the repository: code, identifiers, comments, docs, commit messages, UI copy. The exceptions are the values of the `tr` i18n catalogue, Turkish test fixtures and, by owner decision 2026-11-05, the reviewer-signed TR factor package source `docs/md_docs/Revision MD.md` (kept unchanged; everything derived from it is English).
 - **Git:** never push to `main`. Branch as `feat/`, `fix/`, `chore/`, `docs/`, `test/` or `refactor/`; conventional-commit messages; open a pull request. **The owner merges — never self-merge.** Commit and push only when the owner asked for it.
 - **Never invent emission-factor values**; cite source and version, and never present demo or prototype values as authoritative. Historic calculation snapshots are immutable.
 - **Never weaken tenant isolation** (the API guard and RLS), never `FORCE` RLS, never add an UPDATE or DELETE path to `audit_log`; every mutation writes one audit row.
