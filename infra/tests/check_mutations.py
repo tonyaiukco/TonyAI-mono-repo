@@ -157,6 +157,9 @@ MUTANTS = [
     ('monitoring readback accepts any destination type', 'monitoring_readback.py', "(declared is None and shared_rows == 0 and all(table_rows.values()))", "(shared_rows == 0 and all(table_rows.values()))"),
     ('monitoring readback ignores rows in the shared table', 'monitoring_readback.py', "declared is None and shared_rows == 0 and all(", "declared is None and all("),
     ('monitoring readback passes null routing without rows', 'monitoring_readback.py', "declared is None and shared_rows == 0 and all(table_rows.values())", "declared is None and shared_rows == 0"),
+    ('monitoring readback reads a partial answer as clean', 'monitoring_readback.py', "if result.get('error') or len(rows) != 1", "if len(rows) != 1"),
+    ('monitoring readback reads an empty answer as clean', 'monitoring_readback.py', "if result.get('error') or len(rows) != 1 or len(rows[0]) != 1 or type(rows[0][0]) is not int:\n                return None", "if not rows:\n                return 0\n            if result.get('error') or len(rows) != 1 or len(rows[0]) != 1 or type(rows[0][0]) is not int:\n                return None"),
+    ('monitoring readback misnames the shared table', 'monitoring_readback.py', "SHARED_TABLE_QUERY = 'AzureDiagnostics |", "SHARED_TABLE_QUERY = 'AzureDiagnostics | where false |"),
     ('monitoring readback ignores a stale job image', 'monitoring_readback.py', "image(job) is not None and image(job) == image(api),", "image(job) is not None,"),
     ('build provenance before registry skipped', 'build-images.sh', "python3 - <<'PYVALIDATE'\nimport os,sys\nsys.path.insert(0, 'infra/scripts')\nfrom candidate import create\ncreate(os.environ['RELEASE_SHA'], 'sha256:'+'0'*64, 'sha256:'+'0'*64)\nPYVALIDATE\n", ''),
 

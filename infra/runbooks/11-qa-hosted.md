@@ -397,9 +397,11 @@ re-pins the job to the live API image.
 ARM reads `logAnalyticsDestinationType` back as `null` although the foundation
 requests `Dedicated` (runbook 01), and Terraform sees no difference, so an apply
 cannot change it. The diagnostic-setting link therefore prints the value and accepts
-`null` only on measured routing: rows in both dedicated tables and zero rows in
-`AzureDiagnostics`. Any other value fails. This proves where the rows land; it is
-not a `Dedicated` readback.
+`null` only on measured routing inside the window: rows in both dedicated tables and
+zero rows in `AzureDiagnostics`. Any other value fails. Every count must be exactly one
+integer with no partial error, so a workspace without `AzureDiagnostics` fails closed.
+This shows where the window's rows landed in the workspace. It is neither a `Dedicated`
+readback nor proof of routing newer than ingestion latency.
 
 ## Reset, maintenance and announcements
 
@@ -479,11 +481,12 @@ with `--workflow deploy-qa.yml --all`.
    - **A, two-tenant smoke:** `hosted_smoke.py --helper-sha <sha> --application-source <checkout> --candidate <candidate.json> --inputs <inputs.json> --journal <receipts>/smoke.json --direct-secret-version "$QA_DIRECT_URL_SECRET_VERSION"`.
      Run `--verify-only` first. Wake the web immediately before the run with one
      `curl` of its `/login`: the web app scales to zero, a cold load took 26 s
-     (measured 2026-11-04), and the browser step allows 30 s. Run the probes from the
-     main checkout, which holds the Playwright dependency; it must stay clean and at
-     the helper SHA, so record results in another worktree.
-     Each journal or receipt name works once: a repeat stops before touching QA and
-     needs a new name and the owner's word.
+     (measured once, 2026-11-04), and Playwright's default navigation limit is 30 s.
+     Run the probes from the main checkout, which holds the Playwright dependency; it
+     must stay clean and at the helper SHA, so record results in another worktree.
+     Each journal or receipt name works once, except that `--cleanup-only` reuses its
+     journal. A repeat stops before writing to QA, though it may already have read the
+     vault and ARM, and needs a new name and the owner's word.
    - **C, Storage:** `hosted_storage_probe.py` with the same helper, source,
      candidate and inputs, and `--journal <receipts>/storage.json`. Its hidden prompts
      take the browser key and one owner-approved synthetic QA account's UUID and
@@ -537,8 +540,10 @@ both digests above; times UTC / Europe/Istanbul; receipts in
   their subsidiaries, profiles and audit rows.
 - **C, 17:00:32–17:07:02 / 20:00:32–20:07:02: PASS** (`storage.json` `759aa17ba0c53107…`,
   `objects.json` `829fa5a76685d8a4…`), using an owner-selected QA account other than
-  `executive_viewer`: three private buckets, size and MIME refusals, signed expiry, and
-  deletion plus absence for all 12 exact paths. A repeat at 17:08:21–17:09:20 reused the
+  `executive_viewer`: three private buckets, size and MIME refusals, signed expiry,
+  anonymous and selected-account denial of non-signed reads of the probe's own objects,
+  and deletion plus absence for all 12 exact paths. Isolation between holdings stays with
+  the QA checklist. A repeat at 17:08:21–17:09:20 reused the
   receipt name and stopped at the repeat guard, with no new container directory and no
   change to the receipt, so it wrote nothing to Storage.
 - **Backup, 17:11:43–17:13:23 / 20:11:43–20:13:23: PASS** (`backup.json`
@@ -548,9 +553,14 @@ both digests above; times UTC / Europe/Istanbul; receipts in
   and the destination type. The foundation apply at 17:18:58 / 20:18:58 (`0 added, 2 changed,
   0 destroyed`; `foundation-apply-1.txt` `b03723855d81e086…`) moved `storage-verify` to the
   ci4-1 API digest and re-sent the recorded `join_grant` spelling difference, with the same
-  role GUID. The second readback (17:20:09 / 20:20:09) failed only the destination type,
-  with 0 `AzureDiagnostics` rows and rows in both dedicated tables. Rerun it with the
-  corrected check after this change merges.
+  role GUID. The second readback (17:20:09 / 20:20:09) failed only the diagnostic-setting
+  link. Its output did not print why; an ad hoc ARM GET and KQL count at about 17:21 UTC read
+  a `null` destination type and 0 `AzureDiagnostics` rows. The corrected check, run from
+  this branch before merge (17:36 / 20:36, `monitoring-branch-20261104T173627Z.txt`
+  `9fc32f88934c3443…`), prints both values and passes all 11 links. That is not the task 7.6
+  closure: rerun it from merged `main`. The one `storage_verify` result in its window came
+  from the job's r004 image; the first ci4-1 result is due after 02:00 UTC / 05:00
+  Europe/Istanbul.
 
 ## R004 consolidated L10 acceptance package (prepared 2026-11-02; historical)
 

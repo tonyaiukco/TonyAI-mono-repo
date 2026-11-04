@@ -27,7 +27,7 @@ VERSIONS = {'Microsoft.App/managedEnvironments': '2025-01-01', 'Microsoft.App/co
             'Microsoft.Insights/actionGroups': '2023-01-01'}
 LOG_API = 'https://api.loganalytics.io'
 TABLES = ('ContainerAppConsoleLogs', 'ContainerAppSystemLogs')
-SHARED_TABLE_QUERY = 'union isfuzzy=true AzureDiagnostics, (print x=1 | where x == 0) | summarize rows=count()'
+SHARED_TABLE_QUERY = 'AzureDiagnostics | summarize rows=count()'
 
 
 class Reader:
@@ -50,7 +50,11 @@ class Reader:
             return None  # absent or unreadable: the link reports FAIL
 
     def count(self, workspace_id, query, hours):
-        """Row count of a query ending in `summarize rows=count()`; None when the table is absent."""
+        """Row count of a query ending in `summarize rows=count()`; None unless the answer is unambiguous.
+
+        Exactly one integer and no partial error: 0 can mean "clean" to a caller, so an empty or
+        partial answer must never read as 0. An absent table is a query error, hence None.
+        """
         body = json.dumps({'query': query, 'timespan': 'PT' + str(hours) + 'H'})
         argv = ['az', 'rest', '--method', 'post', '--only-show-errors', '--output', 'json',
                 '--resource', LOG_API, '--headers', 'Content-Type=application/json',
@@ -58,7 +62,9 @@ class Reader:
         try:
             result = json.loads(self.call(argv))
             rows = result['tables'][0]['rows']
-            return int(rows[0][0]) if rows else 0
+            if result.get('error') or len(rows) != 1 or len(rows[0]) != 1 or type(rows[0][0]) is not int:
+                return None
+            return rows[0][0]
         except (SafeFailure, KeyError, IndexError, TypeError, ValueError):
             return None
 
@@ -90,8 +96,8 @@ def readback(foundation, reader, hours=26):
     table_rows = {table: reader.count(workspace, table + ' | summarize rows=count()', hours) if workspace else None
                   for table in TABLES}
     # ARM reads this field back as null although the foundation requests Dedicated (runbook 01).
-    # Null therefore passes only on measured routing: rows in both dedicated tables and none in the
-    # shared table. The fuzzy union counts 0 when that table does not exist, and None stays unreadable.
+    # Null therefore passes only on measured routing in the window: rows in both dedicated tables and
+    # none in the shared table. A workspace without that table fails closed (count() returns None).
     shared_rows = reader.count(workspace, SHARED_TABLE_QUERY, hours) if workspace else None
     declared = properties.get('logAnalyticsDestinationType')
     routed_to_tables = declared == 'Dedicated' or (declared is None and shared_rows == 0 and all(table_rows.values()))
