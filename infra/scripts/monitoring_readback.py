@@ -27,6 +27,7 @@ VERSIONS = {'Microsoft.App/managedEnvironments': '2025-01-01', 'Microsoft.App/co
             'Microsoft.Insights/actionGroups': '2023-01-01'}
 LOG_API = 'https://api.loganalytics.io'
 TABLES = ('ContainerAppConsoleLogs', 'ContainerAppSystemLogs')
+SHARED_TABLE_QUERY = 'AzureDiagnostics | summarize rows=count()'
 
 
 class Reader:
@@ -49,7 +50,11 @@ class Reader:
             return None  # absent or unreadable: the link reports FAIL
 
     def count(self, workspace_id, query, hours):
-        """Row count of a query ending in `summarize rows=count()`; None when the table is absent."""
+        """Row count of a query ending in `summarize rows=count()`; None unless the answer is unambiguous.
+
+        Exactly one integer and no partial error: 0 can mean "clean" to a caller, so an empty or
+        partial answer must never read as 0. An absent table is a query error, hence None.
+        """
         body = json.dumps({'query': query, 'timespan': 'PT' + str(hours) + 'H'})
         argv = ['az', 'rest', '--method', 'post', '--only-show-errors', '--output', 'json',
                 '--resource', LOG_API, '--headers', 'Content-Type=application/json',
@@ -57,7 +62,9 @@ class Reader:
         try:
             result = json.loads(self.call(argv))
             rows = result['tables'][0]['rows']
-            return int(rows[0][0]) if rows else 0
+            if result.get('error') or len(rows) != 1 or len(rows[0]) != 1 or type(rows[0][0]) is not int:
+                return None
+            return rows[0][0]
         except (SafeFailure, KeyError, IndexError, TypeError, ValueError):
             return None
 
@@ -86,14 +93,21 @@ def readback(foundation, reader, hours=26):
                          'Microsoft.Insights/diagnosticSettings/container-logs') or {}
     properties = setting.get('properties') or {}
     enabled = {row.get('category') for row in properties.get('logs') or [] if row.get('enabled') is True}
+    table_rows = {table: reader.count(workspace, table + ' | summarize rows=count()', hours) if workspace else None
+                  for table in TABLES}
+    # ARM reads this field back as null although the foundation requests Dedicated (runbook 01).
+    # Null therefore passes only on measured routing in the window: rows in both dedicated tables and
+    # none in the shared table. A workspace without that table fails closed (count() returns None).
+    shared_rows = reader.count(workspace, SHARED_TABLE_QUERY, hours) if workspace else None
+    declared = properties.get('logAnalyticsDestinationType')
+    routed_to_tables = declared == 'Dedicated' or (declared is None and shared_rows == 0 and all(table_rows.values()))
     check('diagnostic setting container-logs',
-          same(properties.get('workspaceId'), logs.get('id')) and properties.get('logAnalyticsDestinationType') == 'Dedicated'
-          and set(TABLES) <= enabled,
+          same(properties.get('workspaceId'), logs.get('id')) and routed_to_tables and set(TABLES) <= enabled,
           'absent or unreadable' if not setting else 'workspace ' + ('matches' if same(properties.get('workspaceId'), logs.get('id')) else 'differs')
-          + ', categories ' + (','.join(sorted(enabled & set(TABLES))) or 'none'))
+          + ', categories ' + (','.join(sorted(enabled & set(TABLES))) or 'none')
+          + ', destination type ' + str(declared) + ', AzureDiagnostics rows ' + str(shared_rows))
 
-    for table in TABLES:
-        rows = reader.count(workspace, table + ' | summarize rows=count()', hours) if workspace else None
+    for table, rows in table_rows.items():
         check(table + ' rows in ' + str(hours) + 'h', bool(rows),
               'table absent or unreadable' if rows is None else str(rows) + ' row(s)')
     verify_query = ('ContainerAppConsoleLogs | where JobName startswith "' + s + '-storage-verify"'

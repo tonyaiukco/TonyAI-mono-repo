@@ -97,7 +97,8 @@ The owner's tools:
   writes the live release binding that the hosted smoke, storage and backup probes read.
   It is read-only.
 - `python3 infra/scripts/monitoring_readback.py` reports PASS/FAIL for each link of the
-  log → alert → operator chain. It is read-only.
+  log → alert → operator chain. It is read-only. The diagnostic-setting link accepts ARM's
+  `null` destination type only when rows land in the dedicated tables and none in `AzureDiagnostics`.
 - The **QA rollback** workflow (`.github/workflows/rollback-qa.yml`, manual, `main` only)
   serves the candidate an earlier successful QA deploy published, or redeploys the live
   release. It is refused when the move would cross a migration

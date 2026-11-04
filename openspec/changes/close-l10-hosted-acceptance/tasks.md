@@ -37,11 +37,11 @@ Branch `chore/l10-acceptance-package-2`. Groups 1–6 are the Session 1 PR. Grou
 
 ## 7. Session 1 live acceptance (owner runs, Claude prepares and reads)
 
-- [ ] 7.1 Freeze "QA deploy" before the merge; after the merge, confirm the deploy run SKIPs or did not start. Verify `gh workflow view "QA deploy"` shows it disabled.
-- [ ] 7.2 Run `inputs` against live. Verify the binding equals `ci4-1` (source `bdf7646`, digests in the planning file) and stop on any difference.
-- [ ] 7.3 Pull the ci4-1 API image by digest. Run `hosted_smoke.py --verify-only`, then probe A (two tenants: login, own and foreign API/PostgREST confinement, exports, browser download, Auth absence). Verify PASS receipts are in `~/tonyai-evidence-backup/l10-ci4-1/` and the journal shows cleanup completed.
-- [ ] 7.4 Run probe C (`hosted_storage_probe.py`: three private buckets, size limits, MIME types, signed expiry, foreign denial, exact cleanup). Verify a PASS receipt and the cleanup of the exact probe paths.
-- [ ] 7.5 Run `hosted_backup_evidence.py` for recent backup metadata. Verify the receipt shows a backup inside the expected window. No restore is claimed.
+- [x] 7.1 Freeze "QA deploy" before the merge; after the merge, confirm the deploy run SKIPs or did not start. Verify `gh workflow list --all` shows it `disabled_manually` (`gh workflow view` cannot resolve a disabled workflow by name).
+- [x] 7.2 Run `inputs` against live. Verify the binding equals `ci4-1` (source `bdf7646`, digests in the planning file) and stop on any difference.
+- [x] 7.3 Pull the ci4-1 API image by digest. Run `hosted_smoke.py --verify-only`, then probe A (two tenants: login, own and foreign API/PostgREST confinement, exports, browser download, Auth absence). Verify PASS receipts are in `~/tonyai-evidence-backup/l10-ci4-1/` and the journal shows cleanup completed.
+- [x] 7.4 Run probe C (`hosted_storage_probe.py`: three private buckets, size limits, MIME types, signed expiry, foreign denial, exact cleanup). Verify a PASS receipt and the cleanup of the exact probe paths.
+- [x] 7.5 Run `hosted_backup_evidence.py` for recent backup metadata. Verify the receipt shows a backup inside the expected window. No restore is claimed.
 - [ ] 7.6 Run the monitoring readback. If any link fails, prepare the foundation plan that fixes routing and re-pins `storage-verify` to the ci4-1 digest; the owner applies it after the plan is inspected for changes beyond the known noise. Verify that a second readback passes every link.
 - [ ] 7.7 Hand the checklist to QA with the two holdings, the window and the defect process. Verify the handover is recorded in runbook 11.
 

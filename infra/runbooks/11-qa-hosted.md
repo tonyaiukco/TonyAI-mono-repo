@@ -394,6 +394,15 @@ with counts only and exits 1 on any FAIL. It changes nothing. A FAIL is fixed on
 by an inspected foundation plan and owner apply (runbook 06). That same apply
 re-pins the job to the live API image.
 
+ARM reads `logAnalyticsDestinationType` back as `null` although the foundation
+requests `Dedicated` (runbook 01), and Terraform sees no difference, so an apply
+cannot change it. The diagnostic-setting link therefore prints the value and accepts
+`null` only on measured routing inside the window: rows in both dedicated tables and
+zero rows in `AzureDiagnostics`. Any other value fails. Every count must be exactly one
+integer with no partial error, so a workspace without `AzureDiagnostics` fails closed.
+This shows where the window's rows landed in the workspace. It is neither a `Dedicated`
+readback nor proof of routing newer than ingestion latency.
+
 ## Reset, maintenance and announcements
 
 Application deploys follow [Automatic deploy on merge](#automatic-deploy-on-merge) and need no per-deploy approval;
@@ -458,6 +467,10 @@ gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
 gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
 ```
 
+While it is disabled, `gh workflow view "QA deploy"` and `gh run list --workflow "QA deploy"`
+cannot resolve the name. Read the state with `gh workflow list --all` and the runs
+with `--workflow deploy-qa.yml --all`.
+
 **Session 1: automated probes (owner runs; helper SHA = the merged acceptance-tooling commit).**
 
 1. Write the inputs file and run the monitoring readback
@@ -466,7 +479,14 @@ gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
    clean checkout of `bdf7646` as the application source.
 3. Run the probes:
    - **A, two-tenant smoke:** `hosted_smoke.py --helper-sha <sha> --application-source <checkout> --candidate <candidate.json> --inputs <inputs.json> --journal <receipts>/smoke.json --direct-secret-version "$QA_DIRECT_URL_SECRET_VERSION"`.
-     Run `--verify-only` first.
+     Run `--verify-only` first. Wake the web immediately before the run with one
+     `curl` of its `/login`: the web app scales to zero, a cold load took 26 s
+     (measured once, 2026-11-04), and Playwright's default navigation limit is 30 s.
+     Run the probes from the main checkout, which holds the Playwright dependency; it
+     must stay clean and at the helper SHA, so record results in another worktree.
+     Each journal or receipt name works once, except that `--cleanup-only` reuses its
+     journal. A repeat stops before writing to QA, though it may already have read the
+     vault and ARM, and needs a new name and the owner's word.
    - **C, Storage:** `hosted_storage_probe.py` with the same helper, source,
      candidate and inputs, and `--journal <receipts>/storage.json`. Its hidden prompts
      take the browser key and one owner-approved synthetic QA account's UUID and
@@ -491,15 +511,56 @@ are fixed; the rest go under Open questions. Then:
 
 | Control | State (2026-11-04) | Closing evidence |
 |---|---|---|
-| Live binding / ARM | PASS at deploy (run 41738446426) | `inputs` receipt before each operation |
-| A two-tenant smoke | NOT_RUN | smoke receipt + journal cleanup |
-| C Storage probe | NOT_RUN | storage receipt + exact-path cleanup |
-| Backup metadata | NOT_RUN | backup receipt (no restore claim) |
-| Log → alert chain | OPEN (0 rows seen 2026-11-02) | readback all PASS + controlled alert acknowledged |
+| Live binding / ARM | PASS: `inputs` before every operation | `inputs` receipt before each operation |
+| A two-tenant smoke | PASS on the second attempt; rerun on the final release in Session 2 | smoke receipt + journal cleanup |
+| C Storage probe | PASS | storage receipt + exact-path cleanup |
+| Backup metadata | PASS | backup receipt (no restore claim) |
+| Log → alert chain | OPEN: job re-pinned, rerun of the readback and the controlled alert pending | readback all PASS + controlled alert acknowledged |
 | QA checklist (lifecycle, roles, lock, audit, evidence, reports, TR/EN, no_factor, mail, isolation) | NOT_RUN | checklist rows PASS or dispositioned |
 | Rollback drill | NOT_RUN | two `QA rollback` runs + `inputs` after each |
 | Numerical emissions | Out of scope → LP4-02 | — |
 | Full recovery | Out of scope → G2/LP5-03 | — |
+
+**Session 1 evidence (2026-11-04, helper `139235c`, release `ci4-1`, source `bdf7646`,
+both digests above; times UTC / Europe/Istanbul; receipts in
+`~/tonyai-evidence-backup/l10-ci4-1/receipts/`, with `session1.log` beside them):**
+
+- **Freeze:** `QA deploy` reads `disabled_manually`; no deploy run exists for `139235c`.
+- **Binding:** `inputs` matched the target before every operation.
+- **A, first attempt, 16:43:46–16:45:10 / 19:43:46–19:45:10: STOP, not accepted.** The fixtures
+  were created, then the browser step failed. The probe withholds its error by
+  design. Likely cause, inferred and not proven: the web scaled from zero. Its replica
+  was created at 16:44:38, Next.js was ready at 16:44:55, the API logged only the
+  expected anonymous 401, and Auth logged no `/token` request, so the browser never
+  submitted the sign-in form. An exact-ID `--cleanup-only` then exited 0.
+- **A, second attempt, 16:57:45–16:58:46 / 19:57:45–19:58:46: PASS** after waking the web
+  (`smoke-2.json.passed.json`, SHA-256 `850708d21e4598f7…`): ARM before and after, browser
+  sign-in and download, PDF/XLSX/CSV, two-tenant API and PostgREST isolation, exact Auth
+  cleanup. **Retained by design from both attempts:** four `LP2 smoke` organisations with
+  their subsidiaries, profiles and audit rows.
+- **C, 17:00:32–17:07:02 / 20:00:32–20:07:02: PASS** (`storage.json` `759aa17ba0c53107…`,
+  `objects.json` `829fa5a76685d8a4…`), using an owner-selected QA account other than
+  `executive_viewer`: three private buckets, size and MIME refusals, signed expiry,
+  anonymous and selected-account denial of non-signed reads of the probe's own objects,
+  and deletion plus absence for all 12 exact paths. Isolation between holdings stays with
+  the QA checklist. A repeat at 17:08:21–17:09:20 reused the
+  receipt name and stopped at the repeat guard, with no new container directory and no
+  change to the receipt, so it wrote nothing to Storage.
+- **Backup, 17:11:43–17:13:23 / 20:11:43–20:13:23: PASS** (`backup.json`
+  `9b65471d9c84ac3a…`): seven completed backups, the latest inserted 2026-11-03 23:20:32
+  UTC, region `eu-north-1`. Metadata only; no restore claim.
+- **Monitoring:** the first readback (17:14:41 / 20:14:41) failed two links: the job image
+  and the destination type. The foundation apply at 17:18:58 / 20:18:58 (`0 added, 2 changed,
+  0 destroyed`; `foundation-apply-1.txt` `b03723855d81e086…`) moved `storage-verify` to the
+  ci4-1 API digest and re-sent the recorded `join_grant` spelling difference, with the same
+  role GUID. The second readback (17:20:09 / 20:20:09) failed only the diagnostic-setting
+  link. Its output did not print why; an ad hoc ARM GET and KQL count at about 17:21 UTC read
+  a `null` destination type and 0 `AzureDiagnostics` rows. The corrected check, run from
+  this branch before merge (17:36 / 20:36, `monitoring-branch-20261104T173627Z.txt`
+  `9fc32f88934c3443…`), prints both values and passes all 11 links. That is not the task 7.6
+  closure: rerun it from merged `main`. The one `storage_verify` result in its window came
+  from the job's r004 image; the first ci4-1 result is due after 02:00 UTC / 05:00
+  Europe/Istanbul.
 
 ## R004 consolidated L10 acceptance package (prepared 2026-11-02; historical)
 

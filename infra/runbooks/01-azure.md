@@ -98,6 +98,9 @@ the vault was public/RBAC-enabled but returned no `networkAcls` object. Keep
 these exact-value differences open; do not claim explicit `Dedicated` or
 `AzureServices` readback or silently rewrite the desired security policy.
 Verify actual log ingestion/table routing at the later workload acceptance gate.
+Measured 2026-11-04 on hosted QA over 26 hours: the field still reads `null`, both
+dedicated tables hold rows and `AzureDiagnostics` holds none (`monitoring_readback.py`
+prints these; receipts in runbook 11).
 
 ## 1.3 GitHub/Entra federation (deferred to WP-6)
 
