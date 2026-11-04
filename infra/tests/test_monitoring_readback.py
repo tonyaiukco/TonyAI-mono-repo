@@ -50,7 +50,7 @@ def wired():
 class FakeAz:
     def __init__(self, resources=None, counts=None):
         self.resources = wired() if resources is None else resources
-        self.counts = {'ContainerAppConsoleLogs |': 40, 'ContainerAppSystemLogs |': 12, 'storage_verify': 1, **(counts or {})}
+        self.counts = {'ContainerAppConsoleLogs |': 40, 'ContainerAppSystemLogs |': 12, 'storage_verify': 1, 'AzureDiagnostics': 0, **(counts or {})}
         self.calls = []
 
     def __call__(self, argv):
@@ -63,7 +63,7 @@ class FakeAz:
             return json.dumps(self.resources[path])
         assert method == 'post' and url == mr.LOG_API + '/v1/workspaces/' + WORKSPACE + '/query', argv
         query = json.loads(argv[argv.index('--body') + 1])['query']
-        key = next(k for k in ('storage_verify', 'ContainerAppConsoleLogs |', 'ContainerAppSystemLogs |') if k in query)
+        key = next(k for k in ('storage_verify', 'AzureDiagnostics', 'ContainerAppConsoleLogs |', 'ContainerAppSystemLogs |') if k in query)
         if self.counts[key] is None:
             raise SafeFailure("Azure call failed; raw output withheld.")  # table absent: semantic error
         return json.dumps({'tables': [{'rows': [[self.counts[key]]]}]})
@@ -102,6 +102,36 @@ class ReadbackTests(unittest.TestCase):
         resources = wired(); resources[path]['properties']['logs'][1]['enabled'] = False
         self.assertEqual(run(resources)[0]['diagnostic setting container-logs'][0], 'FAIL')
 
+    def test_null_destination_type_passes_only_on_measured_routing(self):
+        path = GROUP + 'Microsoft.App/managedEnvironments/' + S + '-env/providers/Microsoft.Insights/diagnosticSettings/container-logs'
+        link = 'diagnostic setting container-logs'
+        resources = wired(); resources[path]['properties']['logAnalyticsDestinationType'] = None
+        status, detail = run(resources)[0][link]
+        self.assertEqual(status, 'PASS')
+        self.assertIn('destination type None, AzureDiagnostics rows 0', detail)
+        for counts in ({'AzureDiagnostics': 5}, {'AzureDiagnostics': None},
+                       {'ContainerAppConsoleLogs |': 0}, {'ContainerAppSystemLogs |': 0},
+                       {'ContainerAppConsoleLogs |': None}, {'ContainerAppSystemLogs |': None}):
+            self.assertEqual(run(resources, counts)[0][link][0], 'FAIL', counts)
+        del resources[path]['properties']['logAnalyticsDestinationType']
+        self.assertEqual(run(resources)[0][link][0], 'PASS')
+
+    def test_other_destination_type_fails_even_with_clean_rows(self):
+        path = GROUP + 'Microsoft.App/managedEnvironments/' + S + '-env/providers/Microsoft.Insights/diagnosticSettings/container-logs'
+        resources = wired(); resources[path]['properties']['logAnalyticsDestinationType'] = 'AzureDiagnostics'
+        status, detail = run(resources)[0]['diagnostic setting container-logs']
+        self.assertEqual(status, 'FAIL')
+        self.assertIn('destination type AzureDiagnostics', detail)
+
+    def test_explicit_dedicated_keeps_the_workspace_and_category_checks(self):
+        path = GROUP + 'Microsoft.App/managedEnvironments/' + S + '-env/providers/Microsoft.Insights/diagnosticSettings/container-logs'
+        for field, value in (('workspaceId', GROUP + 'Microsoft.OperationalInsights/workspaces/other'), ('logs', [])):
+            for declared in ('Dedicated', None):
+                resources = wired()
+                resources[path]['properties'][field] = value
+                resources[path]['properties']['logAnalyticsDestinationType'] = declared
+                self.assertEqual(run(resources)[0]['diagnostic setting container-logs'][0], 'FAIL', (field, declared))
+
     def test_absent_table_or_zero_rows_fail(self):
         results, _ = run(counts={'ContainerAppConsoleLogs |': None, 'ContainerAppSystemLogs |': 0, 'storage_verify': 0})
         self.assertEqual(results['ContainerAppConsoleLogs rows in 26h'], ('FAIL', 'table absent or unreadable'))
@@ -130,7 +160,7 @@ class ReadbackTests(unittest.TestCase):
             self.assertTrue(method == 'get' or (method == 'post' and url.startswith(mr.LOG_API + '/v1/workspaces/')
                                                 and url.endswith('/query')), argv)
             self.assertTrue(url.startswith(('https://management.azure.com' + GROUP[:-len('/providers/')], mr.LOG_API)), url)
-        self.assertEqual(sum(1 for argv in az.calls if argv[argv.index('--method') + 1] == 'post'), 3)
+        self.assertEqual(sum(1 for argv in az.calls if argv[argv.index('--method') + 1] == 'post'), 4)
 
     def test_main_bounds_the_window(self):
         with self.assertRaises(SafeFailure):

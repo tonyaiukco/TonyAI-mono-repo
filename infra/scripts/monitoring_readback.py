@@ -27,6 +27,7 @@ VERSIONS = {'Microsoft.App/managedEnvironments': '2025-01-01', 'Microsoft.App/co
             'Microsoft.Insights/actionGroups': '2023-01-01'}
 LOG_API = 'https://api.loganalytics.io'
 TABLES = ('ContainerAppConsoleLogs', 'ContainerAppSystemLogs')
+SHARED_TABLE_QUERY = 'union isfuzzy=true AzureDiagnostics, (print x=1 | where x == 0) | summarize rows=count()'
 
 
 class Reader:
@@ -86,14 +87,21 @@ def readback(foundation, reader, hours=26):
                          'Microsoft.Insights/diagnosticSettings/container-logs') or {}
     properties = setting.get('properties') or {}
     enabled = {row.get('category') for row in properties.get('logs') or [] if row.get('enabled') is True}
+    table_rows = {table: reader.count(workspace, table + ' | summarize rows=count()', hours) if workspace else None
+                  for table in TABLES}
+    # ARM reads this field back as null although the foundation requests Dedicated (runbook 01).
+    # Null therefore passes only on measured routing: rows in both dedicated tables and none in the
+    # shared table. The fuzzy union counts 0 when that table does not exist, and None stays unreadable.
+    shared_rows = reader.count(workspace, SHARED_TABLE_QUERY, hours) if workspace else None
+    declared = properties.get('logAnalyticsDestinationType')
+    routed_to_tables = declared == 'Dedicated' or (declared is None and shared_rows == 0 and all(table_rows.values()))
     check('diagnostic setting container-logs',
-          same(properties.get('workspaceId'), logs.get('id')) and properties.get('logAnalyticsDestinationType') == 'Dedicated'
-          and set(TABLES) <= enabled,
+          same(properties.get('workspaceId'), logs.get('id')) and routed_to_tables and set(TABLES) <= enabled,
           'absent or unreadable' if not setting else 'workspace ' + ('matches' if same(properties.get('workspaceId'), logs.get('id')) else 'differs')
-          + ', categories ' + (','.join(sorted(enabled & set(TABLES))) or 'none'))
+          + ', categories ' + (','.join(sorted(enabled & set(TABLES))) or 'none')
+          + ', destination type ' + str(declared) + ', AzureDiagnostics rows ' + str(shared_rows))
 
-    for table in TABLES:
-        rows = reader.count(workspace, table + ' | summarize rows=count()', hours) if workspace else None
+    for table, rows in table_rows.items():
         check(table + ' rows in ' + str(hours) + 'h', bool(rows),
               'table absent or unreadable' if rows is None else str(rows) + ' row(s)')
     verify_query = ('ContainerAppConsoleLogs | where JobName startswith "' + s + '-storage-verify"'

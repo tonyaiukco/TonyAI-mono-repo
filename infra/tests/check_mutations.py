@@ -154,6 +154,9 @@ MUTANTS = [
     ('qa rollback dispatchable off main', '.github/workflows/rollback-qa.yml', "      && github.ref == 'refs/heads/main'\n", ''),
     ('monitoring readback writes to ARM', 'monitoring_readback.py', "argv = ['az', 'rest', '--method', 'get',", "argv = ['az', 'rest', '--method', 'put',"),
     ('monitoring readback accepts unrouted logs', 'monitoring_readback.py', "    check('environment log destination', destination == 'azure-monitor',", "    check('environment log destination', True,"),
+    ('monitoring readback accepts any destination type', 'monitoring_readback.py', "(declared is None and shared_rows == 0 and all(table_rows.values()))", "(shared_rows == 0 and all(table_rows.values()))"),
+    ('monitoring readback ignores rows in the shared table', 'monitoring_readback.py', "declared is None and shared_rows == 0 and all(", "declared is None and all("),
+    ('monitoring readback passes null routing without rows', 'monitoring_readback.py', "declared is None and shared_rows == 0 and all(table_rows.values())", "declared is None and shared_rows == 0"),
     ('monitoring readback ignores a stale job image', 'monitoring_readback.py', "image(job) is not None and image(job) == image(api),", "image(job) is not None,"),
     ('build provenance before registry skipped', 'build-images.sh', "python3 - <<'PYVALIDATE'\nimport os,sys\nsys.path.insert(0, 'infra/scripts')\nfrom candidate import create\ncreate(os.environ['RELEASE_SHA'], 'sha256:'+'0'*64, 'sha256:'+'0'*64)\nPYVALIDATE\n", ''),
 
