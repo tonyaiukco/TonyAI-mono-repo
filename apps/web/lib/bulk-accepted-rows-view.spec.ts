@@ -11,7 +11,7 @@ describe('accepted-row table', () => {
     const rows: BulkUploadAcceptedRow[] = Array.from({ length: 1000 }, (_, i) => ({
       row: i + 2, recordId: null, subsidiaryId: 'entity', locationId: null,
       reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
-      category: 'Fuel', activityType: i % 2 ? 'gas_oil' : 'diesel', activityValue: 1200, activityUnit: 'litres', tCo2e: null, anomalous: false,
+      category: 'Fuel', activityType: i % 2 ? 'gas_oil' : 'diesel', activityValue: 1200, activityUnit: 'litres', parameters: null, tCo2e: null, anomalous: false,
     }));
     const html = renderToStaticMarkup(createElement(IntlProvider, {
       locale, timeZone: 'UTC', messages: MESSAGES[locale], children: createElement(AcceptedRows, { rows }),
@@ -28,9 +28,9 @@ describe('accepted-row table', () => {
 describe('the amount read (LP4-04, D15)', () => {
   const rows: BulkUploadAcceptedRow[] = [
     { row: 2, recordId: null, subsidiaryId: 'entity', locationId: null, reportingYear: 2026, reportingPeriod: 'monthly',
-      periodValue: 'January', category: 'Electricity', activityType: null, activityValue: 1.234, activityUnit: 'kWh', tCo2e: 0.0005, anomalous: false },
+      periodValue: 'January', category: 'Electricity', activityType: null, activityValue: 1.234, activityUnit: 'kWh', parameters: null, tCo2e: 0.0005, anomalous: false },
     { row: 3, recordId: null, subsidiaryId: 'entity', locationId: null, reportingYear: 2026, reportingPeriod: 'monthly',
-      periodValue: 'February', category: 'Fuel', activityType: 'diesel', activityValue: 1234.5, activityUnit: 'litres', tCo2e: 2.3, anomalous: false },
+      periodValue: 'February', category: 'Fuel', activityType: 'diesel', activityValue: 1234.5, activityUnit: 'litres', parameters: null, tCo2e: 2.3, anomalous: false },
   ];
   const render = (locale: 'en' | 'tr') => renderToStaticMarkup(createElement(IntlProvider, {
     locale, timeZone: 'UTC', messages: MESSAGES[locale], children: createElement(AcceptedRows, { rows }),
@@ -72,5 +72,39 @@ describe('the amount read (LP4-04, D15)', () => {
     const en = amounts(render('en'));
     expect(tr.map((a) => read(a, 'tr'))).toEqual(rows.map((r) => r.activityValue));
     expect(en.map((a) => read(a, 'en'))).toEqual(rows.map((r) => r.activityValue));
+  });
+});
+
+describe('the inputs read (LP4-02 PR4)', () => {
+  const base: BulkUploadAcceptedRow = {
+    row: 2, recordId: null, subsidiaryId: 'entity', locationId: null, reportingYear: 2025, reportingPeriod: 'annual',
+    periodValue: 'Annual', category: 'Refrigerants', activityType: 'R-410A', activityValue: 30.5, activityUnit: 'kg',
+    parameters: { equipment: [
+      { equipmentType: 'split_air_conditioner', capacityKg: 10, refillKg: 0, leakRateChoice: 'default' },
+      { equipmentType: 'chiller', capacityKg: 20.5, refillKg: 1.25, leakRateChoice: 'alternative' },
+    ] },
+    lineRows: [2, 3], tCo2e: null, anomalous: false,
+  };
+  const gas: BulkUploadAcceptedRow = {
+    ...base, row: 4, lineRows: undefined, category: 'Natural Gas', activityType: null, activityValue: 100,
+    activityUnit: 'cubic_metres', parameters: { ncvKcalPerSm3: 8100.5, volumeCorrectionFactor: 0.97 },
+  };
+  const render = (locale: 'en' | 'tr') => renderToStaticMarkup(createElement(IntlProvider, {
+    locale, timeZone: 'UTC', messages: MESSAGES[locale], children: createElement(AcceptedRows, { rows: [base, gas] }),
+  }));
+  const inputs = (html: string) => [...html.matchAll(/data-testid="bulk-read-inputs">([^<]*)</g)].map((m) => m[1]);
+
+  it.each(['en', 'tr'] as const)('%s names every equipment line and every gas input, in its own numbers', (locale) => {
+    const html = render(locale);
+    const m = MESSAGES[locale].dataEntry;
+    const [lines, gasInputs] = inputs(html);
+    expect(lines).toContain(m.equipmentTypes.split_air_conditioner);
+    expect(lines).toContain(m.equipmentTypes.chiller);
+    expect(lines).toContain(m.inputs.choice.alternative);
+    expect(lines).toContain(locale === 'en' ? '20.5' : '20,5');
+    expect(gasInputs).toContain(m.bulkColumns.ncvKcalPerSm3);
+    expect(gasInputs).toContain(locale === 'en' ? '8,100.5' : '8.100,5');
+    expect(gasInputs).toContain(locale === 'en' ? '0.97' : '0,97');
+    expect(html).toContain(m.bulkPreview.lineRows.replace('{rows}', '2, 3'));
   });
 });

@@ -1559,4 +1559,54 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       expect(result.refrigerantTerms).toBeNull();
     });
   });
+
+  describe('releaseParameters: what Data Entry shows beside a TR input (LP4-02 PR4)', () => {
+    const query = { category: 'Natural Gas', geographyCode: 'TR', year: 2025 };
+
+    it('lists the Sm³ conversion\'s release parameters, with its release', async () => {
+      const result = await engine.releaseParameters(query);
+      expect(result.release?.id).toBe(release.id);
+      expect(result.parameters).toEqual([
+        { key: 'reference_gcv', equipmentType: null, value: 9155, unit: 'kcal/Sm3', isDefault: true, source: 'SPEC FIXTURE' },
+        { key: 'reference_ncv', equipmentType: null, value: 8250, unit: 'kcal/Sm3', isDefault: true, source: 'SPEC FIXTURE' },
+      ]);
+      expect(prisma.factorParameter.findMany.mock.calls[0][0].where.releaseId).toBe(release.id);
+    });
+
+    it('lists a gas factor\'s leak rates, a default before its alternative', async () => {
+      useFactor(prisma, makeFactor({
+        release, category: 'Refrigerants', activityType: 'R-410A', geographyCode: 'TR', reportingYear: 2025, scope: 1,
+        normalizedUnit: 'kg', calorificBasis: 'not_applicable', factorValue: 2256, factorUnit: 'kgCO2e/kg',
+      }));
+      prisma.library.parameters = [
+        parameter('leak_rate', 'split_air_conditioner', 0.1, 'fraction', false),
+        parameter('leak_rate', 'split_air_conditioner', 0.01, 'fraction'),
+      ];
+      const result = await engine.releaseParameters({ category: 'Refrigerants', activityType: 'R-410A', geographyCode: 'TR', year: 2025 });
+      expect(result.parameters.map((p) => [p.equipmentType, p.value, p.isDefault])).toEqual([
+        ['split_air_conditioner', 0.01, true],
+        ['split_air_conditioner', 0.1, false],
+      ]);
+    });
+
+    it.each([
+      ['another geography', { ...query, geographyCode: 'UK' }],
+      ['a category with no TR rule', { ...query, category: 'Electricity' }],
+      ['a year no path covers', { ...query, year: 2024 }],
+      ['a refrigerant with no gas chosen', { category: 'Refrigerants', geographyCode: 'TR', year: 2025 }],
+      ['a type the category does not have', { ...query, category: 'Refrigerants', activityType: 'diesel' }],
+    ])('answers %s with no release and no value', async (_case, asked) => {
+      expect(await engine.releaseParameters(asked)).toEqual({ release: null, parameters: [] });
+      expect(prisma.factorParameter.findMany).not.toHaveBeenCalled();
+    });
+
+    it('never reads a placeholder where placeholders are refused', async () => {
+      const strict = new CalculationsService(prisma as unknown as PrismaService, { allowPlaceholders: false });
+      prisma.library.conversions[0] = makeConversion({
+        release: makeRelease(), geographyCode: 'TR', reportingYear: 2025, dataYear: 2025,
+        fromUnit: 'standard_cubic_metres', multiplier: 9.588333, calorificBasis: 'net',
+      });
+      expect(await strict.releaseParameters(query)).toEqual({ release: null, parameters: [] });
+    });
+  });
 });

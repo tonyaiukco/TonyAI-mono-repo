@@ -3,7 +3,7 @@
 import { useLocale, useTranslations } from "use-intl";
 import periodMessages from "@/messages/en/periods.json";
 import type { BulkUploadAcceptedRow } from "@/lib/types";
-import { bulkActivityLabel, readAmountLabel } from "@/lib/bulk-upload-view";
+import { bulkActivityLabel, readAmountLabel, readInputsLabel } from "@/lib/bulk-upload-view";
 
 /**
  * Keep every accepted row inspectable before apply, including its fuel or gas
@@ -31,18 +31,21 @@ export function AcceptedRows({ rows }: { rows: BulkUploadAcceptedRow[] }) {
             <th scope="col" className="p-2">{t("bulkColumns.category")}</th>
             <th scope="col" className="p-2">{t("bulkColumns.activityType")}</th>
             <th scope="col" className="p-2 text-right">{t("bulkPreview.amount")}</th>
+            <th scope="col" className="p-2">{t("bulkPreview.inputs")}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.row} className="border-t">
-              <td className="p-2 font-mono">{row.row}</td>
+              {/* A refrigerant record of several equipment lines names each file row. */}
+              <td className="p-2 font-mono">{row.lineRows ? t("bulkPreview.lineRows", { rows: row.lineRows.join(", ") }) : row.row}</td>
               <td className="p-2">{row.reportingYear}</td>
               <td className="p-2">{Object.hasOwn(periodMessages.values, row.periodValue)
                 ? tPeriod(`values.${row.periodValue as keyof typeof periodMessages.values}`) : row.periodValue}</td>
               <td className="p-2">{tCategory(row.category)}</td>
               <td className="p-2">{bulkActivityLabel(row.activityType, t)}</td>
               <td className="p-2 text-right font-mono tabular-nums" data-testid="bulk-read-amount">{readAmountLabel(row, locale)}</td>
+              <td className="p-2" data-testid="bulk-read-inputs">{readInputsLabel(row.parameters, locale, t)}</td>
             </tr>
           ))}
         </tbody>

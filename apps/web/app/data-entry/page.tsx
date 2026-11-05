@@ -41,6 +41,22 @@ import { checkActivityParse, formatNumber } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import { ContextNumberField } from "@/components/data-entry/context-number-field";
+import { EquipmentLines, NaturalGasInputs, type ReferenceState } from "@/components/data-entry/record-inputs";
+import {
+  NO_GAS_INPUTS,
+  equipmentIssue,
+  equipmentParameters,
+  equipmentTotal,
+  gasInputsFromRecord,
+  gasInputsIssue,
+  gasParameters,
+  linesFromRecord,
+  newEquipmentLine,
+  recordInputMode,
+  referenceValue,
+  type EquipmentLineDraft,
+  type GasInputs,
+} from "@/lib/record-inputs-view";
 import {
   anomalyStatement,
   type AnomalyVerdictFields,
@@ -69,6 +85,7 @@ import { RecentImports } from "@/components/data-entry/recent-imports";
 import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
 import {
   ACTIVITY_UNITS,
+  ACTIVITY_VALUE_MAX,
   CATEGORY_ACTIVITY_TYPES,
   CATEGORIES,
   DEFAULT_REPORTING_YEAR,
@@ -78,12 +95,14 @@ import {
   canonicalPeriodValue,
   isInvoiceTracked,
   mayAuthorRecords,
+  offeredActivityTypes,
   PERIOD_VALUES,
-  recordActivityTypesFor,
   REPORTING_YEARS,
   unitSymbol,
   unitsForCategory,
+  unitsForRecord,
   UNSPECIFIED_ACTIVITY_TYPE,
+  usesTrCalculationRules,
 } from "@/lib/types";
 import { appendById } from "@/lib/cursor-pages";
 import type {
@@ -93,6 +112,7 @@ import type {
   ActivityRecordPageItemDTO,
   Category,
   LocationDTO,
+  RecordParameters,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -178,8 +198,6 @@ function DataEntryPageInner() {
   // Refrigerants — LP3-03); "" = none chosen. Never defaulted: a silently
   // pre-selected diesel would price petrol as diesel.
   const [activityType, setActivityType] = useState("");
-  const activityTypes = useMemo(() => recordActivityTypesFor(category), [category]);
-  const isTypedCategory = activityTypes.length > 0;
 
   // Primary calc inputs
   // Typed in the user's locale; a language switch keeps the number it meant
@@ -198,6 +216,20 @@ function DataEntryPageInner() {
   // so editing a stored value into a typo never drops it. Reset with the epoch.
   const [refusedContext, setRefusedContext] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => setRefusedContext(new Set()), [contextEpoch]);
+
+  // A TR record's calculation inputs (LP4-02 PR4, D3): natural gas's calorific
+  // values and correction factor, or a refrigerant's equipment lines. Replaced
+  // whole when a record is opened or the form starts over (the epoch remounts
+  // their fields, which read their stored value once).
+  const [gasInputs, setGasInputs] = useState<GasInputs>(NO_GAS_INPUTS);
+  const [refusedGasInputs, setRefusedGasInputs] = useState<ReadonlySet<keyof GasInputs>>(() => new Set());
+  const lineSeq = useRef(0);
+  const nextLineId = useCallback(() => `line-${(lineSeq.current += 1)}`, []);
+  const [equipment, setEquipment] = useState<EquipmentLineDraft[]>(() => [newEquipmentLine("line-0")]);
+  const [inputsEpoch, setInputsEpoch] = useState(0);
+  useEffect(() => setRefusedGasInputs(new Set()), [inputsEpoch]);
+  // The release parameters the inputs default to (D2): never a constant here.
+  const [reference, setReference] = useState<ReferenceState>({ status: "loading" });
 
   // Preview
   const [preview, setPreview] = useState<ActivityCalculationSnapshot | null>(null);
@@ -293,6 +325,27 @@ function DataEntryPageInner() {
   const effectiveGeography =
     selectedLocation?.geographyCode ?? selectedSubsidiary?.geographyCode ?? null;
 
+  // What the form offers a new record, by the TR rules where they apply
+  // (LP4-02 PR4, D11); an opened record keeps its own type and unit listed,
+  // so its select never goes blank.
+  const activityTypes = useMemo(() => {
+    const offered = offeredActivityTypes(category, effectiveGeography);
+    const own = editingTuple?.category === category ? editingTuple.activityType : null;
+    if (!own || offered.some((type) => type.value === own)) return offered;
+    const spec = CATEGORY_ACTIVITY_TYPES[category]?.types.find((type) => type.value === own);
+    return spec ? [...offered, spec] : offered;
+  }, [category, effectiveGeography, editingTuple]);
+  const isTypedCategory = activityTypes.length > 0;
+  const unitOptions = useMemo(() => {
+    const offered = unitsForRecord(category, effectiveGeography);
+    if (!editingId || offered.some((u) => u.value === activityUnit)) return offered;
+    const own = unitsForCategory(category).find((u) => u.value === activityUnit);
+    return own ? [...offered, own] : offered;
+  }, [category, effectiveGeography, editingId, activityUnit]);
+  const inputMode = recordInputMode(category, effectiveGeography, activityUnit);
+  const refrigerantMode = inputMode === "refrigerant";
+  const vehicleModes = category === "Mobile Combustion" && effectiveGeography !== null && usesTrCalculationRules(effectiveGeography);
+
   /**
    * Set while an OPEN record's location has been changed but not yet saved —
    * i.e. the next save re-attributes it rather than creating anything (WP18).
@@ -319,7 +372,28 @@ function DataEntryPageInner() {
   // here, in the user's language, before the preview or the save would answer
   // `activity_value_too_large` (LP4-04).
   const valueCheck = checkActivityParse(activity.parsed);
-  const numericValue = valueCheck.ok ? valueCheck.value : NaN;
+  // A TR refrigerant record's quantity is its total installed capacity, the
+  // sum of its lines (D7), and zero for a refill alone; the field shows it.
+  const equipmentProblem = refrigerantMode ? equipmentIssue(equipment) : null;
+  const numericValue = refrigerantMode ? equipmentTotal(equipment) : valueCheck.ok ? valueCheck.value : NaN;
+  const quantityReady = refrigerantMode
+    ? equipmentProblem === null && numericValue <= ACTIVITY_VALUE_MAX
+    : Number.isFinite(numericValue) && numericValue > 0;
+  const referenceRows = reference.status === "ready" ? reference.data.parameters : [];
+  const defaultNcv = referenceValue(referenceRows, "reference_ncv");
+  const gasProblem = inputMode === "natural_gas" ? gasInputsIssue(gasInputs, activityUnit, defaultNcv) : null;
+  // Only the fields on screen: the correction factor's field is gone in Sm³.
+  const gasRefused =
+    inputMode === "natural_gas" &&
+    [...refusedGasInputs].some((field) => field !== "volumeCorrectionFactor" || activityUnit === "cubic_metres");
+  const recordParameters: RecordParameters | null =
+    inputMode === "natural_gas"
+      ? gasParameters(gasInputs, activityUnit, defaultNcv)
+      : refrigerantMode && equipmentProblem === null
+        ? equipmentParameters(equipment)
+        : null;
+  // One string for the preview's dependencies: a new object each render is not a change.
+  const parametersKey = JSON.stringify(recordParameters);
   // Mirrors the API's `activity_type_required`: a typed category's record
   // names its activity type — unless it is a record written before LP3-03,
   // opened for editing and left untyped in its own category, the one untyped
@@ -335,8 +409,9 @@ function DataEntryPageInner() {
     !!category &&
     !!activityUnit &&
     activityTypeChosen &&
-    Number.isFinite(numericValue) &&
-    numericValue > 0;
+    quantityReady &&
+    gasProblem === null &&
+    !gasRefused;
 
   const contextSet = contextFieldSet(category);
 
@@ -648,6 +723,7 @@ function DataEntryPageInner() {
           value: numericValue,
           unit: activityUnit,
           reportingPeriod,
+          parameters: recordParameters,
         });
         if (!active) return;
         setPreview(result);
@@ -676,7 +752,71 @@ function DataEntryPageInner() {
     activityUnit,
     subsidiaryId,
     effectiveGeography,
+    parametersKey,
   ]);
+
+  // --- TR calculation inputs (LP4-02 PR4) ----------------------------------
+
+  // The release parameters this record's inputs default to: the reference NCV
+  // and a gas's leak rates come from the release in force, read through the
+  // engine's own lookup, so the form never holds 8,250 or a rate itself (D2).
+  const referenceGas = refrigerantMode ? activityType : "";
+  useEffect(() => {
+    if (inputMode === null || effectiveGeography === null) return;
+    let active = true;
+    setReference({ status: "loading" });
+    api
+      .releaseParameters({
+        category,
+        ...(referenceGas ? { activityType: referenceGas } : {}),
+        geographyCode: effectiveGeography,
+        year: reportingYear,
+      })
+      .then((data) => {
+        if (active) setReference({ status: "ready", data });
+      })
+      .catch((e) => {
+        if (!active) return;
+        setReference({ status: "failed" });
+        stableErrorToast(e);
+      });
+    return () => {
+      active = false;
+    };
+  }, [inputMode, category, referenceGas, effectiveGeography, reportingYear, stableErrorToast]);
+
+  // A new record moved under the TR rules (a site picked, a category chosen
+  // by a link) may hold a unit or type they do not offer: picked again rather
+  // than left bound to a value the select no longer lists. A typed value is
+  // cleared with the unit, never re-read as another unit's quantity.
+  useEffect(() => {
+    if (editingId) return;
+    const units = unitsForRecord(category, effectiveGeography);
+    if (units.length > 0 && !units.some((u) => u.value === activityUnit)) {
+      setActivityUnit(units[0].value);
+      if (activity.text.trim() !== "") {
+        activity.setValue(null);
+        toast.info(t("inputs.unitReset", { unit: unitSymbol(units[0].value) }));
+      }
+    }
+    if (activityType !== "" && !offeredActivityTypes(category, effectiveGeography).some((type) => type.value === activityType)) {
+      setActivityType("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, effectiveGeography, editingId, activityUnit, activityType]);
+
+  // The capacity method is annual (D7): a new TR refrigerant record is filed
+  // on the year. An opened one keeps its own period; the preview names the
+  // refusal (`reporting_period_not_annual`) until it is moved.
+  useEffect(() => {
+    if (refrigerantMode && !editingId && reportingPeriod !== "annual") handlePeriodChange("annual");
+  }, [refrigerantMode, editingId, reportingPeriod]);
+
+  function resetInputs(parameters: unknown = null) {
+    setGasInputs(gasInputsFromRecord(parameters));
+    setEquipment(linesFromRecord(parameters, nextLineId));
+    setInputsEpoch((n) => n + 1);
+  }
 
   // --- Handlers -------------------------------------------------------------
 
@@ -735,6 +875,7 @@ function DataEntryPageInner() {
     setActivityUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
+    resetInputs(rec.parameters);
     setVerdict(verdictOf(rec));
     setVarianceReason(rec.varianceReason ?? "");
     setPreviewError(null);
@@ -791,6 +932,7 @@ function DataEntryPageInner() {
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
+    resetInputs();
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
@@ -854,6 +996,9 @@ function DataEntryPageInner() {
         activityUnit,
         varianceReason: variance,
         input: inputPayload,
+        // Sent on every edit, null included: a record moved off the TR rules
+        // (another category or unit) clears what it no longer takes (D3).
+        parameters: recordParameters,
       });
     }
     return api.createActivityRecord({
@@ -868,6 +1013,7 @@ function DataEntryPageInner() {
       activityUnit,
       varianceReason: variance,
       input: inputPayload,
+      parameters: recordParameters,
     });
   }
 
@@ -1094,6 +1240,7 @@ function DataEntryPageInner() {
                         setCategory(next);
                         setContext({});
                         setContextEpoch((n) => n + 1);
+                        resetInputs();
                         // Each typed category has its own list; a type chosen
                         // for Fuel means nothing for Refrigerants.
                         setActivityType("");
@@ -1102,7 +1249,7 @@ function DataEntryPageInner() {
                         // selected and bind the Select to a value with no item —
                         // a silently blank control, and a request the API now
                         // rejects.
-                        const allowed = unitsForCategory(next);
+                        const allowed = unitsForRecord(next, effectiveGeography);
                         if (!allowed.some((u) => u.value === activityUnit)) {
                           setActivityUnit(allowed[0]?.value ?? "kWh");
                         }
@@ -1123,10 +1270,11 @@ function DataEntryPageInner() {
 
                   {isTypedCategory && (
                     // Labelled "Fuel or gas", never with the word "category":
-                    // the e2e suite finds the Category field by that text.
-                    <Field label={t("fuelOrGas")}>
+                    // the e2e suite finds the Category field by that text. A
+                    // TR mobile record names a vehicle mode instead (D6).
+                    <Field label={vehicleModes ? t("vehicleMode") : t("fuelOrGas")}>
                       <Select value={activityType} onValueChange={setActivityType}>
-                        <SelectTrigger aria-label={t("fuelOrGas")}>
+                        <SelectTrigger aria-label={vehicleModes ? t("vehicleMode") : t("fuelOrGas")}>
                           <SelectValue
                             placeholder={
                               keepsLegacyUntyped
@@ -1171,6 +1319,9 @@ function DataEntryPageInner() {
                         onValueChange={(v) =>
                           handlePeriodChange(v as ReportingPeriod)
                         }
+                        // Annual by the capacity method (D7); an opened record
+                        // that is not may still be moved.
+                        disabled={refrigerantMode && !editingId}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -1265,7 +1416,23 @@ function DataEntryPageInner() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_220px]">
-                    <Field label={t("activityValue")}>
+                    <Field label={refrigerantMode ? t("inputs.total") : t("activityValue")}>
+                      {refrigerantMode ? (
+                        // The record's quantity is its lines' total capacity
+                        // (D7): shown, never typed, so the two cannot disagree.
+                        <>
+                          <Input
+                            readOnly
+                            value={formatNumber(numericValue, locale)}
+                            aria-describedby="activity-total-note"
+                            data-testid="equipment-total"
+                          />
+                          <p id="activity-total-note" className="mt-1 text-xs text-muted-foreground">
+                            {t("inputs.totalHelp")}
+                          </p>
+                        </>
+                      ) : (
+                      <>
                       {/* Text, not type="number": a number input reads and
                           writes the browser's convention, not the user's, and
                           silently drops what it cannot parse. The value is read
@@ -1288,17 +1455,20 @@ function DataEntryPageInner() {
                         otherReading={activity.otherReading}
                         locale={activity.locale}
                       />
+                      </>
+                      )}
                     </Field>
                     <Field label={t("unit")}>
                       <Select value={activityUnit} onValueChange={setActivityUnit}>
-                        <SelectTrigger>
+                        {/* Named: the Additional context card has a field labelled Unit too. */}
+                        <SelectTrigger aria-label={t("unit")}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           {/* Scoped to the category: offering therms for
                               Electricity used to produce a plausible number
                               rather than an error. */}
-                          {unitsForCategory(category).map((u) => (
+                          {unitOptions.map((u) => (
                             <SelectItem key={u.value} value={u.value}>
                               {tUnits(`label.${u.value}` as UnitLabelKey)}
                             </SelectItem>
@@ -1320,8 +1490,40 @@ function DataEntryPageInner() {
                       );
                     }
                     const note = conversionNote(preview, previewing || !hasValidInput || !!previewError, locale, t);
-                    return note ? <p className="mt-2 text-xs text-muted-foreground">{note}</p> : null;
+                    return note ? <p className="mt-2 text-xs text-muted-foreground" data-testid="conversion-note">{note}</p> : null;
                   })()}
+                  {inputMode === "natural_gas" && (
+                    <NaturalGasInputs
+                      unit={activityUnit}
+                      inputs={gasInputs}
+                      reference={reference}
+                      issue={gasProblem}
+                      epoch={inputsEpoch}
+                      onChange={(next, field, refused) => {
+                        setGasInputs((prev) => ({ ...prev, ...next }));
+                        setRefusedGasInputs((prev) => {
+                          if (prev.has(field) === refused) return prev;
+                          const out = new Set(prev);
+                          if (refused) out.add(field);
+                          else out.delete(field);
+                          return out;
+                        });
+                      }}
+                    />
+                  )}
+                  {refrigerantMode && (
+                    <EquipmentLines
+                      lines={equipment}
+                      reference={reference}
+                      issue={equipmentProblem}
+                      epoch={inputsEpoch}
+                      onChange={(id, next) =>
+                        setEquipment((prev) => prev.map((line) => (line.id === id ? { ...line, ...next } : line)))
+                      }
+                      onAdd={() => setEquipment((prev) => [...prev, newEquipmentLine(nextLineId())])}
+                      onRemove={(id) => setEquipment((prev) => prev.filter((line) => line.id !== id))}
+                    />
+                  )}
                 </CardContent>
               </Card>
 
@@ -1658,7 +1860,7 @@ function PreviewCard({
           <div className="space-y-4">
             <div>
               <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-foreground">
+                <span className="text-3xl font-bold text-foreground" data-testid="preview-tco2e">
                   {numberFmt.format(preview.tCo2e)}
                 </span>
                 <span className="flex items-center gap-1 text-sm font-medium text-primary">

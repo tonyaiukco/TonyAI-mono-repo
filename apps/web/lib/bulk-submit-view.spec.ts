@@ -75,6 +75,7 @@ function imported(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAccepted
     activityValue: 1200,
     activityUnit: 'kilometres',
     tCo2e: 1.5,
+    parameters: null,
     anomalous: false,
     ...over,
   };

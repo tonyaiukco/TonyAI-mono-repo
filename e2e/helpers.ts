@@ -945,6 +945,114 @@ export async function cleanupE2EFactors(_request: APIRequestContext): Promise<vo
   );
 }
 
+/**
+ * LP4-02 PR4: a TR fixture release for the Data Entry input forms — natural
+ * gas (a net kWh factor, an Sm³ conversion, reference NCV and GCV), one
+ * refrigerant with a default and an alternative leak rate, one vehicle mode and
+ * gas-network leakage — for `E2E_TR_INPUTS_YEAR`, which the seed's placeholder
+ * library does not cover in TR, so these rows are the path the engine takes.
+ *
+ * **None of these numbers is a factor or a parameter.** They are round values
+ * chosen to make each flow's arithmetic checkable by hand, deliberately unlike
+ * the TR package's (a reference NCV of 9,000, not 8,250), and every row, the
+ * release and its notes say they are a test fixture. Loaded through the owner,
+ * whole and sealed in one transaction, like `seedE2EFactor`; removed by
+ * `cleanupTrInputsFixture` (and swept by `pnpm db:seed` if a run is cut short).
+ */
+export const E2E_TR_INPUTS_EDITION = '0000-E2E-TR-INPUTS';
+export const E2E_TR_INPUTS_YEAR = 2025;
+const TR_INPUTS_SOURCE = 'E2E FIXTURE — not a real emission factor or parameter, not for reporting';
+/** The fixture's reference NCV and GCV, kcal/Sm³, and its rates, as the specs read them back. */
+export const E2E_TR_INPUTS = {
+  referenceNcv: 9000,
+  referenceGcv: 10000,
+  gasFactor: 0.2,
+  refrigerant: 'R-410A',
+  refrigerantFactor: 1000,
+  splitDefaultRate: 0.05,
+  splitAlternativeRate: 0.5,
+  mode: 'on_road_diesel',
+  modeFactor: 3,
+  leakageFactor: 20,
+} as const;
+
+export async function seedTrInputsFixture(): Promise<void> {
+  await cleanupTrInputsFixture();
+  const year = E2E_TR_INPUTS_YEAR;
+  const f = E2E_TR_INPUTS;
+  const factors = [
+    ['Natural Gas', 'natural_gas', 'net', f.gasFactor, 'kgCO2e/kWh', 'kWh'],
+    ['Refrigerants', f.refrigerant, 'not_applicable', f.refrigerantFactor, 'kgCO2e/kg', 'kg'],
+    ['Mobile Combustion', f.mode, 'not_applicable', f.modeFactor, 'kgCO2e/litre', 'litres'],
+    ['Fugitive Gas', 'gas_network_leakage', 'not_applicable', f.leakageFactor, 'kgCO2e/Sm3', 'standard_cubic_metres'],
+  ] as const;
+  await withOwner((owner) =>
+    owner.$transaction(async (tx) => {
+      const id = randomUUID();
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, notes)
+         SELECT $1::uuid, $2, 'End-to-end test fixture: TR record inputs', $3, COALESCE(max(ordinal), 0) + 1, 'fixture',
+                'Written by the e2e suite and deleted by its teardown. Not a source.'
+           FROM factor_releases WHERE publisher = $2`,
+        id,
+        E2E_FIXTURE_PUBLISHER,
+        E2E_TR_INPUTS_EDITION,
+      );
+      for (const [category, activityType, basis, value, factorUnit, normalizedUnit] of factors) {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year,
+             data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+           VALUES (gen_random_uuid(), $1::uuid, $2, $3, 'CO2e', 'all_ghg', 'TR', $4, $4, 1, 'not_applicable', $5, $6, $7, $8,
+                   'E2E fixture — not a methodology', $9, $10, now())`,
+          id, category, activityType, year, basis, value, factorUnit, normalizedUnit, TR_INPUTS_SOURCE, E2E_TR_INPUTS_EDITION,
+        );
+      }
+      // The Sm³ conversion agrees with the fixture's own reference NCV, as the
+      // release validator requires of a real one (D5).
+      await tx.$executeRawUnsafe(
+        `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit,
+           multiplier, calorific_basis, basis)
+         VALUES (gen_random_uuid(), $1::uuid, 'Natural Gas', 'natural_gas', 'TR', $2, $2, 'standard_cubic_metres', 'kWh', $3, 'net',
+                 'E2E fixture — 9,000 kcal/Sm3 × 4.184 / 3,600')`,
+        id, year, (f.referenceNcv * 4.184) / 3600,
+      );
+      const parameters = [
+        ['reference_ncv', null, f.referenceNcv, 'kcal/Sm3', true],
+        ['reference_gcv', null, f.referenceGcv, 'kcal/Sm3', true],
+        ['leak_rate', 'split_air_conditioner', f.splitDefaultRate, 'fraction', true],
+        ['leak_rate', 'split_air_conditioner', f.splitAlternativeRate, 'fraction', false],
+      ] as const;
+      for (const [key, subject, value, unit, isDefault] of parameters) {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO factor_parameters (id, release_id, key, subject, value, unit, is_default, source)
+           VALUES (gen_random_uuid(), $1::uuid, $2, $3, $4, $5, $6, $7)`,
+          id, key, subject, value, unit, isDefault, TR_INPUTS_SOURCE,
+        );
+      }
+      await tx.$executeRawUnsafe('UPDATE factor_releases SET sealed_at = now() WHERE id = $1::uuid', id);
+    }),
+  );
+}
+
+/** Remove the TR inputs fixture, children first: the release key RESTRICTs. */
+export async function cleanupTrInputsFixture(): Promise<void> {
+  await withOwner((owner) =>
+    owner.$transaction(async (tx) => {
+      const releases = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT id::text FROM factor_releases WHERE status = 'fixture' AND publisher = $1 AND edition = $2`,
+        E2E_FIXTURE_PUBLISHER,
+        E2E_TR_INPUTS_EDITION,
+      );
+      for (const { id } of releases) {
+        await tx.$executeRawUnsafe('DELETE FROM emission_factors WHERE release_id = $1::uuid', id);
+        await tx.$executeRawUnsafe('DELETE FROM unit_conversions WHERE release_id = $1::uuid', id);
+        await tx.$executeRawUnsafe('DELETE FROM factor_parameters WHERE release_id = $1::uuid', id);
+        await tx.$executeRawUnsafe('DELETE FROM factor_releases WHERE id = $1::uuid', id);
+      }
+    }),
+  );
+}
+
 /** One row of a bulk-upload file, in the importer's own column order. */
 export interface BulkRow {
   subsidiaryId: string;

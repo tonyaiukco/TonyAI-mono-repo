@@ -88,9 +88,56 @@ export type BulkUploadKey =
   | 'error.roleForbidden'
   | 'error.failed'
   | 'template.rateLimited'
-  | 'template.failed';
+  | 'template.failed'
+  | 'importTitle'
+  | `records.${CountedKey}`;
 
 export type BulkUploadCopy = ViewCopy<BulkUploadKey>;
+
+/**
+ * The sentences that count what an import did. A report holding a refrigerant
+ * record built from several equipment lines (LP4-02 PR4) counts records, not
+ * file rows, so these are worded per record there (`records.*`); every other
+ * report keeps its row wording, which is then the same number. File limits and
+ * issue positions stay physical rows.
+ */
+type CountedKey =
+  | 'rowsOne'
+  | 'rowsMany'
+  | 'importTitle'
+  | 'appliedNone'
+  | 'applyConfirmOne'
+  | 'applyConfirmMany'
+  | 'summary.refusedPreview'
+  | 'summary.refusedApplied'
+  | 'summary.refusedOne'
+  | 'summary.cleanOnePreview'
+  | 'summary.cleanOneApplied'
+  | 'summary.partialPreview'
+  | 'summary.partialAppliedOne'
+  | 'summary.partialAppliedMany'
+  | 'summary.notOne'
+  | 'summary.notMany'
+  | 'summary.retryAppliedOne'
+  | 'summary.retryAppliedMany'
+  | 'summary.warnedOne'
+  | 'summary.warnedMany'
+  | 'summary.draftOne'
+  | 'summary.draftMany';
+
+export type CountUnit = 'row' | 'record';
+
+/** Records, once any outcome in the report stands for several file rows. */
+export function countUnit(report: Pick<BulkUploadReportDTO, 'accepted' | 'errors'>): CountUnit {
+  return report.accepted.some((a) => a.lineRows !== undefined) || report.errors.some((e) => e.lineRows !== undefined)
+    ? 'record'
+    : 'row';
+}
+
+/** A counting sentence's key, in the report's unit. */
+export function counted(unit: CountUnit, key: CountedKey): BulkUploadKey {
+  return unit === 'record' ? `records.${key}` : key;
+}
 
 /** What the file picker offers. Derived, so it cannot drift from the server. */
 export function fileAcceptAttribute(): string {
@@ -102,10 +149,10 @@ export function sizeCapLabel({ t, locale }: BulkUploadCopy): string {
   return t('sizeCap', { value: formatNumber(BULK_UPLOAD_MAX_SIZE_BYTES / 1024 / 1024, locale) });
 }
 
-/** `1 row` / `2 rows`, in one place rather than five. */
-export function rowCount(n: number, { t, locale }: BulkUploadCopy): string {
+/** `1 row` / `2 rows` (or records), in one place rather than five. */
+export function rowCount(n: number, { t, locale }: BulkUploadCopy, unit: CountUnit = 'row'): string {
   const count = formatNumber(n, locale);
-  return n === 1 ? t('rowsOne', { count }) : t('rowsMany', { count });
+  return n === 1 ? t(counted(unit, 'rowsOne'), { count }) : t(counted(unit, 'rowsMany'), { count });
 }
 
 /**
@@ -159,6 +206,41 @@ export function bulkActivityLabel(activityType: string | null,
  */
 export function readAmountLabel(row: Pick<BulkUploadAcceptedRow, 'activityValue' | 'activityUnit'>, locale: Locale): string {
   return `${formatReadAmount(row.activityValue, locale)} ${unitSymbol(row.activityUnit)}`;
+}
+
+type InputsKey =
+  | `bulkColumns.${'ncvKcalPerSm3' | 'billedGcvKcalPerSm3' | 'volumeCorrectionFactor' | 'capacityKg' | 'refillKg'}`
+  | `equipmentTypes.${keyof typeof enEntry.equipmentTypes}`
+  | `inputs.choice.${keyof typeof enEntry.inputs.choice}`;
+
+/**
+ * An accepted row's calculation inputs as the server read them (LP4-02 PR4,
+ * D15): each Natural Gas value, or each equipment line with its masses and
+ * rate choice, in the user's locale. Empty when the row carries none.
+ */
+export function readInputsLabel(
+  parameters: BulkUploadAcceptedRow['parameters'],
+  locale: Locale,
+  translate: (key: InputsKey) => string,
+): string {
+  // `== null`: a server before LP4-02 PR4 sends none at all.
+  if (parameters == null) return '';
+  const amount = (value: number) => formatReadAmount(value, locale);
+  if ('equipment' in parameters) {
+    return parameters.equipment
+      .map((line) => {
+        const type = Object.hasOwn(enEntry.equipmentTypes, line.equipmentType)
+          ? translate(`equipmentTypes.${line.equipmentType as keyof typeof enEntry.equipmentTypes}`)
+          : line.equipmentType;
+        return `${type}: ${translate('bulkColumns.capacityKg')} ${amount(line.capacityKg)}, ` +
+          `${translate('bulkColumns.refillKg')} ${amount(line.refillKg)}, ${translate(`inputs.choice.${line.leakRateChoice}`)}`;
+      })
+      .join('; ');
+  }
+  return (['ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor'] as const)
+    .filter((key) => parameters[key] !== undefined && parameters[key] !== null)
+    .map((key) => `${translate(`bulkColumns.${key}`)} ${amount(parameters[key] as number)}`)
+    .join('; ');
 }
 
 export interface IssueGroup {
@@ -235,6 +317,7 @@ export interface BulkUploadSummary {
 /** The one-glance verdict above the report. */
 export function summarise(report: BulkUploadReportDTO, translate: DeadlineTranslator, copy: BulkUploadCopy): BulkUploadSummary {
   const { t, locale } = copy;
+  const unit = countUnit(report);
   const acceptedCount = report.accepted.length;
   const affectedRows = new Set(report.errors.map((e) => e.row)).size;
   const warnedRows = new Set(report.warnings.map((w) => w.row)).size;
@@ -254,12 +337,12 @@ export function summarise(report: BulkUploadReportDTO, translate: DeadlineTransl
     return {
       ...counts,
       tone: 'refused',
-      headline: report.dryRun ? t('summary.refusedPreview') : t('summary.refusedApplied'),
+      headline: report.dryRun ? t(counted(unit, 'summary.refusedPreview')) : t(counted(unit, 'summary.refusedApplied')),
       detail:
         affectedRows === 1
-          ? t('summary.refusedOne')
+          ? t(counted(unit, 'summary.refusedOne'))
           : affectedRows > 1
-            ? t('summary.refusedMany', { rows: rowCount(affectedRows, copy) })
+            ? t('summary.refusedMany', { rows: rowCount(affectedRows, copy, unit) })
             : t('summary.refusedNone'),
     };
   }
@@ -269,9 +352,9 @@ export function summarise(report: BulkUploadReportDTO, translate: DeadlineTransl
       tone: 'clean',
       headline:
         acceptedCount === 1
-          ? t(report.dryRun ? 'summary.cleanOnePreview' : 'summary.cleanOneApplied')
-          : t(report.dryRun ? 'summary.cleanManyPreview' : 'summary.cleanManyApplied', { rows: rowCount(acceptedCount, copy) }),
-      detail: afterword(report, warnedRows, copy),
+          ? t(counted(unit, report.dryRun ? 'summary.cleanOnePreview' : 'summary.cleanOneApplied'))
+          : t(report.dryRun ? 'summary.cleanManyPreview' : 'summary.cleanManyApplied', { rows: rowCount(acceptedCount, copy, unit) }),
+      detail: afterword(report, warnedRows, copy, unit),
     };
   }
   const values = { accepted: formatNumber(acceptedCount, locale), total: formatNumber(report.totalRows, locale) };
@@ -279,14 +362,16 @@ export function summarise(report: BulkUploadReportDTO, translate: DeadlineTransl
     ...counts,
     tone: 'partial',
     headline: report.dryRun
-      ? t('summary.partialPreview', values)
+      ? t(counted(unit, 'summary.partialPreview'), values)
       : acceptedCount === 1
-        ? t('summary.partialAppliedOne', values)
-        : t('summary.partialAppliedMany', values),
+        ? t(counted(unit, 'summary.partialAppliedOne'), values)
+        : t(counted(unit, 'summary.partialAppliedMany'), values),
     detail: [
-      affectedRows === 1 ? t('summary.notOne') : t('summary.notMany', { count: formatNumber(affectedRows, locale) }),
-      retryAdvice(report, affectedRows, copy),
-      afterword(report, warnedRows, copy),
+      affectedRows === 1
+        ? t(counted(unit, 'summary.notOne'))
+        : t(counted(unit, 'summary.notMany'), { count: formatNumber(affectedRows, locale) }),
+      retryAdvice(report, affectedRows, copy, unit),
+      afterword(report, warnedRows, copy, unit),
     ]
       .filter((part): part is string => part !== null)
       .join(' '),
@@ -300,11 +385,13 @@ export function summarise(report: BulkUploadReportDTO, translate: DeadlineTransl
  * user to fix their file and upload it AGAIN means re-sending the rows that
  * already succeeded, which comes back as a wall of `duplicate_existing`.
  */
-function retryAdvice(report: BulkUploadReportDTO, failedRows: number, { t }: BulkUploadCopy): string {
+function retryAdvice(report: BulkUploadReportDTO, failedRows: number, { t }: BulkUploadCopy, unit: CountUnit): string {
   const one = failedRows === 1;
+  // After an apply, a record of several lines is re-sent with every one of
+  // them: it is imported whole, so a file of the faulty line alone is refused.
   return report.dryRun
     ? t(one ? 'summary.retryPreviewOne' : 'summary.retryPreviewMany')
-    : t(one ? 'summary.retryAppliedOne' : 'summary.retryAppliedMany');
+    : t(counted(unit, one ? 'summary.retryAppliedOne' : 'summary.retryAppliedMany'));
 }
 
 /**
@@ -322,14 +409,15 @@ function afterword(
   report: BulkUploadReportDTO,
   warnedRows: number,
   { t, locale }: BulkUploadCopy,
+  unit: CountUnit,
 ): string | null {
   const parts: string[] = [];
   if (warnedRows > 0) {
     const count = formatNumber(warnedRows, locale);
-    parts.push(warnedRows === 1 ? t('summary.warnedOne', { count }) : t('summary.warnedMany', { count }));
+    parts.push(warnedRows === 1 ? t(counted(unit, 'summary.warnedOne'), { count }) : t(counted(unit, 'summary.warnedMany'), { count }));
   }
   if (!report.dryRun) {
-    parts.push(report.accepted.length === 1 ? t('summary.draftOne') : t('summary.draftMany'));
+    parts.push(report.accepted.length === 1 ? t(counted(unit, 'summary.draftOne')) : t(counted(unit, 'summary.draftMany')));
   }
   return parts.length > 0 ? parts.join(' ') : null;
 }
@@ -345,7 +433,7 @@ function afterword(
  * report. Avoiding `?? 0` at the row level and then re-creating it at the
  * aggregate would be the same defect one layer up.
  */
-export function tonnesLabel(rows: BulkUploadAcceptedRow[], copy: BulkUploadCopy): string {
+export function tonnesLabel(rows: BulkUploadAcceptedRow[], copy: BulkUploadCopy, unit: CountUnit = 'row'): string {
   const { t, locale } = copy;
   const total = totalTonnes(rows);
   if (total === null) return t('tonnes.none');
@@ -358,7 +446,7 @@ export function tonnesLabel(rows: BulkUploadAcceptedRow[], copy: BulkUploadCopy)
   const values = {
     figure,
     counted: formatNumber(counted, locale),
-    rows: rowCount(rows.length, copy),
+    rows: rowCount(rows.length, copy, unit),
     missing: formatNumber(missing, locale),
   };
   return missing === 1 ? t('tonnes.partialOne', values) : t('tonnes.partialMany', values);
@@ -380,10 +468,11 @@ export function canApplyPreview(report: BulkUploadReportDTO): boolean {
 
 export function applyConfirmation(report: BulkUploadReportDTO, copy: BulkUploadCopy): string {
   const count = report.accepted.length;
-  const tonnes = tonnesLabel(report.accepted, copy);
+  const unit = countUnit(report);
+  const tonnes = tonnesLabel(report.accepted, copy, unit);
   return count === 1
-    ? copy.t('applyConfirmOne', { tonnes })
-    : copy.t('applyConfirmMany', { count: formatNumber(count, copy.locale), tonnes });
+    ? copy.t(counted(unit, 'applyConfirmOne'), { tonnes })
+    : copy.t(counted(unit, 'applyConfirmMany'), { count: formatNumber(count, copy.locale), tonnes });
 }
 
 /**
@@ -416,7 +505,7 @@ export function applyToast(report: BulkUploadReportDTO, translate: DeadlineTrans
   if (deadline) return { kind: 'warning', message: deadline.headline, description: deadline.detail };
   return report.accepted.length > 0
     ? { kind: 'success', message: applySuccessMessage(report, copy) }
-    : { kind: 'warning', message: copy.t('appliedNone') };
+    : { kind: 'warning', message: copy.t(counted(countUnit(report), 'appliedNone')) };
 }
 
 /**

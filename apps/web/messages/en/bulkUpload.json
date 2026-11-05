@@ -76,5 +76,31 @@
   "template": {
     "rateLimited": "Too many template downloads. Wait a minute and try again.",
     "failed": "The template could not be downloaded."
+  },
+  "records": {
+    "rowsOne": "{count} record",
+    "rowsMany": "{count} records",
+    "importTitle": "Import these records?",
+    "appliedNone": "No records were imported — the report below says why.",
+    "applyConfirmOne": "Import 1 record ({tonnes}). It arrives as a draft: it is not counted towards any total and does not appear in the review queue until it is submitted.",
+    "applyConfirmMany": "Import {count} records ({tonnes}). This cannot be undone in bulk. They arrive as drafts: they are not counted towards any total and do not appear in the review queue until they are submitted.",
+    "summary": {
+      "refusedPreview": "No records can be imported.",
+      "refusedApplied": "No records were imported.",
+      "refusedOne": "The one record in the file has a problem to fix.",
+      "cleanOnePreview": "1 record would be imported.",
+      "cleanOneApplied": "1 record was imported.",
+      "partialPreview": "{accepted} of {total} records would be imported.",
+      "partialAppliedOne": "{accepted} of {total} records was imported.",
+      "partialAppliedMany": "{accepted} of {total} records were imported.",
+      "notOne": "1 record was not.",
+      "notMany": "{count} records were not.",
+      "retryAppliedOne": "Fix it and upload a file containing only that record, with every file row it is built from, since a record is imported whole. Re-sending the whole file would report the imported ones as duplicates.",
+      "retryAppliedMany": "Fix them and upload a file containing only those records, each with every file row it is built from, since a record is imported whole. Re-sending the whole file would report the imported ones as duplicates.",
+      "warnedOne": "{count} record needs attention before it can be submitted — see below.",
+      "warnedMany": "{count} records need attention before they can be submitted — see below.",
+      "draftOne": "The imported record is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.",
+      "draftMany": "Imported records are drafts: they count towards no total and do not appear in the review queue until they are submitted below."
+    }
   }
 }

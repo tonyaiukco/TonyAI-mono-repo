@@ -1,4 +1,6 @@
 import type {
+  ReleaseParametersDTO,
+  ReleaseParametersQuery,
   ActivityRecordDTO,
   CaptureReportDatasetRequest,
   CreateInventoryBoundaryRequest,
@@ -516,6 +518,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  /** The release parameters a TR record's inputs default to (LP4-02 PR4, D2). */
+  releaseParameters: (query: ReleaseParametersQuery) => {
+    const search = new URLSearchParams({
+      category: query.category,
+      geographyCode: query.geographyCode,
+      year: String(query.year),
+    });
+    if (query.activityType) search.set("activityType", query.activityType);
+    return apiFetch<ReleaseParametersDTO>(`/factors/parameters?${search.toString()}`);
+  },
 
   // --- Activity records ---
   /** One page of records (LP4-05 PR C). Never automatically drains later pages. */

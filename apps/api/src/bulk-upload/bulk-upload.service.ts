@@ -17,6 +17,7 @@ import {
   BULK_UPLOAD_MAX_SIZE_BYTES,
   BULK_UPLOAD_MESSAGE_MAX_LENGTH,
   CATEGORIES,
+  EQUIPMENT_TYPES,
   canonicalPeriodValue,
   isCalculated,
   isEvidenceRequired,
@@ -29,6 +30,7 @@ import {
   type ReportingPeriod,
   type BulkUploadReportDTO,
   type BulkUploadRowIssue,
+  type RecordParameters,
   isRecordActivityTypeAllowed,
   mayAuthorRecords,
   recordActivityTypesFor,
@@ -68,6 +70,7 @@ import {
   strictNumber,
   type ParsedRow,
 } from './parse-rows';
+import { equipmentOf, gasParametersOf, groupEquipmentLines, type CellIssue, type RecordRow } from './record-inputs';
 import { buildTemplateWorkbook } from './template-workbook';
 
 /**
@@ -223,13 +226,16 @@ export class BulkUploadService {
       return { rows: parsed, namedSubsidiaryIds: named };
     });
     const upload = file as Express.Multer.File;
+    // A refrigerant's equipment lines become its one record (D7) before any
+    // row is processed, so the duplicate check and the counts see records.
+    const records = groupEquipmentLines(rows);
 
-    const storedSlots = await this.loadStoredSlots(user, rows);
+    const storedSlots = await this.loadStoredSlots(user, records);
     // An APPLY gets a batch, created BEFORE the loop so every record can carry
     // its id. A dry run gets none: it must provably write nothing.
     const batchId = dryRun
       ? null
-      : await this.openBatch(user, upload, rows.length, namedSubsidiaryIds);
+      : await this.openBatch(user, upload, records.length, namedSubsidiaryIds);
     const seenInFile = new Set<string>();
     const accepted: BulkUploadAcceptedRow[] = [];
     const errors: BulkUploadRowIssue[] = [];
@@ -245,12 +251,14 @@ export class BulkUploadService {
     // so flushing on the way out rather than in a `finally` would drop the
     // incident most worth keeping, and silently.
     try {
-      for (const parsed of rows) {
+      for (const parsed of records) {
         if (deadline.expired) {
           notProcessedCount += 1;
           errors.push({ row: parsed.row, column: null, code: 'not_processed_deadline', message: 'This row was not started before the deadline.' });
+          this.nameEveryLine(parsed, errors, errors.length - 1);
           continue;
         }
+        const refusedBefore = errors.length;
         try {
           await this.processRow(
             user,
@@ -269,6 +277,10 @@ export class BulkUploadService {
             throw error;
           }
           errors.push(this.toIssue(parsed.row, error, unexpected));
+        } finally {
+          // A record of several lines is written whole or not at all: its
+          // refusal, on whichever line, says so for the rest.
+          this.nameEveryLine(parsed, errors, refusedBefore);
         }
       }
     } catch (error) {
@@ -295,7 +307,7 @@ export class BulkUploadService {
         ...(batchId ? { entity: 'import_batch' as const, entityId: batchId }
           : { entity: 'activity_record' as const, entityId: null }),
         diff: this.batchDiff(upload, dryRun, {
-          totalRows: rows.length, acceptedCount: accepted.length, rejectedCount,
+          totalRows: records.length, acceptedCount: accepted.length, rejectedCount,
           completion, notProcessedCount, ...(batchId ? { batchId } : {}),
         }),
       }, batchId ? (tx) => tx.importBatch.update({
@@ -305,7 +317,7 @@ export class BulkUploadService {
       }) : undefined);
     } catch (error) {
       this.logger.error(`bulk import finalization failed; persisted completion is unknown ${JSON.stringify({
-        batchId, totalRows: rows.length, acceptedCount: accepted.length, rejectedCount, notProcessedCount,
+        batchId, totalRows: records.length, acceptedCount: accepted.length, rejectedCount, notProcessedCount,
       })}`,
         error instanceof Error ? error.stack : String(error));
     }
@@ -315,7 +327,7 @@ export class BulkUploadService {
       dryRun,
       fileName: this.shownFileName(upload),
       sizeBytes: upload.size,
-      totalRows: rows.length,
+      totalRows: records.length,
       accepted,
       errors: errors.map((issue) => this.bounded(issue)),
       warnings: warnings.map((issue) => this.bounded(issue)),
@@ -389,7 +401,7 @@ export class BulkUploadService {
 
   private async processRow(
     user: RequestUser,
-    parsed: ParsedRow,
+    parsed: RecordRow,
     context: {
       dryRun: boolean;
       seenInFile: Set<string>;
@@ -426,7 +438,7 @@ export class BulkUploadService {
       });
     }
 
-    const mapped = this.mapRow(cells);
+    const mapped = this.mapRow(parsed);
     if ('issue' in mapped) {
       out.errors.push({ row, ...mapped.issue });
       return;
@@ -565,6 +577,7 @@ export class BulkUploadService {
       );
       out.accepted.push({
         row,
+        ...this.linesOf(parsed),
         recordId: null,
         ...this.identityOf(dto, preview.periodValue),
         tCo2e: this.figureOf(preview.calculation),
@@ -587,6 +600,7 @@ export class BulkUploadService {
     );
     out.accepted.push({
       row,
+      ...this.linesOf(parsed),
       recordId: created.id,
       ...this.identityOf(dto, created.periodValue),
       // What the record holds, not what the row sent: the write stores a
@@ -594,6 +608,7 @@ export class BulkUploadService {
       // 0.30000000000000004 lands as 0.3.
       activityValue: created.activityValue,
       activityUnit: created.activityUnit,
+      parameters: created.parameters,
       tCo2e: this.figureOf(created.calculation),
       anomalous: created.anomalyFlag,
     });
@@ -784,12 +799,12 @@ export class BulkUploadService {
    * anyway, so a change to that order could not make this query say whether
    * another entity's slot is taken.
    */
-  private async loadStoredSlots(user: RequestUser, rows: ParsedRow[]): Promise<StoredSlots> {
+  private async loadStoredSlots(user: RequestUser, rows: RecordRow[]): Promise<StoredSlots> {
     const slots: StoredSlots = { keys: new Set(), typed: new Set(), untyped: new Set() };
     const accessible = new Set(user.accessibleSubsidiaryIds);
     const claimed = new Map<string, ClaimedSlot>();
-    for (const { cells } of rows) {
-      const slot = this.claimedSlot(cells);
+    for (const record of rows) {
+      const slot = this.claimedSlot(record);
       if (slot && accessible.has(slot.subsidiaryId)) {
         claimed.set(
           this.slotOf(slot.subsidiaryId, slot.locationId, slot.reportingYear, slot.reportingPeriod, slot.periodValue, slot.category),
@@ -858,8 +873,8 @@ export class BulkUploadService {
    * strict parse, the DTO and its validation, the canonical period — or null
    * when the row is refused before it claims one. Pure: it writes nothing.
    */
-  private claimedSlot(cells: Record<BulkUploadColumn, string>): ClaimedSlot | null {
-    const mapped = this.mapRow(cells);
+  private claimedSlot(record: RecordRow): ClaimedSlot | null {
+    const mapped = this.mapRow(record);
     if ('issue' in mapped) return null;
     const dto = plainToInstance(CreateActivityRecordDto, mapped.dto);
     if (validateSync(dto as object, PIPE_OPTIONS).length > 0) return null;
@@ -1141,6 +1156,7 @@ export class BulkUploadService {
     activityType: string | null;
     activityValue: number;
     activityUnit: string;
+    parameters: RecordParameters | null;
   } {
     return {
       subsidiaryId: dto.subsidiaryId,
@@ -1155,7 +1171,35 @@ export class BulkUploadService {
       // reports the stored record's own value instead.
       activityValue: dto.activityValue,
       activityUnit: storedUnit(dto.activityUnit),
+      // The inputs as read, beside the amount (D15).
+      parameters: dto.parameters ?? null,
     };
+  }
+
+  /** The file rows a record of several equipment lines was built from. */
+  private linesOf(record: RecordRow): { lineRows?: number[] } {
+    return record.lines && record.lines.length > 1 ? { lineRows: record.lines.map((l) => l.row) } : {};
+  }
+
+  /**
+   * Name every line of a refused record of several lines in its one issue:
+   * none of them was imported, though the issue sits on one row. Said first,
+   * so the message's bound never cuts it, and listed up to the number of
+   * equipment types a record can hold (a longer group is refused for a
+   * repeated type in any case).
+   */
+  private nameEveryLine(record: RecordRow, errors: BulkUploadRowIssue[], from: number): void {
+    if (!record.lines || record.lines.length < 2) return;
+    const rows = record.lines.map((l) => l.row);
+    const shown = rows.slice(0, EQUIPMENT_TYPES.length).join(', ');
+    const more = rows.length > EQUIPMENT_TYPES.length ? ` and ${rows.length - EQUIPMENT_TYPES.length} more` : '';
+    for (let i = from; i < errors.length; i += 1) {
+      errors[i] = {
+        ...errors[i],
+        lineRows: rows,
+        message: `Rows ${shown}${more} are one gas's record, and none was imported. ${errors[i].message}`,
+      };
+    }
   }
 
   /**
@@ -1218,10 +1262,11 @@ export class BulkUploadService {
    * 32,000-character string made a 32,092,008-byte report (measured).
    */
   private mapRow(
-    cells: Record<BulkUploadColumn, string>,
+    record: RecordRow,
   ):
     | { dto: Record<string, unknown> }
-    | { issue: Omit<BulkUploadRowIssue, 'row'> } {
+    | { issue: CellIssue } {
+    const { cells } = record;
     const reportingYear = strictNumber(cells.reportingYear);
     if (reportingYear === null) {
       return {
@@ -1232,6 +1277,15 @@ export class BulkUploadService {
         },
       };
     }
+    if (record.lines) {
+      // A refrigerant record (D7): its quantity is the sum of its lines'
+      // capacities, and its lines are its parameters.
+      const lines = equipmentOf(record.lines);
+      if ('issue' in lines) return lines;
+      return { dto: { ...this.recordFields(cells, reportingYear), activityValue: lines.total, parameters: { equipment: lines.equipment } } };
+    }
+    const gas = gasParametersOf(cells);
+    if ('issue' in gas) return gas;
     const activityValue = strictNumber(cells.activityValue);
     if (activityValue === null && isCommaFigure(cells.activityValue)) {
       // Refused, never reinterpreted (D15): `1.234,5` and `1,200` are each a
@@ -1253,26 +1307,34 @@ export class BulkUploadService {
         },
       };
     }
+    return {
+      dto: {
+        ...this.recordFields(cells, reportingYear),
+        activityValue,
+        ...(gas.parameters === null ? {} : { parameters: gas.parameters }),
+      },
+    };
+  }
+
+  /** A row's record fields other than its quantity and inputs. */
+  private recordFields(cells: Record<BulkUploadColumn, string>, reportingYear: number): Record<string, unknown> {
     const locationId = cells.locationId.trim();
     const activityType = cells.activityType.trim();
     const varianceReason = cells.varianceReason.trim();
     return {
-      dto: {
-        subsidiaryId: cells.subsidiaryId.trim(),
-        // Blank means the whole company, which is a real reporting entity —
-        // not a missing value.
-        ...(locationId === '' ? {} : { locationId }),
-        reportingYear,
-        reportingPeriod: cells.reportingPeriod.trim(),
-        periodValue: cells.periodValue.trim(),
-        category: cells.category.trim(),
-        // Blank means none: an untyped category's record names no type, and a
-        // typed one without it is refused on its own row.
-        ...(activityType === '' ? {} : { activityType }),
-        activityValue,
-        activityUnit: cells.activityUnit.trim(),
-        ...(varianceReason === '' ? {} : { varianceReason }),
-      },
+      subsidiaryId: cells.subsidiaryId.trim(),
+      // Blank means the whole company, which is a real reporting entity —
+      // not a missing value.
+      ...(locationId === '' ? {} : { locationId }),
+      reportingYear,
+      reportingPeriod: cells.reportingPeriod.trim(),
+      periodValue: cells.periodValue.trim(),
+      category: cells.category.trim(),
+      // Blank means none: an untyped category's record names no type, and a
+      // typed one without it is refused on its own row.
+      ...(activityType === '' ? {} : { activityType }),
+      activityUnit: cells.activityUnit.trim(),
+      ...(varianceReason === '' ? {} : { varianceReason }),
     };
   }
 

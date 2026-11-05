@@ -2,12 +2,14 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestj
 import type {
   ActivityCalculationSnapshot,
   EmissionFactorDetailDTO,
+  ReleaseParametersDTO,
 } from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
 import { CalculationInputDto } from './dto/calculation-input.dto';
 import { ListFactorsQueryDto } from './dto/list-factors-query.dto';
+import { ReleaseParametersQueryDto } from './dto/release-parameters-query.dto';
 
-// Auth is enforced globally by SupabaseAuthGuard (APP_GUARD). Both routes are
+// Auth is enforced globally by SupabaseAuthGuard (APP_GUARD). Every route is
 // read-only (preview + reference-data listing), so no RBAC/audit is required.
 @Controller()
 export class CalculationsController {
@@ -25,5 +27,12 @@ export class CalculationsController {
   @Get('factors')
   listFactors(@Query() query: ListFactorsQueryDto): Promise<EmissionFactorDetailDTO[]> {
     return this.service.listFactors(query);
+  }
+
+  // Reference data like the listing above: the values Data Entry shows beside
+  // a TR record's inputs (8,250, a leak rate) before a preview can price one.
+  @Get('factors/parameters')
+  releaseParameters(@Query() query: ReleaseParametersQueryDto): Promise<ReleaseParametersDTO> {
+    return this.service.releaseParameters(query);
   }
 }

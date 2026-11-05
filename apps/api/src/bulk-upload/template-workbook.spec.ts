@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import ExcelJS from 'exceljs';
 import {
+  BULK_EQUIPMENT_COLUMNS,
+  BULK_GAS_PARAMETER_COLUMNS,
   BULK_UPLOAD_COLUMNS,
+  EQUIPMENT_TYPES,
+  LEAK_RATE_CHOICES,
   BULK_UPLOAD_MAX_ROWS,
   CATEGORIES,
   CATEGORY_UNITS,
@@ -172,7 +176,7 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
     // gas. Its valid values depend on the row's category, like the units, so
     // they are listed per category here rather than offered as one flat list.
     const text = await referenceText();
-    expect(text).toContain('Every column there is required except locationId, activityType and varianceReason');
+    expect(text).toContain('Every column there is required except locationId, activityType, varianceReason and the calculation inputs');
     expect(text).toContain(
       'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
     );
@@ -385,3 +389,26 @@ describe('buildTemplateWorkbook — the worked example', () => {
   });
 });
 
+
+describe('buildTemplateWorkbook — calculation inputs (LP4-02 PR4)', () => {
+  it('explains every input column, and holds no rate or calorific value of its own', async () => {
+    const workbook = await load(await buildTemplateWorkbook(ENTITIES));
+    const lines: string[] = [];
+    workbook.worksheets[1].eachRow((row) => lines.push((row.values as unknown[]).slice(1).map(String).join(' | ')));
+    const text = lines.join('\n');
+    for (const column of BULK_EQUIPMENT_COLUMNS) expect(text).toContain(`${column} | `);
+    for (const column of BULK_GAS_PARAMETER_COLUMNS) expect(text).toContain(`${column} | `);
+    expect(text).not.toMatch(/8[,.]?250|9[,.]?155/);
+  });
+
+  it.each([
+    ['equipmentType', EQUIPMENT_TYPES],
+    ['leakRateChoice', LEAK_RATE_CHOICES],
+  ])('offers %s as a closed list', async (column, values) => {
+    const workbook = await load(await buildTemplateWorkbook(ENTITIES));
+    const index = BULK_UPLOAD_COLUMNS.indexOf(column as (typeof BULK_UPLOAD_COLUMNS)[number]);
+    const validation = workbook.worksheets[0].getRow(2).getCell(index + 1).dataValidation as { type?: string; formulae?: unknown[] };
+    expect(validation?.type).toBe('list');
+    expect(validation?.formulae).toEqual([`"${values.join(',')}"`]);
+  });
+});

@@ -89,6 +89,7 @@ function accepted(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAccepted
     activityValue: 1200,
     activityUnit: 'kWh',
     tCo2e: 1.5,
+    parameters: null,
     anomalous: false,
     ...over,
   };
@@ -763,5 +764,45 @@ describe('typed bulk preview', () => {
       .toBe(MESSAGES[locale].errors.bulkQueryTooBroad);
     expect(uploadErrorMessage(new ApiError('unrelated refusal', 422, 'validation_failed'), t))
       .toBe('unrelated refusal');
+  });
+});
+
+describe('counting records once a refrigerant record spans several rows (LP4-02 PR4, Codex review of #281)', () => {
+  const grouped = accepted({ row: 2, lineRows: [2, 3], tCo2e: 1 });
+  const refusedRecord: BulkUploadRowIssue = {
+    row: 4, column: 'equipmentType', code: 'invalid', lineRows: [4, 5],
+    message: "Rows 4, 5 are one gas's record, and none was imported. Use one of the types.",
+  };
+  const words = (locale: 'en' | 'tr') => MESSAGES[locale].bulkUpload;
+  const verdict = (r: BulkUploadReportDTO, locale: 'en' | 'tr') =>
+    summariseIn(r, copyFor('errors', locale).t as Parameters<typeof summariseIn>[1], copyFor('bulkUpload', locale));
+
+  it.each(['en', 'tr'] as const)('%s counts a grouped preview in records', (locale) => {
+    const r = report({ accepted: [grouped] });
+    expect(verdict(r, locale).headline).toBe(words(locale).records.summary.cleanOnePreview);
+    expect(applyConfirmationIn(r, copyFor('bulkUpload', locale))).toContain(
+      words(locale).records.applyConfirmOne.split(' (')[0],
+    );
+  });
+
+  it.each(['en', 'tr'] as const)('%s asks for every row of a refused record after an apply', (locale) => {
+    const r = report({ dryRun: false, totalRows: 2, accepted: [accepted({ row: 2 })], errors: [refusedRecord] });
+    const v = verdict(r, locale);
+    expect(v.tone).toBe('partial');
+    expect(v.headline).toBe(words(locale).records.summary.partialAppliedOne.replace('{accepted}', '1').replace('{total}', '2'));
+    expect(v.detail).toContain(words(locale).records.summary.retryAppliedOne);
+    expect(v.detail).not.toContain(words(locale).summary.retryAppliedOne);
+  });
+
+  it.each(['en', 'tr'] as const)('%s words a refused grouped record as a record', (locale) => {
+    const v = verdict(report({ accepted: [], errors: [refusedRecord] }), locale);
+    expect(v.headline).toBe(words(locale).records.summary.refusedPreview);
+    expect(v.detail).toBe(words(locale).records.summary.refusedOne);
+  });
+
+  it('keeps the row wording for a file with no grouped record', () => {
+    expect(verdict(report(), 'en').headline).toBe(MESSAGES.en.bulkUpload.summary.cleanOnePreview);
+    expect(verdict(report({ dryRun: false, totalRows: 2, errors: [{ ...refusedRecord, lineRows: undefined }] }), 'en').detail)
+      .toContain(MESSAGES.en.bulkUpload.summary.retryAppliedOne);
   });
 });

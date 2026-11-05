@@ -41,6 +41,8 @@ import {
   unitsForCategory,
   type CalculationResult,
   type UncalculatedSnapshot,
+  BULK_EQUIPMENT_COLUMNS,
+  BULK_GAS_PARAMETER_COLUMNS,
   BULK_UPLOAD_COLUMNS,
   BULK_UPLOAD_REQUIRED_COLUMNS,
   BULK_UPLOAD_ERROR_CODES,
@@ -634,10 +636,17 @@ describe('bulk upload — the column contract', () => {
       'activityValue',
       'activityUnit',
       'varianceReason',
+      'ncvKcalPerSm3',
+      'billedGcvKcalPerSm3',
+      'volumeCorrectionFactor',
+      'equipmentType',
+      'capacityKg',
+      'refillKg',
+      'leakRateChoice',
     ]);
   });
 
-  it('requires everything except the three that mean something when blank', () => {
+  it('requires everything except the columns that mean something when blank', () => {
     // A blank `locationId` is the whole company — a real reporting entity, not
     // a missing value — most records carry no variance reason at all, and an
     // untyped category (Electricity, Natural Gas, Water) names no activity
@@ -645,7 +654,12 @@ describe('bulk upload — the column contract', () => {
     const optional = BULK_UPLOAD_COLUMNS.filter(
       (c) => !(BULK_UPLOAD_REQUIRED_COLUMNS as readonly string[]).includes(c),
     );
-    expect(optional).toEqual(['locationId', 'activityType', 'varianceReason']);
+    // The calculation inputs (LP4-02 PR4) are blank on every row whose
+    // category takes none, and absent from an older template.
+    expect(optional).toEqual([
+      'locationId', 'activityType', 'varianceReason',
+      ...BULK_GAS_PARAMETER_COLUMNS, ...BULK_EQUIPMENT_COLUMNS,
+    ]);
   });
 
   it('keeps errors and warnings disjoint', () => {

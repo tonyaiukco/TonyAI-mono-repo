@@ -125,7 +125,10 @@ servers). PR B emits completion on every result, including dry runs. Deadline
 means stop starting rows, settle the current mutation, finalize batch counts and
 audit summaries, and return every applied and unstarted outcome. Each unstarted
 row/id is an error with this code; the import's `accepted + errors = totalRows`
-and submit's `submitted + failed = requested` invariants still hold. The outcome
+and submit's `submitted + failed = requested` invariants still hold. An import
+counts records, not file rows: a refrigerant record's equipment lines are one
+record (LP4-02 PR4), and its one outcome, deadline included, names every line's
+row. The outcome
 makes no existence or access claim: missing and inaccessible ids
 receive identical outcomes at every deadline position, including after preflight.
 An import stopped by deadline closes its batch as `failed`, retaining successful

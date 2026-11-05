@@ -76,5 +76,31 @@
   "template": {
     "rateLimited": "Çok fazla şablon indirme yapıldı. Bir dakika bekleyip tekrar deneyin.",
     "failed": "Şablon indirilemedi."
+  },
+  "records": {
+    "rowsOne": "{count} kayıt",
+    "rowsMany": "{count} kayıt",
+    "importTitle": "Bu kayıtlar içe aktarılsın mı?",
+    "appliedNone": "Hiçbir kayıt içe aktarılmadı — nedeni aşağıdaki raporda.",
+    "applyConfirmOne": "1 kaydı içe aktar ({tonnes}). Taslak olarak gelir: gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez.",
+    "applyConfirmMany": "{count} kaydı içe aktar ({tonnes}). Bu işlem toplu olarak geri alınamaz. Taslak olarak gelirler: gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmezler.",
+    "summary": {
+      "refusedPreview": "Hiçbir kayıt içe aktarılamaz.",
+      "refusedApplied": "Hiçbir kayıt içe aktarılmadı.",
+      "refusedOne": "Dosyadaki tek kayıtta düzeltilmesi gereken bir sorun var.",
+      "cleanOnePreview": "1 kayıt içe aktarılacak.",
+      "cleanOneApplied": "1 kayıt içe aktarıldı.",
+      "partialPreview": "{total} kayıttan {accepted} tanesi içe aktarılacak.",
+      "partialAppliedOne": "{total} kayıttan {accepted} tanesi içe aktarıldı.",
+      "partialAppliedMany": "{total} kayıttan {accepted} tanesi içe aktarıldı.",
+      "notOne": "1 kayıt aktarılmadı.",
+      "notMany": "{count} kayıt aktarılmadı.",
+      "retryAppliedOne": "Düzeltip yalnızca o kaydı, oluştuğu bütün dosya satırlarıyla birlikte içeren bir dosya yükleyin; kayıt bütün olarak aktarılır. Tüm dosyayı yeniden göndermek içe aktarılmış kayıtları mükerrer olarak raporlar.",
+      "retryAppliedMany": "Düzeltip yalnızca o kayıtları, her birinin oluştuğu bütün dosya satırlarıyla birlikte içeren bir dosya yükleyin; kayıt bütün olarak aktarılır. Tüm dosyayı yeniden göndermek içe aktarılmış kayıtları mükerrer olarak raporlar.",
+      "warnedOne": "{count} kayıtla gönderilmeden önce ilgilenilmesi gerekiyor — aşağıya bakın.",
+      "warnedMany": "{count} kayıtla gönderilmeden önce ilgilenilmesi gerekiyor — aşağıya bakın.",
+      "draftOne": "İçe aktarılan kayıt bir taslaktır: aşağıdan gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez.",
+      "draftMany": "İçe aktarılan kayıtlar taslaktır: aşağıdan gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez."
+    }
   }
 }

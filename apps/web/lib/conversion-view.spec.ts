@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createTranslator } from 'use-intl/core';
-import type { CalculationResultV2, FactorStatus, UncalculatedSnapshot } from '@/lib/types';
+import type { CalculationResultV2, CalculationResultV3, FactorStatus, UncalculatedSnapshot } from '@/lib/types';
 import { MESSAGES } from '@/messages';
 import { conversionNote } from './conversion-view';
 
@@ -56,5 +56,40 @@ describe('conversionNote', () => {
       expect(conversionNote(value, false, 'en', t)).toBeNull();
     }
     expect(conversionNote(snapshot, true, 'en', t)).toBeNull();
+  });
+
+  describe('the TR natural gas chain (LP4-02 PR4, D5)', () => {
+    const v3 = (parameters: CalculationResultV3['parameters'], over: Partial<CalculationResultV3> = {}): CalculationResultV3 => ({
+      ...snapshot, snapshotSchema: 3, inputUnit: 'standard_cubic_metres', conversionFactor: 9.389, parameters,
+      parameterRows: [], refrigerantTerms: null, ...over,
+    });
+
+    it.each(['en', 'tr'] as const)('%s names the record\'s own NCV and its origin, never the row\'s multiplier', (locale) => {
+      const t = createTranslator({ locale, messages: MESSAGES[locale].dataEntry });
+      const note = conversionNote(v3([{ name: 'ncvKcalPerSm3', value: 8078.6702, origin: 'derived' }]), false, locale, t)!;
+      expect(note).toContain(locale === 'en' ? '8,078.67' : '8.078,67');
+      expect(note).toContain(MESSAGES[locale].dataEntry.conversionNote.ncvOrigin.derived);
+      expect(note).toContain(locale === 'en' ? '×9.389' : '×9,389');
+      expect(note).toContain('Sm³ → kWh');
+      expect(note).not.toContain(locale === 'en' ? '7.125' : '7,125');
+      expect(note).not.toContain('Test derivation');
+    });
+
+    it('carries a metered reading\'s correction factor, in a whole multiplier from m³', () => {
+      const t = createTranslator({ locale: 'en', messages: MESSAGES.en.dataEntry });
+      const note = conversionNote(v3([
+        { name: 'ncvKcalPerSm3', value: 8250, origin: 'default' },
+        { name: 'volumeCorrectionFactor', value: 0.97, origin: 'user' },
+      ], { inputUnit: 'cubic_metres', conversionFactor: 9.30068301 }), false, 'en', t)!;
+      expect(note).toContain('m³ → kWh: ×9.30068301');
+      expect(note).toContain('8,250');
+      expect(note).toContain(MESSAGES.en.dataEntry.conversionNote.ncvOrigin.default);
+      expect(note).toContain('0.97');
+    });
+
+    it('keeps the row\'s note for a V3 conversion with no NCV', () => {
+      const t = createTranslator({ locale: 'en', messages: MESSAGES.en.dataEntry });
+      expect(conversionNote(v3([]), false, 'en', t)).toContain('Test derivation');
+    });
   });
 });
