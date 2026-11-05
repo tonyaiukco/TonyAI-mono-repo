@@ -17,11 +17,15 @@ The library SHALL admit releases only from registered publishers. The registry S
 - **THEN** the dry run reports an unregistered-publisher issue and nothing is written
 
 ### Requirement: Sealed calculation parameters
-A release SHALL be able to carry calculation parameters next to its factors. A parameter is a sourced, non-factor value with a key, value, unit, source and methodology, for example an equipment leak rate or a reference calorific value. Parameters SHALL be loaded, sealed and withdrawn together with their release. Parameters SHALL be immutable after the seal, in the same way as factors.
+A release SHALL be able to carry calculation parameters next to its factors. A parameter is a sourced, non-factor value with a key, value, unit, source and methodology, for example an equipment leak rate or a reference calorific value. Parameters SHALL be loaded, sealed and withdrawn together with their release. Parameters SHALL be immutable after the seal, in the same way as factors. Each key SHALL have one registered unit: a leak rate is a fraction of at most 1, and a reference calorific value is in kcal/Sm³. Every value SHALL be positive, and an alternative rate SHALL have a default beside it.
 
 #### Scenario: A parameter cannot be added after the seal
 - **WHEN** a writer inserts a parameter row into a sealed release
 - **THEN** the database refuses the write
+
+#### Scenario: A rate in the wrong unit
+- **WHEN** a release file quotes a leak rate as `2` or in `%`
+- **THEN** the loader refuses the whole file and writes nothing
 
 #### Scenario: A leak rate is read from the release, not from code
 - **WHEN** a refrigerant record names equipment type `fire_suppression_system`
@@ -51,7 +55,7 @@ The package covers:
 - **Gas-network leakage:** CH4 only, GWP 29.8.
 - **Refrigerant and suppression gases:** the document's AR6 GWPs.
 - **Leak rates:** the nine equipment leak rates and their two alternatives.
-- **Reference value:** the reference gross calorific value of 9,155 kcal/Sm³.
+- **Reference values:** the reference gross calorific value of 9,155 kcal/Sm³ and the reference net calorific value of 8,250 kcal/Sm³.
 
 #### Scenario: A year without coverage fails closed
 - **WHEN** a TR record for reporting year 2023 is calculated

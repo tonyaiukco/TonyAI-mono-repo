@@ -265,8 +265,10 @@ describe('appliesUnitConversion', () => {
     expect(appliesUnitConversion('litres', 'Fuel')).toBe(false);
   });
 
-  it('is false for a blocked unit — it is refused before any arithmetic', () => {
-    expect(appliesUnitConversion('standard_cubic_metres', 'Natural Gas')).toBe(false);
+  it('is true for standard_cubic_metres on Natural Gas — unblocked by LP4-02 PR2', () => {
+    // standard_cubic_metres was blocked before LP4-02 PR2 (no sourced NCV);
+    // now unblocked: only a sourced row of a release prices or converts it (D5).
+    expect(appliesUnitConversion('standard_cubic_metres', 'Natural Gas')).toBe(true);
   });
 
   it('is false for a unit this build does not know', () => {

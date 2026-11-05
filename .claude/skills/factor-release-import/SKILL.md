@@ -30,7 +30,8 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
    licence (decision L6) — that is a contract change (`@tonyai/shared-types`
    and the CHECK, together), not a loader flag.
 2. **The file is the contract's shape** (`FactorReleaseImport`): `release`,
-   `factors[]`, `conversions[]`. An authoritative release carries `sourceUrl`
+   `factors[]`, `conversions[]`, `parameters[]` (sourced calculation constants,
+   such as leak rates and the reference GCV; empty when there are none). An authoritative release carries `sourceUrl`
    (https), `licence`, `publishedAt`, `reviewedBy` (a firm or role) and
    `reviewedAt` (after publication), and its `gwpSet` — **one GWP set per
    inventory year** (D09), the set the sources declare. A factor is quoted per
@@ -47,7 +48,9 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
 5. **An erratum is a new edition** with the next ordinal (it must exceed every
    ordinal the publisher has), loaded with `--supersedes=<old edition>
    --reason=<why>`: the old edition is withdrawn in the same transaction, so
-   there is never a moment with two live editions or none. A withdrawn release
+   there is never a moment with two live editions or none. A release that
+   overlaps another live edition of its publisher on any factor identity is
+   refused unless it supersedes that edition (D8), on a dry run too. A withdrawn release
    never prices a new record; committed snapshots keep citing it.
 6. **`--operator` names a firm or a role, never a person** — it is recorded as
    the actor of every event in `factor_release_events` and as a withdrawal's
@@ -104,7 +107,8 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
     "calorificBasis": "gross", "scope2Method": "not_applicable",
     "methodology": "FIXTURE — not a methodology", "source": "FIXTURE — not a real emission factor"
   }],
-  "conversions": []
+  "conversions": [],
+  "parameters": []
 }
 ```
 

@@ -76,7 +76,7 @@ describe('the Turkish catalogue covers every word a live PDF or workbook prints'
       (def?.types ?? []).map((t) => ({ category: category as Category, activityType: t.value, label: t.label })));
     for (const { category, activityType, label } of named) {
       // A refrigerant's code is its name in every language.
-      if (/^R-\d/.test(label) || ['LPG', 'Fuel oil'].includes(label)) continue;
+      if (/^R-\d/.test(label) || ['LPG', 'LNG', 'HFC-227ea', 'Fuel oil'].includes(label)) continue;
       expect(tr.activityType({ category, activityType }), `${category} ${activityType}`).not.toBe(label);
     }
   });

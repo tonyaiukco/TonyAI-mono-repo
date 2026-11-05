@@ -1,6 +1,8 @@
-import type {
-  ActivityCalculationSnapshot, FactorReleaseSnapshot, InventoryBoundarySnapshot, PeriodLockDTO, ReportDataset,
-  ReportDatasetRecord, ReportEvidenceReference, ReportReleaseStanding,
+import {
+  REPORT_DATASET_SCHEMA_VERSION,
+  type ActivityCalculationSnapshot, type FactorReleaseSnapshot, type InventoryBoundarySnapshot, type PeriodLockDTO,
+  type ReportDataset, type ReportDatasetRecord, type ReportDatasetSchemaVersion, type ReportEvidenceReference,
+  type ReportReleaseStanding,
 } from '@tonyai/shared-types';
 import { assessDataset, type DatasetSelection } from '../src/report-datasets/dataset-assessments';
 import { reportDatasetFingerprint } from '../src/report-datasets/dataset-fingerprint';
@@ -111,6 +113,7 @@ export interface DatasetFacts {
   locks?: PeriodLockDTO[];
   releases?: ReportReleaseStanding[];
   datasetId?: string;
+  schemaVersion?: ReportDatasetSchemaVersion;
 }
 
 /** A retained dataset as a capture writes it. */
@@ -120,9 +123,10 @@ export function datasetOf(facts: DatasetFacts = {}): ReportDataset {
   const records = facts.records ?? fullYear();
   const evidence = facts.evidence ?? [];
   const releases = facts.releases ?? [standing(release('rel-a'))];
-  const assessments = assessDataset({ boundary, selection, records, evidence, releases: new Map(releases.map((r) => [r.id, r])) });
+  const schemaVersion = facts.schemaVersion ?? REPORT_DATASET_SCHEMA_VERSION;
+  const assessments = assessDataset({ boundary, selection, records, evidence, releases: new Map(releases.map((r) => [r.id, r])) }, schemaVersion);
   const content: Omit<ReportDataset, 'fingerprint'> = {
-    schemaVersion: 1,
+    schemaVersion,
     datasetId: facts.datasetId ?? '0d5e0000-0000-4000-8000-000000000001',
     capturedAt: AT,
     organisationId: boundary.organisationId,

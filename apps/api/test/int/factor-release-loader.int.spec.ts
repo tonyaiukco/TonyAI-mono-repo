@@ -37,6 +37,7 @@ afterEach(async () => {
     if (!release) continue;
     await owner.emissionFactor.deleteMany({ where: { releaseId: release.id } });
     await owner.unitConversion.deleteMany({ where: { releaseId: release.id } });
+    await owner.factorParameter.deleteMany({ where: { releaseId: release.id } });
     await owner.factorRelease.delete({ where: { id: release.id } });
   }
 });
@@ -75,6 +76,7 @@ async function fixtureFile(factorValue = 0.2): Promise<FactorReleaseImport> {
         basis: 'INT FIXTURE — not a real conversion',
       },
     ],
+    parameters: [],
   };
 }
 
@@ -260,6 +262,149 @@ describe('the factor loader (LP4-02 PR B1)', () => {
     } finally {
       await Promise.all([reader.$disconnect(), erratum.$disconnect()]);
     }
+  });
+
+  it('refuses an overlap with a live edition, on a dry run too, and loads once it supersedes (D8)', async () => {
+    const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
+    const first = await fixtureFile(0.2);
+    await loader.load(first, { apply: true });
+
+    const overlapping = await fixtureFile(0.25);
+    for (const apply of [false, true]) {
+      expect(await failure(loader.load(overlapping, { apply }))).toBeInstanceOf(LoaderRefusal);
+    }
+    expect(await owner.factorRelease.count({ where: { publisher: FIXTURE, edition: overlapping.release.edition } })).toBe(0);
+
+    await expect(loader.load(overlapping, { apply: true, supersedes: first.release.edition, reason: 'Erratum: corrected' }))
+      .resolves.toMatchObject({ outcome: 'loaded' });
+  });
+
+  it('lets exactly one of two concurrent overlapping loads win (D8)', async () => {
+    const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
+    for (let round = 0; round < 3; round += 1) {
+      const first = await fixtureFile(0.2);
+      const second = await fixtureFile(0.25);
+      second.release = { ...second.release, ordinal: first.release.ordinal + 1 };
+      const results = await Promise.allSettled([first, second].map((file) => loader.load(file, { apply: true })));
+      const won = results.filter((r) => r.status === 'fulfilled');
+      expect(won, `round ${round}`).toHaveLength(1);
+      const lost = results.find((r) => r.status === 'rejected');
+      expect((lost as PromiseRejectedResult).reason, `round ${round}`).toBeInstanceOf(LoaderRefusal);
+      // The next round's slot must be free again.
+      await loader.withdraw({
+        publisher: FIXTURE,
+        edition: results[0].status === 'fulfilled' ? first.release.edition : second.release.edition,
+        reason: 'Withdrawn by the spec',
+      }, true);
+    }
+  });
+
+  it('holds another slot, and an overlap with a withdrawn edition, to nothing (D8)', async () => {
+    const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
+    const first = await fixtureFile(0.2);
+    await loader.load(first, { apply: true });
+
+    const otherYear = await fixtureFile(0.2);
+    const rows = { factors: otherYear.factors.map((f) => ({ ...f, reportingYear: 2032, dataYear: 2032 })), conversions: [] };
+    await expect(loader.load({ ...otherYear, ...rows }, { apply: true })).resolves.toMatchObject({ outcome: 'loaded' });
+
+    await loader.withdraw({ publisher: FIXTURE, edition: first.release.edition, reason: 'Withdrawn by the spec' }, true);
+    const again = await fixtureFile(0.2);
+    await expect(loader.load(again, { apply: true })).resolves.toMatchObject({ outcome: 'loaded' });
+  });
+
+  describe('a release with parameters (D2)', () => {
+    const PARAMETERS = [
+      { key: 'leak_rate', subject: 'chiller', value: 0.02, unit: 'fraction', isDefault: true, source: 'SPEC FIXTURE — not a source', methodology: null },
+      { key: 'leak_rate', subject: 'chiller', value: 0.08, unit: 'fraction', isDefault: false, source: 'SPEC FIXTURE — not a source', methodology: null },
+      { key: 'reference_gcv', subject: null, value: 9155, unit: 'kcal/Sm3', isDefault: true, source: 'SPEC FIXTURE — not a source', methodology: null },
+    ];
+    async function loadedRelease() {
+      const file = { ...(await fixtureFile()), parameters: PARAMETERS };
+      await new FactorReleaseLoader(loaderDb, OPERATOR).load(file, { apply: true });
+      const release = await owner.factorRelease.findUniqueOrThrow({
+        where: { publisher_edition: { publisher: FIXTURE, edition: file.release.edition } },
+        include: { parameters: true },
+      });
+      return { file, release };
+    }
+    const insertRow = (releaseId: string, key = 'reference_gcv') =>
+      `INSERT INTO factor_parameters (id, release_id, key, subject, value, unit, is_default, source)
+       VALUES (gen_random_uuid(), '${releaseId}', '${key}', NULL, 1, 'kcal/Sm3', true, 'Forged')`;
+
+    it('loads them whole with the release, and a re-run with others is other content', async () => {
+      const { file, release } = await loadedRelease();
+      expect(release.parameters).toHaveLength(3);
+      expect(release.sealedAt).not.toBeNull();
+      const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
+      await expect(loader.load(file, { apply: true })).resolves.toMatchObject({ outcome: 'already_loaded', parameters: 3 });
+      const changed = { ...file, parameters: PARAMETERS.map((p) => ({ ...p, value: p.value / 2 })) };
+      expect(await failure(loader.load(changed, { apply: true }))).toBeInstanceOf(LoaderRefusal);
+    });
+
+    it('refuses a row into the sealed release (TA012) and rewriting one (TA010), as the owner too', async () => {
+      const { release } = await loadedRelease();
+      const [row] = release.parameters;
+      for (const [sql, code] of [
+        [insertRow(release.id, 'reference_ncv'), 'TA012'],
+        [`UPDATE factor_parameters SET value = 1 WHERE id = '${row.id}'`, 'TA010'],
+        ['TRUNCATE factor_parameters', 'TA010'],
+      ] as const) {
+        const e = await failure(owner.$transaction((tx) => tx.$executeRawUnsafe(sql)));
+        expect(String((e as Error).message), sql).toContain(code);
+      }
+      expect(await owner.factorParameter.count({ where: { releaseId: release.id } })).toBe(3);
+    });
+
+    it('holds a subjectless parameter to one row per release, key and role', async () => {
+      // A release still open, inside the transaction that would load it: the
+      // only moment a row can go in at all.
+      const edition = `int-loader-${randomUUID()}`;
+      const ordinal = await nextOrdinal();
+      const e = await failure(loaderDb.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_catalog.set_config('tonyai.actor', ${OPERATOR}, true)`;
+        const { id } = await tx.factorRelease.create({
+          data: { publisher: FIXTURE, title: 'Fixture — not a source', edition, ordinal, status: 'fixture', notes: 'Written by a spec. Not a source.' },
+          select: { id: true },
+        });
+        await tx.$executeRawUnsafe(insertRow(id));
+        await tx.$executeRawUnsafe(insertRow(id));
+      }));
+      expect(String((e as Error).message)).toContain('23505');
+    });
+
+    it('withdrawing the release covers its parameters: their rows stay, under a withdrawn release', async () => {
+      const { file, release } = await loadedRelease();
+      await new FactorReleaseLoader(loaderDb, OPERATOR)
+        .withdraw({ publisher: FIXTURE, edition: file.release.edition, reason: 'Withdrawn by the spec' }, true);
+      const withdrawn = await runtime.factorRelease.findUniqueOrThrow({ where: { id: release.id }, select: { status: true } });
+      expect(withdrawn.status).toBe('withdrawn');
+      expect(await owner.factorParameter.count({ where: { releaseId: release.id } })).toBe(3);
+    });
+
+    it.each([
+      ['a rate above one', `'leak_rate', 'chiller', 2, 'fraction'`],
+      ['a rate in percent', `'leak_rate', 'chiller', 0.02, '%'`],
+      ['a zero reference value', `'reference_gcv', NULL, 0, 'kcal/Sm3'`],
+      ['a key the contract does not name', `'forged_key', NULL, 1, 'kcal/Sm3'`],
+    ])('refuses %s in the database too (23514)', async (_what, values) => {
+      const e = await failure(loaderDb.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_catalog.set_config('tonyai.actor', ${OPERATOR}, true)`;
+        const { id } = await tx.factorRelease.create({
+          data: { publisher: FIXTURE, title: 'Fixture — not a source', edition: `int-loader-${randomUUID()}`, ordinal: await nextOrdinal(), status: 'fixture', notes: 'Written by a spec. Not a source.' },
+          select: { id: true },
+        });
+        await tx.$executeRawUnsafe(`INSERT INTO factor_parameters (id, release_id, key, subject, value, unit, is_default, source)
+          VALUES (gen_random_uuid(), '${id}', ${values}, true, 'Forged')`);
+      }));
+      expect(String((e as Error).message)).toContain('23514');
+    });
+
+    it('lets the API read them and never write them', async () => {
+      const { release } = await loadedRelease();
+      expect(await runtime.factorParameter.count({ where: { releaseId: release.id } })).toBe(3);
+      await expect(runtime.$executeRawUnsafe(insertRow(release.id, 'runtime_forged'))).rejects.toThrow(/permission denied/);
+    });
   });
 
   it('withdraws a release with no replacement, once, as the loader', async () => {

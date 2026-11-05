@@ -77,7 +77,18 @@
     "R-410A": "R-410A",
     "R-448A": "R-448A",
     "R-449A": "R-449A",
-    "R-1234yf": "R-1234yf"
+    "R-1234yf": "R-1234yf",
+    "gas_network_leakage": "Şebeke doğal gaz kaçağı",
+    "lng": "LNG",
+    "coal": "Kömür",
+    "on_road_petrol": "Karayolu – benzin",
+    "on_road_diesel": "Karayolu – dizel",
+    "on_road_lpg": "Karayolu – LPG",
+    "off_road_petrol": "Yol dışı – benzin",
+    "off_road_diesel": "Yol dışı – dizel",
+    "R-22": "R-22 (HCFC-22)",
+    "HFC-227ea": "HFC-227ea",
+    "SF6": "SF6 (kükürt hekzaflorür)"
   },
   "bulkPreview": {
     "title": "Kabul edilen satırlar",

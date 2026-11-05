@@ -1,4 +1,3 @@
-import { ACTIVITY_UNITS } from '@tonyai/shared-types';
 // Unit normalization for the calculation engine (LP3-03).
 //
 // Two steps, and only the first is code:
@@ -34,7 +33,7 @@ export interface NormalizationResult {
  * A unit is either convertible or blocked — never both.
  *
  * The first cut gave blocked units `multiplier: 1`, which is the worst possible
- * fail-open value: if the block check were ever bypassed, `normalize(100,'Sm3')`
+ * fail-open value: if the block check were ever bypassed, `normalize(100,'Nm3')`
  * would return 100 kWh against a real ~10.6, a ~10x understatement that looks
  * entirely normal. As a union, a blocked rule HAS no multiplier and forgetting
  * the check is a type error.
@@ -52,12 +51,6 @@ type UnitRule =
       /** Why this recognised unit cannot be calculated. */
       blocked: string;
     };
-
-// The Sm³ refusal is the shared contract's wording, not a copy — the API and the
-// UI must not be able to state different reasons for the same refusal.
-const BLOCKED_SM3 =
-  ACTIVITY_UNITS.find((u) => u.value === 'standard_cubic_metres')?.blocked ??
-  'Standard cubic metres cannot be converted without a sourced calorific value.';
 
 // Keyed by a canonical (lowercased, trimmed) unit alias. Every `target` is the
 // base unit of the unit's family (`DIMENSION_BASE_UNIT`), and every multiplier
@@ -86,20 +79,15 @@ const UNIT_RULES: Record<string, UnitRule> = {
   // sourced conversion row (see the header); water is priced per m³ as it is.
   cubic_metres: { target: 'cubic_metres', multiplier: 1, basis: 'identity' },
 
-  // Standard cubic metres: RECOGNISED but not calculable. Sm³ and m³ are
-  // different physical quantities — the conversion needs a calorific value at
-  // stated reference conditions, and this repo has no sourced one. Registering
-  // it with any multiplier would produce a number nobody could defend, so it is
-  // registered with none and refused by name (K4: until a sourced row exists).
-  standard_cubic_metres: {
-    target: 'standard_cubic_metres',
-    blocked: BLOCKED_SM3,
-  },
+  // --- Standard gas volume base unit: standard_cubic_metres ---
+  // Sm³ and m³ are different physical quantities, so this is an identity, never
+  // the m³ rule. Sm³ reaches kWh only through a sourced conversion row, as m³
+  // does, and a release's reference conditions state what it means (LP4-02 D5).
+  standard_cubic_metres: { target: 'standard_cubic_metres', multiplier: 1, basis: 'identity' },
   // Nm³ is NOT Sm³. Normal cubic metres are referenced to 0 °C, standard to
   // 15 °C (ISO 13443) — an Nm³ holds ~5.5% more gas (288.15/273.15 = 1.0549).
-  // Both are blocked today, but they must never come to share a multiplier, and
-  // an Nm³ user told about "standard cubic metres" would reasonably conclude
-  // they are the same unit.
+  // They must never come to share a multiplier, and an Nm³ user told about
+  // "standard cubic metres" would reasonably conclude they are the same unit.
   normal_cubic_metres: {
     target: 'normal_cubic_metres',
     blocked:

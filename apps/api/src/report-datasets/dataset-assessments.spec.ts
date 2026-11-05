@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { REPORT_DATASET_SCHEMA_VERSION } from '@tonyai/shared-types';
 import type {
   ActivityCalculationSnapshot, FactorReleaseSnapshot, InventoryBoundarySnapshot, ReportCoverageGap,
   ReportDatasetRecord, ReportEvidenceReference, ReportReleaseStanding,
@@ -78,7 +79,7 @@ function assess(over: Partial<CapturedFacts> = {}) {
     evidence: [],
     releases: new Map([['rel-a', standing(release('rel-a'))]]),
     ...over,
-  });
+  }, REPORT_DATASET_SCHEMA_VERSION);
 }
 
 const codes = (gaps: readonly ReportCoverageGap[]) => gaps.map((g) => g.code);

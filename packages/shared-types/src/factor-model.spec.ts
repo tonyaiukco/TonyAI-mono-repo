@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ACTIVITY_UNITS,
+  AUTHORITATIVE_FACTOR_PUBLISHERS,
   BILLED_ENERGY_CALORIFIC_BASIS,
   CALCULATION_GAS,
   CALCULATION_REFUSAL_CODES,
@@ -12,6 +13,8 @@ import {
   CONVERSION_IDENTITY_FIELDS,
   CONVERSION_TARGETS,
   DIMENSION_BASE_UNIT,
+  EQUIPMENT_TYPES,
+  EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   FACTOR_GASES,
   FACTOR_IMPORT_TEXT_LIMITS,
   FACTOR_PUBLISHERS,
@@ -19,6 +22,7 @@ import {
   FACTOR_STATUSES,
   FACTOR_STATUS_RANK,
   INTERNAL_FACTOR_PUBLISHERS,
+  PARAMETER_KEYS,
   STANDARD_REFERENCE_CONDITIONS,
   UNIT_DIMENSIONS,
   UNSPECIFIED_ACTIVITY_TYPE,
@@ -53,8 +57,9 @@ import {
 
 // Every number below is a STRUCTURAL test value, chosen to be recognisably not
 // a real factor. LP3-03 holds no factor value; LP4-02 loads the real ones.
+// The test uses IPCC, a registered authoritative publisher (LP4-02 PR2 task 2.1).
 const TEST_RELEASE: FactorReleaseImport['release'] = {
-  publisher: 'Structural Test Publisher',
+  publisher: AUTHORITATIVE_FACTOR_PUBLISHERS.ipcc,
   title: 'Structural test release — not a real publication',
   edition: '2026 test',
   ordinal: 1,
@@ -108,16 +113,9 @@ function conversionRow(
   };
 }
 
-/**
- * The registry plus `TEST_RELEASE`'s publisher: no real publisher is
- * registered before its licence is (LP4-02, L6), and the authoritative rules
- * below still need an authoritative release to run on. The registry's own
- * refusals are pinned against the real `FACTOR_PUBLISHERS` further down.
- */
-const TEST_PUBLISHERS: readonly string[] = [...FACTOR_PUBLISHERS, TEST_RELEASE.publisher];
-
+/** Shorthand for validateFactorReleaseImport in the tests below. */
 function validate(input: unknown): FactorImportIssue[] {
-  return validateFactorReleaseImport(input, { testPublishers: TEST_PUBLISHERS });
+  return validateFactorReleaseImport(input);
 }
 
 /** A release; a placeholder or fixture one is published by its internal publisher. */
@@ -135,6 +133,7 @@ function release(
     release: { ...TEST_RELEASE, ...internal, ...over.meta },
     factors: over.factors ?? [factorRow()],
     conversions: over.conversions ?? [],
+    parameters: over.parameters ?? [],
   };
 }
 
@@ -1091,12 +1090,13 @@ describe('validateFactorReleaseImport — review round 1', () => {
       42,
       [],
       {},
-      { release: {}, factors: null, conversions: [] },
-      { release: {}, factors: [], conversions: null },
-      { release: null, factors: [], conversions: [] },
+      { release: {}, factors: null, conversions: [], parameters: [] },
+      { release: {}, factors: [], conversions: null, parameters: [] },
+      { release: null, factors: [], conversions: [], parameters: [] },
+      { release: {}, factors: [], conversions: [], parameters: null },
     ]) {
       expect(validate(bad)).toEqual([
-        { path: '', message: expect.stringContaining('release, factors[] and conversions[]') },
+        { path: '', message: expect.stringContaining('release, factors[], conversions[] and parameters[]') },
       ]);
     }
     expect(issuesAt({ ...release(), factors: [null as unknown as FactorImportRow] })).toContain('factors[0]');
@@ -1159,6 +1159,8 @@ describe('validateFactorReleaseImport — review round 1', () => {
       source: 1000,
       basis: 2000,
       referenceConditions: 200,
+      parameterSubject: 100,
+      parameterUnit: 32,
     });
     expect(issuesAt(release({ meta: { publisher: ' DESNZ' } }))).toContain('release.publisher');
     // Default-ignorable and surrogate code points: a Hangul filler, a
@@ -1390,6 +1392,7 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       unit_not_for_category: 400,
       activity_type_not_for_category: 400,
       activity_type_required: 400,
+      record_parameters_invalid: 400,
       no_factor: 404,
       placeholder_refused: 404,
       ambiguous_factor: 409,
@@ -1436,12 +1439,29 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       Electricity: { implicit: 'grid_electricity', values: ['grid_electricity'] },
       'Natural Gas': { implicit: 'natural_gas', values: ['natural_gas'] },
       Water: { implicit: 'water_supply', values: ['water_supply'] },
-      Fuel: { implicit: undefined, values: ['diesel', 'gas_oil', 'fuel_oil', 'burning_oil', 'lpg'] },
-      'Mobile Combustion': { implicit: undefined, values: ['diesel', 'petrol', 'lpg', 'cng'] },
+      // LP4-02 PR2 task 2.2: petrol, coal, lng added to Fuel.
+      Fuel: {
+        implicit: undefined,
+        values: ['diesel', 'petrol', 'gas_oil', 'fuel_oil', 'burning_oil', 'lpg', 'lng', 'coal'],
+      },
+      // LP4-02 PR2 task 2.2: five mode types added to Mobile Combustion.
+      'Mobile Combustion': {
+        implicit: undefined,
+        values: [
+          'diesel', 'petrol', 'lpg', 'cng',
+          'on_road_petrol', 'on_road_diesel', 'on_road_lpg', 'off_road_petrol', 'off_road_diesel',
+        ],
+      },
+      // LP4-02 PR2 task 2.2: R-22, HFC-227ea, SF6 added to Refrigerants.
       Refrigerants: {
         implicit: undefined,
-        values: ['R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F', 'R-410A', 'R-448A', 'R-449A', 'R-1234yf'],
+        values: [
+          'R-22', 'R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F', 'R-410A', 'R-448A', 'R-449A', 'R-1234yf',
+          'HFC-227ea', 'SF6',
+        ],
       },
+      // LP4-02 PR2 task 2.2: Fugitive Gas category added.
+      'Fugitive Gas': { implicit: 'gas_network_leakage', values: ['gas_network_leakage'] },
     });
   });
 
@@ -1675,19 +1695,21 @@ describe('validateFactorReleaseImport — the publisher registry (LP4-02)', () =
   const atPublisher = (input: FactorReleaseImport) =>
     validateFactorReleaseImport(input).filter((issue) => issue.path === 'release.publisher');
 
-  it('registers no real publisher before its licence is recorded', () => {
-    expect([...FACTOR_PUBLISHERS]).toEqual(['TonyAI prototype', 'TonyAI test fixture']);
+  it('registers the TR factor package publishers (LP4-02 PR2 task 2.1)', () => {
+    // IPCC and ETKB are the authoritative publishers (decisions L6 of 2026-10-11
+    // and 2026-11-05). The internal publishers remain for placeholder and fixture.
+    expect([...FACTOR_PUBLISHERS]).toEqual([
+      'TonyAI prototype',
+      'TonyAI test fixture',
+      'IPCC',
+      'ETKB',
+    ]);
     expect(Object.isFrozen(INTERNAL_FACTOR_PUBLISHERS)).toBe(true);
+    expect(Object.isFrozen(AUTHORITATIVE_FACTOR_PUBLISHERS)).toBe(true);
     // The validator's default allow-list: a push would admit a publisher.
     expect(Object.isFrozen(FACTOR_PUBLISHERS)).toBe(true);
-    // So a complete, reviewed authoritative release is still refused — on its
-    // publisher alone.
-    expect(validateFactorReleaseImport(release())).toEqual([
-      {
-        path: 'release.publisher',
-        message: 'is not a registered publisher (TonyAI prototype, TonyAI test fixture)',
-      },
-    ]);
+    // A complete, reviewed authoritative release with IPCC is now accepted.
+    expect(validateFactorReleaseImport(release())).toEqual([]);
   });
 
   it('refuses a look-alike of a registered name', () => {
@@ -1725,5 +1747,142 @@ describe('validateFactorReleaseImport — the publisher registry (LP4-02)', () =
     expect(issues).toEqual([
       { path: 'release.publisher', message: 'has leading or trailing white space' },
     ]);
+  });
+});
+
+describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
+  const validate = (input: unknown) => validateFactorReleaseImport(input);
+  const issuesAt = (input: FactorReleaseImport) => validate(input).map((issue) => issue.path);
+
+  const leakRateParam = (over: Record<string, unknown> = {}) => ({
+    key: 'leak_rate',
+    subject: 'split_air_conditioner',
+    value: 0.01,
+    unit: 'fraction',
+    isDefault: true,
+    source: 'Revision MD.md §4.3',
+    methodology: null,
+    ...over,
+  });
+
+  const gcvParam = (over: Record<string, unknown> = {}) => ({
+    key: 'reference_gcv',
+    subject: null,
+    value: 9155,
+    unit: 'kcal/Sm3',
+    isDefault: true,
+    source: 'Revision MD.md §4.1',
+    methodology: null,
+    ...over,
+  });
+
+  it('exports the expected keys and equipment types', () => {
+    expect(PARAMETER_KEYS).toEqual(['leak_rate', 'reference_gcv', 'reference_ncv']);
+    expect(EQUIPMENT_TYPES).toContain('split_air_conditioner');
+    expect(EQUIPMENT_TYPES).toContain('chiller');
+    expect(EQUIPMENT_TYPES_WITH_ALTERNATIVE).toEqual(['split_air_conditioner', 'chiller']);
+  });
+
+  it.each([
+    ['a rate above one', () => leakRateParam({ value: 2 }), 'value'],
+    ['a rate quoted in percent', () => leakRateParam({ unit: '%' }), 'unit'],
+    ['a zero rate', () => leakRateParam({ value: 0 }), 'value'],
+    ['a zero reference GCV', () => gcvParam({ value: 0 }), 'value'],
+    ['a reference GCV in another unit', () => gcvParam({ unit: 'kWh/Sm3' }), 'unit'],
+    ['a reference NCV with a subject', () => gcvParam({ key: 'reference_ncv', subject: 'chiller' }), 'subject'],
+  ])('refuses %s', (_what, row, field) => {
+    expect(issuesAt(release({ parameters: [row()] }))).toEqual([`parameters[0].${field}`]);
+  });
+
+  it('accepts a reference NCV beside the reference GCV', () => {
+    expect(issuesAt(release({ parameters: [gcvParam(), gcvParam({ key: 'reference_ncv', value: 8250 })] }))).toEqual([]);
+  });
+
+  it('refuses an alternative rate with no default beside it, and accepts the pair', () => {
+    const alternative = leakRateParam({ value: 0.1, isDefault: false });
+    expect(issuesAt(release({ parameters: [alternative] }))).toEqual(['parameters[0].isDefault']);
+    expect(issuesAt(release({ parameters: [alternative, leakRateParam()] }))).toEqual([]);
+  });
+
+  it('accepts a valid leak_rate parameter', () => {
+    expect(issuesAt(release({ parameters: [leakRateParam()] }))).toEqual([]);
+  });
+
+  it('accepts a valid reference_gcv parameter', () => {
+    expect(issuesAt(release({ parameters: [gcvParam()] }))).toEqual([]);
+  });
+
+  it('refuses an unknown parameter key', () => {
+    expect(issuesAt(release({ parameters: [leakRateParam({ key: 'unknown' })] }))).toContain(
+      'parameters[0].key',
+    );
+  });
+
+  it('requires an equipment type subject for leak_rate', () => {
+    expect(issuesAt(release({ parameters: [leakRateParam({ subject: null })] }))).toContain(
+      'parameters[0].subject',
+    );
+    expect(issuesAt(release({ parameters: [leakRateParam({ subject: 'unknown_type' })] }))).toContain(
+      'parameters[0].subject',
+    );
+  });
+
+  it('requires null subject for reference_gcv', () => {
+    expect(issuesAt(release({ parameters: [gcvParam({ subject: 'split_air_conditioner' })] }))).toContain(
+      'parameters[0].subject',
+    );
+  });
+
+  it('requires a non-negative finite value', () => {
+    expect(issuesAt(release({ parameters: [leakRateParam({ value: -1 })] }))).toContain('parameters[0].value');
+    expect(issuesAt(release({ parameters: [leakRateParam({ value: Infinity })] }))).toContain('parameters[0].value');
+    expect(issuesAt(release({ parameters: [leakRateParam({ value: 'x' })] }))).toContain('parameters[0].value');
+  });
+
+  it('refuses duplicate parameter rows', () => {
+    const p1 = leakRateParam();
+    const p2 = leakRateParam();
+    expect(issuesAt(release({ parameters: [p1, p2] }))).toContain('parameters[1].isDefault');
+  });
+
+  it('refuses duplicate default for the same key+subject', () => {
+    const p1 = leakRateParam({ subject: 'chiller' });
+    const p2 = leakRateParam({ subject: 'chiller' });
+    expect(issuesAt(release({ parameters: [p1, p2] }))).toContain('parameters[1].isDefault');
+  });
+
+  it('allows an alternative only for equipment types that have one', () => {
+    // split_air_conditioner and chiller have alternatives
+    for (const subject of ['split_air_conditioner', 'chiller']) {
+      const pair = [leakRateParam({ subject }), leakRateParam({ subject, isDefault: false })];
+      expect(issuesAt(release({ parameters: pair }))).toEqual([]);
+    }
+    // Other equipment types do not
+    expect(issuesAt(release({ parameters: [leakRateParam({ subject: 'fire_extinguisher', isDefault: false })] }))).toContain(
+      'parameters[0].isDefault',
+    );
+  });
+
+  it('refuses alternative for reference_gcv', () => {
+    expect(issuesAt(release({ parameters: [gcvParam({ isDefault: false })] }))).toContain('parameters[0].isDefault');
+  });
+
+  it('validates text fields', () => {
+    expect(issuesAt(release({ parameters: [leakRateParam({ unit: '' })] }))).toContain('parameters[0].unit');
+    expect(issuesAt(release({ parameters: [leakRateParam({ source: '' })] }))).toContain('parameters[0].source');
+    expect(issuesAt(release({ parameters: [leakRateParam({ source: ' source' })] }))).toContain('parameters[0].source');
+  });
+
+  it('allows null methodology', () => {
+    expect(issuesAt(release({ parameters: [leakRateParam({ methodology: null })] }))).toEqual([]);
+  });
+
+  it('validates methodology when present', () => {
+    expect(issuesAt(release({ parameters: [leakRateParam({ methodology: '' })] }))).toContain(
+      'parameters[0].methodology',
+    );
+    expect(issuesAt(release({ parameters: [leakRateParam({ methodology: ' method' })] }))).toContain(
+      'parameters[0].methodology',
+    );
   });
 });

@@ -177,3 +177,83 @@ describe('LP4-02 (33) — what a record says, at the door, for every writer', ()
     expect(accepted).toBe(7);
   });
 });
+
+describe('LP4-02 (D3) — a record\'s parameters', () => {
+  const gas = (parameters: unknown, periodValue = 'August') =>
+    recordInput(tenant, { category: 'Natural Gas', periodValue, parameters: parameters as Prisma.InputJsonValue });
+  const refrigerant = (parameters: unknown) =>
+    recordInput(tenant, {
+      category: 'Refrigerants', activityType: 'R-32', activityUnit: 'kg', periodValue: 'August',
+      parameters: parameters as Prisma.InputJsonValue,
+    });
+  const CHILLER = { equipmentType: 'chiller', refillKg: 0, leakRateChoice: 'alternative' };
+
+  it.each([
+    ['both calorific values', () => gas({ ncvKcalPerSm3: 8250, billedGcvKcalPerSm3: 9155 })],
+    ['a zero NCV', () => gas({ ncvKcalPerSm3: 0 })],
+    ['a negative correction factor', () => gas({ volumeCorrectionFactor: -1 })],
+    ['a calorific value as text', () => gas({ ncvKcalPerSm3: '8250' })],
+    ['a key the category does not define', () => gas({ ncvKcalPerSm3: 8250, gwp: 1 })],
+    ['an array', () => gas([])],
+    ['a JSON scalar', () => gas(1)],
+    ['a missing refrigerant field', () => refrigerant({ equipmentType: 'chiller', refillKg: 1 })],
+    ['a JSON-null refrigerant field', () => refrigerant({ ...CHILLER, leakRateChoice: null })],
+    ['a capacity beside the activity value it would contradict', () => refrigerant({ ...CHILLER, installedCapacityKg: 10 })],
+    ['an unknown equipment type', () => refrigerant({ ...CHILLER, equipmentType: 'kettle' })],
+    ['a negative mass', () => refrigerant({ ...CHILLER, refillKg: -1 })],
+    ['the alternative rate where none is defined', () => refrigerant({ ...CHILLER, equipmentType: 'refrigerator' })],
+    ["another category's fields", () => refrigerant({ ncvKcalPerSm3: 8250 })],
+    ['parameters on a category that takes none', () => recordInput(tenant, { periodValue: 'August', parameters: { ncvKcalPerSm3: 1 } })],
+  ])('refuses %s, as the owner too (23514)', async (_what, data) => {
+    const e = await failure(withRollback(owner, (tx) => tx.activityRecord.create({ data: data() })));
+    expect(sqlstateOf(e)).toBe('23514');
+    expect(String((e as Error).message)).toContain('activity_records_parameters_check');
+  });
+
+  it.each(['{"ncvKcalPerSm3": 1e400}', '{"ncvKcalPerSm3": 1e-400}', '{"volumeCorrectionFactor": 1e400}'])(
+    'refuses %s, which JSON holds but a double cannot',
+    async (parameters) => {
+      const e = await failure(withRollback(owner, async (tx) => {
+        const rec = await tx.activityRecord.create({ data: gas({}, 'August') });
+        await tx.$executeRawUnsafe(`UPDATE "activity_records" SET "parameters" = '${parameters}'::jsonb WHERE "id" = '${rec.id}'`);
+      }));
+      expect(String((e as Error).message)).toContain('23514');
+    },
+  );
+
+  it('accepts each category\'s valid shape, and no parameters at all', async () => {
+    const accepted = await withRollback(owner, async (tx) => {
+      await tx.activityRecord.create({ data: gas({ ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 }, 'August') });
+      await tx.activityRecord.create({ data: gas({ billedGcvKcalPerSm3: 9000, ncvKcalPerSm3: null }, 'September') });
+      await tx.activityRecord.create({ data: gas({}, 'October') });
+      await tx.activityRecord.create({ data: refrigerant(CHILLER) });
+      await tx.activityRecord.create({ data: recordInput(tenant, { periodValue: 'August' }) });
+      return tx.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId, periodValue: { in: ['August', 'September', 'October'] } } });
+    });
+    expect(accepted).toBe(5);
+  });
+
+  it('freezes them with the other inputs once a record is committed (TA001), the owner included', async () => {
+    const e = await failure(
+      withRollback(owner, async (tx) => {
+        const rec = await tx.activityRecord.create({ data: gas({ ncvKcalPerSm3: 8100 }) });
+        await tx.activityRecord.update({ where: { id: rec.id }, data: { status: ActivityRecordStatus.submitted } });
+        await tx.activityRecord.update({ where: { id: rec.id }, data: { parameters: { ncvKcalPerSm3: 9000 } } });
+      }),
+    );
+    expect(sqlstateOf(e)).toBe('TA001');
+  });
+
+  it('lets only the API change them on a draft: the service role is refused (TA006)', async () => {
+    const rec = await owner.activityRecord.create({ data: gas({ ncvKcalPerSm3: 8100 }, 'November') });
+    try {
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${rec.id}`, { parameters: { ncvKcalPerSm3: 9000 } })))
+        .toEqual({ ok: false, code: 'TA006' });
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).parameters).toEqual({ ncvKcalPerSm3: 8100 });
+      await runtime.activityRecord.update({ where: { id: rec.id }, data: { parameters: { ncvKcalPerSm3: 9000 } } });
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).parameters).toEqual({ ncvKcalPerSm3: 9000 });
+    } finally {
+      await owner.activityRecord.delete({ where: { id: rec.id } });
+    }
+  });
+});

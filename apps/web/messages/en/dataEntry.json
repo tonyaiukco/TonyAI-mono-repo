@@ -77,7 +77,18 @@
     "R-410A": "R-410A",
     "R-448A": "R-448A",
     "R-449A": "R-449A",
-    "R-1234yf": "R-1234yf"
+    "R-1234yf": "R-1234yf",
+    "gas_network_leakage": "Gas network leakage",
+    "lng": "LNG",
+    "coal": "Coal",
+    "on_road_petrol": "On-road petrol",
+    "on_road_diesel": "On-road diesel",
+    "on_road_lpg": "On-road LPG",
+    "off_road_petrol": "Off-road petrol",
+    "off_road_diesel": "Off-road diesel",
+    "R-22": "R-22 (HCFC-22)",
+    "HFC-227ea": "HFC-227ea",
+    "SF6": "SF6 (sulphur hexafluoride)"
   },
   "bulkPreview": {
     "title": "Accepted rows",

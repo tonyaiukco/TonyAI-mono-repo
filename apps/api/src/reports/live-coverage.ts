@@ -1,4 +1,4 @@
-import { CATEGORY_SCOPE_MAP, type ReportCoverageGapCode, type ReportLiveCoverage } from '@tonyai/shared-types';
+import { CATEGORY_SCOPE_MAP, REPORT_DATASET_SCHEMA_VERSION, type ReportCoverageGapCode, type ReportLiveCoverage } from '@tonyai/shared-types';
 import { QueryTooBroadError } from '../common/api-error';
 import { CaptureSnapshot } from '../common/capture-snapshot';
 import { readInventoryBoundary } from '../inventory-boundary/boundary-reader';
@@ -87,7 +87,7 @@ export async function readLiveCoverage(
     records: facts.records,
     evidence: facts.evidence,
     releases: facts.releases,
-  });
+  }, REPORT_DATASET_SCHEMA_VERSION);
   const gapCounts: Partial<Record<ReportCoverageGapCode, number>> = {};
   for (const g of coverage.gaps) gapCounts[g.code] = (gapCounts[g.code] ?? 0) + 1;
   const extract = selection.subsidiaryId !== undefined || selection.scope !== undefined || selection.category !== undefined;

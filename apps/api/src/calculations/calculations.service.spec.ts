@@ -319,31 +319,32 @@ describe('normalize (calculation_logic.md §2)', () => {
   // UNIT_ALIAS_SPELLINGS, which is the entire point. The table-driven checks
   // above compare the table against itself, so re-pointing a single blocked
   // spelling (`'sm³': 'cubic_metres'`) satisfies both while handing Sm³ the
-  // ×11.36 natural-gas multiplier — 1000 Sm³ booked as 11,360 kWh. Sm³ and Nm³
-  // are refused BY NAME because this repo holds no sourced calorific value for
-  // them (see normalization.ts), and a fabricated figure in an emissions
-  // inventory is the failure this product cannot have. Every spelling that
-  // reaches a blocked unit is pinned, not just the one someone remembered.
-  it.each([
-    'Sm3',
-    'sm3',
-    'sm³',
-    'SM³',
-    'scm',
-    'standard_cubic_metre',
-    'standard_cubic_metres',
-    'standard cubic metres',
-    'Nm3',
-    'nm3',
-    'nm³',
-    'normal_cubic_metre',
-    'normal_cubic_metres',
-    'normal cubic metres',
-  ])('refuses %s rather than converting it', (spelling) => {
-    expect(isKnownUnit(spelling)).toBe(true);
-    expect(blockedUnitReason(spelling)).not.toBeNull();
-    expect(() => normalize(1000, spelling, ANY_CATEGORY, null)).toThrow(/sourced calorific value/i);
-  });
+  // ×11.36 natural-gas multiplier — 1000 Sm³ booked as 11,360 kWh. Sm³ stays
+  // its own unit, priced only through a sourced row (LP4-02 D5), and Nm³ is
+  // refused BY NAME because this repo holds no sourced value for it. A
+  // fabricated figure in an emissions inventory is the failure this product
+  // cannot have, so every spelling of both is pinned.
+  it.each(['Sm3', 'sm3', 'sm³', 'SM³', 'scm', 'standard_cubic_metre', 'standard_cubic_metres', 'standard cubic metres'])(
+    'keeps %s in Sm³: an identity, never the m³ rule (LP4-02 D5)',
+    (spelling) => {
+      expect(isKnownUnit(spelling)).toBe(true);
+      expect(blockedUnitReason(spelling)).toBeNull();
+      expect(normalize(1000, spelling, ANY_CATEGORY, null)).toMatchObject({
+        normalizedValue: 1000,
+        normalizedUnit: 'standard_cubic_metres',
+        conversionApplied: false,
+      });
+    },
+  );
+
+  it.each(['Nm3', 'nm3', 'nm³', 'normal_cubic_metre', 'normal_cubic_metres', 'normal cubic metres'])(
+    'refuses %s rather than converting it',
+    (spelling) => {
+      expect(isKnownUnit(spelling)).toBe(true);
+      expect(blockedUnitReason(spelling)).not.toBeNull();
+      expect(() => normalize(1000, spelling, ANY_CATEGORY, null)).toThrow(/sourced calorific value/i);
+    },
+  );
 
   it('uses the exact definitional constants, not rounded ones (LP3-03)', () => {
     // The UK statutory therm as an exact quotient — 29.30711 to seven figures.
@@ -379,11 +380,18 @@ describe('normalize (calculation_logic.md §2)', () => {
     expect(() => normalize(1, 'bananas', ANY_CATEGORY, null)).toThrow(/Unsupported unit/);
   });
 
-  it('knows Sm³ but refuses to convert it', () => {
+  it('normalises Sm³ to itself, never through the m³ rule (LP4-02 D5)', () => {
+    expect(normalize(100, 'Sm3', ANY_CATEGORY, null)).toMatchObject({
+      normalizedValue: 100,
+      normalizedUnit: 'standard_cubic_metres',
+      conversionApplied: false,
+    });
+  });
+
+  it('knows Nm³ but refuses to convert it', () => {
     // Recognised, so the DTO accepts it and the refusal can explain itself —
     // "unsupported unit" would send the user looking for a spelling mistake.
-    expect(isKnownUnit('Sm3')).toBe(true);
-    expect(() => normalize(1, 'Sm3', ANY_CATEGORY, null)).toThrow(/sourced calorific value/i);
+    expect(isKnownUnit('Nm³')).toBe(true);
     expect(() => normalize(1, 'Nm³', ANY_CATEGORY, null)).toThrow(/sourced calorific value/i);
   });
 });
@@ -560,12 +568,9 @@ describe('CalculationsService.compute', () => {
     ).rejects.toMatchObject({ code: 'no_conversion' });
   });
 
-  it('refuses Sm³ by name, saying what is missing', async () => {
-    // Sm³ and m³ are different physical quantities and this repo holds no
-    // sourced calorific value for the first. Registering it with the m³
-    // multiplier would produce a number nobody could defend, so it is
-    // recognised and refused — and the message must say why, or a tester reads
-    // it as "unsupported unit" and simply reaches for m³ instead.
+  it('prices nothing for Sm³ with no sourced row: a refusal naming the gap, never a number (LP4-02 D5)', async () => {
+    // Sm³ and m³ are different physical quantities. Sm³ now reaches the factor
+    // lookup, where only a sourced row can price it.
     await expect(
       service.compute({
         category: 'Natural Gas',
@@ -574,8 +579,7 @@ describe('CalculationsService.compute', () => {
         value: 100,
         unit: 'Sm3',
       }),
-    ).rejects.toThrow(/sourced calorific value/i);
-    expect(prisma.emissionFactor.findMany).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ code: 'no_factor' });
   });
 
   it('records WHICH conversion was applied, not just that one was', async () => {
@@ -1238,7 +1242,7 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
         .compute(input)
         .then(() => null, (e: unknown) => (e as CalculationInputError).getResponse());
     expect(await codeOf({ ...electricityUK, unit: 'bananas' })).toMatchObject({ code: 'unit_unknown' });
-    expect(await codeOf({ ...electricityUK, category: 'Natural Gas', unit: 'Sm3' })).toMatchObject({ code: 'unit_blocked' });
+    expect(await codeOf({ ...electricityUK, category: 'Natural Gas', unit: 'Nm³' })).toMatchObject({ code: 'unit_blocked' });
     expect(await codeOf({ ...electricityUK, unit: 'therms' })).toMatchObject({ code: 'unit_not_for_category' });
     for (const body of [
       await codeOf({ ...electricityUK, unit: 'bananas' }),

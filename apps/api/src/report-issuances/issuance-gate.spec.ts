@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ReportIssuanceGap } from '@tonyai/shared-types';
+import { REPORT_DATASET_SCHEMA_VERSION, type ReportIssuanceGap } from '@tonyai/shared-types';
 import { complete, SITE_1, SUB, SUB_B, without } from '../../test/boundary-fixtures';
 import {
   allLocks, datasetOf, frozenBoundary, fullYear, gasYear, lock, MONTHS, priced, record, refingerprinted, release, rowOf,
@@ -12,6 +12,20 @@ import { boundaryMatchesVersion, deriveIssuance, readRetainedDataset, RetainedDa
  * acceptance table): status and gaps from the retained dataset alone, and the
  * retained text held to its row, its own assessments and its version.
  */
+
+/** A dataset as schema 1 captured it: `complete()` before Fugitive Gas existed. */
+function schema1Dataset(facts: Parameters<typeof datasetOf>[0] = {}) {
+  const rows = complete();
+  return datasetOf({
+    boundary: frozenBoundary({
+      ...rows,
+      policies: without(rows.policies, (p) => p.category === 'Fugitive Gas'),
+      cells: without(rows.cells, (c) => c.category === 'Fugitive Gas'),
+    }),
+    schemaVersion: 1,
+    ...facts,
+  });
+}
 
 const codes = (gaps: readonly ReportIssuanceGap[]) => gaps.map((g) => g.code);
 const only = (gaps: readonly ReportIssuanceGap[], code: ReportIssuanceGap['code']) => gaps.filter((g) => g.code === code);
@@ -241,7 +255,8 @@ describe('readRetainedDataset — the text held to its row before it is trusted 
     expect(() => readRetainedDataset({ ...rowOf(dataset), id: 'another' })).toThrow(/identity/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), organisationId: 'org-b' })).toThrow(/identity/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), content: '{"schemaVersion":' })).toThrow(/not JSON/);
-    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 2 })).toThrow(/schemaVersion/);
+    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 1 })).toThrow(/schemaVersion/);
+    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 3 })).toThrow(/schemaVersion/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), content: 'null' })).toThrow(RetainedDatasetError);
   });
 });
@@ -255,12 +270,56 @@ describe('the pinned assessments — K2 holds every retained dataset to them (ar
   // REPORT_DATASET_SCHEMA_VERSION and keep the old rules for the old version
   // ("LP3-04 PR D follow-ups"), then re-pin.
   it('a complete year', () => {
-    expect(datasetOf().fingerprint.hex).toBe('244200c5f4ed453538f36487a8014ba67e1c49957fc2c4a672a37cd1f8ad946b');
+    expect(datasetOf().fingerprint.hex).toBe('1732443717b5bfad15ba3a2cd9dd74cec49b5532b2f69b130f22e01656927570');
   });
 
   it('one January record, nothing locked', () => {
     expect(datasetOf({ records: [record('r-01')], locks: [] }).fingerprint.hex)
+      .toBe('f2846969e058c5084bf0f7bbaa0198b013cc413306dde54df08581d774dd042d');
+  });
+
+  // Schema 1's fingerprints, unchanged since LP3-04 PR D: the five categories
+  // its boundaries were asked about. Never re-pin these.
+  it('schema 1: a complete year', () => {
+    expect(schema1Dataset().fingerprint.hex).toBe('244200c5f4ed453538f36487a8014ba67e1c49957fc2c4a672a37cd1f8ad946b');
+  });
+
+  it('schema 1: one January record, nothing locked', () => {
+    expect(schema1Dataset({ records: [record('r-01')], locks: [] }).fingerprint.hex)
       .toBe('319372f63039ad57edc2bd9a7afcf82299ecd21b20b7674186f18c4e15d417e5');
+  });
+});
+
+describe('a dataset retained before Fugitive Gas (schema 1)', () => {
+  const dataset = () => schema1Dataset();
+
+  it('is read and issued under the rule it was captured under', () => {
+    expect(readRetainedDataset(rowOf(dataset()))).toEqual(dataset());
+    expect(deriveIssuance(dataset())).toEqual({ status: 'final', gaps: [] });
+  });
+
+  it('its boundary, frozen before the category, still matches its version', () => {
+    expect(boundaryMatchesVersion(1, dataset().boundary, dataset().boundary)).toBe(true);
+  });
+
+  it('a new capture of the same boundary must decide the new category: partial, the gap named', () => {
+    const current = datasetOf({ boundary: dataset().boundary });
+    expect(current.schemaVersion).toBe(REPORT_DATASET_SCHEMA_VERSION);
+    const result = deriveIssuance(current);
+    expect(result.status).toBe('partial');
+    expect(gapsOf(result).filter((g) => g.coverageCode === 'applicability_undetermined').map((g) => g.category))
+      .toEqual(['Fugitive Gas', 'Fugitive Gas']);
+  });
+
+  it("is refused when its row and its content disagree on the version, or either names one this gate doesn't read", () => {
+    expect(() => readRetainedDataset({ ...rowOf(dataset()), schemaVersion: 2 })).toThrow(RetainedDatasetError);
+    const future = refingerprinted(dataset(), (d) => { (d as { schemaVersion: number }).schemaVersion = 3; });
+    expect(() => readRetainedDataset({ ...rowOf(future), schemaVersion: 3 })).toThrow(RetainedDatasetError);
+  });
+
+  it('cannot be relabelled to escape the newer rule: schema 2 recomputes under six categories', () => {
+    const relabelled = refingerprinted(dataset(), (d) => { d.schemaVersion = 2; });
+    expect(() => readRetainedDataset(rowOf(relabelled))).toThrow(/do not recompute/);
   });
 });
 
@@ -284,6 +343,6 @@ describe('boundaryMatchesVersion — the retained boundary is the frozen version
 
   it('fails closed on a version it cannot read, or a schema it has no comparison for', () => {
     expect(boundaryMatchesVersion(1, retained, null)).toBe(false);
-    expect(boundaryMatchesVersion(2, retained, retained)).toBe(false);
+    expect(boundaryMatchesVersion(3, retained, retained)).toBe(false);
   });
 });

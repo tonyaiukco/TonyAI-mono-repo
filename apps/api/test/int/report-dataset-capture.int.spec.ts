@@ -138,6 +138,7 @@ function declaration(): PutInventoryBoundarySubsidiaryRequest {
       { category: 'Fuel', level: 'company', reportingPeriod: 'annual' },
       { category: 'Mobile Combustion', level: 'company', reportingPeriod: 'annual' },
       { category: 'Refrigerants', level: 'company', reportingPeriod: 'annual' },
+      { category: 'Fugitive Gas', level: 'company', reportingPeriod: 'annual' },
     ],
     applicability: [
       { locationId: L1, category: 'Electricity', applicability: 'included' },
@@ -145,6 +146,7 @@ function declaration(): PutInventoryBoundarySubsidiaryRequest {
       { locationId: null, category: 'Fuel', applicability: 'excluded', reason: 'No fuel burnt on site' },
       { locationId: null, category: 'Mobile Combustion', applicability: 'excluded', reason: 'No company vehicles' },
       { locationId: null, category: 'Refrigerants', applicability: 'excluded', reason: 'No refrigeration plant' },
+      { locationId: null, category: 'Fugitive Gas', applicability: 'excluded', reason: 'No gas distribution network' },
     ],
     sources: [
       { locationId: L1, name: 'L1 main meter', mapping: { kind: 'mapped', category: 'Electricity', activityType: null }, applicability: 'included', evidenceReportingPeriod: null },
@@ -154,7 +156,7 @@ function declaration(): PutInventoryBoundarySubsidiaryRequest {
 
 /** A holding's whole declaration: every category excluded at the company. No gap. */
 function holdingDeclaration(): PutInventoryBoundarySubsidiaryRequest {
-  const categories = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const;
+  const categories = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
   return {
     firstMonth: 1, lastMonth: 12, sites: [],
     attribution: categories.map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
@@ -366,8 +368,8 @@ describe('a capture over HTTP', () => {
     await service.putSubsidiary(user, boundaryId, S, declaration());
     await service.putSubsidiary(user, boundaryId, S2, {
       firstMonth: 1, lastMonth: 12, sites: [],
-      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
-      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
+      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
+      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
       sources: [],
     });
     await owner.organisation.update({ where: { id: t.organisationId }, data: { tradingName: 'Int-test trading name' } });
@@ -706,8 +708,8 @@ describe('who reads a retained dataset', () => {
     await service.putSubsidiary(user, boundaryId, S, declaration());
     await service.putSubsidiary(user, boundaryId, S2, {
       firstMonth: 1, lastMonth: 12, sites: [],
-      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
-      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
+      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
+      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
       sources: [],
     });
     const { datasetId } = summaryOf(await capture(admin(), { boundaryId, subsidiaryId: S }));
@@ -813,7 +815,7 @@ describe('the retained table (TA016, V5)', () => {
           (doc) => set('{boundary,reportingYear}', Prisma.sql`to_jsonb(${later})`)(set('{context,year}', Prisma.sql`to_jsonb(${later})`)(doc)))],
         ['a selection column the content does not carry', copy({ selection: Prisma.sql`'extract'` })],
         ['a context column the content does not carry', copy({ context: Prisma.sql`jsonb_build_object('year', ${YEAR}, 'scope', 2)` })],
-        ["the content's schema version another", copy({}, set('{schemaVersion}', Prisma.sql`'2'::jsonb`))],
+        ["the content's schema version another", copy({}, set('{schemaVersion}', Prisma.sql`'1'::jsonb`))],
         ["the content's algorithm another", copy({}, set('{fingerprint,algorithm}', Prisma.sql`'"md5"'::jsonb`))],
         ["the content's canonicalization another", copy({}, set('{fingerprint,canonicalization}', Prisma.sql`'"v0"'::jsonb`))],
         ['a referenced column naming one the content does not', copy({ referenced_subsidiary_ids: Prisma.sql`referenced_subsidiary_ids || ${S2}::uuid` })],

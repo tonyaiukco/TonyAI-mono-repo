@@ -50,7 +50,7 @@ describe('the activity_records integrity triggers', () => {
     const body = functionBody('activity_records_snapshot_immutable');
     expect(body).toContain('CREATE OR REPLACE FUNCTION'); // LP4-01's, not LP3-03's
     for (const column of [
-      'calculation', 'activity_type', 'category', 'activity_value', 'activity_unit', 'scope',
+      'calculation', 'activity_type', 'category', 'activity_value', 'activity_unit', 'parameters', 'scope',
       'reporting_year', 'reporting_period', 'period_value', 'subsidiary_id', 'location_id',
     ]) {
       expect(body).toContain(`NEW."${column}" IS DISTINCT FROM OLD."${column}"`);
@@ -62,7 +62,7 @@ describe('the activity_records integrity triggers', () => {
     expect(body).not.toContain('SECURITY DEFINER');
   });
 
-  it("LP4-01 changes only K5's location test: otherwise LP3-03's body, word for word", () => {
+  it("LP4-01 changes only K5's location test: otherwise LP3-03's body, word for word, with LP4-02's parameters", () => {
     const original = sql.slice(
       sql.indexOf('CREATE FUNCTION "public"."activity_records_snapshot_immutable"()'),
       sql.indexOf('$fn$;', sql.indexOf('CREATE FUNCTION "public"."activity_records_snapshot_immutable"()')),
@@ -72,10 +72,16 @@ describe('the activity_records integrity triggers', () => {
     const removed = lines(original).filter((l) => !lines(current).includes(l));
     const added = lines(current).filter((l) => !lines(original).includes(l));
     expect(removed).toEqual([
+      "SET search_path = ''",
       '    OR (NEW."location_id" IS DISTINCT FROM OLD."location_id"',
       `        AND (NEW."location_id" IS NOT NULL OR current_user <> ${OWNER}))`,
     ]);
-    expect(added).toEqual(['    OR NEW."location_id" IS DISTINCT FROM OLD."location_id"']);
+    // Since then: the pinned search path (LP3-04) and LP4-02's parameters (D3).
+    expect(added).toEqual([
+      'SET search_path = pg_catalog, pg_temp',
+      '    OR NEW."parameters" IS DISTINCT FROM OLD."parameters"',
+      '    OR NEW."location_id" IS DISTINCT FROM OLD."location_id"',
+    ]);
   });
 
   it("LP4-01: every parent key refuses a delete and a key change, so no referential action — which runs as the owner — writes a record", () => {

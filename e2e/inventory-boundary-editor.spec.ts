@@ -15,7 +15,7 @@ import { ADMIN_EMAIL, API_BASE, CONSULTANT_EMAIL, ENTRY_EMAIL, SUB, bearer, getA
  */
 
 const YEAR = 2028;
-const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const;
+const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
 // As a boundary names a subsidiary: its trading name (the API's `tradingName || legalName`).
 const TRADING = 'TonyAI Trading';
 const ENERGY = 'TonyAI Energy';
@@ -103,13 +103,13 @@ test('a super admin declares, is refused, resolves the gaps and confirms a versi
   await editor.getByTestId('declaration-save').click();
   await expect(page.getByText(`${ENERGY} saved.`)).toBeVisible();
   await expect(editor).toBeHidden();
-  // Four categories have no attribution: gaps, stored and shown, that block a confirmation.
+  // Five categories have no attribution: gaps, stored and shown, that block a confirmation.
   const energy = subsidiaryRow(page, ENERGY);
   await expect(energy.getByRole('cell').nth(1)).toHaveText('January – December');
-  await expect(energy.getByRole('cell').nth(4)).toHaveText('4');
+  await expect(energy.getByRole('cell').nth(4)).toHaveText('5');
   await detail.getByRole('button', { name: 'Confirm version' }).click();
   const confirmDialog = page.getByRole('alertdialog');
-  await expect(confirmDialog.getByTestId('confirm-blocked')).toHaveText('Resolve the gaps first: 4');
+  await expect(confirmDialog.getByTestId('confirm-blocked')).toHaveText('Resolve the gaps first: 5');
   await expect(confirmDialog.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled();
   await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
   // The stored body is the one the form sent.

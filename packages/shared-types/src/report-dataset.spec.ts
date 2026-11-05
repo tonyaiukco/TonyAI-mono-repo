@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  REPORT_DATASET_SCHEMA_VERSION, REPORT_COVERAGE_GAP_CODES,
+  BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA, INVENTORY_CATEGORIES, REPORT_DATASET_SCHEMA_VERSION,
+  REPORT_DATASET_SCHEMA_VERSIONS, REPORT_COVERAGE_GAP_CODES,
   REPORT_PROVENANCE_ISSUE_CODES, REPORT_ISSUANCE_GAP_CODES,
   type ActivityCalculationSnapshot, type ActivityRecordDTO,
   type InventorySource, type InventoryAttributionPolicy, type InventoryBoundarySnapshot,
@@ -51,7 +52,14 @@ describe('the additive report dataset contract', () => {
     expectTypeOf<ReportDatasetRecord['createdByName']>().toEqualTypeOf<undefined>();
     expectTypeOf<ReportDatasetRecord['reviewedByName']>().toEqualTypeOf<undefined>();
     expectTypeOf<ReportDatasetRecord['voidedByName']>().toEqualTypeOf<undefined>();
-    expect(REPORT_DATASET_SCHEMA_VERSION).toBe(1);
+    expect(REPORT_DATASET_SCHEMA_VERSION).toBe(2);
+    expect(REPORT_DATASET_SCHEMA_VERSIONS.at(-1)).toBe(REPORT_DATASET_SCHEMA_VERSION);
+    // The newest version asks what the write path asks today; older ones never move.
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[REPORT_DATASET_SCHEMA_VERSION]).toEqual(INVENTORY_CATEGORIES);
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[1]).toEqual(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants']);
+    // Spelled out, never today's list: an alias would carry a later category into schema 2.
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[2]).toEqual(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas']);
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[2]).not.toBe(INVENTORY_CATEGORIES);
   });
 
   it('can describe a mid-year site, named exclusions and an unsupported source without invented amounts', () => {

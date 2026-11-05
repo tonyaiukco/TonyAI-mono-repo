@@ -411,3 +411,170 @@ describe.each(DTOS)('%s — activityType (LP3-03)', (_name, Dto) => {
     expect(constraintsOn(Dto, { activityType: 7 }, 'activityType')).toContain('isString');
   });
 });
+
+describe.each(DTOS)('%s — parameters (LP4-02, D3)', (_name, Dto) => {
+  it('accepts null and its absence — most categories do not use parameters', () => {
+    expect(parse(Dto, { parameters: null }).errors).toHaveLength(0);
+    expect(parse(Dto, { parameters: undefined }).errors).toHaveLength(0);
+    expect(parse(Dto, {}).errors).toHaveLength(0);
+  });
+
+  it('accepts valid Natural Gas parameters', () => {
+    const body = { category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8500 } };
+    expect(parse(Dto, body).errors).toHaveLength(0);
+
+    const withGcv = { category: 'Natural Gas', parameters: { billedGcvKcalPerSm3: 9500 } };
+    expect(parse(Dto, withGcv).errors).toHaveLength(0);
+
+    const withVcf = { category: 'Natural Gas', parameters: { volumeCorrectionFactor: 0.98 } };
+    expect(parse(Dto, withVcf).errors).toHaveLength(0);
+
+    const combined = { category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8500, volumeCorrectionFactor: 0.98 } };
+    expect(parse(Dto, combined).errors).toHaveLength(0);
+  });
+
+  it('refuses Natural Gas parameters with both ncvKcalPerSm3 and billedGcvKcalPerSm3', () => {
+    const body = {
+      category: 'Natural Gas',
+      parameters: { ncvKcalPerSm3: 8500, billedGcvKcalPerSm3: 9500 },
+    };
+    expect(constraintsOn(Dto, body, 'parameters').length).toBeGreaterThan(0);
+  });
+
+  it('accepts valid Refrigerant parameters', () => {
+    const body = {
+      category: 'Refrigerants',
+      activityType: 'R-410A',
+      parameters: {
+        equipmentType: 'split_air_conditioner',
+        refillKg: 2.0,
+        leakRateChoice: 'default',
+      },
+    };
+    expect(parse(Dto, body).errors).toHaveLength(0);
+  });
+
+  it('accepts alternative leak rate for equipment types that have one', () => {
+    const body = {
+      category: 'Refrigerants',
+      activityType: 'R-410A',
+      parameters: {
+        equipmentType: 'split_air_conditioner', // has alternative
+        refillKg: 2.0,
+        leakRateChoice: 'alternative',
+      },
+    };
+    expect(parse(Dto, body).errors).toHaveLength(0);
+  });
+
+  it('refuses alternative leak rate for equipment types without one', () => {
+    const body = {
+      category: 'Refrigerants',
+      activityType: 'R-410A',
+      parameters: {
+        equipmentType: 'fire_extinguisher', // no alternative
+        refillKg: 2.0,
+        leakRateChoice: 'alternative',
+      },
+    };
+    expect(constraintsOn(Dto, body, 'parameters').length).toBeGreaterThan(0);
+  });
+
+  it('refuses Refrigerant parameters with missing required fields', () => {
+    const incomplete = {
+      category: 'Refrigerants',
+      activityType: 'R-410A',
+      parameters: {
+        equipmentType: 'split_air_conditioner',
+        // missing refillKg and leakRateChoice
+      },
+    };
+    expect(constraintsOn(Dto, incomplete, 'parameters').length).toBeGreaterThan(0);
+  });
+
+  it('refuses Refrigerant parameters with invalid equipment type', () => {
+    const body = {
+      category: 'Refrigerants',
+      activityType: 'R-410A',
+      parameters: {
+        equipmentType: 'invalid_type',
+        refillKg: 2.0,
+        leakRateChoice: 'default',
+      },
+    };
+    expect(constraintsOn(Dto, body, 'parameters').length).toBeGreaterThan(0);
+  });
+
+  it('refuses Refrigerant parameters with negative values', () => {
+    const negative = {
+      category: 'Refrigerants',
+      activityType: 'R-410A',
+      parameters: {
+        equipmentType: 'split_air_conditioner',
+        refillKg: -2.0,
+        leakRateChoice: 'default',
+      },
+    };
+    expect(constraintsOn(Dto, negative, 'parameters').length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['ncvKcalPerSm3', 0],
+    ['billedGcvKcalPerSm3', 0],
+    ['volumeCorrectionFactor', 0],
+    ['ncvKcalPerSm3', -1],
+    ['ncvKcalPerSm3', '8250'],
+  ])('refuses Natural Gas %s of %s: not a positive number', (field, value) => {
+    const body = { category: 'Natural Gas', parameters: { [field]: value } };
+    expect(parse(Dto, body).errors.map((e) => e.property)).toContain('parameters');
+  });
+
+  it('refuses a key the category does not define, which would be stored as if it were an input', () => {
+    const gas = { category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8250, gwp: 1 } };
+    expect(parse(Dto, gas).errors.map((e) => e.property)).toContain('parameters');
+    const refrigerant = {
+      category: 'Refrigerants',
+      parameters: { equipmentType: 'chiller', refillKg: 1, leakRateChoice: 'default', ncvKcalPerSm3: 1 },
+    };
+    expect(parse(Dto, refrigerant).errors.map((e) => e.property)).toContain('parameters');
+  });
+
+  it('refuses an array or a scalar under any category', () => {
+    for (const parameters of [[], 'x', 1, true]) {
+      expect(parse(Dto, { category: 'Natural Gas', parameters }).errors.map((e) => e.property)).toContain('parameters');
+    }
+  });
+
+  it('allows a refill of zero: a capacity-only refrigerant record', () => {
+    const body = {
+      category: 'Refrigerants',
+      parameters: { equipmentType: 'chiller', refillKg: 0, leakRateChoice: 'default' },
+    };
+    expect(parse(Dto, body).errors.map((e) => e.property)).not.toContain('parameters');
+  });
+
+  it('refuses parameters for categories that do not accept them', () => {
+    const electricity = {
+      category: 'Electricity',
+      parameters: { ncvKcalPerSm3: 8500 },
+    };
+    expect(constraintsOn(Dto, electricity, 'parameters').length).toBeGreaterThan(0);
+
+    const fuel = {
+      category: 'Fuel',
+      activityType: 'diesel',
+      parameters: { equipmentType: 'chiller' },
+    };
+    expect(constraintsOn(Dto, fuel, 'parameters').length).toBeGreaterThan(0);
+  });
+});
+
+describe('UpdateActivityRecordDto — parameters with no category named', () => {
+  it('leaves the category rule to the service, which knows the effective one', () => {
+    expect(parseExactly(UpdateActivityRecordDto, { parameters: { ncvKcalPerSm3: 8500 } })).toEqual([]);
+  });
+
+  it("still refuses what is no category's object", () => {
+    expect(parseExactly(UpdateActivityRecordDto, { parameters: 'x' }).map((e) => e.property)).toEqual(['parameters']);
+  });
+});

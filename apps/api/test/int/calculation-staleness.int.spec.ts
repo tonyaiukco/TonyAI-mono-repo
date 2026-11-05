@@ -104,6 +104,7 @@ async function fixture(factors: FixtureFactor[]): Promise<FactorReleaseImport> {
     },
     factors,
     conversions: [],
+    parameters: [],
   } as FactorReleaseImport;
 }
 

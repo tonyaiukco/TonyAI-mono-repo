@@ -260,7 +260,7 @@ export class ReportDatasetsService {
     );
     const assessments = assessDataset({
       boundary, selection, records: facts.records, evidence: facts.evidence, releases: facts.releases,
-    });
+    }, REPORT_DATASET_SCHEMA_VERSION);
     const content: Omit<ReportDataset, 'fingerprint'> = {
       schemaVersion: REPORT_DATASET_SCHEMA_VERSION,
       datasetId: randomUUID(),

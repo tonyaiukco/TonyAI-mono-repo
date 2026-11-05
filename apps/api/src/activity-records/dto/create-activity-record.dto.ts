@@ -27,6 +27,7 @@ import {
 } from '@tonyai/shared-types';
 import type {
   Category,
+  RecordParameters,
   ReportingPeriod,
 } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
@@ -34,6 +35,7 @@ import { blankToNull } from '../../common/blank-to-null';
 import { codedConstraint } from '../../common/coded-validation.pipe';
 import { storableUnit } from '../../calculations/storable-unit';
 import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../../calculations/activity-type';
+import { IsValidRecordParameters } from './record-parameters.dto';
 
 
 /**
@@ -114,6 +116,13 @@ export class CreateActivityRecordDto {
   @IsOptional()
   @IsObject()
   input?: Record<string, unknown> | null;
+
+  // LP4-02 (D3): per-record calculation parameters, in their own column:
+  // Natural Gas's calorific overrides and volume correction, a refrigerant's
+  // equipment, refill and leak rate choice. Every other category takes none.
+  @IsOptional()
+  @IsValidRecordParameters()
+  parameters?: RecordParameters | null;
 
   // Unbounded `text` in Postgres, rendered verbatim to a reviewer, and one of
   // the three explanations-about-a-figure that share EXPLANATION_MAX_LENGTH.

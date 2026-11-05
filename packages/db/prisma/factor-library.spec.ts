@@ -9,6 +9,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  PARAMETER_KEYS,
+  PARAMETER_UNITS,
   CALORIFIC_BASES,
   CATEGORY_ACTIVITY_TYPES,
   CATEGORY_SCOPE_MAP,
@@ -324,6 +326,13 @@ describe('the migration and schema agree with the contract', () => {
     expect(checkVocabulary('publisher')).toEqual([PLACEHOLDER_PUBLISHER, FIXTURE_PUBLISHER]);
   });
 
+  it("holds each parameter key to the contract's unit, in the CHECK now in force", () => {
+    const body = constraintInForce('factor_parameters_value_check');
+    for (const key of PARAMETER_KEYS) expect(body).toContain(`WHEN '${key}' THEN "unit" = '${PARAMETER_UNITS[key]}'`);
+    expect(body.match(/WHEN '/g)).toHaveLength(PARAMETER_KEYS.length);
+    expect(body).toMatch(/ELSE false\s+END/);
+  });
+
   it('admits exactly the contract\'s publisher registry, in the CHECK now in force', () => {
     // The import refuses an unregistered publisher before the database does
     // (LP4-02); the two lists must be one list, or a release the validator
@@ -354,13 +363,16 @@ describe('the migration and schema agree with the contract', () => {
   });
 
   it('backfills each implicit category with its own activity type and every other with unspecified', () => {
-    const implicit = Object.entries(CATEGORY_ACTIVITY_TYPES).filter(([, spec]) => spec?.implicit);
-    for (const [category, spec] of implicit) {
+    // LP3-03 backfilled the implicit categories that existed at its time.
+    // New implicit categories (Fugitive Gas, LP4-02 PR2) are not in that migration.
+    const lp3ImplicitCategories = ['Electricity', 'Natural Gas', 'Water'];
+    for (const category of lp3ImplicitCategories) {
+      const spec = CATEGORY_ACTIVITY_TYPES[category as keyof typeof CATEGORY_ACTIVITY_TYPES];
       expect(migration).toContain(`WHEN '${category}' THEN '${spec!.implicit}'`);
     }
     // No mapping for a category the contract does not make implicit.
     const block = /"activity_type" = CASE f\."category"([\s\S]*?)END/.exec(migration)?.[1] ?? '';
-    expect(block.match(/WHEN /g)).toHaveLength(implicit.length);
+    expect(block.match(/WHEN /g)).toHaveLength(lp3ImplicitCategories.length);
     expect(block).toContain(`ELSE '${UNSPECIFIED_ACTIVITY_TYPE}'`);
   });
 

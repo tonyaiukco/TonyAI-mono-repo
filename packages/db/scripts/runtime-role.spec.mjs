@@ -245,8 +245,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // on the boundary's header and its five row tables; LP4-02 (27)'s
     // geography guard on subsidiaries and sites; LP3-04 PR C's dataset guard
     // and truncate guard on `report_datasets`; PR D's issuance guard and
-    // truncate guard on `report_issuances`.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2);
+    // truncate guard on `report_issuances`. LP4-02 PR2 adds factor_parameters
+    // (6 triggers: 4 BEFORE + 2 AFTER).
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2);
     for (const table of ['subsidiaries', 'locations']) {
       expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === `${table}_geography_writer`)).toEqual({
         table,
@@ -256,7 +257,8 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       });
     }
     expect(INTEGRITY_TRIGGERS.filter((t) => t.definer).map((t) => t.trigger).sort()).toEqual([
-      'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
+      'emission_factors_record_delete', 'emission_factors_record_insert',
+      'factor_parameters_record_delete', 'factor_parameters_record_insert', 'factor_releases_record_event',
       'inventory_applicability_cells_frozen', 'inventory_attribution_policies_frozen', 'inventory_boundaries_frozen',
       'inventory_boundary_sites_frozen', 'inventory_boundary_subsidiaries_frozen', 'inventory_sources_frozen',
       'report_datasets_guard', 'report_issuances_guard', 'unit_conversions_record_delete', 'unit_conversions_record_insert',
@@ -381,7 +383,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // access-removal trigger lives there too (Open questions, "LP3-03 PR B" (20)).
     const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))].filter((t) => t !== 'organisations').sort();
     expect(guarded).toEqual([
-      'activity_records', 'emission_factors', 'factor_release_events', 'factor_releases',
+      'activity_records', 'emission_factors', 'factor_parameters', 'factor_release_events', 'factor_releases',
       'inventory_applicability_cells', 'inventory_attribution_policies', 'inventory_boundaries', 'inventory_boundary_sites',
       'inventory_boundary_subsidiaries', 'inventory_sources', 'locations', 'report_datasets', 'report_issuances',
       'subsidiaries', 'unit_conversions',
@@ -935,6 +937,7 @@ describe('the factor loader role (LP4-02)', () => {
       factor_releases: ['SELECT', 'INSERT'],
       emission_factors: ['SELECT', 'INSERT'],
       unit_conversions: ['SELECT', 'INSERT'],
+      factor_parameters: ['SELECT', 'INSERT'],
     });
     expect(FACTOR_LOADER_COLUMN_UPDATES).toEqual({
       factor_releases: ['sealed_at', 'status', 'withdrawn_at', 'withdrawn_by', 'withdrawal_reason'],
@@ -971,7 +974,7 @@ describe('checkFactorLoaderRole — the loader as the runtime role is checked, a
       : sql.includes(`has_schema_privilege('${FACTOR_LOADER_ROLE}', 'public', 'USAGE') AS usage`)
         ? [{ usage: true, create_: false, createdb_obj: false }]
         : sql.includes('has_parameter_privilege') ? [{ replica }] : [];
-  const missing = ['factor_releases', 'emission_factors', 'unit_conversions'].map(
+  const missing = ['factor_releases', 'emission_factors', 'unit_conversions', 'factor_parameters'].map(
     (t) => `${FACTOR_LOADER_ROLE}'s table privileges list public.${t}, which does not exist`,
   );
 

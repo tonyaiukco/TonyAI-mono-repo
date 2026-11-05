@@ -54,7 +54,8 @@ export function complete(): BoundaryRows {
       policy('Fuel', 'company'),
       policy('Mobile Combustion', 'company'),
       policy('Refrigerants', 'company'),
-      ...['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'].map((c) => policy(c, 'company', 'annual', SUB_B)),
+      policy('Fugitive Gas', 'company'),
+      ...['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'].map((c) => policy(c, 'company', 'annual', SUB_B)),
     ],
     cells: [
       cell(SITE_1, 'Electricity'),
@@ -63,7 +64,8 @@ export function complete(): BoundaryRows {
       cell(null, 'Fuel', 'excluded'),
       cell(null, 'Mobile Combustion', 'excluded'),
       cell(null, 'Refrigerants', 'excluded'),
-      ...['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'].map((c) => cell(null, c, 'excluded', SUB_B)),
+      cell(null, 'Fugitive Gas', 'excluded'),
+      ...['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'].map((c) => cell(null, c, 'excluded', SUB_B)),
     ],
     sources: [
       source({ id: 'e-1', locationId: SITE_1, category: 'Electricity', scope: 2, reportingPeriod: 'monthly' }),

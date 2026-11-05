@@ -1,11 +1,12 @@
 import {
   isProvenanceSnapshot,
-  REPORT_DATASET_SCHEMA_VERSION,
+  REPORT_DATASET_SCHEMA_VERSIONS,
   REPORT_ISSUANCE_GAP_CODES,
   type InventoryBoundarySnapshot,
   type InventorySource,
   type ReportCoverageGap,
   type ReportDataset,
+  type ReportDatasetSchemaVersion,
   type ReportIssuanceGap,
   type ReportIssuanceGapCode,
 } from '@tonyai/shared-types';
@@ -73,6 +74,9 @@ export function selectionOfContext(context: ReportDataset['context']): DatasetSe
   return selection;
 }
 
+const isReadableSchemaVersion = (version: unknown): version is ReportDatasetSchemaVersion =>
+  (REPORT_DATASET_SCHEMA_VERSIONS as readonly unknown[]).includes(version);
+
 /**
  * The retained dataset, parsed from its row's exact text and verified against
  * the row and itself; throws `RetainedDatasetError` otherwise.
@@ -88,7 +92,7 @@ export function readRetainedDataset(row: RetainedDatasetRow): ReportDataset {
     return problem('its content is not JSON');
   }
   if (dataset === null || typeof dataset !== 'object' || Array.isArray(dataset)) problem('its content is not an object');
-  if (dataset.schemaVersion !== REPORT_DATASET_SCHEMA_VERSION || row.schemaVersion !== REPORT_DATASET_SCHEMA_VERSION) {
+  if (!isReadableSchemaVersion(dataset.schemaVersion) || row.schemaVersion !== dataset.schemaVersion) {
     problem(`schemaVersion ${String(dataset.schemaVersion)} is not one this gate reads`);
   }
   if (dataset.datasetId !== row.id || dataset.organisationId !== row.organisationId || dataset.context?.year !== row.reportingYear) {
@@ -119,7 +123,7 @@ export function readRetainedDataset(row: RetainedDatasetRow): ReportDataset {
       records: dataset.records,
       evidence: dataset.evidence,
       releases: new Map(dataset.provenance.releases.map((r) => [r.id, r])),
-    });
+    }, dataset.schemaVersion);
     const retained = { review: dataset.review, coverage: dataset.coverage, provenance: dataset.provenance, scopes: dataset.scopes };
     same = canonicalJson(recomputed) === canonicalJson(retained);
   } catch (e) {
@@ -133,7 +137,7 @@ export function readRetainedDataset(row: RetainedDatasetRow): ReportDataset {
  * Whether the retained boundary is the frozen version as stored — every fact
  * of it: ids, names, months, cells, policies and source fields, its number,
  * decision and decider (PR C follow-up (9)). Compared under the dataset's
- * schemaVersion: version 1's boundary is what `buildBoundarySnapshot` builds
+ * schemaVersion: versions 1 and 2's boundary is what `buildBoundarySnapshot` builds
  * from a frozen version's rows (its frozen names, W7), compared whole. A later
  * schemaVersion that changes the builder adds its own comparison here, so a
  * historic dataset is never held to a newer shape.
@@ -146,6 +150,7 @@ export function boundaryMatchesVersion(
   if (rebuilt === null) return false;
   switch (schemaVersion) {
     case 1:
+    case 2:
       return canonicalJson(rebuilt) === canonicalJson(retained);
     default:
       return false;

@@ -28,8 +28,9 @@ const ALLOWED: Record<string, number | 'any'> = {
   'apps/api/src/calculations/calculations.service.ts': 1,
   // A comment naming the table.
   'apps/api/src/calculations/normalization.ts': 1,
-  // The loader re-reads a release it just stored, by its id.
-  'apps/api/src/factor-releases/factor-release-loader.ts': 2,
+  // The loader re-reads a release it just stored, by its id, and compares a new
+  // release's identities with the live ones (D8). Neither prices anything.
+  'apps/api/src/factor-releases/factor-release-loader.ts': 3,
   // The seed's `resolveFactor` — the accepted second copy (LP4-02 follow-up
   // (26)): local, single-writer, it prices the demo records — and its
   // presence checks by id.

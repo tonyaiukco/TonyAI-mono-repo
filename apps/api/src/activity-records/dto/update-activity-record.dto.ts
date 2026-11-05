@@ -25,12 +25,13 @@ import {
   PERIOD_VALUE_MAX_LENGTH,
   REPORTING_PERIODS,
 } from '@tonyai/shared-types';
-import type { Category, ReportingPeriod } from '@tonyai/shared-types';
+import type { Category, RecordParameters, ReportingPeriod } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 import { blankToNull } from '../../common/blank-to-null';
 import { codedConstraint } from '../../common/coded-validation.pipe';
 import { storableUnit } from '../../calculations/storable-unit';
 import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../../calculations/activity-type';
+import { IsValidRecordParameters } from './record-parameters.dto';
 
 
 /**
@@ -110,6 +111,13 @@ export class UpdateActivityRecordDto {
   @IsOptional()
   @IsObject()
   input?: Record<string, unknown> | null;
+
+  // LP4-02 (D3): per-record calculation parameters, in their own column. Null
+  // clears them; absent keeps them. An edit that names no category leaves the
+  // category rule to the service, which asks it of the effective category.
+  @IsOptional()
+  @IsValidRecordParameters()
+  parameters?: RecordParameters | null;
 
   // Unbounded `text` in Postgres, rendered verbatim to a reviewer, and one of
   // the three explanations-about-a-figure that share EXPLANATION_MAX_LENGTH.

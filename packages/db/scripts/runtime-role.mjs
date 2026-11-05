@@ -150,6 +150,7 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   emission_factors: ['SELECT'],
   factor_releases: ['SELECT'],
   unit_conversions: ['SELECT'],
+  factor_parameters: ['SELECT'],
   // The library's record: written by its own triggers only, and not read by
   // the API yet — the grant arrives with its first reader.
   factor_release_events: [],
@@ -301,6 +302,7 @@ export const FACTOR_LOADER_TABLE_PRIVILEGES = Object.freeze({
   factor_releases: ['SELECT', 'INSERT'],
   emission_factors: ['SELECT', 'INSERT'],
   unit_conversions: ['SELECT', 'INSERT'],
+  factor_parameters: ['SELECT', 'INSERT'],
 });
 
 /** A release's seal and its withdrawal: the columns those two changes write. */
@@ -624,7 +626,7 @@ export async function factorLoaderExposures(query) {
   return (await outsideReach(query, FACTOR_LOADER_SPEC)).filter((r) => r.viaPublic).map((r) => `${r.what} (via PUBLIC)`);
 }
 
-const LIBRARY_TABLES = Object.freeze(['factor_releases', 'emission_factors', 'unit_conversions']);
+const LIBRARY_TABLES = Object.freeze(['factor_releases', 'emission_factors', 'unit_conversions', 'factor_parameters']);
 
 /**
  * Who may write the factor library (LP4-02): its loader (exactly
@@ -936,7 +938,7 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'activity_records', trigger: 'activity_records_snapshot_immutable', fn: 'activity_records_snapshot_immutable', type: ROW | BEFORE | ON.update },
   { table: 'activity_records', trigger: 'activity_records_slot_kind', fn: 'activity_records_slot_kind', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'activity_records', trigger: 'activity_records_committed_delete', fn: 'activity_records_committed_delete', type: ROW | BEFORE | ON.delete },
-  ...['factor_releases', 'emission_factors', 'unit_conversions'].flatMap((table) => {
+  ...['factor_releases', 'emission_factors', 'unit_conversions', 'factor_parameters'].flatMap((table) => {
     const rows = table === 'factor_releases' ? 'factor_releases' : 'factor_rows';
     return [
       { table, trigger: `${table}_before_insert`, fn: `${rows}_before_insert`, type: ROW | BEFORE | ON.insert },
@@ -948,7 +950,7 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   // The library's record: AFTER triggers, SECURITY DEFINER so the table needs
   // no INSERT grant; and the record's own append-only guards.
   { table: 'factor_releases', trigger: 'factor_releases_record_event', fn: 'factor_releases_record_event', type: ROW | ON.insert | ON.update | ON.delete, definer: true },
-  ...['emission_factors', 'unit_conversions'].flatMap((table) => [
+  ...['emission_factors', 'unit_conversions', 'factor_parameters'].flatMap((table) => [
     { table, trigger: `${table}_record_insert`, fn: 'factor_rows_record_event', type: ON.insert, definer: true },
     { table, trigger: `${table}_record_delete`, fn: 'factor_rows_record_event', type: ON.delete, definer: true },
   ]),
@@ -1010,8 +1012,10 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['activity_records', 'activity_records_activity_type_check', '209bc4e708c65029678d21cb1c434ea6'],
   // LP4-02 (33): what a record says, held for every writer at the door.
   ['activity_records', 'activity_records_activity_value_check', 'eeef9e2c8cf6539c36909ac41432c40a'],
+  // LP4-02 (D3): per-record calculation parameters shape.
+  ['activity_records', 'activity_records_parameters_check', '0e165bcf50c10a3a5f9b4fb690c02149'],
   ['activity_records', 'activity_records_period_value_check', 'd15080e375207c7ca22a5777c479af8b'],
-  ['activity_records', 'activity_records_scope_check', 'e8da473541720c3a2b4ecaeff36399b4'],
+  ['activity_records', 'activity_records_scope_check', '8cae4f533cf776fdcef2cf79f1fcf834'],
   ['emission_factors', 'emission_factors_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['emission_factors', 'emission_factors_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
   ['emission_factors', 'emission_factors_factor_value_check', '9fd4bc38d56fd6f39cda5c362d62ca79'],
@@ -1028,17 +1032,17 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['factor_releases', 'factor_releases_gwp_set_check', 'f6e24213b9fca85d3a461e21251bc870'],
   ['factor_releases', 'factor_releases_ordinal_check', '6580fa22ba83139e4fd215ea6bc16a65'],
   ['factor_releases', 'factor_releases_placeholder_publisher_check', '8e38e4580950d19e9acc916fd2a67bce'],
-  ['factor_releases', 'factor_releases_publisher_check', '436f2593daab905bce8207daac167c44'],
+  ['factor_releases', 'factor_releases_publisher_check', 'afc8e0acc0331c2027689cefdddc8ee3'],
   ['factor_releases', 'factor_releases_review_after_publication_check', '353156c1deb3822c89c3e2f11821ec78'],
   ['factor_releases', 'factor_releases_source_url_check', '21eb1a772e5e1387ef77a535984e21b3'],
   ['factor_releases', 'factor_releases_status_check', 'fd922ea1cc055a55f0e91a96f486f183'],
   ['factor_releases', 'factor_releases_text_check', 'd23326d88a280c94d486b236f0c12e0b'],
   ['factor_releases', 'factor_releases_withdrawal_check', '4430a3652b1631e86ce68f076eae32a4'],
   ['factor_releases', 'factor_releases_withdrawn_sealed_check', '071f2bdff4397aeabbe9fc0c396e8dc6'],
-  ['inventory_applicability_cells', 'inventory_applicability_cells_category_check', 'a4735b502a4150198c717e43593a8dbd'],
+  ['inventory_applicability_cells', 'inventory_applicability_cells_category_check', 'db59dbf87b6a2d8d91309941108261fc'],
   ['inventory_applicability_cells', 'inventory_applicability_cells_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
   ['inventory_applicability_cells', 'inventory_applicability_cells_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
-  ['inventory_attribution_policies', 'inventory_attribution_policies_category_check', 'a4735b502a4150198c717e43593a8dbd'],
+  ['inventory_attribution_policies', 'inventory_attribution_policies_category_check', 'db59dbf87b6a2d8d91309941108261fc'],
   ['inventory_attribution_policies', 'inventory_attribution_policies_level_check', '584fbf926f5623ee47e8d5e34cfbcf8a'],
   ['inventory_attribution_policies', 'inventory_attribution_policies_period_check', '002fa1bd1e5ae2f5bfc7921603e932bb'],
   ['inventory_boundaries', 'inventory_boundaries_decision_check', 'b1d011288917c94e6edec6e5ccba2e9b'],
@@ -1053,12 +1057,12 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['inventory_sources', 'inventory_sources_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
   ['inventory_sources', 'inventory_sources_included_key_check', '8dd7ef5d1dcbce5b18d5ce7e1cb88f4a'],
   ['inventory_sources', 'inventory_sources_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
-  ['inventory_sources', 'inventory_sources_mapping_check', '58f17af88daeadf0cd7b256ef9972040'],
+  ['inventory_sources', 'inventory_sources_mapping_check', '780b5ba7d0697011aea061de5a77688e'],
   ['inventory_sources', 'inventory_sources_name_check', '89abd8a30af4e8ea9fe6138919107443'],
   // LP3-04 PR C: what a retained dataset row is (V5).
   ['report_datasets', 'report_datasets_fingerprint_check', '63204d1bbd98e2266744f4d2a7eb9a0c'],
   ['report_datasets', 'report_datasets_referenced_check', 'a61fe632e52e8c2bc789ca1a3a429491'],
-  ['report_datasets', 'report_datasets_schema_check', '14dd828e62fc6a8879ad1d25e61e94cc'],
+  ['report_datasets', 'report_datasets_schema_check', '7532274c7f11bcd412174655f7cfa6ae'],
   ['report_datasets', 'report_datasets_selection_check', '8ff91db91299eba2a1b97fa4d1533b93'],
   ['report_datasets', 'report_datasets_selection_context_check', '30735b94defd559b810da8a1f204d001'],
   // LP3-04 PR D: what an issuance is — its status and gaps' shapes, its
@@ -1080,6 +1084,9 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['unit_conversions', 'unit_conversions_multiplier_check', 'b44055800a17e765590df1c5c881b412'],
   ['unit_conversions', 'unit_conversions_text_check', '8d2e1321b2663ba9997f792676f25afc'],
   ['unit_conversions', 'unit_conversions_units_check', 'beeb2e7d9604ac1218b01390e2f1e6cb'],
+  // LP4-02: factor_parameters CHECKs
+  ['factor_parameters', 'factor_parameters_text_check', 'cadaec00182803028e60114b35441b1e'],
+  ['factor_parameters', 'factor_parameters_value_check', '8e098efa1fdb5503a3408bc5d097578f'],
 ]);
 
 /**
@@ -1289,7 +1296,7 @@ function pinsPgTempLast(config) {
 
 /** The tables the integrity triggers guard: nothing else may hook into them. */
 const GUARDED_TABLES = Object.freeze([
-  'activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries',
+  'activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_parameters', 'factor_release_events', 'subsidiaries',
   'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES, 'locations', 'report_datasets', 'report_issuances',
 ]);
 
@@ -1490,7 +1497,8 @@ export async function factorLibraryReport(query) {
   const releases = await query(
     `SELECT r.publisher, r.edition, r.status,
             (SELECT count(*) FROM emission_factors f WHERE f.release_id = r.id)::int AS factors,
-            (SELECT count(*) FROM unit_conversions u WHERE u.release_id = r.id)::int AS conversions
+            (SELECT count(*) FROM unit_conversions u WHERE u.release_id = r.id)::int AS conversions,
+            (SELECT count(*) FROM factor_parameters p WHERE p.release_id = r.id)::int AS parameters
        FROM factor_releases r
       WHERE r.status IN ('placeholder', 'fixture')
       ORDER BY r.publisher, r.ordinal`,
@@ -1513,6 +1521,8 @@ export async function factorLibraryReport(query) {
        SELECT release_id, 'emission_factors' AS table_name, count(*)::int AS n FROM emission_factors GROUP BY release_id
        UNION ALL
        SELECT release_id, 'unit_conversions', count(*)::int FROM unit_conversions GROUP BY release_id
+       UNION ALL
+       SELECT release_id, 'factor_parameters', count(*)::int FROM factor_parameters GROUP BY release_id
      ), recorded AS (
        SELECT release_id, table_name,
               sum(CASE event WHEN 'rows_added' THEN row_count ELSE -row_count END)::int AS n

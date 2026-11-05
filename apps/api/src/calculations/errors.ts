@@ -21,6 +21,7 @@ export type InputRefusalCode = Extract<
   | 'unit_not_for_category'
   | 'activity_type_not_for_category'
   | 'activity_type_required'
+  | 'record_parameters_invalid'
 >;
 export type CoverageRefusalCode = Extract<
   CalculationRefusalCode,
@@ -34,6 +35,7 @@ export const INPUT_REFUSAL_CODES: readonly InputRefusalCode[] = [
   'unit_not_for_category',
   'activity_type_not_for_category',
   'activity_type_required',
+  'record_parameters_invalid',
 ];
 export const COVERAGE_REFUSAL_CODES: readonly CoverageRefusalCode[] = [
   'no_factor',

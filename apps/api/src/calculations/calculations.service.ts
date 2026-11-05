@@ -206,7 +206,7 @@ export class CalculationsService {
     if (!isKnownUnit(input.unit)) {
       throw new CalculationInputError('unit_unknown', `Unsupported unit "${quoteCallerText(input.unit)}"`);
     }
-    // Recognised but not calculable (Sm³): refuse by name, with the reason, so
+    // Recognised but not calculable (Nm³): refuse by name, with the reason, so
     // the caller learns what is missing rather than "unsupported unit".
     const blocked = blockedUnitReason(input.unit);
     if (blocked) {

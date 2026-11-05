@@ -34,19 +34,24 @@ function fixtureRelease(): FactorReleaseImport {
       },
     ],
     conversions: [],
+    parameters: [],
   };
 }
 
 /** Just enough of the client for `load`: the identity check, the reads, one transaction. */
-function fakeDb(existing: Record<string, unknown> | null = null, highestOrdinal: number | null = null) {
-  const created = { release: [] as unknown[], factors: [] as unknown[], conversions: [] as unknown[], sealed: [] as unknown[] };
+function fakeDb(existing: Record<string, unknown> | null = null, highestOrdinal: number | null = null, live: unknown[] = []) {
+  const created = { release: [] as unknown[], factors: [] as unknown[], conversions: [] as unknown[], parameters: [] as unknown[], sealed: [] as unknown[] };
   const tx = {
     $executeRaw: vi.fn(async () => 1),
     factorRelease: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => (created.release.push(args.data), { id: 'new-release', ...args.data })),
       update: vi.fn(async (args: unknown) => (created.sealed.push(args), { id: 'new-release' })),
     },
-    emissionFactor: { createMany: vi.fn(async (args: { data: unknown[] }) => (created.factors.push(...args.data), { count: args.data.length })) },
+    emissionFactor: {
+      findMany: vi.fn(async () => live),
+      createMany: vi.fn(async (args: { data: unknown[] }) => (created.factors.push(...args.data), { count: args.data.length })),
+    },
+    factorParameter: { createMany: vi.fn(async (args: { data: unknown[] }) => (created.parameters.push(...args.data), { count: args.data.length })) },
     unitConversion: { createMany: vi.fn(async (args: { data: unknown[] }) => (created.conversions.push(...args.data), { count: args.data.length })) },
   };
   const db = {
@@ -55,8 +60,9 @@ function fakeDb(existing: Record<string, unknown> | null = null, highestOrdinal:
       findUnique: vi.fn(async () => existing),
       aggregate: vi.fn(async () => ({ _max: { ordinal: highestOrdinal } })),
     },
-    emissionFactor: { findMany: vi.fn(async () => []) },
+    emissionFactor: { findMany: vi.fn(async () => live) },
     unitConversion: { findMany: vi.fn(async () => []) },
+    factorParameter: { findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
   };
   return { db: db as unknown as PrismaClient, raw: db, tx, created };
@@ -126,8 +132,71 @@ describe('FactorReleaseLoader.load', () => {
       release: { publisher: INTERNAL_FACTOR_PUBLISHERS.fixture, edition: 'spec-1', ordinal: 7, status: 'fixture' },
       factors: 1,
       conversions: 0,
+      parameters: 0,
     });
     expect(raw.$transaction).not.toHaveBeenCalled();
+  });
+
+  describe('its parameters (LP4-02, D2)', () => {
+    const leakRate = {
+      key: 'leak_rate', subject: 'chiller', value: 0.02, unit: 'fraction', isDefault: true,
+      source: 'SPEC FIXTURE — not a real source', methodology: null,
+    };
+    const withParameter = () => ({ ...fixtureRelease(), parameters: [leakRate] });
+
+    it('writes them under the new release, before its seal', async () => {
+      const { db, tx, created } = fakeDb();
+      const report = await new FactorReleaseLoader(db, 'TonyAI data team').load(withParameter(), { apply: true });
+      expect(report).toMatchObject({ outcome: 'loaded', parameters: 1 });
+      expect(created.parameters).toEqual([{ ...leakRate, releaseId: 'new-release' }]);
+      expect(tx.factorParameter.createMany.mock.invocationCallOrder[0])
+        .toBeLessThan(tx.factorRelease.update.mock.invocationCallOrder[0]);
+    });
+
+    it('holds a re-run to them: the same parameters are a no-op, other ones are other content', async () => {
+      const file = withParameter();
+      const stored = { ...file.release, id: 'stored', publishedAt: null, reviewedAt: null };
+      const { db, raw } = fakeDb(stored);
+      raw.emissionFactor.findMany.mockResolvedValue(file.factors as never);
+      const loader = new FactorReleaseLoader(db, 'TonyAI data team');
+
+      raw.factorParameter.findMany.mockResolvedValue([leakRate] as never);
+      await expect(loader.load(file, { apply: false })).resolves.toMatchObject({ outcome: 'already_loaded' });
+
+      raw.factorParameter.findMany.mockResolvedValue([{ ...leakRate, value: 0.03 }] as never);
+      await expect(loader.load(file, { apply: false })).rejects.toThrow(/already loaded with other content/);
+    });
+  });
+
+  describe('one live edition per slot (LP4-02, D8)', () => {
+    const clash = () => ({ ...fixtureRelease().factors[0], release: { edition: 'older' } });
+
+    it.each([[false], [true]])('refuses an overlap with a live edition it does not supersede (apply %s), writing nothing', async (apply) => {
+      const { db, raw } = fakeDb(null, null, [clash()]);
+      await expect(new FactorReleaseLoader(db, 'TonyAI data team').load(fixtureRelease(), { apply }))
+        .rejects.toThrow(/older is live .* must supersede it/);
+      expect(raw.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('asks only about the live editions of this publisher, past the one it supersedes', async () => {
+      const older = { id: 'older-id', publisher: INTERNAL_FACTOR_PUBLISHERS.fixture, edition: 'older', ordinal: 1, status: 'fixture' };
+      const { db, raw } = fakeDb();
+      raw.factorRelease.findUnique
+        .mockResolvedValueOnce(older as never)
+        .mockResolvedValueOnce(null as never);
+      await new FactorReleaseLoader(db, 'TonyAI data team').load(fixtureRelease(), { apply: false, supersedes: 'older', reason: 'Erratum' });
+      expect(raw.emissionFactor.findMany.mock.calls[0]).toMatchObject([{
+        where: { release: { publisher: INTERNAL_FACTOR_PUBLISHERS.fixture, status: { not: 'withdrawn' }, id: { not: 'older-id' } } },
+      }]);
+    });
+
+    it('passes a row of another slot, and asks again inside the transaction', async () => {
+      const elsewhere = { ...clash(), reportingYear: 2030 };
+      const { db, tx } = fakeDb(null, null, [elsewhere]);
+      await expect(new FactorReleaseLoader(db, 'TonyAI data team').load(fixtureRelease(), { apply: true }))
+        .resolves.toMatchObject({ outcome: 'loaded' });
+      expect(tx.emissionFactor.findMany).toHaveBeenCalledTimes(1);
+    });
   });
 
   it.each([
