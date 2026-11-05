@@ -33,9 +33,9 @@ Owner-run from the owner's machine, or run by you only with the owner's explicit
 - **Never invent emission-factor values**; cite source and version, and never present demo or prototype values as authoritative. Historic calculation snapshots are immutable.
 - **Never weaken tenant isolation** (the API guard and RLS), never `FORCE` RLS, never add an UPDATE or DELETE path to `audit_log`; every mutation writes one audit row.
 - **Runtime grants:** a new table needs its runtime grant in the migration and an entry in `packages/db/scripts/runtime-role.mjs`.
-- **UI copy and API errors:** every user-facing string goes through the TR/EN catalogues in `apps/web/messages/`, and an API refusal a screen words gets a registered error code — follow [`.claude/skills/localise-ui/SKILL.md`](.claude/skills/localise-ui/SKILL.md) and README "Localisation and error codes".
+- **UI copy and API errors:** every user-facing string goes through the TR/EN catalogues in `apps/web/messages/`, and an API refusal a screen words gets a registered error code — follow [`.claude/skills/localise-ui/SKILL.md`](.claude/skills/localise-ui/SKILL.md) and [`docs/architecture/localisation.md`](docs/architecture/localisation.md).
 - **One source of types:** `@tonyai/shared-types`. The web reaches the API only through `apps/web/lib/api.ts`; the API persists only through Prisma.
-- **Keep `README.md` current** in the same PR as the change it describes.
+- **Keep docs current in their own homes** in the same PR as the change: `README.md` for entry-level content only (overview, features, setup, commands, configuration, environments), `docs/api/` for API contracts, `docs/architecture/` for security, data model, localisation and observability, `docs/development/` for testing and tooling. Status lives only in the status file.
 - **Never commit** `.env*` (except `.env.example`), `dist/`, `generated/` or `*.tsbuildinfo`.
 
 ## Before you hand off

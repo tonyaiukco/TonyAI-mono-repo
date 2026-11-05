@@ -8,6 +8,8 @@ path (runbooks 00–06; the `terraform/foundation` and `terraform/application` r
 their `qa/` subfolders). Codex runs it; every live operation is owner-run or
 owner-approved. Plan, work packages and live operations:
 [`docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md`](../docs/TMP_Supabase_Azure_Doc/tmp_supabase_azure_roadmap.md).
+The staging deployment runbook (LP2-01) that used to sit in the root README:
+[`staging-deployment.md`](staging-deployment.md).
 **The self-hosted route described below is paused, not removed:** nothing in it is
 executed until the owner resumes it after the pilot launch (to move the Supabase side
 to Azure). Its CI gates run only by hand — `selfhost-checks.yml` and `qa-infra.yml`

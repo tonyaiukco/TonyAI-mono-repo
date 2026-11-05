@@ -495,7 +495,7 @@ either into this document, a command argument or a JWT inspection website.
 ### First organisation and delivered mail
 
 After ACS Email is provisioned (hosted-phase plan L1b, L3, L7), runbook 03's mail wiring, migrations and the checks
-above succeed, follow README [Account lifecycle](../../README.md#account-lifecycle-lp4-01).
+above succeed, follow [Account lifecycle](../../docs/architecture/security.md#account-lifecycle-lp4-01).
 On Node 22, in a private owner shell at the deployed source SHA, load the selected
 **owner session** URL using runbook 05's
 [Owner reconciliation check](05-rotation.md#owner-reconciliation-check): hidden
@@ -529,7 +529,7 @@ Choose `tr` for a Turkish first invitation. Use the real approved metadata in th
 private terminal only. The CLI reads `DIRECT_URL`, audits `diff.operator`, and a
 re-run completes partial work/re-sends an unaccepted invitation. Inspect its report;
 an Auth/SMTP failure is not success. For an existing organisation use the returned
-`--organisation-id` as documented in README. Never grant a customer the operator
+`--organisation-id` as documented in [`docs/development/commands.md`](../../docs/development/commands.md). Never grant a customer the operator
 connection or run the local demo seed.
 
 Open the delivered invitation at `<web-origin>/auth/confirm`, choose a password
