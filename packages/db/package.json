@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "anomaly:probe": "node scripts/anomaly-probe.mjs",
-    "anomaly:recompute": "tsx scripts/anomaly-recompute.mjs"
+    "anomaly:recompute": "tsx scripts/anomaly-recompute.mjs",
+    "factor-releases:tr": "tsx factor-releases/tr-2026-11/build.mjs --write"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",

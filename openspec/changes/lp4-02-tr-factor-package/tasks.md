@@ -82,10 +82,10 @@
 
 ## 5. PR5: TR releases, golden values and the Scope 2 label
 
-- [ ] 5.1 Write the build script that derives both release files (IPCC and ETKB, D1) from the document's values, including `reference_gcv`, `reference_ncv` and all nine default and two alternative leak rates, each pinned in a spec. Each row carries its `source` (document section) and its `methodology` (arithmetic); `reviewedBy` is "TonyAI Sustainability Team". Verify:
+- [x] 5.1 Write the build script that derives both release files (IPCC and ETKB, D1) from the document's values, including `reference_gcv`, `reference_ncv` and all nine default and two alternative leak rates, each pinned in a spec. Each row carries its `source` (document section) and its `methodology` (arithmetic); `reviewedBy` is "TonyAI Sustainability Team". Verify:
   - the script's output matches D6's table to six decimals;
   - the loader dry run reports no issue for either file.
-- [ ] 5.2 Golden integration tests: load both releases into a test database through the loader and calculate the §5 rows, all within ±0.5%:
+- [x] 5.2 Golden integration tests: load both releases into a test database through the loader and calculate the §5 rows, all within ±0.5%:
 
   | Source | Expected kgCO2e |
   |---|---|
@@ -100,9 +100,9 @@
   | FM200 | 2,880.00 |
 
   Also verify that 2023 and UK are refused with `no_factor`, and that a committed placeholder-era record is byte-identical after the load.
-- [ ] 5.3 Reports: print a refrigerant's refill and term breakdown beside its total capacity, and a gas record's own NCV beside the row's basis (`report-html.ts`, `issuance-html.ts`, `issuance-tables.ts`; a refill-only record prints 0 kg beside its figure today). Label Scope 2 as location-based and print "No market-based result" in the PDF, Excel and CSV outputs, with TR/EN copy. Verify report specs and the issuance fingerprints are updated deliberately, with the fingerprint change explained in the PR.
-- [ ] 5.4 Update `docs/api/`, `docs/architecture/data-model.md`, the `factor-release-import` skill (parameters, overlap rule, TR publishers) and the planning file (LP4-02 DONE pending the hosted load). Run the full checks and the three-seat review pass. Verify all are green.
-- [ ] 5.5 Billed GCV range (D11; blocked until the COO approves the values): `billed_gcv_min` and `billed_gcv_max` as `kcal/Sm3` release parameters, the contract and CHECK updated together, and a new refusal code with TR and EN copy when a billed GCV falls outside them. A release without them answers `parameter_missing` for a billed GCV. Verify specs cover both bounds, and that a record with no billed GCV is unaffected.
+- [x] 5.3 Reports: print a refrigerant's refill and term breakdown beside its total capacity, and a gas record's own NCV beside the row's basis (`report-html.ts`, `issuance-html.ts`, `issuance-tables.ts`; a refill-only record prints 0 kg beside its figure today). Label Scope 2 as location-based and print "No market-based result" in the PDF, Excel and CSV outputs, with TR/EN copy. Verify report specs and the issuance fingerprints are updated deliberately, with the fingerprint change explained in the PR.
+- [x] 5.4 Update `docs/api/`, `docs/architecture/data-model.md`, the `factor-release-import` skill (parameters, overlap rule, TR publishers) and the planning file (LP4-02 DONE pending the hosted load). Run the full checks and the three-seat review pass. Verify all are green.
+- [x] 5.5 Billed GCV range (D11; values set by the owner on 2026-11-05 in place of the COO: 8,100 and 10,427 kcal/Sm³, from the ŞİD's Annex 1 gas quality specification, checked on 2026-11-05 against BOTAŞ's official copy (https://www.botas.gov.tr/uploads/sayfaResim/191307-d_21122023_12275_kk.doc, sha256 `9bc1a8081886…`), the rows' `source` citing it): `billed_gcv_min` and `billed_gcv_max` as `kcal/Sm3` release parameters, the contract and CHECK updated together, and a new refusal code with TR and EN copy when a billed GCV falls outside them. A release without them answers `parameter_missing` for a billed GCV. Verify specs cover both bounds, and that a record with no billed GCV is unaffected.
 
 ## 6. Hosted QA load (owner; only after L10 closes)
 

@@ -7,7 +7,7 @@ import {
   type SnapshotInput,
   type SnapshotParameterRow,
 } from '@tonyai/shared-types';
-import { FactorLibraryConflictError } from './errors';
+import { CalculationInputError, FactorLibraryConflictError } from './errors';
 import type { readReleaseParameters } from './factor-lookup';
 
 /** The rows `readReleaseParameters` returns. */
@@ -59,6 +59,18 @@ export function naturalGasChain(
   const billedGcv = parameters?.billedGcvKcalPerSm3 ?? null;
   if (billedGcv !== null) {
     const gcv = reference(rows, 'reference_gcv');
+    // The formula divides by the bill's value, so one outside the network's
+    // gas quality range (`0.9` typed for `9,000`, a value in kWh or MJ) would
+    // inflate the figure many times over (D11, task 5.5). A release without
+    // the range answers `parameter_missing`, as for any value it lacks.
+    const min = reference(rows, 'billed_gcv_min');
+    const max = reference(rows, 'billed_gcv_max');
+    if (billedGcv < min.value || billedGcv > max.value) {
+      throw new CalculationInputError(
+        'billed_gcv_out_of_range',
+        `A billed gross calorific value must be between ${min.value} and ${max.value} kcal/Sm³, the range the factor release accepts.`,
+      );
+    }
     const effective = (ncv.value * gcv.value) / billedGcv;
     return {
       multiplier: effective * KWH_PER_KCAL,
@@ -67,7 +79,7 @@ export function naturalGasChain(
         { name: 'ncvKcalPerSm3', value: effective, origin: 'derived' },
         ...volumeInput,
       ],
-      rowsUsed: [ncv, gcv],
+      rowsUsed: [ncv, gcv, min, max],
     };
   }
   const edited = parameters?.ncvKcalPerSm3 ?? null;

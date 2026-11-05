@@ -77,7 +77,7 @@ describe('buildIssuanceHtml', () => {
   it('prints a figure the dataset does not hold as "Not calculated", never 0 — and a calculated zero as 0', () => {
     const none = datasetOf({ records: fullYear().map((r) => (r.scope === 1 ? { ...r, calculation: UNCALCULATED } : r)) });
     expect(none.scopes[0].tCo2e).toBeNull();
-    const scope1 = (page: string) => page.slice(page.indexOf('Scope 1</div>'), page.indexOf('Scope 2</div>'));
+    const scope1 = (page: string) => page.slice(page.indexOf('Scope 1</div>'), page.indexOf('Scope 2 (location-based)</div>'));
     expect(scope1(html(none))).toContain('<div class="v">Not calculated</div>');
     const zero = datasetOf({ records: fullYear().map((r) => (r.scope === 1 ? { ...r, calculation: priced(0) } : r)) });
     expect(scope1(html(zero))).toContain('<div class="v">0 <span class="u">tCO2e</span></div>');
@@ -105,7 +105,7 @@ describe('buildIssuanceHtml', () => {
   });
 
   it('a scope an extract filters out reads "Not in this extract" — never "No included source" (`qa-auditor` re-review P2)', () => {
-    const tiles = (page: string) => [...page.matchAll(/<div class="l">Scope (\d)<\/div>\s*<div class="v">([^<]*)/g)].map((m) => [m[1], m[2].trim()]);
+    const tiles = (page: string) => [...page.matchAll(/<div class="l">Scope (\d)(?: \(location-based\))?<\/div>\s*<div class="v">([^<]*)/g)].map((m) => [m[1], m[2].trim()]);
     expect(tiles(html(datasetOf({ selection: { scope: 1 } })))).toEqual([['1', '4'], ['2', 'Not in this extract']]);
     expect(tiles(html(datasetOf({ selection: { category: 'Electricity' } })))).toEqual([['1', 'Not in this extract'], ['2', '24']]);
     // A subsidiary extract selects both scopes: each reads its own figure.

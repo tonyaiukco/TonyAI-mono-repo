@@ -31,7 +31,13 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
    and the CHECK, together), not a loader flag.
 2. **The file is the contract's shape** (`FactorReleaseImport`): `release`,
    `factors[]`, `conversions[]`, `parameters[]` (sourced calculation constants,
-   such as leak rates and the reference GCV; empty when there are none). An authoritative release carries `sourceUrl`
+   empty when there are none: `reference_ncv` and `reference_gcv` for the TR
+   natural gas chain, `leak_rate` per equipment type with an alternative only
+   for split air conditioners and chillers, and `billed_gcv_min` /
+   `billed_gcv_max`, a pair, the plausibility range of a billed GCV — each key
+   in its one unit, `PARAMETER_UNITS`). A TR net Sm³ → kWh conversion needs
+   `reference_ncv` (its multiplier must equal `reference_ncv × 4.184 / 3,600`)
+   and `reference_gcv`; a TR refrigerant factor needs a default leak rate. An authoritative release carries `sourceUrl`
    (https), `licence`, `publishedAt`, `reviewedBy` (a firm or role) and
    `reviewedAt` (after publication), and its `gwpSet` — **one GWP set per
    inventory year** (D09), the set the sources declare. A factor is quoted per
@@ -67,6 +73,20 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
    `INTERNAL_FACTOR_PUBLISHERS.fixture` with status `fixture`, and its title,
    `methodology` and `source` say it is not an emission factor; it is removed
    by its test (the fixture publisher's releases are the only deletable ones).
+
+## The TR package (LP4-02)
+
+The two authoritative TR releases, `IPCC` and `ETKB` under one edition
+(`TONYAI-EF-TR-UK-2026.11-AR6-SEALED`, D1), are **built, not typed**:
+`packages/db/factor-releases/tr-2026-11/build.mjs` derives every row from the
+sealed package's figures (`docs/md_docs/Revision MD.md`) with its arithmetic in
+`methodology`, and `pnpm --filter @tonyai/db factor-releases:tr` rewrites
+`ipcc.json` and `etkb.json`. `build.spec.mjs` fails if the files differ from
+the build, a value leaves design D6's table at six decimals, or the contract
+finds an issue; `apps/api/test/int/tr-factor-package.int.spec.ts` loads both
+through the loader and prices the package's §5 golden values within ±0.5%. A
+correction is an erratum: change the build, a new edition and ordinal, and
+`--supersedes`.
 
 ## Steps
 

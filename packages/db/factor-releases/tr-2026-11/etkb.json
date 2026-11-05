@@ -1,0 +1,71 @@
+{
+  "release": {
+    "publisher": "ETKB",
+    "title": "Türkiye electricity generation and consumption-point emission factors information form (ETKB EVCED), as sealed in the TonyAI TR factor package",
+    "edition": "TONYAI-EF-TR-UK-2026.11-AR6-SEALED",
+    "ordinal": 1,
+    "status": "authoritative",
+    "sourceUrl": "https://enerji.gov.tr/evced-cevre-ve-iklim-elektrik-uretim-tuketim-emisyon-faktorleri",
+    "licence": "Official public data of the Republic of Türkiye",
+    "publishedAt": "2026-11-04",
+    "gwpSet": "AR6",
+    "reviewedBy": "TonyAI Sustainability Team",
+    "reviewedAt": "2026-11-05",
+    "notes": "Built by packages/db/factor-releases/tr-2026-11/build.mjs from TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md), sealed 2026-11-04, and the owner's decisions of 2026-11-05 (ETKB data years, D07). publishedAt is the package's seal date; reviewedAt the owner's decisions on its rows."
+  },
+  "factors": [
+    {
+      "category": "Electricity",
+      "activityType": "grid_electricity",
+      "gas": "CO2e",
+      "gasCoverage": "all_ghg",
+      "geographyCode": "TR",
+      "reportingYear": 2024,
+      "dataYear": 2023,
+      "scope": 2,
+      "factorValue": 0.442,
+      "factorUnit": "kgCO2e/kWh",
+      "normalizedUnit": "kWh",
+      "calorificBasis": "not_applicable",
+      "scope2Method": "location",
+      "methodology": "Location-based national grid factor; reporting year 2024 uses the ETKB value of data year 2023, the latest published (D07)",
+      "source": "ETKB EVCED Türkiye electricity consumption-point emission factor, via TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md) §2, §4.5"
+    },
+    {
+      "category": "Electricity",
+      "activityType": "grid_electricity",
+      "gas": "CO2e",
+      "gasCoverage": "all_ghg",
+      "geographyCode": "TR",
+      "reportingYear": 2025,
+      "dataYear": 2024,
+      "scope": 2,
+      "factorValue": 0.434,
+      "factorUnit": "kgCO2e/kWh",
+      "normalizedUnit": "kWh",
+      "calorificBasis": "not_applicable",
+      "scope2Method": "location",
+      "methodology": "Location-based national grid factor; reporting year 2025 uses the ETKB value of data year 2024, the latest published (D07)",
+      "source": "ETKB EVCED Türkiye electricity consumption-point emission factor, via TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md) §2, §4.5"
+    },
+    {
+      "category": "Electricity",
+      "activityType": "grid_electricity",
+      "gas": "CO2e",
+      "gasCoverage": "all_ghg",
+      "geographyCode": "TR",
+      "reportingYear": 2026,
+      "dataYear": 2024,
+      "scope": 2,
+      "factorValue": 0.434,
+      "factorUnit": "kgCO2e/kWh",
+      "normalizedUnit": "kWh",
+      "calorificBasis": "not_applicable",
+      "scope2Method": "location",
+      "methodology": "Location-based national grid factor; reporting year 2026 uses the ETKB value of data year 2024, the latest published (D07)",
+      "source": "ETKB EVCED Türkiye electricity consumption-point emission factor, via TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md) §2, §4.5"
+    }
+  ],
+  "conversions": [],
+  "parameters": []
+}

@@ -949,8 +949,10 @@ export async function cleanupE2EFactors(_request: APIRequestContext): Promise<vo
  * LP4-02 PR4: a TR fixture release for the Data Entry input forms — natural
  * gas (a net kWh factor, an Sm³ conversion, reference NCV and GCV), one
  * refrigerant with a default and an alternative leak rate, one vehicle mode and
- * gas-network leakage — for `E2E_TR_INPUTS_YEAR`, which the seed's placeholder
- * library does not cover in TR, so these rows are the path the engine takes.
+ * gas-network leakage — for `E2E_TR_INPUTS_YEAR`, which neither the seed's
+ * placeholder library nor the authoritative TR releases (2024–2026, LP4-02 PR5)
+ * cover in TR, so these rows are the path the engine takes: a fixture ranks
+ * below both.
  *
  * **None of these numbers is a factor or a parameter.** They are round values
  * chosen to make each flow's arithmetic checkable by hand, deliberately unlike
@@ -960,12 +962,14 @@ export async function cleanupE2EFactors(_request: APIRequestContext): Promise<vo
  * `cleanupTrInputsFixture` (and swept by `pnpm db:seed` if a run is cut short).
  */
 export const E2E_TR_INPUTS_EDITION = '0000-E2E-TR-INPUTS';
-export const E2E_TR_INPUTS_YEAR = 2025;
+export const E2E_TR_INPUTS_YEAR = 2023;
 const TR_INPUTS_SOURCE = 'E2E FIXTURE — not a real emission factor or parameter, not for reporting';
 /** The fixture's reference NCV and GCV, kcal/Sm³, and its rates, as the specs read them back. */
 export const E2E_TR_INPUTS = {
   referenceNcv: 9000,
   referenceGcv: 10000,
+  billedGcvMin: 5000,
+  billedGcvMax: 20000,
   gasFactor: 0.2,
   refrigerant: 'R-410A',
   refrigerantFactor: 1000,
@@ -1019,6 +1023,9 @@ export async function seedTrInputsFixture(): Promise<void> {
       const parameters = [
         ['reference_ncv', null, f.referenceNcv, 'kcal/Sm3', true],
         ['reference_gcv', null, f.referenceGcv, 'kcal/Sm3', true],
+        // The billed GCV range the engine reads since LP4-02 PR5 (task 5.5).
+        ['billed_gcv_min', null, f.billedGcvMin, 'kcal/Sm3', true],
+        ['billed_gcv_max', null, f.billedGcvMax, 'kcal/Sm3', true],
         ['leak_rate', 'split_air_conditioner', f.splitDefaultRate, 'fraction', true],
         ['leak_rate', 'split_air_conditioner', f.splitAlternativeRate, 'fraction', false],
       ] as const;

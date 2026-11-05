@@ -169,8 +169,12 @@ export function buildReportHtml(data: ReportData): string {
     .join('');
 
   const th = (label: string, num = false) => `<th${num ? ' class="num"' : ''}>${esc(v.label(label))}</th>`;
-  const scopeTile = (scope: 1 | 2, value: number) => `<div class="tile"><div class="l">${v.html('tileScope', { scope })}</div><div class="v">${
-    scope3Only ? v.html('notCovered') : esc(tonnes(value))}</div></div>`;
+  // Scope 2 is location-based only (D08): it says so, and that no market-based
+  // figure exists, rather than leave a reader to assume the two agree.
+  const scopeTile = (scope: 1 | 2, value: number) => `<div class="tile"><div class="l">${
+    scope === 2 ? v.html('scope2LocationBased') : v.html('tileScope', { scope })}</div><div class="v">${
+    scope3Only ? v.html('notCovered') : esc(tonnes(value))}</div>${
+    scope === 2 ? `<div class="l">${v.html('noMarketBased')}</div>` : ''}</div>`;
   const s3 = data.scope3;
 
   return `<!DOCTYPE html><html lang="${data.language}"><head><meta charset="utf-8"><style>

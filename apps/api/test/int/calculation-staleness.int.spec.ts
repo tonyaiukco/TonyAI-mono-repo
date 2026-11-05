@@ -417,6 +417,9 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
       parameters: [
         parameter('reference_ncv', null, 8250, 'kcal/Sm3'),
         parameter('reference_gcv', null, 9155, 'kcal/Sm3'),
+        // A TR net Sm³ conversion carries the billed GCV range (D11, LP4-02 PR5).
+        parameter('billed_gcv_min', null, 8100, 'kcal/Sm3'),
+        parameter('billed_gcv_max', null, 10427, 'kcal/Sm3'),
         parameter('leak_rate', 'fire_suppression_system', 0.02, 'fraction'),
       ],
     };

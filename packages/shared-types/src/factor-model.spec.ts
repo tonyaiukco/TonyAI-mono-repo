@@ -1398,6 +1398,7 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       parameters_required: 400,
       parameters_not_applicable: 400,
       parameter_missing: 409,
+      billed_gcv_out_of_range: 400,
       no_factor: 404,
       placeholder_refused: 404,
       ambiguous_factor: 409,
@@ -1782,7 +1783,7 @@ describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
   });
 
   it('exports the expected keys and equipment types', () => {
-    expect(PARAMETER_KEYS).toEqual(['leak_rate', 'reference_gcv', 'reference_ncv']);
+    expect(PARAMETER_KEYS).toEqual(['billed_gcv_max', 'billed_gcv_min', 'leak_rate', 'reference_gcv', 'reference_ncv']);
     expect(EQUIPMENT_TYPES).toContain('split_air_conditioner');
     expect(EQUIPMENT_TYPES).toContain('chiller');
     expect(EQUIPMENT_TYPES_WITH_ALTERNATIVE).toEqual(['split_air_conditioner', 'chiller']);
@@ -1816,17 +1817,20 @@ describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
       referenceConditions: STANDARD_REFERENCE_CONDITIONS, basis: 'NCV 8,250 kcal/Sm³', ...over,
     });
     const ncv = () => gcvParam({ key: 'reference_ncv', value: 8250 });
+    const range = () => [gcvParam({ key: 'billed_gcv_min', value: 8100 }), gcvParam({ key: 'billed_gcv_max', value: 10427 })];
     const bad = (conversions: unknown[], parameters: unknown[]) =>
       issuesAt(release({ conversions, parameters } as never)).filter((path) => path.startsWith('conversions[0].multiplier'));
 
     it('accepts a net Sm³ row that is reference_ncv × 4.184 / 3,600, to six decimals', () => {
-      expect(bad([conversion()], [gcvParam(), ncv()])).toEqual([]);
+      expect(bad([conversion()], [gcvParam(), ncv(), ...range()])).toEqual([]);
     });
 
     it('refuses one that disagrees, or stands without its reference values', () => {
-      expect(bad([conversion({ multiplier: 9.59 })], [gcvParam(), ncv()])).toEqual(['conversions[0].multiplier']);
-      expect(bad([conversion()], [gcvParam()])).toEqual(['conversions[0].multiplier']);
-      expect(bad([conversion()], [ncv()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion({ multiplier: 9.59 })], [gcvParam(), ncv(), ...range()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion()], [gcvParam(), ...range()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion()], [ncv(), ...range()])).toEqual(['conversions[0].multiplier']);
+      // The billed GCV range comes with the chain (D11): an erratum cannot drop it.
+      expect(bad([conversion()], [gcvParam(), ncv()])).toEqual(['conversions[0].multiplier']);
     });
 
     it('asks nothing of another geography', () => {
@@ -1836,6 +1840,32 @@ describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
 
   it('accepts a valid leak_rate parameter', () => {
     expect(issuesAt(release({ parameters: [leakRateParam()] }))).toEqual([]);
+  });
+
+  describe('the billed GCV range (D11, task 5.5)', () => {
+    const bound = (key: 'billed_gcv_min' | 'billed_gcv_max', value: number, over: Record<string, unknown> = {}) =>
+      gcvParam({ key, value, source: 'SPEC FIXTURE — ŞİD Annex 1', ...over });
+
+    it('accepts a pair, the lower below the upper', () => {
+      expect(issuesAt(release({ parameters: [bound('billed_gcv_min', 8100), bound('billed_gcv_max', 10427)] }))).toEqual([]);
+    });
+
+    it.each([
+      ['a lower bound alone', [bound('billed_gcv_min', 8100)]],
+      ['an upper bound alone', [bound('billed_gcv_max', 10427)]],
+      ['bounds the wrong way round', [bound('billed_gcv_min', 10427), bound('billed_gcv_max', 8100)]],
+      ['equal bounds', [bound('billed_gcv_min', 9000), bound('billed_gcv_max', 9000)]],
+    ])('refuses %s', (_case, parameters) => {
+      expect(issuesAt(release({ parameters }))).toEqual(['parameters']);
+    });
+
+    it.each([
+      ['a bound with a subject', () => bound('billed_gcv_min', 8100, { subject: 'chiller' }), 'subject'],
+      ['a bound in another unit', () => bound('billed_gcv_min', 8100, { unit: 'kWh/Sm3' }), 'unit'],
+      ['an alternative bound', () => bound('billed_gcv_min', 8100, { isDefault: false }), 'isDefault'],
+    ])('refuses %s', (_case, row, field) => {
+      expect(issuesAt(release({ parameters: [row(), bound('billed_gcv_max', 10427)] }))).toContain(`parameters[0].${field}`);
+    });
   });
 
   it('accepts a valid reference_gcv parameter', () => {

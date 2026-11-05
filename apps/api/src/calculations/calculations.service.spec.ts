@@ -1387,7 +1387,12 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       release, geographyCode: 'TR', reportingYear: 2025, dataYear: 2025,
       fromUnit: 'standard_cubic_metres', multiplier: 9.588333, calorificBasis: 'net',
     })];
-    prisma.library.parameters = [parameter('reference_ncv', null, 8250, 'kcal/Sm3'), parameter('reference_gcv', null, 9155, 'kcal/Sm3')];
+    prisma.library.parameters = [
+      parameter('reference_ncv', null, 8250, 'kcal/Sm3'),
+      parameter('reference_gcv', null, 9155, 'kcal/Sm3'),
+      parameter('billed_gcv_min', null, 8100, 'kcal/Sm3'),
+      parameter('billed_gcv_max', null, 10427, 'kcal/Sm3'),
+    ];
   });
 
   describe('natural gas', () => {
@@ -1408,7 +1413,7 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       const derived = result.parameters.find((p) => p.origin === 'derived');
       expect(derived?.name).toBe('ncvKcalPerSm3');
       within(derived!.value, 8078.67);
-      expect(result.parameterRows.map((r) => r.key)).toEqual(['reference_ncv', 'reference_gcv']);
+      expect(result.parameterRows.map((r) => r.key)).toEqual(['reference_ncv', 'reference_gcv', 'billed_gcv_min', 'billed_gcv_max']);
     });
 
     it('an edited NCV replaces the multiplier, and the row stays cited unchanged', async () => {
@@ -1456,10 +1461,36 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
     it.each([
       ['a product past a double', 1e-300, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
       ['the same with a zero reading', 0, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
-      ['a billed GCV driving it past a double', 1e-300, { billedGcvKcalPerSm3: 1e-300, volumeCorrectionFactor: 1e300 }],
       ['a product below a double', 1, { ncvKcalPerSm3: 1e-300, volumeCorrectionFactor: 1e-300 }],
     ])('refuses %s with a code, rather than storing a number JSON cannot hold', async (_what, value, parameters) => {
       expect(await code({ ...gas, unit: 'cubic_metres', value, parameters })).toBe('record_parameters_invalid');
+    });
+
+    describe('the billed GCV range (D11, task 5.5)', () => {
+      const billed = (billedGcvKcalPerSm3: number) => ({ ...gas, parameters: { billedGcvKcalPerSm3 } });
+
+      it.each([8100, 9349.174, 10427])('accepts %s kcal/Sm³, its bounds included', async (value) => {
+        expect(await code(billed(value))).toBeNull();
+      });
+
+      it.each([
+        ['just below the lower bound', 8099.999],
+        ['just above the upper bound', 10427.001],
+        ['a dropped thousands separator', 9.349],
+        ['a value in kWh per Sm³', 10.6],
+        ['a value in MJ per Sm³', 39.1],
+        ['an extra zero', 93491.74],
+        ['a value driving the figure past a double', 1e-300],
+      ])('refuses %s', async (_case, value) => {
+        expect(await code(billed(value))).toBe('billed_gcv_out_of_range');
+      });
+
+      it('answers a release without the range as a library defect, for a billed GCV only', async () => {
+        prisma.library.parameters = prisma.library.parameters.filter((p) => !String(p.key).startsWith('billed_gcv'));
+        expect(await code(billed(9349.174))).toBe('parameter_missing');
+        expect(await code(gas)).toBeNull();
+        expect(await code({ ...gas, parameters: { ncvKcalPerSm3: 8100 } })).toBeNull();
+      });
     });
 
     it('keeps every number of a stored snapshot through JSON', async () => {
@@ -1567,6 +1598,8 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       const result = await engine.releaseParameters(query);
       expect(result.release?.id).toBe(release.id);
       expect(result.parameters).toEqual([
+        { key: 'billed_gcv_max', equipmentType: null, value: 10427, unit: 'kcal/Sm3', isDefault: true, source: 'SPEC FIXTURE' },
+        { key: 'billed_gcv_min', equipmentType: null, value: 8100, unit: 'kcal/Sm3', isDefault: true, source: 'SPEC FIXTURE' },
         { key: 'reference_gcv', equipmentType: null, value: 9155, unit: 'kcal/Sm3', isDefault: true, source: 'SPEC FIXTURE' },
         { key: 'reference_ncv', equipmentType: null, value: 8250, unit: 'kcal/Sm3', isDefault: true, source: 'SPEC FIXTURE' },
       ]);

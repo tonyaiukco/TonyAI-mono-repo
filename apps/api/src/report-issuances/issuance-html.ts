@@ -14,6 +14,7 @@ import {
   type ReportTemplate,
 } from '@tonyai/shared-types';
 import { escapeHtmlText as esc } from '../common/html-escape';
+import { calculationInputs } from '../common/calculation-inputs';
 import en from './i18n/en.json';
 import tr from './i18n/tr.json';
 
@@ -30,7 +31,8 @@ import tr from './i18n/tr.json';
  */
 
 /** The renderer's own version; the issuance records it with the browser's. */
-export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v1';
+// v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
+export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v2';
 
 export interface IssuanceDocument {
   issuanceId: string;
@@ -155,10 +157,12 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     const r = scopeReading(dataset, s);
     return r.kind === 'not_in_extract' ? t('scopeNotInExtract') : r.kind === 'no_source' ? t('scopeNoSource') : tonnes(r.tCo2e);
   };
+  // Scope 2 is location-based only (D08), and says that no market-based figure exists.
   const tile = (s: typeof scope1 | typeof scope2): string => `<div class="tile">
-    <div class="l">${t('scope', { scope: s.scope })}</div>
+    <div class="l">${s.scope === 2 ? t('scope2LocationBased') : t('scope', { scope: s.scope })}</div>
     <div class="v">${reading(s)}${s.tCo2e === null ? '' : ' <span class="u">tCO2e</span>'}</div>
-    <div class="n">${s.coverage === 'covered' ? t('coverageCovered') : t('coveragePartial')} · ${t('countedRecords', { count: s.countedRecordIds.length })}</div>
+    <div class="n">${s.coverage === 'covered' ? t('coverageCovered') : t('coveragePartial')} · ${t('countedRecords', { count: s.countedRecordIds.length })}</div>${
+    s.scope === 2 ? `\n    <div class="n">${t('noMarketBased')}</div>` : ''}
   </div>`;
 
   // --- Detail: coverage gaps, the counted ledger, exclusions, withdrawals.
@@ -168,11 +172,20 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     <td class="num">${g.sourceIds.length}</td><td class="num">${g.obligationIds.length}</td><td class="num">${g.recordIds.length}</td></tr>`).join('');
 
   const standing = new Map(dataset.provenance.records.map((p) => [p.recordId, p.standing]));
+  // The record's own calculation inputs under its quantity (LP4-02 PR5),
+  // composed from the catalogue's plain text and escaped once, whole: `t`
+  // escapes, and a word it escaped would be escaped again as a value.
+  const plain = (key: IssuanceMessageKey, values?: Record<string, string>): string =>
+    String(new IntlMessageFormat(ISSUANCE_CATALOGUES[language][key], tag).format(values));
+  const inputsNote = (calculation: unknown): string => {
+    const text = calculationInputs(calculation, { text: plain, locale: language });
+    return text ? `<br><span class="note">${esc(text)}</span>` : '';
+  };
   const ledger = countedRecords(dataset);
   const ledgerRows = ledger.map((r) => `<tr><td>${entityLabel(r.subsidiaryId, r.locationId, r)}</td>
     <td>${label('category', r.category)}</td><td>${label('period', r.periodValue)}</td>
     <td>${RECORD_STATUS_LABEL[r.status] === undefined ? esc(r.status) : t(RECORD_STATUS_LABEL[r.status])}</td>
-    <td class="num">${number.format(r.activityValue)} ${esc(r.activityUnit)}</td>
+    <td class="num">${number.format(r.activityValue)} ${esc(r.activityUnit)}${inputsNote(r.calculation)}</td>
     <td class="num">${isCalculated(r.calculation) ? number.format(r.calculation.tCo2e) : t('notCalculated')}</td>
     <td>${t(STANDING_LABEL[standing.get(r.id) ?? 'uncalculated'])}</td></tr>`).join('');
 
