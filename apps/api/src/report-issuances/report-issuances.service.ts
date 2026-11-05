@@ -33,7 +33,7 @@ import { readIssuanceList, readIssuanceRows, toIssuance, type IssuanceRow } from
 import { issuedCsv, issuedWorkbook } from './issuance-tables';
 
 /**
- * LP3-04 PR D — the issuance (README "The issuance"; Decisions 2026-10-21):
+ * LP3-04 PR D — the issuance (docs/api/report-datasets.md "The issuance"; Decisions 2026-10-21):
  * a retained dataset issued as a PDF whose exact bytes are retained.
  *
  *  1. READ, in one REPEATABLE READ snapshot (`CaptureSnapshot`): the retained

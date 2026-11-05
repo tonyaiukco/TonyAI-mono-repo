@@ -196,7 +196,7 @@ const FLAGS = ['--apply', '--allow-remote'];
  *  0, so a scripted caller could not tell a typo from a successful repair. */
 export function parseArgs(argv) {
   // A bare `--` is the conventional end-of-options marker, and `pnpm run x --
-  // --apply` forwards it verbatim — it is the form this repo's README documents
+  // --apply` forwards it verbatim — it is the form docs/development/commands.md documents
   // (`pnpm anomaly:recompute -- --apply`). Rejecting it would refuse that invocation.
   const unknown = argv.filter(
     (a) => a !== '--' && !FLAGS.includes(a) && !a.startsWith('--allow-remote='),

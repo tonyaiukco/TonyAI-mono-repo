@@ -25,7 +25,7 @@ export class ReportDatasetsController {
   }
 
   /** The retained text itself, as stored — never rebuilt. Its fingerprint is
-   * recomputed from it parsed and canonicalised (README "Fingerprint
+   * recomputed from it parsed and canonicalised (docs/api/report-datasets.md "Fingerprint
    * encoding"), not from these bytes. */
   @Get(':id')
   @UseGuards(DatasetReaderGuard)

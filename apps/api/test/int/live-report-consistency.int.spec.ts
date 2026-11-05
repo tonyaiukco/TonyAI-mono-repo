@@ -1,5 +1,5 @@
 /**
- * LP4-03 on the real database (README "Live reports"; Decisions 2026-10-24,
+ * LP4-03 on the real database (docs/api/reports-and-issuance.md "Live reports"; Decisions 2026-10-24,
  * K2–K4): a live report is read in ONE REPEATABLE READ snapshot, so an
  * approval, a withdrawal, a new record and a rename committed while it is
  * being built cannot make its badge, counts, totals and ledger disagree — the

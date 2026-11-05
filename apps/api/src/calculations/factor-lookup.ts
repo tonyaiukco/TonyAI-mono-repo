@@ -14,7 +14,7 @@ import { FactorLibraryConflictError } from './errors';
 import type { FactorPolicy } from './factor-policy';
 
 /**
- * The ONE factor lookup (LP3-04 PR B, W2; README "Inventory coverage and
+ * The ONE factor lookup (LP3-04 PR B, W2; docs/api/report-datasets.md "Inventory coverage and
  * report datasets"): which factor — and which sourced conversion — prices one
  * category, activity type, geography, year and unit. The engine prices with
  * it; nothing else selects candidates from the library

@@ -15,7 +15,7 @@ import { canonicalJson, reportDatasetFingerprint } from '../report-datasets/data
 import { referencedSubsidiaryIds } from '../report-datasets/dataset-reader';
 
 /**
- * LP3-04 PR D — the final gate (README "The issuance"; Decisions 2026-10-21,
+ * LP3-04 PR D — the final gate (docs/api/report-datasets.md "The issuance"; Decisions 2026-10-21,
  * K2 and K4). Pure: everything is read from the retained dataset, which was
  * captured in one snapshot (V4) — nothing here reads the live database, the
  * factor library or a clock, and nothing is recalculated.
@@ -183,7 +183,7 @@ const coverageGap = (g: ReportCoverageGap): ReportIssuanceGap => ({
 type Included = InventorySource & { applicability: 'included' };
 
 /**
- * The issuance's status and gaps from the retained dataset alone (D13; README
+ * The issuance's status and gaps from the retained dataset alone (D13; docs/api/report-datasets.md
  * "The issuance"). Final requires, of the selection's included obligations:
  * the inventory, its boundary confirmed and without a coverage gap (missing
  * records or evidence, attribution, applicability, unmapped records — the

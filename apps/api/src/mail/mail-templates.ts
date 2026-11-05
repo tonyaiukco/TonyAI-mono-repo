@@ -6,7 +6,7 @@ import tr from './i18n/tr.json';
 /**
  * The two emails the pilot sends (decision 2026-09-27): an invitation and a
  * password reset — TR/EN, rendered on the server from this module's own
- * catalogue (D16, README "Localisation and error codes"). The recipient's
+ * catalogue (D16, docs/architecture/localisation.md). The recipient's
  * language picks the catalogue: the inviter's choice for an invitation, the
  * account's `profiles.language` for a reset.
  */

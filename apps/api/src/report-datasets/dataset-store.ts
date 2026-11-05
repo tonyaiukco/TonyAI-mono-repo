@@ -15,7 +15,7 @@ export const DATASET_LIST_LIMIT = 50;
 
 type Db = Pick<Prisma.TransactionClient, 'reportDataset' | '$queryRaw'>;
 
-/** Readable: a non-empty referenced set wholly inside current access (README). */
+/** Readable: a non-empty referenced set wholly inside current access (docs/api/report-datasets.md). */
 export const readableBy = (referenced: readonly string[], access: readonly string[]): boolean => {
   const granted = new Set(access);
   return referenced.length > 0 && referenced.every((id) => granted.has(id));

@@ -9,7 +9,7 @@ import { buildBoundarySnapshot, type BoundaryRows } from '../inventory-boundary/
 import { cell, complete, SITE_1, SITE_2, source, SUB, SUB_B, without } from '../../test/boundary-fixtures';
 
 /**
- * A dataset's assessments (LP3-04 PR C; README's acceptance table, V10, V11):
+ * A dataset's assessments (LP3-04 PR C; the acceptance table in docs/api/report-datasets.md, V10, V11):
  * each case a boundary from `complete()` — Sub A's electricity metered monthly
  * at two sites (Scope 2), its gas quarterly at the company (Scope 1), the rest
  * excluded — and the records a capture would read beside it.
@@ -115,7 +115,7 @@ describe('assessDataset — a complete, confirmed year', () => {
   });
 });
 
-describe("assessDataset — README's acceptance examples", () => {
+describe("assessDataset — the contract's acceptance examples", () => {
   it('one approved January record, eleven missing months: missing_record each, partial', () => {
     const a = assess({ records: [record('r-01')] });
     expect(obligation(a, 'e-1:January')).toMatchObject({ state: 'satisfied', recordIds: ['r-01'] });

@@ -69,7 +69,7 @@ import trSubsidiaries from "./tr/subsidiaries.json";
  * features translating at once touch different files. English is the source —
  * its shape is the `Messages` type every `useTranslations` call is checked
  * against — and `messages.spec.ts` holds Turkish to the same keys and ICU
- * arguments. Conventions: README "Localisation and error codes" and the
+ * arguments. Conventions: docs/architecture/localisation.md and the
  * `localise-ui` skill.
  *
  *   common      words every screen shares — Sign out, loading/saving/cancel, the not-calculated and

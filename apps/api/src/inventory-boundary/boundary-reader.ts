@@ -13,7 +13,7 @@ import { buildBoundarySnapshot } from './boundary-snapshot';
  *
  * Bound to the organisation it is asked under (follow-up (13)). Answers null —
  * not found, never "not yours" — unless every subsidiary it declares is in the
- * caller's CURRENT access (README: a dataset's referenced subsidiaries, no
+ * caller's CURRENT access (docs/api/report-datasets.md: a dataset's referenced subsidiaries, no
  * bypass for the capturer, never redacted): a partially granted `data_entry`
  * user reads no version (W3), and a version declaring no subsidiary references
  * none, so it is no one's to read.

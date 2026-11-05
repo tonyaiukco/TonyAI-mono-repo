@@ -14,7 +14,7 @@ import {
 
 /**
  * An inventory boundary version as `InventoryBoundarySnapshot` (LP3-04 PR B;
- * README "Inventory coverage and report datasets"), built from its stored rows
+ * docs/api/report-datasets.md "Inventory coverage and report datasets"), built from its stored rows
  * — pure, so every rule below is a DB-free spec. What the tables hold is the
  * owner's declaration; what this derives is never stored: the entities, the
  * obligations and their evidence periods, an included cell's sources (W1).

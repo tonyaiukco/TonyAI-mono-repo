@@ -8,7 +8,7 @@ import {
 import { boundaryMatchesVersion, deriveIssuance, readRetainedDataset, RetainedDatasetError } from './issuance-gate';
 
 /**
- * The final gate (LP3-04 PR D; D13, K2, K4; README "The issuance" and its
+ * The final gate (LP3-04 PR D; D13, K2, K4; docs/api/report-datasets.md "The issuance" and its
  * acceptance table): status and gaps from the retained dataset alone, and the
  * retained text held to its row, its own assessments and its version.
  */
@@ -68,7 +68,7 @@ describe('deriveIssuance — final', () => {
   });
 });
 
-describe("deriveIssuance — partial, every gap named (README's acceptance table)", () => {
+describe("deriveIssuance — partial, every gap named (the contract's acceptance table)", () => {
   it('one approved January record: partial — the missing months are coverage gaps', () => {
     const result = deriveIssuance(datasetOf({ records: [record('r-01')] }));
     expect(result.status).toBe('partial');

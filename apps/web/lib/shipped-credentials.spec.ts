@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 /**
  * Everything here reaches the browser or the web image, whatever the
  * environment: a hint hidden by a flag would still ship in the bundle, so the
- * seed accounts stay out of the source altogether. The README's "Seed users"
- * documents them. Latin-1 keeps `public/`'s binaries readable; the patterns are
+ * seed accounts stay out of the source altogether. README.md and
+ * docs/development/local-setup.md ("Seed users") document them. Latin-1 keeps `public/`'s binaries readable; the patterns are
  * ASCII. Values inlined from the build's environment are out of this scan's reach.
  */
 const WEB_ROOT = fileURLToPath(new URL("..", import.meta.url));

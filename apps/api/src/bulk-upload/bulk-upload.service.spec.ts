@@ -1010,7 +1010,7 @@ describe('BulkUploadService — the figures that reach the write', () => {
     // `activityValue * 2` in the row mapper passed all 68 tests: `2400` still
     // satisfies `@Min(0)`, and `create` is mocked, so every emissions figure
     // in the file could be doubled on its way into the inventory with CI
-    // green. In a product whose README calls wrong numbers a liability, this
+    // green. In a product whose CLAUDE.md calls wrong numbers a liability, this
     // is the assertion that has to exist.
     const { records, service } = build();
 

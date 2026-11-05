@@ -29,11 +29,11 @@
 
   Verify: `git grep -n -i "keep .README" CLAUDE.md AGENTS.md .claude` returns only the narrowed wording.
 - [x] 2.8 Confirm the self-hosted anchors are intact. Verify: `infra/runbooks/11-qa-hosted.md` is unchanged, and the anchors cited by `deploy-qa.yml` and `rollback-qa.yml` still exist.
-- [ ] 2.9 Open PR A (`docs/refactor-big-md-files`). In the description, include the D2 check output, the link-check output and the replacement-bundle digest note. Verify: CI is green; the owner merges.
+- [x] 2.9 Open PR A (`docs/refactor-big-md-files`). In the description, include the D2 check output, the link-check output and the replacement-bundle digest note. Verify: CI is green; the owner merges.
 
 ## 3. PR B — repoint code citations (comments only)
 
-- [ ] 3.1 After PR A merges, branch from `main`. Rewrite each `README "X"` / `README:` citation in the 39 non-migration files to the D5 form, quoting the new doc path. Leave `packages/db/prisma/migrations/**` untouched. Verify: `git grep -n "README" -- apps packages e2e ':!packages/db/prisma/migrations'` returns no citation of a moved section, and `git diff --stat -- packages/db/prisma/migrations` is empty.
+- [x] 3.1 After PR A merges, branch from `main`. Rewrite each `README "X"` / `README:` citation in the 39 non-migration files to the D5 form, quoting the new doc path. Leave `packages/db/prisma/migrations/**` untouched. Verify: `git grep -n "README" -- apps packages e2e ':!packages/db/prisma/migrations'` returns no citation of a moved section, and `git diff --stat -- packages/db/prisma/migrations` is empty.
 - [ ] 3.2 Prove the change is comment-only. Verify: `pnpm typecheck`, `pnpm lint` and `pnpm test` are green. With the local stack up, `pnpm --filter @tonyai/db exec prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_DATABASE_URL"` reports no change other than the known `activity_records` index note.
 - [ ] 3.3 Open PR B. State in the description that it is comment-only and triggers a QA image deploy. Verify: CI is green, the QA deploy smoke passes after merge, and the owner merges.
 

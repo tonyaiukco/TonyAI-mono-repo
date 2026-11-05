@@ -309,7 +309,7 @@ export interface ReportUncoveredScope {
   countedRecordIds?: never;
 }
 
-/** SHA-256 of UTF-8 canonical content (see README). Identity and capture time
+/** SHA-256 of UTF-8 canonical content (see docs/api/report-datasets.md, "Fingerprint encoding"). Identity and capture time
  * are retained, but excluded from the content-equivalence fingerprint. */
 export interface ReportDatasetFingerprint extends Sha256Fingerprint {
   canonicalization: 'tonyai-report-dataset-v1';

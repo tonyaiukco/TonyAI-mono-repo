@@ -286,7 +286,7 @@ describe('parseArgs', () => {
   it('lets the end-of-options separator through', () => {
     // `pnpm anomaly:recompute -- --apply` forwards the `--` verbatim, and that
     // is the documented invocation. A strict parser that rejected it refused
-    // the README's own command.
+    // the documented command (docs/development/commands.md).
     expect(parseArgs(['--', '--apply'])).toMatchObject({ apply: true, unknown: [] });
   });
 

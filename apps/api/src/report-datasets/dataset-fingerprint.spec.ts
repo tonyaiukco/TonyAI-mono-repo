@@ -7,7 +7,7 @@ import {
 } from './dataset-fingerprint';
 
 /**
- * `tonyai-report-dataset-v1` (README, "Fingerprint encoding"): what the
+ * `tonyai-report-dataset-v1` (docs/api/report-datasets.md, "Fingerprint encoding"): what the
  * canonical form accepts, refuses and how it orders — each rule its own case.
  */
 

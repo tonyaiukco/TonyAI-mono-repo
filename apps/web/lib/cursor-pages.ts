@@ -14,7 +14,7 @@ export function appendById<T extends { id: string }>(list: readonly T[], page: r
 /**
  * A "load more" refused with 400: its cursor is one this deployment no longer
  * accepts (an old tab across a release) — the list starts again from its first
- * page rather than offering the same refused cursor (README "Release and
+ * page rather than offering the same refused cursor (docs/api/bounded-access.md "Release and
  * rollback").
  */
 export function isStaleCursor(error: unknown): boolean {
