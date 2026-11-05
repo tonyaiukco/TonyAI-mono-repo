@@ -129,8 +129,9 @@ export function endsWithPendingSeparator(text: string, locale: Locale): boolean 
   const last = trimmed.slice(-1);
   if (last !== decimal && last !== group) return false;
   const before = trimmed.slice(0, -1);
-  // Nothing follows a decimal part but digits: `1,2,` is a mistake, not a pause.
-  if (before.includes(decimal)) return false;
+  // Nothing follows a decimal part but digits: `1,2,` is a mistake, not a pause;
+  // nor is a space before the separator (`178 ,`).
+  if (before.includes(decimal) || before !== before.trimEnd()) return false;
   return parseLocaleDecimal(before, locale).ok;
 }
 

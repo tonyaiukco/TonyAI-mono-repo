@@ -731,7 +731,8 @@ function DataEntryPageInner() {
       } catch (e) {
         if (!active) return;
         setPreview(null);
-        setPreviewError(e);
+        // Never a falsy state: `null` means "no error" to the card.
+        setPreviewError(e ?? new Error("preview failed"));
       } finally {
         if (active) setPreviewing(false);
       }

@@ -1,4 +1,5 @@
 import { test, expect, request as playwrightRequest, type Page, type Request } from '@playwright/test';
+import { DEFAULT_REPORTING_YEAR, selectableReportingYears } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
   API_BASE,
@@ -42,7 +43,12 @@ test('the selection lives in the URL: reload, navigation and the export keep it'
 
   await page.goto('/emissions');
   await expect(page).toHaveURL(new RegExp(`/emissions\\?${CANONICAL_DEFAULT}$`));
-  // A year other than the default, inside the pickers' window (QA BUG-08).
+  // QA BUG-08: the picker offers the current year and the ten before it, not 2100 → 2000.
+  await page.getByTestId('context-year').click();
+  await expect(page.getByRole('option')).toHaveText(selectableReportingYears(DEFAULT_REPORTING_YEAR).map(String));
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox')).toHaveCount(0);
+  // A year other than the default, inside the pickers' window.
   await pick(page, 'context-year', '2024');
   await pick(page, 'context-subsidiary', /^TonyAI Energy/);
   await expect(page).toHaveURL(new RegExp(`year=2024&subsidiaryId=${SUB.energy}&scope=all&category=all`));

@@ -174,6 +174,7 @@ describe("endsWithPendingSeparator — a number still being typed (QA BUG-06)", 
     ["178,,", "tr"],
     ["abc,", "en"],
     ["1,2,", "tr"],
+    ["178 ,", "tr"],
   ] as const)("%j in %s is not pending", (input, locale) => {
     expect(endsWithPendingSeparator(input, locale)).toBe(false);
   });
