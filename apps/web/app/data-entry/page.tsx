@@ -1444,7 +1444,8 @@ function DataEntryPageInner() {
                         placeholder={t("activityValuePlaceholder")}
                         value={activityValue}
                         onChange={(e) => activity.setText(e.target.value)}
-                        aria-invalid={activityValue.trim() !== "" && !valueCheck.ok}
+                        onBlur={activity.blur}
+                        aria-invalid={activityValue.trim() !== "" && !valueCheck.ok && !activity.typing}
                         aria-describedby="activity-value-note"
                       />
                       {/* What the other convention would have read is named, so a
@@ -1454,6 +1455,7 @@ function DataEntryPageInner() {
                         check={valueCheck}
                         otherReading={activity.otherReading}
                         locale={activity.locale}
+                        typing={activity.typing}
                       />
                       </>
                       )}

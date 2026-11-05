@@ -117,6 +117,23 @@ export function alternativeReading(text: string, locale: Locale): number | null 
   return null;
 }
 
+/**
+ * `178,` on the way to `178,5` (QA BUG-06): one trailing separator after text
+ * that reads as a number on its own. It is still refused — the parser never
+ * guesses the missing digits — but a field holds that refusal back while the
+ * user is still typing, and shows it once they leave the field.
+ */
+export function endsWithPendingSeparator(text: string, locale: Locale): boolean {
+  const trimmed = text.trim();
+  const { decimal, group } = NUMBER_SEPARATORS[locale];
+  const last = trimmed.slice(-1);
+  if (last !== decimal && last !== group) return false;
+  const before = trimmed.slice(0, -1);
+  // Nothing follows a decimal part but digits: `1,2,` is a mistake, not a pause.
+  if (before.includes(decimal)) return false;
+  return parseLocaleDecimal(before, locale).ok;
+}
+
 /** A value typed into a field, with the locale it was typed in — kept together
  *  so the text is never read under another locale's rules. */
 export interface TypedDecimal {

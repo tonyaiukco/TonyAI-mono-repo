@@ -280,15 +280,15 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.baselineYear} onChange={(e) => setForm((f) => ({ ...f, baselineYear: e.target.value }))} />
                   </Field>
                   <Field label={t('baselineTonnes')}>
-                    <Input type="text" inputMode="decimal" autoComplete="off" value={baselineInput.text} onChange={(e) => baselineInput.setText(e.target.value)} placeholder={t('baselinePlaceholder')} aria-describedby="target-baseline-note" aria-invalid={baselineInput.text.trim() !== '' && !baselineCheck.ok} />
-                    <DecimalNote id="target-baseline-note" check={baselineCheck} otherReading={baselineInput.otherReading} locale={baselineInput.locale} />
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={baselineInput.text} onChange={(e) => baselineInput.setText(e.target.value)} onBlur={baselineInput.blur} placeholder={t('baselinePlaceholder')} aria-describedby="target-baseline-note" aria-invalid={baselineInput.text.trim() !== '' && !baselineCheck.ok && !baselineInput.typing} />
+                    <DecimalNote id="target-baseline-note" check={baselineCheck} otherReading={baselineInput.otherReading} locale={baselineInput.locale} typing={baselineInput.typing} />
                   </Field>
                   <Field label={t('targetYear')}>
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.targetYear} onChange={(e) => setForm((f) => ({ ...f, targetYear: e.target.value }))} />
                   </Field>
                   <Field label={t('targetTonnes')}>
-                    <Input type="text" inputMode="decimal" autoComplete="off" value={targetInput.text} onChange={(e) => targetInput.setText(e.target.value)} placeholder={t('targetPlaceholder')} aria-describedby="target-target-note" aria-invalid={targetInput.text.trim() !== '' && !targetCheck.ok} />
-                    <DecimalNote id="target-target-note" check={targetCheck} otherReading={targetInput.otherReading} locale={targetInput.locale} />
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={targetInput.text} onChange={(e) => targetInput.setText(e.target.value)} onBlur={targetInput.blur} placeholder={t('targetPlaceholder')} aria-describedby="target-target-note" aria-invalid={targetInput.text.trim() !== '' && !targetCheck.ok && !targetInput.typing} />
+                    <DecimalNote id="target-target-note" check={targetCheck} otherReading={targetInput.otherReading} locale={targetInput.locale} typing={targetInput.typing} />
                   </Field>
                 </div>
               </div>
