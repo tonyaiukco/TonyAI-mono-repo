@@ -24,7 +24,7 @@ import { boundaryGaps } from '../inventory-boundary/boundary-gaps';
 import { periodsOf } from '../inventory-boundary/boundary-snapshot';
 
 /**
- * A dataset's assessments from its captured facts (LP3-04 PR C; README
+ * A dataset's assessments from its captured facts (LP3-04 PR C; docs/api/report-datasets.md
  * "Inventory coverage and report datasets"): review, coverage, provenance and
  * the scope disclosures. Pure — every input was read in the capture's one
  * snapshot, so the result is a function of that moment alone.

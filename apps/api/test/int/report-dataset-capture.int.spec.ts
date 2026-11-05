@@ -1,5 +1,5 @@
 /**
- * LP3-04 PR C on the real database (README "Inventory coverage and report
+ * LP3-04 PR C on the real database (docs/api/report-datasets.md "Inventory coverage and report
  * datasets"; Decisions 2026-10-15 (ninth), V1–V12): the dataset routes
  * through the deployed app as the runtime role, and the retained table's
  * guard (TA016) as every writer meets it.

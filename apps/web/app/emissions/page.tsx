@@ -254,7 +254,7 @@ function EmissionsAnalysisPageInner() {
   const selectedSubsidiaryId = context?.subsidiaryId;
 
   // Sequence tokens: a slower answer for an earlier selection must not land
-  // over a newer one (README "Reporting context contract").
+  // over a newer one (docs/api/reporting-context.md).
   const summarySeq = useRef(0);
   const trendSeq = useRef(0);
   const recordsSeq = useRef(0);

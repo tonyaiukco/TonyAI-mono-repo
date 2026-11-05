@@ -24,7 +24,7 @@ import { readCaptureContext, readCaptureFacts, referencedSubsidiaryIds } from '.
 import { datasetRow, datasetSummary, listDatasetSummaries, readableBy, readDatasetContent } from './dataset-store';
 
 /**
- * LP3-04 PR C — the report dataset's capture (README "Inventory coverage and
+ * LP3-04 PR C — the report dataset's capture (docs/api/report-datasets.md "Inventory coverage and
  * report datasets"; Decisions 2026-10-15 (ninth), V1–V12).
  *
  * A capture runs in two transactions (W8; PR B follow-up (4a)):

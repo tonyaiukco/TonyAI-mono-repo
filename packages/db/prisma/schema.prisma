@@ -813,7 +813,7 @@ model StorageIntent {
 }
 
 // ---------------------------------------------------------------------------
-// LP3-04 PR B — the declared inventory boundary (D11, D12; README "Inventory
+// LP3-04 PR B — the declared inventory boundary (D11, D12; docs/api/report-datasets.md "Inventory
 // coverage and report datasets"; Decisions 2026-10-15 (second), W1–W13).
 //
 // One version of an organisation's boundary for a reporting year: which
@@ -1019,7 +1019,7 @@ model ReportDataset {
   schemaVersion           Int               @map("schema_version")
   canonicalization        String
   fingerprintHex          String            @map("fingerprint_hex") @db.Char(64)
-  // Every subsidiary the dataset references (README: the read rule's set),
+  // Every subsidiary the dataset references (docs/api/report-datasets.md: the read rule's set),
   // computed from the content — the guard recomputes it. A reader needs all of
   // them in their current access.
   referencedSubsidiaryIds String[]          @map("referenced_subsidiary_ids") @db.Uuid
@@ -1037,7 +1037,7 @@ model ReportDataset {
   @@map("report_datasets")
 }
 
-/// LP3-04 PR D — a retained dataset issued as a retained PDF (README "The
+/// LP3-04 PR D — a retained dataset issued as a retained PDF (docs/api/report-datasets.md "The
 /// issuance"; Decisions 2026-10-21). Append-only: the guard (TA017) binds an
 /// insert to its dataset — organisation, year, fingerprint and referenced
 /// set — admits a final only of a confirmed inventory without coverage gaps,

@@ -267,7 +267,7 @@ export async function readCaptureFacts(
 }
 
 /**
- * Every subsidiary a dataset references (README: the read rule's set) — each
+ * Every subsidiary a dataset references (docs/api/report-datasets.md: the read rule's set) — each
  * `subsidiaryId` it holds at any depth, the boundary's declared subsidiaries
  * and the resolved ones — sorted. The same rule as the table's guard, which
  * recomputes it from the stored content (`lax $.**.subsidiaryId`), so a

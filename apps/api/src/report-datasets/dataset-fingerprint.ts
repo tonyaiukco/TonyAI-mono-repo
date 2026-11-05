@@ -3,7 +3,7 @@ import type { ReportDataset, ReportDatasetFingerprint } from '@tonyai/shared-typ
 
 /**
  * The dataset's content fingerprint, version `tonyai-report-dataset-v1`
- * (README, "Fingerprint encoding"; LP3-04 PR C). The whole dataset but its
+ * (docs/api/report-datasets.md, "Fingerprint encoding"; LP3-04 PR C). The whole dataset but its
  * `datasetId`, `capturedAt` and `fingerprint` is canonicalised and hashed with
  * SHA-256, so two captures of the same facts share a fingerprint and a changed
  * fact never does.
@@ -124,7 +124,7 @@ export function reportDatasetFingerprint(
 }
 
 /**
- * The encoding's identity rules (README): IDs unique within each named
+ * The encoding's identity rules (docs/api/report-datasets.md): IDs unique within each named
  * collection — records, evidence, releases, sources; boundary subsidiaries,
  * entity keys `(subsidiaryId, locationId)`, attribution keys
  * `(subsidiaryId, category)` and applicability keys

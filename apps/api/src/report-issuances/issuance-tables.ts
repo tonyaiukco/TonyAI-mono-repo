@@ -23,7 +23,7 @@ import {
 } from './issuance-html';
 
 /**
- * An issuance's Excel and CSV (LP4-03 K5; README "Issued reports"): the
+ * An issuance's Excel and CSV (LP4-03 K5; docs/api/reports-and-issuance.md "Issued reports"): the
  * RETAINED dataset projected exactly as the issued PDF projects it — the same
  * counted records (the scopes' `countedRecordIds`, never a live read), the same
  * figures, gaps, exclusions and withdrawals. Pure functions of the issuance and

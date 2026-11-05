@@ -3,7 +3,8 @@ import { join, relative, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 /**
- * ONE factor lookup (LP3-04 PR B, W2; README: coverage "must not copy private
+ * ONE factor lookup (LP3-04 PR B, W2; the coverage contract, now
+ * docs/api/report-datasets.md, as first worded: "must not copy private
  * candidate SQL/diagnostic selection a third time"). Every read of the factor
  * library's rows in the API and the database package is listed here, file by
  * file, with how many times it names the library: a new reader — a report, a

@@ -1,5 +1,5 @@
 /**
- * LP3-04 PR D on the real database and the local Storage (README "The
+ * LP3-04 PR D on the real database and the local Storage (docs/api/report-datasets.md "The
  * issuance"; Decisions 2026-10-21): the issuance routes through the deployed
  * app as the runtime role, the retained table's guard (TA017) as every
  * writer meets it, and the retained PDF's recovery (LP1-02) failed at each
@@ -9,7 +9,7 @@
  * priced on an authoritative release; until LP4-02 opens the publisher
  * registry no release can be authoritative, so the final this spec issues is
  * a confirmed boundary whose every category is excluded with a reason — no
- * obligation, nothing to count (README's acceptance table) — and a metered
+ * obligation, nothing to count (the acceptance table in docs/api/report-datasets.md) — and a metered
  * year on the fixture release is the partial beside it.
  */
 import 'reflect-metadata';

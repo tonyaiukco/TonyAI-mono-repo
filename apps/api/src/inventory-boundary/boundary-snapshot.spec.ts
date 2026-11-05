@@ -9,7 +9,7 @@ import {
 
 /**
  * The boundary as the contract's `InventoryBoundarySnapshot` (LP3-04 PR B):
- * the README's examples — a site opening mid-year, a quarterly cadence clipped
+ * the contract's examples in docs/api/report-datasets.md — a site opening mid-year, a quarterly cadence clipped
  * to operating months, an excluded and an unsupported source, a missing cell,
  * a `sites` policy with no site — each with one expected outcome.
  */

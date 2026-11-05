@@ -7,7 +7,7 @@ import { readCaptureFacts, type CaptureLimits } from '../report-datasets/dataset
 
 /**
  * What the year's inventory boundary says about a live report's selection
- * (LP4-03 K3; README "Live reports and issued reports"): the NEWEST version of
+ * (LP4-03 K3; docs/api/reports-and-issuance.md "Live reports and issued reports"): the NEWEST version of
  * the year — open, frozen or confirmed — read whole and assessed by the
  * capture's rule (`assessDataset`) over the records, evidence and releases as
  * they stand in the caller's snapshot. Nothing is retained.

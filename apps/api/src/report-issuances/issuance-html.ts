@@ -18,7 +18,7 @@ import en from './i18n/en.json';
 import tr from './i18n/tr.json';
 
 /**
- * The issued PDF's HTML (LP3-04 PR D; README "The issuance"; D16). A pure
+ * The issued PDF's HTML (LP3-04 PR D; docs/api/report-datasets.md "The issuance"; D16). A pure
  * function of the retained dataset and what the gate derived from it — no
  * live read, no clock — so what it prints is what the dataset holds.
  *

@@ -7,7 +7,7 @@ import { DATASET_LIST_LIMIT, datasetRow, datasetSummary, listDatasetSummaries, r
  * a capture inserts — every column from the dataset itself — and the list.
  */
 
-describe('readableBy — README: a non-empty referenced set wholly inside current access', () => {
+describe('readableBy — the read rule: a non-empty referenced set wholly inside current access', () => {
   it('admits a set inside access', () => {
     expect(readableBy(['a', 'b'], ['a', 'b', 'c'])).toBe(true);
   });
