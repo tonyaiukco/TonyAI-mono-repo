@@ -288,6 +288,11 @@ model ActivityRecord {
   activityValue             Float                    @map("activity_value")
   activityUnit              String                   @map("activity_unit")
   input                     Json? // raw structured input as submitted (optional)
+  // Per-record calculation parameters (LP4-02, D3): Natural Gas's calorific
+  // overrides and volume correction, a refrigerant's equipment, refill and leak
+  // rate choice. A database CHECK holds their shape; audited with the record and
+  // frozen with its inputs once committed. The engine reads them from PR3.
+  parameters                Json?    @map("parameters")
   calculation               Json // immutable calc-engine snapshot (tCo2e + factor traceability)
   createdBy                 String                   @map("created_by") @db.Uuid
   anomalyFlag               Boolean                  @default(false) @map("anomaly_flag")
@@ -616,6 +621,7 @@ model FactorRelease {
 
   factors     EmissionFactor[]
   conversions UnitConversion[]
+  parameters  FactorParameter[]
 
   @@unique([publisher, ordinal])
   @@unique([publisher, edition])
@@ -700,6 +706,28 @@ model UnitConversion {
   @@unique([releaseId, category, activityType, geographyCode, reportingYear, fromUnit, toUnit, calorificBasis], name: "identity", map: "unit_conversions_identity_key")
   @@index([category, geographyCode, reportingYear])
   @@map("unit_conversions")
+}
+
+// A sourced calculation parameter from a factor release (LP4-02, D2): leak
+// rates per equipment type, the reference GCV, or any constant a calculation
+// reads from a release. Sealed and withdrawn with the release.
+model FactorParameter {
+  id          String        @id @default(uuid()) @db.Uuid
+  releaseId   String        @map("release_id") @db.Uuid
+  release     FactorRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  key         String // PARAMETER_KEYS: 'leak_rate', 'reference_gcv', 'reference_ncv'
+  subject     String? // for leak_rate: equipment type; for a reference value: null
+  value       Float
+  unit        String // PARAMETER_UNITS: 'fraction' for a rate, 'kcal/Sm3' for a calorific value
+  isDefault   Boolean       @map("is_default") // true for default, false for alternative
+  source      String // provenance, e.g. document section
+  methodology String? // arithmetic or derivation, when applicable
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  // PARAMETER_IDENTITY_FIELDS (@tonyai/shared-types), in its order.
+  @@unique([releaseId, key, subject, isDefault], name: "identity", map: "factor_parameters_identity_key")
+  @@index([key, subject])
+  @@map("factor_parameters")
 }
 
 model AuditLog {

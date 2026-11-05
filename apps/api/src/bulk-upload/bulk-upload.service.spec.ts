@@ -2182,7 +2182,7 @@ describe('BulkUploadService — what the report repeats back', () => {
 
     // The category refusal ends with the whole vocabulary.
     expect(report.errors[0].message).toContain(CATEGORIES.join(', '));
-    for (const unit of ['standard_cubic_metres', 'normal_cubic_metres']) {
+    for (const unit of ['normal_cubic_metres']) {
       const reason = blockedUnitReason(unit) ?? '';
       expect(reason).not.toBe('');
       expect(Array.from(reason).length).toBeLessThanOrEqual(
@@ -2529,7 +2529,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       expect.objectContaining({ row: 3, code: 'invalid', column: 'activityType' }),
     ]);
     expect(report.errors[0].message).toBe(
-      'A Fuel record must name its activity type in the activityType column (download the current template if the file has none): diesel, gas_oil, fuel_oil, burning_oil or lpg.',
+      'A Fuel record must name its activity type in the activityType column (download the current template if the file has none): diesel, petrol, gas_oil, fuel_oil, burning_oil, lpg, lng or coal.',
     );
     expect(records.previewCreate).not.toHaveBeenCalled();
   });
@@ -2590,7 +2590,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       dataEntry(),
       csvFile([
         row({ ...FUEL, activityType: 'R-32' }),
-        row({ ...FUEL, activityType: 'petrol', periodValue: 'February' }),
+        row({ ...FUEL, activityType: 'cng', periodValue: 'February' }),
         row({ activityType: 'grid_electricity', periodValue: 'March' }),
       ]),
       DRY,
@@ -2602,7 +2602,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       expect.objectContaining({ row: 4, code: 'invalid', column: 'activityType' }),
     ]);
     expect(report.errors[0].message).toBe(
-      '"R-32" is not an activity type of Fuel. Use one of: diesel, gas_oil, fuel_oil, burning_oil or lpg.',
+      '"R-32" is not an activity type of Fuel. Use one of: diesel, petrol, gas_oil, fuel_oil, burning_oil, lpg, lng or coal.',
     );
     // An implicit category names none: the column stays blank.
     expect(report.errors[2].message).toBe(
@@ -2880,10 +2880,10 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
 
     it('refuses the whole file rather than check part of it, when its own slots hold more than the cap', async () => {
       // Through the API a slot holds at most one record per activity type
-      // (nine refrigerants), so this takes records written around it. A
+      // (twelve refrigerants), so this takes records written around it. A
       // partial answer would be the false clean dry run again.
       const { prisma, records, service } = build();
-      const junk = elsewhere(BULK_UPLOAD_MAX_ROWS * 10 + 1).map((r) => ({ ...r, periodValue: 'January' }));
+      const junk = elsewhere(BULK_UPLOAD_MAX_ROWS * 13 + 1).map((r) => ({ ...r, periodValue: 'January' }));
       prisma.activityRecord.findMany.mockImplementation(table(junk));
 
       for (const options of [DRY, { dryRun: false }]) {

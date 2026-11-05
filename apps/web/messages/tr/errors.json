@@ -67,6 +67,7 @@
     "unit_not_for_category": "Bu kategori bu birimle ölçülmez.",
     "activity_type_not_for_category": "Bu yakıt ya da gaz seçilen kategoriye ait değil.",
     "activity_type_required": "Bu kategori için yakıt ya da gaz türünü seçin.",
+    "record_parameters_invalid": "Bu hesaplama girdileri bu kategoriye uymuyor. Kontrol edip yeniden deneyin.",
     "no_factor": "Bu kategori, yakıt ya da gaz, coğrafya ve yıl için henüz bir emisyon faktörü yok.",
     "placeholder_refused": "Bu girişi yalnızca yer tutucu (placeholder) emisyon faktörleri karşılıyor ve burada kullanılmıyorlar.",
     "ambiguous_factor": "Emisyon faktörü kütüphanesinde bu giriş için eşit önceliğe sahip iki faktör var. Bir yöneticinin bunu çözmesi gerekir.",

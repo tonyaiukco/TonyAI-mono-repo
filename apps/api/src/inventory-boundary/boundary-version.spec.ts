@@ -119,6 +119,6 @@ describe('versionDTO', () => {
   it('keeps a policy row of a subsidiary out of view along with it', () => {
     const r = rows();
     const dto = versionDTO(loaded({ ...r, policies: [...r.policies, policy('Fuel', 'company', 'annual', SUB_B)] }), viewer('data_entry', [SUB_B]));
-    expect(dto.boundary.attribution.map((p) => p.subsidiaryId)).toEqual(Array(5).fill(SUB_B));
+    expect(dto.boundary.attribution.map((p) => p.subsidiaryId)).toEqual(Array(6).fill(SUB_B));
   });
 });

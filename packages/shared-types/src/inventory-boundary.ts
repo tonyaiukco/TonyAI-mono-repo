@@ -67,7 +67,7 @@ import type {
  * (`CATEGORY_SCOPE_MAP` 1 or 2), in `CATEGORIES` order. Scope 3 is declared
  * not covered, never as a boundary row. */
 export const INVENTORY_CATEGORIES = Object.freeze([
-  'Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants',
+  'Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas',
 ] as const);
 export type InventoryCategory = (typeof INVENTORY_CATEGORIES)[number];
 

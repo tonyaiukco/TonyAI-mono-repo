@@ -47,7 +47,7 @@ describe('report context boundary', () => {
     expect(Object.keys(tr).sort()).toEqual(Object.keys(en).sort());
     // The same in both only where the word is the same in both: a unit, a
     // fuel's own name, a format with no words (LP4-03's catalogue).
-    const SAME_IN_BOTH = new Set(['label tCO₂e', 'activity LPG', 'activity Fuel oil', 'coverageGap']);
+    const SAME_IN_BOTH = new Set(['label tCO₂e', 'activity LPG', 'activity LNG', 'activity HFC-227ea', 'activity Fuel oil', 'coverageGap']);
     type Element = { value?: unknown; options?: Record<string, { value: Element[] }> };
     const names = (elements: Element[], into: Set<string>): Set<string> => {
       for (const e of elements) {

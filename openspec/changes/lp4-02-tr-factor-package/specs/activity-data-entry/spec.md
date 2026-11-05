@@ -27,7 +27,7 @@ For a TR natural gas record in Sm³, the form SHALL show NCV prefilled with 8,25
 - **THEN** the record stores 8,100 as user-entered, and the preview's conversion note shows it
 
 ### Requirement: Refrigerant equipment inputs
-For a refrigerant record, the form SHALL ask for equipment type, installed capacity (kg) and refilled mass (kg). It SHALL show the equipment type's default leak rate. Only for split air conditioners and chillers, it SHALL offer the release's alternative rate as a choice.
+For a refrigerant record, the form SHALL be annual and SHALL ask, per equipment line, for equipment type, installed capacity (kg) and refilled mass (kg), showing their total as the record's quantity. A line with zero capacity and a refill SHALL be accepted. It SHALL show the equipment type's default leak rate. Only for split air conditioners and chillers, it SHALL offer the release's alternative rate as a choice.
 
 #### Scenario: Alternative offered only where defined
 - **WHEN** a user picks equipment type `refrigerator`

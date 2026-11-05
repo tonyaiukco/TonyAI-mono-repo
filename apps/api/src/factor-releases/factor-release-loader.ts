@@ -1,15 +1,18 @@
 import { Prisma, type FactorRelease, type PrismaClient } from '@tonyai/db';
 import {
+  FACTOR_IDENTITY_FIELDS,
+  identityKey,
   validateFactorReleaseImport,
   type FactorImportIssue,
   type FactorImportRow,
+  type FactorParameterImportRow,
   type FactorReleaseImport,
   type UnitConversionImportRow,
 } from '@tonyai/shared-types';
 
 /**
  * The factor library's loader (LP4-02, decisions L5 and P1–P8): it loads a
- * release whole — the release, its factors and conversions, its seal — in one
+ * release whole — the release, its factors, conversions and parameters, its seal — in one
  * transaction, and withdraws one, as the database role `tonyai_factor_loader`
  * and nothing else. The database holds the rules (a sealed release takes no
  * row, a seal is the loader's or the owner's, a commit leaving a release
@@ -51,6 +54,7 @@ export interface LoadReport {
   release: ReleaseSummary;
   factors: number;
   conversions: number;
+  parameters: number;
   supersedes: (ReleaseSummary & { reason: string }) | null;
 }
 
@@ -62,9 +66,10 @@ export interface WithdrawReport {
   reason: string;
 }
 
-type ReleaseData = Omit<Prisma.FactorReleaseCreateInput, 'factors' | 'conversions'>;
+type ReleaseData = Omit<Prisma.FactorReleaseCreateInput, 'factors' | 'conversions' | 'parameters'>;
 type FactorData = Omit<Prisma.EmissionFactorUncheckedCreateInput, 'releaseId' | 'version'>;
 type ConversionData = Omit<Prisma.UnitConversionUncheckedCreateInput, 'releaseId'>;
+type ParameterData = Omit<Prisma.FactorParameterUncheckedCreateInput, 'releaseId'>;
 
 /** A date the contract has checked is `YYYY-MM-DD`, as the `DATE` column holds it. */
 const asDate = (value: string | null): Date | null => (value === null ? null : new Date(`${value}T00:00:00.000Z`));
@@ -123,8 +128,21 @@ function conversionData(c: UnitConversionImportRow): ConversionData {
   };
 }
 
+function parameterData(p: FactorParameterImportRow): ParameterData {
+  return {
+    key: p.key,
+    subject: p.subject,
+    value: p.value,
+    unit: p.unit,
+    isDefault: p.isDefault,
+    source: p.source,
+    methodology: p.methodology,
+  };
+}
+
 const FACTOR_FIELDS = Object.keys(factorData({} as FactorImportRow)) as (keyof FactorData)[];
 const CONVERSION_FIELDS = Object.keys(conversionData({} as UnitConversionImportRow)) as (keyof ConversionData)[];
+const PARAMETER_FIELDS = Object.keys(parameterData({} as FactorParameterImportRow)) as (keyof ParameterData)[];
 const RELEASE_FIELDS = Object.keys(releaseData({} as FactorReleaseImport['release'])) as (keyof ReleaseData)[];
 
 /** Rows as comparable text, in one order: what a release holds, whichever way it was read. */
@@ -172,6 +190,7 @@ export class FactorReleaseLoader {
     const release = releaseData(file.release);
     const factors = file.factors.map(factorData);
     const conversions = file.conversions.map(conversionData);
+    const parameters = file.parameters.map(parameterData);
     await this.assertLoader();
 
     const superseded = options.supersedes === undefined ? null : await this.find(release.publisher, options.supersedes);
@@ -185,6 +204,7 @@ export class FactorReleaseLoader {
       release: summary(release),
       factors: factors.length,
       conversions: conversions.length,
+      parameters: parameters.length,
       supersedes: superseded ? { ...summary(superseded), reason: options.reason! } : null,
     });
 
@@ -195,7 +215,7 @@ export class FactorReleaseLoader {
       );
     }
     if (stored) {
-      await this.assertSameContent(stored, release, factors, conversions);
+      await this.assertSameContent(stored, release, factors, conversions, parameters);
       if (superseded && superseded.status !== 'withdrawn') {
         throw new LoaderRefusal(
           `${release.publisher} ${release.edition} is loaded, but ${superseded.edition} it supersedes is not withdrawn — withdraw it with the withdraw command`,
@@ -217,12 +237,16 @@ export class FactorReleaseLoader {
         `ordinal ${release.ordinal} of ${release.publisher} does not exceed its latest, ${highest} — an erratum is a new release with the next ordinal`,
       );
     }
+    await this.assertNoLiveOverlap(this.db, release.publisher, factors, superseded?.id ?? null);
     if (!options.apply) return report('would_load');
 
     await this.db.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_catalog.set_config('tonyai.actor', ${this.operator}, true)`;
         const { id } = await tx.factorRelease.create({ data: release, select: { id: true } });
+        // Asked again now the insert holds the publisher's lock, so two
+        // concurrent loads cannot both pass the check above.
+        await this.assertNoLiveOverlap(tx, release.publisher, factors, superseded?.id ?? null);
         for (let i = 0; i < factors.length; i += INSERT_CHUNK) {
           const chunk = factors.slice(i, i + INSERT_CHUNK).map((f) => ({ ...f, releaseId: id, version: release.edition }));
           await tx.emissionFactor.createMany({ data: chunk });
@@ -230,6 +254,9 @@ export class FactorReleaseLoader {
         for (let i = 0; i < conversions.length; i += INSERT_CHUNK) {
           const chunk = conversions.slice(i, i + INSERT_CHUNK).map((c) => ({ ...c, releaseId: id }));
           await tx.unitConversion.createMany({ data: chunk });
+        }
+        if (parameters.length > 0) {
+          await tx.factorParameter.createMany({ data: parameters.map((p) => ({ ...p, releaseId: id })) });
         }
         // The database's clock replaces the value given; after this the
         // release takes no row.
@@ -289,6 +316,37 @@ export class FactorReleaseLoader {
     }
   }
 
+  /**
+   * One live edition per slot (D8): a release that overlaps another live
+   * edition of its publisher on any factor identity must supersede it, or an
+   * erratum to an older edition could outrank a newer one.
+   */
+  private async assertNoLiveOverlap(
+    db: Pick<PrismaClient, 'emissionFactor'>,
+    publisher: string,
+    factors: FactorData[],
+    supersededId: string | null,
+  ): Promise<void> {
+    const live = await db.emissionFactor.findMany({
+      where: {
+        release: {
+          publisher,
+          status: { not: 'withdrawn' },
+          ...(supersededId === null ? {} : { id: { not: supersededId } }),
+        },
+      },
+      include: { release: { select: { edition: true } } },
+    });
+    const incoming = new Set(factors.map((f) => identityKey({ ...f, releaseId: null }, FACTOR_IDENTITY_FIELDS)));
+    const clash = live.find((row) => incoming.has(identityKey({ ...row, releaseId: null }, FACTOR_IDENTITY_FIELDS)));
+    if (clash) {
+      throw new LoaderRefusal(
+        `${publisher} ${clash.release.edition} is live and holds ${clash.category}/${clash.activityType} ${clash.gas} ` +
+          `for ${clash.geographyCode} ${clash.reportingYear}: this release must supersede it`,
+      );
+    }
+  }
+
   private find(publisher: string, edition: string) {
     return this.db.factorRelease.findUnique({ where: { publisher_edition: { publisher, edition } } });
   }
@@ -298,15 +356,18 @@ export class FactorReleaseLoader {
     release: ReleaseData,
     factors: FactorData[],
     conversions: ConversionData[],
+    parameters: ParameterData[],
   ): Promise<void> {
-    const [storedFactors, storedConversions] = await Promise.all([
+    const [storedFactors, storedConversions, storedParameters] = await Promise.all([
       this.db.emissionFactor.findMany({ where: { releaseId: stored.id } }),
       this.db.unitConversion.findMany({ where: { releaseId: stored.id } }),
+      this.db.factorParameter.findMany({ where: { releaseId: stored.id } }),
     ]);
     const same =
       canonical([stored], RELEASE_FIELDS) === canonical([release], RELEASE_FIELDS) &&
       canonical(storedFactors, FACTOR_FIELDS) === canonical(factors, FACTOR_FIELDS) &&
-      canonical(storedConversions, CONVERSION_FIELDS) === canonical(conversions, CONVERSION_FIELDS);
+      canonical(storedConversions, CONVERSION_FIELDS) === canonical(conversions, CONVERSION_FIELDS) &&
+      canonical(storedParameters, PARAMETER_FIELDS) === canonical(parameters, PARAMETER_FIELDS);
     if (!same) {
       throw new LoaderRefusal(
         `${release.publisher} ${release.edition} is already loaded with other content — an erratum is a new edition with the next ordinal (--supersedes=${release.edition})`,

@@ -16,7 +16,7 @@ import { isKnownUnit } from './normalization';
  * It delegates to `isKnownUnit` rather than listing values, because the engine
  * accepts ALIASES (`m3`, `m³`, `cubic_metre`) and a hand-written whitelist would
  * quietly reject spellings that work today. Being *known* is the DTO's question;
- * whether a known unit can currently be CALCULATED (Sm³ cannot) is the service's,
+ * whether a known unit can currently be CALCULATED (Nm³ cannot) is the service's,
  * so that refusal keeps its own explanatory message.
  */
 export function IsActivityUnit(options?: ValidationOptions) {

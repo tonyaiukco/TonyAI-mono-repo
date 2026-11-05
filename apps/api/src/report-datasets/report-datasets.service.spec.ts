@@ -253,7 +253,7 @@ describe('ReportDatasetsService.capture', () => {
       const data = (db.tx.reportDataset.create.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
       const stored = JSON.parse(data.content as string) as ReportDataset;
       expect(stored).toMatchObject({
-        schemaVersion: 1, capturedAt: '2026-10-15T12:00:01.234Z', organisationId: ORG, organisationName: 'Org',
+        schemaVersion: 2, capturedAt: '2026-10-15T12:00:01.234Z', organisationId: ORG, organisationName: 'Org',
         context: { year: 2026, scope: 1 }, selection: 'extract', resolvedSubsidiaryIds: ['sub-1', 'sub-2'],
       });
       expect(Object.keys(stored.context)).toEqual(['year', 'scope']);

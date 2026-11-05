@@ -120,7 +120,7 @@ interface ClaimedSlot {
 /**
  * How many stored records the slot check reads at most: a file claims at most
  * `BULK_UPLOAD_MAX_ROWS` slots, and through the API a slot holds one record
- * per activity type of its category (nine refrigerants today) or one untyped
+ * per activity type of its category (twelve refrigerants today) or one untyped
  * record — derived, so a longer list in the contract raises it. Past it the
  * file is refused, never checked in part.
  */

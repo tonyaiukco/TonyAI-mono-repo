@@ -43,7 +43,7 @@ describe('boundaryGaps — every rule a boundary breaks before any record is rea
         policies: without(rows.policies, (p) => p.subsidiaryId === SUB_B),
         cells: without(rows.cells, (c) => c.subsidiaryId === SUB_B),
       })).toEqual(
-        ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants']
+        ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas']
           .map((c) => gap('applicability_undetermined', SUB_B, null, c)),
       );
     });

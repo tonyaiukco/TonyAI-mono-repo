@@ -1,4 +1,5 @@
 import {
+  BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA,
   CATEGORY_SCOPE_MAP,
   COUNTED_STATUSES,
   isCalculated,
@@ -11,6 +12,7 @@ import {
   type ReportCoverageGap,
   type ReportDataset,
   type ReportDatasetRecord,
+  type ReportDatasetSchemaVersion,
   type ReportEvidenceReference,
   type ReportProvenanceAssessment,
   type ReportProvenanceIssueCode,
@@ -85,12 +87,15 @@ interface Attachment {
   obligation: InventoryObligation;
 }
 
-export function assessDataset(facts: CapturedFacts): DatasetAssessments {
+export function assessDataset(
+  facts: CapturedFacts,
+  schemaVersion: ReportDatasetSchemaVersion,
+): DatasetAssessments {
   const { boundary, selection, records, evidence } = facts;
   const live = records.filter((r) => r.status !== 'voided');
 
   // --- Sources: countable, and every other one a record could name.
-  const boundaryOwn = boundaryGaps(boundary);
+  const boundaryOwn = boundaryGaps(boundary, BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[schemaVersion]);
   const conflicting = new Set(
     boundaryOwn.filter((g) => g.code === 'attribution_conflict').flatMap((g) => g.sourceIds),
   );

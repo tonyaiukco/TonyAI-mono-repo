@@ -1,3 +1,4 @@
+import type { InventoryCategory } from './inventory-boundary';
 import type {
   ActivityRecordDTO, Category, EvidenceDTO, FactorReleaseDTO, FactorReleaseSnapshot,
   Locale, PeriodLockDTO, ReportingContext, ReportingPeriod, ReportTemplate,
@@ -11,7 +12,25 @@ import type {
  * All timestamps use Date.prototype.toISOString() UTC spelling; months are calendar months of reportingYear.
  * Producers validate runtime inputs, referential integrity and the invariants
  * below. TypeScript shapes alone do not certify a complete inventory. */
-export const REPORT_DATASET_SCHEMA_VERSION = 1 as const;
+export const REPORT_DATASET_SCHEMA_VERSION = 2 as const;
+
+/**
+ * Every version a retained dataset may hold. 2 (LP4-02) is 1 with Fugitive Gas
+ * among the categories a boundary must decide; content and encoding are the
+ * same shape, so the version only selects the rule K2 recomputes under.
+ */
+export const REPORT_DATASET_SCHEMA_VERSIONS = Object.freeze([1, 2] as const);
+export type ReportDatasetSchemaVersion = (typeof REPORT_DATASET_SCHEMA_VERSIONS)[number];
+
+/**
+ * The categories a boundary must decide under each schema, spelled out and
+ * never aliased to today's list: K2 recomputes a retained dataset under its own
+ * version's rule, so a later category must not reach an older version.
+ */
+export const BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA = Object.freeze({
+  1: Object.freeze(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const),
+  2: Object.freeze(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const),
+}) satisfies Record<ReportDatasetSchemaVersion, readonly InventoryCategory[]>;
 export type InventoryMonth = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 
 /** D11 is per subsidiary/year/category, across ALL its activity types. */
@@ -310,7 +329,7 @@ export interface ReportDatasetFingerprint extends Sha256Fingerprint {
  * artifactId and fingerprints are never capabilities. Refusal is indistinguishable
  * from not-found. Signed URLs and credentials never belong in retained data. */
 export interface ReportDataset {
-  schemaVersion: typeof REPORT_DATASET_SCHEMA_VERSION;
+  schemaVersion: ReportDatasetSchemaVersion;
   datasetId: string;
   capturedAt: string;
   organisationId: string;

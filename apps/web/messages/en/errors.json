@@ -67,6 +67,7 @@
     "unit_not_for_category": "This category is not measured in this unit.",
     "activity_type_not_for_category": "This fuel or gas does not belong to the chosen category.",
     "activity_type_required": "Choose the fuel or gas for this category.",
+    "record_parameters_invalid": "These calculation inputs do not fit this category. Check them and try again.",
     "no_factor": "No emission factor covers this category, fuel or gas, geography and year yet.",
     "placeholder_refused": "Only placeholder emission factors cover this entry, and they are not used here.",
     "ambiguous_factor": "The emission factor library holds two equally ranked factors for this entry. An administrator must resolve it.",

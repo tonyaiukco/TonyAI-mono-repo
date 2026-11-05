@@ -46,11 +46,19 @@ A Fugitive Gas record in standard cubic metres (15 °C) SHALL be priced as `Sm³
 - **THEN** the result is 1,632,467.22 kgCO2e (±0.5%)
 
 ### Requirement: Refrigerant capacity method
-A refrigerant record SHALL carry a gas, an equipment type, an installed capacity in kg and a refilled mass in kg (zero allowed). It SHALL be priced as `(capacity × leak rate + refill) × GWP`. The leak rate is the equipment type's default parameter. The user may select the release's alternative instead: 10% for split air conditioners and 8% for chillers. The chosen rate and whether it is the default SHALL be in the snapshot. R-22 SHALL be priced in Scope 1 like the other gases (owner decision 2026-11-05).
+A refrigerant record SHALL be one gas on an annual period, with one line per equipment type, each carrying an installed capacity and a refilled mass in kg (zero allowed). Its activity value SHALL equal the sum of the capacities. It SHALL be priced as `Σ (capacity × leak rate + refill) × GWP`. A record on another period, or with no equipment line, SHALL be refused. The leak rate is the equipment type's default parameter. The user may select the release's alternative instead: 10% for split air conditioners and 8% for chillers. The chosen rate and whether it is the default SHALL be in the snapshot. R-22 SHALL be priced in Scope 1 like the other gases (owner decision 2026-11-05).
 
 #### Scenario: Golden value 9 (FM200)
 - **WHEN** a fire-suppression system holding 40 kg of HFC-227ea with no refill is calculated for 2025
 - **THEN** the result is 2,880.00 kgCO2e (±0.5%) and the snapshot records leak rate 0.02 as the default
+
+#### Scenario: Two equipment types, one gas
+- **WHEN** an annual R-410A record has a split air conditioner line and a chiller line
+- **THEN** each line uses its own rate, the result is their sum, and the snapshot records both terms
+
+#### Scenario: A monthly refrigerant record
+- **WHEN** a TR refrigerant record names a monthly period
+- **THEN** it is refused, because the document's leak rates are yearly
 
 #### Scenario: Alternative leak rate
 - **WHEN** a split air conditioner record selects the 10% alternative
@@ -62,6 +70,17 @@ A report SHALL label the Scope 2 figure as location-based. When there is no mark
 #### Scenario: No certificates held
 - **WHEN** a final report is issued for a TR boundary with grid electricity
 - **THEN** Scope 2 reads as location-based, with the statement "No market-based result"
+
+### Requirement: Retained report datasets keep their own rule
+A retained report dataset SHALL be recomputed under the categories of its own schema version, never a newer list. A new capture SHALL use the current version. A boundary version confirmed before a category existed SHALL yield a partial with that category's gap named, until a new version decides it. A dataset whose row and content disagree on the version, or that names a version the gate does not read, SHALL be refused.
+
+#### Scenario: A dataset retained before Fugitive Gas
+- **WHEN** a schema 1 dataset is issued after the category was added
+- **THEN** it recomputes under its five categories, with its original fingerprint, and can still be final
+
+#### Scenario: A new capture of an old confirmed version
+- **WHEN** a version confirmed before the category existed is captured
+- **THEN** the dataset is schema 2 and partial, with `applicability_undetermined` on Fugitive Gas
 
 ### Requirement: Snapshots stay immutable and readable
 A calculation SHALL write its per-record inputs and parameters into a new snapshot version. Snapshots already committed SHALL be neither rewritten nor reinterpreted. Readers SHALL accept both the old and the new version. Loading the TR releases SHALL change no committed record's figure.

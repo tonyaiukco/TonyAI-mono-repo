@@ -131,7 +131,7 @@ async function dropRelease(id: string): Promise<void> {
   await owner.factorRelease.deleteMany({ where: { id } });
 }
 
-const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const;
+const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
 
 /** S's electricity metered monthly at L1; everything else excluded at the company. No gap. */
 function meteredDeclaration(): PutInventoryBoundarySubsidiaryRequest {

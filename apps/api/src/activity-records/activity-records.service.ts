@@ -47,6 +47,7 @@ import {
   type AuditAction,
   type CursorPage,
   type Category,
+  type RecordParameters,
   type ReportingPeriod,
   mayAuthorRecords,
   recordActivityTypesFor,
@@ -78,6 +79,8 @@ import {
 } from './lifecycle-lock';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
+import { recordParametersIssues } from './dto/record-parameters.dto';
+import { assertParametersArePriced } from './record-parameters-gate';
 import {
   ActivityRecordFiltersQueryDto,
   ActivityRecordPageQueryDto,
@@ -110,6 +113,17 @@ function assertActivityTypeNamed(category: string, activityType: string | null):
       `A ${category} record must name its activity type. Accepted: ${types.map((t) => t.value).join(', ')}.`,
     );
   }
+}
+
+/**
+ * A write's parameters hold to its EFFECTIVE category's rule (D3). The DTO
+ * cannot ask this for an edit that does not name its category, or one that
+ * moves a record with stored parameters to a category that takes none, and the
+ * database CHECK would answer those with a server error.
+ */
+function assertRecordParameters(category: string, parameters: unknown): void {
+  const issues = recordParametersIssues(category, parameters);
+  if (issues.length > 0) throw new CalculationInputError('record_parameters_invalid', issues.join('; '));
 }
 
 /**
@@ -408,6 +422,7 @@ export class ActivityRecordsService {
       activityValue: r.activityValue,
       activityUnit: r.activityUnit,
       input: (r.input as Record<string, unknown> | null) ?? null,
+      parameters: (r.parameters as RecordParameters | null) ?? null,
       calculation: r.calculation as unknown as ActivityCalculationSnapshot,
       createdBy: r.createdBy,
       anomalyFlag: r.anomalyFlag,
@@ -984,6 +999,8 @@ export class ActivityRecordsService {
     // written before LP3-03 stay untyped; no new one joins them.
     const activityType = dto.activityType ?? null;
     assertActivityTypeNamed(dto.category, activityType);
+    assertRecordParameters(dto.category, dto.parameters);
+    assertParametersArePriced(dto.parameters);
     // Period-lock gate (FR §4.2): no new records in a closed period. An early
     // answer only — `create` asks again once it holds the period.
     await this.assertPeriodNotLocked({
@@ -1077,6 +1094,7 @@ export class ActivityRecordsService {
             // one as `inputUnit` until the record is next edited. See `storedUnit`.
             activityUnit: storedUnit(dto.activityUnit),
             input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
+            parameters: (dto.parameters ?? undefined) as Prisma.InputJsonValue | undefined,
             calculation: calculation as unknown as Prisma.InputJsonValue,
             createdBy: user.id,
             varianceReason: dto.varianceReason ?? null,
@@ -1139,6 +1157,10 @@ export class ActivityRecordsService {
     if (!(storedType === null && activityType === null && category === existing.category)) {
       assertActivityTypeNamed(category, activityType);
     }
+    // Refused rather than cleared when a record moves category: the user clears
+    // them by sending null, as with the activity type above.
+    assertRecordParameters(category, dto.parameters !== undefined ? dto.parameters : existing.parameters);
+    assertParametersArePriced(dto.parameters);
 
     const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;
     const periodValue = requireCanonicalPeriodValue(
@@ -1224,6 +1246,13 @@ export class ActivityRecordsService {
     if (dto.periodValue !== undefined) data.periodValue = periodValue;
     if (dto.input !== undefined) {
       data.input = (dto.input ?? Prisma.JsonNull) as Prisma.InputJsonValue;
+    }
+    // SQL NULL, not JSON null: the shape CHECK and every reader mean "no
+    // parameters" by the column being NULL.
+    if (dto.parameters !== undefined) {
+      data.parameters = dto.parameters === null
+        ? Prisma.DbNull
+        : (dto.parameters as unknown as Prisma.InputJsonValue);
     }
     if (dto.varianceReason !== undefined) data.varianceReason = dto.varianceReason;
 

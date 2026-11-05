@@ -89,6 +89,7 @@ const record = (over: Partial<ActivityRecordDTO> = {}): ActivityRecordDTO => ({
   activityValue: 127_600,
   activityUnit: 'kWh',
   input: null,
+  parameters: null,
   calculation: calculated(56.144),
   createdBy: 'user-1',
   createdByName: 'Entry User',

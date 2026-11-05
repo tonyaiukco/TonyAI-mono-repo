@@ -24,8 +24,13 @@ import {
  * view of some subsidiaries holds exactly their gaps (a data_entry user's,
  * W3). A "selected" entity is the company entity under a `company` policy and
  * each declared site under a `sites` one.
+ * `categories` is what the boundary must decide: today's list, or the older one
+ * a retained dataset was captured under.
  */
-export function boundaryGaps(boundary: InventoryBoundarySnapshot): InventoryBoundaryGap[] {
+export function boundaryGaps(
+  boundary: InventoryBoundarySnapshot,
+  categories: readonly Category[] = INVENTORY_CATEGORIES,
+): InventoryBoundaryGap[] {
   const gaps: InventoryBoundaryGap[] = [];
   const add = (
     code: InventoryBoundaryGapCode,
@@ -66,7 +71,7 @@ export function boundaryGaps(boundary: InventoryBoundarySnapshot): InventoryBoun
   // undetermined cell.
   for (const subsidiaryId of boundary.subsidiaryIds) {
     const company = { subsidiaryId, locationId: null };
-    for (const category of INVENTORY_CATEGORIES) {
+    for (const category of categories) {
       const policy = policies.get(`${subsidiaryId}/${category}`);
       if (policy === undefined) {
         add('applicability_undetermined', company, category);

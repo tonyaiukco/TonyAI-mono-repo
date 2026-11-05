@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
@@ -14,14 +14,23 @@ import {
  * contract cannot say — or refuse what it can.
  */
 
-const sql = readFileSync(
-  resolve(__dirname, '../../../../packages/db/prisma/migrations/20261016120000_lp3_04_inventory_boundary/migration.sql'),
-  'utf8',
-);
+const MIGRATIONS = resolve(__dirname, '../../../../packages/db/prisma/migrations');
+// Every migration in order, so `lastIndexOf` reads a CHECK as it now stands:
+// a migration that adds a category re-creates the constraints that list one.
+const sql = readdirSync(MIGRATIONS)
+  .filter((name) => /^\d/.test(name))
+  .sort()
+  .map((name) => readFileSync(resolve(MIGRATIONS, name, 'migration.sql'), 'utf8'))
+  .join('\n');
+
+/** Where the last definition of the named constraint starts, however it is wrapped. */
+function definitionOf(constraint: string): number {
+  return [...sql.matchAll(new RegExp(`"${constraint}"\\s+CHECK`, 'g'))].at(-1)?.index ?? -1;
+}
 
 /** The quoted list of the first `"<column>" IN (…)` inside the named constraint. */
 function listIn(constraint: string, column: string): string[] {
-  const start = sql.indexOf(`"${constraint}" CHECK`);
+  const start = definitionOf(constraint);
   expect(start, constraint).toBeGreaterThan(-1);
   const match = sql.slice(start).match(new RegExp(`"${column}" IN \\(([^)]*)\\)`));
   expect(match, `${constraint}: ${column}`).not.toBeNull();
@@ -43,8 +52,8 @@ describe('the inventory boundary schema and shared-types agree', () => {
 
   it("on which categories are typed and on each one's activity types — a typed source names one of its own (21)", () => {
     const typed = SCOPE_1_2.filter((c) => recordActivityTypesFor(c).length > 0);
-    const block = sql.slice(sql.indexOf('"inventory_sources_mapping_check" CHECK'));
-    const cases = [...block.matchAll(/WHEN '([^']+)' THEN "activity_type" IS NOT NULL AND "activity_type" IN \(([^)]*)\)/g)];
+    const block = sql.slice(definitionOf('inventory_sources_mapping_check'));
+    const cases = [...block.matchAll(/WHEN '([^']+)' THEN "activity_type" IS NOT NULL\s+AND "activity_type" IN \(([^)]*)\)/g)];
     expect(cases.map((m) => m[1]).sort()).toEqual([...typed].sort());
     for (const [, category, list] of cases) {
       expect([...list.matchAll(/'([^']*)'/g)].map((m) => m[1]), category).toEqual(recordActivityTypesFor(category).map((t) => t.value));
@@ -53,7 +62,7 @@ describe('the inventory boundary schema and shared-types agree', () => {
   });
 
   it('on the scope each category maps to', () => {
-    const block = sql.slice(sql.indexOf('"inventory_sources_mapping_check" CHECK'));
+    const block = sql.slice(definitionOf('inventory_sources_mapping_check'));
     const match = block.match(/"scope" = CASE "category" WHEN '([^']+)' THEN 2 ELSE 1 END/);
     expect(match).not.toBeNull();
     expect(SCOPE_1_2.filter((c) => CATEGORY_SCOPE_MAP[c] === 2)).toEqual([match![1]]);
@@ -73,7 +82,7 @@ describe('the inventory boundary schema and shared-types agree', () => {
 
   it("on the write path's free-text caps", () => {
     const capsOf = (constraint: string, column: string): number[] => {
-      const start = sql.indexOf(`"${constraint}" CHECK`);
+      const start = definitionOf(constraint);
       expect(start, constraint).toBeGreaterThan(-1);
       // To the next constraint: this one's own bounds, never a neighbour's.
       const end = sql.indexOf('\n  ADD CONSTRAINT', start + 1);

@@ -14,7 +14,5 @@
     "tonnes": "Ton",
     "kg": "Kilogram — kg"
   },
-  "blocked": {
-    "standard_cubic_metres": "Standart metreküpün kWh'ye çevrilmesi için kaynağı belli bir ısıl değer gerekir ve bu prototipte henüz yok — Faz 4 faktör kütüphanesiyle gelecek. Hacmi m³ olarak ya da enerjiyi kWh olarak girin."
-  }
+  "blocked": {}
 }

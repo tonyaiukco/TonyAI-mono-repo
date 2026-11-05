@@ -105,7 +105,7 @@ async function get(user: RequestUser, path: string): Promise<{ status: number; b
 
 /** S's whole declaration: L1's meter monthly, every other category excluded at the company. */
 function declaration(): PutInventoryBoundarySubsidiaryRequest {
-  const others = ['Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const;
+  const others = ['Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
   return {
     firstMonth: 1, lastMonth: 12,
     sites: [{ locationId: L1, firstMonth: 1, lastMonth: 12 }],
@@ -306,8 +306,8 @@ describe('coverage is the boundary\'s, never a count of what exists (K3)', () =>
     const [version] = await owner.inventoryBoundary.findMany({ where: { organisationId: t.organisationId, reportingYear: YEAR } });
     await boundaries.putSubsidiary(await withAccess(admin()), version.id, S2, {
       firstMonth: 1, lastMonth: 12, sites: [],
-      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const).map((category) => ({ category, level: 'company' as const, reportingPeriod: 'annual' as const })),
-      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded' as const, reason: 'Holding' })),
+      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ category, level: 'company' as const, reportingPeriod: 'annual' as const })),
+      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded' as const, reason: 'Holding' })),
       sources: [],
     });
     // data_entry is granted S alone.

@@ -15,7 +15,7 @@ import { ADMIN_EMAIL, API_BASE, ENTRY_EMAIL, SUB, bearer, getAccessToken, login 
  */
 
 const YEAR = 2021;
-const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const;
+const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
 
 /**
  * A confirmed holding version for YEAR: TonyAI Trading, every category excluded

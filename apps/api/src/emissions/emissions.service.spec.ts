@@ -929,13 +929,13 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(cell('Waste').status).toBe('missing');
     expect(cell('Waste').lastUpdate).toBeNull();
 
-    // Row rollups: 1 complete, 11 categories, total = 12 + 5 + 7
+    // Row rollups: 1 complete, 12 categories, total = 12 + 5 + 7
     expect(row.completeCount).toBe(1);
-    expect(row.categoryCount).toBe(11);
+    expect(row.categoryCount).toBe(12);
     expect(row.totalTCo2e).toBe(24);
 
-    // Matrix totals: 1 complete + 2 incomplete + 8 missing
-    expect(m.totals).toEqual({ complete: 1, incomplete: 2, missing: 8 });
+    // Matrix totals: 1 complete + 2 incomplete + 9 missing
+    expect(m.totals).toEqual({ complete: 1, incomplete: 2, missing: 9 });
   });
 
   it('keeps an evidence-required cell incomplete until a file is attached (FR §2.2)', async () => {
@@ -1677,7 +1677,7 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(m.rows).toHaveLength(2);
     expect(m.rows[1].subsidiaryName).toBe('Gas Legal Ltd.'); // legalName fallback
     expect(m.rows.every((r) => r.cells.every((c) => c.status === 'missing'))).toBe(true);
-    expect(m.totals).toEqual({ complete: 0, incomplete: 0, missing: 22 });
+    expect(m.totals).toEqual({ complete: 0, incomplete: 0, missing: 24 });
   });
 });
 

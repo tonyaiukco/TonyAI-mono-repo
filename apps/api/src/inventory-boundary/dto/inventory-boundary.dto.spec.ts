@@ -258,7 +258,7 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
       const mapping = (b: Body, i: number) => sources(b)[i].mapping as Record<string, unknown>;
       expect(put((b) => { mapping(b, 1).activityType = null; }).join()).toMatch(/sources\[1\] .*activity type/);
       expect(put((b) => { delete mapping(b, 1).activityType; }).join()).toMatch(/sources\[1\] .*activity type/);
-      expect(put((b) => { mapping(b, 1).activityType = 'petrol'; }).join()).toMatch(/sources\[1\] .*activity type/);
+      expect(put((b) => { mapping(b, 1).activityType = 'cng'; }).join()).toMatch(/sources\[1\] .*activity type/);
       expect(put((b) => { mapping(b, 0).activityType = 'diesel'; }).join()).toMatch(/sources\[0\] .*activity type/);
       expect(put((b) => { mapping(b, 1).activityType = 'gas_oil'; })).toEqual([]);
     });
@@ -396,7 +396,7 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
   });
 
   it('pins the bounds', () => {
-    expect(INVENTORY_DECLARATION_LIMITS).toEqual({ sites: 500, attribution: 5, applicability: 2505, sources: 2000 });
+    expect(INVENTORY_DECLARATION_LIMITS).toEqual({ sites: 500, attribution: 6, applicability: 3006, sources: 2000 });
   });
 });
 

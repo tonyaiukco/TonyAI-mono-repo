@@ -54,6 +54,7 @@ export const CATEGORY_SCOPE_MAP: Record<Category, 1 | 2 | 3> = {
   'Fuel': 1,
   'Mobile Combustion': 1,
   'Refrigerants': 1,
+  'Fugitive Gas': 1,
   'Purchased Goods': 3,
   'Waste': 3,
   'Water': 3,
@@ -77,6 +78,7 @@ export const CATEGORIES = [
   'Fuel',
   'Mobile Combustion',
   'Refrigerants',
+  'Fugitive Gas',
   'Purchased Goods',
   'Waste',
   'Water',
@@ -202,18 +204,16 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
     dimension: 'metered_volume',
   },
   {
-    // Round-1 DE-3/EM-1 asked for Sm³ alongside m³. It is listed rather than
-    // hidden, because the request was to SEE it — but standard and actual cubic
-    // metres are different physical quantities, and this repo holds no sourced
-    // calorific value for the conversion. Inventing one would put a fabricated
-    // number into an inventory, so it is offered and refused, with the reason.
+    // Round-1 DE-3/EM-1 asked for Sm³ alongside m³. Standard and actual cubic
+    // metres are different physical quantities: Sm³ is the volume at standard
+    // reference conditions (15 °C, 101.325 kPa per ISO 13443). Only a sourced
+    // row prices or converts it: the TR factor package (LP4-02, D5) supplies a
+    // net-basis Sm³→kWh conversion row.
     value: 'standard_cubic_metres',
     label: 'Standard cubic metres — Sm³ (natural gas)',
     symbol: 'Sm³',
     target: 'kWh',
     dimension: 'standard_volume',
-    blocked:
-      'Standard cubic metres need a sourced calorific value to become kWh, and this prototype does not have one yet — it arrives with the Phase-4 factor library. Enter the volume in m³, or the energy in kWh.',
   },
   { value: 'therms', label: 'Therms (natural gas)', symbol: 'therms', target: 'kWh', dimension: 'energy' },
   { value: 'gj', label: 'GJ (natural gas)', symbol: 'GJ', target: 'kWh', dimension: 'energy' },
@@ -258,13 +258,17 @@ export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
     'therms',
     'gj',
   ],
-  Fuel: ['litres', 'uk_gallons', 'us_gallons'],
+  // Liquid fuels in volume units; solid fuels (coal) in mass units.
+  Fuel: ['litres', 'uk_gallons', 'us_gallons', 'kg'],
   // Fuel-based first (LP3-03, T4): the fuel a fleet bought — litres of liquid
   // fuel, kilograms of CNG. Distance-based activity (km by vehicle class)
   // needs its own activity types and waits for the holding's source list (D05).
   'Mobile Combustion': ['litres', 'uk_gallons', 'us_gallons', 'kg'],
   // Leakage is reported as a mass of refrigerant, priced by that gas's GWP.
   Refrigerants: ['kg'],
+  // Fugitive emissions from gas network leakage, reported in Sm³ and priced
+  // directly per Sm³ (D6).
+  'Fugitive Gas': ['standard_cubic_metres'],
   // Water is billed in cubic metres and has no factor yet, so nothing is
   // normalised or calculated from it (see UncalculatedSnapshot). Pinning the
   // unit anyway keeps the invoice figure comparable across locations — left
@@ -283,7 +287,7 @@ export function unitsForCategory(category: string): readonly ActivityUnitSpec[] 
   const allowed = CATEGORY_UNITS[category as Category];
   return allowed
     ? ACTIVITY_UNITS.filter((u) => allowed.includes(u.value))
-    : ACTIVITY_UNITS.filter((u) => !u.blocked);
+    : ACTIVITY_UNITS.filter((u) => !u.blocked && u.dimension !== 'standard_volume');
 }
 
 /**
@@ -396,32 +400,47 @@ export const CATEGORY_ACTIVITY_TYPES: Partial<
   // ever needs it. `gas_oil` is the UK's off-road "red diesel"; `burning_oil`
   // is kerosene, which UK sites usually call heating oil (a literal Turkish
   // rendering of "gas oil" reads as kerosene — LP3-01's translators beware).
+  // `coal` and `lng` are solid and liquefied fuels for industrial boilers.
   Fuel: {
     types: [
       { value: 'diesel', label: 'Diesel' },
+      { value: 'petrol', label: 'Petrol' },
       { value: 'gas_oil', label: 'Gas oil (red diesel)' },
       { value: 'fuel_oil', label: 'Fuel oil' },
       { value: 'burning_oil', label: 'Burning oil (kerosene, heating oil)' },
       { value: 'lpg', label: 'LPG' },
+      { value: 'lng', label: 'LNG' },
+      { value: 'coal', label: 'Coal' },
     ],
   },
+  // Mobile combustion: fuels as purchased, plus mode-based types for the five
+  // combinations the TR factor package prices (on_road vs off_road, and fuel).
+  // Mode types carry per-litre factors split by road use. The fuel types stay
+  // valid for existing records; a release prices only the rows it loads (D6).
   'Mobile Combustion': {
     types: [
       { value: 'diesel', label: 'Diesel' },
       { value: 'petrol', label: 'Petrol' },
       { value: 'lpg', label: 'LPG' },
       { value: 'cng', label: 'CNG' },
+      { value: 'on_road_petrol', label: 'On-road petrol' },
+      { value: 'on_road_diesel', label: 'On-road diesel' },
+      { value: 'on_road_lpg', label: 'On-road LPG' },
+      { value: 'off_road_petrol', label: 'Off-road petrol' },
+      { value: 'off_road_diesel', label: 'Off-road diesel' },
     ],
   },
   // ASHRAE designations, written exactly so; an import canonicalises aliases
-  // (R410A, HFC-134a) to them. HCFCs such as R-22 are absent on purpose: the
-  // GHG Protocol treats Montreal Protocol gases as optional and reported
-  // separately, outside the scopes. R-1234yf (fleet air conditioning) is an
+  // (R410A, HFC-134a) to them. R-22 is an HCFC, a Montreal Protocol gas the
+  // GHG Protocol treats as optional and reported separately — it is listed
+  // by owner decision (2026-11-05).
+  // SF6 is an insulator in switchgear. R-1234yf (fleet air conditioning) is an
   // HFO, outside the Kyoto basket too; it is listed so a fleet's leakage can be
   // recorded, and a release prices it only with a numeric GWP it states (AR5
   // gives "<1"), never one chosen at load.
   Refrigerants: {
     types: [
+      { value: 'R-22', label: 'R-22 (HCFC-22)' },
       { value: 'R-32', label: 'R-32' },
       { value: 'R-134a', label: 'R-134a' },
       { value: 'R-404A', label: 'R-404A' },
@@ -431,7 +450,16 @@ export const CATEGORY_ACTIVITY_TYPES: Partial<
       { value: 'R-448A', label: 'R-448A' },
       { value: 'R-449A', label: 'R-449A' },
       { value: 'R-1234yf', label: 'R-1234yf' },
+      { value: 'HFC-227ea', label: 'HFC-227ea' },
+      { value: 'SF6', label: 'SF6 (sulphur hexafluoride)' },
     ],
+  },
+  // Fugitive emissions from gas network leakage: the volume of natural gas
+  // lost at standard conditions, priced as methane per Sm³ (D6), not combustion.
+  // An implicit category — every record is gas_network_leakage.
+  'Fugitive Gas': {
+    implicit: 'gas_network_leakage',
+    types: [{ value: 'gas_network_leakage', label: 'Gas network leakage' }],
   },
 };
 
@@ -1974,6 +2002,19 @@ export const INTERNAL_FACTOR_PUBLISHERS = Object.freeze({
 } as const);
 
 /**
+ * The two real publishers of the TR factor package (LP4-02, decisions L6 and
+ * 2026-11-05):
+ * - IPCC: fuels, gases, GWPs, leak-rate parameters, reference calorific value.
+ * - ETKB (the Turkish energy ministry): Turkish grid electricity.
+ *
+ * Their sources and licences are recorded in `docs/md_docs/Revision MD.md` §2.
+ */
+export const AUTHORITATIVE_FACTOR_PUBLISHERS = Object.freeze({
+  ipcc: 'IPCC',
+  etkb: 'ETKB',
+} as const);
+
+/**
  * The closed publisher registry: exactly the names the database's
  * `factor_releases_publisher_check` admits (a parity spec in `packages/db`
  * reads the latest migration that defines it). A look-alike name must not
@@ -1989,6 +2030,8 @@ export const INTERNAL_FACTOR_PUBLISHERS = Object.freeze({
 export const FACTOR_PUBLISHERS = Object.freeze([
   INTERNAL_FACTOR_PUBLISHERS.placeholder,
   INTERNAL_FACTOR_PUBLISHERS.fixture,
+  AUTHORITATIVE_FACTOR_PUBLISHERS.ipcc,
+  AUTHORITATIVE_FACTOR_PUBLISHERS.etkb,
 ] as const);
 
 export type FactorPublisher = (typeof FACTOR_PUBLISHERS)[number];
@@ -2293,7 +2336,7 @@ export function isAuthoritativeSnapshot(
 export const CALCULATION_REFUSAL_CODES = [
   /** The unit is not one the engine knows. */
   'unit_unknown',
-  /** The unit is known but cannot be calculated (Sm³, Nm³ today). */
+  /** The unit is known but cannot be calculated (Nm³ today). */
   'unit_blocked',
   /** The unit is not one this category is measured in. */
   'unit_not_for_category',
@@ -2301,6 +2344,7 @@ export const CALCULATION_REFUSAL_CODES = [
   'activity_type_not_for_category',
   /** A new record in a typed category names no activity type. */
   'activity_type_required',
+  'record_parameters_invalid',
   /** No factor covers this category, activity, geography and year. */
   'no_factor',
   /** Only non-authoritative factors cover it, and they are not allowed here. */
@@ -2330,6 +2374,7 @@ export const CALCULATION_REFUSAL_STATUS: Readonly<
   unit_not_for_category: 400,
   activity_type_not_for_category: 400,
   activity_type_required: 400,
+  record_parameters_invalid: 400,
   no_factor: 404,
   placeholder_refused: 404,
   ambiguous_factor: 409,
@@ -2957,6 +3002,7 @@ export interface FactorReleaseImport {
   };
   factors: readonly FactorImportRow[];
   conversions: readonly UnitConversionImportRow[];
+  parameters: readonly FactorParameterImportRow[];
 }
 
 export interface FactorImportRow {
@@ -3001,6 +3047,32 @@ export interface UnitConversionImportRow {
   basis: string;
 }
 
+/**
+ * A calculation parameter row in the import contract (LP4-02, D2): leak rates
+ * per equipment type, the reference GCV, or any sourced constant a calculation
+ * may read from the release. Sealed and withdrawn with the release.
+ */
+export interface FactorParameterImportRow {
+  key: string;
+  /** For leak_rate: the equipment type; for a reference calorific value: null. */
+  subject: string | null;
+  value: number;
+  /** The key's own unit, `PARAMETER_UNITS`. */
+  unit: string;
+  /** True for the default; false for an alternative (only where one exists). */
+  isDefault: boolean;
+  source: string;
+  methodology: string | null;
+}
+
+/** The identity fields of a factor parameter row, in order. */
+export const PARAMETER_IDENTITY_FIELDS = Object.freeze([
+  'releaseId',
+  'key',
+  'subject',
+  'isDefault',
+] as const);
+
 export interface FactorImportIssue {
   /** Where, e.g. `release.sourceUrl` or `factors[12].gas`. */
   path: string;
@@ -3030,7 +3102,94 @@ export const FACTOR_IMPORT_TEXT_LIMITS = {
   source: 1000,
   basis: 2000,
   referenceConditions: 200,
+  // Parameter fields (LP4-02)
+  parameterSubject: 100,
+  parameterUnit: 32,
 } as const;
+
+// ---------------------------------------------------------------------------
+// Factor parameters (LP4-02, D2): calculation inputs sourced from a release.
+// ---------------------------------------------------------------------------
+
+/** The keys a factor parameter may carry (D2). */
+export const PARAMETER_KEYS = Object.freeze(['leak_rate', 'reference_gcv', 'reference_ncv'] as const);
+export type ParameterKey = (typeof PARAMETER_KEYS)[number];
+
+/**
+ * The one unit each key is quoted in. A leak rate is a fraction (0.02, never 2):
+ * read in the wrong one, the leak would be priced a hundred times over.
+ */
+export const PARAMETER_UNITS: Readonly<Record<ParameterKey, string>> = Object.freeze({
+  leak_rate: 'fraction',
+  reference_gcv: 'kcal/Sm3',
+  reference_ncv: 'kcal/Sm3',
+});
+
+/**
+ * Equipment types for refrigerant leak-rate parameters (D7). A record's
+ * `equipmentType` field comes from this list; each type has a default rate
+ * in the release, and some have an alternative.
+ */
+export const EQUIPMENT_TYPES = Object.freeze([
+  'fire_suppression_system',
+  'fire_extinguisher',
+  'transformer_breaker',
+  'split_air_conditioner',
+  'water_dispenser',
+  'refrigerator',
+  'chiller',
+  'mobile_air_conditioner',
+  'portable_air_conditioner',
+] as const);
+export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
+
+/** Equipment types that have an alternative leak rate beside their default. */
+export const EQUIPMENT_TYPES_WITH_ALTERNATIVE: readonly EquipmentType[] = Object.freeze([
+  'split_air_conditioner',
+  'chiller',
+]);
+
+// ---------------------------------------------------------------------------
+// Record parameters (LP4-02, D3): per-record inputs as a typed, validated block.
+// ---------------------------------------------------------------------------
+
+/** The choice of leak rate for a refrigerant record (D7). */
+export const LEAK_RATE_CHOICES = Object.freeze(['default', 'alternative'] as const);
+export type LeakRateChoice = (typeof LEAK_RATE_CHOICES)[number];
+
+/**
+ * Per-record parameters for Natural Gas (D3).
+ * - `ncvKcalPerSm3` and `billedGcvKcalPerSm3` are mutually exclusive.
+ * - `volumeCorrectionFactor` is required when the record's unit is m³.
+ */
+export interface NaturalGasRecordParameters {
+  /** Net calorific value override (kcal/Sm³). Mutually exclusive with billedGcvKcalPerSm3. */
+  ncvKcalPerSm3?: number | null;
+  /** Billed gross calorific value (kcal/Sm³). Mutually exclusive with ncvKcalPerSm3. */
+  billedGcvKcalPerSm3?: number | null;
+  /** Volume correction factor for metered m³. Required when unit is m³. */
+  volumeCorrectionFactor?: number | null;
+}
+
+/**
+ * Per-record parameters for Refrigerants (D3, D7).
+ * All fields are required for refrigerant records. The installed capacity is
+ * the record's `kg` activity value (D7), never a second figure here.
+ */
+export interface RefrigerantRecordParameters {
+  /** The equipment type from EQUIPMENT_TYPES. */
+  equipmentType: EquipmentType;
+  /** Refill amount in kg. */
+  refillKg: number;
+  /** Whether to use the default or alternative leak rate. */
+  leakRateChoice: LeakRateChoice;
+}
+
+/**
+ * Union of all category-specific record parameters (D3).
+ * Each category that requires per-record inputs has its own shape.
+ */
+export type RecordParameters = NaturalGasRecordParameters | RefrigerantRecordParameters;
 
 /** Statuses a release can be loaded with — `withdrawn` is reached, not loaded. */
 const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'fixture'];
@@ -3113,31 +3272,24 @@ function factorActivityTypesFor(category: string, status: string | null): string
  * the database cannot: types and vocabulary, the registered publisher, the
  * provenance and review an authoritative release must carry, the scope, basis,
  * unit and gas rules, and duplicates within the file.
- *
- * `options.testPublishers` stands in for `FACTOR_PUBLISHERS` so a spec can
- * check the other rules on an authoritative release before any real publisher
- * is registered; the loader never passes it (to be removed once one is, in
- * LP4-02's release PR), and the database's CHECK admits only the registry
- * either way.
  */
-export function validateFactorReleaseImport(
-  input: unknown,
-  options: { testPublishers?: readonly string[] } = {},
-): FactorImportIssue[] {
-  const publishers = options.testPublishers ?? FACTOR_PUBLISHERS;
+export function validateFactorReleaseImport(input: unknown): FactorImportIssue[] {
+  const publishers = FACTOR_PUBLISHERS;
   const issues: FactorImportIssue[] = [];
   const fail = (path: string, message: string) => issues.push({ path, message });
   if (
     !isObject(input) ||
     !isObject(input.release) ||
     !Array.isArray(input.factors) ||
-    !Array.isArray(input.conversions)
+    !Array.isArray(input.conversions) ||
+    !Array.isArray(input.parameters)
   ) {
-    return [{ path: '', message: 'must be an object with release, factors[] and conversions[]' }];
+    return [{ path: '', message: 'must be an object with release, factors[], conversions[] and parameters[]' }];
   }
   const release = input.release;
   const factors: unknown[] = input.factors;
   const conversions: unknown[] = input.conversions;
+  const parameters: unknown[] = input.parameters;
   // Echoed into messages only once it is known to be one of ours.
   const status = isOneOf(release.status, LOADABLE_STATUSES) ? release.status : null;
   const authoritative = status === 'authoritative';
@@ -3373,6 +3525,76 @@ export function validateFactorReleaseImport(
     seenConversions.add(key);
   });
 
+  // Parameters validation (LP4-02, D2).
+  const seenParameters = new Set<string>();
+  // Track defaults per (key, subject) to ensure one default per subject.
+  const defaultsPerSubject = new Map<string, string>();
+  const alternatives = new Map<string, string>();
+  parameters.forEach((row, i) => {
+    const at = (field: string) => `parameters[${i}].${field}`;
+    if (!isObject(row)) {
+      fail(`parameters[${i}]`, 'is not an object');
+      return;
+    }
+    const key = row.key;
+    if (!isOneOf(key, PARAMETER_KEYS)) {
+      fail(at('key'), `must be one of ${PARAMETER_KEYS.join(', ')}`);
+      return;
+    }
+    const subject = row.subject;
+    // leak_rate requires an equipment type; a reference value requires null.
+    if (key === 'leak_rate') {
+      if (!isOneOf(subject, EQUIPMENT_TYPES)) {
+        fail(at('subject'), `must be an equipment type (${EQUIPMENT_TYPES.join(', ')}) for a leak_rate`);
+      }
+    } else if (subject !== null) {
+      fail(at('subject'), `must be null for ${key}`);
+    }
+    // Positive: a reference value or a rate of zero would silently price nothing.
+    // A rate is a fraction of the charge, so at most 1.
+    if (!(typeof row.value === 'number' && Number.isFinite(row.value) && row.value > 0)) {
+      fail(at('value'), 'must be a finite, positive number');
+    } else if (key === 'leak_rate' && row.value > 1) {
+      fail(at('value'), 'a leak rate is a fraction, at most 1');
+    }
+    const unit = PARAMETER_UNITS[key as ParameterKey];
+    if (row.unit !== unit) fail(at('unit'), `must be ${unit} for ${key}`);
+    if (typeof row.isDefault !== 'boolean') {
+      fail(at('isDefault'), 'must be a boolean');
+    } else {
+      // One default per (key, subject); alternative only where defined.
+      const subjectKey = `${key}:${subject ?? ''}`;
+      if (row.isDefault) {
+        if (defaultsPerSubject.has(subjectKey)) {
+          fail(at('isDefault'), `duplicates the default for ${key}${subject ? ` / ${subject}` : ''}`);
+        } else {
+          defaultsPerSubject.set(subjectKey, `parameters[${i}]`);
+        }
+      } else {
+        // Alternative: only split_air_conditioner and chiller have one (D7).
+        if (key === 'leak_rate' && !EQUIPMENT_TYPES_WITH_ALTERNATIVE.includes(subject as EquipmentType)) {
+          fail(at('isDefault'), `${subject} has no alternative leak rate — isDefault must be true`);
+        } else if (key !== 'leak_rate') {
+          fail(at('isDefault'), `${key} has no alternative — isDefault must be true`);
+        } else {
+          alternatives.set(subjectKey, `parameters[${i}]`);
+        }
+      }
+    }
+    const sourceProblem = textIssue(row.source, limits.source);
+    if (sourceProblem) fail(at('source'), sourceProblem);
+    if (row.methodology !== null) {
+      const methodProblem = textIssue(row.methodology, limits.methodology);
+      if (methodProblem) fail(at('methodology'), methodProblem);
+    }
+    const identity = identityKey({ ...row, releaseId: null }, PARAMETER_IDENTITY_FIELDS);
+    if (seenParameters.has(identity)) fail(at('isDefault'), 'duplicates an earlier parameter row');
+    seenParameters.add(identity);
+  });
+  for (const [subjectKey, path] of alternatives) {
+    if (!defaultsPerSubject.has(subjectKey)) fail(`${path}.isDefault`, 'an alternative rate needs a default beside it');
+  }
+
   return issues;
 }
 
@@ -3461,6 +3683,14 @@ export interface ActivityRecordDTO {
    * per key across records.
    */
   input: Record<string, unknown> | null;
+  /**
+   * Per-record calculation parameters (LP4-02, D3). Category-specific typed
+   * inputs: Natural Gas uses calorific value overrides and volume correction;
+   * Refrigerants use equipment type, refill and leak rate choice.
+   * Stored and audited from LP4-02 PR2; the engine and K11's staleness read them
+   * from PR3.
+   */
+  parameters: RecordParameters | null;
   /** Immutable snapshot written at create/update time. Narrow it with
    *  `isCalculated()` before reading `tCo2e` or any factor field — an
    *  invoice-tracked category with no seeded factor stores the explicit

@@ -177,9 +177,9 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
       'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
     );
     expect(text).toContain('Activity types, by category\ncategory | Accepted activityType');
-    expect(text).toContain('Fuel | diesel, gas_oil, fuel_oil, burning_oil, lpg');
-    expect(text).toContain('Mobile Combustion | diesel, petrol, lpg, cng');
-    expect(text).toContain('Refrigerants | R-32, R-134a, R-404A, R-407C, R-407F, R-410A, R-448A, R-449A, R-1234yf');
+    expect(text).toContain('Fuel | diesel, petrol, gas_oil, fuel_oil, burning_oil, lpg, lng, coal');
+    expect(text).toContain('Mobile Combustion | diesel, petrol, lpg, cng, on_road_petrol, on_road_diesel, on_road_lpg, off_road_petrol, off_road_diesel');
+    expect(text).toContain('Refrigerants | R-22, R-32, R-134a, R-404A, R-407C, R-407F, R-410A, R-448A, R-449A, R-1234yf, HFC-227ea, SF6');
     expect(text).toContain('Electricity | Leave blank: this category names no activity type.');
   });
 
