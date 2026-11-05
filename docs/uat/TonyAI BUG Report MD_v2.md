@@ -1,0 +1,39 @@
+# TonyAI — UAT Round 1 Bug & Finding Report (v3)
+**Date:** November 3, 2026  
+**Tested By:** QA tester 1 (`super_admin`) & QA tester 2 (`consultant`)  
+**Environment:** TonyAI Web Application (Prototype / Staging)  
+**Overall Status:** **BLOCKED (P1)** — The Data Entry module cannot complete any calculation or submission due to missing/unmapped emission factors across all tested years (2024, 2025, 2026), combined/ambiguous unit definitions (`kWh (elektrik / gaz)`), and unit conversion restrictions on `Sm³`.
+
+---
+
+## 1. Executive Summary of Blockers & Architectural Findings
+1. **Emission Factor Deadlock (`TR` Geography):** Selecting `2024` for Electricity states that the library only covers `2026`. However, selecting `2025` or `2026` for Electricity or Natural Gas also returns `"No emission factor found"`. As a result, zero records can be saved or submitted.
+2. **Combined `kWh (elektrik / gaz)` Unit Ambiguity:** The Unit dropdown combines Electricity and Natural Gas into a single `"kWh (elektrik / gaz)"` option instead of separating them into **`kWh (elektrik)`** and **`kWh (doğal gaz)`**. In the calculation engine, Electricity `kWh` multiplies directly by grid EF (`kgCO2e/kWh` without `cvBasis`), whereas Natural Gas `kWh` requires a mandatory `cvBasis` (`NET` vs. `GROSS`) guardrail and converts to `TJ (Net CV)`. Sharing a single unit key likely contributes to the factor lookup/routing failure.
+3. **Natural Gas `Sm³` Unit Blocked by "Phase 4" Placeholder:** Selecting `Sm³` displays a prototype warning asking the user to enter `m³` or `kWh` instead. In Turkey, `Sm³` is the primary natural gas invoice unit and must calculate directly via the Net-CV chain (`Sm³ × NCV [default 8,250 kcal/Sm³, manually editable] × 4.184 kJ → TJ`).
+4. **Geolocation & Map Service Integration (Replacing Static `TR`/`UK` Dropdowns):** Group company (Subsidiary) creation and operational location entry currently rely on a static categorical dropdown limited to `TR` and `UK`. Both company address entry and operational facility address entry must integrate with a Map / Geolocation service (e.g., Google Maps Places / Geocoding or Mapbox) so the platform captures real geographic coordinates, learns the actual physical location of each facility beyond simple categorization/clustering, and automatically classifies the country/region for emission factor routing.
+
+---
+
+## 2. Detailed Findings & Bug List
+
+| ID | Priority | Module / Screen | Issue Description (Observed Behavior) | Expected Behavior (Acceptance Criteria) | Screenshot Ref |
+| :--- | :---: | :--- | :--- | :--- | :---: |
+| **BUG-01** | **P1 (Blocker)** | Data Entry — Electricity | In geography `TR`, selecting `2024`, `2025`, or `2026` all fail with `"No emission factor found for category 'Electricity'"`. Selecting `2024` shows a message saying the prototype library currently covers `2026`, but selecting `2026` also fails to find a factor. | Seed and map `TR` Electricity grid emission factors for **2024 (`0.442 kgCO2e/kWh`)** and **2025 (`0.434 kgCO2e/kWh`)**. Remove the hardcoded "prototype covers 2026" warning message. | Screenshot 5, 6, 7, 8 |
+| **BUG-02** | **P1 (Blocker)** | Data Entry — Natural Gas | Selecting category `Natural Gas`, geography `TR`, and year `2025` triggers `"No emission factor found for category 'Natural Gas', geography 'TR', year 2025"`, blocking record submission. | Seed and map IPCC 2006 Net-CV emission factors for `TR` Natural Gas (`CO2: 56,100`, `CH4: 1`, `N2O: 0.1 kg/TJ`) with IPCC AR6 combustion GWP (`CO2=1`, `CH4=27.0`, `N2O=273`). | Screenshot 5 |
+| **BUG-03** | **P1 (Blocker)** | Data Entry — Natural Gas (`Sm³` Unit) | Selecting `Sm³` displays a banner: *"Converting standard cubic meters to kWh requires a source-specific calorific value not yet in this prototype — coming in Phase 4 factor library."* | Remove the Phase 4 warning banner. `Sm³` must be active and use the Net-CV chain (`Sm³ → kcal → kJ → TJ Net CV`) with a pre-filled default NCV of **8,250 kcal/Sm³** that allows manual user override (e.g., `8,080 kcal/Sm³`). | Screenshot 3 |
+| **BUG-04** | **P1 (Blocker)** | Data Entry — Unit Dropdown (`kWh` Separation) | The Unit dropdown lists a single merged option `"kWh (elektrik / gaz)"` alongside `"MWh (elektrik)"` and gas units (`Sm³`, `Therm`, `GJ`). Merging electricity and gas `kWh` creates routing/factor lookup conflicts because Natural Gas `kWh` requires `cvBasis` (`NET`), whereas Electricity `kWh` does not. | Split the merged option into two distinct units: **`kWh (elektrik)`** and **`kWh (doğal gaz)`** (and filter available units dynamically based on the selected Category so gas units do not appear under Electricity and vice versa). | Screenshot 9 |
+| **BUG-05** | **P2 (High)** | Subsidiaries & Operational Locations — Geolocation & Map Service | Operational geography only offers `TR` and `UK` via a static categorical dropdown. Entering a group company or operational sub-location only performs basic label categorization/clustering without knowing the real geographic location. | Replace the static `TR`/`UK` categorical dropdown with a Map / Geolocation service integration for both Group Company address entry and Operational Location address entry. The system must automatically pick up real geographic coordinates (`lat/lng`), learn the true physical location of the facility, and auto-classify its country/region code. | QA testers' finding |
+| **BUG-06** | **P2 (High)** | Data Entry — Activity Value Input | Typing a decimal number with a comma (e.g., `178,`) immediately turns the input border red and displays `"Enter a number, e.g. 45000,5"` before the user can type the decimal digits. | Allow trailing comma (`,`) or dot (`.`) while typing without throwing an immediate validation error. Trigger numeric validation on blur (`onBlur`) or after the 300ms debounce delay. | Screenshot 4 |
+| **BUG-07** | **P2 (High)** | Subsidiaries — Add Sub-location Modal | The "Add Sub-location" modal/drawer does not display a vertical scrollbar (`scroll down`), preventing users from reaching lower fields and action buttons. | Add vertical scroll (`overflow-y: auto` and proper `max-height`) to the modal container so all form fields are accessible. | Screenshot 1 (Note) |
+| **BUG-08** | **P2 (Medium)** | Data Entry — Reporting Year Dropdown | The Reporting Year dropdown lists future years all the way up to `2074` (`2065–2074`), which is unnecessary for historical/current inventory entry and leads to missing factor errors. | Restrict the Data Entry Reporting Year dropdown to active inventory years only (**2024, 2025, 2026**). | Screenshot 2 |
+| **BUG-09** | **P3 (Low)** | Authentication — Login / Password Screen | The initial password input screen lacks a "Show / Hide Password" toggle icon, making it difficult to verify typed characters. | Add a password visibility toggle (eye icon) to the password field. | General Note |
+| **BUG-10** | **P3 (Low)** | Global UI — Browser Tab Title & Favicon | The browser tab text (`<title>`) and favicon do not display the proper TonyAI brand text and logo. | Update the HTML `<title>` and favicon across the web app to reflect TonyAI branding. | General Note |
+
+---
+
+## 3. Golden Vector Verification Checklist (To Run Once P1 Blockers Are Fixed)
+Once **BUG-01** through **BUG-04** are resolved, the development team should verify the following reference inputs before handing the build back for UAT Round 2:
+* **Natural Gas (`TR`, `2025`):** `73.953 Sm³` with manual NCV `8,080 kcal/Sm³` → **0.1404 tCO2e** (±0.5%)
+* **Electricity (`TR`, `2025` & `2024`):** `4,180.56 kWh` → **1.814 tCO2e** (in `2025` at `0.434`) and **1.848 tCO2e** (in `2024` at `0.442`)
+* **Gasoline On-Road (`TR`, `2025`):** `15,973.75 L` → **36.8646 tCO2e** (±0.5%)
+* **Natural Gas Grid Leakage / Fugitive (`TR`, `2025`):** `84,783.36 std m³` (fixed density & CH4 fraction, `GWP=29.8`) → **1,632.47 tCO2e** (±0.5%)

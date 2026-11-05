@@ -47,16 +47,22 @@ Branch `chore/l10-acceptance-package-2`. Groups 1–6 are the Session 1 PR. Grou
 
 ## 8. Session 2: QA results, rollback drill, alert test
 
-- [ ] 8.1 Triage QA's results and map them to checklist row IDs, since QA reports in its own format. Fix correctness, security or data-integrity defects in focused PRs; file the rest under Open questions. Verify every FAIL row has a disposition and no in-scope row is left unmapped.
-- [ ] 8.2 The freeze was lifted on 2026-11-05 (owner decision; merges deploy as they land, LP4-02 migrations included). Identify the live release after QA's fixes merge, and map every QA finding to the release that was live when it was made. Verify `inputs` shows that release, and check whether `git diff` of the migrations between `bdf7646` and its source is empty. If it is not empty, skip to 8.4.
+Order (owner decision 2026-11-06, design.md Decisions 8–11): 8.0 → 8.1 → 8.7 → 8.8 → 8.2/8.4 → 8.5 → 8.6 → 9.1. Numbers are kept stable because the planning file cites them.
+
+- [x] 8.0 LP4-02 task 6.1, run inside L10 after the QA deploy of `9c6f70a` (run 42110731838) is green: provision the hosted loader login, dry-run `packages/db/factor-releases/tr-2026-11/ipcc.json` and `etkb.json` against hosted QA, and `--apply` on the owner's word. Verify `runtime-role.mjs check` passes, `GET /api/v1/factors` lists both releases as authoritative, and a QA record for 2025 TR electricity shows 0.434 kgCO2e/kWh; record the receipt without secrets, tick 6.1 in `lp4-02-tr-factor-package/tasks.md`, and run `/opsx:archive lp4-02-tr-factor-package`. **Done 2026-11-06:** the record is LP4-02's task 6.1. On this Mac the loader runs in a `node:22.23.3-bookworm` container (runbook 05).
+
+- [ ] 8.1 Triage QA's report (`docs/uat/TonyAI BUG Report MD_v2.md`, BUG-01..10) per finding on the live release, after 8.0, and run its golden vector checklist on hosted. Verify every finding has a disposition (fixed with its PR, open, or new) and names the release that was live when it was made, and the golden checklist has a result per vector.
+- [ ] 8.2 The freeze was lifted on 2026-11-05 (owner decision; merges deploy as they land, LP4-02 migrations included). Identify the live release after QA's fixes merge, and map every QA finding to the release that was live when it was made. Verify `inputs` shows that release, and check whether `git diff` of the migrations between `bdf7646` and its source is empty. If it is not empty, skip to 8.4. Expected since 2026-11-06: LP4-02's migrations differ, so 8.3 is recorded as not applicable and checked with that note.
 - [ ] 8.3 After announcing the outage to QA, dispatch `rollback-qa` with `qa-candidate-4-1`, then with ci5's candidate. Verify both runs pass smoke and `inputs` shows ci4-1 and then ci5.
 - [ ] 8.4 Fallback, when 8.2 found no release compatible with ci4-1 (expected once an LP4-02 migration has deployed): dispatch `rollback-qa` in `same-image` mode. Verify a new suffix, unchanged digests, and smoke PASS, and record that a cross-version rollback was not rehearsed.
 - [ ] 8.5 Run the controlled alert test chosen from 7.6's readback. Verify the named operator acknowledges the notification and the readback shows the matching log rows.
 - [ ] 8.6 Re-run probe A on the final live release. Verify PASS.
+- [ ] 8.7 Fix in focused PRs, one per finding: BUG-06 (comma refused while typing), BUG-07 (sub-location modal scroll), BUG-08 (year list to 2074) and the preview's "prototype covers 2026" hint (owner decision 2026-11-06), plus any other finding 8.1 left open that is a correctness, security or data-integrity defect. File the rest under Open questions; record BUG-05 (geolocation) as a post-pilot feature. Verify each PR has tests for the fix, green CI and its QA deploy, and 8.1's disposition names it.
+- [ ] 8.8 Run `docs/uat/l10_hosted_acceptance.md` on the final release (after the last 8.7 deploy), adapting the UAT round 3 pre-pass harness; run mailbox rows with the owner. Verify every row has PASS or FAIL, an evidence ID in the private store and the release, every FAIL has a disposition, and no credential, action link or signed URL appears in any record.
 
 ## 9. L10 closure record
 
-- [ ] 9.1 Fill runbook 11's ci4-1 matrix with each result (UTC and Europe/Istanbul time, release, digests, receipt ID). Mark L10 CLOSED in the hosted roadmap and the planning file, with numerical acceptance pointing to LP4-02 and full recovery to G2/LP5-03. Verify no unchecked in-scope item remains, then open the PR for Codex review.
+- [ ] 9.1 Fill runbook 11's ci4-1 matrix with each result (UTC and Europe/Istanbul time, release, digests, receipt ID). Mark L10 CLOSED in the hosted roadmap and the planning file, with numerical acceptance pointing to LP4-02 and full recovery to G2/LP5-03. The closure criterion (owner decision 2026-11-06): 8.4, 8.5 and 8.6 PASS, 8.8 complete, and every QA finding dispositioned in 8.1; the record names who ran each arm. Verify no unchecked in-scope item remains, then open the PR for Codex review.
 
 ## Workflow follow-up
 
