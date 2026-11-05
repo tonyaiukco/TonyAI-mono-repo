@@ -657,6 +657,8 @@ async function main() {
     await prisma.$transaction([
       prisma.emissionFactor.deleteMany({ where: { releaseId } }),
       prisma.unitConversion.deleteMany({ where: { releaseId } }),
+      // A fixture's parameters too (LP4-02): the release key RESTRICTs.
+      prisma.factorParameter.deleteMany({ where: { releaseId } }),
       prisma.factorRelease.deleteMany({ where: { id: releaseId } }),
     ]);
     console.log(

@@ -5,6 +5,9 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   CATEGORIES,
   CATEGORY_UNITS,
+  EQUIPMENT_TYPES,
+  EQUIPMENT_TYPES_WITH_ALTERNATIVE,
+  LEAK_RATE_CHOICES,
   PERIOD_VALUES,
   REPORTING_PERIODS,
   WHOLE_COMPANY_ENTITY_LABEL,
@@ -153,6 +156,10 @@ export async function buildTemplateWorkbook(
     ['reportingPeriod', REPORTING_PERIODS],
     ['periodValue', Object.values(PERIOD_VALUES).flat()],
     ['category', CATEGORIES],
+    // Closed lists whose every value fits every row that may carry them: the
+    // equipment columns belong to Refrigerants rows alone (LP4-02 PR4).
+    ['equipmentType', EQUIPMENT_TYPES],
+    ['leakRateChoice', LEAK_RATE_CHOICES],
   ];
   for (const [column, values] of dropdowns) {
     const letter = records.getColumn(columnIndex(column)).letter;
@@ -213,7 +220,7 @@ export async function buildTemplateWorkbook(
   const first = reference.addRow(['How to use this template']);
   first.font = { bold: true, size: 14 };
   reference.addRow([
-    `Fill in the "${SHEET_RECORDS}" sheet. Every column there is required except locationId, activityType and varianceReason.`,
+    `Fill in the "${SHEET_RECORDS}" sheet. Every column there is required except locationId, activityType, varianceReason and the calculation inputs (described below).`,
   ]);
   reference.addRow([
     'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
@@ -295,6 +302,37 @@ export async function buildTemplateWorkbook(
         : 'Leave blank: this category names no activity type.',
     ]);
   }
+
+  // No value of a leak rate or a calorific value here: those come from the
+  // factor release in force (D2), and a constant written into a template
+  // would outlive an erratum.
+  section('Calculation inputs (Türkiye)');
+  head(['column', 'Use']);
+  reference.addRow([
+    'ncvKcalPerSm3',
+    'Natural Gas: the net calorific value, kcal/Sm³, when it is not the factor release\'s default. Leave blank for the default.',
+  ]);
+  reference.addRow([
+    'billedGcvKcalPerSm3',
+    'Natural Gas: the gross calorific value on the bill, kcal/Sm³. Give it or ncvKcalPerSm3, not both.',
+  ]);
+  reference.addRow([
+    'volumeCorrectionFactor',
+    'Natural Gas in cubic_metres (a meter reading): the factor that brings it to Sm³. Required for cubic_metres, blank for standard_cubic_metres.',
+  ]);
+  reference.addRow([
+    'equipmentType',
+    `Refrigerants: one row per equipment type holding the gas, on an annual period (${EQUIPMENT_TYPES.join(', ')}). Rows naming the same entity, year and gas are one record.`,
+  ]);
+  reference.addRow([
+    'capacityKg',
+    'Refrigerants: the installed capacity of that equipment type, kg. Write 0 for none. Leave activityValue blank on these rows: the record\'s quantity is the sum of its capacityKg.',
+  ]);
+  reference.addRow(['refillKg', 'Refrigerants: the mass refilled in the year, kg. Write 0 for none.']);
+  reference.addRow([
+    'leakRateChoice',
+    `Refrigerants: blank or default for the equipment type's default leak rate; alternative only for ${EQUIPMENT_TYPES_WITH_ALTERNATIVE.join(' and ')}.`,
+  ]);
 
   section('Periods');
   head(['reportingPeriod', 'Accepted periodValue']);

@@ -202,6 +202,7 @@ function build() {
         varianceReason: dto.varianceReason ?? null,
         activityValue: dto.activityValue,
         activityUnit: dto.activityUnit,
+        parameters: dto.parameters ?? null,
       });
     }),
   };
@@ -1071,6 +1072,7 @@ describe('BulkUploadService — the figures that reach the write', () => {
       // What the server read and will store (D15) — the number, not the text.
       activityValue: 1200,
       activityUnit: 'kWh',
+      parameters: null,
       tCo2e: 0.528,
       anomalous: false,
     });
@@ -1856,9 +1858,10 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
 
     const message = (error as Error).message;
     const fragment = `${'aaa<U+200B>'.repeat(5)}aaa…`;
-    // Four quoted cells since the tenth column (LP4-02): at five the worst
-    // case reached 504.
-    expect(QUOTED_FRAGMENTS).toBe(4);
+    // Two quoted cells since the seven input columns (LP4-02 PR4): at three
+    // the worst case left 9 of the 10 to spare, at four it reached 554; at
+    // five it had reached 504 with ten columns.
+    expect(QUOTED_FRAGMENTS).toBe(2);
     // A worst case only if every quote is as long as its bound allows.
     expect([...fragment].length).toBe(CALLER_TEXT_QUOTE_MAX_CODE_POINTS + 1);
     expect(message).toContain(`"${fragment}", "${fragment}"`);
@@ -1868,7 +1871,8 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     expect([...longest].length).toBeLessThanOrEqual(AUDIT_REASON_MAX_LENGTH);
     // And with room to spare, deliberately. With nine columns and five quotes
     // the ceiling was 490 at a 58 code-point quote, 495 at 59 and exactly 500
-    // at 60; the tenth column cost 14 and was paid for with the fifth quote.
+    // at 60; the tenth column cost 14 and was paid for with the fifth quote,
+    // and the seven input columns cost 104, paid for with the fourth and third.
     expect(AUDIT_REASON_MAX_LENGTH - [...longest].length).toBeGreaterThanOrEqual(10);
   });
 
@@ -3159,5 +3163,210 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     const report = await service.import(dataEntry(), await xlsxFile(1e21), DRY);
 
     expect(report.errors[0]).toMatchObject({ code: 'invalid', column: 'activityValue' });
+  });
+});
+
+describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
+  const INPUT_HEADER = [
+    'subsidiaryId', 'locationId', 'reportingYear', 'reportingPeriod', 'periodValue', 'category', 'activityType',
+    'activityValue', 'activityUnit', 'varianceReason', 'ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor',
+    'equipmentType', 'capacityKg', 'refillKg', 'leakRateChoice',
+  ] as const;
+  type Cells = Partial<Record<(typeof INPUT_HEADER)[number], string>>;
+  const line = (over: Cells = {}) => {
+    const cells: Cells = {
+      subsidiaryId: SUB_1, reportingYear: '2025', reportingPeriod: 'annual', periodValue: 'Annual',
+      category: 'Refrigerants', activityType: 'R-410A', activityUnit: 'kg',
+      equipmentType: 'split_air_conditioner', capacityKg: '10', refillKg: '0', ...over,
+    };
+    return INPUT_HEADER.map((c) => cells[c] ?? '').join(',');
+  };
+  const gasRow = (over: Cells = {}) => line({
+    category: 'Natural Gas', activityType: '', activityValue: '100', activityUnit: 'standard_cubic_metres',
+    reportingPeriod: 'monthly', periodValue: 'January', equipmentType: '', capacityKg: '', refillKg: '', ...over,
+  });
+  const file = (...lines: string[]) => csvFile([], { buffer: Buffer.from([INPUT_HEADER.join(','), ...lines].join('\n')) });
+
+  it('builds one refrigerant record from its equipment lines: their capacities summed, the lines as parameters', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(
+      line(),
+      line({ equipmentType: 'chiller', capacityKg: '20.5', refillKg: '1.25', leakRateChoice: 'alternative' }),
+    ), DRY);
+    expect(report.errors).toEqual([]);
+    expect(report.totalRows).toBe(1);
+    expect(records.previewCreate).toHaveBeenCalledTimes(1);
+    const dto = records.previewCreate.mock.calls[0][1];
+    expect(dto.activityValue).toBe(30.5);
+    expect(dto.parameters).toEqual({ equipment: [
+      { equipmentType: 'split_air_conditioner', capacityKg: 10, refillKg: 0, leakRateChoice: 'default' },
+      { equipmentType: 'chiller', capacityKg: 20.5, refillKg: 1.25, leakRateChoice: 'alternative' },
+    ] });
+    expect(report.accepted).toHaveLength(1);
+    expect(report.accepted[0]).toMatchObject({ row: 2, lineRows: [2, 3], activityValue: 30.5, parameters: dto.parameters });
+  });
+
+  it('keeps a record of one line as a record of one row, and accepts a refill alone', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(line({ capacityKg: '0', refillKg: '2' })), DRY);
+    expect(report.errors).toEqual([]);
+    expect(records.previewCreate.mock.calls[0][1].activityValue).toBe(0);
+    expect(report.accepted[0].lineRows).toBeUndefined();
+  });
+
+  it('groups lines across spellings of one record, and keeps two gases apart', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(
+      line(),
+      line({ subsidiaryId: SUB_1.toUpperCase(), periodValue: 'annual', equipmentType: 'chiller' }),
+      line({ activityType: 'R-32' }),
+    ), DRY);
+    expect(report.errors).toEqual([]);
+    expect(report.totalRows).toBe(2);
+    expect(records.previewCreate).toHaveBeenCalledTimes(2);
+    expect(report.accepted.map((a) => a.lineRows ?? [a.row])).toEqual([[2, 3], [4]]);
+  });
+
+  it('refuses a refrigerant record whole, on the line at fault, naming every line', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(
+      line(),
+      line({ equipmentType: 'refrigerator', leakRateChoice: 'alternative' }),
+    ), DRY);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    expect(report.accepted).toEqual([]);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 3, column: 'leakRateChoice', code: 'invalid' })]);
+    expect(report.errors[0].message).toMatch(/^Rows 2, 3 are one gas's record, and none was imported\. /);
+    expect(report.totalRows).toBe(1);
+  });
+
+  it.each([
+    ['a quantity on a line', { activityValue: '10' }, 'activityValue'],
+    ['an unknown equipment type', { equipmentType: 'kettle' }, 'equipmentType'],
+    ['a missing refill', { refillKg: '' }, 'refillKg'],
+    ['a comma figure', { capacityKg: '"1,5"' }, 'capacityKg'],
+    ['a negative capacity', { capacityKg: '-1' }, 'capacityKg'],
+    ['neither a capacity nor a refill', { capacityKg: '0', refillKg: '0' }, 'capacityKg'],
+    ['an unknown leak rate choice', { leakRateChoice: 'lowest' }, 'leakRateChoice'],
+    ['a gas input on a refrigerant line', { ncvKcalPerSm3: '8100' }, 'ncvKcalPerSm3'],
+  ])('refuses %s on its own cell', async (_case, over, column) => {
+    const { service } = build();
+    const report = await service.import(dataEntry(), file(line(over as Cells)), DRY);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 2, column })]);
+    expect(report.errors[0].code).toBe((over as Cells).capacityKg === '"1,5"' ? 'wrong_decimal_separator' : 'invalid');
+  });
+
+  it('refuses a second line of one equipment type, and lines that disagree on the record', async () => {
+    const { service } = build();
+    const repeated = await service.import(dataEntry(), file(line(), line()), DRY);
+    expect(repeated.errors).toEqual([expect.objectContaining({ row: 3, column: 'equipmentType' })]);
+    const units = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller', varianceReason: 'other' })), DRY);
+    expect(units.errors).toEqual([expect.objectContaining({ row: 3, column: 'varianceReason' })]);
+  });
+
+  it('checks a refrigerant record against the stored slots and the rest of the file', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([{
+      subsidiaryId: SUB_1, locationId: null, reportingYear: 2025, reportingPeriod: 'annual', periodValue: 'Annual',
+      category: 'Refrigerants', activityType: 'R-410A',
+    }]);
+    const stored = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller' })), DRY);
+    expect(stored.errors).toEqual([expect.objectContaining({ row: 2, code: 'duplicate_existing' })]);
+  });
+
+  it('reads the Natural Gas inputs and echoes them', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(
+      gasRow({ billedGcvKcalPerSm3: '9349.174' }),
+      gasRow({ periodValue: 'February', activityUnit: 'cubic_metres', volumeCorrectionFactor: '0.97', ncvKcalPerSm3: '8100' }),
+    ), DRY);
+    expect(report.errors).toEqual([]);
+    expect(records.previewCreate.mock.calls.map(([, dto]) => dto.parameters)).toEqual([
+      { billedGcvKcalPerSm3: 9349.174 },
+      { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 },
+    ]);
+    expect(report.accepted.map((a) => a.parameters)).toEqual([
+      { billedGcvKcalPerSm3: 9349.174 },
+      { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 },
+    ]);
+  });
+
+  it.each([
+    ['both calorific values', { ncvKcalPerSm3: '8100', billedGcvKcalPerSm3: '9300' }, 'billedGcvKcalPerSm3'],
+    ['a zero', { volumeCorrectionFactor: '0' }, 'volumeCorrectionFactor'],
+    ['text', { ncvKcalPerSm3: 'default' }, 'ncvKcalPerSm3'],
+    ['a gas input on Electricity', { category: 'Electricity', activityUnit: 'kWh', ncvKcalPerSm3: '8100' }, 'ncvKcalPerSm3'],
+    ['an equipment column on Natural Gas', { equipmentType: 'chiller' }, 'equipmentType'],
+  ])('refuses %s on its own cell, before the record service sees it', async (_case, over, column) => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(gasRow(over as Cells)), DRY);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 2, column, code: 'invalid' })]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('passes a row with no inputs as before, its parameters null', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(gasRow()), DRY);
+    expect(records.previewCreate.mock.calls[0][1].parameters).toBeUndefined();
+    expect(report.accepted[0].parameters).toBeNull();
+  });
+
+  it('keeps one record whole across spellings of its year (review finding)', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(
+      line(),
+      line({ reportingYear: '2025.0', equipmentType: 'chiller' }),
+      line({ reportingYear: '02025', equipmentType: 'refrigerator' }),
+    ), DRY);
+    expect(report.errors).toEqual([]);
+    expect(report.totalRows).toBe(1);
+    expect(records.previewCreate.mock.calls[0][1].parameters.equipment).toHaveLength(3);
+  });
+
+  it('names every line of a record the record service refuses, before the bound can cut it', async () => {
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValueOnce(new BadRequestException('A refrigerant record in Türkiye is annual: its leak rates are yearly.'));
+    const report = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller' })), DRY);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 2, code: 'invalid' })]);
+    expect(report.errors[0].message).toMatch(/^Rows 2, 3 are one gas's record, and none was imported\. A refrigerant record/);
+  });
+
+  it('refuses a line with no equipment type, saying the column is required', async () => {
+    const { service } = build();
+    const report = await service.import(dataEntry(), file(line({ equipmentType: '', capacityKg: '5' })), DRY);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 2, column: 'equipmentType' })]);
+    expect(report.errors[0].message).toMatch(/^equipmentType is required on an equipment line/);
+  });
+
+  it('names every line of a record the deadline stops (review finding)', async () => {
+    const { performance } = await import('node:perf_hooks');
+    let time = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => time);
+    try {
+      const { records, service } = build();
+      const original = records.previewCreate.getMockImplementation()!;
+      records.previewCreate.mockImplementation(async (...args: any[]) => {
+        const result = await (original as (...a: any[]) => unknown)(...args);
+        time = 60_000;
+        return result;
+      });
+      const report = await service.import(dataEntry(), file(
+        gasRow(),
+        line(),
+        line({ equipmentType: 'chiller' }),
+      ), DRY);
+      expect(report.totalRows).toBe(2);
+      expect(report.errors).toEqual([expect.objectContaining({ row: 3, code: 'not_processed_deadline' })]);
+      expect(report.errors[0].message).toMatch(/^Rows 3, 4 are one gas's record/);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('applies a refrigerant record once, and reports what the record stores', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller' })), { dryRun: false });
+    expect(records.create).toHaveBeenCalledTimes(1);
+    expect(report.accepted).toEqual([expect.objectContaining({ lineRows: [2, 3], activityValue: 20 })]);
   });
 });

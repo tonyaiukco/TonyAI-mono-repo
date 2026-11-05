@@ -89,6 +89,7 @@ function accepted(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAccepted
     activityValue: 1200,
     activityUnit: 'kWh',
     tCo2e: 1.5,
+    parameters: null,
     anomalous: false,
     ...over,
   };

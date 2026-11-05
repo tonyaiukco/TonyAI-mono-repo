@@ -30,6 +30,8 @@ import type {
   FactorGasCoverage,
   NaturalGasRecordParameters,
   RefrigerantRecordParameters,
+  ReleaseParametersDTO,
+  ReleaseParametersQuery,
   RefrigerantTerm,
   SnapshotInput,
   SnapshotParameterRow,
@@ -152,6 +154,51 @@ export class CalculationsService {
       dataYear: f.dataYear,
       release: releaseSnapshot(f.release),
     }));
+  }
+
+  /**
+   * The release parameters a TR calculation of this lookup would read (LP4-02
+   * PR4, D2): the natural gas chain's from the Sm³ conversion's release, the
+   * capacity method's from the gas factor's, chosen by the engine's own lookup
+   * so the form shows what the engine would price with. Empty where the TR
+   * rules do not apply or no path resolves; the preview names that refusal.
+   */
+  async releaseParameters(query: ReleaseParametersQuery): Promise<ReleaseParametersDTO> {
+    const none: ReleaseParametersDTO = { release: null, parameters: [] };
+    if (!usesTrCalculationRules(query.geographyCode)) return none;
+    const gas = query.category === 'Natural Gas';
+    if (!gas && query.category !== 'Refrigerants') return none;
+    const recordType = query.activityType ?? null;
+    if (!isRecordActivityTypeAllowed(query.category, recordType)) return none;
+    const path = await this.lookupFactorPath(
+      {
+        category: query.category,
+        activityType: factorActivityTypeFor(query.category, recordType),
+        geographyCode: query.geographyCode,
+        reportingYear: query.year,
+      },
+      gas ? 'standard_cubic_metres' : 'kg',
+    );
+    if (!path.ok) return none;
+    const release = gas ? path.conversion?.release : path.factor.release;
+    if (!release) return none;
+    const rows = await readReleaseParameters(this.prisma, release.id);
+    return {
+      release: releaseSnapshot(release),
+      parameters: rows
+        .map((row) => ({
+          key: row.key,
+          equipmentType: row.subject,
+          value: row.value,
+          unit: row.unit,
+          isDefault: row.isDefault,
+          source: row.source,
+        }))
+        .sort((a, b) =>
+          a.key.localeCompare(b.key) ||
+          (a.equipmentType ?? '').localeCompare(b.equipmentType ?? '') ||
+          Number(b.isDefault) - Number(a.isDefault)),
+    };
   }
 
   /**

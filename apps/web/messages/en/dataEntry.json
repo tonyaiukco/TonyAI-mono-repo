@@ -9,6 +9,7 @@
   "wholeCompany": "Whole company",
   "category": "Category",
   "fuelOrGas": "Fuel or gas",
+  "vehicleMode": "Vehicle mode",
   "chooseOne": "Choose one",
   "notSpecifiedLegacy": "Not specified (entered before fuels were tracked)",
   "reportingYear": "Reporting year",
@@ -56,7 +57,14 @@
     "activityType": "Activity type",
     "activityValue": "Activity value",
     "activityUnit": "Unit",
-    "varianceReason": "Variance reason"
+    "varianceReason": "Variance reason",
+    "ncvKcalPerSm3": "Net calorific value",
+    "billedGcvKcalPerSm3": "Billed gross calorific value",
+    "volumeCorrectionFactor": "Volume correction factor",
+    "equipmentType": "Equipment type",
+    "capacityKg": "Installed capacity (kg)",
+    "refillKg": "Refilled (kg)",
+    "leakRateChoice": "Leak rate"
   },
   "activityTypes": {
     "grid_electricity": "Grid electricity",
@@ -90,12 +98,25 @@
     "HFC-227ea": "HFC-227ea",
     "SF6": "SF6 (sulphur hexafluoride)"
   },
+  "equipmentTypes": {
+    "fire_suppression_system": "Fire suppression system",
+    "fire_extinguisher": "Fire extinguisher",
+    "transformer_breaker": "Transformer or circuit breaker",
+    "split_air_conditioner": "Split air conditioner",
+    "water_dispenser": "Water dispenser",
+    "refrigerator": "Refrigerator",
+    "chiller": "Chiller",
+    "mobile_air_conditioner": "Vehicle air conditioner",
+    "portable_air_conditioner": "Portable air conditioner"
+  },
   "bulkPreview": {
     "title": "Accepted rows",
     "row": "File row",
     "amount": "Amount read",
     "readNote": "Numbers in a file are read with a point as the decimal separator: 1.234 means 1.234, not 1,234. Check each amount before you import.",
-    "noActivityType": "Not specified"
+    "noActivityType": "Not specified",
+    "inputs": "Inputs read",
+    "lineRows": "Rows {rows}"
   },
   "conversionNote": {
     "detail": "{fromUnit} → {toUnit}: ×{multiplier}. Calorific basis: {calorificBasis}. Derivation: {basis}. Reference conditions: {conditions}. Release: {publisher}, {edition} — {status}.",
@@ -110,6 +131,60 @@
       "placeholder": "Placeholder — not authoritative",
       "fixture": "Test fixture — not authoritative",
       "withdrawn": "Withdrawn"
+    },
+    "ncvDetail": "{fromUnit} → {toUnit}: ×{multiplier}, at this record's net calorific value of {ncv} kcal/Sm³ ({origin}).{volume} Reference conditions: {conditions}. Release: {publisher}, {edition} — {status}.",
+    "ncvOrigin": {
+      "default": "the factor release's default",
+      "user": "entered on this record",
+      "derived": "derived from the billed gross calorific value"
+    },
+    "volumeCorrection": " Volume correction factor: {factor}."
+  },
+  "inputs": {
+    "title": "Calculation inputs",
+    "ncv": "Net calorific value (kcal/Sm³)",
+    "ncvDefault": "Default {value} kcal/Sm³, from {publisher} {edition}{status}. Change it only if your supplier states another value.",
+    "ncvDerived": "Derived from the billed gross calorific value, so it is not entered here.",
+    "gcv": "Billed gross calorific value (kcal/Sm³)",
+    "gcvHelp": "Optional: the value printed on the bill. Enter it or change the net value, not both.",
+    "gcvBlocked": "Put the net calorific value back to its default to enter a billed value instead.",
+    "volumeCorrectionFactor": "Volume correction factor",
+    "volumeCorrectionHelp": "Required for a metered reading in m³: it brings the volume to standard cubic metres.",
+    "referenceLoading": "Loading the factor release's reference values…",
+    "referenceMissing": "No factor release covers this record yet, so no default is shown.",
+    "referenceFailed": "The factor release's reference values could not be loaded.",
+    "notAuthoritative": " (not authoritative)",
+    "gasIssues": {
+      "volume_correction_required": "Enter the volume correction factor for a reading in m³.",
+      "ncv_and_gcv": "Enter a net calorific value or a billed gross calorific value, not both."
+    },
+    "equipmentTitle": "Equipment holding this gas",
+    "equipmentHelp": "One line per equipment type, for the whole year. The leak is priced at each type's rate on its installed capacity, plus what was refilled.",
+    "equipmentType": "Equipment type",
+    "chooseEquipment": "Choose equipment",
+    "capacity": "Installed capacity (kg)",
+    "refill": "Refilled in the year (kg)",
+    "leakRate": "Leak rate",
+    "defaultRate": "Default: {rate}",
+    "alternativeRate": "Alternative: {rate}",
+    "rateUnknown": "No rate in the factor release yet",
+    "addLine": "Add equipment",
+    "removeLine": "Remove this line",
+    "total": "Total installed capacity (kg)",
+    "totalHelp": "The sum of the capacities below: this is the record's quantity.",
+    "annualOnly": "Refrigerant records in Türkiye are annual, because the leak rates are yearly.",
+    "equipmentIssues": {
+      "no_lines": "Add at least one equipment line.",
+      "type_missing": "Choose the equipment type of every line.",
+      "type_repeated": "Each equipment type takes one line.",
+      "value_missing": "Enter a valid capacity and refill on every line (0 for none).",
+      "empty_line": "Each line needs a capacity, a refill, or both.",
+      "too_large": "The total capacity is too large."
+    },
+    "unitReset": "This site follows the Türkiye rules, so the unit is now {unit} and the value was cleared. Enter it again.",
+    "choice": {
+      "default": "default rate",
+      "alternative": "alternative rate"
     }
   },
   "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",

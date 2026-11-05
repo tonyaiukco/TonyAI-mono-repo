@@ -3285,6 +3285,75 @@ export function usesTrCalculationRules(geographyCode: string): boolean {
 /** kWh per kcal, definitional: 4.184 kJ per kcal, 3,600 kJ per kWh (D5). */
 export const KWH_PER_KCAL = 4.184 / 3600;
 
+/** The vehicle modes a TR Mobile Combustion record names (D6), priced per litre. */
+export const MOBILE_MODE_ACTIVITY_TYPES = Object.freeze([
+  'on_road_petrol',
+  'on_road_diesel',
+  'on_road_lpg',
+  'off_road_petrol',
+  'off_road_diesel',
+] as const);
+
+/**
+ * The activity types Data Entry offers a NEW record (LP4-02
+ * PR4). Under the TR rules a Mobile Combustion record names one of the five
+ * vehicle modes, since the TR releases price no other; every other case is the
+ * category's whole list. A stored record keeps whatever type it already names
+ * (`isRecordActivityTypeAllowed` is unchanged).
+ */
+export function offeredActivityTypes(category: string, geographyCode: string | null): readonly ActivityTypeSpec[] {
+  const types = recordActivityTypesFor(category);
+  if (category !== 'Mobile Combustion' || geographyCode === null || !usesTrCalculationRules(geographyCode)) return types;
+  return types.filter((t) => (MOBILE_MODE_ACTIVITY_TYPES as readonly string[]).includes(t.value));
+}
+
+/**
+ * The units Data Entry offers a NEW record (LP4-02 PR4, D11): the category's
+ * own (`unitsForCategory`), narrowed under the TR rules to what the engine
+ * prices there. TR natural gas is a volume, Sm³ or metered m³, because a bill's
+ * kWh is gross and is refused; a TR vehicle mode is per litre.
+ */
+export function unitsForRecord(category: string, geographyCode: string | null): readonly ActivityUnitSpec[] {
+  const units = unitsForCategory(category);
+  if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return units;
+  const only = (values: readonly string[]) => units.filter((u) => values.includes(u.value));
+  if (category === 'Natural Gas') return only(['standard_cubic_metres', 'cubic_metres']);
+  if (category === 'Mobile Combustion') return only(['litres']);
+  return units;
+}
+
+/** One release parameter as `GET /api/v1/factors/parameters` lists it (D2). */
+export interface ReleaseParameterDTO {
+  key: string;
+  /** The equipment type of a leak rate; null for a reference value. */
+  equipmentType: string | null;
+  value: number;
+  /** `PARAMETER_UNITS[key]`. */
+  unit: string;
+  isDefault: boolean;
+  source: string;
+}
+
+/**
+ * The parameters a TR calculation of one lookup would read (LP4-02 PR4):
+ * the conversion's release for natural gas, the factor's for a refrigerant,
+ * resolved by the engine's own lookup. `release` is null, with no parameters,
+ * where no path resolves or the TR rules do not apply, so a form holds no
+ * value of its own: 8,250 and a leak rate come from here, never a constant.
+ */
+export interface ReleaseParametersDTO {
+  release: FactorReleaseSnapshot | null;
+  parameters: ReleaseParameterDTO[];
+}
+
+/** Query of `GET /api/v1/factors/parameters`. */
+export interface ReleaseParametersQuery {
+  category: string;
+  activityType?: string;
+  geographyCode: string;
+  year: number;
+}
+
 /** Statuses a release can be loaded with — `withdrawn` is reached, not loaded. */
 const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'fixture'];
 
@@ -3972,6 +4041,8 @@ export interface CreateActivityRecordInput {
   activityUnit: string;
   input?: Record<string, unknown> | null;
   varianceReason?: string | null;
+  /** The record's calculation inputs (LP4-02, D3); null clears them on an edit. */
+  parameters?: RecordParameters | null;
 }
 
 /** All fields optional; `subsidiaryId` is immutable and cannot be changed here. */
@@ -5305,9 +5376,42 @@ export const BULK_UPLOAD_COLUMNS = [
   'activityValue',
   'activityUnit',
   'varianceReason',
+  /**
+   * The record's calculation inputs (LP4-02 PR4, D3), optional in the header
+   * and blank unless the row's category takes them. Natural Gas: the three
+   * calorific and volume inputs, each a dot-decimal number.
+   */
+  'ncvKcalPerSm3',
+  'billedGcvKcalPerSm3',
+  'volumeCorrectionFactor',
+  /**
+   * Refrigerants: one row per equipment line (D7). Rows naming the same
+   * entity, period and gas are one record, whose quantity is the sum of their
+   * `capacityKg`, so their `activityValue` stays blank. `leakRateChoice` is
+   * `default` when blank.
+   */
+  'equipmentType',
+  'capacityKg',
+  'refillKg',
+  'leakRateChoice',
 ] as const;
 
 export type BulkUploadColumn = (typeof BULK_UPLOAD_COLUMNS)[number];
+
+/** The Natural Gas input columns, named as the record's parameters are. */
+export const BULK_GAS_PARAMETER_COLUMNS = Object.freeze([
+  'ncvKcalPerSm3',
+  'billedGcvKcalPerSm3',
+  'volumeCorrectionFactor',
+] as const satisfies readonly BulkUploadColumn[]);
+
+/** The columns of one refrigerant equipment line. */
+export const BULK_EQUIPMENT_COLUMNS = Object.freeze([
+  'equipmentType',
+  'capacityKg',
+  'refillKg',
+  'leakRateChoice',
+] as const satisfies readonly BulkUploadColumn[]);
 
 /**
  * Columns a row cannot omit. `locationId` blank means the whole company;
@@ -5520,6 +5624,17 @@ export interface BulkUploadAcceptedRow {
   /** The unit as the server stores it (its canonical spelling, `kWh` for a
    *  file's `KWH`). */
   activityUnit: string;
+  /**
+   * The calculation inputs the server read (LP4-02 PR4), as the record stores
+   * them; null when the row carries none. Shown before an apply, like the
+   * amount (D15). Absent from a server before LP4-02 PR4.
+   */
+  parameters?: RecordParameters | null;
+  /**
+   * The file rows a refrigerant record was built from, one per equipment
+   * line, in file order; absent for a record of one row. `row` is the first.
+   */
+  lineRows?: number[];
   tCo2e: number | null;
   anomalous: boolean;
 }
@@ -5537,7 +5652,10 @@ export interface BulkUploadReportDTO {
    */
   fileName: string;
   sizeBytes: number;
-  /** Data rows found in the file, excluding the header. */
+  /**
+   * Records the file describes: its data rows, excluding the header, with a
+   * refrigerant record's equipment lines counted once (LP4-02 PR4).
+   */
   totalRows: number;
   accepted: BulkUploadAcceptedRow[];
   /**
@@ -5587,6 +5705,11 @@ export interface ImportBatchDTO {
   /** Hex SHA-256 of the file as received — proves which bytes were imported. */
   sha256: string;
   status: ImportBatchStatus;
+  /**
+   * Records the file describes, as `BulkUploadReportDTO.totalRows`: a
+   * refrigerant record's equipment lines count once (LP4-02 PR4), so this can
+   * be fewer than the source file's data rows.
+   */
   totalRows: number;
   /** Null while processing or after an interruption without finalized counts.
    * Cooperative deadlines finalize both counts and status=failed. Unstarted rows

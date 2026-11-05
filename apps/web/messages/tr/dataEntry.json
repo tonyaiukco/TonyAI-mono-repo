@@ -9,6 +9,7 @@
   "wholeCompany": "Tüm şirket",
   "category": "Kategori",
   "fuelOrGas": "Yakıt veya gaz",
+  "vehicleMode": "Araç kullanım modu",
   "chooseOne": "Birini seçin",
   "notSpecifiedLegacy": "Belirtilmemiş (yakıt türleri izlenmeden önce girilmiş)",
   "reportingYear": "Raporlama yılı",
@@ -56,7 +57,14 @@
     "activityType": "Aktivite tipi",
     "activityValue": "Aktivite değeri",
     "activityUnit": "Birim",
-    "varianceReason": "Sapma nedeni"
+    "varianceReason": "Sapma nedeni",
+    "ncvKcalPerSm3": "Alt ısıl değer",
+    "billedGcvKcalPerSm3": "Faturadaki üst ısıl değer",
+    "volumeCorrectionFactor": "Hacim düzeltme katsayısı",
+    "equipmentType": "Ekipman türü",
+    "capacityKg": "Kurulu kapasite (kg)",
+    "refillKg": "Dolum (kg)",
+    "leakRateChoice": "Kaçak oranı"
   },
   "activityTypes": {
     "grid_electricity": "Şebeke elektriği",
@@ -90,12 +98,25 @@
     "HFC-227ea": "HFC-227ea",
     "SF6": "SF6 (kükürt hekzaflorür)"
   },
+  "equipmentTypes": {
+    "fire_suppression_system": "Yangın söndürme sistemi",
+    "fire_extinguisher": "Yangın söndürücü",
+    "transformer_breaker": "Trafo veya kesici",
+    "split_air_conditioner": "Split klima",
+    "water_dispenser": "Su sebili",
+    "refrigerator": "Buzdolabı",
+    "chiller": "Chiller (soğutma grubu)",
+    "mobile_air_conditioner": "Araç kliması",
+    "portable_air_conditioner": "Portatif klima"
+  },
   "bulkPreview": {
     "title": "Kabul edilen satırlar",
     "row": "Dosya satırı",
     "amount": "Okunan miktar",
     "readNote": "Dosyadaki sayılarda ondalık ayırıcı noktadır: dosyadaki 1.234, 1,234 olarak okunur (bin iki yüz otuz dört değil). İçe aktarmadan önce her miktarı kontrol edin.",
-    "noActivityType": "Belirtilmemiş"
+    "noActivityType": "Belirtilmemiş",
+    "inputs": "Okunan girdiler",
+    "lineRows": "Satırlar {rows}"
   },
   "conversionNote": {
     "detail": "{fromUnit} → {toUnit}: ×{multiplier}. Isıl değer temeli: {calorificBasis}. Türetim: {basis}. Referans koşulları: {conditions}. Yayın: {publisher}, {edition} — {status}.",
@@ -110,6 +131,60 @@
       "placeholder": "Örnek değer — yetkili kaynağa dayalı değil",
       "fixture": "Test verisi — yetkili kaynağa dayalı değil",
       "withdrawn": "Geri çekilmiş"
+    },
+    "ncvDetail": "{fromUnit} → {toUnit}: ×{multiplier}; bu kaydın alt ısıl değeri {ncv} kcal/Sm³ ({origin}).{volume} Referans koşulları: {conditions}. Yayın: {publisher}, {edition} — {status}.",
+    "ncvOrigin": {
+      "default": "faktör sürümünün varsayılanı",
+      "user": "bu kayıtta girildi",
+      "derived": "faturadaki üst ısıl değerden türetildi"
+    },
+    "volumeCorrection": " Hacim düzeltme katsayısı: {factor}."
+  },
+  "inputs": {
+    "title": "Hesaplama girdileri",
+    "ncv": "Alt ısıl değer (kcal/Sm³)",
+    "ncvDefault": "Varsayılan {value} kcal/Sm³; kaynak: {publisher} {edition}{status}. Yalnızca tedarikçiniz başka bir değer bildiriyorsa değiştirin.",
+    "ncvDerived": "Faturadaki üst ısıl değerden türetildiği için burada girilmez.",
+    "gcv": "Faturadaki üst ısıl değer (kcal/Sm³)",
+    "gcvHelp": "İsteğe bağlı: faturada yazan değer. Bunu girin ya da alt ısıl değeri değiştirin; ikisini birden değil.",
+    "gcvBlocked": "Fatura değerini girmek için alt ısıl değeri varsayılanına döndürün.",
+    "volumeCorrectionFactor": "Hacim düzeltme katsayısı",
+    "volumeCorrectionHelp": "Sayaçtan m³ olarak okunan değer için gereklidir: hacmi standart metreküpe çevirir.",
+    "referenceLoading": "Faktör sürümünün referans değerleri yükleniyor…",
+    "referenceMissing": "Bu kaydı kapsayan bir faktör sürümü henüz yok; bu nedenle varsayılan gösterilmiyor.",
+    "referenceFailed": "Faktör sürümünün referans değerleri yüklenemedi.",
+    "notAuthoritative": " (yetkili değil)",
+    "gasIssues": {
+      "volume_correction_required": "m³ olarak girilen değer için hacim düzeltme katsayısını girin.",
+      "ncv_and_gcv": "Alt ısıl değer ya da faturadaki üst ısıl değer girin; ikisini birden değil."
+    },
+    "equipmentTitle": "Bu gazı içeren ekipmanlar",
+    "equipmentHelp": "Yıl boyunca her ekipman türü için bir satır. Kaçak, her türün oranıyla kurulu kapasitesi üzerinden, artı yapılan dolum ile hesaplanır.",
+    "equipmentType": "Ekipman türü",
+    "chooseEquipment": "Ekipman seçin",
+    "capacity": "Kurulu kapasite (kg)",
+    "refill": "Yıl içinde dolum (kg)",
+    "leakRate": "Kaçak oranı",
+    "defaultRate": "Varsayılan: {rate}",
+    "alternativeRate": "Alternatif: {rate}",
+    "rateUnknown": "Faktör sürümünde henüz oran yok",
+    "addLine": "Ekipman ekle",
+    "removeLine": "Bu satırı kaldır",
+    "total": "Toplam kurulu kapasite (kg)",
+    "totalHelp": "Aşağıdaki kapasitelerin toplamı: kaydın miktarı budur.",
+    "annualOnly": "Türkiye'de soğutucu gaz kayıtları yıllıktır, çünkü kaçak oranları yıllıktır.",
+    "equipmentIssues": {
+      "no_lines": "En az bir ekipman satırı ekleyin.",
+      "type_missing": "Her satırın ekipman türünü seçin.",
+      "type_repeated": "Her ekipman türü için tek satır girilir.",
+      "value_missing": "Her satıra geçerli bir kapasite ve dolum girin (yoksa 0).",
+      "empty_line": "Her satırda kapasite, dolum ya da ikisi birden olmalıdır.",
+      "too_large": "Toplam kapasite çok büyük."
+    },
+    "unitReset": "Bu tesis Türkiye kurallarına tabi; birim artık {unit} ve değer temizlendi. Değeri yeniden girin.",
+    "choice": {
+      "default": "varsayılan oran",
+      "alternative": "alternatif oran"
     }
   },
   "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",

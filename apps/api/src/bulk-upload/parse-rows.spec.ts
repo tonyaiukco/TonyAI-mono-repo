@@ -328,7 +328,7 @@ describe('parseRows — CSV', () => {
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "${'x'.repeat(40)}…", "b", "c", "d" (+3 more). Expected: ${EXPECTED}.`,
+      `Unrecognised column(s): "${'x'.repeat(40)}…", "b" (+5 more). Expected: ${EXPECTED}.`,
     );
   });
 

@@ -65,7 +65,7 @@
 
 ## 4. PR4: Data Entry and bulk upload
 
-- [ ] 4.1 Data Entry form:
+- [x] 4.1 Data Entry form:
   - the mobile mode select;
   - Fuel kg;
   - the Fugitive Gas category;
@@ -76,9 +76,9 @@
   - refrigerant equipment lines (type, capacity, refill) on an annual period, the total shown as the record's quantity, and accepting a refill-only record (`data-entry/page.tsx` requires a value above 0 today), with the default rate shown and the alternative offered only for split air conditioners and chillers.
 
   Use `useDecimalInput` for every new number. Verify web specs cover the field visibility rules and Turkish decimal parsing, and the preview's conversion note shows the effective NCV.
-- [ ] 4.2 Bulk upload: optional parameter columns (one file row per equipment line, grouped into the gas's one annual record before `duplicate_in_file` asks), the template workbook and the dry-run echo of the values read. Verify bulk specs accept valid rows, refuse invalid parameter combinations with row-level errors, and show the values read.
-- [ ] 4.3 TR/EN catalogues for every new label and error (`localise-ui`). Verify `messages.spec.ts` passes and no key is missing in either language. List the new TR strings in the PR for the owner's Turkish review.
-- [ ] 4.4 E2E: one Playwright flow per new form (natural gas with GCV, refrigerant with the alternative rate, mobile mode, leakage) against the local stack, using the fixture publisher. Verify `pnpm e2e` passes for the new specs.
+- [x] 4.2 Bulk upload: optional parameter columns (one file row per equipment line, grouped into the gas's one annual record before `duplicate_in_file` asks), the template workbook and the dry-run echo of the values read. Verify bulk specs accept valid rows, refuse invalid parameter combinations with row-level errors, and show the values read.
+- [x] 4.3 TR/EN catalogues for every new label and error (`localise-ui`). Verify `messages.spec.ts` passes and no key is missing in either language. List the new TR strings in the PR for the owner's Turkish review.
+- [x] 4.4 E2E: one Playwright flow per new form (natural gas with GCV, refrigerant with the alternative rate, mobile mode, leakage) against the local stack, using the fixture publisher. Verify `pnpm e2e` passes for the new specs.
 
 ## 5. PR5: TR releases, golden values and the Scope 2 label
 

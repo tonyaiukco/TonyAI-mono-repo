@@ -161,6 +161,41 @@ export function readAmountLabel(row: Pick<BulkUploadAcceptedRow, 'activityValue'
   return `${formatReadAmount(row.activityValue, locale)} ${unitSymbol(row.activityUnit)}`;
 }
 
+type InputsKey =
+  | `bulkColumns.${'ncvKcalPerSm3' | 'billedGcvKcalPerSm3' | 'volumeCorrectionFactor' | 'capacityKg' | 'refillKg'}`
+  | `equipmentTypes.${keyof typeof enEntry.equipmentTypes}`
+  | `inputs.choice.${keyof typeof enEntry.inputs.choice}`;
+
+/**
+ * An accepted row's calculation inputs as the server read them (LP4-02 PR4,
+ * D15): each Natural Gas value, or each equipment line with its masses and
+ * rate choice, in the user's locale. Empty when the row carries none.
+ */
+export function readInputsLabel(
+  parameters: BulkUploadAcceptedRow['parameters'],
+  locale: Locale,
+  translate: (key: InputsKey) => string,
+): string {
+  // `== null`: a server before LP4-02 PR4 sends none at all.
+  if (parameters == null) return '';
+  const amount = (value: number) => formatReadAmount(value, locale);
+  if ('equipment' in parameters) {
+    return parameters.equipment
+      .map((line) => {
+        const type = Object.hasOwn(enEntry.equipmentTypes, line.equipmentType)
+          ? translate(`equipmentTypes.${line.equipmentType as keyof typeof enEntry.equipmentTypes}`)
+          : line.equipmentType;
+        return `${type}: ${translate('bulkColumns.capacityKg')} ${amount(line.capacityKg)}, ` +
+          `${translate('bulkColumns.refillKg')} ${amount(line.refillKg)}, ${translate(`inputs.choice.${line.leakRateChoice}`)}`;
+      })
+      .join('; ');
+  }
+  return (['ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor'] as const)
+    .filter((key) => parameters[key] !== undefined && parameters[key] !== null)
+    .map((key) => `${translate(`bulkColumns.${key}`)} ${amount(parameters[key] as number)}`)
+    .join('; ');
+}
+
 export interface IssueGroup {
   code: BulkUploadIssueCode;
   label: string;

@@ -60,6 +60,15 @@ attachment), use `supabase-storage` instead.
   `1.234` must be SEEN as 1.234 before anyone applies it.
   Do **not** fix this with `@Type(() => Number)`: that repairs the CSV case by
   breaking the live HTTP one.
+- **Several file rows, one record: group before the duplicate check.** When a
+  record holds a list (a refrigerant's equipment lines, LP4-02 PR4), one row
+  per item is grouped into its record by the record's key — ids case-blind,
+  the period canonical — before `duplicate_in_file` asks, and the stored-slot
+  query reads the grouped records. Write the record whole or not at all: its
+  one refusal sits on the line and column at fault and names every line's row,
+  so `accepted + errors === totalRows` still counts records
+  (`record-inputs.ts`). A derived quantity (the sum of the lines) is never also
+  typed on the line: refuse a filled cell rather than reconcile two figures.
 - **Formula handling is asymmetric.** On parse, flag the row in the report —
   never reject it, and never prefix on the way in: a stored apostrophe is
   re-neutralised on the next export and corrupts the value permanently, and a
