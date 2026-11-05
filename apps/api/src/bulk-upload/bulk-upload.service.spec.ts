@@ -3363,6 +3363,34 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     }
   });
 
+  // Codex review of #281 (P2): a sibling row of the same record with no
+  // equipment cell split off, so the equipment group was written alone.
+  const bare = (over: Cells = {}) => line({ equipmentType: '', capacityKg: '', refillKg: '', leakRateChoice: '', activityValue: '20', ...over });
+  it.each([
+    ['an equipment line, then a bare row', () => [line(), bare()], 3],
+    ['a bare row, then an equipment line', () => [bare(), line()], 2],
+    ['an equipment line, then a row with every equipment cell blank and no quantity', () => [line(), bare({ activityValue: '' })], 3],
+  ])('refuses the whole record for %s of the same gas, on either path', async (_case, rows, faultRow) => {
+    for (const dryRun of [true, false]) {
+      const { records, service } = build();
+      const report = await service.import(dataEntry(), file(...rows()), { dryRun });
+      expect(records.previewCreate).not.toHaveBeenCalled();
+      expect(records.create).not.toHaveBeenCalled();
+      expect(report.accepted).toEqual([]);
+      expect(report.totalRows).toBe(1);
+      expect(report.errors).toEqual([expect.objectContaining({ row: faultRow, code: 'invalid', lineRows: [2, 3] })]);
+      expect(report.errors[0].message).toMatch(/^Rows 2, 3 are one gas's record, and none was imported\. /);
+    }
+  });
+
+  it('keeps a legacy Refrigerants row with no equipment anywhere in its record as before', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(bare({ reportingPeriod: 'monthly', periodValue: 'January' })), DRY);
+    expect(report.errors).toEqual([]);
+    expect(records.previewCreate.mock.calls[0][1]).toMatchObject({ activityValue: 20 });
+    expect(records.previewCreate.mock.calls[0][1].parameters).toBeUndefined();
+  });
+
   it('applies a refrigerant record once, and reports what the record stores', async () => {
     const { records, service } = build();
     const report = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller' })), { dryRun: false });

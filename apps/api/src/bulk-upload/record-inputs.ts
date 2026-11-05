@@ -70,17 +70,25 @@ function recordKey(cells: ParsedRow['cells']): string {
 /**
  * Group a refrigerant's equipment lines into its one record, BEFORE the
  * duplicate check: two lines of one gas are one record, not a duplicate (D7).
- * The record sits where its first line was; every other row keeps its place.
+ * Membership is by the record's key, not by a filled equipment cell: once any
+ * row of a gas's record is an equipment line, every Refrigerants row with that
+ * key joins it, so a sibling written the old way or left blank fails the whole
+ * record instead of splitting off and letting part of it be written (Codex
+ * review of #281). A record no row of which is an equipment line stays as it
+ * was, one row each. The record sits where its first row was; every other row
+ * keeps its place.
  */
 export function groupEquipmentLines(rows: readonly ParsedRow[]): RecordRow[] {
+  const isRefrigerant = (row: ParsedRow) => row.cells.category.trim() === 'Refrigerants';
+  const lineKeys = new Set(rows.filter((row) => isEquipmentLine(row.cells)).map((row) => recordKey(row.cells)));
   const records: RecordRow[] = [];
   const groups = new Map<string, RecordRow>();
   for (const row of rows) {
-    if (!isEquipmentLine(row.cells)) {
+    const key = isRefrigerant(row) ? recordKey(row.cells) : null;
+    if (key === null || !lineKeys.has(key)) {
       records.push(row);
       continue;
     }
-    const key = recordKey(row.cells);
     const group = groups.get(key);
     if (group) {
       group.lines!.push(row);

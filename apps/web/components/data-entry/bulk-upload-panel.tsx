@@ -39,7 +39,9 @@ import {
   groupIssues,
   MAX_ISSUE_ROWS_PER_GROUP,
   preflightFile,
+  countUnit,
   rowCount,
+  type CountUnit,
   sizeCapLabel,
   summarise,
   templateErrorMessage,
@@ -356,7 +358,7 @@ export function BulkUploadPanel({
                 {summary.detail && <p>{summary.detail}</p>}
                 {summary.acceptedCount > 0 && (
                   <p className="font-mono text-xs">
-                    {tonnesLabel(report.accepted, copy)}
+                    {tonnesLabel(report.accepted, copy, countUnit(report))}
                   </p>
                 )}
                 <p className="text-xs opacity-80">{report.fileName}</p>
@@ -366,13 +368,13 @@ export function BulkUploadPanel({
             <AcceptedRows rows={report.accepted} />
 
             {errorGroups.length > 0 && (
-              <IssueList groups={errorGroups} tone="error" />
+              <IssueList groups={errorGroups} tone="error" unit={countUnit(report)} />
             )}
 
             {warningGroups.length > 0 && (
               <>
                 <Separator />
-                <IssueList groups={warningGroups} tone="warning" />
+                <IssueList groups={warningGroups} tone="warning" unit={countUnit(report)} />
               </>
             )}
 
@@ -462,7 +464,7 @@ export function BulkUploadPanel({
                   {busy === "importing" ? (
                     <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                   ) : null}
-                  {t("importRows", { rows: rowCount(summary.acceptedCount, copy) })}
+                  {t("importRows", { rows: rowCount(summary.acceptedCount, copy, report ? countUnit(report) : "row") })}
                 </Button>
               )}
               <Button
@@ -504,7 +506,7 @@ export function BulkUploadPanel({
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t("importTitle")}</DialogTitle>
+            <DialogTitle>{t(report && countUnit(report) === "record" ? "records.importTitle" : "importTitle")}</DialogTitle>
             <DialogDescription>
               {report ? applyConfirmation(report, copy) : null}
             </DialogDescription>
@@ -539,9 +541,11 @@ export function BulkUploadPanel({
 function IssueList({
   groups,
   tone,
+  unit,
 }: {
   groups: IssueGroup[];
   tone: "error" | "warning";
+  unit: CountUnit;
 }) {
   const t = useTranslations("bulkUpload");
   const locale = useLocale();
@@ -568,7 +572,7 @@ function IssueList({
         >
           <summary className="flex cursor-pointer items-center gap-1.5 rounded font-medium outline-none [&::-webkit-details-marker]:hidden focus-visible:ring-2 focus-visible:ring-ring">
             <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
-            {t("groupHeading", { label: group.label, rows: rowCount(group.count, copy) })}
+            {t("groupHeading", { label: group.label, rows: rowCount(group.count, copy, unit) })}
           </summary>
           {/* A list, not a table: without headers a `<table>` is announced as
               "table, 50 rows, 3 columns" with nothing to orient by, and the

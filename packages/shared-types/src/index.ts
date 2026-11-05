@@ -5507,6 +5507,12 @@ export interface BulkUploadRowIssue {
   column: BulkUploadColumn | null;
   code: BulkUploadIssueCode;
   message: string;
+  /**
+   * The file rows of the refrigerant record this issue refuses, when it was
+   * built from several equipment lines (LP4-02 PR4): none of them was
+   * imported. `row` is the line at fault, or the first.
+   */
+  lineRows?: number[];
 }
 
 /**

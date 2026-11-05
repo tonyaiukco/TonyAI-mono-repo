@@ -1196,6 +1196,7 @@ export class BulkUploadService {
     for (let i = from; i < errors.length; i += 1) {
       errors[i] = {
         ...errors[i],
+        lineRows: rows,
         message: `Rows ${shown}${more} are one gas's record, and none was imported. ${errors[i].message}`,
       };
     }
