@@ -53,6 +53,7 @@ describe('the additive report dataset contract', () => {
     expectTypeOf<ReportDatasetRecord['reviewedByName']>().toEqualTypeOf<undefined>();
     expectTypeOf<ReportDatasetRecord['voidedByName']>().toEqualTypeOf<undefined>();
     expect(REPORT_DATASET_SCHEMA_VERSION).toBe(2);
+    // Snapshot V3 is a field of a record, not a new dataset shape (D11).
     expect(REPORT_DATASET_SCHEMA_VERSIONS.at(-1)).toBe(REPORT_DATASET_SCHEMA_VERSION);
     // The newest version asks what the write path asks today; older ones never move.
     expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[REPORT_DATASET_SCHEMA_VERSION]).toEqual(INVENTORY_CATEGORIES);

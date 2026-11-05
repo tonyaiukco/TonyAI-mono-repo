@@ -1787,6 +1787,10 @@ export interface CalculationInput {
   reportingYear: number;
   value: number;
   unit: string;
+  /** The record's period: the capacity method prices a yearly leak (D7). */
+  reportingPeriod?: string | null;
+  /** The record's per-record inputs (LP4-02, D3). */
+  parameters?: RecordParameters | null;
 }
 
 /**
@@ -1895,6 +1899,7 @@ export type UncalculatedReasonCode = 'no_emission_factor';
 export type ActivityCalculationSnapshot =
   | CalculationResult
   | CalculationResultV2
+  | CalculationResultV3
   | UncalculatedSnapshot;
 
 /**
@@ -2271,7 +2276,7 @@ export interface UnitConversionSnapshot {
  * together) and `conversionBasis` how it was reached.
  *
  * `snapshotSchema` numbers one sequence across the union: 1 is the
- * `UncalculatedSnapshot` (WP17), 2 this. The untagged pre-LP3-03 shape stays
+ * `UncalculatedSnapshot` (WP17), 2 this, 3 `CalculationResultV3`. The untagged pre-LP3-03 shape stays
  * readable as it is; no historic row is ever rewritten.
  */
 export interface CalculationResultV2 extends CalculationResult {
@@ -2294,14 +2299,59 @@ export interface CalculationResultV2 extends CalculationResult {
   conversion: UnitConversionSnapshot | null;
 }
 
+/** Where a per-record calculation input came from (D4). */
+export type SnapshotInputOrigin = 'default' | 'user' | 'derived';
+
+/** One input a calculation used, with its origin. */
+export interface SnapshotInput {
+  name: string;
+  value: number;
+  origin: SnapshotInputOrigin;
+}
+
+/** A release parameter a calculation read (D2, D4). */
+export interface SnapshotParameterRow {
+  id: string;
+  /** Two publishers' releases may share an edition, so the release is cited by id. */
+  releaseId: string;
+  key: string;
+  equipmentType: string | null;
+  value: number;
+  unit: string;
+  isDefault: boolean;
+  source: string;
+  edition: string;
+}
+
+/** One equipment line of the capacity method (D7): `leakedKg + refillKg` is its priced mass. */
+export interface RefrigerantTerm {
+  equipmentType: string;
+  leakRateChoice: LeakRateChoice;
+  capacityKg: number;
+  leakRate: number;
+  leakedKg: number;
+  refillKg: number;
+}
+
+/**
+ * The snapshot every calculation writes from LP4-02 PR3 on (D4, D11): V2 plus
+ * the per-record inputs, the release parameters read and, for a refrigerant,
+ * the capacity method's terms. V2 stays frozen and readable.
+ */
+export interface CalculationResultV3 extends Omit<CalculationResultV2, 'snapshotSchema'> {
+  snapshotSchema: 3;
+  parameters: readonly SnapshotInput[];
+  parameterRows: readonly SnapshotParameterRow[];
+  refrigerantTerms: readonly RefrigerantTerm[] | null;
+}
+
 /** True when the snapshot is a factor-backed figure that carries provenance. */
 export function isProvenanceSnapshot(
   snapshot: ActivityCalculationSnapshot | null | undefined,
-): snapshot is CalculationResultV2 {
-  return (
-    isCalculated(snapshot) &&
-    (snapshot as CalculationResultV2).snapshotSchema === 2
-  );
+): snapshot is CalculationResultV2 | CalculationResultV3 {
+  if (!isCalculated(snapshot)) return false;
+  const schema = (snapshot as CalculationResultV2 | CalculationResultV3).snapshotSchema;
+  return schema === 2 || schema === 3;
 }
 
 /**
@@ -2345,6 +2395,16 @@ export const CALCULATION_REFUSAL_CODES = [
   /** A new record in a typed category names no activity type. */
   'activity_type_required',
   'record_parameters_invalid',
+  /** A capacity-method record on a period other than annual: its rates are yearly. */
+  'reporting_period_not_annual',
+  /** A refrigerant record whose value is not the sum of its equipment capacities. */
+  'equipment_sum_mismatch',
+  /** A TR refrigerant record with no equipment lines. */
+  'parameters_required',
+  /** Parameters off the TR rules, or an input that does not apply to this unit. */
+  'parameters_not_applicable',
+  /** The release a TR rule reads holds no such parameter: a library defect. */
+  'parameter_missing',
   /** No factor covers this category, activity, geography and year. */
   'no_factor',
   /** Only non-authoritative factors cover it, and they are not allowed here. */
@@ -2375,6 +2435,11 @@ export const CALCULATION_REFUSAL_STATUS: Readonly<
   activity_type_not_for_category: 400,
   activity_type_required: 400,
   record_parameters_invalid: 400,
+  reporting_period_not_annual: 400,
+  equipment_sum_mismatch: 400,
+  parameters_required: 400,
+  parameters_not_applicable: 400,
+  parameter_missing: 409,
   no_factor: 404,
   placeholder_refused: 404,
   ambiguous_factor: 409,
@@ -3171,14 +3236,12 @@ export interface NaturalGasRecordParameters {
   volumeCorrectionFactor?: number | null;
 }
 
-/**
- * Per-record parameters for Refrigerants (D3, D7).
- * All fields are required for refrigerant records. The installed capacity is
- * the record's `kg` activity value (D7), never a second figure here.
- */
-export interface RefrigerantRecordParameters {
-  /** The equipment type from EQUIPMENT_TYPES. */
+/** One equipment type's line on a refrigerant record (D3, D7). */
+export interface RefrigerantEquipmentLine {
+  /** The equipment type from EQUIPMENT_TYPES; once per record. */
   equipmentType: EquipmentType;
+  /** Installed capacity in kg. */
+  capacityKg: number;
   /** Refill amount in kg. */
   refillKg: number;
   /** Whether to use the default or alternative leak rate. */
@@ -3186,10 +3249,41 @@ export interface RefrigerantRecordParameters {
 }
 
 /**
+ * Per-record parameters for Refrigerants (D3, D7): one record per gas, with one
+ * line per equipment type. The record's `kg` activity value is the sum of the
+ * lines' capacities.
+ */
+export interface RefrigerantRecordParameters {
+  equipment: readonly RefrigerantEquipmentLine[];
+}
+
+/**
  * Union of all category-specific record parameters (D3).
  * Each category that requires per-record inputs has its own shape.
  */
 export type RecordParameters = NaturalGasRecordParameters | RefrigerantRecordParameters;
+
+/**
+ * Stored parameters as the engine and K11 read them: a null field is an absent
+ * one, and an object with nothing left is no parameters at all.
+ */
+export function normalizeRecordParameters(parameters: unknown): RecordParameters | null {
+  if (parameters === null || typeof parameters !== 'object' || Array.isArray(parameters)) return null;
+  const entries = Object.entries(parameters).filter(([, value]) => value !== null && value !== undefined);
+  return entries.length === 0 ? null : (Object.fromEntries(entries) as unknown as RecordParameters);
+}
+
+/**
+ * Whether a geography takes the TR factor package's calculation rules (D11): the
+ * natural gas chain (D5) and the refrigerant capacity method (D7). The one place
+ * the engine names a country.
+ */
+export function usesTrCalculationRules(geographyCode: string): boolean {
+  return geographyCode === 'TR';
+}
+
+/** kWh per kcal, definitional: 4.184 kJ per kcal, 3,600 kJ per kWh (D5). */
+export const KWH_PER_KCAL = 4.184 / 3600;
 
 /** Statuses a release can be loaded with — `withdrawn` is reached, not loaded. */
 const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'fixture'];
@@ -3590,6 +3684,30 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
     const identity = identityKey({ ...row, releaseId: null }, PARAMETER_IDENTITY_FIELDS);
     if (seenParameters.has(identity)) fail(at('isDefault'), 'duplicates an earlier parameter row');
     seenParameters.add(identity);
+  });
+  // The package's one source for its calorific values and leak rates (D5, D11).
+  const parameterRow = (key: ParameterKey) =>
+    parameters.find((row) => isObject(row) && row.key === key && row.isDefault === true) as
+      | { value?: unknown }
+      | undefined;
+  conversions.forEach((row, i) => {
+    if (!isObject(row) || row.fromUnit !== 'standard_cubic_metres' || row.toUnit !== 'kWh' || row.calorificBasis !== 'net') return;
+    if (!usesTrCalculationRules(row.geographyCode as string)) return;
+    const ncv = parameterRow('reference_ncv')?.value;
+    if (typeof ncv !== 'number') {
+      fail(`conversions[${i}].multiplier`, 'a TR net Sm³ conversion needs reference_ncv in parameters[]');
+    } else if (typeof row.multiplier === 'number' && Math.abs(row.multiplier - ncv * KWH_PER_KCAL) > 5e-7) {
+      fail(`conversions[${i}].multiplier`, 'must be reference_ncv × 4.184 / 3,600, to six decimals');
+    }
+    if (parameterRow('reference_gcv') === undefined) {
+      fail(`conversions[${i}].multiplier`, 'a TR net Sm³ conversion needs reference_gcv in parameters[]');
+    }
+  });
+  factors.forEach((row, i) => {
+    if (!isObject(row) || row.category !== 'Refrigerants' || !usesTrCalculationRules(row.geographyCode as string)) return;
+    if (parameterRow('leak_rate') === undefined) {
+      fail(`factors[${i}].category`, 'a TR refrigerant factor needs a default leak_rate in parameters[]');
+    }
   });
   for (const [subjectKey, path] of alternatives) {
     if (!defaultsPerSubject.has(subjectKey)) fail(`${path}.isDefault`, 'an alternative rate needs a default beside it');

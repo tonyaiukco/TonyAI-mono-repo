@@ -70,7 +70,7 @@ result, not a defect. Never ask for placeholder factors to be loaded.
 | RC-10 | Try to lock a month that holds a rejected record | Refused |  |  |  |
 | RC-11 | Electricity: open the calculation preview for a UK or TR site | Refused with `no_factor` and coverage shown; no figure, no placeholder value |  |  |  |
 | RC-12 | Audit log after RC-01 to RC-09 | One row for each create, update, submit, approve, reject, lock and evidence action; no row can be edited or deleted from the UI |  |  |  |
-| RC-13 | data_entry tries to save a Natural Gas, Fuel or Electricity record for a UK or TR site | Not saved with a figure: refused with `no_factor` (coverage shown) or the category is not offered; never a placeholder value |  |  |  |
+| RC-13 | data_entry tries to save a Natural Gas, Fuel or Electricity record for a UK or TR site | Not saved with a figure: refused with `no_factor` (coverage shown) or the category is not offered; never a placeholder value. TR Natural Gas in kWh answers `calorific_basis_mismatch`, and in m³ without a correction factor `no_conversion` (LP4-02) |  |  |  |
 
 ## 4. Evidence and files (H1)
 

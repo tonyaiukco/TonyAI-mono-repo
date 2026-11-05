@@ -119,7 +119,7 @@ export class CreateActivityRecordDto {
 
   // LP4-02 (D3): per-record calculation parameters, in their own column:
   // Natural Gas's calorific overrides and volume correction, a refrigerant's
-  // equipment, refill and leak rate choice. Every other category takes none.
+  // equipment lines. Every other category takes none.
   @IsOptional()
   @IsValidRecordParameters()
   parameters?: RecordParameters | null;

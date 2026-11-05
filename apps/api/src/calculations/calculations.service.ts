@@ -14,18 +14,25 @@ import {
   isInvoiceTracked,
   isRecordActivityTypeAllowed,
   isRecordableWithoutFactor,
+  normalizeRecordParameters,
   recordActivityTypesFor,
+  usesTrCalculationRules,
   yearPolicyOf,
 } from '@tonyai/shared-types';
 import type {
   ActivityCalculationSnapshot,
   CalculationInput,
-  CalculationResultV2,
+  CalculationResultV3,
   Category,
   CoverageKey,
   EmissionFactorDetailDTO,
   EmissionFactorDTO,
   FactorGasCoverage,
+  NaturalGasRecordParameters,
+  RefrigerantRecordParameters,
+  RefrigerantTerm,
+  SnapshotInput,
+  SnapshotParameterRow,
   UnitConversionSnapshot,
 } from '@tonyai/shared-types';
 import { quoteCallerText } from '../common/caller-text';
@@ -33,17 +40,21 @@ import { RELEASE_SNAPSHOT_SELECT, releaseSnapshot } from './release-snapshot';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   lookupFactorPath,
+  readReleaseParameters,
   SEALED,
   type FactorLookupKey,
   type FactorLookupResult,
 } from './factor-lookup';
 import type { CaptureSnapshot } from '../common/capture-snapshot';
+import { NUMBER_TOLERANCE } from './snapshot-staleness';
+import { capacityMethod, naturalGasChain, snapshotParameterRow } from './tr-rules';
 import { FACTOR_POLICY, type FactorPolicy } from './factor-policy';
 import {
   blockedUnitReason,
   canonicalUnit as canonicalInputUnit,
   isKnownUnit,
   normalize,
+  type NormalizationResult,
 } from './normalization';
 import { storedUnit } from './storable-unit';
 
@@ -185,8 +196,8 @@ export class CalculationsService {
   /**
    * Compute emissions for a single activity input.
    * kgCo2e = normalizedValue × factorValue ; tCo2e = kgCo2e / 1000.
-   * Returns the v2 snapshot — the figure and where every number came from
-   * (calculation_logic.md §5; `CalculationResultV2`).
+   * Returns the v3 snapshot — the figure and where every number came from
+   * (calculation_logic.md §5; `CalculationResultV3`).
    *
    * Validates the activity type against the category (`activity_type_*`), but
    * does not require one: whether a record must name a type depends on
@@ -251,6 +262,20 @@ export class CalculationsService {
     // The vocabulary spelling (`kWh`, not `kwh`): path resolution classifies a
     // unit by exact match.
     const unit = storedUnit(input.unit);
+    const parameters = normalizeRecordParameters(input.parameters);
+    const trRule = !usesTrCalculationRules(input.geographyCode)
+      ? null
+      : input.category === 'Natural Gas'
+        ? 'natural_gas'
+        : input.category === 'Refrigerants'
+          ? 'refrigerant'
+          : null;
+    if (parameters !== null && trRule === null) {
+      throw new CalculationInputError(
+        'parameters_not_applicable',
+        `${input.category} in ${input.geographyCode} takes no record parameters.`,
+      );
+    }
     const coverage: CoverageKey = {
       category: input.category,
       activityType: factorActivityTypeFor(input.category, recordType),
@@ -258,6 +283,13 @@ export class CalculationsService {
       reportingYear: input.reportingYear,
       unit,
     };
+    // A metered m³ becomes Sm³ first, so it looks up as Sm³ (D5).
+    const typedLookup = recordType !== null;
+    const gasInputs = trRule === 'natural_gas' ? (parameters as NaturalGasRecordParameters | null) : null;
+    const volumeCorrection = gasInputs?.volumeCorrectionFactor ?? null;
+    if (trRule === 'natural_gas') this.assertTrGasUnit(unit, volumeCorrection, coverage);
+    if (trRule === 'refrigerant') this.assertRefrigerantInputs(input, parameters as RefrigerantRecordParameters | null);
+    const lookupUnit = trRule === 'natural_gas' ? 'standard_cubic_metres' : unit;
     // Resolved BEFORE normalization: when there is no factor there is nothing
     // to normalise TOWARDS, and the factorless Water branch below must freeze
     // the reading exactly as entered.
@@ -268,7 +300,7 @@ export class CalculationsService {
         geographyCode: coverage.geographyCode,
         reportingYear: coverage.reportingYear,
       },
-      unit,
+      lookupUnit,
     );
 
     if (!resolution.ok) {
@@ -322,7 +354,7 @@ export class CalculationsService {
             `by invoice for data-completeness purposes.`,
         };
       }
-      throw new NoEmissionFactorError(this.coverageMessage(resolution.code, coverage, recordType !== null), {
+      throw new NoEmissionFactorError(this.coverageMessage(resolution.code, coverage, typedLookup), {
         code: resolution.code,
         coverage,
       });
@@ -339,12 +371,54 @@ export class CalculationsService {
       );
     }
 
-    const { normalizedValue, normalizedUnit, conversionApplied, conversionFactor, conversionBasis } = normalize(
-      input.value,
-      input.unit,
-      input.category,
-      conversion,
-    );
+    let inputs: SnapshotInput[] = [];
+    let parameterRows: SnapshotParameterRow[] = [];
+    let refrigerantTerms: RefrigerantTerm[] | null = null;
+    let priced: NormalizationResult;
+    if (trRule === 'natural_gas') {
+      if (conversion === null) {
+        throw new NoEmissionFactorError(this.coverageMessage('no_conversion', coverage, typedLookup), {
+          code: 'no_conversion',
+          coverage,
+        });
+      }
+      // The chain's NCV is a net figure, so only a net row can carry it.
+      if (conversion.calorificBasis !== 'net') {
+        throw new NoEmissionFactorError(this.coverageMessage('calorific_basis_mismatch', coverage, typedLookup), {
+          code: 'calorific_basis_mismatch',
+          coverage,
+        });
+      }
+      const chain = naturalGasChain(
+        gasInputs,
+        conversion.multiplier,
+        await readReleaseParameters(this.prisma, conversion.release.id),
+      );
+      inputs = chain.inputs;
+      parameterRows = chain.rowsUsed.map(snapshotParameterRow);
+      const steps = normalize(
+        input.value * (volumeCorrection ?? 1),
+        'standard_cubic_metres',
+        input.category,
+        { ...conversion, multiplier: chain.multiplier },
+      );
+      // The whole multiplier from input to normalised unit (`conversionFactor`).
+      priced = { ...steps, conversionFactor: chain.multiplier * (volumeCorrection ?? 1) };
+    } else if (trRule === 'refrigerant') {
+      if (parameters === null) {
+        throw new CalculationInputError('parameters_required', 'A refrigerant record in Türkiye lists its equipment: type, capacity and refill.');
+      }
+      const method = capacityMethod(
+        parameters as RefrigerantRecordParameters,
+        await readReleaseParameters(this.prisma, factor.release.id),
+      );
+      refrigerantTerms = method.terms;
+      parameterRows = method.rowsUsed.map(snapshotParameterRow);
+      priced = { normalizedValue: method.massKg, normalizedUnit: 'kg', conversionApplied: false };
+    } else {
+      priced = normalize(input.value, input.unit, input.category, conversion);
+    }
+    const { normalizedValue, normalizedUnit, conversionApplied, conversionFactor, conversionBasis } = priced;
     // The resolver chose this path for this unit; arriving anywhere else is a
     // defect in the engine, not something to price through.
     if (normalizedUnit !== factor.normalizedUnit) {
@@ -365,8 +439,8 @@ export class CalculationsService {
     }
     const tCo2e = kgCo2e / 1000;
 
-    const snapshot: CalculationResultV2 = {
-      snapshotSchema: 2,
+    const snapshot: CalculationResultV3 = {
+      snapshotSchema: 3,
       category: input.category,
       geographyCode: input.geographyCode,
       reportingYear: input.reportingYear,
@@ -390,13 +464,67 @@ export class CalculationsService {
       activityType: factor.activityType,
       gas: CALCULATION_GAS,
       gasCoverage: factor.gasCoverage as FactorGasCoverage,
-      calorificBasis: factor.calorificBasis as CalculationResultV2['calorificBasis'],
-      scope2Method: factor.scope2Method as CalculationResultV2['scope2Method'],
+      calorificBasis: factor.calorificBasis as CalculationResultV3['calorificBasis'],
+      scope2Method: factor.scope2Method as CalculationResultV3['scope2Method'],
       dataYear: factor.dataYear,
       yearPolicy: yearPolicyOf(input.reportingYear, factor.dataYear),
       factorRelease: releaseSnapshot(factor.release),
       conversion: conversion ? conversionSnapshot(conversion) : null,
+      parameters: inputs,
+      parameterRows,
+      refrigerantTerms,
     };
     return snapshot;
+  }
+
+  /**
+   * Which units a TR natural gas record may be in (D5, D11), whatever rows the
+   * library holds. A bill's kWh is gross and the TR factor is net, so it is the
+   * Sm³ or the metered m³ that is priced.
+   */
+  private assertTrGasUnit(unit: string, volumeCorrection: number | null, coverage: CoverageKey): void {
+    if (unit === 'standard_cubic_metres') {
+      if (volumeCorrection !== null) {
+        throw new CalculationInputError('parameters_not_applicable', 'Standard cubic metres take no volume correction factor.');
+      }
+      return;
+    }
+    if (unit === 'cubic_metres') {
+      if (volumeCorrection === null) {
+        throw new NoEmissionFactorError('A natural gas reading in m³ in Türkiye needs its volume correction factor to reach Sm³.', {
+          code: 'no_conversion',
+          coverage,
+        });
+      }
+      return;
+    }
+    throw new NoEmissionFactorError(
+      'Natural gas in Türkiye is priced on the net calorific basis, and a bill states energy on the gross one. Enter the volume in Sm³ or m³.',
+      { code: 'calorific_basis_mismatch', coverage },
+    );
+  }
+
+  /** The capacity method's inputs (D7, D11), asked before the library is. */
+  private assertRefrigerantInputs(input: CalculationInput, parameters: RefrigerantRecordParameters | null): void {
+    // An edit may inherit a unit from before the category map (`enforceCategoryUnit`),
+    // and the method's capacities are kg.
+    if (storedUnit(input.unit) !== 'kg') {
+      throw new CalculationInputError('unit_not_for_category', 'A refrigerant record in Türkiye is in kg.');
+    }
+    if (input.reportingPeriod !== 'annual') {
+      throw new CalculationInputError(
+        'reporting_period_not_annual',
+        'A refrigerant record in Türkiye is annual: its leak rates are yearly.',
+      );
+    }
+    if (parameters === null) return;
+    const total = parameters.equipment.reduce((sum, line) => sum + line.capacityKg, 0);
+    const largest = Math.max(Math.abs(total), Math.abs(input.value));
+    if (Math.abs(total - input.value) > NUMBER_TOLERANCE * largest) {
+      throw new CalculationInputError(
+        'equipment_sum_mismatch',
+        'The quantity of a refrigerant record is its total installed capacity: the sum of its equipment capacities.',
+      );
+    }
   }
 }

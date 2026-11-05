@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isProvenanceSnapshot,
+  normalizeRecordParameters,
   API_ERROR_PARAMS,
   API_ERROR_STATUS,
   mayAuthorRecords,
@@ -769,3 +771,30 @@ describe('mayAuthorRecords — the one record-write rule', () => {
     expect(mayAuthorRecords(undefined)).toBe(false);
   });
 });
+
+describe('normalizeRecordParameters (LP4-02, D11)', () => {
+  it('reads {}, an all-null object, a scalar and an array as no parameters', () => {
+    for (const value of [null, undefined, {}, { ncvKcalPerSm3: null }, 'x', 1, []]) {
+      expect(normalizeRecordParameters(value)).toBeNull();
+    }
+  });
+
+  it('drops a null field and keeps the rest', () => {
+    expect(normalizeRecordParameters({ ncvKcalPerSm3: 8100, billedGcvKcalPerSm3: null })).toEqual({ ncvKcalPerSm3: 8100 });
+  });
+
+  it('keeps equipment lines as they are', () => {
+    const equipment = [{ equipmentType: 'chiller', capacityKg: 0, refillKg: 1, leakRateChoice: 'default' }];
+    expect(normalizeRecordParameters({ equipment })).toEqual({ equipment });
+  });
+});
+
+describe('isProvenanceSnapshot (LP4-02, D11)', () => {
+  const figure = { factorId: 'f-1', tCo2e: 1 };
+  it('reads schemas 2 and 3 as provenance, and an untagged figure as not', () => {
+    expect(isProvenanceSnapshot({ ...figure, snapshotSchema: 2 } as never)).toBe(true);
+    expect(isProvenanceSnapshot({ ...figure, snapshotSchema: 3 } as never)).toBe(true);
+    expect(isProvenanceSnapshot(figure as never)).toBe(false);
+  });
+});
+

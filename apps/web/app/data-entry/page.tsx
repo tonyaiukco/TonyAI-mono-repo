@@ -647,6 +647,7 @@ function DataEntryPageInner() {
           reportingYear,
           value: numericValue,
           unit: activityUnit,
+          reportingPeriod,
         });
         if (!active) return;
         setPreview(result);

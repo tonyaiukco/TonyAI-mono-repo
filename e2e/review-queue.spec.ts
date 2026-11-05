@@ -302,7 +302,7 @@ test('the queue is ordered by longest WAIT, not by oldest draft', async ({ page,
   // wait it comes last. Only one of those is the queue this screen claims.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   await createCommittedRecord(request, token, {
-    subsidiaryId: SUB.energy,
+    subsidiaryId: SUB.trading,
     category: 'Natural Gas',
     periodValue: 'Q2',
     activityValue: 1200,

@@ -335,3 +335,23 @@ describe('compareSnapshots — K11 (P6)', () => {
     expect(r.classes).toEqual(['figure']);
   });
 });
+
+describe('compareSnapshots across snapshot versions (LP4-02, D11)', () => {
+  const base = { factorId: 'f-1', tCo2e: 1, kgCo2e: 1000, category: 'Natural Gas' };
+  const v3 = { ...base, snapshotSchema: 3, parameters: [], parameterRows: [], refrigerantTerms: null } as never;
+
+  it('calls a calculated V2 snapshot stale against a V3 recompute, without calling it legacy', () => {
+    expect(compareSnapshots({ ...base, snapshotSchema: 2 }, v3)).toMatchObject({ stale: true, legacy: false });
+  });
+
+  it('files a changed input under input, and a changed term under figure', () => {
+    const changed = { ...base, snapshotSchema: 3, parameters: [{ name: 'ncvKcalPerSm3', value: 8100, origin: 'user' }], parameterRows: [], refrigerantTerms: null };
+    expect(compareSnapshots(changed, v3).classes).toEqual(['input']);
+    expect(compareSnapshots({ ...base, snapshotSchema: 3, parameters: [], parameterRows: [], refrigerantTerms: [] }, v3).classes).toEqual(['figure']);
+  });
+
+  it('holds an unchanged V3 snapshot fresh', () => {
+    expect(compareSnapshots({ ...base, snapshotSchema: 3, parameters: [], parameterRows: [], refrigerantTerms: null }, v3)).toMatchObject({ stale: false });
+  });
+});
+

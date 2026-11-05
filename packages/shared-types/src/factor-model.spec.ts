@@ -1393,6 +1393,11 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       activity_type_not_for_category: 400,
       activity_type_required: 400,
       record_parameters_invalid: 400,
+      reporting_period_not_annual: 400,
+      equipment_sum_mismatch: 400,
+      parameters_required: 400,
+      parameters_not_applicable: 400,
+      parameter_missing: 409,
       no_factor: 404,
       placeholder_refused: 404,
       ambiguous_factor: 409,
@@ -1802,6 +1807,31 @@ describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
     const alternative = leakRateParam({ value: 0.1, isDefault: false });
     expect(issuesAt(release({ parameters: [alternative] }))).toEqual(['parameters[0].isDefault']);
     expect(issuesAt(release({ parameters: [alternative, leakRateParam()] }))).toEqual([]);
+  });
+
+  describe('the TR package holds its own sources (D5, D11)', () => {
+    const conversion = (over: Record<string, unknown> = {}) => ({
+      category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025, dataYear: 2025,
+      fromUnit: 'standard_cubic_metres', toUnit: 'kWh', multiplier: 9.588333, calorificBasis: 'net',
+      referenceConditions: STANDARD_REFERENCE_CONDITIONS, basis: 'NCV 8,250 kcal/Sm³', ...over,
+    });
+    const ncv = () => gcvParam({ key: 'reference_ncv', value: 8250 });
+    const bad = (conversions: unknown[], parameters: unknown[]) =>
+      issuesAt(release({ conversions, parameters } as never)).filter((path) => path.startsWith('conversions[0].multiplier'));
+
+    it('accepts a net Sm³ row that is reference_ncv × 4.184 / 3,600, to six decimals', () => {
+      expect(bad([conversion()], [gcvParam(), ncv()])).toEqual([]);
+    });
+
+    it('refuses one that disagrees, or stands without its reference values', () => {
+      expect(bad([conversion({ multiplier: 9.59 })], [gcvParam(), ncv()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion()], [gcvParam()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion()], [ncv()])).toEqual(['conversions[0].multiplier']);
+    });
+
+    it('asks nothing of another geography', () => {
+      expect(bad([conversion({ geographyCode: 'UK' })], [])).toEqual([]);
+    });
   });
 
   it('accepts a valid leak_rate parameter', () => {

@@ -1400,7 +1400,7 @@ function EmissionsAnalysisPageInner() {
                       <Row label={t('drawer.factor')} value={`${formatReadAmount(selectedRecord.calculation.factorValue, locale)} ${selectedRecord.calculation.factorUnit}`} />
                       <Row label={t('drawer.methodologyRow')} value={selectedRecord.calculation.methodology} />
                       <Row label={t('drawer.geography')} value={selectedRecord.calculation.geographyCode} />
-                      <Row label={t('drawer.normalised')} value={`${fixed(selectedRecord.calculation.normalizedValue, locale)} ${unitSymbol(selectedRecord.calculation.normalizedUnit)}`} />
+                      <Row label={t('drawer.normalised')} value={`${formatReadAmount(selectedRecord.calculation.normalizedValue, locale)} ${unitSymbol(selectedRecord.calculation.normalizedUnit)}`} />
                       <Row label={t('drawer.source')} value={selectedRecord.calculation.source} />
                       <Row label={t('drawer.version')} value={selectedRecord.calculation.version} />
                     </div>

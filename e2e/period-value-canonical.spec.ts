@@ -49,7 +49,7 @@ const PERIOD = 'Q1';
 test('a period is one period, whatever the caller capitalises', async ({ request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const body = (periodValue: string) => ({
-    subsidiaryId: SUB.logistics,
+    subsidiaryId: SUB.trading,
     locationId: null,
     reportingYear: E2E_YEAR,
     reportingPeriod: E2E_PERIOD,
@@ -90,7 +90,7 @@ test('a period is one period, whatever the caller capitalises', async ({ request
   const rows = await listAllPages<Record<string, string | null>>(
     request,
     token,
-    `/activity-records?subsidiaryId=${SUB.logistics}`,
+    `/activity-records?subsidiaryId=${SUB.trading}`,
   );
   const forThisPeriod = rows.filter(
     (r) =>

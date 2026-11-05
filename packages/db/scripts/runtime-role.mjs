@@ -1013,7 +1013,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
   // LP4-02 (33): what a record says, held for every writer at the door.
   ['activity_records', 'activity_records_activity_value_check', 'eeef9e2c8cf6539c36909ac41432c40a'],
   // LP4-02 (D3): per-record calculation parameters shape.
-  ['activity_records', 'activity_records_parameters_check', '0e165bcf50c10a3a5f9b4fb690c02149'],
+  ['activity_records', 'activity_records_parameters_check', 'fc84b7e8105e93efd50d26f39d054e11'],
   ['activity_records', 'activity_records_period_value_check', 'd15080e375207c7ca22a5777c479af8b'],
   ['activity_records', 'activity_records_scope_check', '8cae4f533cf776fdcef2cf79f1fcf834'],
   ['emission_factors', 'emission_factors_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],

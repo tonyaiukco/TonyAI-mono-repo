@@ -22,12 +22,16 @@ export type InputRefusalCode = Extract<
   | 'activity_type_not_for_category'
   | 'activity_type_required'
   | 'record_parameters_invalid'
+  | 'reporting_period_not_annual'
+  | 'equipment_sum_mismatch'
+  | 'parameters_required'
+  | 'parameters_not_applicable'
 >;
 export type CoverageRefusalCode = Extract<
   CalculationRefusalCode,
   'no_factor' | 'placeholder_refused' | 'no_conversion' | 'calorific_basis_mismatch'
 >;
-export type LibraryRefusalCode = Extract<CalculationRefusalCode, 'ambiguous_factor' | 'factor_scope_mismatch'>;
+export type LibraryRefusalCode = Extract<CalculationRefusalCode, 'ambiguous_factor' | 'factor_scope_mismatch' | 'parameter_missing'>;
 
 export const INPUT_REFUSAL_CODES: readonly InputRefusalCode[] = [
   'unit_unknown',
@@ -36,6 +40,10 @@ export const INPUT_REFUSAL_CODES: readonly InputRefusalCode[] = [
   'activity_type_not_for_category',
   'activity_type_required',
   'record_parameters_invalid',
+  'reporting_period_not_annual',
+  'equipment_sum_mismatch',
+  'parameters_required',
+  'parameters_not_applicable',
 ];
 export const COVERAGE_REFUSAL_CODES: readonly CoverageRefusalCode[] = [
   'no_factor',
@@ -43,7 +51,7 @@ export const COVERAGE_REFUSAL_CODES: readonly CoverageRefusalCode[] = [
   'no_conversion',
   'calorific_basis_mismatch',
 ];
-export const LIBRARY_REFUSAL_CODES: readonly LibraryRefusalCode[] = ['ambiguous_factor', 'factor_scope_mismatch'];
+export const LIBRARY_REFUSAL_CODES: readonly LibraryRefusalCode[] = ['ambiguous_factor', 'factor_scope_mismatch', 'parameter_missing'];
 
 /**
  * The calculation refused what the caller sent (400): a unit the engine does
@@ -98,8 +106,9 @@ export class NoEmissionFactorError extends NotFoundException {
 
 /**
  * The factor library contradicts itself (409): two releases claim one key at
- * the same rank (`ambiguous_factor`), or the resolved factor's scope is not its
- * category's (`factor_scope_mismatch`). A defect a person settles in the
+ * the same rank (`ambiguous_factor`), the resolved factor's scope is not its
+ * category's (`factor_scope_mismatch`), or a TR rule reads a parameter its release
+ * does not hold (`parameter_missing`). A defect a person settles in the
  * library, never a silent pick.
  */
 export class FactorLibraryConflictError extends ConflictException {

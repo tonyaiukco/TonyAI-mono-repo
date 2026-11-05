@@ -412,110 +412,26 @@ describe.each(DTOS)('%s — activityType (LP3-03)', (_name, Dto) => {
   });
 });
 
-describe.each(DTOS)('%s — parameters (LP4-02, D3)', (_name, Dto) => {
-  it('accepts null and its absence — most categories do not use parameters', () => {
-    expect(parse(Dto, { parameters: null }).errors).toHaveLength(0);
-    expect(parse(Dto, { parameters: undefined }).errors).toHaveLength(0);
-    expect(parse(Dto, {}).errors).toHaveLength(0);
+describe.each(DTOS)('%s — parameters (LP4-02, D3, D7)', (_name, Dto) => {
+  const refused = (body: Record<string, unknown>) => parse(Dto, body).errors.map((e) => e.property);
+  const line = (over: Record<string, unknown> = {}) => ({
+    equipmentType: 'chiller', capacityKg: 5, refillKg: 1, leakRateChoice: 'default', ...over,
+  });
+  const refrigerant = (equipment: unknown, category = 'Refrigerants') => ({ category, activityType: 'R-410A', parameters: { equipment } });
+
+  it('accepts null and its absence', () => {
+    expect(refused({ parameters: null })).not.toContain('parameters');
+    expect(refused({})).not.toContain('parameters');
   });
 
   it('accepts valid Natural Gas parameters', () => {
-    const body = { category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8500 } };
-    expect(parse(Dto, body).errors).toHaveLength(0);
-
-    const withGcv = { category: 'Natural Gas', parameters: { billedGcvKcalPerSm3: 9500 } };
-    expect(parse(Dto, withGcv).errors).toHaveLength(0);
-
-    const withVcf = { category: 'Natural Gas', parameters: { volumeCorrectionFactor: 0.98 } };
-    expect(parse(Dto, withVcf).errors).toHaveLength(0);
-
-    const combined = { category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8500, volumeCorrectionFactor: 0.98 } };
-    expect(parse(Dto, combined).errors).toHaveLength(0);
+    for (const parameters of [{ ncvKcalPerSm3: 8100 }, { billedGcvKcalPerSm3: 9349.174 }, { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 }]) {
+      expect(refused({ category: 'Natural Gas', parameters })).not.toContain('parameters');
+    }
   });
 
-  it('refuses Natural Gas parameters with both ncvKcalPerSm3 and billedGcvKcalPerSm3', () => {
-    const body = {
-      category: 'Natural Gas',
-      parameters: { ncvKcalPerSm3: 8500, billedGcvKcalPerSm3: 9500 },
-    };
-    expect(constraintsOn(Dto, body, 'parameters').length).toBeGreaterThan(0);
-  });
-
-  it('accepts valid Refrigerant parameters', () => {
-    const body = {
-      category: 'Refrigerants',
-      activityType: 'R-410A',
-      parameters: {
-        equipmentType: 'split_air_conditioner',
-        refillKg: 2.0,
-        leakRateChoice: 'default',
-      },
-    };
-    expect(parse(Dto, body).errors).toHaveLength(0);
-  });
-
-  it('accepts alternative leak rate for equipment types that have one', () => {
-    const body = {
-      category: 'Refrigerants',
-      activityType: 'R-410A',
-      parameters: {
-        equipmentType: 'split_air_conditioner', // has alternative
-        refillKg: 2.0,
-        leakRateChoice: 'alternative',
-      },
-    };
-    expect(parse(Dto, body).errors).toHaveLength(0);
-  });
-
-  it('refuses alternative leak rate for equipment types without one', () => {
-    const body = {
-      category: 'Refrigerants',
-      activityType: 'R-410A',
-      parameters: {
-        equipmentType: 'fire_extinguisher', // no alternative
-        refillKg: 2.0,
-        leakRateChoice: 'alternative',
-      },
-    };
-    expect(constraintsOn(Dto, body, 'parameters').length).toBeGreaterThan(0);
-  });
-
-  it('refuses Refrigerant parameters with missing required fields', () => {
-    const incomplete = {
-      category: 'Refrigerants',
-      activityType: 'R-410A',
-      parameters: {
-        equipmentType: 'split_air_conditioner',
-        // missing refillKg and leakRateChoice
-      },
-    };
-    expect(constraintsOn(Dto, incomplete, 'parameters').length).toBeGreaterThan(0);
-  });
-
-  it('refuses Refrigerant parameters with invalid equipment type', () => {
-    const body = {
-      category: 'Refrigerants',
-      activityType: 'R-410A',
-      parameters: {
-        equipmentType: 'invalid_type',
-        refillKg: 2.0,
-        leakRateChoice: 'default',
-      },
-    };
-    expect(constraintsOn(Dto, body, 'parameters').length).toBeGreaterThan(0);
-  });
-
-  it('refuses Refrigerant parameters with negative values', () => {
-    const negative = {
-      category: 'Refrigerants',
-      activityType: 'R-410A',
-      parameters: {
-        equipmentType: 'split_air_conditioner',
-        refillKg: -2.0,
-        leakRateChoice: 'default',
-      },
-    };
-    expect(constraintsOn(Dto, negative, 'parameters').length).toBeGreaterThan(0);
+  it('refuses both calorific values', () => {
+    expect(refused({ category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8100, billedGcvKcalPerSm3: 9000 } })).toContain('parameters');
   });
 
   it.each([
@@ -524,48 +440,49 @@ describe.each(DTOS)('%s — parameters (LP4-02, D3)', (_name, Dto) => {
     ['volumeCorrectionFactor', 0],
     ['ncvKcalPerSm3', -1],
     ['ncvKcalPerSm3', '8250'],
-  ])('refuses Natural Gas %s of %s: not a positive number', (field, value) => {
-    const body = { category: 'Natural Gas', parameters: { [field]: value } };
-    expect(parse(Dto, body).errors.map((e) => e.property)).toContain('parameters');
+    ['ncvKcalPerSm3', 1e301],
+    ['ncvKcalPerSm3', 1e-301],
+  ])('refuses Natural Gas %s of %s', (field, value) => {
+    expect(refused({ category: 'Natural Gas', parameters: { [field]: value } })).toContain('parameters');
   });
 
-  it('refuses a key the category does not define, which would be stored as if it were an input', () => {
-    const gas = { category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8250, gwp: 1 } };
-    expect(parse(Dto, gas).errors.map((e) => e.property)).toContain('parameters');
-    const refrigerant = {
-      category: 'Refrigerants',
-      parameters: { equipmentType: 'chiller', refillKg: 1, leakRateChoice: 'default', ncvKcalPerSm3: 1 },
-    };
-    expect(parse(Dto, refrigerant).errors.map((e) => e.property)).toContain('parameters');
+  it('accepts two equipment types of one gas, a refill-only line and a capacity-only line', () => {
+    expect(refused(refrigerant([line(), line({ equipmentType: 'split_air_conditioner', leakRateChoice: 'alternative' })]))).not.toContain('parameters');
+    expect(refused(refrigerant([line({ capacityKg: 0 })]))).not.toContain('parameters');
+    expect(refused(refrigerant([line({ refillKg: 0 })]))).not.toContain('parameters');
   });
 
-  it('refuses an array or a scalar under any category', () => {
+  it.each([
+    ['no list', () => refrigerant(undefined)],
+    ['an empty list', () => refrigerant([])],
+    ['a line that is no object', () => refrigerant(['chiller'])],
+    ['a repeated equipment type', () => refrigerant([line(), line()])],
+    ['a line with neither capacity nor refill', () => refrigerant([line({ capacityKg: 0, refillKg: 0 })])],
+    ['an unknown equipment type', () => refrigerant([line({ equipmentType: 'kettle' })])],
+    ['a missing field', () => refrigerant([{ equipmentType: 'chiller', capacityKg: 5 }])],
+    ['a negative capacity', () => refrigerant([line({ capacityKg: -5 })])],
+    ['a negative refill', () => refrigerant([line({ refillKg: -1 })])],
+    ['a capacity past the activity value bound', () => refrigerant([line({ capacityKg: 1e12 + 1 })])],
+    ['a refill past the activity value bound', () => refrigerant([line({ refillKg: 1e12 + 1 })])],
+    ['an alternative rate where none is defined', () => refrigerant([line({ equipmentType: 'refrigerator', leakRateChoice: 'alternative' })])],
+    ['a key the line does not define', () => refrigerant([line({ gwp: 1 })])],
+    ['a capacity beside the list', () => ({ category: 'Refrigerants', parameters: { equipment: [line()], installedCapacityKg: 5 } })],
+    ['the old flat shape', () => ({ category: 'Refrigerants', parameters: line() })],
+    ["another category's fields", () => ({ category: 'Refrigerants', parameters: { ncvKcalPerSm3: 1 } })],
+  ])('refuses a refrigerant record with %s', (_what, body) => {
+    expect(refused(body())).toContain('parameters');
+  });
+
+  it('refuses a key Natural Gas does not define, and an array or a scalar', () => {
+    expect(refused({ category: 'Natural Gas', parameters: { ncvKcalPerSm3: 8250, gwp: 1 } })).toContain('parameters');
     for (const parameters of [[], 'x', 1, true]) {
-      expect(parse(Dto, { category: 'Natural Gas', parameters }).errors.map((e) => e.property)).toContain('parameters');
+      expect(refused({ category: 'Natural Gas', parameters })).toContain('parameters');
     }
   });
 
-  it('allows a refill of zero: a capacity-only refrigerant record', () => {
-    const body = {
-      category: 'Refrigerants',
-      parameters: { equipmentType: 'chiller', refillKg: 0, leakRateChoice: 'default' },
-    };
-    expect(parse(Dto, body).errors.map((e) => e.property)).not.toContain('parameters');
-  });
-
-  it('refuses parameters for categories that do not accept them', () => {
-    const electricity = {
-      category: 'Electricity',
-      parameters: { ncvKcalPerSm3: 8500 },
-    };
-    expect(constraintsOn(Dto, electricity, 'parameters').length).toBeGreaterThan(0);
-
-    const fuel = {
-      category: 'Fuel',
-      activityType: 'diesel',
-      parameters: { equipmentType: 'chiller' },
-    };
-    expect(constraintsOn(Dto, fuel, 'parameters').length).toBeGreaterThan(0);
+  it('refuses parameters for categories that take none', () => {
+    expect(refused({ category: 'Electricity', parameters: { ncvKcalPerSm3: 1 } })).toContain('parameters');
+    expect(refused({ category: 'Fuel', activityType: 'diesel', parameters: { equipment: [line()] } })).toContain('parameters');
   });
 });
 
