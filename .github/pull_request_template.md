@@ -19,4 +19,4 @@
 - [ ] Tenant isolation + RBAC respected; RLS added for any new table
 - [ ] `audit_log` written on mutations
 - [ ] No secrets committed (`.env*` stays ignored)
-- [ ] `README.md` updated if this change affects it
+- [ ] Docs updated in their home: `README.md` (entry-level only), `docs/api/`, `docs/architecture/` or `docs/development/`

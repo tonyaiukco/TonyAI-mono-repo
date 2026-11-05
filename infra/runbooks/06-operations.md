@@ -230,8 +230,8 @@ at about 23:38:49. Treat every release as one that may run briefly beside its
 predecessor, including across a migration. The tool waits for this rollover before
 verifying, and fails without retrying if an outgoing revision stays live.
 
-`release.runtime_limits` accepts registered integer settings only. See README's
-runtime table and `infra/config/runtime-limits.json`. Recheck API startup and
+`release.runtime_limits` accepts registered integer settings only. See the runtime table in
+[`docs/api/bounded-access.md`](../../docs/api/bounded-access.md) ("Runtime enforcement") and `infra/config/runtime-limits.json`. Recheck API startup and
 actual ingress with spoofed `X-Forwarded-For`, quota refusal and `Retry-After`
 after deployment. Azure proxy mode is valid only while the Node target port is
 reachable exclusively through trusted ingress. Readiness probes are exempt from

@@ -234,7 +234,7 @@ Bulk upload is not an action-bar action — it has its own panel on the page (§
 
 This page can import many records at once and send many drafts for review at once. The importer is a `Bulk upload` panel on the page itself, not a modal workflow — the only dialogs are the confirmations before importing and before submitting. Bulk submit is offered in two places: by the panel, for the rows it has just imported, and by a checkbox list on `Previous submissions`, for drafts already on the list.
 
-The server-side rules behind this section, and the reasons for them, are in `README.md` (the WP8 bulk upload and bulk submit paragraphs).
+The server-side rules behind this section, and the reasons for them, are in [`docs/api/endpoints.md`](../api/endpoints.md) (the WP8 bulk upload and bulk submit paragraphs).
 
 ### 9.1 Bulk Upload Panel
 

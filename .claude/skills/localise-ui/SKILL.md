@@ -7,8 +7,8 @@ description: Put a TonyAI screen's copy into the TR/EN catalogues, add a stable 
 
 The foundation is LP3-01: `use-intl` catalogues on the web, a `code` on every
 API error, locale-aware numeric input. The canonical exemplar is the Data Entry
-form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
-"Localisation and error codes" holds the decisions; this file holds the steps.
+form (`apps/web/app/data-entry/page.tsx`) and its error toasts.
+[`docs/architecture/localisation.md`](../../../docs/architecture/localisation.md) holds the decisions; this file holds the steps.
 
 ## Rules (must hold)
 
@@ -139,14 +139,14 @@ needs them (`SubsidiarySummaryDTO.blockerCounts`).
 
 ## Recipe C — server-side copy (emails, reports; LP4-01, LP4-03)
 
-Follow D16 (README "Localisation and error codes"): the report's language is a
+Follow D16 (`docs/architecture/localisation.md`): the report's language is a
 generation parameter defaulting to the requester's `profiles.language` and is
 recorded in its audit row; an email uses the recipient's; an invitation the
 inviter's choice, stored on it. Keep the module's copy in
 `apps/api/src/<module>/i18n/{en,tr}.json`, render it with `intl-messageformat`
 (the same ICU format, no React) and give the module a parity spec like
 `messages.spec.ts`. It is ESM-only: the CommonJS API loads it through
-`require(esm)`, which needs Node ≥ 22.12 — raise README's prerequisite with the
+`require(esm)`, which needs Node ≥ 22.12 — raise the Node prerequisite in README.md and `docs/development/local-setup.md` with the
 first server-side catalogue. CSV headers stay English machine keys and
 CSV numbers dot-decimal; XLSX figures stay numeric cells (a number format, never
 a localised string).
