@@ -145,6 +145,9 @@ describe("the catalogues", () => {
       'subsidiaries.locations.personPlaceholder',
       'subsidiaries.locks.periodYear',
       'subsidiaries.locks.granularity',
+      // A bare unit symbol, offered for more than one category (QA BUG-04).
+      'units.label.kWh',
+      'units.label.MWh',
     ]);
     const other = leaves(MESSAGES[locale]);
     for (const [key, message] of en) {

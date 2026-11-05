@@ -1,7 +1,7 @@
 {
   "label": {
-    "kWh": "kWh (elektrik / gaz)",
-    "MWh": "MWh (elektrik)",
+    "kWh": "kWh",
+    "MWh": "MWh",
     "cubic_metres": "Metreküp — m³",
     "standard_cubic_metres": "Standart metreküp — Sm³ (doğal gaz)",
     "therms": "Therm (doğal gaz)",

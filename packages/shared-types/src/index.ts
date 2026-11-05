@@ -190,8 +190,11 @@ export interface ActivityUnitSpec {
 }
 
 export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
-  { value: 'kWh', label: 'kWh (electricity / gas)', symbol: 'kWh', target: 'kWh', dimension: 'energy' },
-  { value: 'MWh', label: 'MWh (electricity)', symbol: 'MWh', target: 'kWh', dimension: 'energy' },
+  // No parenthetical, as for cubic_metres below: Electricity offers kWh and MWh,
+  // and so does Natural Gas outside TR; "kWh (electricity / gas)" under
+  // Electricity read as one unit shared by two fuels (QA BUG-04).
+  { value: 'kWh', label: 'kWh', symbol: 'kWh', target: 'kWh', dimension: 'energy' },
+  { value: 'MWh', label: 'MWh', symbol: 'MWh', target: 'kWh', dimension: 'energy' },
   {
     value: 'cubic_metres',
     // No parenthetical: the same token is offered for Natural Gas and for Water,
