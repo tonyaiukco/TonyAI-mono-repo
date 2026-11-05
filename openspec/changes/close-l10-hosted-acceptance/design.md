@@ -13,6 +13,8 @@ Facts the approach rests on:
 - **Migrations.** r004 (`7d3e2e9`) and `ci4-1` (`bdf7646`) ship the same migrations.
 - **OpenSpec tracking.** `openspec/` is not in `NON_IMAGE_PREFIXES` and is not tracked in git yet.
 
+**Update (2026-11-06).** The facts above describe Session 1. Since then: the freeze was lifted on 2026-11-05; QA runs `9c6f70a` (run 42110731838), whose migrations end at `20261107120000_lp4_02_billed_gcv_range`, so the migrations tree differs from `bdf7646` and the rollback guard makes `ci4-1` unreachable; QA's report lists BUG-01..10 in its own format plus a golden vector checklist. Decisions 8–11 record the owner's re-plan.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -117,6 +119,30 @@ Each row has: ID, steps, expected result, PASS/FAIL, evidence reference, release
 
 **Why it is safe.** The merge commit's own classifier sees `openspec/` as non-image, because the workflow checks out the merge SHA. The deploy is also frozen before the merge.
 
+### 8. L10 closes on Claude Code's own evidence (owner decision 2026-11-06)
+
+**Choice.** L10 closes when three arms hold: the drills PASS (8.4 same-image rollback, 8.5 controlled alert test, 8.6 probe A on the final release); Claude Code's run of the hosted acceptance checklist on the final release is complete, with evidence per row ID (8.8); and every QA finding has a disposition on the live release (8.1).
+
+**Why.** QA reported per finding, not per checklist row, so mapping its report onto the template would leave rows unproven and block the pilot timeline. The triage keeps QA's findings as the independent input.
+
+**Trade-off.** The self-run checklist is not an independent check. The closure record states who ran it.
+
+### 9. The TR factor load runs inside L10, before the triage (owner decision 2026-11-06)
+
+**Choice.** LP4-02 task 6.1 runs as L10 task 8.0: provision the hosted loader login, dry-run `packages/db/factor-releases/tr-2026-11/ipcc.json` and `etkb.json`, `--apply` on the owner's word, and read back. It is ticked in LP4-02's `tasks.md`, which is then archived.
+
+**Why before the triage.** BUG-01/02 (no factor) cannot be judged without the releases loaded. **Why after the deploy.** The IPCC release carries `billed_gcv_*` rows that only the CHECK from migration `20261107120000_lp4_02_billed_gcv_range` admits.
+
+### 10. Claude Code runs the hosted acceptance checklist itself
+
+**Choice.** Claude Code runs `docs/uat/l10_hosted_acceptance.md` on the final release, adapting the UAT round 3 pre-pass harness. Evidence stays in the owner's private store and is referenced by ID, under the rules of Decision 6. Rows that need something Claude Code cannot reach alone, such as a real mailbox for invitation and reset mail, are run with the owner, and their evidence field says so. No row is marked PASS without evidence.
+
+**Why.** It turns the checklist from a template waiting for QA into evidence on the release that L10 accepts.
+
+### 11. Fix scope inside L10 (owner decision 2026-11-06)
+
+**Choice.** Focused PRs fix BUG-06, BUG-07, BUG-08 and the preview's "prototype covers 2026" hint, as exceptions to the pre-pilot rule that a non-defect finding is filed, not fixed, because they block the testers directly. Any other open correctness, security or data-integrity defect is fixed as well. Everything else goes to Open questions in the planning file. BUG-05 (geolocation) is a new feature, recorded for after the pilot.
+
 ## Risks / Trade-offs
 
 - **QA produces no fix, so ci5 never exists.** → Run the same-image drill (spec: same-image redeploy). Record that a cross-version rollback was not rehearsed.
@@ -127,6 +153,8 @@ Each row has: ID, steps, expected result, PASS/FAIL, evidence reference, release
 - **ACS-managed domain quota is 5/min and 10/h.** → QA paces invitations and resets; the checklist states the ceiling.
 - **Reset-link expiry needs real waiting time.** → QA checks expiry and replay at the end of its round, not inline.
 - **Two API outages of about 2.5 minutes each during the drill.** → Run outside the QA test window and announce it beforehand.
+- **Fix PRs deploy while the checklist runs.** → Run 8.8 only after the last L10 fix PR has deployed, and re-run the inputs export before each run and probe. A binding change mid-run restarts the affected rows.
+- **The self-run checklist is not independent.** → QA's findings are triaged on their own (8.1), and the closure record names who ran each arm.
 
 ## Migration Plan
 
@@ -138,13 +166,21 @@ Each row has: ID, steps, expected result, PASS/FAIL, evidence reference, release
    5. Owner runs the monitoring readback. If it fails, apply the foundation fix (this also re-pins the monitoring job).
    6. Hand the checklist to QA.
 2. **QA round.** Checklist execution and bug list.
-3. **Session 2.**
+3. **Session 2 (superseded on 2026-11-06 by step 5 below).**
    1. Fixes merge with the deploy briefly unfrozen, which produces ci5. Then freeze again.
    2. Rollback drill: `ci5 → ci4-1 → ci5`.
    3. Controlled alert test.
    4. A smoke on ci5.
    5. Record results and close L10.
-4. **Backing out this change.** Revert the PR. It is infra, docs and planning only, so no QA redeploy follows. Delete `rollback-qa.yml` with it.
+4. **L10 closure, re-planned (owner decision 2026-11-06).** Claude Code runs it in this order:
+   0. Record the decision and revise this change.
+   1. After the QA deploy of `9c6f70a` is green, load the TR releases (8.0).
+   2. Triage QA's report on the live release, plus its golden vector checklist on hosted (8.1).
+   3. Fix what stays open in focused PRs (8.7).
+   4. Run the hosted acceptance checklist on the final release (8.8).
+   5. Run the drills, each announced to the owner first: same-image rollback (8.2, 8.4), controlled alert test (8.5), probe A (8.6).
+   6. Write the closure record (9.1).
+5. **Backing out this change.** Revert the PR. It is infra, docs and planning only, so no QA redeploy follows. Delete `rollback-qa.yml` with it.
 
 ## Open Questions
 
