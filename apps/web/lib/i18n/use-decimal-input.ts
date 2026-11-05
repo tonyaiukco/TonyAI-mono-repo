@@ -3,6 +3,7 @@ import { useLocale } from "use-intl";
 import type { Locale } from "@/lib/types";
 import {
   alternativeReading,
+  endsWithPendingSeparator,
   parseLocaleDecimal,
   retypeForLocale,
   typedText,
@@ -24,6 +25,14 @@ export interface DecimalInput {
   parsed: DecimalParse;
   /** What the other convention would read, when that differs (shown on screen). */
   otherReading: number | null;
+  /** The user left the field: a held-back refusal shows now. Wire to `onBlur`. */
+  blur: () => void;
+  /**
+   * `text` is a number still being typed (`178,`): refused by `parsed`, but the
+   * field shows no refusal until `blur` (QA BUG-06). Gate `aria-invalid` and
+   * `DecimalNote` on it; saving still reads `parsed`.
+   */
+  typing: boolean;
 }
 
 /**
@@ -46,15 +55,27 @@ export function useDecimalInput(initial?: TypedDecimal): DecimalInput {
     current = retypeForLocale(typed, locale);
     setTyped(current);
   }
-  const setText = useCallback((text: string) => setTyped(typedText(text, locale)), [locale]);
-  const setValue = useCallback((value: number | null) => setTyped(typedValue(value, locale)), [locale]);
+  // True between a keystroke and leaving the field: only then may a pending
+  // separator (`178,`) wait to be refused (QA BUG-06).
+  const [editing, setEditing] = useState(false);
+  const setText = useCallback((text: string) => {
+    setEditing(true);
+    setTyped(typedText(text, locale));
+  }, [locale]);
+  const setValue = useCallback((value: number | null) => {
+    setEditing(false);
+    setTyped(typedValue(value, locale));
+  }, [locale]);
+  const blur = useCallback(() => setEditing(false), []);
   const parsed = parseLocaleDecimal(current.text, current.locale);
   return {
     text: current.text,
     locale: current.locale,
     setText,
     setValue,
+    blur,
     parsed,
     otherReading: parsed.ok ? alternativeReading(current.text, current.locale) : null,
+    typing: editing && !parsed.ok && endsWithPendingSeparator(current.text, current.locale),
   };
 }

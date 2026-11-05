@@ -44,7 +44,6 @@
   "duplicateAdvice": "Devam etmek için kaydı “Previous submissions” listesinden açın.",
   "duplicateAdviceMoving": "Kayıt taşınmadı; olduğu yerde duruyor.",
   "saveFailedServer": "Kaydedilemedi — sunucu bu kaydı işleyemedi. Yeniden deneyin; sürerse bildirin.",
-  "previewYearHint": "Bu prototipin faktör kütüphanesi şu an {year} yılını kapsıyor.",
   "previewTitle": "Canlı emisyon önizlemesi",
   "previewPrompt": "Canlı tCO₂e tahmini görmek için bir bağlı şirket ve kategori seçip faaliyet değerini girin.",
   "bulkColumns": {

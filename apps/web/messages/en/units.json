@@ -1,7 +1,7 @@
 {
   "label": {
-    "kWh": "kWh (electricity / gas)",
-    "MWh": "MWh (electricity)",
+    "kWh": "kWh",
+    "MWh": "MWh",
     "cubic_metres": "Cubic metres — m³",
     "standard_cubic_metres": "Standard cubic metres — Sm³ (natural gas)",
     "therms": "Therms (natural gas)",

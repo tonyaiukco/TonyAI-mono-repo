@@ -4,6 +4,7 @@ import {
   checkActivityParse,
   checkActivityValue,
   checkDecimal,
+  endsWithPendingSeparator,
   formatReadAmount,
   parseYearInput,
   formatDecimalInput,
@@ -147,6 +148,35 @@ describe("alternativeReading — what the other convention would have read", () 
     ["1,5", "en"],
   ] as const)("%j in %s has no other reading", (input, locale) => {
     expect(alternativeReading(input, locale)).toBeNull();
+  });
+});
+
+describe("endsWithPendingSeparator — a number still being typed (QA BUG-06)", () => {
+  it.each([
+    ["178,", "tr"],
+    ["178.", "tr"],
+    ["178.", "en"],
+    ["178,", "en"],
+    ["1.234,", "tr"],
+    [" 178, ", "tr"],
+    ["-5,", "tr"],
+  ] as const)("%j in %s is pending", (input, locale) => {
+    expect(endsWithPendingSeparator(input, locale)).toBe(true);
+    // Pending is not accepted: the parser still refuses it.
+    expect(parseLocaleDecimal(input, locale).ok).toBe(false);
+  });
+
+  it.each([
+    ["178,5", "tr"],
+    ["178", "tr"],
+    [",", "tr"],
+    ["", "en"],
+    ["178,,", "tr"],
+    ["abc,", "en"],
+    ["1,2,", "tr"],
+    ["178 ,", "tr"],
+  ] as const)("%j in %s is not pending", (input, locale) => {
+    expect(endsWithPendingSeparator(input, locale)).toBe(false);
   });
 });
 

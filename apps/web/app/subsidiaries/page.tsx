@@ -370,7 +370,9 @@ export default function SubsidiariesPage() {
       </main>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent>
+        {/* The form grows with each draft location: it scrolls inside the
+            viewport so the last fields and the footer stay reachable (QA BUG-07). */}
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t("create.title")}</DialogTitle>
           </DialogHeader>

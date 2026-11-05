@@ -1,4 +1,5 @@
 import { test, expect, request as playwrightRequest, type Page, type Request } from '@playwright/test';
+import { DEFAULT_REPORTING_YEAR, selectableReportingYears } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
   API_BASE,
@@ -42,22 +43,28 @@ test('the selection lives in the URL: reload, navigation and the export keep it'
 
   await page.goto('/emissions');
   await expect(page).toHaveURL(new RegExp(`/emissions\\?${CANONICAL_DEFAULT}$`));
-  await pick(page, 'context-year', '2027');
+  // QA BUG-08: the picker offers the current year and the ten before it, not 2100 → 2000.
+  await page.getByTestId('context-year').click();
+  await expect(page.getByRole('option')).toHaveText(selectableReportingYears(DEFAULT_REPORTING_YEAR).map(String));
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox')).toHaveCount(0);
+  // A year other than the default, inside the pickers' window.
+  await pick(page, 'context-year', '2024');
   await pick(page, 'context-subsidiary', /^TonyAI Energy/);
-  await expect(page).toHaveURL(new RegExp(`year=2027&subsidiaryId=${SUB.energy}&scope=all&category=all`));
+  await expect(page).toHaveURL(new RegExp(`year=2024&subsidiaryId=${SUB.energy}&scope=all&category=all`));
   // Each choice is a history entry: Back returns to the previous selection, and its data.
   const backData = page.waitForRequest((r) => isSummary(r) && !('subsidiaryId' in queryOf(r)));
   await page.goBack();
-  expect(queryOf(await backData)).toEqual({ year: '2027' });
-  await expect(page).toHaveURL(/year=2027&subsidiaryId=all&scope=all&category=all/);
+  expect(queryOf(await backData)).toEqual({ year: '2024' });
+  await expect(page).toHaveURL(/year=2024&subsidiaryId=all&scope=all&category=all/);
   await expect(page.getByTestId('context-subsidiary')).toHaveText('All accessible subsidiaries');
   await page.goForward();
-  await expect(page).toHaveURL(new RegExp(`year=2027&subsidiaryId=${SUB.energy}`));
+  await expect(page).toHaveURL(new RegExp(`year=2024&subsidiaryId=${SUB.energy}`));
   await expect(page.getByTestId('context-subsidiary')).toContainText('TonyAI Energy');
 
   // A reload keeps it — the URL, not memory, carries it.
   await page.reload();
-  await expect(page.getByTestId('context-year')).toHaveText('2027');
+  await expect(page.getByTestId('context-year')).toHaveText('2024');
   await expect(page.getByTestId('context-subsidiary')).toContainText('TonyAI Energy');
   // Trends is the explicit all-year comparison, labelled as such.
   await page.getByRole('tab', { name: /trends/i }).click();
@@ -65,19 +72,19 @@ test('the selection lives in the URL: reload, navigation and the export keep it'
 
   // A sidebar link has no query: the remembered selection fills it in.
   await page.getByRole('link', { name: 'Reports' }).click();
-  await expect(page).toHaveURL(new RegExp(`/reports\\?year=2027&subsidiaryId=${SUB.energy}&scope=all&category=all`));
-  await expect(page.getByText(/Reporting year 2027/)).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/reports\\?year=2024&subsidiaryId=${SUB.energy}&scope=all&category=all`));
+  await expect(page.getByText(/Reporting year 2024/)).toBeVisible();
 
-  // The export is the selection the preview shows: 2027, Energy — read off the
+  // The export is the selection the preview shows: 2024, Energy — read off the
   // request itself (every seed id starts 22222222, so the file name cannot tell).
   const exported = page.waitForRequest((r) => r.url().includes('/reports/context/csv'));
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export CSV' }).click();
   expect(queryOf(await exported)).toEqual({
-    year: '2027', subsidiaryId: SUB.energy, template: 'executive_summary',
+    year: '2024', subsidiaryId: SUB.energy, template: 'executive_summary',
     includeMethodologyNotes: 'true', includeEvidenceSummary: 'false',
   });
-  expect((await download).suggestedFilename()).toBe(`tonyai-live-executive_summary-2027-${SUB.energy.slice(0, 8)}.csv`);
+  expect((await download).suggestedFilename()).toBe(`tonyai-live-executive_summary-2024-${SUB.energy.slice(0, 8)}.csv`);
 
   // A scope narrows the report to an extract, and says so.
   await pick(page, 'context-scope', 'Scope 2');

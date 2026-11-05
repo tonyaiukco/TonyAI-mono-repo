@@ -13,7 +13,7 @@ import {
 import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
-  REPORTING_YEARS,
+  selectableReportingYears,
   type ReportingContext,
   type SubsidiaryDTO,
 } from "@/lib/types";
@@ -72,7 +72,7 @@ export function ReportingContextBar({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {REPORTING_YEARS.map((y) => (
+              {selectableReportingYears(context.year).map((y) => (
                 <SelectItem key={y} value={String(y)}>{y}</SelectItem>
               ))}
             </SelectContent>

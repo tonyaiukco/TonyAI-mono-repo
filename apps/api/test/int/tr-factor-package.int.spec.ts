@@ -78,6 +78,8 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
     ['Electricity 2026', tr({ value: 4180.56, reportingYear: 2026 }), 1814.36],
     ['Natural gas with billed GCV', tr({ category: 'Natural Gas', value: 73.953103, unit: 'standard_cubic_metres', parameters: { billedGcvKcalPerSm3: 9349.174 } }), 140.37],
     ['Natural gas, default NCV', tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres' }), 193.83],
+    // QA's UAT round 1 golden vector: the NCV typed by the user, not derived (0.1404 t).
+    ['Natural gas, user-edited NCV', tr({ category: 'Natural Gas', value: 73.953, unit: 'standard_cubic_metres', parameters: { ncvKcalPerSm3: 8080 } }), 140.39],
     ['On-road petrol', tr({ category: 'Mobile Combustion', activityType: 'on_road_petrol', value: 15973.75, unit: 'litres' }), 36864.62],
     ['On-road diesel', tr({ category: 'Mobile Combustion', activityType: 'on_road_diesel', value: 3784.51, unit: 'litres' }), 10090.24],
     ['Leakage', tr({ category: 'Fugitive Gas', value: 84783.36, unit: 'standard_cubic_metres' }), 1632467.22],

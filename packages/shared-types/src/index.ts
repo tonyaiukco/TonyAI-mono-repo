@@ -190,8 +190,11 @@ export interface ActivityUnitSpec {
 }
 
 export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
-  { value: 'kWh', label: 'kWh (electricity / gas)', symbol: 'kWh', target: 'kWh', dimension: 'energy' },
-  { value: 'MWh', label: 'MWh (electricity)', symbol: 'MWh', target: 'kWh', dimension: 'energy' },
+  // No parenthetical, as for cubic_metres below: Electricity offers kWh and MWh,
+  // and so does Natural Gas outside TR; "kWh (electricity / gas)" under
+  // Electricity read as one unit shared by two fuels (QA BUG-04).
+  { value: 'kWh', label: 'kWh', symbol: 'kWh', target: 'kWh', dimension: 'energy' },
+  { value: 'MWh', label: 'MWh', symbol: 'MWh', target: 'kWh', dimension: 'energy' },
   {
     value: 'cubic_metres',
     // No parenthetical: the same token is offered for Natural Gas and for Water,
@@ -561,6 +564,27 @@ export const DEFAULT_REPORTING_YEAR: ReportingYear = 2026;
 export const isReportingYear = (value: unknown): value is ReportingYear =>
   typeof value === 'number' && Number.isInteger(value) &&
   value >= REPORTING_YEAR_MIN && value <= REPORTING_YEAR_MAX;
+
+/** How many years before the current one a year picker offers (owner, 2026-11-06). */
+export const SELECTABLE_REPORTING_YEARS_BACK = 10;
+
+/**
+ * The years a screen's year picker offers, newest first: the current calendar
+ * year in the browser's local time (not UTC: the server has no current-year
+ * rule, and the user's own New Year is what they expect) and the ten before it (owner decision 2026-11-06, QA BUG-08 — the list
+ * ran to 2100). The window moves with the calendar, so no year needs adding by
+ * hand. A `selected` year outside it (an opened record, a shared link) is kept
+ * in its place so the picker never shows blank. Narrower than the API on
+ * purpose: `isReportingYear` still accepts 2000–2100, and a year without a
+ * factor is still refused by the calculation (D07), not by this list.
+ */
+export function selectableReportingYears(selected?: number, today: Date = new Date()): readonly ReportingYear[] {
+  const newest = Math.min(today.getFullYear(), REPORTING_YEAR_MAX);
+  const oldest = Math.max(newest - SELECTABLE_REPORTING_YEARS_BACK, REPORTING_YEAR_MIN);
+  const years = Array.from({ length: newest - oldest + 1 }, (_, index) => newest - index);
+  if (isReportingYear(selected) && !years.includes(selected)) years.push(selected);
+  return years.sort((a, b) => b - a);
+}
 
 /**
  * One annual inventory selection (LP3-02, owner decisions 2026-10-10).

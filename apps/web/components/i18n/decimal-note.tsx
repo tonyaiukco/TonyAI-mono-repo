@@ -8,23 +8,28 @@ import type { Locale } from "@/lib/types";
  * The line under a quantity field (D15): why a value is refused, or how it was
  * read — with the other convention's reading named when the text has two, so a
  * 1000× misreading is visible before saving. Pair it with `useDecimalInput`
- * and give the input `aria-describedby={id}`.
+ * and give the input `aria-describedby={id}`. While `typing` (`178,` not yet
+ * finished, QA BUG-06) it says nothing; the refusal shows once the field is left.
  */
 export function DecimalNote({
   id,
   check,
   otherReading,
   locale,
+  typing = false,
 }: {
   id: string;
   check: DecimalCheck;
   otherReading: number | null;
   locale: Locale;
+  typing?: boolean;
 }) {
   const t = useTranslations("numbers");
   const example = `45000${NUMBER_SEPARATORS[locale].decimal}5`;
   let note: { text: string; refused: boolean } | null = null;
-  if (check.ok) {
+  if (typing) {
+    note = null;
+  } else if (check.ok) {
     if (otherReading !== null) {
       note = {
         text: t("readAsNot", {

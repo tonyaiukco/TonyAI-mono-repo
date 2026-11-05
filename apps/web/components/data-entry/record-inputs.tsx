@@ -86,15 +86,16 @@ function ParameterNumberField({
         autoComplete="off"
         value={input.text}
         disabled={disabled}
-        aria-invalid={input.text.trim() !== "" && !check.ok}
+        aria-invalid={input.text.trim() !== "" && !check.ok && !input.typing}
         aria-describedby={`${id}-note`}
+        onBlur={input.blur}
         onChange={(e) => {
           input.setText(e.target.value);
           const next = checkDecimal(parseLocaleDecimal(e.target.value, locale), rule, max);
           onChange(next.ok ? next.value : null, !next.ok && next.reason !== "empty");
         }}
       />
-      <DecimalNote id={`${id}-note`} check={check} otherReading={input.otherReading} locale={input.locale} />
+      <DecimalNote id={`${id}-note`} check={check} otherReading={input.otherReading} locale={input.locale} typing={input.typing} />
       {help && <p className="text-xs text-muted-foreground">{help}</p>}
     </div>
   );

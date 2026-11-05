@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { MESSAGES } from "@/messages";
 import type { Locale } from "@/lib/types";
 import type { TypedDecimal } from "./number";
+import { DecimalNote } from "@/components/i18n/decimal-note";
+import { checkActivityParse } from "./number";
 import { useDecimalInput, type DecimalInput } from "./use-decimal-input";
 
 /**
@@ -99,3 +101,61 @@ describe("useDecimalInput — a language switch keeps the number", () => {
     expect(html).toContain("tr||empty");
   });
 });
+
+/**
+ * QA BUG-06: typing `178,` on the way to `178,5` must not turn the field red.
+ * The refusal waits while the user is in the field (`typing`) and shows once
+ * they leave it (`blur`); `parsed` refuses the text throughout, so nothing can
+ * save it. A field opened with such text is not being typed in.
+ */
+describe("useDecimalInput — a pending separator waits for blur", () => {
+  function render(locale: Locale, steps: (input: DecimalInput) => void) {
+    function Field() {
+      const input = useDecimalInput();
+      steps(input);
+      const check = checkActivityParse(input.parsed);
+      return createElement("div", null,
+        createElement("output", null, `typing=${input.typing}|ok=${input.parsed.ok}`),
+        createElement(DecimalNote, { id: "n", check, otherReading: input.otherReading, locale: input.locale, typing: input.typing }));
+    }
+    return renderToString(createElement(IntlProvider, { locale, messages: MESSAGES[locale], children: createElement(Field) }));
+  }
+  const refusal = (locale: Locale) => String(MESSAGES[locale].numbers.invalid).split("{")[0];
+
+  it("178, while typing: no refusal on screen, and still not a number", () => {
+    const html = render("tr", (input) => { if (input.text === "") input.setText("178,"); });
+    expect(html).toContain("typing=true|ok=false");
+    expect(html).not.toContain(refusal("tr"));
+  });
+
+  it("178, after leaving the field: the refusal shows", () => {
+    let left = false;
+    const html = render("tr", (input) => {
+      if (input.text === "") input.setText("178,");
+      else if (!left) { left = true; input.blur(); }
+    });
+    expect(html).toContain("typing=false|ok=false");
+    expect(html).toContain(refusal("tr"));
+  });
+
+  it("text that is wrong for another reason is refused while typing", () => {
+    const html = render("tr", (input) => { if (input.text === "") input.setText("17a"); });
+    expect(html).toContain("typing=false|ok=false");
+    expect(html).toContain(refusal("tr"));
+  });
+
+  it("a field opened with such text is not being typed in: refused at once", () => {
+    function Field() {
+      const input = useDecimalInput({ text: "178,", locale: "tr" });
+      return createElement("output", null, `typing=${input.typing}`);
+    }
+    const html = renderToString(createElement(IntlProvider, { locale: "tr", messages: MESSAGES.tr, children: createElement(Field) }));
+    expect(html).toContain("typing=false");
+  });
+
+  it("the finished number is accepted in both locales", () => {
+    expect(render("tr", (input) => { if (input.text === "") input.setText("178,5"); })).toContain("typing=false|ok=true");
+    expect(render("en", (input) => { if (input.text === "") input.setText("178.5"); })).toContain("typing=false|ok=true");
+  });
+});
+

@@ -46,13 +46,14 @@ export function ContextNumberField({
         placeholder={placeholder}
         value={input.text}
         aria-describedby={noteId}
+        onBlur={input.blur}
         onChange={(e) => {
           input.setText(e.target.value);
           const next = checkDecimal(parseLocaleDecimal(e.target.value, locale), "non_negative");
           onChange(next.ok ? next.value : "", !next.ok && next.reason !== "empty");
         }}
       />
-      <DecimalNote id={noteId} check={check} otherReading={input.otherReading} locale={input.locale} />
+      <DecimalNote id={noteId} check={check} otherReading={input.otherReading} locale={input.locale} typing={input.typing} />
     </div>
   );
 }

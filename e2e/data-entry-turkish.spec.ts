@@ -4,6 +4,7 @@ import trCategories from '../apps/web/messages/tr/categories.json';
 import trCompleteness from '../apps/web/messages/tr/completeness.json';
 import trEntry from '../apps/web/messages/tr/dataEntry.json';
 import trNav from '../apps/web/messages/tr/nav.json';
+import trNumbers from '../apps/web/messages/tr/numbers.json';
 import trPeriods from '../apps/web/messages/tr/periods.json';
 import enEntry from '../apps/web/messages/en/dataEntry.json';
 import {
@@ -60,6 +61,17 @@ test('Data Entry speaks Turkish, and 1.234,5 typed in Turkish is saved as 1234.5
   await expect(page.getByText(trCompleteness.panel.title, { exact: true })).toBeVisible();
   await pickByFieldLabel(page, trEntry.category, trCategories.Water);
   await pickByFieldLabel(page, trEntry.periodValue, trPeriods.values.Q2);
+
+  // QA BUG-06: "178," on the way to "178,5" is not refused while typing — the
+  // field stays unmarked and its note empty — but is once the field is left.
+  const typed = page.getByPlaceholder(trEntry.activityValuePlaceholder);
+  const note = page.locator('#activity-value-note');
+  await typed.fill('178,');
+  await expect(typed).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(note).toHaveText('');
+  await typed.blur();
+  await expect(typed).toHaveAttribute('aria-invalid', 'true');
+  await expect(note).toContainText(trNumbers.invalid.split('{')[0].trim());
 
   await page.getByPlaceholder(trEntry.activityValuePlaceholder).fill('1.234,5');
   // The switcher, as a user would: the field is re-written from the number it
