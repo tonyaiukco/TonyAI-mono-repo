@@ -50,9 +50,9 @@
   - the environments table against the hosting decision in `CLAUDE.md`
 
   Verify: each row has a source, and nothing is listed that the repo lacks.
-- [ ] 4.3 Run the quick start on a clean checkout: `pnpm setup`, `pnpm dev`, then `curl -i http://localhost:3001/api/v1/health`, then sign in as `admin@tonyai.local`. Verify: the health check returns 200 and the dashboard loads.
-- [ ] 4.4 Check links and rendering. Verify: the link check over `README.md` reports 0 broken links and anchors, and the Mermaid diagram and the alerts render on GitHub's PR preview.
-- [ ] 4.5 Open PR C. In the description, include a before/after size note and the replacement-bundle digest note. Verify: CI is green; the owner merges.
+- [x] 4.3 Run the quick start on a clean checkout: `pnpm setup`, `pnpm dev`, then `curl -i http://localhost:3001/api/v1/health`, then sign in as `admin@tonyai.local`. Verify: the health check returns 200 and the dashboard loads.
+- [x] 4.4 Check links and rendering. Verify: the link check over `README.md` reports 0 broken links and anchors, and the Mermaid diagram and the alerts render on GitHub's PR preview.
+- [x] 4.5 Open PR C. In the description, include a before/after size note and the replacement-bundle digest note. Verify: CI is green; the owner merges.
 
 ## Workflow follow-up
 
