@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   BadRequestException,
   ConflictException,
@@ -16,7 +16,6 @@ import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
 } from '@tonyai/shared-types';
 import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
 import { ActivityRecordsService, evidenceReadyWhere } from './activity-records.service';
-import { assertParametersArePriced } from './record-parameters-gate';
 import {
   CALCULATION_STALE_MESSAGE,
   CalculationStaleError,
@@ -57,10 +56,6 @@ import { EvidenceService } from '../evidence/evidence.service';
  * specs assert WHAT was audited; the row shape it stamps (actor role +
  * organisation) is covered by audit.service.spec.ts.
  */
-// Off for the whole file: the suite below proves the write path PR3 opens. The
-// gate's own describe puts the real one back.
-vi.mock('./record-parameters-gate', () => ({ assertParametersArePriced: vi.fn() }));
-
 const audit = { record: vi.fn() };
 const auditMock = () => audit as unknown as AuditService;
 
@@ -557,6 +552,8 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
         reportingYear: 2024,
         value: 45000,
         unit: 'kWh',
+        reportingPeriod: 'annual',
+        parameters: null,
       },
       // A create always chooses its unit, so the category/unit map applies.
       { enforceCategoryUnit: true },
@@ -774,53 +771,43 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
   });
 });
 
-describe('ActivityRecordsService — parameters are refused until the engine reads them (LP4-02 PR2)', () => {
+describe('ActivityRecordsService — the engine reads the effective parameters and period (LP4-02, D11)', () => {
   const GAS = { ncvKcalPerSm3: 8100 };
-  const CREATE = {
-    subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
-    category: 'Natural Gas', activityValue: 10, activityUnit: 'kWh',
-  };
-  const stored = () => ({
-    ...makeRecord({ id: 'rec-g', subsidiaryId: 'sub-1', createdBy: 'user-entry', category: 'Natural Gas', activityUnit: 'kWh' }),
+  const stored = (over: Partial<ActivityRecord> = {}) => ({
+    ...makeRecord({ id: 'rec-e', subsidiaryId: 'sub-1', createdBy: 'user-entry', category: 'Natural Gas', activityUnit: 'kWh', ...over }),
     _count: { evidenceLinks: 0 },
     location: null,
   });
+  const lastInput = (calc: ReturnType<typeof build>['calc']) => calc.compute.mock.calls.at(-1)![0];
+  const editing = (row: ReturnType<typeof stored>) => {
+    const built = build(1);
+    built.prisma.activityRecord.findUnique.mockResolvedValue(row);
+    built.prisma.activityRecord.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ ...row, ...data }));
+    return built;
+  };
 
-  beforeEach(async () => {
-    const real = await vi.importActual<typeof import('./record-parameters-gate')>('./record-parameters-gate');
-    vi.mocked(assertParametersArePriced).mockImplementation(real.assertParametersArePriced);
-  });
-  afterEach(() => vi.mocked(assertParametersArePriced).mockReset());
-
-  it('create refuses valid parameters, before anything is written', async () => {
-    const { prisma, service } = build(1);
-    await expect(service.create(dataEntry(), { ...CREATE, parameters: GAS } as never))
-      .rejects.toMatchObject({ code: 'record_parameters_invalid' });
-    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
-  });
-
-  it('update refuses valid parameters, before anything is written', async () => {
-    const { prisma, service } = build(1);
-    prisma.activityRecord.findUnique.mockResolvedValue(stored());
-    await expect(service.update(dataEntry(), 'rec-g', { parameters: GAS }))
-      .rejects.toMatchObject({ code: 'record_parameters_invalid' });
-    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  it('an edit naming them prices with them', async () => {
+    const { calc, service } = editing(stored());
+    await service.update(dataEntry(), 'rec-e', { parameters: GAS });
+    expect(lastInput(calc)).toMatchObject({ parameters: GAS });
   });
 
-  it('lets a create through with none, or with null', async () => {
-    for (const body of [CREATE, { ...CREATE, parameters: null }]) {
-      const { prisma, service } = build(1);
-      prisma.activityRecord.create.mockResolvedValue(stored());
-      await expect(service.create(dataEntry(), body as never)).resolves.toBeDefined();
-    }
+  it('an edit not naming them prices with the stored ones', async () => {
+    const { calc, service } = editing(stored({ parameters: GAS as never }));
+    await service.update(dataEntry(), 'rec-e', { activityValue: 12 });
+    expect(lastInput(calc)).toMatchObject({ parameters: GAS });
   });
 
-  it('lets an update through with none, or with null', async () => {
-    const { prisma, service } = build(1);
-    prisma.activityRecord.findUnique.mockResolvedValue(stored());
-    prisma.activityRecord.update.mockResolvedValue(stored());
-    await expect(service.update(dataEntry(), 'rec-g', { activityValue: 12 })).resolves.toBeDefined();
-    await expect(service.update(dataEntry(), 'rec-g', { parameters: null })).resolves.toBeDefined();
+  it('an edit clearing them prices with none', async () => {
+    const { calc, service } = editing(stored({ parameters: GAS as never }));
+    await service.update(dataEntry(), 'rec-e', { parameters: null });
+    expect(lastInput(calc)).toMatchObject({ parameters: null });
+  });
+
+  it('an edit moving the period prices under the new one', async () => {
+    const { calc, service } = editing(stored({ reportingPeriod: 'monthly', periodValue: 'January' }));
+    await service.update(dataEntry(), 'rec-e', { reportingPeriod: 'annual', periodValue: 'Annual' });
+    expect(lastInput(calc)).toMatchObject({ reportingPeriod: 'annual' });
   });
 });
 
@@ -4069,6 +4056,8 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
         reportingYear: 2024,
         value: 45000,
         unit: 'kWh',
+        reportingPeriod: expect.any(String),
+        parameters: null,
       },
       { enforceCategoryUnit: false },
     );
@@ -4301,7 +4290,9 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     ['category', 'Natural Gas'],
     ['activityType', 'natural_gas'],
     ['reportingYear', 2025],
+    ['reportingPeriod', 'monthly'],
     ['activityUnit', 'MWh'],
+    ['parameters', { ncvKcalPerSm3: 8100 }],
   ] as const)('a change of %s between the read and the lock is a change of inputs', async (field, value) => {
     const seen = submitted();
     const { prisma, service } = arrange(seen);

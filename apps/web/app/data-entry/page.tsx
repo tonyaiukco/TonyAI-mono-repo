@@ -647,6 +647,7 @@ function DataEntryPageInner() {
           reportingYear,
           value: numericValue,
           unit: activityUnit,
+          reportingPeriod,
         });
         if (!active) return;
         setPreview(result);
@@ -670,6 +671,7 @@ function DataEntryPageInner() {
     category,
     activityType,
     reportingYear,
+    reportingPeriod,
     numericValue,
     activityUnit,
     subsidiaryId,

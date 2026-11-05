@@ -30,6 +30,8 @@ Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It bec
 
 > **Standard and normal cubic metres (`Sm3` / `Nm3`) are different physical quantities from metered cubic metres (and from each other: 15 °C vs 0 °C).** `Sm3` is its own base unit (LP4-02): it stays in Sm³, and only a sourced row of a release can price it or convert it, so with no such row the record is refused (`no_factor`, or `no_conversion` where a factor exists in another unit), never given a number. `Nm3` has no sourced value: it is recognised and refused by name. Re-entering a standard volume as metered m³ would overstate it.
 
+> **Natural gas in Türkiye (LP4-02, D5, D11).** The rules follow the record's geography, whatever rows a release holds. Sm³ is converted on the net basis: `kWh = Sm³ × NCV × 4.184 / 3,600`, through the release's conversion row, which must equal `reference_ncv × 4.184 / 3,600`. An edited NCV replaces the multiplier. A billed GCV gives an effective NCV of `reference_ncv × reference_gcv / GCV`, as the source document writes it (owner decision 2026-11-05); the two inputs are mutually exclusive. A metered m³ takes its volume correction factor first and is refused with `no_conversion` without one. Energy units are refused with `calorific_basis_mismatch`, because a bill states them on the gross basis and the factor is net. So the placeholder paths above do not price TR natural gas.
+
 ### 2.2 Liquid fuel (base unit `litres`)
 - `litres`: identity
 - `uk_gallons` → `litres`: × `4.54609` (exact)
@@ -41,6 +43,7 @@ Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It bec
 ### 2.4 Category specific rules
 - Travel stays in `passenger_kilometres` or `kilometres` (identity).
 - Mass is quoted per `kg`: `tonnes` → `kg` × `1000` (exact). Refrigerant leakage is entered in kg. A publisher's per-tonne value (DESNZ quotes waste and materials per tonne) must be loaded per kg by exact decimal division (LP4-02; no loader exists yet), keeping the published value and unit in the row's methodology — never by floating-point arithmetic (0.20705/1000 is 0.00020705000000000002 in binary floating point).
+- Refrigerants in Türkiye use the capacity method (LP4-02, D7, D11): `kgCO2e = Σ (capacityKg × leak rate + refillKg) × GWP`, one line per equipment type, on an annual record whose `kg` quantity is the sum of the capacities. The rates are yearly, so another period is refused (`reporting_period_not_annual`), and so is a quantity that is not the sum (`equipment_sum_mismatch`) or a record with no lines (`parameters_required`). `normalizedValue` is the priced mass. Elsewhere a refrigerant's `kg` is priced per kg as entered, and parameters are refused (`parameters_not_applicable`).
 - Water stays in `cubic_metres` and is recorded without a factor (no factor is loaded for it): the reading is kept exactly as entered and no figure is produced.
 
 ---
@@ -114,6 +117,8 @@ Each calculation result must store:
 - `normalizedUnit`
 - `conversionApplied`, and `conversionFactor` + `conversionBasis` when something was converted
 
+Every new calculation writes `CalculationResultV3`, schema 3 (LP4-02, D4, D11): the fields above and below, plus `parameters` (each per-record input with its origin, `default`, `user` or `derived`), `parameterRows` (the release parameters read) and `refrigerantTerms` (the capacity method's lines, or null). Schema 2 stays frozen and readable, and a draft or submitted record holding a calculated schema 2 snapshot reads as stale until saved again (§5.2).
+
 Since LP3-03 the snapshot (`CalculationResultV2`, schema 2) also stores where every number came from: the factor's release (publisher, edition, ordinal, status, source URL, licence, GWP set), the activity type, gas and gas coverage, calorific basis, Scope 2 method, data year and year policy, and the sourced conversion with its own release. A figure is authoritative only when every link is (`isAuthoritativeSnapshot`); reports and screens ask that, never the factor's status alone.
 
 This information must be viewable in the Emissions History detail panel.
@@ -122,9 +127,13 @@ This information must be viewable in the Emissions History detail panel.
 
 A factor release is loaded, whole, by the factor-release loader (`pnpm --filter @tonyai/api factor-release`), which connects as its own database role, `tonyai_factor_loader` — the library's one writer besides the database owner (whose writes are the local placeholder seed and test fixtures); the API and the service role only read it. The loader checks the release file against the import contract (`validateFactorReleaseImport`: a registered publisher, an authoritative release's source, licence and review) and loads the release, its factors and conversions and its **seal** in one transaction. The engine prices from sealed releases only; a sealed release takes no row, and a seal is never undone — so what a snapshot cites is exactly what was loaded, and reviewed before the load. A correction is an **erratum**: a new edition with the next ordinal, which outranks what it corrects, loaded with `--supersedes`, which withdraws the old edition in the same transaction. A withdrawn release never prices a new record; a committed snapshot keeps citing it (history is immutable).
 
+A release's calculation parameters are read by that release's id (`readReleaseParameters`): calorific values from the conversion's release, leak rates from the factor's. A sealed release's rows cannot change, so this needs no shared snapshot with the lookup. A release a TR rule reads that lacks the parameter is answered with `parameter_missing` (409), a library defect.
+
 The engine selects a release's factor and conversion through **one lookup** (`lookupFactorPath`, LP3-04 PR B), reading both in one consistent snapshot of the library — an erratum committed between two reads can never price the old factor with the new conversion. A report capture will read the library through the same lookup, inside its own consistent snapshot, so what it says about factor coverage describes one library state; the figures a report holds are still each record's immutable snapshot, never recalculated. *(In force since LP3-04 PR B.)*
 
 ### 5.2 A draft's figure is recomputed before it is committed (K11)
+
+The record's `parameters` and period are among the inputs recomputed from. They are compared by value, with `{}` and an all-null object counting as none.
 
 A draft stores the figure the engine computed when it was saved. Only the API (and the database owner) may change a draft's figure, the inputs it was computed from or its author, or delete a draft; the database refuses any other writer (since LP4-02 PR B1). Since LP4-02 (29) those two alone insert a record at all (a restore aside), and since (27) they alone update the geography of the subsidiary or site a draft is priced for. A session holding the API's own database credential is the API to the database: it could insert a draft whose inputs are forged and carry the engine's honest figure for them — which the recompute below cannot see — and move its status itself; that rests on the credential's custody alone. The record's scope, its period's spelling and an activity value within 0…10¹² are the database's to hold for every writer (CHECKs, since (33)). Submit and approve recompute the figure from the record's stored inputs with the current library and refuse a mismatch — a factor, a conversion or an input that changed since the draft was saved, including a release loaded or withdrawn in between — with `calculation_stale`: the author saves the draft again (an audited update showing the old and new figure), and a reviewer returns a submitted record first. *(In force since LP4-02 PR B2.)*
 

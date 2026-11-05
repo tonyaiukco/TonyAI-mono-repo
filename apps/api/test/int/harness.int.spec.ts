@@ -120,8 +120,8 @@ describe('createRecord — priced (LP4-02 B2)', () => {
       });
       const atSite = await createRecord(a, tenant, { periodValue: 'March', locationId: site.id }, { priced: true });
       const atCompany = await createRecord(a, tenant, { periodValue: 'April' }, { priced: true });
-      expect(atSite.calculation).toMatchObject({ geographyCode: 'TR', snapshotSchema: 2 });
-      expect(atCompany.calculation).toMatchObject({ geographyCode: 'UK', snapshotSchema: 2 });
+      expect(atSite.calculation).toMatchObject({ geographyCode: 'TR', snapshotSchema: 3 });
+      expect(atCompany.calculation).toMatchObject({ geographyCode: 'UK', snapshotSchema: 3 });
     } finally {
       await owner.$disconnect();
       await tenant.cleanup();

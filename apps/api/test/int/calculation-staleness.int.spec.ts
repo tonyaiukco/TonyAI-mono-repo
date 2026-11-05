@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
-import { ActivityRecordStatus } from '@tonyai/db';
-import {
+import { Prisma, ActivityRecordStatus } from '@tonyai/db';
+import { STANDARD_REFERENCE_CONDITIONS,
   INTERNAL_FACTOR_PUBLISHERS,
   factorUnitFor,
   type ActivityRecordDTO,
@@ -59,6 +59,7 @@ afterEach(async () => {
     if (!release) continue;
     await owner.emissionFactor.deleteMany({ where: { releaseId: release.id } });
     await owner.unitConversion.deleteMany({ where: { releaseId: release.id } });
+    await owner.factorParameter.deleteMany({ where: { releaseId: release.id } });
     await owner.factorRelease.delete({ where: { id: release.id } });
   }
 });
@@ -341,7 +342,7 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
     ['Electricity', null, 0.1, 'kWh', null],
     ['Electricity', null, 123456.789, 'MWh', null],
     ['Natural Gas', null, 1, 'gj', null],
-    ['Natural Gas', null, 1200, 'cubic_metres', 'TR'],
+    ['Natural Gas', null, 1200, 'cubic_metres', 'UK'],
     ['Fuel', 'diesel', 800, 'litres', 'TR'],
     ['Fuel', 'diesel', 123456.789, 'us_gallons', null],
   ] as const;
@@ -385,5 +386,133 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
     await records.submit(tenant.users.dataEntry, record.id);
     await records.approve(tenant.users.superAdmin, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.approved);
+  });
+});
+
+describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
+  const YEAR_TR = 2031;
+  const gasFactor = {
+    category: 'Natural Gas', activityType: 'natural_gas', gas: 'CO2e', gasCoverage: 'all_ghg', geographyCode: 'TR',
+    reportingYear: YEAR_TR, dataYear: YEAR_TR, scope: 1, factorValue: 0.2, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh',
+    calorificBasis: 'net', scope2Method: 'not_applicable',
+    methodology: 'K11 fixture — not a methodology', source: 'K11 FIXTURE — not a real factor',
+  };
+  const refrigerantFactor = {
+    ...gasFactor, category: 'Refrigerants', activityType: 'HFC-227ea', factorValue: 3600, factorUnit: 'kgCO2e/kg',
+    normalizedUnit: 'kg', calorificBasis: 'not_applicable',
+  };
+  const parameter = (key: string, subject: string | null, value: number, unit: string) => ({
+    key, subject, value, unit, isDefault: true, source: 'K11 FIXTURE — not a source', methodology: null,
+  });
+
+  async function loadTr(): Promise<void> {
+    const file = await fixture([gasFactor, refrigerantFactor] as never);
+    const withRows = {
+      ...file,
+      conversions: [{
+        category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: YEAR_TR, dataYear: YEAR_TR,
+        fromUnit: 'standard_cubic_metres', toUnit: 'kWh', multiplier: 9.588333, calorificBasis: 'net',
+        referenceConditions: STANDARD_REFERENCE_CONDITIONS, basis: 'K11 fixture — not a source',
+      }],
+      parameters: [
+        parameter('reference_ncv', null, 8250, 'kcal/Sm3'),
+        parameter('reference_gcv', null, 9155, 'kcal/Sm3'),
+        parameter('leak_rate', 'fire_suppression_system', 0.02, 'fraction'),
+      ],
+    };
+    await loader().load(withRows, { apply: true });
+  }
+
+  async function savedTr(body: Record<string, unknown>) {
+    const location = await owner.location.create({
+      data: { subsidiaryId: tenant.subsidiaryId, name: `K11 TR ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
+    });
+    const record = await lifecycleServices(runtime).records.create(tenant.users.dataEntry, {
+      subsidiaryId: tenant.subsidiaryId,
+      locationId: location.id,
+      reportingYear: YEAR_TR,
+      ...body,
+    } as never);
+    await attachEvidence(runtime, tenant, [record.id]);
+    return record;
+  }
+  const gas = (parameters: unknown = null) => ({
+    reportingPeriod: 'monthly', periodValue: 'January', category: 'Natural Gas', activityValue: 100,
+    activityUnit: 'standard_cubic_metres', ...(parameters ? { parameters } : {}),
+  });
+  const fm200 = (parameters: unknown) => ({
+    reportingPeriod: 'annual', periodValue: 'Annual', category: 'Refrigerants', activityType: 'HFC-227ea', activityValue: 40,
+    activityUnit: 'kg', parameters,
+  });
+  const EQUIPMENT = { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' }] };
+
+  it('carries a parameter through the API into a V3 snapshot, and submits it fresh', async () => {
+    await loadTr();
+    const record = await savedTr(gas({ ncvKcalPerSm3: 8100 }));
+    expect(record.parameters).toEqual({ ncvKcalPerSm3: 8100 });
+    expect(record.calculation).toMatchObject({
+      snapshotSchema: 3,
+      parameters: [{ name: 'ncvKcalPerSm3', value: 8100, origin: 'user' }],
+    });
+    await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('holds a draft whose parameter changed past the API stale, logged under input and figure', async () => {
+    await loadTr();
+    const record = await savedTr(gas({ ncvKcalPerSm3: 8100 }));
+    await owner.activityRecord.update({ where: { id: record.id }, data: { parameters: { ncvKcalPerSm3: 9000 } } });
+    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect(logged().join()).toMatch(/refused — input/);
+  });
+
+  it('bulk submit names a draft whose parameter changed past the API `calculation_stale`, and submits the fresh one', async () => {
+    await loadTr();
+    const stale = await savedTr(gas({ ncvKcalPerSm3: 8100 }));
+    const fresh = await savedTr({ ...gas({ ncvKcalPerSm3: 8100 }), periodValue: 'February' });
+    await owner.activityRecord.update({ where: { id: stale.id }, data: { parameters: { ncvKcalPerSm3: 9000 } } });
+    const { records } = lifecycleServices(runtime);
+    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.dataEntry, [stale.id, fresh.id]);
+    expect(JSON.stringify(report)).toContain('calculation_stale');
+    expect((await row(stale.id)).status).toBe(ActivityRecordStatus.draft);
+    expect((await row(fresh.id)).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('holds a draft with an unchanged parameter, or with {} for none, fresh', async () => {
+    await loadTr();
+    const empty = await savedTr(gas());
+    await owner.activityRecord.update({ where: { id: empty.id }, data: { parameters: {} } });
+    await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, empty.id);
+    expect((await row(empty.id)).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('calls a calculated V2 snapshot stale, and saving it again clears it', async () => {
+    await loadTr();
+    const record = await savedTr(gas());
+    const stored = (await row(record.id)).calculation as Record<string, unknown>;
+    const { parameters: _p, parameterRows: _r, refrigerantTerms: _t, ...v2 } = stored;
+    await owner.activityRecord.update({ where: { id: record.id }, data: { calculation: { ...v2, snapshotSchema: 2 } as never } });
+    const { records } = lifecycleServices(runtime);
+    expect(await failure(records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    await records.update(tenant.users.dataEntry, record.id, { activityValue: 100 });
+    await records.submit(tenant.users.dataEntry, record.id);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('prices golden value 9 through the API, audits its parameters, and refuses a TR refrigerant without equipment', async () => {
+    await loadTr();
+    const record = await savedTr(fm200(EQUIPMENT));
+    expect(record.calculation).toMatchObject({ kgCo2e: 2880, normalizedValue: 0.8, refrigerantTerms: [{ capacityKg: 40, leakRate: 0.02 }] });
+    const audit = await owner.auditLog.findFirstOrThrow({ where: { entityId: record.id, action: 'create' } });
+    expect((audit.diff as { after: { parameters: unknown } }).after.parameters).toEqual(EQUIPMENT);
+    expect(await failure(savedTr({ ...fm200(undefined), activityType: 'HFC-227ea', periodValue: 'Annual' }))).toMatchObject({ code: 'parameters_required' });
+  });
+
+  it('refuses at submit a TR refrigerant draft a direct writer stripped of its equipment: stale, nothing committed', async () => {
+    await loadTr();
+    const record = await savedTr(fm200(EQUIPMENT));
+    await owner.activityRecord.update({ where: { id: record.id }, data: { parameters: Prisma.DbNull } });
+    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.draft);
   });
 });

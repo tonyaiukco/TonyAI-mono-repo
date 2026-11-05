@@ -20,6 +20,8 @@ const CLASS_OF: Readonly<Record<string, StalenessClass>> = {
   inputValue: 'input',
   inputUnit: 'input',
   activityType: 'input',
+  parameters: 'input',
+  refrigerantTerms: 'figure',
   normalizedValue: 'conversion',
   normalizedUnit: 'conversion',
   conversionApplied: 'conversion',

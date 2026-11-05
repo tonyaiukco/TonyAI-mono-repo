@@ -15,13 +15,15 @@ import {
   ACTIVITY_VALUE_MAX,
   CATEGORIES,
   GEOGRAPHY_CODES,
+  REPORTING_PERIODS,
 } from '@tonyai/shared-types';
-import type { Category, GeographyCode } from '@tonyai/shared-types';
+import type { Category, GeographyCode, RecordParameters } from '@tonyai/shared-types';
 import { Transform } from 'class-transformer';
 import { IsActivityUnit } from '../is-activity-unit.decorator';
 import { storableUnit } from '../storable-unit';
 import { codedConstraint } from '../../common/coded-validation.pipe';
 import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../activity-type';
+import { IsValidRecordParameters } from '../../activity-records/dto/record-parameters.dto';
 
 /**
  * Body of POST /api/v1/calculations/preview.
@@ -99,4 +101,13 @@ export class CalculationInputDto {
   @MinLength(1)
   @MaxLength(ACTIVITY_UNIT_MAX_LENGTH)
   unit!: string;
+
+  // The inputs the TR rules read (D7, D11): preview prices what a save would.
+  @IsOptional()
+  @IsIn(REPORTING_PERIODS)
+  reportingPeriod?: string | null;
+
+  @IsOptional()
+  @IsValidRecordParameters()
+  parameters?: RecordParameters | null;
 }

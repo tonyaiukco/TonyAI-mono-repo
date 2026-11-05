@@ -50,6 +50,7 @@ import {
   type RecordParameters,
   type ReportingPeriod,
   mayAuthorRecords,
+  normalizeRecordParameters,
   recordActivityTypesFor,
   REPORTING_PERIODS,
 } from '@tonyai/shared-types';
@@ -80,7 +81,6 @@ import {
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { recordParametersIssues } from './dto/record-parameters.dto';
-import { assertParametersArePriced } from './record-parameters-gate';
 import {
   ActivityRecordFiltersQueryDto,
   ActivityRecordPageQueryDto,
@@ -148,12 +148,29 @@ const ENGINE_INPUT_COLUMNS = [
   'category',
   'activityType',
   'reportingYear',
+  'reportingPeriod',
   'activityValue',
   'activityUnit',
 ] as const satisfies readonly (keyof ActivityRecord)[];
 
 function sameEngineInputs(read: ActivityRecord, locked: ActivityRecord): boolean {
-  return ENGINE_INPUT_COLUMNS.every((column) => (read[column] ?? null) === (locked[column] ?? null));
+  return (
+    ENGINE_INPUT_COLUMNS.every((column) => (read[column] ?? null) === (locked[column] ?? null)) &&
+    sameParameters(read.parameters, locked.parameters)
+  );
+}
+
+/** Compared by value, a null field being an absent one: Prisma returns a new object per read. */
+function sameParameters(a: unknown, b: unknown): boolean {
+  return canonicalParameters(normalizeRecordParameters(a)) === canonicalParameters(normalizeRecordParameters(b));
+}
+
+function canonicalParameters(value: unknown): string {
+  return JSON.stringify(value, (_key, field: unknown) =>
+    field !== null && typeof field === 'object' && !Array.isArray(field)
+      ? Object.fromEntries(Object.entries(field).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : field,
+  );
 }
 
 /** A refusal's stable code for the log — never its sentence, which may quote input. */
@@ -597,6 +614,8 @@ export class ActivityRecordsService {
     locationId: string | null | undefined,
     /** The record's own activity type (null when it names none). */
     activityType: string | null,
+    /** The record's period and per-record inputs, which the TR rules read (D11). */
+    inputs: { reportingPeriod: string; parameters: RecordParameters | null },
     /** False when `activityUnit` came from the stored record, not this request. */
     unitChosenNow = true,
   ): Promise<{ calculation: ActivityCalculationSnapshot; scope: number }> {
@@ -632,6 +651,7 @@ export class ActivityRecordsService {
         reportingYear,
         value: activityValue,
         unit: activityUnit,
+        ...inputs,
       },
       { enforceCategoryUnit: unitChosenNow },
     );
@@ -667,6 +687,7 @@ export class ActivityRecordsService {
         record.activityUnit,
         record.locationId,
         record.activityType ?? null,
+        { reportingPeriod: record.reportingPeriod, parameters: (record.parameters ?? null) as RecordParameters | null },
         false,
       );
       return { ok: true, calculation };
@@ -1000,7 +1021,6 @@ export class ActivityRecordsService {
     const activityType = dto.activityType ?? null;
     assertActivityTypeNamed(dto.category, activityType);
     assertRecordParameters(dto.category, dto.parameters);
-    assertParametersArePriced(dto.parameters);
     // Period-lock gate (FR §4.2): no new records in a closed period. An early
     // answer only — `create` asks again once it holds the period.
     await this.assertPeriodNotLocked({
@@ -1019,6 +1039,7 @@ export class ActivityRecordsService {
       dto.activityUnit,
       dto.locationId,
       activityType,
+      { reportingPeriod: dto.reportingPeriod, parameters: dto.parameters ?? null },
     );
 
     const verdict = await this.detectAnomalyFor(calculation, {
@@ -1159,8 +1180,8 @@ export class ActivityRecordsService {
     }
     // Refused rather than cleared when a record moves category: the user clears
     // them by sending null, as with the activity type above.
-    assertRecordParameters(category, dto.parameters !== undefined ? dto.parameters : existing.parameters);
-    assertParametersArePriced(dto.parameters);
+    const parameters = ((dto.parameters !== undefined ? dto.parameters : existing.parameters) ?? null) as RecordParameters | null;
+    assertRecordParameters(category, parameters);
 
     const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;
     const periodValue = requireCanonicalPeriodValue(
@@ -1189,6 +1210,7 @@ export class ActivityRecordsService {
       activityUnit,
       locationId,
       activityType,
+      { reportingPeriod, parameters },
       // Enforce the category/unit map when the unit was chosen NOW **or when
       // the category changed**. The second half was missing and it was a live
       // path to a fabricated figure: a PATCH that sends only `{category}` left

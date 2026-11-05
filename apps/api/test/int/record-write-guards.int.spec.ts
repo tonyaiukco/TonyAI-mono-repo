@@ -186,7 +186,10 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
       category: 'Refrigerants', activityType: 'R-32', activityUnit: 'kg', periodValue: 'August',
       parameters: parameters as Prisma.InputJsonValue,
     });
-  const CHILLER = { equipmentType: 'chiller', refillKg: 0, leakRateChoice: 'alternative' };
+  const line = (over: Record<string, unknown> = {}) => ({
+    equipmentType: 'chiller', capacityKg: 10, refillKg: 0, leakRateChoice: 'alternative', ...over,
+  });
+  const equipment = (...lines: unknown[]) => refrigerant({ equipment: lines });
 
   it.each([
     ['both calorific values', () => gas({ ncvKcalPerSm3: 8250, billedGcvKcalPerSm3: 9155 })],
@@ -196,12 +199,27 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
     ['a key the category does not define', () => gas({ ncvKcalPerSm3: 8250, gwp: 1 })],
     ['an array', () => gas([])],
     ['a JSON scalar', () => gas(1)],
-    ['a missing refrigerant field', () => refrigerant({ equipmentType: 'chiller', refillKg: 1 })],
-    ['a JSON-null refrigerant field', () => refrigerant({ ...CHILLER, leakRateChoice: null })],
-    ['a capacity beside the activity value it would contradict', () => refrigerant({ ...CHILLER, installedCapacityKg: 10 })],
-    ['an unknown equipment type', () => refrigerant({ ...CHILLER, equipmentType: 'kettle' })],
-    ['a negative mass', () => refrigerant({ ...CHILLER, refillKg: -1 })],
-    ['the alternative rate where none is defined', () => refrigerant({ ...CHILLER, equipmentType: 'refrigerator' })],
+    ['a key beside the list', () => refrigerant({ equipment: [line()], installedCapacityKg: 10 })],
+    ['the old flat shape', () => refrigerant(line())],
+    ['no list', () => refrigerant({})],
+    ['a list that is no array', () => refrigerant({ equipment: line() })],
+    ['an empty list', () => equipment()],
+    ['a line that is no object', () => equipment('chiller')],
+    ['a line missing a field', () => equipment({ equipmentType: 'chiller', capacityKg: 1, refillKg: 1 })],
+    ['a JSON-null field', () => equipment(line({ leakRateChoice: null }))],
+    ['a capacity as text', () => equipment(line({ capacityKg: '10' }))],
+    ['an unknown equipment type', () => equipment(line({ equipmentType: 'kettle' }))],
+    ['a negative refill', () => equipment(line({ refillKg: -1 }))],
+    ['neither capacity nor refill', () => equipment(line({ capacityKg: 0 }))],
+    ['the alternative rate where none is defined', () => equipment(line({ equipmentType: 'refrigerator' }))],
+    ['a key the line does not define', () => equipment(line({ gwp: 1 }))],
+    ['a repeated equipment type', () => equipment(line(), line())],
+    ['a nested list, which lax jsonpath would unwrap', () => equipment([line()])],
+    ['a nested list hiding a bad line', () => equipment([line(), { equipmentType: 'evil', capacityKg: 'x' }])],
+    ['an array as the equipment type', () => equipment(line({ equipmentType: ['chiller', 'evil'] }))],
+    ['an array as the rate choice, which would read as the alternative', () => equipment(line({ leakRateChoice: ['default'] }))],
+    ['a capacity past the activity value bound', () => equipment(line({ capacityKg: 1e13 }))],
+    ['a refill past the activity value bound', () => equipment(line({ refillKg: 1e13 }))],
     ["another category's fields", () => refrigerant({ ncvKcalPerSm3: 8250 })],
     ['parameters on a category that takes none', () => recordInput(tenant, { periodValue: 'August', parameters: { ncvKcalPerSm3: 1 } })],
   ])('refuses %s, as the owner too (23514)', async (_what, data) => {
@@ -226,7 +244,7 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
       await tx.activityRecord.create({ data: gas({ ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 }, 'August') });
       await tx.activityRecord.create({ data: gas({ billedGcvKcalPerSm3: 9000, ncvKcalPerSm3: null }, 'September') });
       await tx.activityRecord.create({ data: gas({}, 'October') });
-      await tx.activityRecord.create({ data: refrigerant(CHILLER) });
+      await tx.activityRecord.create({ data: equipment(line(), line({ equipmentType: 'refrigerator', capacityKg: 0, refillKg: 2, leakRateChoice: 'default' })) });
       await tx.activityRecord.create({ data: recordInput(tenant, { periodValue: 'August' }) });
       return tx.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId, periodValue: { in: ['August', 'September', 'October'] } } });
     });

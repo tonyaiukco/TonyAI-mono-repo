@@ -23,9 +23,10 @@ import {
  * this spec — and a quantity typed the Turkish way is the same number after a
  * switch to English, and the same number in the database.
  *
- * Lane: `SUB.logistics` / quarterly `E2E_YEAR` / Q2 `Natural Gas`, whole
- * company — no other spec writes Natural Gas for Logistics. The draft is
- * deleted in the test's own `finally`.
+ * Lane: `SUB.logistics` / quarterly `E2E_YEAR` / Q2 `Water`, whole company. Water
+ * because the entry user holds only TR subsidiaries, and TR natural gas needs a
+ * release's Sm³ path (LP4-02 D11). The draft is deleted in the test's own
+ * `finally`.
  */
 async function setLanguage(language: 'tr' | 'en') {
   const api = await playwrightRequest.newContext();
@@ -57,7 +58,7 @@ test('Data Entry speaks Turkish, and 1.234,5 typed in Turkish is saved as 1234.5
 
   await pickByFieldLabel(page, trEntry.subsidiary, 'TonyAI Logistics (TR)');
   await expect(page.getByText(trCompleteness.panel.title, { exact: true })).toBeVisible();
-  await pickByFieldLabel(page, trEntry.category, trCategories['Natural Gas']);
+  await pickByFieldLabel(page, trEntry.category, trCategories.Water);
   await pickByFieldLabel(page, trEntry.periodValue, trPeriods.values.Q2);
 
   await page.getByPlaceholder(trEntry.activityValuePlaceholder).fill('1.234,5');
@@ -73,7 +74,7 @@ test('Data Entry speaks Turkish, and 1.234,5 typed in Turkish is saved as 1234.5
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const id = await findRecordId(request, token, {
     subsidiaryId: SUB.logistics,
-    category: 'Natural Gas',
+    category: 'Water',
     periodValue: 'Q2',
   });
   try {

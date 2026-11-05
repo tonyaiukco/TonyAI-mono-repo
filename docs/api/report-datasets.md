@@ -129,7 +129,8 @@ All other fields, including boundary versions, actor IDs, record timestamps,
 calculation snapshots, labels, evidence hashes and release standing, participate.
 Normalize typed timestamps to `Date.prototype.toISOString()` spelling (UTC with
 milliseconds, e.g. `2026-10-11T00:00:00.000Z`) before capture; retained calculation
-snapshots remain unchanged and their producer must already supply canonical
+snapshots remain unchanged (schema 2 and 3 snapshots sit side by side under dataset
+schema 2: a snapshot's own version is no dataset version) and their producer must already supply canonical
 values. Optional absent properties are omitted before canonicalization; a present
 key or array element whose value is `undefined` is rejected, never silently
 removed or changed to null. Null is distinct from omission. Reject nonfinite

@@ -2,7 +2,7 @@ import {
   IsIn,
   IsNumber,
   IsOptional,
-  IsPositive,
+  Max,
   Min,
   ValidatorConstraint,
   ValidatorConstraintInterface,
@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { plainToInstance, type ClassConstructor } from 'class-transformer';
 import {
+  ACTIVITY_VALUE_MAX,
   EQUIPMENT_TYPES,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   LEAK_RATE_CHOICES,
@@ -20,44 +21,77 @@ import {
   type LeakRateChoice,
 } from '@tonyai/shared-types';
 
+/** The bounds of the shape CHECK, so a figure it refuses is a 400, never a 500. */
+const CALORIFIC_MIN = 1e-300;
+const CALORIFIC_MAX = 1e300;
+
 /**
  * Natural Gas parameters (D3). A calorific value or a correction factor of
  * zero has no meaning, and the billed GCV divides (D5), so all three are
- * positive. Whether the unit requires the correction factor is the engine's
+ * positive, from the CHECK's floor up. Whether the unit requires the correction factor is the engine's
  * refusal (D5), because only the engine sees the unit it prices.
  */
 class NaturalGasParametersDto {
   @IsOptional()
   @IsNumber()
-  @IsPositive()
+  @Min(CALORIFIC_MIN)
+  @Max(CALORIFIC_MAX)
   ncvKcalPerSm3?: number | null;
 
   @IsOptional()
   @IsNumber()
-  @IsPositive()
+  @Min(CALORIFIC_MIN)
+  @Max(CALORIFIC_MAX)
   billedGcvKcalPerSm3?: number | null;
 
   @IsOptional()
   @IsNumber()
-  @IsPositive()
+  @Min(CALORIFIC_MIN)
+  @Max(CALORIFIC_MAX)
   volumeCorrectionFactor?: number | null;
 }
 
-/**
- * Refrigerant parameters (D3, D7): all three are required. The installed
- * capacity is the record's `kg` activity value, so it is not repeated here; a
- * refill may be zero.
- */
-class RefrigerantParametersDto {
+/** One equipment line (D3, D7). A mass may be zero, but not both. */
+class EquipmentLineDto {
   @IsIn(EQUIPMENT_TYPES)
   equipmentType!: EquipmentType;
 
   @IsNumber()
   @Min(0)
+  @Max(ACTIVITY_VALUE_MAX)
+  capacityKg!: number;
+
+  @IsNumber()
+  @Min(0)
+  @Max(ACTIVITY_VALUE_MAX)
   refillKg!: number;
 
   @IsIn(LEAK_RATE_CHOICES)
   leakRateChoice!: LeakRateChoice;
+}
+
+function refrigerantIssues(value: object): string[] {
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== 'equipment') return ['refrigerant parameters must be { equipment: [...] }'];
+  const { equipment } = value as { equipment: unknown };
+  if (!Array.isArray(equipment) || equipment.length === 0) return ['equipment must be a non-empty list'];
+  const issues: string[] = [];
+  const seen = new Set<unknown>();
+  equipment.forEach((line: unknown, i) => {
+    if (line === null || typeof line !== 'object' || Array.isArray(line)) {
+      issues.push(`equipment[${i}] must be an object`);
+      return;
+    }
+    const { dto, issues: fields } = fieldIssues(EquipmentLineDto, line);
+    issues.push(...fields.map((issue) => `equipment[${i}]: ${issue}`));
+    if (seen.has(dto.equipmentType)) issues.push(`equipment[${i}] repeats ${String(dto.equipmentType)}`);
+    seen.add(dto.equipmentType);
+    if (dto.leakRateChoice === 'alternative' && !EQUIPMENT_TYPES_WITH_ALTERNATIVE.includes(dto.equipmentType)) {
+      issues.push(`${String(dto.equipmentType)} has no alternative leak rate: leakRateChoice must be 'default'`);
+    }
+    if (dto.capacityKg === 0 && dto.refillKg === 0) issues.push(`equipment[${i}] has neither a capacity nor a refill`);
+  });
+  return issues;
 }
 
 function fieldIssues<T extends object>(Dto: ClassConstructor<T>, value: object): { dto: T; issues: string[] } {
@@ -86,11 +120,7 @@ export function recordParametersIssues(category: string, value: unknown): string
     return issues;
   }
   if (category === 'Refrigerants') {
-    const { dto, issues } = fieldIssues(RefrigerantParametersDto, value);
-    if (dto.leakRateChoice === 'alternative' && !EQUIPMENT_TYPES_WITH_ALTERNATIVE.includes(dto.equipmentType)) {
-      issues.push(`${String(dto.equipmentType)} has no alternative leak rate: leakRateChoice must be 'default'`);
-    }
-    return issues;
+    return refrigerantIssues(value);
   }
   return [`${category} does not accept record parameters`];
 }

@@ -175,3 +175,12 @@ export async function lookupFactorPath(
     throw e;
   }
 }
+
+/**
+ * A release's calculation parameters (D2, D11). By id, outside the lookup's
+ * snapshot, on purpose: a sealed release's rows cannot change, so this read
+ * returns what any snapshot would.
+ */
+export function readReleaseParameters(prisma: Pick<PrismaService, 'factorParameter'>, releaseId: string) {
+  return prisma.factorParameter.findMany({ where: { releaseId }, include: { release: { select: { edition: true } } } });
+}

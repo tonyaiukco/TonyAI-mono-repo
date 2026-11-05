@@ -14,7 +14,7 @@ import {
   unitDimensionOf,
   type ActivityCalculationSnapshot,
   type CalculationResult,
-  type CalculationResultV2,
+  type CalculationResultV3,
   type UncalculatedSnapshot,
 } from '@tonyai/shared-types';
 import { CalculationsService, FACTOR_CANDIDATE_CAP } from './calculations.service';
@@ -65,7 +65,11 @@ function matchesWhere(row: Record<string, unknown>, where: Record<string, unknow
 }
 
 function createFactorPrismaMock() {
-  const library = { factors: [] as FactorRow[], conversions: [] as ConversionRow[] };
+  const library = {
+    factors: [] as FactorRow[],
+    conversions: [] as ConversionRow[],
+    parameters: [] as Array<Record<string, unknown> & { releaseId: string }>,
+  };
   return {
     library,
     // The batch form the engine reads both in: one snapshot (`factor-lookup.ts`).
@@ -78,6 +82,11 @@ function createFactorPrismaMock() {
     unitConversion: {
       findMany: vi.fn(async (args: { where: Record<string, unknown>; take?: number }) =>
         library.conversions.filter((c) => matchesWhere(c, args.where)).slice(0, args.take),
+      ),
+    },
+    factorParameter: {
+      findMany: vi.fn(async (args: { where: { releaseId: string } }) =>
+        library.parameters.filter((p) => p.releaseId === args.where.releaseId),
       ),
     },
   };
@@ -547,7 +556,7 @@ describe('CalculationsService.compute', () => {
     expect(result.kgCo2e).toBeCloseTo(207.7744, 4);
     expect(result.scope).toBe(1);
     // The v2 snapshot names the conversion row and its release.
-    const v2 = result as CalculationResultV2;
+    const v2 = result as CalculationResultV3;
     expect(v2.conversion).toMatchObject({ fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 11.36, calorificBasis: 'gross' });
     expect(v2.conversion?.release.status).toBe('placeholder');
     expect(v2.calorificBasis).toBe('gross');
@@ -1125,14 +1134,17 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
     prisma = createFactorPrismaMock();
   });
 
-  it('writes the v2 snapshot: release, activity type, gas coverage, basis, method, year policy', async () => {
+  it('writes the v3 snapshot: release, activity type, gas coverage, basis, method, year policy', async () => {
     const release = authoritative();
     // The row's own `version` label differs from its release's edition, as a
     // pre-LP3-03 row's can: the snapshot's `version` is the EDITION (contract).
     useFactor(prisma, makeFactor({ geographyCode: 'UK', reportingYear: 2026, factorValue: 0.2, release, version: 'row-label' }));
-    const result = (await service(false).compute(electricityUK)) as CalculationResultV2;
+    const result = (await service(false).compute(electricityUK)) as CalculationResultV3;
     expect(result).toMatchObject({
-      snapshotSchema: 2,
+      snapshotSchema: 3,
+      parameters: [],
+      parameterRows: [],
+      refrigerantTerms: null,
       activityType: 'grid_electricity',
       gas: 'CO2e',
       gasCoverage: 'all_ghg',
@@ -1341,6 +1353,210 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
     ).rejects.toMatchObject({
       code: 'no_factor',
       coverage: { category: 'Electricity', activityType: 'grid_electricity', geographyCode: 'UK', reportingYear: 2031, unit: 'kWh' },
+    });
+  });
+});
+
+describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', () => {
+  let prisma: FactorPrismaMock;
+  let engine: CalculationsService;
+  let release: ReturnType<typeof makeRelease>;
+
+  const parameter = (key: string, subject: string | null, value: number, unit: string, isDefault = true) => ({
+    id: `${key}-${subject ?? 'none'}-${String(isDefault)}`,
+    releaseId: release.id,
+    key, subject, value, unit, isDefault,
+    source: 'SPEC FIXTURE',
+    methodology: null,
+    release: { edition: release.edition },
+  });
+
+  const gas = { category: 'Natural Gas', geographyCode: 'TR', reportingYear: 2025, value: 100, unit: 'standard_cubic_metres' };
+  const code = (input: Parameters<CalculationsService['compute']>[0]) =>
+    engine.compute(input).then(() => null, (e: { code?: string }) => e.code);
+
+  beforeEach(() => {
+    prisma = createFactorPrismaMock();
+    engine = new CalculationsService(prisma as unknown as PrismaService, ALLOW_PLACEHOLDERS);
+    release = makeRelease({ status: 'authoritative' });
+    useFactor(prisma, makeFactor({
+      release, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025, scope: 1,
+      normalizedUnit: 'kWh', calorificBasis: 'net', factorValue: 0.20215548,
+    }));
+    prisma.library.conversions = [makeConversion({
+      release, geographyCode: 'TR', reportingYear: 2025, dataYear: 2025,
+      fromUnit: 'standard_cubic_metres', multiplier: 9.588333, calorificBasis: 'net',
+    })];
+    prisma.library.parameters = [parameter('reference_ncv', null, 8250, 'kcal/Sm3'), parameter('reference_gcv', null, 9155, 'kcal/Sm3')];
+  });
+
+  describe('natural gas', () => {
+    const within = (actual: number, expected: number) => expect(Math.abs(actual - expected) / expected).toBeLessThan(0.005);
+
+    it('golden value 5: the default NCV, the row\'s multiplier, its origin recorded', async () => {
+      const result = (await engine.compute(gas)) as CalculationResultV3;
+      within(result.kgCo2e, 193.83);
+      expect(result.parameters).toEqual([{ name: 'ncvKcalPerSm3', value: 8250, origin: 'default' }]);
+      expect(result.parameterRows.map((r) => r.key)).toEqual(['reference_ncv']);
+      expect(result.conversionFactor).toBe(9.588333);
+      expect(result.conversion?.multiplier).toBe(9.588333);
+    });
+
+    it('golden value 4: a billed GCV derives the effective NCV, as the document writes it', async () => {
+      const result = (await engine.compute({ ...gas, value: 73.953103, parameters: { billedGcvKcalPerSm3: 9349.174 } })) as CalculationResultV3;
+      within(result.kgCo2e, 140.37);
+      const derived = result.parameters.find((p) => p.origin === 'derived');
+      expect(derived?.name).toBe('ncvKcalPerSm3');
+      within(derived!.value, 8078.67);
+      expect(result.parameterRows.map((r) => r.key)).toEqual(['reference_ncv', 'reference_gcv']);
+    });
+
+    it('an edited NCV replaces the multiplier, and the row stays cited unchanged', async () => {
+      const result = (await engine.compute({ ...gas, parameters: { ncvKcalPerSm3: 8100 } })) as CalculationResultV3;
+      expect(result.parameters).toEqual([{ name: 'ncvKcalPerSm3', value: 8100, origin: 'user' }]);
+      expect(result.normalizedValue).toBeCloseTo(100 * 8100 * 4.184 / 3600, 8);
+      expect(result.conversion?.multiplier).toBe(9.588333);
+    });
+
+    it('a metered m³ takes its correction factor first, in the whole multiplier', async () => {
+      const result = (await engine.compute({ ...gas, unit: 'cubic_metres', parameters: { volumeCorrectionFactor: 0.97 } })) as CalculationResultV3;
+      expect(result.normalizedValue).toBeCloseTo(100 * 0.97 * 9.588333, 8);
+      expect(result.conversionFactor).toBeCloseTo(0.97 * 9.588333, 10);
+      expect(result.inputUnit).toBe('cubic_metres');
+      expect(result.parameters).toContainEqual({ name: 'volumeCorrectionFactor', value: 0.97, origin: 'user' });
+    });
+
+    it('refuses a metered m³ with no correction factor, even beside a placeholder m³ path', async () => {
+      prisma.library.conversions.push(makeConversion({ release: makeRelease(), reportingYear: 2025, dataYear: 2025 }));
+      expect(await code({ ...gas, unit: 'cubic_metres' })).toBe('no_conversion');
+    });
+
+    it.each(['kWh', 'MWh'])('refuses %s, stated on the gross basis, with a factor present', async (unit) => {
+      useFactor(prisma, makeFactor({ release: makeRelease(), category: 'Natural Gas', activityType: 'natural_gas', reportingYear: 2025, scope: 1, normalizedUnit: 'kWh', calorificBasis: 'gross' }));
+      expect(await code({ ...gas, unit })).toBe('calorific_basis_mismatch');
+    });
+
+    it('refuses a correction factor on Sm³, and parameters off the TR rules', async () => {
+      expect(await code({ ...gas, parameters: { volumeCorrectionFactor: 0.97 } })).toBe('parameters_not_applicable');
+      expect(await code({ ...gas, geographyCode: 'UK', parameters: { ncvKcalPerSm3: 8100 } })).toBe('parameters_not_applicable');
+    });
+
+    it('answers a release without its reference values as a library defect, pricing nothing', async () => {
+      prisma.library.parameters = [parameter('reference_gcv', null, 9155, 'kcal/Sm3')];
+      expect(await code(gas)).toBe('parameter_missing');
+      prisma.library.parameters = [parameter('reference_ncv', null, 8250, 'kcal/Sm3')];
+      expect(await code({ ...gas, parameters: { billedGcvKcalPerSm3: 9349.174 } })).toBe('parameter_missing');
+    });
+
+    it('reads the calorific values from the conversion\'s release', async () => {
+      await engine.compute(gas);
+      expect(prisma.factorParameter.findMany.mock.calls[0][0].where.releaseId).toBe(release.id);
+    });
+
+    it.each([
+      ['a product past a double', 1e-300, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
+      ['the same with a zero reading', 0, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
+      ['a billed GCV driving it past a double', 1e-300, { billedGcvKcalPerSm3: 1e-300, volumeCorrectionFactor: 1e300 }],
+      ['a product below a double', 1, { ncvKcalPerSm3: 1e-300, volumeCorrectionFactor: 1e-300 }],
+    ])('refuses %s with a code, rather than storing a number JSON cannot hold', async (_what, value, parameters) => {
+      expect(await code({ ...gas, unit: 'cubic_metres', value, parameters })).toBe('record_parameters_invalid');
+    });
+
+    it('keeps every number of a stored snapshot through JSON', async () => {
+      const result = await engine.compute({ ...gas, unit: 'cubic_metres', value: 100, parameters: { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 } });
+      expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+    });
+
+    it('refuses a gross Sm³ row: the chain\'s NCV is net', async () => {
+      prisma.library.conversions = [makeConversion({ release, reportingYear: 2025, dataYear: 2025, fromUnit: 'standard_cubic_metres', multiplier: 10, calorificBasis: 'net' })];
+      prisma.library.conversions[0] = { ...prisma.library.conversions[0], calorificBasis: 'gross' };
+      useFactor(prisma, makeFactor({ release, category: 'Natural Gas', activityType: 'natural_gas', reportingYear: 2025, scope: 1, normalizedUnit: 'kWh', calorificBasis: 'gross' }));
+      expect(await code(gas)).toBe('calorific_basis_mismatch');
+    });
+
+    it('treats {} and an all-null object as no parameters, off the TR rules too', async () => {
+      useFactor(prisma, makeFactor({ release, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'UK', reportingYear: 2025, scope: 1, normalizedUnit: 'kWh', calorificBasis: 'gross' }));
+      for (const parameters of [{}, { ncvKcalPerSm3: null }]) {
+        const result = (await engine.compute({ ...gas, geographyCode: 'UK', unit: 'kWh', parameters })) as CalculationResultV3;
+        expect(result.parameters).toEqual([]);
+      }
+    });
+
+    it('treats an all-null object as no parameters', async () => {
+      const result = (await engine.compute({ ...gas, parameters: { ncvKcalPerSm3: null } })) as CalculationResultV3;
+      expect(result.parameters).toEqual([{ name: 'ncvKcalPerSm3', value: 8250, origin: 'default' }]);
+    });
+  });
+
+  describe('refrigerants', () => {
+    const fm200 = { category: 'Refrigerants', activityType: 'HFC-227ea', geographyCode: 'TR', reportingYear: 2025, unit: 'kg', reportingPeriod: 'annual' };
+    const line = (over: Record<string, unknown> = {}) => ({ equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default', ...over });
+    const record = (value: number, ...lines: ReturnType<typeof line>[]) => ({ ...fm200, value, parameters: { equipment: lines } }) as never;
+
+    beforeEach(() => {
+      useFactor(prisma, makeFactor({
+        release, category: 'Refrigerants', activityType: 'HFC-227ea', geographyCode: 'TR', reportingYear: 2025, scope: 1,
+        normalizedUnit: 'kg', calorificBasis: 'not_applicable', factorValue: 3600, factorUnit: 'kgCO2e/kg',
+      }));
+      prisma.library.parameters = [
+        parameter('leak_rate', 'fire_suppression_system', 0.02, 'fraction'),
+        parameter('leak_rate', 'split_air_conditioner', 0.01, 'fraction'),
+        parameter('leak_rate', 'split_air_conditioner', 0.1, 'fraction', false),
+        parameter('leak_rate', 'chiller', 0.02, 'fraction'),
+      ];
+    });
+
+    it('golden value 9: 40 kg of FM200 at 2%', async () => {
+      const result = (await engine.compute(record(40, line()))) as CalculationResultV3;
+      expect(result.kgCo2e).toBeCloseTo(2880, 8);
+      expect(result.normalizedValue).toBeCloseTo(0.8, 12);
+      expect(result.normalizedUnit).toBe('kg');
+      expect(result.inputValue).toBe(40);
+      expect(result.refrigerantTerms).toEqual([expect.objectContaining({ capacityKg: 40, leakRate: 0.02, leakedKg: 0.8, refillKg: 0, leakRateChoice: 'default' })]);
+    });
+
+    it('prices two equipment types of one gas, each at its own rate', async () => {
+      const result = (await engine.compute(record(30, line({ equipmentType: 'chiller', capacityKg: 20 }), line({ equipmentType: 'split_air_conditioner', capacityKg: 10, leakRateChoice: 'alternative' })))) as CalculationResultV3;
+      expect(result.normalizedValue).toBeCloseTo(20 * 0.02 + 10 * 0.1, 12);
+      expect(result.parameterRows.map((r) => [r.equipmentType, r.isDefault])).toEqual([['chiller', true], ['split_air_conditioner', false]]);
+    });
+
+    it('prices a refill alone, and a capacity alone', async () => {
+      const refill = (await engine.compute(record(0, line({ capacityKg: 0, refillKg: 2 })))) as CalculationResultV3;
+      expect(refill.normalizedValue).toBe(2);
+      const capacity = (await engine.compute(record(40, line()))) as CalculationResultV3;
+      expect(capacity.refrigerantTerms?.[0].refillKg).toBe(0);
+    });
+
+    it.each(['monthly', 'quarterly', null, undefined])('refuses a record whose period is %s', async (reportingPeriod) => {
+      expect(await code({ ...(record(40, line()) as object), reportingPeriod } as never)).toBe('reporting_period_not_annual');
+    });
+
+    it('refuses a value that is not the sum of the capacities, past rounding only', async () => {
+      expect(await code(record(41, line()))).toBe('equipment_sum_mismatch');
+      expect(await code(record(0.1 + 0.2, line({ capacityKg: 0.3 })))).toBeNull();
+    });
+
+    it('refuses an inherited unit that is not kg, on an edit that does not enforce the category map', async () => {
+      expect(await engine.compute({ ...(record(40, line()) as object), unit: 'tonnes' } as never, { enforceCategoryUnit: false }).then(() => null, (e: { code?: string }) => e.code)).toBe('unit_not_for_category');
+    });
+
+    it('asks for the equipment after the library: no_factor first, then parameters_required', async () => {
+      expect(await code({ ...fm200, value: 40 } as never)).toBe('parameters_required');
+      useFactor(prisma, null);
+      expect(await code({ ...fm200, value: 40 } as never)).toBe('no_factor');
+    });
+
+    it('answers a rate the release does not hold as a library defect', async () => {
+      expect(await code(record(40, line({ equipmentType: 'refrigerator' })))).toBe('parameter_missing');
+      expect(await code(record(40, line({ equipmentType: 'chiller', leakRateChoice: 'alternative' })))).toBe('parameter_missing');
+    });
+
+    it('prices a record outside the TR rules per kg, as before', async () => {
+      useFactor(prisma, makeFactor({ release, category: 'Refrigerants', activityType: 'HFC-227ea', geographyCode: 'UK', reportingYear: 2025, scope: 1, normalizedUnit: 'kg', calorificBasis: 'not_applicable', factorValue: 3600, factorUnit: 'kgCO2e/kg' }));
+      const result = (await engine.compute({ ...fm200, geographyCode: 'UK', value: 2, reportingPeriod: 'monthly' } as never)) as CalculationResultV3;
+      expect(result.kgCo2e).toBe(7200);
+      expect(result.refrigerantTerms).toBeNull();
     });
   });
 });

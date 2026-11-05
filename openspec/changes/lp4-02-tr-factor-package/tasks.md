@@ -45,20 +45,23 @@
 
 ## 3. PR3: Engine and snapshot V3
 
-- [ ] 3.1 Add `CalculationResultV3` (D4) and the reader union. V2 stays frozen. Verify:
+- [x] 3.1 Add `CalculationResultV3` (D4, D11), written by every new calculation, and the reader union, widening `isProvenanceSnapshot` and every reader. V2 stays frozen. Verify:
   - the issuance gate's pinned fingerprints still pass;
   - a V2 fixture round-trips unchanged;
-  - `readRetainedDataset` accepts both versions.
-- [ ] 3.2 Natural gas chain (D5): the per-record NCV, the billed-GCV correction (8,250 and 9,155 read from the release parameters; the validator refuses a conversion row that disagrees with `reference_ncv`, and an unedited NCV is sent as null) and the metered-m³ volume correction step. The kWh entry is still refused. Verify unit specs cover:
+  - `readRetainedDataset` accepts both versions;
+  - a draft with a V2 snapshot reads as `calculation_stale`, and saving again clears it.
+- [x] 3.2 Natural gas chain (D5, D11), on the TR helper: the per-record NCV, the billed-GCV correction (8,250 and 9,155 read from the release parameters; the validator refuses a conversion row that disagrees with `reference_ncv`, and an unedited NCV is sent as null) and the metered-m³ volume correction step. The kWh entry is still refused. Verify unit specs cover:
   - the default, edited and GCV-derived multipliers;
   - the refusal when both are given;
-  - the refusal for m³ without a factor;
+  - the refusal for m³ without a correction factor, with the seed's placeholder TR rows present;
+  - `parameters_not_applicable` for an input that does not apply and for parameters off TR;
+  - `parameter_missing` when the release holds no reference value;
   - kWh refused with `calorific_basis_mismatch`;
   - the snapshot recording each input's origin.
-- [ ] 3.3 Refrigerant capacity method (D7): replace PR2's single-equipment shape with `equipment[]` in the type, the DTO and a new migration re-creating the shape CHECK with its pin (also with an upper bound, so `1e400` cannot reach the engine as Infinity). Annual only, the activity value equal to the sum of capacities, NULL parameters refused for TR at create and submit. The default or alternative leak-rate parameter and the term breakdown go in the snapshot. Verify specs cover two equipment types of one gas, a non-annual period refused, a sum mismatch refused, the default and alternative rates, refill only, capacity only, and an equipment type without an alternative refusing `alternative`.
-- [ ] 3.4 Include `parameters` in the K11 staleness comparison and in bulk submit. Verify `calculation-staleness.int.spec.ts` shows that a changed parameter makes a draft stale and an unchanged one does not.
-- [ ] 3.6 Remove PR2's parameters gate: delete `record-parameters-gate.ts`, its `vi.mock` and its specs. Treat a stored `{}` or all-null object as no difference from NULL for staleness, and compare `parameters` by value, since `sameEngineInputs` uses `===`. Verify a parameter reaches the snapshot through the API, and that a retained V2 dataset still issues.
-- [ ] 3.5 Update `calculation_logic.md` and README for the chain, the capacity method and V3. Run the full checks and the three-seat review pass. Verify all are green and the docs match the code.
+- [x] 3.3 Refrigerant capacity method (D7, D11), on the TR helper: replace PR2's single-equipment shape with `equipment[]` in the type, the DTO and a new migration re-creating the shape CHECK with its pin (also with an upper bound, so `1e400` cannot reach the engine as Infinity). Annual only, the activity value equal to the sum of capacities, NULL parameters refused for TR at create and submit. The default or alternative leak-rate parameter and the term breakdown go in the snapshot. Verify specs cover two equipment types of one gas, a non-annual period refused, a sum mismatch refused, the default and alternative rates, refill only, capacity only, and an equipment type without an alternative refusing `alternative`.
+- [x] 3.4 Include `parameters` in the K11 staleness comparison and in bulk submit. Verify `calculation-staleness.int.spec.ts` shows that a changed parameter makes a draft stale and an unchanged one does not.
+- [x] 3.6 Remove PR2's parameters gate: delete `record-parameters-gate.ts`, its `vi.mock` and its specs. Treat a stored `{}` or all-null object as no difference from NULL for staleness, and compare `parameters` by value, since `sameEngineInputs` uses `===`. Verify a parameter reaches the snapshot through the API, and that a retained V2 dataset still issues.
+- [x] 3.5 Update `docs/md_docs/calculation_logic.md`, `docs/api/endpoints.md`, `docs/api/report-datasets.md` and `docs/architecture/data-model.md` for the chain, the capacity method and V3, and check that the e2e fixtures do not rely on the placeholder TR gas paths. Run the full checks and the three-seat review pass. Verify all are green and the docs match the code.
 
 ## 4. PR4: Data Entry and bulk upload
 
@@ -67,16 +70,19 @@
   - Fuel kg;
   - the Fugitive Gas category;
   - natural gas NCV (prefilled 8,250, editable), billed GCV (mutually exclusive) and the volume correction factor for m³;
+  - a read path for the release's parameters, since the form can't hold 8,250 or a rate as a constant (D2) and a preview needs a value first: `GET /factors` omits them today;
+  - units by geography: TR Natural Gas offers Sm³ and m³, not the refused kWh default;
+  - the conversion note showing the record's own NCV, not the row's multiplier (`conversion-view.ts`);
   - refrigerant equipment lines (type, capacity, refill) on an annual period, the total shown as the record's quantity, and accepting a refill-only record (`data-entry/page.tsx` requires a value above 0 today), with the default rate shown and the alternative offered only for split air conditioners and chillers.
 
   Use `useDecimalInput` for every new number. Verify web specs cover the field visibility rules and Turkish decimal parsing, and the preview's conversion note shows the effective NCV.
-- [ ] 4.2 Bulk upload: optional parameter columns (one file row per equipment line, combined into the gas's one annual record), the template workbook and the dry-run echo of the values read. Verify bulk specs accept valid rows, refuse invalid parameter combinations with row-level errors, and show the values read.
+- [ ] 4.2 Bulk upload: optional parameter columns (one file row per equipment line, grouped into the gas's one annual record before `duplicate_in_file` asks), the template workbook and the dry-run echo of the values read. Verify bulk specs accept valid rows, refuse invalid parameter combinations with row-level errors, and show the values read.
 - [ ] 4.3 TR/EN catalogues for every new label and error (`localise-ui`). Verify `messages.spec.ts` passes and no key is missing in either language. List the new TR strings in the PR for the owner's Turkish review.
 - [ ] 4.4 E2E: one Playwright flow per new form (natural gas with GCV, refrigerant with the alternative rate, mobile mode, leakage) against the local stack, using the fixture publisher. Verify `pnpm e2e` passes for the new specs.
 
 ## 5. PR5: TR releases, golden values and the Scope 2 label
 
-- [ ] 5.1 Write the build script that derives both release files (IPCC and ETKB, D1) from the document's values, including `reference_gcv` and `reference_ncv`. Each row carries its `source` (document section) and its `methodology` (arithmetic); `reviewedBy` is "TonyAI Sustainability Team". Verify:
+- [ ] 5.1 Write the build script that derives both release files (IPCC and ETKB, D1) from the document's values, including `reference_gcv`, `reference_ncv` and all nine default and two alternative leak rates, each pinned in a spec. Each row carries its `source` (document section) and its `methodology` (arithmetic); `reviewedBy` is "TonyAI Sustainability Team". Verify:
   - the script's output matches D6's table to six decimals;
   - the loader dry run reports no issue for either file.
 - [ ] 5.2 Golden integration tests: load both releases into a test database through the loader and calculate the §5 rows, all within ±0.5%:
@@ -94,8 +100,9 @@
   | FM200 | 2,880.00 |
 
   Also verify that 2023 and UK are refused with `no_factor`, and that a committed placeholder-era record is byte-identical after the load.
-- [ ] 5.3 Reports: print a refrigerant's refill and term breakdown beside its total capacity. Label Scope 2 as location-based and print "No market-based result" in the PDF, Excel and CSV outputs, with TR/EN copy. Verify report specs and the issuance fingerprints are updated deliberately, with the fingerprint change explained in the PR.
-- [ ] 5.4 Update README, the `factor-release-import` skill (parameters, overlap rule, TR publishers) and the planning file (LP4-02 DONE pending the hosted load). Run the full checks and the three-seat review pass. Verify all are green.
+- [ ] 5.3 Reports: print a refrigerant's refill and term breakdown beside its total capacity, and a gas record's own NCV beside the row's basis (`report-html.ts`, `issuance-html.ts`, `issuance-tables.ts`; a refill-only record prints 0 kg beside its figure today). Label Scope 2 as location-based and print "No market-based result" in the PDF, Excel and CSV outputs, with TR/EN copy. Verify report specs and the issuance fingerprints are updated deliberately, with the fingerprint change explained in the PR.
+- [ ] 5.4 Update `docs/api/`, `docs/architecture/data-model.md`, the `factor-release-import` skill (parameters, overlap rule, TR publishers) and the planning file (LP4-02 DONE pending the hosted load). Run the full checks and the three-seat review pass. Verify all are green.
+- [ ] 5.5 Billed GCV range (D11; blocked until the COO approves the values): `billed_gcv_min` and `billed_gcv_max` as `kcal/Sm3` release parameters, the contract and CHECK updated together, and a new refusal code with TR and EN copy when a billed GCV falls outside them. A release without them answers `parameter_missing` for a billed GCV. Verify specs cover both bounds, and that a record with no billed GCV is unaffected.
 
 ## 6. Hosted QA load (owner; only after L10 closes)
 

@@ -45,8 +45,8 @@ What exists on `main` (`3f78d7e`, investigated 2026-11-05):
 
 ### D1. Two releases, one per publisher
 The document names IPCC (fuels, gases, GWPs) and ETKB (grid) as publishers. Each release has one publisher, so we load:
-- **`IPCC`:** edition `TONYAI-EF-TR-UK-2026.11-AR6-SEALED`, `gwpSet: AR6`. It holds natural gas, stationary fuels, mobile modes, leakage, refrigerant GWPs, the leak-rate parameters and the reference GCV.
-- **`ETKB`:** the same edition code. It holds grid electricity 2024–2026.
+- **`IPCC`:** edition `TONYAI-EF-TR-UK-2026.11-AR6-SEALED`, `gwpSet: AR6`. It holds natural gas, stationary fuels, mobile modes, leakage, refrigerant GWPs, `reference_ncv`, `reference_gcv`, the leak-rate parameters and the reference GCV.
+- **`ETKB`:** the same edition code, `gwpSet: AR6` (owner decision 2026-11-05: the document's one official set). It holds grid electricity 2024–2026.
 
 Rows that rely on national values (NCVs, densities) or on the holding's own figures (leakage composition, leak rates) cite the document's section in `source` and give the arithmetic in `methodology`.
 
@@ -94,7 +94,7 @@ V2 readers stay as they are. A reader union accepts both versions, and the issua
 ### D5. Natural gas chain
 - **Factor:** a TR `kWh` net-basis row, 0.20215548 kgCO2e/kWh = 56,154.3 kg/TJ × 3.6e-6. The 56,154.3 is 56,100 + 1 × 27 + 0.1 × 273.
 - **Conversion:** a TR Sm³ → kWh net row, 9.588333 kWh/Sm³ = 8,250 × 4.184 / 3,600. Its reference conditions are 15 °C, 101.325 kPa.
-- **One source for 8,250:** `reference_ncv` is the value. The release validator refuses a Sm³ → kWh net row that differs from `reference_ncv × 4.184 / 3,600` beyond rounding, so the snapshot can never cite 8,250 beside another multiplier. An unedited NCV is sent as null, not as 8,250, so its origin stays `default`.
+- **One source for 8,250:** `reference_ncv` is the value. The release validator refuses a Sm³ → kWh net row that differs from `reference_ncv × 4.184 / 3,600` beyond rounding, so an unedited record's snapshot can never cite 8,250 beside another multiplier. An edited or billed record's snapshot cites the row beside its own inputs in `parameters`, and a report prints them (task 5.3). An unedited NCV is sent as null, not as 8,250, so its origin stays `default`.
 - **Per-record override:** it replaces the multiplier before the step. An edited NCV gives `NCV × 4.184 / 3,600`. A billed GCV gives an effective NCV of `8,250 × 9,155 / GCV`, with 8,250 and 9,155 read from the release parameters.
 - **Metered m³:** a per-record `× volumeCorrectionFactor` step runs first. This is the only metered-volume route for TR, so no national m³ row is loaded (an earlier review note).
 - **kWh entries** stay gross and are refused with `calorific_basis_mismatch`.
@@ -157,6 +157,38 @@ Equipment types:
 ### D8. Edition overlap (follow-up 12)
 The loader refuses a live, non-superseding release that overlaps another live release of the same publisher on any factor identity. This keeps one live edition per slot, so an erratum to an older edition cannot outrank a newer one.
 
+### D11. Engine rules for PR3 (owner decisions 2026-11-05)
+**Every new calculation writes V3.** V2 stays frozen and readable. `isProvenanceSnapshot` and every reader widen to accept both. A draft or submitted record whose calculated snapshot is V2 reads as stale at K11 (`calculation_stale`): its author saves a draft again, and a submitted record must be returned first. Committed records are untouched. The PR warns QA.
+
+**The TR rules are keyed on geography,** through one named helper in `@tonyai/shared-types`, not on what a release holds:
+- **TR Natural Gas:** Sm³ takes the chain (D5). m³ needs a volume correction factor, or is refused with `no_conversion`. kWh is refused with `calorific_basis_mismatch`. This holds whatever rows exist, so the seed's placeholder TR m³ and kWh paths stop pricing.
+- **TR Refrigerants:** the capacity method (D7). A record with no parameters is refused.
+- **Any other geography:** priced as today, and non-null `parameters` are refused with `parameters_not_applicable`.
+
+**Refusals,** each with TR and EN copy in PR3 (`messages.spec.ts` requires parity):
+
+| Code | Status | When |
+|---|---|---|
+| `reporting_period_not_annual` | 400 | a capacity-method record on another period |
+| `equipment_sum_mismatch` | 400 | the activity value is not the sum of `capacityKg`, within `NUMBER_TOLERANCE` |
+| `parameters_required` | 400 | a TR refrigerant record with none, after the factor lookup, so `no_factor` answers first until PR5 |
+| `parameters_not_applicable` | 400 | parameters off the TR rules, or an input that does not apply: a correction factor on Sm³. NCV or GCV on kWh answers `calorific_basis_mismatch`, as kWh does |
+| `parameter_missing` | 409 | the release a TR rule reads holds no such parameter: a library defect |
+
+**Other rules:**
+- `reportingPeriod` joins `CalculationInput` and the preview, so recompute refuses as create does.
+- A refrigerant's `normalizedValue` is the priced mass. The activity value stays the total capacity.
+- An equipment line with zero capacity and zero refill is refused. Capacity and refill are bounded by `ACTIVITY_VALUE_MAX`, as an activity value is. A refrigerant record in another unit, inherited from before the category map, is refused.
+- Only a net Sm³ row carries the chain: a gross one answers `calorific_basis_mismatch`.
+- Calorific values are read from the conversion's release and leak rates from the factor's, by release id: a sealed release's rows cannot change, so the read needs no shared snapshot with the lookup. The single-reader spec covers the table.
+- The validator refuses a net Sm³ → kWh row that disagrees with `reference_ncv`, and a TR release with such a row but no `reference_ncv` or `reference_gcv`, or with a refrigerant row but no default leak rate.
+- K11 compares `parameters` by value, treating `{}` and an all-null object as NULL, and logs a difference under the `input` class.
+- `conversionBasis` stays the row's generic text, because the report appendix dedupes on it. `conversionFactor` includes the volume correction.
+
+**A billed GCV has no plausibility range yet (owner decision 2026-11-05).** The formula divides by it, so `0.9` for `9,000` inflates the figure 10,000-fold, and only a reviewer stands in the way. The document states no range, so none is written into code. The COO approves one, and it is loaded as release parameters in PR5 (task 5.5). Until then the engine applies only the shape bounds.
+
+*Alternatives rejected by the owner:* V3 only on parameter paths (no stale drafts, two shapes in new writes), and rules driven by what the release holds (no geography in code).
+
 ### D10. Report dataset schema 2
 Issuance recomputes a retained dataset's assessments with today's code and refuses one that differs (K2), and `boundaryGaps` reads the list of categories a boundary must decide. Adding Fugitive Gas to that list would make every dataset retained before it unissuable. So:
 - `REPORT_DATASET_SCHEMA_VERSION` becomes 2, and `report_datasets_schema_check` admits 1 and 2;
@@ -192,6 +224,8 @@ PR2 and PR3 merge separately (owner decision 2026-11-05). Hosted QA load is a se
 - **Old mobile types stop pricing in TR, so existing drafts become `no_factor` at submit.** Mitigation: no TR pilot data exists yet. Release notes tell users to re-enter drafts with a mode.
 
 - **Confirmed boundaries lose `final` in hosted QA once PR2 deploys (D10).** Mitigation: it fails closed and names the gap. The PR warns QA that a new version must decide Fugitive Gas.
+- **Every open draft with a calculated V2 snapshot goes stale when PR3 deploys (D11).** Mitigation: it fails closed with `calculation_stale`, and saving again recovers it. The PR warns QA.
+- **TR is a literal in the engine (D11).** Mitigation: one named helper, and a new country's rules are a deliberate contract change.
 - **The category appears before it can be priced.** Fugitive Gas and Sm³ are selectable from PR2, and a record is refused with `no_factor` or `no_conversion` until PR5's releases load. The tracking matrix shows the new category's cell as missing meanwhile.
 
 ## Migration Plan

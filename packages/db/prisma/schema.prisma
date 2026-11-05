@@ -289,9 +289,9 @@ model ActivityRecord {
   activityUnit              String                   @map("activity_unit")
   input                     Json? // raw structured input as submitted (optional)
   // Per-record calculation parameters (LP4-02, D3): Natural Gas's calorific
-  // overrides and volume correction, a refrigerant's equipment, refill and leak
-  // rate choice. A database CHECK holds their shape; audited with the record and
-  // frozen with its inputs once committed. The engine reads them from PR3.
+  // overrides and volume correction, a refrigerant's equipment lines. A database
+  // CHECK holds their shape; audited with the record and frozen with its inputs
+  // once committed. The TR rules read them (D11).
   parameters                Json?    @map("parameters")
   calculation               Json // immutable calc-engine snapshot (tCo2e + factor traceability)
   createdBy                 String                   @map("created_by") @db.Uuid

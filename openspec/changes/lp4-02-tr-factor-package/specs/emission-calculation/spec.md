@@ -71,6 +71,21 @@ A report SHALL label the Scope 2 figure as location-based. When there is no mark
 - **WHEN** a final report is issued for a TR boundary with grid electricity
 - **THEN** Scope 2 reads as location-based, with the statement "No market-based result"
 
+### Requirement: Calculations write the new snapshot, and TR rules follow geography
+Every new calculation SHALL write the new snapshot version. A draft or submitted record holding a calculated older version SHALL read as stale until it is saved again. The TR natural gas and refrigerant rules SHALL apply by the record's geography, whatever rows a release holds. Parameters on a record outside those rules SHALL be refused. A release a TR rule reads that lacks the parameter SHALL be answered as a library defect, not priced.
+
+#### Scenario: A draft from before the new snapshot
+- **WHEN** a draft with a calculated older snapshot is submitted
+- **THEN** it is refused as stale, and saving it again clears the refusal
+
+#### Scenario: Parameters off the TR rules
+- **WHEN** a UK natural gas record carries an NCV
+- **THEN** it is refused with `parameters_not_applicable`, and nothing is calculated
+
+#### Scenario: A placeholder path in TR
+- **WHEN** a TR natural gas record in m³ with no correction factor meets a placeholder m³ conversion
+- **THEN** it is refused with `no_conversion`, not priced by the placeholder
+
 ### Requirement: Retained report datasets keep their own rule
 A retained report dataset SHALL be recomputed under the categories of its own schema version, never a newer list. A new capture SHALL use the current version. A boundary version confirmed before a category existed SHALL yield a partial with that category's gap named, until a new version decides it. A dataset whose row and content disagree on the version, or that names a version the gate does not read, SHALL be refused.
 

@@ -1199,7 +1199,7 @@ describe('the engine on the real library', () => {
     const engine = new CalculationsService(runtime, INT_FACTOR_POLICY);
     const result = await engine.compute({ category: 'Natural Gas', geographyCode: 'UK', reportingYear: 2026, value: 100, unit: 'cubic_metres' });
     expect(result).toMatchObject({
-      snapshotSchema: 2,
+      snapshotSchema: 3,
       normalizedUnit: 'kWh',
       conversionApplied: true,
       conversionFactor: 11.36,

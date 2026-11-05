@@ -290,6 +290,37 @@ describe('the pinned assessments — K2 holds every retained dataset to them (ar
   });
 });
 
+describe('a dataset holding V3 snapshots (LP4-02, D11)', () => {
+  const v3 = (over = {}) => ({
+    ...(priced(1) as object),
+    snapshotSchema: 3,
+    parameters: [{ name: 'ncvKcalPerSm3', value: 8250, origin: 'default' }],
+    parameterRows: [],
+    refrigerantTerms: null,
+    ...over,
+  }) as unknown as ReturnType<typeof priced>;
+  const records = () => fullYear().map((r) => ({ ...r, calculation: v3() }));
+
+  it('reads, recomputes and issues as a V2 one does', () => {
+    const dataset = datasetOf({ records: records() });
+    expect(readRetainedDataset(rowOf(dataset))).toEqual(dataset);
+    expect(deriveIssuance(dataset)).toEqual({ status: 'final', gaps: [] });
+  });
+
+  it('issues beside V2 records in one dataset', () => {
+    const [first, ...rest] = fullYear();
+    const dataset = datasetOf({ records: [{ ...first, calculation: v3() }, ...rest] });
+    expect(readRetainedDataset(rowOf(dataset))).toEqual(dataset);
+    expect(deriveIssuance(dataset)).toEqual({ status: 'final', gaps: [] });
+  });
+
+  it('holds its text to its fingerprint', () => {
+    const dataset = datasetOf({ records: records() });
+    const forged = rowOf(dataset, JSON.stringify(dataset).replace('"ncvKcalPerSm3","value":8250', '"ncvKcalPerSm3","value":9000'));
+    expect(() => readRetainedDataset(forged)).toThrow(RetainedDatasetError);
+  });
+});
+
 describe('a dataset retained before Fugitive Gas (schema 1)', () => {
   const dataset = () => schema1Dataset();
 

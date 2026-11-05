@@ -47,9 +47,11 @@ import {
 const PERIOD = 'Q1';
 
 test('a period is one period, whatever the caller capitalises', async ({ request }) => {
+  // Q3: `gates.spec` locks Trading's Q1, and `review-queue.spec` holds its gas Q2 and Q4.
+  const LANE_PERIOD = 'Q3';
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const body = (periodValue: string) => ({
-    subsidiaryId: SUB.logistics,
+    subsidiaryId: SUB.trading,
     locationId: null,
     reportingYear: E2E_YEAR,
     reportingPeriod: E2E_PERIOD,
@@ -65,19 +67,19 @@ test('a period is one period, whatever the caller capitalises', async ({ request
   // and lower-cases only to COMPARE.
   const first = await request.post(`${API_BASE}/activity-records`, {
     headers: bearer(token),
-    data: body('  q1  '),
+    data: body('  q3  '),
   });
   expect(first.status()).toBe(201);
   // Stored canonical, so what comes back is what every other surface keys on —
   // not what was typed.
-  expect((await first.json()).periodValue).toBe(PERIOD);
+  expect((await first.json()).periodValue).toBe(LANE_PERIOD);
 
   // The same period, spelled the way the app spells it. Before canonicalisation
   // this was a DIFFERENT index key and returned 201, leaving two live rows for
   // one quarter, both inside COUNTED_STATUSES and both counted.
   const second = await request.post(`${API_BASE}/activity-records`, {
     headers: bearer(token),
-    data: body(PERIOD),
+    data: body(LANE_PERIOD),
   });
   expect(second.status()).toBe(409);
   // WHICH conflict matters: the period-lock gate raises 409 too, and a test
@@ -90,17 +92,17 @@ test('a period is one period, whatever the caller capitalises', async ({ request
   const rows = await listAllPages<Record<string, string | null>>(
     request,
     token,
-    `/activity-records?subsidiaryId=${SUB.logistics}`,
+    `/activity-records?subsidiaryId=${SUB.trading}`,
   );
   const forThisPeriod = rows.filter(
     (r) =>
       r.category === 'Natural Gas' &&
       r.reportingPeriod === E2E_PERIOD &&
       String(r.reportingYear) === String(E2E_YEAR) &&
-      (r.periodValue ?? '').toLowerCase() === PERIOD.toLowerCase(),
+      (r.periodValue ?? '').toLowerCase() === LANE_PERIOD.toLowerCase(),
   );
   expect(forThisPeriod).toHaveLength(1);
-  expect(forThisPeriod[0].periodValue).toBe(PERIOD);
+  expect(forThisPeriod[0].periodValue).toBe(LANE_PERIOD);
 });
 
 test('a closed period is closed whatever spelling closed it', async ({ request }) => {

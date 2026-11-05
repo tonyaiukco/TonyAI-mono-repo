@@ -19,19 +19,20 @@ const ROOTS = ['apps/api/src', 'packages/db/prisma', 'packages/db/scripts', 'pac
  * or selects its rows, and the tables' names in raw SQL (qa-auditor P3-8).
  */
 const LIBRARY_READ =
-  /(emissionFactor|unitConversion)\s*\.\s*(find[A-Za-z]*|count|aggregate|groupBy)\b|\b(factors|conversions)\s*:\s*(true|\{)|\b(emission_factors|unit_conversions)\b/g;
+  /(emissionFactor|unitConversion|factorParameter)\s*\.\s*(find[A-Za-z]*|count|aggregate|groupBy)\b|\b(factors|conversions)\s*:\s*(true|\{)|\b(emission_factors|unit_conversions|factor_parameters)\b/g;
 
 /** File → how many times it may name the library; `'any'` for a catalogue that is no reader. */
 const ALLOWED: Record<string, number | 'any'> = {
-  // The lookup itself: the candidate factors and conversions.
-  'apps/api/src/calculations/factor-lookup.ts': 2,
+  // The lookup itself: the candidate factors and conversions, and a resolved
+  // release's parameters, by its id (D11).
+  'apps/api/src/calculations/factor-lookup.ts': 3,
   // `listFactors` — the catalogue `GET /factors` lists, no selection.
   'apps/api/src/calculations/calculations.service.ts': 1,
   // A comment naming the table.
   'apps/api/src/calculations/normalization.ts': 1,
   // The loader re-reads a release it just stored, by its id, and compares a new
   // release's identities with the live ones (D8). Neither prices anything.
-  'apps/api/src/factor-releases/factor-release-loader.ts': 3,
+  'apps/api/src/factor-releases/factor-release-loader.ts': 4,
   // The seed's `resolveFactor` — the accepted second copy (LP4-02 follow-up
   // (26)): local, single-writer, it prices the demo records — and its
   // presence checks by id.
