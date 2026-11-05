@@ -22,6 +22,12 @@ import { KWH_PER_KCAL, STANDARD_REFERENCE_CONDITIONS, factorUnitFor, unitSymbol 
 export const EDITION = 'TONYAI-EF-TR-UK-2026.11-AR6-SEALED';
 /** The package's seal date (§3), when its reviewers signed it. */
 const SEALED_ON = '2026-11-04';
+/**
+ * The release's review: the owner's decisions of 2026-11-05 shaped its rows
+ * (the leakage density, the mobile formula, the ETKB data years, the ŞİD
+ * range), so it was reviewed then, after the package was sealed.
+ */
+const REVIEWED_ON = '2026-11-05';
 const REVIEWED_BY = 'TonyAI Sustainability Team';
 const PACKAGE = 'TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md)';
 const YEARS = [2024, 2025, 2026];
@@ -255,8 +261,8 @@ function ipccRelease() {
       publishedAt: SEALED_ON,
       gwpSet: 'AR6',
       reviewedBy: REVIEWED_BY,
-      reviewedAt: SEALED_ON,
-      notes: `Built by packages/db/factor-releases/tr-2026-11/build.mjs from ${PACKAGE}, sealed ${SEALED_ON}, and the owner's decisions of 2026-11-05. publishedAt is the package's seal date. The billed GCV bounds come from BOTAŞ's ŞİD Annex 1.`,
+      reviewedAt: REVIEWED_ON,
+      notes: `Built by packages/db/factor-releases/tr-2026-11/build.mjs from ${PACKAGE}, sealed ${SEALED_ON}, and the owner's decisions of 2026-11-05. publishedAt is the package's seal date; reviewedAt the owner's decisions on its rows. The billed GCV bounds come from BOTAŞ's ŞİD Annex 1.`,
     },
     factors,
     conversions,
@@ -277,8 +283,8 @@ function etkbRelease() {
       publishedAt: SEALED_ON,
       gwpSet: 'AR6',
       reviewedBy: REVIEWED_BY,
-      reviewedAt: SEALED_ON,
-      notes: `Built by packages/db/factor-releases/tr-2026-11/build.mjs from ${PACKAGE}, sealed ${SEALED_ON}, and the owner's decisions of 2026-11-05 (ETKB data years, D07). publishedAt is the package's seal date.`,
+      reviewedAt: REVIEWED_ON,
+      notes: `Built by packages/db/factor-releases/tr-2026-11/build.mjs from ${PACKAGE}, sealed ${SEALED_ON}, and the owner's decisions of 2026-11-05 (ETKB data years, D07). publishedAt is the package's seal date; reviewedAt the owner's decisions on its rows.`,
     },
     factors: GRID.map((g) => ({
       category: 'Electricity', activityType: 'grid_electricity', gas: 'CO2e', gasCoverage: 'all_ghg', geographyCode: 'TR',

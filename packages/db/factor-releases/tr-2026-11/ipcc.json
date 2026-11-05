@@ -10,8 +10,8 @@
     "publishedAt": "2026-11-04",
     "gwpSet": "AR6",
     "reviewedBy": "TonyAI Sustainability Team",
-    "reviewedAt": "2026-11-04",
-    "notes": "Built by packages/db/factor-releases/tr-2026-11/build.mjs from TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md), sealed 2026-11-04, and the owner's decisions of 2026-11-05. publishedAt is the package's seal date. The billed GCV bounds come from BOTAŞ's ŞİD Annex 1."
+    "reviewedAt": "2026-11-05",
+    "notes": "Built by packages/db/factor-releases/tr-2026-11/build.mjs from TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md), sealed 2026-11-04, and the owner's decisions of 2026-11-05. publishedAt is the package's seal date; reviewedAt the owner's decisions on its rows. The billed GCV bounds come from BOTAŞ's ŞİD Annex 1."
   },
   "factors": [
     {

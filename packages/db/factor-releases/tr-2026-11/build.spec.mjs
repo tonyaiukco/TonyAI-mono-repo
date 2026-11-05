@@ -36,7 +36,7 @@ describe('the TR release files (LP4-02 PR5, task 5.1)', () => {
     for (const [release, publisher] of [[ipcc, 'IPCC'], [etkb, 'ETKB']]) {
       expect(release.release).toMatchObject({
         publisher, edition: EDITION, ordinal: 1, status: 'authoritative', gwpSet: 'AR6',
-        reviewedBy: 'TonyAI Sustainability Team', publishedAt: '2026-11-04', reviewedAt: '2026-11-04',
+        reviewedBy: 'TonyAI Sustainability Team', publishedAt: '2026-11-04', reviewedAt: '2026-11-05',
       });
     }
   });
