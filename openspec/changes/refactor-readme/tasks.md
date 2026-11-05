@@ -34,16 +34,16 @@
 ## 3. PR B — repoint code citations (comments only)
 
 - [x] 3.1 After PR A merges, branch from `main`. Rewrite each `README "X"` / `README:` citation in the 39 non-migration files to the D5 form, quoting the new doc path. Leave `packages/db/prisma/migrations/**` untouched. Verify: `git grep -n "README" -- apps packages e2e ':!packages/db/prisma/migrations'` returns no citation of a moved section, and `git diff --stat -- packages/db/prisma/migrations` is empty.
-- [ ] 3.2 Prove the change is comment-only. Verify: `pnpm typecheck`, `pnpm lint` and `pnpm test` are green. With the local stack up, `pnpm --filter @tonyai/db exec prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_DATABASE_URL"` reports no change other than the known `activity_records` index note.
-- [ ] 3.3 Open PR B. State in the description that it is comment-only and triggers a QA image deploy. Verify: CI is green, the QA deploy smoke passes after merge, and the owner merges.
+- [x] 3.2 Prove the change is comment-only. Verify: `pnpm typecheck`, `pnpm lint` and `pnpm test` are green. With the local stack up, `pnpm --filter @tonyai/db exec prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_DATABASE_URL"` reports no change other than the known `activity_records` index note.
+- [x] 3.3 Open PR B. State in the description that it is comment-only and triggers a QA image deploy. Verify: CI is green, the QA deploy smoke passes after merge, and the owner merges.
 
 ## 4. PR C — rewrite the README
 
-- [ ] 4.1 After PR B merges, branch from `main`. Replace `README.md` with the D6 structure, following the conversation draft of 2026-11-05 and updated to the current `main`. Verify:
+- [x] 4.1 After PR B merges, branch from `main`. Replace `README.md` with the D6 structure, following the conversation draft of 2026-11-05 and updated to the current `main`. Verify:
   - About 260 lines.
   - `grep -nE "\b(LP[0-9]|WP[0-9]|D[0-9]{2}|K[0-9])\b" README.md` returns nothing.
   - No "Scope 1/2/3" claim remains.
-- [ ] 4.2 Check every fact in the README against the repo:
+- [x] 4.2 Check every fact in the README against the repo:
   - the commands table against root `package.json` scripts
   - the configuration keys against each `.env.example`
   - the features table against the `apps/api/src` modules
