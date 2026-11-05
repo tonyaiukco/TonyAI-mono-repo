@@ -290,6 +290,9 @@ describe('ReportsService', () => {
     expect(html).toContain('Scope filter: Scope 2');
     expect(html).toContain('Category filter: Electricity');
     expect(html).toContain('Subsidiary filter: Energy');
+    // Scope 2 is location-based, and says no market-based figure exists (D08, LP4-02 PR5).
+    expect(html).toContain('Scope 2 (location-based)');
+    expect(html).toContain('No market-based result');
     const bytes = await service.generateExcel(admin, selected);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes as unknown as Parameters<typeof workbook.xlsx.load>[0]);
@@ -297,10 +300,13 @@ describe('ReportsService', () => {
     workbook.getWorksheet('Summary')!.eachRow((row) => rows.push(row.values as unknown[]));
     expect(rows).toContainEqual([undefined, 'Scope filter', 'Scope 2']);
     expect(rows).toContainEqual([undefined, 'Category filter', 'Electricity']);
+    expect(rows).toContainEqual([undefined, 'Scope 2, market-based', 'No market-based result']);
     const csv = await service.generateCsv(admin, selected);
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     expect(csv.trim().split('\n')).toHaveLength(3);
     expect(csv.trim().split('\n')[0]).toBe(csvHeader());
+    // Every Scope 2 row, counted or withdrawn, carries the statement last.
+    for (const line of csv.trim().split('\n').slice(1)) expect(line.endsWith(',No market-based result')).toBe(true);
     for (const [, event] of audit.record.mock.calls) {
       expect(event.diff).toMatchObject({ year: 2024, subsidiaryId: 'sub-1', scope: 2, category: 'Electricity', recordCount: 1, voidedCount: 1 });
     }
@@ -1382,7 +1388,7 @@ describe('ReportsService', () => {
         'evidence_files', 'anomaly_flag', 'voided_activity_value',
         'voided_tco2e', 'voided_at_utc', 'void_reason', 'voided_by',
         // LP3-03, appended after the disclosure so no column moved.
-        'activity_type', 'factor_standing',
+        'activity_type', 'factor_standing', 'calculation_inputs', 'scope2_market_based',
       ]);
     });
 
@@ -1417,7 +1423,7 @@ describe('ReportsService', () => {
       // catches a marker gained or lost when the columns move: the fixture is
       // comma-free on purpose, so a plain split is exact here.
       const width = lines[0].split(',').length;
-      expect(width).toBe(18);
+      expect(width).toBe(20);
       for (const line of lines.slice(1)) {
         expect(line.split(',')).toHaveLength(width);
       }
@@ -1428,7 +1434,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Raw Activity Data')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e', 'Status',
-        'Evidence files', 'Anomaly flag', 'Activity type', 'Factor standing',
+        'Evidence files', 'Anomaly flag', 'Activity type', 'Factor standing', 'Calculation inputs', 'Scope 2 market-based',
       ]);
     });
 
@@ -1437,7 +1443,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Withdrawn Records')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e removed',
-        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)', 'Activity type', 'Factor standing',
+        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)', 'Activity type', 'Factor standing', 'Calculation inputs', 'Scope 2 market-based',
       ]);
     });
 
@@ -1797,7 +1803,7 @@ describe('report column descriptors', () => {
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
-    activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
+    activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
   };
@@ -2058,7 +2064,7 @@ describe('no column can opt out of CSV neutralisation', () => {
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
-    activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
+    activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
   };
@@ -2160,13 +2166,18 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
     // CSV: activity_type then factor_standing, last on BOTH row kinds — the
     // withdrawn row keeps them (identifying, never marked).
     const csv = (await service.generateCsv(admin, noNotes)).trim().split('\n');
-    const tail = (line: string) => line.split(',').slice(-2);
+    // Before LP4-02 PR5's two trailing columns (calculation inputs, Scope 2 market-based).
+    const tail = (line: string) => line.split(',').slice(-4, -2);
     expect(csv.slice(1).map(tail)).toEqual([['diesel', 'placeholder'], ['', 'authoritative'], ['diesel', 'placeholder']]);
 
     // Excel: the label and the sentence, last on the ledger and the withdrawn sheet.
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load((await service.generateExcel(admin, noNotes)) as unknown as ArrayBuffer);
-    const lastTwo = (sheet: string, row: number) => (wb.getWorksheet(sheet)!.getRow(row).values as unknown[]).slice(-2);
+    const lastTwo = (sheet: string, row: number) => {
+      const header = wb.getWorksheet(sheet)!.getRow(1).values as unknown[];
+      const at = header.indexOf('Activity type');
+      return (wb.getWorksheet(sheet)!.getRow(row).values as unknown[]).slice(at, at + 2);
+    };
     expect(lastTwo('Raw Activity Data', 2)).toEqual(['Diesel', 'Not authoritative (placeholder)']);
     expect(lastTwo('Withdrawn Records', 2)).toEqual(['Diesel', 'Not authoritative (placeholder)']);
 

@@ -11,6 +11,8 @@ import {
 } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
 import { NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
+import { calculationInputs } from '../reports/calculation-inputs';
+import { NO_MARKET_BASED } from '../reports/report-columns';
 import {
   countedRecords,
   coverageGapLabel,
@@ -41,7 +43,8 @@ import {
  * issuance's counted total.
  */
 
-export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v1';
+// v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
+export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v2';
 
 export interface IssuedTablesDocument {
   issuanceId: string;
@@ -79,6 +82,9 @@ export const ISSUED_CSV_COLUMNS = [
   'voided_activity_value', 'voided_tco2e', 'voided_at_utc', 'void_reason',
   // The ids behind the names: a name is the record's or the boundary's as captured, an id never moves.
   'subsidiary_id', 'location_id',
+  // LP4-02 PR5, appended so no column moves: what the figure was computed
+  // from, and Scope 2's market-based statement (D08), in English as every cell.
+  'calculation_inputs', 'scope2_market_based',
 ] as const;
 
 export function issuedCsv(doc: IssuedTablesDocument): string {
@@ -95,19 +101,28 @@ export function issuedCsv(doc: IssuedTablesDocument): string {
   // issuance, dataset, fingerprint and status — every other cell empty, so it
   // adds nothing to a sum (Codex's B9 P2-2 on LP4-03 PR A).
   const document: CellValue[] = [...identity, 'issuance', ...Array(ISSUED_CSV_COLUMNS.length - identity.length - 1).fill('')];
+  const english = ISSUANCE_CATALOGUES.en;
+  const words = {
+    text: (key: IssuanceMessageKey, values?: Record<string, string>) =>
+      String(new IntlMessageFormat(english[key], LOCALE_FORMAT_TAGS.en).format(values)),
+    locale: 'en' as const,
+  };
+  const trailing = (r: ReportDatasetRecord): CellValue[] => [
+    calculationInputs(r.calculation, words), r.scope === 2 ? NO_MARKET_BASED : '',
+  ];
   const rows: CellValue[][] = [
     document,
     ...countedRecords(dataset).map((r) => [
       ...identity, 'counted', ...common(r),
       r.activityValue, r.activityUnit, figureOf(r) ?? NOT_CALCULATED, standing.get(r.id) ?? 'uncalculated',
       '', '', '', '',
-      r.subsidiaryId, r.locationId ?? '',
+      r.subsidiaryId, r.locationId ?? '', ...trailing(r),
     ]),
     ...withdrawnRecords(dataset).map((r) => [
       ...identity, 'withdrawn', ...common(r),
       WITHDRAWN, r.activityUnit, WITHDRAWN, '',
       r.activityValue, figureOf(r) ?? NOT_CALCULATED, r.voidedAt ?? '', r.voidReason ?? '',
-      r.subsidiaryId, r.locationId ?? '',
+      r.subsidiaryId, r.locationId ?? '', ...trailing(r),
     ]),
   ];
   // U+FEFF, as the live CSV: a double-clicked file otherwise mojibakes Turkish names.
@@ -152,7 +167,9 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
       dataset.boundary.decision === 'confirmed' ? t('decisionConfirmed') : t('decisionUnconfirmed')],
     [],
     [t('scope', { scope: 1 }), scopeCell(scope1), t('countedRecords', { count: scope1.countedRecordIds.length })],
-    [t('scope', { scope: 2 }), scopeCell(scope2), t('countedRecords', { count: scope2.countedRecordIds.length })],
+    [t('scope2LocationBased'), scopeCell(scope2), t('countedRecords', { count: scope2.countedRecordIds.length })],
+    // A sentence, never a figure (D08).
+    ['', t('noMarketBased')],
     [t('rowScope3'), t('scope3NotCovered')],
     [],
     [t('identityHeading')],
@@ -182,7 +199,7 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
 
   const ledger = wb.addWorksheet(t('sheetLedger'));
   ledger.addRow([t('colRecordId'), t('colEntity'), t('colCategory'), t('colScope'), t('colPeriod'), t('colStatus'),
-    t('colActivityValue'), t('colUnit'), t('colEmissions'), t('colStanding')]);
+    t('colActivityValue'), t('colUnit'), t('colEmissions'), t('colStanding'), t('colInputs')]);
   for (const r of countedRecords(dataset)) {
     ledger.addRow([
       r.id, names.entity(r.subsidiaryId, r.locationId, r), label('category', r.category), r.scope,
@@ -190,6 +207,7 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
       RECORD_STATUS_KEY[r.status] === undefined ? r.status : t(RECORD_STATUS_KEY[r.status]),
       r.activityValue, r.activityUnit, figureOf(r) ?? t('notCalculated'),
       t(STANDING_KEY[standing.get(r.id) ?? 'uncalculated']),
+      calculationInputs(r.calculation, { text: t, locale: language }),
     ]);
   }
 

@@ -26,6 +26,7 @@ export type InputRefusalCode = Extract<
   | 'equipment_sum_mismatch'
   | 'parameters_required'
   | 'parameters_not_applicable'
+  | 'billed_gcv_out_of_range'
 >;
 export type CoverageRefusalCode = Extract<
   CalculationRefusalCode,
@@ -44,6 +45,7 @@ export const INPUT_REFUSAL_CODES: readonly InputRefusalCode[] = [
   'equipment_sum_mismatch',
   'parameters_required',
   'parameters_not_applicable',
+  'billed_gcv_out_of_range',
 ];
 export const COVERAGE_REFUSAL_CODES: readonly CoverageRefusalCode[] = [
   'no_factor',

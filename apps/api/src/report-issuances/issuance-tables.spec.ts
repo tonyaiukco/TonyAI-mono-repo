@@ -153,7 +153,8 @@ describe('the issued workbook', () => {
     expect(wb.worksheets.map((s) => s.name)).toEqual(['Summary', 'Gaps', 'Counted records', 'Exclusions', 'Withdrawn records']);
     const summary = rowsOf(wb.getWorksheet('Summary')!);
     const scope1 = summary.find((r) => r[0] === 'Scope 1')!;
-    const scope2 = summary.find((r) => r[0] === 'Scope 2')!;
+    const scope2 = summary.find((r) => r[0] === 'Scope 2 (location-based)')!;
+    expect(summary).toContainEqual(['', 'No market-based result']);
     expect(scope1[1]).toBeCloseTo(dataset.scopes[0].tCo2e!, 9);
     expect(scope2[1]).toBeCloseTo(dataset.scopes[1].tCo2e!, 9);
     expect(typeof scope2[1]).toBe('number');
@@ -192,7 +193,7 @@ describe('the issued workbook', () => {
     const wb = await load(doc(dataset, { language: 'tr' }));
     expect(wb.worksheets.map((s) => s.name)).toEqual(['Özet', 'Eksikler', 'Sayılan kayıtlar', 'Hariç tutulanlar', 'Geri çekilen kayıtlar']);
     const summary = rowsOf(wb.getWorksheet('Özet')!);
-    expect(summary.find((r) => r[0] === 'Kapsam 2')![1]).toBeCloseTo(dataset.scopes[1].tCo2e!, 9);
+    expect(summary.find((r) => r[0] === 'Kapsam 2 (konum bazlı)')![1]).toBeCloseTo(dataset.scopes[1].tCo2e!, 9);
     const ledger = rowsOf(wb.getWorksheet('Sayılan kayıtlar')!);
     expect(ledger.some((r) => r[2] === 'Elektrik' && r[4] === 'Ocak')).toBe(true);
     expect(ledger.some((r) => r[2] === 'Doğal gaz' && r[4] === '1. çeyrek')).toBe(true);

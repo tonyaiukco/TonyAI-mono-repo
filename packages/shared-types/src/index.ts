@@ -2405,6 +2405,8 @@ export const CALCULATION_REFUSAL_CODES = [
   'parameters_not_applicable',
   /** The release a TR rule reads holds no such parameter: a library defect. */
   'parameter_missing',
+  /** A billed gross calorific value outside the release's accepted range (D11). */
+  'billed_gcv_out_of_range',
   /** No factor covers this category, activity, geography and year. */
   'no_factor',
   /** Only non-authoritative factors cover it, and they are not allowed here. */
@@ -2440,6 +2442,7 @@ export const CALCULATION_REFUSAL_STATUS: Readonly<
   parameters_required: 400,
   parameters_not_applicable: 400,
   parameter_missing: 409,
+  billed_gcv_out_of_range: 400,
   no_factor: 404,
   placeholder_refused: 404,
   ambiguous_factor: 409,
@@ -3177,7 +3180,13 @@ export const FACTOR_IMPORT_TEXT_LIMITS = {
 // ---------------------------------------------------------------------------
 
 /** The keys a factor parameter may carry (D2). */
-export const PARAMETER_KEYS = Object.freeze(['leak_rate', 'reference_gcv', 'reference_ncv'] as const);
+export const PARAMETER_KEYS = Object.freeze([
+  'billed_gcv_max',
+  'billed_gcv_min',
+  'leak_rate',
+  'reference_gcv',
+  'reference_ncv',
+] as const);
 export type ParameterKey = (typeof PARAMETER_KEYS)[number];
 
 /**
@@ -3185,6 +3194,9 @@ export type ParameterKey = (typeof PARAMETER_KEYS)[number];
  * read in the wrong one, the leak would be priced a hundred times over.
  */
 export const PARAMETER_UNITS: Readonly<Record<ParameterKey, string>> = Object.freeze({
+  // The bounds a billed gross calorific value must fall within (D11, task 5.5).
+  billed_gcv_max: 'kcal/Sm3',
+  billed_gcv_min: 'kcal/Sm3',
   leak_rate: 'fraction',
   reference_gcv: 'kcal/Sm3',
   reference_ncv: 'kcal/Sm3',
@@ -3780,6 +3792,15 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
   });
   for (const [subjectKey, path] of alternatives) {
     if (!defaultsPerSubject.has(subjectKey)) fail(`${path}.isDefault`, 'an alternative rate needs a default beside it');
+  }
+  // A billed GCV range is a pair, its lower bound below its upper (D11): one
+  // bound alone would refuse every bill on one side and none on the other.
+  const gcvMin = parameterRow('billed_gcv_min');
+  const gcvMax = parameterRow('billed_gcv_max');
+  if ((gcvMin === undefined) !== (gcvMax === undefined)) {
+    fail('parameters', 'billed_gcv_min and billed_gcv_max come together');
+  } else if (typeof gcvMin?.value === 'number' && typeof gcvMax?.value === 'number' && !(gcvMin.value < gcvMax.value)) {
+    fail('parameters', 'billed_gcv_min must be below billed_gcv_max');
   }
 
   return issues;

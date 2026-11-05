@@ -1,4 +1,4 @@
-import { CATEGORY_ACTIVITY_TYPES, entityLabel, UNSPECIFIED_ACTIVITY_TYPE, type Category } from '@tonyai/shared-types';
+import { CATEGORY_ACTIVITY_TYPES, CATEGORY_SCOPE_MAP, entityLabel, UNSPECIFIED_ACTIVITY_TYPE, type Category } from '@tonyai/shared-types';
 import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
 import { escapeHtmlText } from '../common/html-escape';
@@ -283,8 +283,13 @@ export const BODY_COLUMNS = [
     // escapes the whole thing and the hand-written `esc` that used to live
     // inside the template — which nothing tested, and whose deletion left the
     // suite green — is gone by construction.
+    // The record's own calculation inputs ride under the quantity (LP4-02
+    // PR5): a refrigerant's activity value is its total capacity, not the
+    // mass priced, and a gas record's NCV is its own, not the row's basis.
     pdf: { label: 'Activity', num: true,
-           cell: (r, v) => `${v.number.format(r.activityValue)} ${r.activityUnit}` } },
+           cell: (r, v) => r.calculationInputs
+             ? rawHtml(`${esc(`${v.number.format(r.activityValue)} ${r.activityUnit}`)}<br><span class="note">${esc(r.calculationInputs)}</span>`)
+             : `${v.number.format(r.activityValue)} ${r.activityUnit}` } },
   // A unit is a word, and words are not summable — but this one sits next to a
   // marked value on a withdrawn row, which is what proves "aggregatable" and
   // not "on a withdrawn row" is the right discriminator.
@@ -519,6 +524,13 @@ function categoryWithActivity(r: Pick<ReportRowBase, 'category' | 'activityType'
  * the Category cell of the PDF. Never marked on a withdrawn row: they say
  * which record it was, not what it counted.
  */
+/** The machine-readable CSV's statement for a Scope 2 row (D08): English, as every CSV cell. */
+export const NO_MARKET_BASED = 'No market-based result';
+
+function scopeOf(r: Pick<ReportRowBase, 'category'>): number | undefined {
+  return CATEGORY_SCOPE_MAP[r.category as Category];
+}
+
 export const TRAILING_COLUMNS = [
   {
     key: 'activity_type',
@@ -534,6 +546,21 @@ export const TRAILING_COLUMNS = [
     key: 'factor_standing',
     csv: { label: 'factor_standing', cell: (r: ReportRowBase) => r.factorStanding?.code ?? '' },
     excel: { label: 'Factor standing', cell: (r: ReportRowBase) => r.factorStanding?.text ?? '' },
+  },
+  {
+    // What the figure was computed from, beside the quantity (LP4-02 PR5): a
+    // gas record's own NCV, a refrigerant's capacity, rate and refill per line.
+    key: 'calculation_inputs',
+    csv: { label: 'calculation_inputs', cell: (r: ReportRowBase) => r.calculationInputs },
+    excel: { label: 'Calculation inputs', cell: (r: ReportRowBase) => r.calculationInputs },
+  },
+  {
+    // Scope 2 is location-based only (D08): with no certificate data there is
+    // no market-based figure, and the location-based one is never copied into
+    // its place. Said on every Scope 2 row, empty on the others.
+    key: 'scope2_market_based',
+    csv: { label: 'scope2_market_based', cell: (r: ReportRowBase) => (scopeOf(r) === 2 ? NO_MARKET_BASED : '') },
+    excel: { label: 'Scope 2 market-based', cell: (r: ReportRowBase, v: ReportVocabulary) => (scopeOf(r) === 2 ? v.text('noMarketBased') : '') },
   },
   // Text, always: a trailing column is identifying, never summable, so it is
   // never marked on a withdrawn row — a number here would print a withdrawn

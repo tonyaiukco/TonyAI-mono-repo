@@ -1086,7 +1086,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['unit_conversions', 'unit_conversions_units_check', 'beeb2e7d9604ac1218b01390e2f1e6cb'],
   // LP4-02: factor_parameters CHECKs
   ['factor_parameters', 'factor_parameters_text_check', 'cadaec00182803028e60114b35441b1e'],
-  ['factor_parameters', 'factor_parameters_value_check', '8e098efa1fdb5503a3408bc5d097578f'],
+  ['factor_parameters', 'factor_parameters_value_check', '358e0e70df506a850b60caf8c1db861d'],
 ]);
 
 /**

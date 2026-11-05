@@ -1398,6 +1398,7 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       parameters_required: 400,
       parameters_not_applicable: 400,
       parameter_missing: 409,
+      billed_gcv_out_of_range: 400,
       no_factor: 404,
       placeholder_refused: 404,
       ambiguous_factor: 409,
@@ -1782,7 +1783,7 @@ describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
   });
 
   it('exports the expected keys and equipment types', () => {
-    expect(PARAMETER_KEYS).toEqual(['leak_rate', 'reference_gcv', 'reference_ncv']);
+    expect(PARAMETER_KEYS).toEqual(['billed_gcv_max', 'billed_gcv_min', 'leak_rate', 'reference_gcv', 'reference_ncv']);
     expect(EQUIPMENT_TYPES).toContain('split_air_conditioner');
     expect(EQUIPMENT_TYPES).toContain('chiller');
     expect(EQUIPMENT_TYPES_WITH_ALTERNATIVE).toEqual(['split_air_conditioner', 'chiller']);
@@ -1836,6 +1837,32 @@ describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
 
   it('accepts a valid leak_rate parameter', () => {
     expect(issuesAt(release({ parameters: [leakRateParam()] }))).toEqual([]);
+  });
+
+  describe('the billed GCV range (D11, task 5.5)', () => {
+    const bound = (key: 'billed_gcv_min' | 'billed_gcv_max', value: number, over: Record<string, unknown> = {}) =>
+      gcvParam({ key, value, source: 'SPEC FIXTURE — ŞİD Annex 1', ...over });
+
+    it('accepts a pair, the lower below the upper', () => {
+      expect(issuesAt(release({ parameters: [bound('billed_gcv_min', 8100), bound('billed_gcv_max', 10427)] }))).toEqual([]);
+    });
+
+    it.each([
+      ['a lower bound alone', [bound('billed_gcv_min', 8100)]],
+      ['an upper bound alone', [bound('billed_gcv_max', 10427)]],
+      ['bounds the wrong way round', [bound('billed_gcv_min', 10427), bound('billed_gcv_max', 8100)]],
+      ['equal bounds', [bound('billed_gcv_min', 9000), bound('billed_gcv_max', 9000)]],
+    ])('refuses %s', (_case, parameters) => {
+      expect(issuesAt(release({ parameters }))).toEqual(['parameters']);
+    });
+
+    it.each([
+      ['a bound with a subject', () => bound('billed_gcv_min', 8100, { subject: 'chiller' }), 'subject'],
+      ['a bound in another unit', () => bound('billed_gcv_min', 8100, { unit: 'kWh/Sm3' }), 'unit'],
+      ['an alternative bound', () => bound('billed_gcv_min', 8100, { isDefault: false }), 'isDefault'],
+    ])('refuses %s', (_case, row, field) => {
+      expect(issuesAt(release({ parameters: [row(), bound('billed_gcv_max', 10427)] }))).toContain(`parameters[0].${field}`);
+    });
   });
 
   it('accepts a valid reference_gcv parameter', () => {

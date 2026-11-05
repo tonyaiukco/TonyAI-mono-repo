@@ -73,6 +73,11 @@ export interface ReportLedgerRow {
   normalizedValue?: number;
   normalizedUnit?: string;
   conversionFactor?: number;
+  /** The record's own calculation inputs, as words (LP4-02 PR5): a natural
+   *  gas record's NCV and its origin, a refrigerant's capacity, rate and
+   *  refill per equipment line; empty when the snapshot carries none
+   *  (`calculation-inputs.ts`). */
+  calculationInputs: string;
   /** `null` when the record's category has no emission factor and therefore
    *  produced no figure (WP17 — Water). Deliberately not `0`: an audit-ready
    *  ledger that prints a measured zero where nothing was measured cannot be

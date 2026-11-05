@@ -78,12 +78,29 @@ generation audit row (`report` / `generate`) adds the snapshot time
 (`readAt`), the badge it printed (`status`), what the boundary said
 (`coverage`) and — PDF and workbook — the `language`.
 
+**Calculation inputs and Scope 2's method (LP4-02 PR5).** Every report, live
+or issued, prints a record's own calculation inputs read from its snapshot
+(`reports/calculation-inputs.ts`): a natural gas record's NCV and its origin
+(the release's default, entered, or derived from a billed GCV) beside the
+row's generic basis, and a refrigerant's capacity, leak rate and refill per
+equipment line beside its activity value, which is the total capacity rather
+than the mass priced. They sit under the quantity in the PDFs, and in a
+trailing `calculation_inputs` column (Excel "Calculation inputs") appended
+last so no column moves. Scope 2 is labelled location-based, and since no
+certificate data exists every report says "No market-based result" (TR
+"Piyasa bazlı sonuç bulunmamaktadır") instead of copying the location-based
+figure: on the PDF tile, as a Summary row in Excel, and in a trailing
+`scope2_market_based` CSV column on every Scope 2 row (English, as every CSV
+cell). The issued renderers are `tonyai-issuance-pdf-v2` and
+`tonyai-issuance-tables-v2`; a retained dataset's fingerprint is unchanged,
+since neither the dataset nor its assessments moved.
+
 **Issued Excel and CSV (K5).** `GET /report-issuances/:id/xlsx` and `/csv`
 project the issuance's RETAINED dataset — re-read, re-verified as an issue
 verifies it (fingerprint, assessments, frozen version), and bound to the
 issuance by its fingerprint — exactly as its PDF does: the scopes' counted
 records, the same figures, gaps, exclusions and withdrawals
-(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v1`).
+(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v2`).
 Written on request and never stored (no migration, no new bucket); the same
 issuance always yields the same rows and figures. The workbook follows the
 issuance's language with numeric figures and names the issuance, dataset,
