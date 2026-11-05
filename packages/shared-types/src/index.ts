@@ -3191,35 +3191,6 @@ export interface RefrigerantRecordParameters {
  */
 export type RecordParameters = NaturalGasRecordParameters | RefrigerantRecordParameters;
 
-/**
- * Categories that require per-record parameters (D3).
- * Each maps to its specific parameter interface.
- */
-export const CATEGORIES_WITH_PARAMETERS = Object.freeze([
-  'Natural Gas',
-  'Refrigerants',
-] as const);
-export type CategoryWithParameters = (typeof CATEGORIES_WITH_PARAMETERS)[number];
-
-/** Type guard: is this a Natural Gas parameters object? */
-export function isNaturalGasParameters(params: unknown): params is NaturalGasRecordParameters {
-  if (!isRecordParametersObject(params)) return false;
-  // Natural Gas parameters have optional ncv, gcv, volumeCorrectionFactor
-  // and do NOT have the required refrigerant fields
-  return !('equipmentType' in params) && !('refillKg' in params);
-}
-
-/** Type guard: is this a Refrigerant parameters object? */
-export function isRefrigerantParameters(params: unknown): params is RefrigerantRecordParameters {
-  if (!isRecordParametersObject(params)) return false;
-  return 'equipmentType' in params && 'refillKg' in params && 'leakRateChoice' in params;
-}
-
-/** Type guard: is this a valid record parameters object (not null, not array)? */
-function isRecordParametersObject(params: unknown): params is Record<string, unknown> {
-  return typeof params === 'object' && params !== null && !Array.isArray(params);
-}
-
 /** Statuses a release can be loaded with — `withdrawn` is reached, not loaded. */
 const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'fixture'];
 
