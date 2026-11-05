@@ -10,3 +10,8 @@ export const NOT_CALCULATED = 'Not calculated';
 
 /** What a CSV writes in a withdrawn row's aggregatable cells, which share one table with the counted rows. */
 export const WITHDRAWN = 'Withdrawn';
+
+/** A Scope 2 row's market-based statement in a CSV (D08, LP4-02 PR5): with no
+ *  certificate data there is no market-based figure, and the location-based
+ *  one is never copied into its place. English, as every CSV cell. */
+export const NO_MARKET_BASED = 'No market-based result';

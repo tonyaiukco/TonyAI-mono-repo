@@ -2,7 +2,7 @@ import { IntlMessageFormat } from 'intl-messageformat';
 import { describe, expect, it } from 'vitest';
 import type { CalculationResultV3, Locale } from '@tonyai/shared-types';
 import { calculationInputs, type CalculationInputsKey } from './calculation-inputs';
-import { REPORT_CATALOGUES } from './report-vocabulary';
+import { REPORT_CATALOGUES } from '../reports/report-vocabulary';
 import { ISSUANCE_CATALOGUES } from '../report-issuances/issuance-html';
 
 // Display fixture: the numbers are a snapshot's, not a source's.

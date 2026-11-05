@@ -14,7 +14,7 @@ import {
   type ReportTemplate,
 } from '@tonyai/shared-types';
 import { escapeHtmlText as esc } from '../common/html-escape';
-import { calculationInputs } from '../reports/calculation-inputs';
+import { calculationInputs } from '../common/calculation-inputs';
 import en from './i18n/en.json';
 import tr from './i18n/tr.json';
 
@@ -172,11 +172,14 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     <td class="num">${g.sourceIds.length}</td><td class="num">${g.obligationIds.length}</td><td class="num">${g.recordIds.length}</td></tr>`).join('');
 
   const standing = new Map(dataset.provenance.records.map((p) => [p.recordId, p.standing]));
-  // The record's own calculation inputs under its quantity (LP4-02 PR5): `t`
-  // escapes each word, and numbers carry no markup.
+  // The record's own calculation inputs under its quantity (LP4-02 PR5),
+  // composed from the catalogue's plain text and escaped once, whole: `t`
+  // escapes, and a word it escaped would be escaped again as a value.
+  const plain = (key: IssuanceMessageKey, values?: Record<string, string>): string =>
+    String(new IntlMessageFormat(ISSUANCE_CATALOGUES[language][key], tag).format(values));
   const inputsNote = (calculation: unknown): string => {
-    const text = calculationInputs(calculation, { text: t, locale: language });
-    return text ? `<br><span class="note">${text}</span>` : '';
+    const text = calculationInputs(calculation, { text: plain, locale: language });
+    return text ? `<br><span class="note">${esc(text)}</span>` : '';
   };
   const ledger = countedRecords(dataset);
   const ledgerRows = ledger.map((r) => `<tr><td>${entityLabel(r.subsidiaryId, r.locationId, r)}</td>

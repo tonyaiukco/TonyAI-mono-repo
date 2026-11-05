@@ -3783,6 +3783,11 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
     if (parameterRow('reference_gcv') === undefined) {
       fail(`conversions[${i}].multiplier`, 'a TR net Sm³ conversion needs reference_gcv in parameters[]');
     }
+    // A billed GCV divides the chain, so its range comes with it (D11): an
+    // erratum without it would refuse every billed record as a library defect.
+    if (parameterRow('billed_gcv_min') === undefined || parameterRow('billed_gcv_max') === undefined) {
+      fail(`conversions[${i}].multiplier`, 'a TR net Sm³ conversion needs billed_gcv_min and billed_gcv_max in parameters[]');
+    }
   });
   factors.forEach((row, i) => {
     if (!isObject(row) || row.category !== 'Refrigerants' || !usesTrCalculationRules(row.geographyCode as string)) return;

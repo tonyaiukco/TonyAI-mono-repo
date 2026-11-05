@@ -2,7 +2,7 @@ import { CATEGORY_ACTIVITY_TYPES, CATEGORY_SCOPE_MAP, entityLabel, UNSPECIFIED_A
 import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
 import { escapeHtmlText } from '../common/html-escape';
-import { NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
+import { NO_MARKET_BASED, NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
 import type {
   ReportLedgerRow,
   ReportRowBase,
@@ -524,9 +524,6 @@ function categoryWithActivity(r: Pick<ReportRowBase, 'category' | 'activityType'
  * the Category cell of the PDF. Never marked on a withdrawn row: they say
  * which record it was, not what it counted.
  */
-/** The machine-readable CSV's statement for a Scope 2 row (D08): English, as every CSV cell. */
-export const NO_MARKET_BASED = 'No market-based result';
-
 function scopeOf(r: Pick<ReportRowBase, 'category'>): number | undefined {
   return CATEGORY_SCOPE_MAP[r.category as Category];
 }
@@ -551,7 +548,8 @@ export const TRAILING_COLUMNS = [
     // What the figure was computed from, beside the quantity (LP4-02 PR5): a
     // gas record's own NCV, a refrigerant's capacity, rate and refill per line.
     key: 'calculation_inputs',
-    csv: { label: 'calculation_inputs', cell: (r: ReportRowBase) => r.calculationInputs },
+    // English and dot-decimal in the CSV whatever the caller's language, as the issued CSV.
+    csv: { label: 'calculation_inputs', cell: (r: ReportRowBase) => r.calculationInputsCsv },
     excel: { label: 'Calculation inputs', cell: (r: ReportRowBase) => r.calculationInputs },
   },
   {

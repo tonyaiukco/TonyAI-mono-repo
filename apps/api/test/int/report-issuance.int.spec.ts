@@ -289,7 +289,7 @@ describe('an issuance over HTTP', () => {
       template: 'executive_summary', options: { includeMethodologyNotes: true, includeEvidenceSummary: false },
       pdf: { mimeType: 'application/pdf' },
     });
-    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v1 \(.+\)$/);
+    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v2 \(.+\)$/);
 
     const dataset = await owner.reportDataset.findUniqueOrThrow({ where: { id: datasetId } });
     expect(issued.datasetFingerprint).toEqual({ algorithm: 'sha256', canonicalization: dataset.canonicalization, hex: dataset.fingerprintHex });

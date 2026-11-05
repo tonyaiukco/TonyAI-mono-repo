@@ -1817,17 +1817,20 @@ describe('validateFactorReleaseImport — parameters (LP4-02)', () => {
       referenceConditions: STANDARD_REFERENCE_CONDITIONS, basis: 'NCV 8,250 kcal/Sm³', ...over,
     });
     const ncv = () => gcvParam({ key: 'reference_ncv', value: 8250 });
+    const range = () => [gcvParam({ key: 'billed_gcv_min', value: 8100 }), gcvParam({ key: 'billed_gcv_max', value: 10427 })];
     const bad = (conversions: unknown[], parameters: unknown[]) =>
       issuesAt(release({ conversions, parameters } as never)).filter((path) => path.startsWith('conversions[0].multiplier'));
 
     it('accepts a net Sm³ row that is reference_ncv × 4.184 / 3,600, to six decimals', () => {
-      expect(bad([conversion()], [gcvParam(), ncv()])).toEqual([]);
+      expect(bad([conversion()], [gcvParam(), ncv(), ...range()])).toEqual([]);
     });
 
     it('refuses one that disagrees, or stands without its reference values', () => {
-      expect(bad([conversion({ multiplier: 9.59 })], [gcvParam(), ncv()])).toEqual(['conversions[0].multiplier']);
-      expect(bad([conversion()], [gcvParam()])).toEqual(['conversions[0].multiplier']);
-      expect(bad([conversion()], [ncv()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion({ multiplier: 9.59 })], [gcvParam(), ncv(), ...range()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion()], [gcvParam(), ...range()])).toEqual(['conversions[0].multiplier']);
+      expect(bad([conversion()], [ncv(), ...range()])).toEqual(['conversions[0].multiplier']);
+      // The billed GCV range comes with the chain (D11): an erratum cannot drop it.
+      expect(bad([conversion()], [gcvParam(), ncv()])).toEqual(['conversions[0].multiplier']);
     });
 
     it('asks nothing of another geography', () => {

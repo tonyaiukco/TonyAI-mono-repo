@@ -78,6 +78,9 @@ export interface ReportLedgerRow {
    *  refill per equipment line; empty when the snapshot carries none
    *  (`calculation-inputs.ts`). */
   calculationInputs: string;
+  /** The same in English with dot-decimal numbers, for the CSV: machine-
+   *  readable in every language, as every CSV cell and the issued CSV. */
+  calculationInputsCsv: string;
   /** `null` when the record's category has no emission factor and therefore
    *  produced no figure (WP17 — Water). Deliberately not `0`: an audit-ready
    *  ledger that prints a measured zero where nothing was measured cannot be

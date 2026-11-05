@@ -97,6 +97,35 @@ describe('the TR release files (LP4-02 PR5, task 5.1)', () => {
     expect(gwps).toEqual({ 'HFC-227ea': 3600, 'R-410A': 2256, 'R-134a': 1530, 'R-32': 771, 'R-404A': 4728, 'R-22': 1960, SF6: 25200 });
   });
 
+  // A right number in a wrong unit prices wrongly, so the whole identity is
+  // pinned, not only the value (qa-auditor's review of PR5).
+  it('quotes every factor in its unit, basis and scope, the IPCC ones in their own year', () => {
+    const expected = {
+      'Natural Gas|natural_gas': ['kWh', 'net', 1],
+      'Fuel|diesel': ['litres', 'not_applicable', 1], 'Fuel|petrol': ['litres', 'not_applicable', 1],
+      'Fuel|lpg': ['kg', 'not_applicable', 1], 'Fuel|coal': ['kg', 'not_applicable', 1],
+      'Fuel|lng': ['kg', 'not_applicable', 1], 'Fuel|fuel_oil': ['kg', 'not_applicable', 1],
+      ...Object.fromEntries(['on_road_petrol', 'on_road_diesel', 'on_road_lpg', 'off_road_petrol', 'off_road_diesel']
+        .map((t) => [`Mobile Combustion|${t}`, ['litres', 'not_applicable', 1]])),
+      'Fugitive Gas|gas_network_leakage': ['standard_cubic_metres', 'not_applicable', 1],
+      ...Object.fromEntries(['HFC-227ea', 'R-410A', 'R-134a', 'R-32', 'R-404A', 'R-22', 'SF6']
+        .map((t) => [`Refrigerants|${t}`, ['kg', 'not_applicable', 1]])),
+    };
+    const seen = new Set();
+    for (const f of ipcc.factors) {
+      const key = `${f.category}|${f.activityType}`;
+      seen.add(key);
+      expect([f.normalizedUnit, f.calorificBasis, f.scope], key).toEqual(expected[key]);
+      expect([f.scope2Method, f.geographyCode, f.dataYear], key).toEqual(['not_applicable', 'TR', f.reportingYear]);
+      expect(f.gasCoverage, key).toBe(f.gas === 'CO2e' ? 'all_ghg' : null);
+    }
+    expect([...seen].sort()).toEqual(Object.keys(expected).sort());
+    for (const f of etkb.factors) {
+      expect([f.category, f.activityType, f.normalizedUnit, f.scope, f.gasCoverage])
+        .toEqual(['Electricity', 'grid_electricity', 'kWh', 2, 'all_ghg']);
+    }
+  });
+
   it('covers 2024 to 2026 only, so other years fail closed', () => {
     for (const release of [ipcc, etkb]) {
       expect([...new Set(release.factors.map((f) => f.reportingYear))].sort()).toEqual([2024, 2025, 2026]);

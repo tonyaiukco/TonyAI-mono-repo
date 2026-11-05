@@ -212,3 +212,56 @@ describe('the issued workbook', () => {
     void SUB;
   });
 });
+
+describe('calculation inputs and Scope 2\'s method in the issued tables and PDF (LP4-02 PR5)', () => {
+  // A V3 snapshot carrying the inputs the engine recorded; a display fixture.
+  const withInputs = (): ReportDataset => datasetOf({
+    records: fullYear().map((r) => (r.id === fullYear()[0].id ? {
+      ...r,
+      calculation: {
+        ...priced(1), snapshotSchema: 3, parameterRows: [],
+        parameters: [
+          { name: 'billedGcvKcalPerSm3', value: 9349.174, origin: 'user' },
+          { name: 'ncvKcalPerSm3', value: 8078.6702, origin: 'derived' },
+        ],
+        refrigerantTerms: [{ equipmentType: 'split_air_conditioner', leakRateChoice: 'alternative', capacityKg: 10, leakRate: 0.1, leakedKg: 1, refillKg: 0.5 }],
+      } as never,
+    } : r)),
+  });
+  const first = fullYear()[0].id;
+  const EN = 'billed GCV 9,349.174 kcal/Sm³; NCV 8,078.67 kcal/Sm³ (derived from the billed GCV); '
+    + 'split air conditioner: 10 kg × 10% + 0.5 kg refilled = 1.5 kg released';
+
+  it('prints the inputs in English in the CSV, and the market-based statement on Scope 2 rows only', () => {
+    for (const language of ['en', 'tr'] as const) {
+      const csv = issuedCsv(doc(withInputs(), { language })).replace(/^\uFEFF/, '').trimEnd().split('\n');
+      const header = csv[0].split(',');
+      expect(header.slice(-2)).toEqual(['calculation_inputs', 'scope2_market_based']);
+      const line = csv.find((l) => l.includes(`,${first},`))!;
+      expect(line).toContain(`"${EN}"`);
+      for (const l of csv.slice(1)) {
+        const scope = l.includes(',counted,') || l.includes(',withdrawn,') ? l.split(',')[header.indexOf('scope')] : null;
+        if (scope === '2') expect(l.endsWith(',No market-based result')).toBe(true);
+        if (scope === '1') expect(l.endsWith(',')).toBe(true);
+      }
+    }
+  });
+
+  it('prints the inputs on the ledger sheet in the issuance\'s language', async () => {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await issuedWorkbook(doc(withInputs(), { language: 'tr' }))) as unknown as ArrayBuffer);
+    const ledger: unknown[][] = [];
+    wb.worksheets.find((s) => s.name !== 'Summary' && JSON.stringify((s.getRow(1).values as unknown[])).includes('Hesaplama girdileri'))!
+      .eachRow((row) => ledger.push((row.values as unknown[]).slice(1)));
+    const row = ledger.find((r) => r[0] === first)!;
+    expect(String(row.at(-1))).toContain('AID 8.078,67 kcal/Sm³');
+    expect(String(row.at(-1))).toContain('split / ofis klima: 10 kg × %10');
+  });
+
+  it('prints the inputs under the quantity in the PDF, escaped once', () => {
+    const page = buildIssuanceHtml({ ...doc(withInputs()), options: { includeMethodologyNotes: false, includeEvidenceSummary: false } });
+    expect(page).toContain(`<br><span class="note">${EN}</span>`);
+    expect(page).not.toContain('&amp;');
+    expect(page).toContain('No market-based result');
+  });
+});

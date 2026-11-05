@@ -10,9 +10,8 @@ import {
   type ReportTemplate,
 } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
-import { NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
-import { calculationInputs } from '../reports/calculation-inputs';
-import { NO_MARKET_BASED } from '../reports/report-columns';
+import { calculationInputs } from '../common/calculation-inputs';
+import { NO_MARKET_BASED, NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
 import {
   countedRecords,
   coverageGapLabel,

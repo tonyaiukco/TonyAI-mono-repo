@@ -1803,7 +1803,7 @@ describe('report column descriptors', () => {
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
-    activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', tCo2e: 0.44, status: 'approved',
+    activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
   };
@@ -2064,7 +2064,7 @@ describe('no column can opt out of CSV neutralisation', () => {
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
-    activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', tCo2e: 0.44, status: 'approved',
+    activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
   };

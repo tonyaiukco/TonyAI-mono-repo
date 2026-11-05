@@ -51,7 +51,8 @@ export function calculationInputs(calculation: unknown, words: CalculationInputs
     parts.push(words.text('inputsLine', {
       equipment: words.text(`inputsEquipment_${term.equipmentType as EquipmentType}`),
       capacity: format(term.capacityKg, 3),
-      rate: `${format(term.leakRate * 100, 4)}%`,
+      // `%1` in Turkish, `1%` in English.
+      rate: words.locale === 'tr' ? `%${format(term.leakRate * 100, 4)}` : `${format(term.leakRate * 100, 4)}%`,
       refill: format(term.refillKg, 3),
       mass: format(term.leakedKg + term.refillKg, 6),
     }));

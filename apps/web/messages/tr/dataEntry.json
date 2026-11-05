@@ -100,14 +100,14 @@
   },
   "equipmentTypes": {
     "fire_suppression_system": "Yangın söndürme sistemi",
-    "fire_extinguisher": "Yangın söndürücü",
-    "transformer_breaker": "Trafo veya kesici",
-    "split_air_conditioner": "Split klima",
+    "fire_extinguisher": "Yangın söndürme tüpü",
+    "transformer_breaker": "Transformatör kesici",
+    "split_air_conditioner": "Klima (split / ofis)",
     "water_dispenser": "Su sebili",
     "refrigerator": "Buzdolabı",
     "chiller": "Chiller (soğutma grubu)",
     "mobile_air_conditioner": "Araç kliması",
-    "portable_air_conditioner": "Portatif klima"
+    "portable_air_conditioner": "Taşınabilir klima"
   },
   "bulkPreview": {
     "title": "Kabul edilen satırlar",

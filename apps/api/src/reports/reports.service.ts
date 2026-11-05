@@ -57,7 +57,10 @@ import { reportingContext } from '../common/reporting-context-query.dto';
 import { contextLabels } from './context-labels';
 import { buildReportHtml, coverageSentences, selectsScope3Only, statusLabel } from './report-html';
 import { reportVocabulary, type ReportVocabulary } from './report-vocabulary';
-import { calculationInputs } from './calculation-inputs';
+import { calculationInputs } from '../common/calculation-inputs';
+
+/** The CSV's words: English, whatever the caller's language (D16's machine-readable export). */
+const CSV_VOCABULARY = reportVocabulary('en');
 import { PdfRenderer } from '../common/pdf-renderer';
 
 // Single source of truth for "committed": imported from the emissions service so
@@ -561,6 +564,7 @@ export class ReportsService {
         normalizedUnit: calc.normalizedUnit,
         conversionFactor: calc.conversionFactor,
         calculationInputs: calculationInputs(r.calculation, { text: v.text, locale: language }),
+        calculationInputsCsv: calculationInputs(r.calculation, { text: CSV_VOCABULARY.text, locale: 'en' }),
         // `?? 0` was the previous line and it is the exact misstatement this
         // type now prevents: a record with no factor has no figure, and a
         // report that prints 0 for it asserts a measurement nobody made.

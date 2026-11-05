@@ -8,8 +8,8 @@
 // written into the row's `methodology`. Nothing is rounded: the design's D6
 // table is the check, to six decimals (build.spec.mjs).
 //
-//   node packages/db/factor-releases/tr-2026-11/build.mjs           # check only
-//   node packages/db/factor-releases/tr-2026-11/build.mjs --write   # rewrite the JSON files
+//   pnpm --filter @tonyai/db factor-releases:tr   # rewrite the JSON files
+// (tsx, which reads @tonyai/shared-types from source). The spec compares them.
 //
 // The JSON files are what the loader reads; the spec fails if they differ
 // from what this builds.

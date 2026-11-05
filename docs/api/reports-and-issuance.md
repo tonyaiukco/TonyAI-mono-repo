@@ -80,7 +80,7 @@ generation audit row (`report` / `generate`) adds the snapshot time
 
 **Calculation inputs and Scope 2's method (LP4-02 PR5).** Every report, live
 or issued, prints a record's own calculation inputs read from its snapshot
-(`reports/calculation-inputs.ts`): a natural gas record's NCV and its origin
+(`common/calculation-inputs.ts`): a natural gas record's NCV and its origin
 (the release's default, entered, or derived from a billed GCV) beside the
 row's generic basis, and a refrigerant's capacity, leak rate and refill per
 equipment line beside its activity value, which is the total capacity rather
@@ -102,14 +102,17 @@ issuance by its fingerprint — exactly as its PDF does: the scopes' counted
 records, the same figures, gaps, exclusions and withdrawals
 (`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v2`).
 Written on request and never stored (no migration, no new bucket); the same
-issuance always yields the same rows and figures. The workbook follows the
+issuance always yields the same rows and figures under one renderer, which the
+tables name, so an issuance made under v1 now downloads with v2's two trailing
+columns, its figures unchanged. The workbook follows the
 issuance's language with numeric figures and names the issuance, dataset,
 fingerprint, capture and issue times on its Summary (its file clock is the
 issue time; its labels are the catalogue's current words); the CSV opens with
 one `row_kind: issuance` row — the identity and status, every other cell empty
 — so an issuance with no ledger row (an all-excluded final, an empty extract)
 still names itself, then carries the issuance, dataset, fingerprint and status
-on every row, the entity's `subsidiary_id` and `location_id` last, and a withdrawn row's
+on every row, the entity's `subsidiary_id` and `location_id`, then
+`calculation_inputs` and `scope2_market_based` last (LP4-02 PR5), and a withdrawn row's
 aggregatable cells read `Withdrawn` (values in `voided_*`), so a SUM over
 `tco2e` is the issuance's counted total. Neither writes an audit row: each is a
 read of retained data, as the PDF download is. The PDF, workbook and CSV of one

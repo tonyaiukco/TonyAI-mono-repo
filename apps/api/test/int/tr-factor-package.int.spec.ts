@@ -33,6 +33,7 @@ let owner: PrismaService;
 /** Every committed record's figure, as it stood before this spec loaded anything. */
 let committedBefore: Map<string, string>;
 
+/** Committed records, keyed by id, with whether a placeholder priced them in TR. */
 const committed = async (db: PrismaService) =>
   new Map(
     (await db.activityRecord.findMany({
@@ -40,6 +41,10 @@ const committed = async (db: PrismaService) =>
       select: { id: true, calculation: true },
     })).map((r) => [r.id, JSON.stringify(r.calculation)]),
   );
+const placeholderTr = (calculation: string) => {
+  const c = JSON.parse(calculation) as { geographyCode?: string; factorRelease?: { status?: string } };
+  return c.geographyCode === 'TR' && c.factorRelease?.status === 'placeholder';
+};
 
 beforeAll(async () => {
   owner = connectOwner();
@@ -116,15 +121,19 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
 
   it('fails closed for 2023 and for UK (owner decision 2026-11-05 (1))', async () => {
     expect(await code(tr({ value: 100, reportingYear: 2023 }))).toBe('no_factor');
-    expect(await code(tr({ category: 'Mobile Combustion', activityType: 'on_road_diesel', value: 100, unit: 'litres', reportingYear: 2023 }))).toBe('no_factor');
+    // on_road_petrol, which the e2e suite's TR 2023 fixture does not hold.
+    expect(await code(tr({ category: 'Mobile Combustion', activityType: 'on_road_petrol', value: 100, unit: 'litres', reportingYear: 2023 }))).toBe('no_factor');
     expect(await code(tr({ value: 100, geographyCode: 'UK', reportingYear: 2024 }))).toBe('no_factor');
   });
 
-  it('leaves every committed record byte-identical', async () => {
+  // On the first load, this is the TR records the seed's placeholders priced,
+  // which the new releases now outrank; on a re-run the load is a no-op and
+  // the check guards only that nothing recomputes a committed record.
+  it('leaves every committed record byte-identical, the placeholder-priced TR ones included', async () => {
     const after = await committed(owner);
     // A record another spec deleted meanwhile is gone, not changed.
     const kept = [...committedBefore].filter(([id]) => after.has(id));
-    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.filter(([, calculation]) => placeholderTr(calculation)).length).toBeGreaterThan(0);
     for (const [id, calculation] of kept) expect(after.get(id), id).toBe(calculation);
   });
 });
