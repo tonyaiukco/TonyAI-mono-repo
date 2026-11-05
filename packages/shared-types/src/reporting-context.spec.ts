@@ -2,10 +2,41 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_REPORTING_YEAR, GROUP_INTENSITY_METRICS, REPORTING_CONTEXT_API_PATHS,
   REPORTING_YEARS, REPORTING_YEAR_MIN, REPORTING_YEAR_MAX,
-  isReportingContext, isReportingYear, matchesReportingContext,
+  SELECTABLE_REPORTING_YEARS_BACK, isReportingContext, isReportingYear, matchesReportingContext,
+  selectableReportingYears,
   type EmissionsSummaryParams, type ReportingContext, type ReportingExportParams,
   type ReportingIntensityResponse,
 } from './index';
+
+describe('selectableReportingYears — the pickers show the current year and the ten before it (QA BUG-08)', () => {
+  const on = (iso: string) => new Date(`${iso}T12:00:00`);
+
+  it('lists 2026 down to 2016 in November 2026, newest first', () => {
+    expect(SELECTABLE_REPORTING_YEARS_BACK).toBe(10);
+    expect(selectableReportingYears(on('2026-11-06'))).toEqual(
+      [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016]);
+  });
+
+  it('moves with the calendar: no year is added by hand', () => {
+    const next = selectableReportingYears(on('2027-01-01'));
+    expect(next[0]).toBe(2027);
+    expect(next.at(-1)).toBe(2017);
+    expect(next).toHaveLength(11);
+  });
+
+  it('keeps a selected year outside the window in its place, so the picker never shows blank', () => {
+    expect(selectableReportingYears(on('2026-11-06'), 2040)[0]).toBe(2040);
+    expect(selectableReportingYears(on('2026-11-06'), 2005).at(-1)).toBe(2005);
+    expect(selectableReportingYears(on('2026-11-06'), 2020)).toHaveLength(11);
+  });
+
+  it('never offers a year the API refuses', () => {
+    expect(selectableReportingYears(on('2026-11-06'), 1999)).not.toContain(1999);
+    const late = selectableReportingYears(on('2105-06-01'));
+    expect(late[0]).toBe(REPORTING_YEAR_MAX);
+    expect(late.every(isReportingYear)).toBe(true);
+  });
+});
 
 describe('LP3-02 supported reporting years', () => {
   it('keeps the existing inclusive API range, including backfill and 2027', () => {

@@ -8,10 +8,14 @@
 intensity, report metadata and PDF/Excel/CSV routes are implemented, and N1
 wired the dashboard, emissions (absolute and intensity) and reports screens to
 them through one URL-carried context (below).** Existing routes and clients
-retain their response shapes. The expanded `REPORTING_YEARS` list already affects
-existing year selectors: the accepted range is **2000–2100 inclusive**, matching
-the API's existing DTO bounds. `DEFAULT_REPORTING_YEAR` stays **2026** (D06),
-independently of list order and calendar rollover. Selecting 2027 does not promise
+retain their response shapes. The accepted range (`REPORTING_YEARS`,
+`isReportingYear`) is **2000–2100 inclusive**, matching the API's existing DTO
+bounds. The year pickers on Data Entry, the context bar and period locks offer a
+narrower window, `selectableReportingYears()`: the current calendar year and the
+ten before it, newest first (owner decision 2026-11-06, QA BUG-08), plus a year
+already selected outside it (an opened record, a shared link). A URL or API call
+may still name any accepted year. `DEFAULT_REPORTING_YEAR` stays **2026** (D06),
+independently of list order and calendar rollover. Selecting a year does not promise
 factor coverage: D07 still refuses a calculation without its activity-year factor;
 there is no "latest overall" fallback or recalculation of historical snapshots.
 

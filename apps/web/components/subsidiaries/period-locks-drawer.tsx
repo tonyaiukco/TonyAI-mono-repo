@@ -22,7 +22,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { LoadMoreButton } from '@/components/ui/load-more-button';
-import { DEFAULT_REPORTING_YEAR, PERIOD_VALUES, REPORTING_YEARS } from '@/lib/types';
+import { DEFAULT_REPORTING_YEAR, PERIOD_VALUES, selectableReportingYears } from '@/lib/types';
 import type { PeriodLockDTO, ReportingPeriod, SubsidiaryDTO } from '@/lib/types';
 import { useTranslations } from 'use-intl';
 import { useErrorToast, useRecordWords } from '@/lib/i18n/hooks';
@@ -214,7 +214,7 @@ export function PeriodLocksDrawer({
                       <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {REPORTING_YEARS.map((y) => (
+                          {selectableReportingYears(new Date(), year).map((y) => (
                             <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                           ))}
                         </SelectContent>

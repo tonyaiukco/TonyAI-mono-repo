@@ -97,7 +97,7 @@ import {
   mayAuthorRecords,
   offeredActivityTypes,
   PERIOD_VALUES,
-  REPORTING_YEARS,
+  selectableReportingYears,
   unitSymbol,
   unitsForCategory,
   unitsForRecord,
@@ -1295,7 +1295,7 @@ function DataEntryPageInner() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {REPORTING_YEARS.map((y) => (
+                        {selectableReportingYears(new Date(), reportingYear).map((y) => (
                           <SelectItem key={y} value={String(y)}>
                             {y}
                           </SelectItem>
