@@ -236,7 +236,7 @@ function DataEntryPageInner() {
   // The failed call itself, not its sentence: the sentence is chosen at render,
   // so a language switch re-words a refusal already on screen (independent
   // review P3-3).
-  const [previewError, setPreviewError] = useState<{ error: unknown; year: number } | null>(null);
+  const [previewError, setPreviewError] = useState<unknown>(null);
   const [previewing, setPreviewing] = useState(false);
 
   // Anomaly (VAR §4): server flags a value that deviates >±50% from the
@@ -731,7 +731,7 @@ function DataEntryPageInner() {
       } catch (e) {
         if (!active) return;
         setPreview(null);
-        setPreviewError({ error: e, year: reportingYear });
+        setPreviewError(e);
       } finally {
         if (active) setPreviewing(false);
       }
@@ -1101,20 +1101,12 @@ function DataEntryPageInner() {
 
   // The refusal's code says WHICH gap it is — no factor, a placeholder
   // refused, a conversion not loaded (LP3-03) — and is worded here, in the
-  // current language. Outside the one year the prototype library covers, a 404
-  // also names the year that does work (DE-9 opened the list to 2015–2026), so
-  // a tester picking 2018 sees a boundary of the demo data, not a broken app.
+  // current language. It names no "covered" year: the library's coverage is
+  // the loaded releases', not one prototype year (QA BUG-01).
   const previewErrorShown: ErrorDescription | null = (() => {
     if (!previewError) return null;
-    const { title, description } = describeError(previewError.error);
-    // A server sentence may end without a stop; the hint is a sentence of its own.
-    const hint =
-      previewError.error instanceof ApiError &&
-      previewError.error.status === 404 &&
-      previewError.year !== DEFAULT_REPORTING_YEAR
-        ? `${/[.!?]$/.test(title) ? "" : "."} ${t("previewYearHint", { year: String(DEFAULT_REPORTING_YEAR) })}`
-        : "";
-    return { title: `${title}${hint}`, ...(description ? { description } : {}) };
+    const { title, description } = describeError(previewError);
+    return { title, ...(description ? { description } : {}) };
   })();
 
   // --- Render ---------------------------------------------------------------
