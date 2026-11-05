@@ -224,13 +224,18 @@ describe('calculation inputs and Scope 2\'s method in the issued tables and PDF 
           { name: 'billedGcvKcalPerSm3', value: 9349.174, origin: 'user' },
           { name: 'ncvKcalPerSm3', value: 8078.6702, origin: 'derived' },
         ],
-        refrigerantTerms: [{ equipmentType: 'split_air_conditioner', leakRateChoice: 'alternative', capacityKg: 10, leakRate: 0.1, leakedKg: 1, refillKg: 0.5 }],
+        refrigerantTerms: [
+          { equipmentType: 'split_air_conditioner', leakRateChoice: 'alternative', capacityKg: 10, leakRate: 0.1, leakedKg: 1, refillKg: 0.5 },
+          // A refill below a gram, as an SF6 breaker takes: printed as entered, never 0.
+          { equipmentType: 'transformer_breaker', leakRateChoice: 'default', capacityKg: 0, leakRate: 0.0001, leakedKg: 0, refillKg: 0.00049 },
+        ],
       } as never,
     } : r)),
   });
   const first = fullYear()[0].id;
   const EN = 'billed GCV 9,349.174 kcal/Sm³; NCV 8,078.67 kcal/Sm³ (derived from the billed GCV); '
-    + 'split air conditioner: 10 kg × 10% + 0.5 kg refilled = 1.5 kg released';
+    + 'split air conditioner: 10 kg × 10% + 0.5 kg refilled = 1.5 kg released; '
+    + 'transformer or circuit breaker: 0 kg × 0.01% + 0.00049 kg refilled = 0.00049 kg released';
 
   it('prints the inputs in English in the CSV, and the market-based statement on Scope 2 rows only', () => {
     for (const language of ['en', 'tr'] as const) {
@@ -256,6 +261,7 @@ describe('calculation inputs and Scope 2\'s method in the issued tables and PDF 
     const row = ledger.find((r) => r[0] === first)!;
     expect(String(row.at(-1))).toContain('AID 8.078,67 kcal/Sm³');
     expect(String(row.at(-1))).toContain('split / ofis klima: 10 kg × %10');
+    expect(String(row.at(-1))).toContain('transformatör kesici: 0 kg × %0,01 + 0,00049 kg dolum = 0,00049 kg salım');
   });
 
   it('prints the inputs under the quantity in the PDF, escaped once', () => {

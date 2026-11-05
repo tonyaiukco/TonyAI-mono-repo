@@ -47,6 +47,37 @@ describe('a record\'s calculation inputs in a report (LP4-02 PR5, task 5.3)', ()
     );
   });
 
+  // Codex's review of #282: three fixed decimals printed a real refill of
+  // 0.00049 kg (SF6, 25,200) as 0 beside the mass it produced.
+  it.each([
+    ['en', 'transformer or circuit breaker: 0 kg × 0.01% + 0.00049 kg refilled = 0.00049 kg released; '
+      + 'chiller: 0.0004 kg × 2% + 0 kg refilled = 0.000008 kg released; volume correction ×0.0000004'],
+    ['tr', 'transformatör kesici: 0 kg × %0,01 + 0,00049 kg dolum = 0,00049 kg salım; '
+      + 'chiller (soğutma grubu): 0,0004 kg × %2 + 0 kg dolum = 0,000008 kg salım; hacim düzeltme ×0,0000004'],
+  ] as const)('%s keeps a small input as entered, so the line adds up', (locale, expected) => {
+    const text = calculationInputs(v3({
+      parameters: [{ name: 'volumeCorrectionFactor', value: 0.0000004, origin: 'user' }],
+      refrigerantTerms: [
+        { equipmentType: 'transformer_breaker', leakRateChoice: 'default', capacityKg: 0, leakRate: 0.0001, leakedKg: 0, refillKg: 0.00049 },
+        { equipmentType: 'chiller', leakRateChoice: 'default', capacityKg: 0.0004, leakRate: 0.02, leakedKg: 0.000008, refillKg: 0 },
+      ],
+    }), words(locale));
+    expect(text.split('; ').sort()).toEqual(expected.split('; ').sort());
+  });
+
+  it('shows an input as entered, dropping only float noise, and a derived NCV to six digits', () => {
+    const text = calculationInputs(v3({
+      parameters: [
+        { name: 'billedGcvKcalPerSm3', value: 9349.17412345, origin: 'user' },
+        { name: 'ncvKcalPerSm3', value: 8078.670167, origin: 'derived' },
+      ],
+      refrigerantTerms: [{ equipmentType: 'chiller', leakRateChoice: 'alternative', capacityKg: 12.345678, leakRate: 0.07, leakedKg: 12.345678 * 0.07, refillKg: 0 }],
+    }), words('en'));
+    expect(text).toContain('billed GCV 9,349.17412345 kcal/Sm³');
+    expect(text).toContain('NCV 8,078.67 kcal/Sm³');
+    expect(text).toContain('12.345678 kg × 7% + 0 kg refilled = 0.864197 kg released');
+  });
+
   it('reads the same in the issued reports\' catalogue', () => {
     expect(calculationInputs(billed, words('tr', ISSUANCE_CATALOGUES.tr))).toBe(calculationInputs(billed, words('tr')));
   });

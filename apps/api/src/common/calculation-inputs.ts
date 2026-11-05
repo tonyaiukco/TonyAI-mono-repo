@@ -36,25 +36,32 @@ export function calculationInputs(calculation: unknown, words: CalculationInputs
   const snapshot = calculation as ActivityCalculationSnapshot;
   if (!isProvenanceSnapshot(snapshot) || snapshot.snapshotSchema !== 3) return '';
   const tag = words.locale === 'tr' ? 'tr-TR' : 'en-GB';
-  const format = (n: number, digits: number) => new Intl.NumberFormat(tag, { maximumFractionDigits: digits }).format(n);
+  // Significant digits, never a fixed number of decimals: a refill of
+  // 0.00049 kg is a real input (SF6 at 25,200), and three decimals printed it
+  // as 0 beside the mass it produced (Codex's review of #282). An input shows
+  // as entered, its 16th digit (float noise) dropped; a derived value to six.
+  const format = (n: number, digits: number) => new Intl.NumberFormat(tag, { maximumSignificantDigits: digits }).format(n);
+  const entered = (n: number) => format(n, 15);
+  const derived = (n: number) => format(n, 6);
   const parts: string[] = [];
   for (const input of snapshot.parameters) {
     if (input.name === 'ncvKcalPerSm3') {
-      parts.push(words.text('inputsNcv', { value: format(input.value, 2), origin: words.text(ORIGIN_KEY[input.origin]) }));
+      const value = input.origin === 'derived' ? derived(input.value) : entered(input.value);
+      parts.push(words.text('inputsNcv', { value, origin: words.text(ORIGIN_KEY[input.origin]) }));
     } else if (input.name === 'billedGcvKcalPerSm3') {
-      parts.push(words.text('inputsBilledGcv', { value: format(input.value, 3) }));
+      parts.push(words.text('inputsBilledGcv', { value: entered(input.value) }));
     } else if (input.name === 'volumeCorrectionFactor') {
-      parts.push(words.text('inputsVolume', { value: format(input.value, 6) }));
+      parts.push(words.text('inputsVolume', { value: entered(input.value) }));
     }
   }
   for (const term of snapshot.refrigerantTerms ?? []) {
     parts.push(words.text('inputsLine', {
       equipment: words.text(`inputsEquipment_${term.equipmentType as EquipmentType}`),
-      capacity: format(term.capacityKg, 3),
+      capacity: entered(term.capacityKg),
       // `%1` in Turkish, `1%` in English.
-      rate: words.locale === 'tr' ? `%${format(term.leakRate * 100, 4)}` : `${format(term.leakRate * 100, 4)}%`,
-      refill: format(term.refillKg, 3),
-      mass: format(term.leakedKg + term.refillKg, 6),
+      rate: words.locale === 'tr' ? `%${entered(term.leakRate * 100)}` : `${entered(term.leakRate * 100)}%`,
+      refill: entered(term.refillKg),
+      mass: derived(term.leakedKg + term.refillKg),
     }));
   }
   return parts.join('; ');
