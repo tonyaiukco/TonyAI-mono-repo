@@ -1,6 +1,6 @@
 # TonyAI: API reporting context
 
-> Moved from [`README.md`](../../README.md) on 2026-11-05 (OpenSpec change `refactor-readme`); the text is unchanged.
+> Moved from [`README.md`](../../README.md) on 2026-11-05 (OpenSpec change `refactor-readme`); the text is unchanged except where a later change says so (the year pickers, 2026-11-06).
 
 ## Reporting context contract (LP3-02)
 
@@ -11,8 +11,8 @@ them through one URL-carried context (below).** Existing routes and clients
 retain their response shapes. The accepted range (`REPORTING_YEARS`,
 `isReportingYear`) is **2000–2100 inclusive**, matching the API's existing DTO
 bounds. The year pickers on Data Entry, the context bar and period locks offer a
-narrower window, `selectableReportingYears()`: the current calendar year and the
-ten before it, newest first (owner decision 2026-11-06, QA BUG-08), plus a year
+narrower window, `selectableReportingYears()`: the current calendar year (the
+browser's local time) and the ten before it, newest first (owner decision 2026-11-06, QA BUG-08), plus a year
 already selected outside it (an opened record, a shared link). A URL or API call
 may still name any accepted year. `DEFAULT_REPORTING_YEAR` stays **2026** (D06),
 independently of list order and calendar rollover. Selecting a year does not promise

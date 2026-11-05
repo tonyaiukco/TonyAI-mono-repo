@@ -13,26 +13,26 @@ describe('selectableReportingYears — the pickers show the current year and the
 
   it('lists 2026 down to 2016 in November 2026, newest first', () => {
     expect(SELECTABLE_REPORTING_YEARS_BACK).toBe(10);
-    expect(selectableReportingYears(on('2026-11-06'))).toEqual(
+    expect(selectableReportingYears(undefined, on('2026-11-06'))).toEqual(
       [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016]);
   });
 
   it('moves with the calendar: no year is added by hand', () => {
-    const next = selectableReportingYears(on('2027-01-01'));
+    const next = selectableReportingYears(undefined, on('2027-01-01'));
     expect(next[0]).toBe(2027);
     expect(next.at(-1)).toBe(2017);
     expect(next).toHaveLength(11);
   });
 
   it('keeps a selected year outside the window in its place, so the picker never shows blank', () => {
-    expect(selectableReportingYears(on('2026-11-06'), 2040)[0]).toBe(2040);
-    expect(selectableReportingYears(on('2026-11-06'), 2005).at(-1)).toBe(2005);
-    expect(selectableReportingYears(on('2026-11-06'), 2020)).toHaveLength(11);
+    expect(selectableReportingYears(2040, on('2026-11-06'))[0]).toBe(2040);
+    expect(selectableReportingYears(2005, on('2026-11-06')).at(-1)).toBe(2005);
+    expect(selectableReportingYears(2020, on('2026-11-06'))).toHaveLength(11);
   });
 
   it('never offers a year the API refuses', () => {
-    expect(selectableReportingYears(on('2026-11-06'), 1999)).not.toContain(1999);
-    const late = selectableReportingYears(on('2105-06-01'));
+    expect(selectableReportingYears(1999, on('2026-11-06'))).not.toContain(1999);
+    const late = selectableReportingYears(undefined, on('2105-06-01'));
     expect(late[0]).toBe(REPORTING_YEAR_MAX);
     expect(late.every(isReportingYear)).toBe(true);
   });

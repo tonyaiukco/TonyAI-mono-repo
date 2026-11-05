@@ -214,7 +214,7 @@ export function PeriodLocksDrawer({
                       <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {selectableReportingYears(new Date(), year).map((y) => (
+                          {selectableReportingYears(year).map((y) => (
                             <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                           ))}
                         </SelectContent>

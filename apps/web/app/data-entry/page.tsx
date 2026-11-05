@@ -1295,7 +1295,7 @@ function DataEntryPageInner() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {selectableReportingYears(new Date(), reportingYear).map((y) => (
+                        {selectableReportingYears(reportingYear).map((y) => (
                           <SelectItem key={y} value={String(y)}>
                             {y}
                           </SelectItem>

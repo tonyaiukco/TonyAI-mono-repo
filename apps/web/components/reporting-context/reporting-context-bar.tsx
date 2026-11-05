@@ -72,7 +72,7 @@ export function ReportingContextBar({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {selectableReportingYears(new Date(), context.year).map((y) => (
+              {selectableReportingYears(context.year).map((y) => (
                 <SelectItem key={y} value={String(y)}>{y}</SelectItem>
               ))}
             </SelectContent>

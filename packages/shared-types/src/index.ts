@@ -570,14 +570,15 @@ export const SELECTABLE_REPORTING_YEARS_BACK = 10;
 
 /**
  * The years a screen's year picker offers, newest first: the current calendar
- * year and the ten before it (owner decision 2026-11-06, QA BUG-08 — the list
+ * year in the browser's local time (not UTC: the server has no current-year
+ * rule, and the user's own New Year is what they expect) and the ten before it (owner decision 2026-11-06, QA BUG-08 — the list
  * ran to 2100). The window moves with the calendar, so no year needs adding by
  * hand. A `selected` year outside it (an opened record, a shared link) is kept
  * in its place so the picker never shows blank. Narrower than the API on
  * purpose: `isReportingYear` still accepts 2000–2100, and a year without a
  * factor is still refused by the calculation (D07), not by this list.
  */
-export function selectableReportingYears(today: Date = new Date(), selected?: number): readonly ReportingYear[] {
+export function selectableReportingYears(selected?: number, today: Date = new Date()): readonly ReportingYear[] {
   const newest = Math.min(today.getFullYear(), REPORTING_YEAR_MAX);
   const oldest = Math.max(newest - SELECTABLE_REPORTING_YEARS_BACK, REPORTING_YEAR_MIN);
   const years = Array.from({ length: newest - oldest + 1 }, (_, index) => newest - index);
