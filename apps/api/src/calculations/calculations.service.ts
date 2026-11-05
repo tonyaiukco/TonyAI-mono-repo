@@ -403,7 +403,14 @@ export class CalculationsService {
         { ...conversion, multiplier: chain.multiplier },
       );
       // The whole multiplier from input to normalised unit (`conversionFactor`).
-      priced = { ...steps, conversionFactor: chain.multiplier * (volumeCorrection ?? 1) };
+      const wholeMultiplier = chain.multiplier * (volumeCorrection ?? 1);
+      // Each input is in bounds, but a product of them can leave a double: as
+      // Infinity it is stored as JSON null and the record reads as stale forever,
+      // and as 0 it prices a positive reading at nothing.
+      if (!Number.isFinite(wholeMultiplier) || wholeMultiplier <= 0 || chain.inputs.some((i) => !Number.isFinite(i.value))) {
+        throw new CalculationInputError('record_parameters_invalid', 'These calculation inputs are too extreme to calculate with.');
+      }
+      priced = { ...steps, conversionFactor: wholeMultiplier };
     } else if (trRule === 'refrigerant') {
       if (parameters === null) {
         throw new CalculationInputError('parameters_required', 'A refrigerant record in Türkiye lists its equipment: type, capacity and refill.');

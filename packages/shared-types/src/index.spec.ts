@@ -797,4 +797,3 @@ describe('isProvenanceSnapshot (LP4-02, D11)', () => {
     expect(isProvenanceSnapshot(figure as never)).toBe(false);
   });
 });
-

@@ -1453,6 +1453,20 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       expect(prisma.factorParameter.findMany.mock.calls[0][0].where.releaseId).toBe(release.id);
     });
 
+    it.each([
+      ['a product past a double', 1e-300, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
+      ['the same with a zero reading', 0, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
+      ['a billed GCV driving it past a double', 1e-300, { billedGcvKcalPerSm3: 1e-300, volumeCorrectionFactor: 1e300 }],
+      ['a product below a double', 1, { ncvKcalPerSm3: 1e-300, volumeCorrectionFactor: 1e-300 }],
+    ])('refuses %s with a code, rather than storing a number JSON cannot hold', async (_what, value, parameters) => {
+      expect(await code({ ...gas, unit: 'cubic_metres', value, parameters })).toBe('record_parameters_invalid');
+    });
+
+    it('keeps every number of a stored snapshot through JSON', async () => {
+      const result = await engine.compute({ ...gas, unit: 'cubic_metres', value: 100, parameters: { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 } });
+      expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+    });
+
     it('refuses a gross Sm³ row: the chain\'s NCV is net', async () => {
       prisma.library.conversions = [makeConversion({ release, reportingYear: 2025, dataYear: 2025, fromUnit: 'standard_cubic_metres', multiplier: 10, calorificBasis: 'net' })];
       prisma.library.conversions[0] = { ...prisma.library.conversions[0], calorificBasis: 'gross' };

@@ -671,6 +671,7 @@ function DataEntryPageInner() {
     category,
     activityType,
     reportingYear,
+    reportingPeriod,
     numericValue,
     activityUnit,
     subsidiaryId,

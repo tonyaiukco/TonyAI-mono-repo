@@ -354,4 +354,3 @@ describe('compareSnapshots across snapshot versions (LP4-02, D11)', () => {
     expect(compareSnapshots({ ...base, snapshotSchema: 3, parameters: [], parameterRows: [], refrigerantTerms: null }, v3)).toMatchObject({ stale: false });
   });
 });
-
