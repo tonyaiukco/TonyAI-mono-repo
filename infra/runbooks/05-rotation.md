@@ -408,6 +408,19 @@ node infra/scripts/loader-identity.mjs
 node infra/scripts/loader-command.mjs load --file="$RELEASE_FILE" --operator='Factor operations' > "$EVIDENCE_DIR/dry-run.json"
 ```
 
+**On macOS, run the Node steps in a Linux container.** Prisma's darwin engine
+verifies TLS through Security.framework, which refuses the Supabase pooler
+certificate (5-year leaf, no serverAuth EKU) with "The certificate was not
+trusted", before any password is sent; OpenSSL accepts the same chain against
+`prod-ca-2021.crt`. Run `loader-identity.mjs`, `loader-command.mjs` and
+`runtime-role.mjs check` in `node:22.23.3-bookworm` (pinned by digest; the slim
+image lacks libssl3) with the built checkout bind-mounted read-only at the
+**same path** (the URL's `sslcert` must equal the checker's CA path), the release
+directory read-only, and the secret passed by variable name (`-e NAME`), never in
+argv. An owner URL from `direct-url` names `/app/infra/certs/prod-ca-2021.crt`:
+mount the CA there. psql from Homebrew `libpq` (OpenSSL) works natively. First
+used for hosted QA on 2026-11-06 (L10 task 8.0).
+
 Require identity output
 `PASS: current_user=tonyai_factor_loader; session_user=tonyai_factor_loader`
 and a successful dry-run exit with `would_load` (or a reviewed `already_loaded`).
@@ -466,7 +479,12 @@ sessions; repeat the session check from a fresh owner transaction. NOLOGIN and
 restrict termination to the current database. A pooled backend can outlive its
 client. Require an explicit refusal of a fresh loader connection at the chosen
 endpoint (private `psql -X -W` with strict libpq TLS as above); a network/TLS error
-is not revocation proof. If cached authentication still works or termination is
+is not revocation proof. Through the Supabase session pooler the refusal arrives as
+`FATAL: (EAUTHQUERY) user not found in the database`, not Postgres's "not permitted
+to log in": Supavisor resolves users through `pgbouncer.get_auth`, which reads
+`pg_authid … WHERE rolcanlogin`, so an existing NOLOGIN role is "not found" and
+the connection never reaches Postgres. That refusal, with `rolcanlogin = false`
+read as the owner, is the proof. If cached authentication still works or termination is
 refused, stop and resolve with the platform owner before declaring closure.
 Record only sanitized outcomes, identities, counts and secret version references.
 
