@@ -289,7 +289,10 @@ describe('the factor loader (LP4-02 PR B1)', () => {
       const won = results.filter((r) => r.status === 'fulfilled');
       expect(won, `round ${round}`).toHaveLength(1);
       const lost = results.find((r) => r.status === 'rejected');
-      expect((lost as PromiseRejectedResult).reason, `round ${round}`).toBeInstanceOf(LoaderRefusal);
+      // Whichever insert reached the publisher's lock first decides the refusal:
+      // the overlap check, or the database's ordinal rule when the higher ordinal won.
+      const reason = (lost as PromiseRejectedResult).reason as Error;
+      if (!(reason instanceof LoaderRefusal)) expect(String(reason.message), `round ${round}`).toContain('TA011');
       // The next round's slot must be free again.
       await loader.withdraw({
         publisher: FIXTURE,
