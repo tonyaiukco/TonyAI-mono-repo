@@ -7,7 +7,8 @@
     "intensityLocked": "Configure an intensity denominator to enable this"
   },
   "export": "Export",
-  "banner": "Figures are computed from committed activity records with the emission factors of the releases loaded into the factor library, which need not all be authoritative. A report states <strong>whether its figures rest on authoritative releases</strong>. Scope 3 is not covered by this inventory.",
+  "banner": "Figures are computed from committed activity records with the emission factors of the releases loaded into the factor library, which <strong>need not all be authoritative</strong>; any figure that is not is flagged on this page. Scope 3 is not covered by this inventory.",
+  "nonAuthoritative": "Figures shown here that rest on placeholder (demo) or other non-authoritative factors: <strong>{count} of {of}</strong>. They are not authoritative values.",
   "errors": {
     "sessionExpired": "Your session has expired — please sign in again.",
     "forbidden": "You do not have access to this data.",

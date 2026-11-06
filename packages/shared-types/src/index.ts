@@ -4806,6 +4806,15 @@ export interface EmissionsSummary {
    * 0 tCO₂e" row asserts a measurement nobody made.
    */
   uncalculatedRecordCount: number;
+  /**
+   * Of `calculatedRecordCount`, the ones whose figure does NOT rest on
+   * authoritative releases end to end (`isAuthoritativeSnapshot`: a
+   * placeholder, fixture or pre-release factor, or such a conversion), as
+   * calculated. They stay in every total; a screen showing those totals labels
+   * them by this count, never by a fixed sentence (QA L10). A release withdrawn
+   * after the calculation is not counted here; the report states that standing.
+   */
+  nonAuthoritativeRecordCount: number;
   /** Statuses included in the aggregation — drafts, rejected and voided
    *  records are all excluded. */
   statusesIncluded: ActivityRecordStatus[];

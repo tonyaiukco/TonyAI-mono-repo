@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
-import { emissionsError, trendLabel } from './emissions-view';
+import { emissionsError, nonAuthoritativeFigures, trendLabel } from './emissions-view';
 import { copyFor, describeFor, recordWordsFor } from '@/lib/i18n/testing';
 import type { Locale } from '@/lib/types';
 
@@ -44,5 +44,22 @@ describe('trendLabel', () => {
     expect(label('Smarch 2024', 'tr')).toBe('Smarch 2024');
     expect(label('2024-Q5', 'tr')).toBe('2024-Q5');
     expect(label('constructor 2024', 'tr')).toBe('constructor 2024');
+  });
+});
+
+describe('nonAuthoritativeFigures (QA L10)', () => {
+  it('labels the figures that do not rest on authoritative releases, out of the calculated ones', () => {
+    expect(nonAuthoritativeFigures({ calculatedRecordCount: 7, nonAuthoritativeRecordCount: 3 })).toEqual({ count: 3, of: 7 });
+  });
+  it('says nothing when every figure is authoritative, when there is no summary, or when an older server omits the count', () => {
+    expect(nonAuthoritativeFigures({ calculatedRecordCount: 7, nonAuthoritativeRecordCount: 0 })).toBeNull();
+    expect(nonAuthoritativeFigures(null)).toBeNull();
+    expect(nonAuthoritativeFigures({ calculatedRecordCount: 7 } as never)).toBeNull();
+  });
+  it.each(['en', 'tr'] as const)('%s: the warning renders its count and total, formatted by the screen', (locale) => {
+    const { t } = copyFor('emissions', locale);
+    const markup = (t as unknown as { markup: (k: string, v: Record<string, unknown>) => string }).markup;
+    const text = markup('nonAuthoritative', { count: '3', of: locale === 'en' ? '1,200' : '1.200', strong: (c: string) => c });
+    expect(text).toContain(locale === 'en' ? '3 of 1,200' : '3 / 1.200');
   });
 });

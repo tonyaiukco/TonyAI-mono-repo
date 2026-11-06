@@ -2,7 +2,8 @@
   "title": "Reports",
   "subtitle": "Audit-ready reports generated from committed activity records",
   "subtitleUser": "Audit-ready reports generated from committed activity records · {name} ({role})",
-  "provenance": "Reports are computed from committed activity records with the emission factors of the releases loaded into the factor library, which need not all be authoritative. Every report states <strong>whether its figures rest on authoritative releases</strong>; with methodology notes its PDF also lists the factor releases and their standing. Scope 3 is not covered by this inventory.",
+  "provenance": "Reports are computed from committed activity records with the emission factors of the releases loaded into the factor library, which <strong>need not all be authoritative</strong>; any figure that is not is flagged on this page. With methodology notes, a report's PDF lists the factor releases and their standing. Scope 3 is not covered by this inventory.",
+  "nonAuthoritative": "Figures shown here that rest on placeholder (demo) or other non-authoritative factors: <strong>{count} of {of}</strong>. They are not authoritative values.",
   "tabs": {
     "live": "Live preview",
     "issued": "Issued reports"

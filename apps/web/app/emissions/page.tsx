@@ -69,7 +69,7 @@ import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, LOCALE_FORMAT_TAGS, enti
 import type { Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
-import { emissionsError, trendLabel } from '@/lib/emissions-view';
+import { emissionsError, nonAuthoritativeFigures, trendLabel } from '@/lib/emissions-view';
 import {
   VOID_REASON_MAX_LENGTH,
   canOfferVoid,
@@ -699,6 +699,17 @@ function EmissionsAnalysisPageInner() {
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{t.rich('banner', { strong: (chunks) => <strong>{chunks}</strong> })}</span>
           </div>
+
+          {(() => {
+            // Placeholder figures are labelled by the data, never by a fixed sentence (QA L10).
+            const na = nonAuthoritativeFigures(summary);
+            return na ? (
+              <div role="alert" data-testid="non-authoritative-warning" className="flex items-start gap-2 rounded-lg border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#991B1B]">
+                <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{t.rich('nonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale), strong: (chunks) => <strong>{chunks}</strong> })}</span>
+              </div>
+            ) : null;
+          })()}
 
           {/* The one reporting selection (LP3-02 N1): year, subsidiary, scope, category. */}
           {contextView.status === 'ready' && (

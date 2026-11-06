@@ -151,6 +151,13 @@ excluded from `emissionsTotal` because they have no usable figure. The summary's
 count for all selected subsidiaries cannot substitute for this numerator-specific
 disclosure. Metric/unit pairs must be unique, with disjoint contributor sets
 across units of the same metric (one denominator per subsidiary/year/metric).
+The summary (`EmissionsSummary`, and the report meta's `summary`, which is the same
+fold) also returns `nonAuthoritativeRecordCount` (QA L10): of `calculatedRecordCount`,
+the records whose figure does not rest on authoritative releases end to end
+(`isAuthoritativeSnapshot`: a placeholder, fixture or pre-release factor or
+conversion), as calculated. They stay in every total. Reports and Emissions show an
+explicit placeholder warning whenever it is above zero; a release withdrawn after
+the calculation is not counted here, and the report states that standing.
 The summary, matrix and intensity context routes require a valid year and refuse
 unknown fields, repeated parameters and conflicting scope/category filters with
 `validation_failed`. Legacy and context reads share their aggregation methods.

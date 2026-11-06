@@ -7,7 +7,8 @@
     "intensityLocked": "Bunu etkinleştirmek için bir yoğunluk paydası tanımlayın"
   },
   "export": "Dışa aktar",
-  "banner": "Rakamlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş yayımların emisyon faktörleriyle hesaplanır; bu yayımların hepsi yetkili olmayabilir. Rapor, <strong>rakamların yetkili yayımlara dayanıp dayanmadığını</strong> belirtir. Kapsam 3 bu envanterin kapsamında değildir.",
+  "banner": "Rakamlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş yayımların emisyon faktörleriyle hesaplanır; bu yayımların <strong>hepsi yetkili olmayabilir</strong> ve yetkili olmayan rakamlar bu sayfada belirtilir. Kapsam 3 bu envanterin kapsamında değildir.",
+  "nonAuthoritative": "Burada gösterilen ve yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: <strong>{count} / {of}</strong>. Bunlar yetkili değerler değildir.",
   "errors": {
     "sessionExpired": "Oturumunuzun süresi doldu — lütfen yeniden giriş yapın.",
     "forbidden": "Bu verilere erişiminiz yok.",

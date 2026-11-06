@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import type { ErrorDescription } from "@/lib/i18n/errors";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
-import { PERIOD_VALUES } from "@/lib/types";
+import { PERIOD_VALUES, type EmissionsSummary } from "@/lib/types";
 import type { RecordWords } from "@/lib/vocabulary";
 
 /**
@@ -50,4 +50,17 @@ export function trendLabel(period: string, { t }: ViewCopy<TrendLabelKey>, words
   const month = /^(\S+) (\d{4})$/.exec(period);
   if (month && MONTHS.includes(month[1])) return t("trend.month", { month: words.period(month[1]), year: month[2] });
   return period;
+}
+
+/**
+ * The figures a summary shows that do not rest on authoritative releases
+ * (placeholder, fixture or pre-release factors), for the screen to label them
+ * explicitly: null when there are none, or when an older server does not say.
+ * The banner above them states no standing of its own (QA L10).
+ */
+export function nonAuthoritativeFigures(
+  summary: Pick<EmissionsSummary, "calculatedRecordCount" | "nonAuthoritativeRecordCount"> | null | undefined,
+): { count: number; of: number } | null {
+  const count = summary?.nonAuthoritativeRecordCount ?? 0;
+  return summary && count > 0 ? { count, of: summary.calculatedRecordCount } : null;
 }

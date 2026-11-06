@@ -10,6 +10,7 @@ import {
   COUNTED_STATUSES as SHARED_COUNTED_STATUSES,
   MONTH_NAMES,
   isAnomalyEvaluated,
+  isAuthoritativeSnapshot,
   isCalculated,
   INVOICE_TRACKED_CATEGORIES,
   isEvidenceRequired,
@@ -332,6 +333,7 @@ export function emptySummary(): EmissionsSummary {
     recordCount: 0,
     calculatedRecordCount: 0,
     uncalculatedRecordCount: 0,
+    nonAuthoritativeRecordCount: 0,
     statusesIncluded: COUNTED_STATUSES,
   };
 }
@@ -380,6 +382,7 @@ export function summariseCounted(rows: readonly SummaryRecord[], nameById: Reado
   };
 
   let uncalculatedRecordCount = 0;
+  let nonAuthoritativeRecordCount = 0;
 
   for (const r of rows) {
     const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
@@ -393,6 +396,8 @@ export function summariseCounted(rows: readonly SummaryRecord[], nameById: Reado
       uncalculatedRecordCount += 1;
       continue;
     }
+    // Counted like any figure, and declared: a placeholder's tonnes must be labelled where they are shown.
+    if (!isAuthoritativeSnapshot(calc)) nonAuthoritativeRecordCount += 1;
     const tCo2e = calc.tCo2e;
     const scope = r.scope;
 
@@ -494,6 +499,7 @@ export function summariseCounted(rows: readonly SummaryRecord[], nameById: Reado
     recordCount: rows.length,
     calculatedRecordCount: rows.length - uncalculatedRecordCount,
     uncalculatedRecordCount,
+    nonAuthoritativeRecordCount,
     statusesIncluded: COUNTED_STATUSES,
   };
 }
