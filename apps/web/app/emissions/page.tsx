@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
@@ -70,6 +70,7 @@ import type { Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
 import { emissionsError, nonAuthoritativeFigures, trendLabel } from '@/lib/emissions-view';
+import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import {
   VOID_REASON_MAX_LENGTH,
   canOfferVoid,
@@ -694,20 +695,24 @@ function EmissionsAnalysisPageInner() {
             </div>
           </div>
 
-          {/* Provenance banner: the loaded releases price every figure; a report states each factor's standing (QA L10). */}
+          {/* Provenance banner: no standing of its own; the warning beneath counts the non-authoritative figures (QA L10). */}
           <div className="flex items-start gap-2 rounded-lg border border-[#FEF3C7] bg-[#FFFBEB] px-4 py-3 text-sm text-[#92400E]">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{t.rich('banner', { strong: (chunks) => <strong>{chunks}</strong> })}</span>
           </div>
 
           {(() => {
-            // Placeholder figures are labelled by the data, never by a fixed sentence (QA L10).
+            // The totals' figures (the selection) and the trends' (every year), labelled by the data (QA L10).
             const na = nonAuthoritativeFigures(summary);
-            return na ? (
-              <div role="alert" data-testid="non-authoritative-warning" className="flex items-start gap-2 rounded-lg border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#991B1B]">
-                <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{t.rich('nonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale), strong: (chunks) => <strong>{chunks}</strong> })}</span>
-              </div>
+            const trends = nonAuthoritativeFigures(trendSummary);
+            const n = (v: number) => formatNumber(v, locale);
+            const strong = (chunks: ReactNode) => <strong>{chunks}</strong>;
+            return na || trends ? (
+              <NonAuthoritativeWarning>
+                {na && t.rich('nonAuthoritative', { count: n(na.count), of: n(na.of), strong })}
+                {na && trends && ' '}
+                {trends && t.rich('nonAuthoritativeTrends', { count: n(trends.count), of: n(trends.of), strong })}
+              </NonAuthoritativeWarning>
             ) : null;
           })()}
 

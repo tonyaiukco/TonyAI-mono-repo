@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import type { ErrorDescription } from "@/lib/i18n/errors";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
-import { PERIOD_VALUES, type EmissionsSummary } from "@/lib/types";
+import { PERIOD_VALUES, type EmissionsSummary, type ReportScope3Disclosure } from "@/lib/types";
 import type { RecordWords } from "@/lib/vocabulary";
 
 /**
@@ -53,14 +53,27 @@ export function trendLabel(period: string, { t }: ViewCopy<TrendLabelKey>, words
 }
 
 /**
- * The figures a summary shows that do not rest on authoritative releases
- * (placeholder, fixture or pre-release factors), for the screen to label them
- * explicitly: null when there are none, or when an older server does not say.
- * The banner above them states no standing of its own (QA L10).
+ * The figures a summary shows that are not authoritative now (a placeholder or
+ * fixture factor, a pre-release snapshot, a release withdrawn since), for the
+ * screen to label them explicitly: null when there are none, or when an older
+ * server does not say. The banner above them states no standing of its own (QA L10).
  */
 export function nonAuthoritativeFigures(
   summary: Pick<EmissionsSummary, "calculatedRecordCount" | "nonAuthoritativeRecordCount"> | null | undefined,
 ): { count: number; of: number } | null {
   const count = summary?.nonAuthoritativeRecordCount ?? 0;
   return summary && count > 0 ? { count, of: summary.calculatedRecordCount } : null;
+}
+
+/** The live report preview's figures: its Scope 1/2 summary and the Scope 3 tonnes it discloses beside it. */
+export function liveReportNonAuthoritative(
+  summary: Pick<EmissionsSummary, "calculatedRecordCount" | "nonAuthoritativeRecordCount"> | null | undefined,
+  scope3: Pick<ReportScope3Disclosure, "recordCount" | "uncalculatedRecordCount" | "nonAuthoritativeRecordCount"> | null | undefined,
+): { count: number; of: number } | null {
+  if (!summary) return null;
+  const s3 = scope3 ?? { recordCount: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 };
+  return nonAuthoritativeFigures({
+    calculatedRecordCount: summary.calculatedRecordCount + (s3.recordCount - s3.uncalculatedRecordCount),
+    nonAuthoritativeRecordCount: (summary.nonAuthoritativeRecordCount ?? 0) + (s3.nonAuthoritativeRecordCount ?? 0),
+  });
 }

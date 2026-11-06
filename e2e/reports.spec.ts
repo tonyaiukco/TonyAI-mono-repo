@@ -32,7 +32,7 @@ test('reports: live preview + PDF/Excel/CSV downloads', async ({ page }) => {
     page.getByText(/^(All records approved|Draft — pending review|Contains incomplete data)$/).first(),
   ).toBeVisible();
   await expect(page.getByText('Committed records', { exact: false })).toBeVisible();
-  await expect(page.getByTestId('non-authoritative-warning')).toContainText('placeholder (demo)');
+  await expect(page.getByTestId('non-authoritative-warning')).toContainText(/placeholder \(demo\).*\d+ of \d+/);
 
   // Each export produces a real download with the expected extension + content.
   // Exact server-chosen filenames (proves Content-Disposition survives CORS)

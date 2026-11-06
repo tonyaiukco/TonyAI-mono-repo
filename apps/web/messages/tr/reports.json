@@ -2,8 +2,8 @@
   "title": "Raporlar",
   "subtitle": "Sayılan faaliyet kayıtlarından üretilen denetime hazır raporlar",
   "subtitleUser": "Sayılan faaliyet kayıtlarından üretilen denetime hazır raporlar · {name} ({role})",
-  "provenance": "Raporlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş yayımların emisyon faktörleriyle hesaplanır; bu yayımların <strong>hepsi yetkili olmayabilir</strong> ve yetkili olmayan rakamlar bu sayfada belirtilir. Yöntem notlarıyla bir raporun PDF'i faktör yayımlarını ve durumlarını listeler. Kapsam 3 bu envanterin kapsamında değildir.",
-  "nonAuthoritative": "Burada gösterilen ve yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: <strong>{count} / {of}</strong>. Bunlar yetkili değerler değildir.",
+  "provenance": "Raporlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş yayımların emisyon faktörleriyle hesaplanır; bu yayımların <strong>hepsi yetkili olmayabilir</strong> ve canlı önizlemede yetkili olmayan rakamlar bir uyarıda sayılır. Yöntem notlarıyla bir raporun PDF'i faktör yayımlarını ve durumlarını listeler. Kapsam 3 bu envanterin kapsamında değildir.",
+  "nonAuthoritative": "Bu önizlemede yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: <strong>{count} / {of}</strong>, Kapsam 3 dahil. Bunlar yetkili değerler değildir.",
   "tabs": {
     "live": "Canlı önizleme",
     "issued": "Kesinleştirilmiş raporlar"

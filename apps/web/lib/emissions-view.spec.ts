@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
-import { emissionsError, nonAuthoritativeFigures, trendLabel } from './emissions-view';
+import { emissionsError, liveReportNonAuthoritative, nonAuthoritativeFigures, trendLabel } from './emissions-view';
 import { copyFor, describeFor, recordWordsFor } from '@/lib/i18n/testing';
 import type { Locale } from '@/lib/types';
 
@@ -61,5 +61,18 @@ describe('nonAuthoritativeFigures (QA L10)', () => {
     const markup = (t as unknown as { markup: (k: string, v: Record<string, unknown>) => string }).markup;
     const text = markup('nonAuthoritative', { count: '3', of: locale === 'en' ? '1,200' : '1.200', strong: (c: string) => c });
     expect(text).toContain(locale === 'en' ? '3 of 1,200' : '3 / 1.200');
+  });
+});
+
+describe('liveReportNonAuthoritative (QA L10)', () => {
+  it('adds the Scope 3 tonnes the preview discloses to its Scope 1/2 figures', () => {
+    const summary = { calculatedRecordCount: 10, nonAuthoritativeRecordCount: 0 };
+    // 4 Scope 3 records, 1 with no figure: 3 calculated, 2 of them not authoritative.
+    expect(liveReportNonAuthoritative(summary, { recordCount: 4, uncalculatedRecordCount: 1, nonAuthoritativeRecordCount: 2 })).toEqual({ count: 2, of: 13 });
+    expect(liveReportNonAuthoritative({ calculatedRecordCount: 10, nonAuthoritativeRecordCount: 1 }, null)).toEqual({ count: 1, of: 10 });
+  });
+  it('says nothing when every figure is authoritative, or before the preview has loaded', () => {
+    expect(liveReportNonAuthoritative({ calculatedRecordCount: 10, nonAuthoritativeRecordCount: 0 }, { recordCount: 2, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 })).toBeNull();
+    expect(liveReportNonAuthoritative(null, { recordCount: 2, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 2 })).toBeNull();
   });
 });

@@ -26,6 +26,8 @@ export interface ReportScope3Disclosure {
   /** Sum of those that carry a figure; 0 when none does — read with the counts. */
   calculatedTCo2e: number;
   uncalculatedRecordCount: number;
+  /** Of the calculated ones, those not authoritative now (`EmissionsSummary.nonAuthoritativeRecordCount`'s test, QA L10). */
+  nonAuthoritativeRecordCount: number;
 }
 
 /** A live report's own summary (K2, K4): the Scope 1/2 committed records it

@@ -56,7 +56,8 @@ import { useReportingContext } from '@/lib/use-reporting-context';
 import { reportingContextKey } from '@/lib/reporting-context-url';
 import { ReportingContextBar, ReportingContextInvalid, selectionAvailable } from '@/components/reporting-context/reporting-context-bar';
 import { CATEGORY_SCOPE_MAP, REPORT_TEMPLATES } from '@/lib/types';
-import { nonAuthoritativeFigures } from '@/lib/emissions-view';
+import { liveReportNonAuthoritative } from '@/lib/emissions-view';
+import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import type {
   Category,
   Locale,
@@ -284,17 +285,6 @@ function ReportsPageInner() {
             <span>{t.rich('provenance', { strong: (chunks) => <strong>{chunks}</strong> })}</span>
           </div>
 
-          {(() => {
-            // Placeholder figures are labelled by the data, never by a fixed sentence (QA L10).
-            const na = nonAuthoritativeFigures(summary);
-            return na ? (
-              <div role="alert" data-testid="non-authoritative-warning" className="flex items-start gap-2 rounded-lg border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#991B1B]">
-                <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{t.rich('nonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale), strong: (chunks) => <strong>{chunks}</strong> })}</span>
-              </div>
-            ) : null;
-          })()}
-
           <Tabs value={tab} onValueChange={selectTab}>
             <TabsList>
               <TabsTrigger value="live">{t('tabs.live')}</TabsTrigger>
@@ -308,6 +298,15 @@ function ReportsPageInner() {
               ) : null}
             </TabsContent>
             <TabsContent value="live" className="mt-4 space-y-6">
+          {(() => {
+            // The preview's figures labelled by the data, never by a fixed sentence (QA L10).
+            const na = liveReportNonAuthoritative(summary, meta?.scope3);
+            return na ? (
+              <NonAuthoritativeWarning>
+                {t.rich('nonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale), strong: (chunks) => <strong>{chunks}</strong> })}
+              </NonAuthoritativeWarning>
+            ) : null;
+          })()}
           <div
             className="flex items-start gap-2 rounded-lg border-2 border-dashed border-amber-400 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900"
             data-testid="live-banner"

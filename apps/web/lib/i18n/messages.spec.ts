@@ -332,7 +332,8 @@ describe("the provenance banners (QA L10)", () => {
     }
   });
   it.each(SUPPORTED_LOCALES)("%s: the warning for non-authoritative figures says placeholder (demo) on both screens", (locale) => {
-    for (const warning of [MESSAGES[locale].reports.nonAuthoritative, MESSAGES[locale].emissions.nonAuthoritative]) {
+    const m = MESSAGES[locale];
+    for (const warning of [m.reports.nonAuthoritative, m.emissions.nonAuthoritative, m.emissions.nonAuthoritativeTrends]) {
       expect(warning).toMatch(placeholder[locale]);
     }
   });

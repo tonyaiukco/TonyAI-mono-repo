@@ -30,6 +30,9 @@ function createPrismaMock() {
     location: {
       findMany: vi.fn(),
     },
+    factorRelease: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
 }
 type PrismaMock = ReturnType<typeof createPrismaMock>;
@@ -720,7 +723,7 @@ describe('EmissionsService.summary', () => {
     expect(s.bySubsidiary[0].recordCount).toBe(1);
   });
 
-  it('counts the figures that do not rest on authoritative releases, end to end (QA L10)', async () => {
+  it('counts the figures that are not authoritative now — placeholder, conversion, withdrawn since, pre-release (QA L10)', async () => {
     const user = superAdmin();
     const release = (id: string, status: string) => ({ id, publisher: 'p', title: 't', edition: 'e', ordinal: 1, status, sourceUrl: null, licence: null, publishedAt: null, gwpSet: null });
     const v2 = (tCo2e: number, factorRelease: object, conversion: object | null = null) => ({
@@ -733,20 +736,28 @@ describe('EmissionsService.summary', () => {
       makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: v2(2, release('p', 'placeholder')) }),
       // An authoritative factor reached through a placeholder conversion is only as good as that conversion.
       makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', scope: 1, calculation: v2(4, release('a', 'authoritative'), { id: 'c', release: release('pc', 'placeholder') }) }),
+      // Authoritative when calculated, but its release has been withdrawn since (an erratum): the report's test, now.
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: v2(16, release('w', 'authoritative')) }),
       // A pre-release snapshot carries no release at all.
       makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 8, factorId: 'f-old' } }),
       // No figure: uncalculated, never counted as non-authoritative.
       makeRecord({ subsidiaryId: 'sub-1', category: 'Water', scope: 3, calculation: { category: 'Water', scope: 3, inputValue: 1, inputUnit: 'cubic_metres', reasonCode: 'no_emission_factor', reason: 'r' } }),
     ]);
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' })]);
+    prisma.factorRelease.findMany.mockResolvedValue([{ id: 'w' }]);
 
     const s = await service.summary(user, {});
 
-    expect(s.calculatedRecordCount).toBe(4);
+    // One read of the cited releases' withdrawals, never of the whole library.
+    expect(prisma.factorRelease.findMany).toHaveBeenCalledWith({
+      where: { id: { in: expect.arrayContaining(['a', 'p', 'pc', 'w']) }, status: 'withdrawn' },
+      select: { id: true },
+    });
+    expect(s.calculatedRecordCount).toBe(5);
     expect(s.uncalculatedRecordCount).toBe(1);
-    expect(s.nonAuthoritativeRecordCount).toBe(3);
+    expect(s.nonAuthoritativeRecordCount).toBe(4);
     // Declared, not excluded: every figure stays in the totals.
-    expect(s.totals.total).toBe(15);
+    expect(s.totals.total).toBe(31);
   });
 
   it('buckets monthly records into monthly, quarterly and yearly trends', async () => {
