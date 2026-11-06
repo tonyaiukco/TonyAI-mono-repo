@@ -7,7 +7,7 @@
     "intensityLocked": "Configure an intensity denominator to enable this"
   },
   "export": "Export",
-  "banner": "Figures are computed from committed activity records with the emission factors of the releases loaded into the factor library, which <strong>need not all be authoritative</strong>; a warning counts any figure in this page's totals and trends that is not. Scope 3 is not covered by this inventory.",
+  "banner": "Figures are computed from committed activity records with the emission factors of the releases loaded into the factor library, which <strong>need not all be authoritative</strong>; a warning counts any figure in the selection's totals and in the trends that is not. Scope 3 is not covered by this inventory.",
   "nonAuthoritative": "In this selection's totals, figures that rest on placeholder (demo) or other non-authoritative factors: <strong>{count} of {of}</strong>. They are not authoritative values.",
   "nonAuthoritativeTrends": "In the trends (every year), figures that rest on placeholder (demo) or other non-authoritative factors: <strong>{count} of {of}</strong>.",
   "errors": {
