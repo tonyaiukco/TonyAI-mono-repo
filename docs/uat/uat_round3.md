@@ -75,7 +75,7 @@ you see, but do not judge them.
 | Activity records | **96**, all `approved`, reporting year **2026**; 6 of them filed against a site |
 | Review queue · withdrawn records · period locks · boundary versions · issued reports | all **empty / none** |
 | TonyAI Energy · Electricity cell (dashboard) | **`3/24`** |
-| Banner on `/emissions` and `/reports` | the placeholder-factor wording quoted at the top of this document |
+| Banner on `/emissions` and `/reports` | names the loaded factor releases, says they need not all be authoritative, and points to the report for standing (wording since L10, 2026-11-07) |
 
 If a count is wrong, stop and report it before going further. A stale database is the most
 likely reason a case "fails".

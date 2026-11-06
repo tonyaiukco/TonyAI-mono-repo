@@ -2,7 +2,7 @@
   "title": "Raporlar",
   "subtitle": "Sayılan faaliyet kayıtlarından üretilen denetime hazır raporlar",
   "subtitleUser": "Sayılan faaliyet kayıtlarından üretilen denetime hazır raporlar · {name} ({role})",
-  "provenance": "Raporlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş sürümlerin emisyon faktörleriyle hesaplanır. Her rapor, faktör ekinde her faktörün kaynağını, sürümünü ve <strong>durumunu (yetkili olup olmadığını)</strong> belirtir. Kapsam 3 bu envanterin kapsamında değildir.",
+  "provenance": "Raporlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş yayımların emisyon faktörleriyle hesaplanır; bu yayımların hepsi yetkili olmayabilir. Her rapor <strong>rakamlarının yetkili yayımlara dayanıp dayanmadığını</strong> belirtir; metodoloji notlarıyla ayrıca faktör yayımlarını ve durumlarını listeler. Kapsam 3 bu envanterin kapsamında değildir.",
   "tabs": {
     "live": "Canlı önizleme",
     "issued": "Kesinleştirilmiş raporlar"

@@ -320,9 +320,15 @@ describe("rich text (LP4-04 slice 2 PR B)", () => {
 describe("the provenance banners (QA L10)", () => {
   // Reports and Emissions said every figure came from "prototype demo emission
   // factors" while the TR releases priced them as authoritative. Standing is a
-  // figure's, stated by the report from its snapshot, never by a fixed sentence.
-  it.each(SUPPORTED_LOCALES)("%s: neither banner calls the figures prototype or demo values", (locale) => {
+  // figure's, stated by the report from its snapshot, never by a fixed sentence:
+  // a banner calls nothing prototype, and claims no authority either, since a
+  // local build prices placeholders and a release can be withdrawn.
+  const qualifier = { en: /need not all be authoritative/, tr: /hepsi yetkili olmayabilir/ } as const;
+  it.each(SUPPORTED_LOCALES)("%s: neither banner calls the figures prototype or demo values, both say standing varies", (locale) => {
     const banners = [MESSAGES[locale].reports.provenance, MESSAGES[locale].emissions.banner];
-    for (const banner of banners) expect(banner).not.toMatch(/prototyp|prototip|demo|DEFRA|AIB/i);
+    for (const banner of banners) {
+      expect(banner).not.toMatch(/prototyp|prototip|demo/i);
+      expect(banner).toMatch(qualifier[locale]);
+    }
   });
 });
