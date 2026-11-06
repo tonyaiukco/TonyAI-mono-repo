@@ -220,7 +220,8 @@ describe('one selection, three formats (K4)', () => {
     const viewer = t.users.consultant;
     const meta = JSON.parse((await get(viewer, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     expect(meta.data.summary.totals).toEqual({ scope1: 0, scope2: 19.75, scope3: 0, total: 19.75 });
-    expect(meta.data.scope3).toEqual({ coverage: 'not_covered', recordCount: 1, calculatedTCo2e: 999, uncalculatedRecordCount: 0 });
+    // `priced` is a pre-release snapshot (no release), so its figure is not authoritative (QA L10).
+    expect(meta.data.scope3).toEqual({ coverage: 'not_covered', recordCount: 1, calculatedTCo2e: 999, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 1 });
     expect(meta.data.committedCount).toBe(2);
 
     const csv = await get(viewer, `/reports/context/csv?year=${YEAR}&template=executive_summary`);

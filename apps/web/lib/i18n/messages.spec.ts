@@ -316,3 +316,25 @@ describe("rich text (LP4-04 slice 2 PR B)", () => {
     }
   });
 });
+
+describe("the provenance banners (QA L10)", () => {
+  // Reports and Emissions said every figure came from "prototype demo emission
+  // factors" while the TR releases priced them as authoritative. Standing is a
+  // figure's: the fixed banners call nothing prototype and claim no authority,
+  // and the data-driven warning (`nonAuthoritative`, shown only when the
+  // summary counts such figures) names placeholders explicitly.
+  const qualifier = { en: /need not all be authoritative/, tr: /hepsi yetkili olmayabilir/ } as const;
+  const placeholder = { en: /placeholder \(demo\)/, tr: /yer tutucu \(demo\)/ } as const;
+  it.each(SUPPORTED_LOCALES)("%s: the fixed banners call nothing prototype or demo, and say standing varies", (locale) => {
+    for (const banner of [MESSAGES[locale].reports.provenance, MESSAGES[locale].emissions.banner]) {
+      expect(banner).not.toMatch(/prototyp|prototip|demo/i);
+      expect(banner).toMatch(qualifier[locale]);
+    }
+  });
+  it.each(SUPPORTED_LOCALES)("%s: the warning for non-authoritative figures says placeholder (demo) on both screens", (locale) => {
+    const m = MESSAGES[locale];
+    for (const warning of [m.reports.nonAuthoritative, m.emissions.nonAuthoritative, m.emissions.nonAuthoritativeTrends]) {
+      expect(warning).toMatch(placeholder[locale]);
+    }
+  });
+});

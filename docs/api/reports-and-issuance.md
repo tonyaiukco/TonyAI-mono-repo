@@ -27,6 +27,8 @@ its badge, counts, totals and ledger disagree (`live-report-consistency.int.spec
 holds the read mid-way and commits all four). Every figure is stated as of the
 snapshot's own clock (`generatedAt`, UTC). `GET /reports/context/meta` is the
 preview's one read: its counts, `summary`, `scope3` and `coverage` are one moment's.
+`summary` and `scope3` each carry `nonAuthoritativeRecordCount`, the figures not
+authoritative now, which the preview's warning shows ([reporting context](reporting-context.md), QA L10).
 
 **Scope 1 and 2 only (K4).** A live report counts, lists and totals every
 committed Scope 1/2 record of its selection (a dataset holds Scope 1/2 too, but

@@ -49,7 +49,15 @@ import type {
 } from './report-data';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
-import { COUNTED_STATUSES, SUMMARY_RECORD_SELECT, summariseCounted, type SummaryRecord } from '../emissions/emissions.service';
+import {
+  COUNTED_STATUSES,
+  SUMMARY_RECORD_SELECT,
+  authoritativeNow,
+  summariseCounted,
+  withdrawnReleaseIds,
+  type SummaryRecord,
+  type WithdrawnReleases,
+} from '../emissions/emissions.service';
 import { CaptureSnapshot } from '../common/capture-snapshot';
 import { readLiveCoverage } from './live-coverage';
 import { ReportQueryDto } from './dto/report-query.dto';
@@ -85,9 +93,13 @@ function inventoryScopeFilter(scope: number | undefined): number | { in: number[
  * literal 0 the contract's type holds — refused, not silently zeroed, if a
  * read ever let one through.
  */
-function inventorySummary(rows: readonly SummaryRecord[], nameById: ReadonlyMap<string, string>): ReportInventorySummary {
+function inventorySummary(
+  rows: readonly SummaryRecord[],
+  nameById: ReadonlyMap<string, string>,
+  withdrawn: WithdrawnReleases,
+): ReportInventorySummary {
   if (rows.some((r) => r.scope !== 1 && r.scope !== 2)) throw new Error('A live report sums Scope 1/2 records only.');
-  const summary = summariseCounted(rows, nameById);
+  const summary = summariseCounted(rows, nameById, withdrawn);
   const point = (p: (typeof summary.trend.monthly)[number]) => ({ ...p, scope3: 0 as const });
   return {
     ...summary,
@@ -96,7 +108,7 @@ function inventorySummary(rows: readonly SummaryRecord[], nameById: ReadonlyMap<
   };
 }
 
-const NO_SCOPE3: ReportScope3Disclosure = { coverage: 'not_covered', recordCount: 0, calculatedTCo2e: 0, uncalculatedRecordCount: 0 };
+const NO_SCOPE3: ReportScope3Disclosure = { coverage: 'not_covered', recordCount: 0, calculatedTCo2e: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 };
 
 // Re-exported so every existing importer keeps working; the definitions moved
 // to `report-data.ts` to break the value-import cycle the descriptors create.
@@ -125,16 +137,6 @@ type ReportEvidenceLink = {
 
 type ReleaseWithdrawal = { at: Date | null; reason: string | null };
 
-/** The releases a provenance snapshot rests on: its factor's, and its conversion's if any. */
-function pathReleaseIds(snapshot: ActivityCalculationSnapshot): string[] {
-  if (!isProvenanceSnapshot(snapshot)) return [];
-  return [snapshot.factorRelease.id, ...(snapshot.conversion ? [snapshot.conversion.release.id] : [])];
-}
-
-/** Authoritative when calculated, and still: no link's release has been withdrawn since. */
-function authoritativeNow(snapshot: ActivityCalculationSnapshot, withdrawals: Map<string, ReleaseWithdrawal>): boolean {
-  return isAuthoritativeSnapshot(snapshot) && !pathReleaseIds(snapshot).some((id) => withdrawals.has(id));
-}
 
 /**
  * A factor path's standing in words, as of the report's generation:
@@ -252,7 +254,8 @@ export class ReportsService {
       });
       if (committed.length > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
       const nameById = await this.namesOf(db, ids);
-      return this.metaOf(head, inventorySummary(committed, nameById), await this.readTail(snapshot, user, ids, selection));
+      const withdrawn = await withdrawnReleaseIds(db, committed);
+      return this.metaOf(head, inventorySummary(committed, nameById, withdrawn), await this.readTail(snapshot, user, ids, selection));
     });
   }
 
@@ -277,7 +280,7 @@ export class ReportsService {
       pendingCount: 0,
       incompleteRatio: 0,
       voidedCount: 0,
-      summary: inventorySummary([], new Map()),
+      summary: inventorySummary([], new Map(), new Set()),
       scope3: NO_SCOPE3,
       // Nothing of the boundary is read for a selection the caller cannot see.
       coverage: { state: 'not_readable' },
@@ -358,13 +361,17 @@ export class ReportsService {
     if (scope3Rows.length > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
     let calculatedTCo2e = 0;
     let uncalculatedRecordCount = 0;
+    let nonAuthoritativeRecordCount = 0;
+    const withdrawn = await withdrawnReleaseIds(db, scope3Rows);
     for (const r of scope3Rows) {
       const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
-      if (isCalculated(calc)) calculatedTCo2e += calc.tCo2e;
-      else uncalculatedRecordCount += 1;
+      if (isCalculated(calc)) {
+        calculatedTCo2e += calc.tCo2e;
+        if (!authoritativeNow(calc, withdrawn)) nonAuthoritativeRecordCount += 1;
+      } else uncalculatedRecordCount += 1;
     }
     const scope3: ReportScope3Disclosure = {
-      coverage: 'not_covered', recordCount: scope3Rows.length, calculatedTCo2e, uncalculatedRecordCount,
+      coverage: 'not_covered', recordCount: scope3Rows.length, calculatedTCo2e, uncalculatedRecordCount, nonAuthoritativeRecordCount,
     };
     // A requested subsidiary outside the caller's access never reaches here
     // (`ids` is empty and `readHead` answered); the boundary's own read rule
@@ -682,7 +689,8 @@ export class ReportsService {
 
     // The totals, the tables and the badge from the ledger's own rows — never
     // a second read of the same selection (K2).
-    const summary = inventorySummary(records, nameById);
+    // The same withdrawals as the factor note, so the screen's warning and the PDF agree.
+    const summary = inventorySummary(records, nameById, withdrawals);
     // Nothing more is read for a selection the caller cannot see (`readHead`).
     const meta = counts === null ? head.meta : this.metaOf(head, summary, await this.readTail(snapshot, user, ids, selection));
 

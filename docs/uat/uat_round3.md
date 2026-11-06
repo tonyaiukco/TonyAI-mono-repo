@@ -13,9 +13,12 @@
 > not repeated here still describe their screens, but the screens now have Turkish text too.
 >
 > **Emission factors on this build are placeholders.** Every tonnage comes from the
-> prototype demo factor library, which the app labels: EN *"prototype demo emission factors —
-> not authoritative DEFRA/AIB values"*, TR *"prototip demo emisyon faktörleri — yetkili
-> DEFRA/AIB değerleri değildir"*. **No figure in this round is an acceptance value.**
+> prototype demo factor library; a report's factor appendix states each factor's standing
+> ("Not authoritative"). Until L10 (2026-11-07) a fixed banner on Reports and Emissions also
+> called every figure EN *"prototype demo emission factors"*, TR *"prototip demo emisyon
+> faktörleri"*; it now names the loaded releases, and a red warning beneath it counts the
+> figures that rest on placeholder (demo) factors, since standing is each figure's own.
+> **No figure in this round is an acceptance value.**
 > Authoritative UK/TR factor releases come with LP4-02 PR C, which has not shipped. Every case
 > that depends on them is marked **Waits on LP4-02 PR C — do not accept**. Leave its P/F
 > empty, or write "blocked".
@@ -73,7 +76,7 @@ you see, but do not judge them.
 | Activity records | **96**, all `approved`, reporting year **2026**; 6 of them filed against a site |
 | Review queue · withdrawn records · period locks · boundary versions · issued reports | all **empty / none** |
 | TonyAI Energy · Electricity cell (dashboard) | **`3/24`** |
-| Banner on `/emissions` and `/reports` | the placeholder-factor wording quoted at the top of this document |
+| Banner on `/emissions` and `/reports` | names the loaded factor releases and says they need not all be authoritative; beneath it (Reports: in the live tab) a red warning counts the figures on placeholder (demo) or other non-authoritative factors, "N of M" (since L10, 2026-11-07) |
 
 If a count is wrong, stop and report it before going further. A stale database is the most
 likely reason a case "fails".

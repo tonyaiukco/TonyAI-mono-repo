@@ -120,11 +120,11 @@ describe("issuanceGapCounts", () => {
 
 describe("scope3Lines and selectsScope3Only", () => {
   it("discloses Scope 3's committed records, never as a figure of the inventory", () => {
-    expect(scope3Lines({ coverage: "not_covered", recordCount: 0, calculatedTCo2e: 0, uncalculatedRecordCount: 0 })).toEqual([{ key: "scope3.notCovered" }]);
-    expect(scope3Lines({ coverage: "not_covered", recordCount: 3, calculatedTCo2e: 12.5, uncalculatedRecordCount: 0 }))
+    expect(scope3Lines({ coverage: "not_covered", recordCount: 0, calculatedTCo2e: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 })).toEqual([{ key: "scope3.notCovered" }]);
+    expect(scope3Lines({ coverage: "not_covered", recordCount: 3, calculatedTCo2e: 12.5, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 }))
       .toEqual([{ key: "scope3.notCovered" }, { key: "scope3.recorded", values: { count: 3, tonnes: 12.5 } }]);
     // A 0 sum is read with its uncalculated count, never alone.
-    expect(scope3Lines({ coverage: "not_covered", recordCount: 5, calculatedTCo2e: 0, uncalculatedRecordCount: 5 }))
+    expect(scope3Lines({ coverage: "not_covered", recordCount: 5, calculatedTCo2e: 0, uncalculatedRecordCount: 5, nonAuthoritativeRecordCount: 0 }))
       .toEqual([
         { key: "scope3.notCovered" },
         { key: "scope3.recorded", values: { count: 5, tonnes: 0 } },

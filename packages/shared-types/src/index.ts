@@ -4806,6 +4806,14 @@ export interface EmissionsSummary {
    * 0 tCO₂e" row asserts a measurement nobody made.
    */
   uncalculatedRecordCount: number;
+  /**
+   * Of `calculatedRecordCount`, the ones whose figure is NOT authoritative now:
+   * a placeholder or fixture factor or conversion, a pre-release snapshot, or a
+   * release withdrawn since the calculation (an erratum) — the report's own test
+   * (`authoritativeNow`). They stay in every total. Reports and Emissions label
+   * them by this count, never by a fixed sentence (QA L10).
+   */
+  nonAuthoritativeRecordCount: number;
   /** Statuses included in the aggregation — drafts, rejected and voided
    *  records are all excluded. */
   statusesIncluded: ActivityRecordStatus[];

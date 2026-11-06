@@ -7,7 +7,9 @@
     "intensityLocked": "Bunu etkinleştirmek için bir yoğunluk paydası tanımlayın"
   },
   "export": "Dışa aktar",
-  "banner": "Rakamlar, sayılan faaliyet kayıtlarından <strong>prototip demo emisyon faktörleri</strong> kullanılarak hesaplanır — yetkili DEFRA/AIB değerleri değildir. Kapsam 3, 1. Aşama'nın kapsamı dışındadır.",
+  "banner": "Rakamlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş yayımların emisyon faktörleriyle hesaplanır; bu yayımların <strong>hepsi yetkili olmayabilir</strong> ve seçimin toplamlarında ve eğilimlerde yetkili olmayan rakamlar bir uyarıda sayılır. Kapsam 3 bu envanterin kapsamında değildir.",
+  "nonAuthoritative": "Bu seçimin toplamlarında yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: <strong>{count} / {of}</strong>. Bunlar yetkili değerler değildir.",
+  "nonAuthoritativeTrends": "Eğilimlerde (tüm yıllar) yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: <strong>{count} / {of}</strong>.",
   "errors": {
     "sessionExpired": "Oturumunuzun süresi doldu — lütfen yeniden giriş yapın.",
     "forbidden": "Bu verilere erişiminiz yok.",

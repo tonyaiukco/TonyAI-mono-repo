@@ -2,7 +2,8 @@
   "title": "Reports",
   "subtitle": "Audit-ready reports generated from committed activity records",
   "subtitleUser": "Audit-ready reports generated from committed activity records · {name} ({role})",
-  "provenance": "Reports are computed from committed activity records using <strong>prototype demo emission factors</strong> — not authoritative DEFRA/AIB values. Scope 3 is not covered by this inventory.",
+  "provenance": "Reports are computed from committed activity records with the emission factors of the releases loaded into the factor library, which <strong>need not all be authoritative</strong>; a warning counts any figure in the live preview that is not. With methodology notes, a report's PDF lists the factor releases and their standing. Scope 3 is not covered by this inventory.",
+  "nonAuthoritative": "In this preview, figures that rest on placeholder (demo) or other non-authoritative factors: <strong>{count} of {of}</strong>, Scope 3 included. They are not authoritative values.",
   "tabs": {
     "live": "Live preview",
     "issued": "Issued reports"

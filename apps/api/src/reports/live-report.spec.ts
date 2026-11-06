@@ -114,7 +114,8 @@ describe('Scope 3 is not covered (K4)', () => {
     const data = await service.assemble(user, q);
     expect(data.records.map((r) => r.category)).toEqual(['Electricity']);
     expect(data.summary.totals).toMatchObject({ scope1: 0, scope2: 0.44, scope3: 0, total: 0.44 });
-    expect(data.scope3).toEqual({ coverage: 'not_covered', recordCount: 1, calculatedTCo2e: 5, uncalculatedRecordCount: 0 });
+    // A pre-release figure is not authoritative, Scope 3 or not (QA L10).
+    expect(data.scope3).toEqual({ coverage: 'not_covered', recordCount: 1, calculatedTCo2e: 5, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 1 });
     const meta = await service.meta(user, 2024);
     expect(meta.committedCount).toBe(1);
     expect(meta.scope3.recordCount).toBe(1);
@@ -146,6 +147,31 @@ describe('Scope 3 is not covered (K4)', () => {
     const waterSheet = await sheetRows(await service.generateExcel(user, { ...q, category: 'Water' } as never), 'Summary');
     expect(waterSheet).toContainEqual(['Scope 1 + 2 total (tCO₂e)', 'Not covered']);
     expect(summary).toContainEqual(['Scope 1 + 2 total (tCO₂e)', 'Not covered']);
+  });
+});
+
+describe('standing now, on the screen as in the PDF (QA L10)', () => {
+  const release = (id: string) => ({ id, publisher: 'ETKB', title: 't', edition: '2024', ordinal: 1, status: 'authoritative', sourceUrl: null, licence: null, publishedAt: null, gwpSet: null });
+  const v2 = (tCo2e: number, releaseId: string) => ({
+    ...calc(tCo2e), snapshotSchema: 2, activityType: 'grid_electricity', gas: 'CO2e', gasCoverage: 'all_ghg', calorificBasis: 'not_applicable',
+    scope2Method: 'location', dataYear: 2024, yearPolicy: 'exact', factorRelease: release(releaseId), conversion: null,
+  });
+
+  it('counts a figure whose release was withdrawn after it was calculated, in the meta and the report alike', async () => {
+    const { tx, service } = mocks([
+      rec({ id: 'rec-a', calculation: v2(1, 'rel-ok') }),
+      rec({ id: 'rec-b', periodValue: 'February', calculation: v2(2, 'rel-gone') }),
+      rec({ id: 'rec-c', periodValue: 'March', scope: 3, category: 'Water', calculation: v2(4, 'rel-gone') }),
+    ]);
+    tx.factorRelease.findMany.mockImplementation((async ({ where }: { where: { id: { in: string[] } } }) =>
+      where.id.in.includes('rel-gone') ? [{ id: 'rel-gone', withdrawnAt: null, withdrawalReason: null }] : []) as never);
+    const meta = await service.meta(user, 2024);
+    const data = await service.assemble(user, q);
+    expect(meta.summary.calculatedRecordCount).toBe(2);
+    expect(meta.summary.nonAuthoritativeRecordCount).toBe(1);
+    expect(data.summary.nonAuthoritativeRecordCount).toBe(data.nonAuthoritativeRecords);
+    expect(data.nonAuthoritativeRecords).toBe(1);
+    expect(meta.scope3.nonAuthoritativeRecordCount).toBe(1);
   });
 });
 

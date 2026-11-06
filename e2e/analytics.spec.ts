@@ -21,6 +21,8 @@ test('emissions analytics renders live tabs; intensity is gated', async ({ page 
   await login(page, ADMIN_EMAIL);
   await page.goto('/emissions');
   await expect(page.getByRole('heading', { name: 'Emissions Analytics' })).toBeVisible();
+  // The local seed prices with placeholder factors: the data-driven warning names them (QA L10).
+  await expect(page.getByTestId('non-authoritative-warning')).toContainText(/placeholder \(demo\).*\d+ of \d+/);
 
   // Tabs render and switch.
   await expect(page.getByRole('tab', { name: /summary/i })).toBeVisible();

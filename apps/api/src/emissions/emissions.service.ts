@@ -10,7 +10,9 @@ import {
   COUNTED_STATUSES as SHARED_COUNTED_STATUSES,
   MONTH_NAMES,
   isAnomalyEvaluated,
+  isAuthoritativeSnapshot,
   isCalculated,
+  isProvenanceSnapshot,
   INVOICE_TRACKED_CATEGORIES,
   isEvidenceRequired,
   isInvoiceTracked,
@@ -332,8 +334,38 @@ export function emptySummary(): EmissionsSummary {
     recordCount: 0,
     calculatedRecordCount: 0,
     uncalculatedRecordCount: 0,
+    nonAuthoritativeRecordCount: 0,
     statusesIncluded: COUNTED_STATUSES,
   };
+}
+
+/** The releases a provenance snapshot rests on: its factor's, and its conversion's if any. */
+export function pathReleaseIds(snapshot: ActivityCalculationSnapshot | null): string[] {
+  if (!isProvenanceSnapshot(snapshot)) return [];
+  return [snapshot.factorRelease.id, ...(snapshot.conversion ? [snapshot.conversion.release.id] : [])];
+}
+
+/** Ids of releases withdrawn — a set, or the reports' map of withdrawals. */
+export type WithdrawnReleases = { has(releaseId: string): boolean };
+
+/**
+ * Authoritative when calculated, and still: no link's release has been
+ * withdrawn since (an erratum). A snapshot freezes its release's status, so the
+ * standing a screen or report states NOW needs the library's withdrawals too.
+ */
+export function authoritativeNow(snapshot: ActivityCalculationSnapshot | null, withdrawn: WithdrawnReleases): boolean {
+  return isAuthoritativeSnapshot(snapshot) && !pathReleaseIds(snapshot).some((id) => withdrawn.has(id));
+}
+
+/** The withdrawn releases among those the rows' snapshots rest on: one read, none when no row cites a release. */
+export async function withdrawnReleaseIds(
+  db: { factorRelease: { findMany(args: { where: { id: { in: string[] }; status: 'withdrawn' }; select: { id: true } }): Promise<{ id: string }[]> } },
+  rows: readonly { calculation: unknown }[],
+): Promise<Set<string>> {
+  const ids = new Set(rows.flatMap((r) => pathReleaseIds(r.calculation as ActivityCalculationSnapshot | null)));
+  if (ids.size === 0) return new Set();
+  const withdrawn = await db.factorRelease.findMany({ where: { id: { in: [...ids] }, status: 'withdrawn' }, select: { id: true } });
+  return new Set(withdrawn.map((w) => w.id));
 }
 
 /** What `summariseCounted` reads of a record — and all the summary route selects. */
@@ -347,7 +379,12 @@ export type SummaryRecord = Pick<ActivityRecord, keyof typeof SUMMARY_RECORD_SEL
  * Pure, so a caller that read its rows in a snapshot of its own (a live report,
  * LP4-03 K2) sums exactly those rows, not a second read of the same selection.
  */
-export function summariseCounted(rows: readonly SummaryRecord[], nameById: ReadonlyMap<string, string>): EmissionsSummary {
+export function summariseCounted(
+  rows: readonly SummaryRecord[],
+  nameById: ReadonlyMap<string, string>,
+  // Required, never defaulted: a default would quietly fall back to the standing at calculation.
+  withdrawn: WithdrawnReleases,
+): EmissionsSummary {
   const totals = { scope1: 0, scope2: 0, scope3: 0, total: 0 };
   const byCategory = new Map<
     string,
@@ -380,6 +417,7 @@ export function summariseCounted(rows: readonly SummaryRecord[], nameById: Reado
   };
 
   let uncalculatedRecordCount = 0;
+  let nonAuthoritativeRecordCount = 0;
 
   for (const r of rows) {
     const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
@@ -393,6 +431,9 @@ export function summariseCounted(rows: readonly SummaryRecord[], nameById: Reado
       uncalculatedRecordCount += 1;
       continue;
     }
+    // Counted like any figure, and declared: a placeholder's tonnes, or a withdrawn
+    // release's, must be labelled where they are shown — the report's own test.
+    if (!authoritativeNow(calc, withdrawn)) nonAuthoritativeRecordCount += 1;
     const tCo2e = calc.tCo2e;
     const scope = r.scope;
 
@@ -494,6 +535,7 @@ export function summariseCounted(rows: readonly SummaryRecord[], nameById: Reado
     recordCount: rows.length,
     calculatedRecordCount: rows.length - uncalculatedRecordCount,
     uncalculatedRecordCount,
+    nonAuthoritativeRecordCount,
     statusesIncluded: COUNTED_STATUSES,
   };
 }
@@ -557,7 +599,7 @@ export class EmissionsService {
     const nameById = new Map(
       subs.map((s) => [s.id, s.tradingName || s.legalName]),
     );
-    return summariseCounted(rows, nameById);
+    return summariseCounted(rows, nameById, await withdrawnReleaseIds(this.prisma, rows));
   }
 
   /**
