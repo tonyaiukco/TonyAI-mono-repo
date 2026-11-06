@@ -7,7 +7,7 @@
     "intensityLocked": "Configure an intensity denominator to enable this"
   },
   "export": "Export",
-  "banner": "Figures are computed from committed activity records using <strong>prototype demo emission factors</strong> — not authoritative DEFRA/AIB values. Scope 3 is out of scope for Phase 1.",
+  "banner": "Figures are computed from committed activity records with the emission factors of the releases loaded into the factor library. A report names every factor's source, release and <strong>standing (authoritative or not)</strong>. Scope 3 is not covered by this inventory.",
   "errors": {
     "sessionExpired": "Your session has expired — please sign in again.",
     "forbidden": "You do not have access to this data.",

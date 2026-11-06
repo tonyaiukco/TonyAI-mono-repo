@@ -7,7 +7,7 @@
     "intensityLocked": "Bunu etkinleştirmek için bir yoğunluk paydası tanımlayın"
   },
   "export": "Dışa aktar",
-  "banner": "Rakamlar, sayılan faaliyet kayıtlarından <strong>prototip demo emisyon faktörleri</strong> kullanılarak hesaplanır — yetkili DEFRA/AIB değerleri değildir. Kapsam 3, 1. Aşama'nın kapsamı dışındadır.",
+  "banner": "Rakamlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş sürümlerin emisyon faktörleriyle hesaplanır. Rapor, her faktörün kaynağını, sürümünü ve <strong>durumunu (yetkili olup olmadığını)</strong> belirtir. Kapsam 3 bu envanterin kapsamında değildir.",
   "errors": {
     "sessionExpired": "Oturumunuzun süresi doldu — lütfen yeniden giriş yapın.",
     "forbidden": "Bu verilere erişiminiz yok.",

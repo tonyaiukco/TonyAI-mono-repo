@@ -694,7 +694,7 @@ function EmissionsAnalysisPageInner() {
             </div>
           </div>
 
-          {/* Provenance banner — these are prototype demo factors, not authoritative. */}
+          {/* Provenance banner: the loaded releases price every figure; a report states each factor's standing (QA L10). */}
           <div className="flex items-start gap-2 rounded-lg border border-[#FEF3C7] bg-[#FFFBEB] px-4 py-3 text-sm text-[#92400E]">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{t.rich('banner', { strong: (chunks) => <strong>{chunks}</strong> })}</span>

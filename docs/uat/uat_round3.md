@@ -13,9 +13,11 @@
 > not repeated here still describe their screens, but the screens now have Turkish text too.
 >
 > **Emission factors on this build are placeholders.** Every tonnage comes from the
-> prototype demo factor library, which the app labels: EN *"prototype demo emission factors —
-> not authoritative DEFRA/AIB values"*, TR *"prototip demo emisyon faktörleri — yetkili
-> DEFRA/AIB değerleri değildir"*. **No figure in this round is an acceptance value.**
+> prototype demo factor library; a report's factor appendix states each factor's standing
+> ("Not authoritative"). Until L10 (2026-11-07) a fixed banner on Reports and Emissions also
+> called every figure EN *"prototype demo emission factors"*, TR *"prototip demo emisyon
+> faktörleri"*; it now names the loaded releases, since standing is each figure's own.
+> **No figure in this round is an acceptance value.**
 > Authoritative UK/TR factor releases come with LP4-02 PR C, which has not shipped. Every case
 > that depends on them is marked **Waits on LP4-02 PR C — do not accept**. Leave its P/F
 > empty, or write "blocked".
