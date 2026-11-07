@@ -2,7 +2,7 @@
 
 This checklist closes the L10 gate on hosted QA. Claude Code runs it on the final
 release (owner decision 2026-11-06, L10 task 8.8); rows that need a real mailbox
-run with the owner. The final release is `ci16-1` (source `d403874`) unless the
+run with the owner. The final release is `ci17-1` (source `d2a5f9b`) unless the
 owner announces another one. Fill in **every** row: PASS, FAIL (with a defect
 report) or N/A (with a reason the owner accepts). Procedure, scope and the
 automated probes are in
