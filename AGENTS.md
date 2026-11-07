@@ -10,6 +10,8 @@ Instructions for Codex, and for any agent that loads `AGENTS.md`, in the TonyAI 
 
 ## You run the project
 
+> **Superseded 2026-11-07 (owner decision):** Claude Code now runs the project and is the planning file's only writer. Codex works only in a session the owner opens for a specific task (for example a review seat): it follows this rulebook, does not write `project_status_roadmap_phases.md` unless the owner asks, and puts its status in its PR description. The paragraph and bullets below describe the 2026-10-28 mode and apply only where they do not conflict.
+
 **Single-tool mode (owner decision 2026-10-28).** Codex is the only implementer. The project owner reviews and merges every pull request and runs or approves every live cloud operation. Claude Code joins only when the owner opens a session for it (for example as an independent review seat).
 
 - **You own every file**, the local Supabase stack, CI (`.github/**`) and the infrastructure (`infra/**`). The development machine has 16 GB: run one Supabase stack at a time, and stop it before heavy Docker builds.

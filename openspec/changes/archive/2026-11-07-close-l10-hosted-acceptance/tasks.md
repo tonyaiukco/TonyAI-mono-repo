@@ -33,7 +33,7 @@ Branch `chore/l10-acceptance-package-2`. Groups 1–6 are the Session 1 PR. Grou
 - [x] 6.3 README: mention the `inputs`, `rollback` and monitoring readback operations and the rollback workflow. Verify the README commands match `--help`.
 - [x] 6.4 Commit `openspec/config.yaml` and this change. Verify `openspec validate close-l10-hosted-acceptance` passes.
 - [x] 6.5 Run Node 22 `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`, and `python3 -m unittest discover -s infra/tests`. Verify all exit 0 and record any pre-existing warnings.
-- [ ] 6.6 Run a fresh-eyes review with Codex (owner-requested reviewer) and `qa-auditor` in parallel on the diff, probing the rollback guards, workflow privilege and secret hygiene. Verify every blocker is fixed or answered in the PR. Open the PR with green CI; the owner merges after freezing "QA deploy".
+- [x] 6.6 Run a fresh-eyes review with Codex (owner-requested reviewer) and `qa-auditor` in parallel on the diff, probing the rollback guards, workflow privilege and secret hygiene. Verify every blocker is fixed or answered in the PR. Open the PR with green CI; the owner merges after freezing "QA deploy". **Done (recorded 2026-11-07):** the owner confirmed that Codex reviewed #272 alongside `qa-auditor`; the review was not recorded at the time. #272 merged with green CI (`8f327c8`).
 
 ## 7. Session 1 live acceptance (owner runs, Claude prepares and reads)
 
