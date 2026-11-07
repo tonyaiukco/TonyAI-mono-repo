@@ -515,17 +515,19 @@ security and data-integrity defects are fixed; the rest go under Open questions.
 3. Rerun A on the final release.
 4. Record the results below.
 
-| Control | State (2026-11-04) | Closing evidence |
+| Control | State (closed 2026-11-07, final release `ci17-1`) | Closing evidence |
 |---|---|---|
-| Live binding / ARM | PASS: `inputs` before every operation | `inputs` receipt before each operation |
-| A two-tenant smoke | PASS on the second attempt; rerun on the final release in Session 2 | smoke receipt + journal cleanup |
-| C Storage probe | PASS | storage receipt + exact-path cleanup |
-| Backup metadata | PASS | backup receipt (no restore claim) |
-| Log → alert chain | OPEN: readback all PASS from merged `main`; controlled alert pending | readback all PASS + controlled alert acknowledged |
-| QA checklist (lifecycle, roles, lock, audit, evidence, reports, TR/EN, no_factor, mail, isolation) | HANDED OVER, results pending | checklist rows PASS or dispositioned |
-| Rollback drill | NOT_RUN | two `QA rollback` runs + `inputs` after each |
-| Numerical emissions | Out of scope → LP4-02 | — |
+| Live binding / ARM | PASS | `inputs` 10:02 UTC / 13:02 Europe/Istanbul: `rb1-1` (= `ci17-1`'s images), source `d2a5f9b`, API `sha256:c3a2d20c…`, web `sha256:3e2ee87b…` |
+| A two-tenant smoke | PASS on `rb1-1`, 10:03:03–10:04:37 UTC / 13:03:03–13:04:37 Europe/Istanbul (owner-run) | `l10-ci17-1/receipts/smoke-20261107T100236Z.json.passed.json` (`84efd39de6363a3f…`) |
+| C Storage probe | PASS (Session 1, `ci4-1`) | storage receipt + exact-path cleanup |
+| Backup metadata | PASS (Session 1, `ci4-1`) | backup receipt (no restore claim) |
+| Log → alert chain | PASS: one failing `storage-verify` execution (exit 2, 09:59:40 UTC) → alert Fired 10:04:24 UTC / 13:04:24 Europe/Istanbul → operator acknowledged | execution `…-4xymmp9`; alert history; owner's acknowledgement in chat |
+| Hosted checklist (lifecycle, roles, lock, audit, evidence, reports, TR/EN, no_factor, mail, isolation) | PASS: 41 rows, RP-03 N/A, run by Claude Code on `ci17-1` (task 8.8); QA's own findings dispositioned (8.1) | `l10-checklist/results-r2.jsonl` |
+| Rollback drill | PASS, same-image (cross-version not rehearsed: LP4-02 migrations) | `QA rollback` run 42361513330, suffix `rb1-1`, digests unchanged, smoke PASS |
+| Numerical emissions | Out of scope → LP4-02 (DONE; owner's five hosted checks on `ci16-1`) | — |
 | Full recovery | Out of scope → G2/LP5-03 | — |
+
+**L10 CLOSED (2026-11-07).** Closure criterion (owner decision 2026-11-06): 8.4, 8.5 and 8.6 PASS, 8.8 complete, every QA finding dispositioned. Known after closure: the `storage-verify` job still runs `ci4-1`'s API image (a foundation apply re-pins it; Open questions); its alert stays fired until the test's failing row leaves the 26-hour window.
 
 **Session 1 evidence (2026-11-04, helper `139235c`, release `ci4-1`, source `bdf7646`,
 both digests above; times UTC / Europe/Istanbul; receipts in

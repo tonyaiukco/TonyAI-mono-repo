@@ -1,15 +1,19 @@
 # L10 hosted acceptance checklist (QA)
 
-QA runs this checklist on hosted QA to close the L10 gate. The live release is
-`ci4-1` (source `bdf7646`) unless the owner announces another one. Fill in **every**
-row: PASS, FAIL (with a defect report) or N/A (with a reason the owner accepts).
-Procedure, scope and the automated probes are in
+This checklist closes the L10 gate on hosted QA. Claude Code runs it on the final
+release (owner decision 2026-11-06, L10 task 8.8); rows that need a real mailbox
+run with the owner. The final release is `ci17-1` (source `d2a5f9b`) unless the
+owner announces another one. Fill in **every** row: PASS, FAIL (with a defect
+report) or N/A (with a reason the owner accepts). Procedure, scope and the
+automated probes are in
 [runbook 11](../../infra/runbooks/11-qa-hosted.md#ci4-1-l10-acceptance-from-2026-11-04).
 
 **Out of scope.** Numerical emission figures (LP4-02) and full recovery (G2/LP5-03).
-No authoritative factor library is loaded, so categories with no factor show
-"Not calculated" and refuse a preview with `no_factor`. That is the expected
-result, not a defect. Never ask for placeholder factors to be loaded.
+Since 2026-11-06 the two TR releases (IPCC 2006 fuels and the ETKB grid factor)
+are loaded and authoritative, so TR sites calculate Natural Gas, Fuel and
+Electricity. No UK release is loaded: UK categories show "Not calculated" and
+refuse a preview with `no_factor`. That is the expected result, not a defect.
+Never ask for placeholder factors to be loaded.
 
 ## Rules for every row
 
@@ -68,9 +72,9 @@ result, not a defect. Never ask for placeholder factors to be loaded.
 | RC-08 | super_admin locks a month that holds no pending or rejected record | Locked |  |  |  |
 | RC-09 | Try to create, edit or delete a record in the locked month (any role) | Refused with `period_locked` |  |  |  |
 | RC-10 | Try to lock a month that holds a rejected record | Refused |  |  |  |
-| RC-11 | Electricity: open the calculation preview for a UK or TR site | Refused with `no_factor` and coverage shown; no figure, no placeholder value |  |  |  |
+| RC-11 | Electricity: open the calculation preview for a UK site, then for a TR site | UK: refused with `no_factor` and coverage shown; no figure, no placeholder value. TR: a figure from the ETKB release, which the preview cites |  |  |  |
 | RC-12 | Audit log after RC-01 to RC-09 | One row for each create, update, submit, approve, reject, lock and evidence action; no row can be edited or deleted from the UI |  |  |  |
-| RC-13 | data_entry tries to save a Natural Gas, Fuel or Electricity record for a UK or TR site | Not saved with a figure: refused with `no_factor` (coverage shown) or the category is not offered; never a placeholder value. TR Natural Gas in kWh answers `calorific_basis_mismatch`, and in m³ without a correction factor `no_conversion` (LP4-02) |  |  |  |
+| RC-13 | data_entry saves a Natural Gas, Fuel or Electricity record for a UK site, then for a TR site | UK: not saved with a figure (refused with `no_factor`, coverage shown, or the category is not offered); never a placeholder value. TR: calculated from the TR release it cites. TR Natural Gas offers Sm³ and m³ only (LP4-02) |  |  |  |
 
 ## 4. Evidence and files (H1)
 
