@@ -436,7 +436,7 @@ this does not close the wider G2 recovery/recreation gates or approve production
 ## ci4-1 L10 acceptance (from 2026-11-04)
 
 **This section governs L10.** The r004 package below is historical: keep its
-evidence, but do not resume it. Planning: `openspec/changes/close-l10-hosted-acceptance/`.
+evidence, but do not resume it. Planning (archived 2026-11-07): `openspec/changes/archive/2026-11-07-close-l10-hosted-acceptance/`; its spec: `openspec/specs/qa-release-operations/`.
 
 **Scope (owner decision 2026-11-04).** L10 closes on functional and operational
 acceptance of the live release. **Numerical** emissions acceptance belongs to the
