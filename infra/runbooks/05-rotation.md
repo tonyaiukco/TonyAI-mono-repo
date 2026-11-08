@@ -549,6 +549,10 @@ The owner `direct-url` stays unchanged. Follow this order:
    `\password tonyai_runtime` with the exact saved new hex string, followed by
    `ALTER ROLE tonyai_runtime LOGIN;`. Once this executes, an interruption needs
    forward recovery: old revisions may fail on their next database connection.
+   The hidden prompt shows nothing and accepts any value entered twice, so do not
+   hold the password on the clipboard while also copying commands: G2's rehearsal
+   stored the command's text this way. Step 6 catches it; recovery is in
+   [runbook 11](11-qa-hosted.md#g2-closure-2026-11-08).
 6. Immediately run **Runtime connection and privilege evidence** above using the
    new URL. Stop on any identity, login or privilege failure; repair forward
    through the private owner session before proceeding.
