@@ -162,7 +162,7 @@ The package ships no hashing runtime; the API implements the encoding
 (`apps/api/src/report-datasets/dataset-fingerprint.ts`, LP3-04 PR C), refusing
 a dataset that breaks any rule above rather than coercing it.
 
-Contract acceptance examples (not executed database/UAT evidence):
+Contract acceptance examples, agreed by the owner on 2026-11-09 (not executed database/UAT evidence):
 
 | Captured facts | Required interpretation |
 | --- | --- |
@@ -178,7 +178,7 @@ Contract acceptance examples (not executed database/UAT evidence):
 | Scope 2 obligations satisfied but one counted record uncalculated | Partial coverage; only calculated figures summed, or null if none |
 | Empty referenced-subsidiary set or a requester from another organisation | Dataset/issuance lookup refused indistinguishably from not-found |
 | Site opens in July | July–December obligations only, independently of when its database row was created |
-| Applicable source lacks a usable factor | Named gap/uncalculated provenance; never zero; partial |
+| Applicable source lacks a usable factor | A category that needs a factor is refused at save (`no_factor`), so its obligation stays missing_record; a category recordable without a factor saves as uncalculated provenance; never zero; partial |
 | No fleet, explicitly excluded with a reason | Named exclusion, no fleet obligations and no fleet amount |
 | Unsupported source excluded with reason (heat: "No purchased heat") | Named exclusion disclosed, never counted; no unsupported_source gap and does not block final |
 | Approved calculated zero-consumption record | Measured zero; approval, evidence, lock and provenance rules still apply |
