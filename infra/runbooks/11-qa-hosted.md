@@ -577,8 +577,8 @@ both digests above; times UTC / Europe/Istanbul; receipts in
 ## G2 closure (2026-11-08)
 
 G2 is met on hosted QA. Live release `rot1-1`: `ci17-1`'s images (API `sha256:c3a2d20c…`, web
-`sha256:3e2ee87b…`), source `d2a5f9b`, runtime secret version `b4ca2b9d…`. Planning:
-`openspec/changes/close-g2-hosted-staging/`. Receipts are private, under
+`sha256:3e2ee87b…`), source `d2a5f9b`, runtime secret version `b4ca2b9d…`. Planning (archived):
+`openspec/changes/archive/2026-11-08-close-g2-hosted-staging/`. Receipts are private, under
 `~/tonyai-evidence-backup/g2/receipts/`; hashes below are the first 16 hex characters of SHA-256.
 
 | Drill | Outcome | Receipt |
