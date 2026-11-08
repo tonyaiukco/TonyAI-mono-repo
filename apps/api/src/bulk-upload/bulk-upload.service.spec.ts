@@ -1768,16 +1768,62 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     // These used to be audited, and the reason then carried the file's own
     // header text into an append-only table at five rows a minute per user.
     const { audit, service } = build();
+    // A plain unknown column: a raw NUL would stop at `requireUtf8`, before the
+    // header is ever mapped, and leave this refusal untested.
     const file = {
       ...csvFile([]),
-      buffer: Buffer.from(`${HEADER},bad\u0000col\n${row()}`),
+      buffer: Buffer.from(`${HEADER},badcol\n${row()}`),
     } as Express.Multer.File;
 
-    await expect(service.import(dataEntry(), file, DRY)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    const refused = service.import(dataEntry(), file, DRY);
+    await expect(refused).rejects.toBeInstanceOf(BadRequestException);
+    await expect(refused).rejects.toThrow('Unrecognised column(s): "badcol"');
 
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  describe('an applied XLSX whose later cell decodes to a NUL', () => {
+    async function workbookFile(lastCell: string): Promise<Express.Multer.File> {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('Data');
+      sheet.addRow(HEADER.split(','));
+      sheet.addRow([SUB_1, '', 2024, 'monthly', 'January', 'Electricity', '', 1200, 'kWh', '']);
+      sheet.addRow([SUB_1, '', 2024, 'monthly', 'February', 'Electricity', '', 1200, 'kWh', lastCell]);
+      const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+      return {
+        originalname: 'data.xlsx',
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        size: buffer.length,
+        buffer,
+      } as Express.Multer.File;
+    }
+
+    it('writes nothing, not even the valid row before it', async () => {
+      const { prisma, records, audit, storage, intents, service } = build();
+
+      await expect(
+        service.import(dataEntry(), await workbookFile('x_x0000_y'), NOTHING),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prisma.importBatch.create).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(records.create).not.toHaveBeenCalled();
+      expect(storage.upload).not.toHaveBeenCalled();
+      expect(intents.beginUpload).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+      expect(audit.finalize).not.toHaveBeenCalled();
+    });
+
+    it('applies the same file without the NUL, so the refusal is what stopped the writes', async () => {
+      const { prisma, records, storage, service } = build();
+
+      const report = await service.import(dataEntry(), await workbookFile('x'), NOTHING);
+
+      expect(report.errors).toEqual([]);
+      expect(prisma.importBatch.create).toHaveBeenCalledOnce();
+      expect(storage.upload).toHaveBeenCalledOnce();
+      expect(records.create).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('rethrows an unexpected pre-flight failure without auditing it', async () => {
