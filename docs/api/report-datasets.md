@@ -162,7 +162,7 @@ The package ships no hashing runtime; the API implements the encoding
 (`apps/api/src/report-datasets/dataset-fingerprint.ts`, LP3-04 PR C), refusing
 a dataset that breaks any rule above rather than coercing it.
 
-Contract acceptance examples (not executed database/UAT evidence):
+Contract acceptance examples, agreed by the owner on 2026-11-09 (not executed database/UAT evidence):
 
 | Captured facts | Required interpretation |
 | --- | --- |
