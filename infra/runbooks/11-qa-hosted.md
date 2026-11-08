@@ -574,6 +574,70 @@ both digests above; times UTC / Europe/Istanbul; receipts in
   The holdings are Arda Test Holding and Emre Test Holding. QA reports its findings to the
   owner in its own format, and no window or sign-off date is recorded (owner decision).
 
+## G2 closure (2026-11-08)
+
+G2 is met on hosted QA. Live release `rot1-1`: `ci17-1`'s images (API `sha256:c3a2d20c…`, web
+`sha256:3e2ee87b…`), source `d2a5f9b`, runtime secret version `b4ca2b9d…`. Planning:
+`openspec/changes/close-g2-hosted-staging/`. Receipts are private, under
+`~/tonyai-evidence-backup/g2/receipts/`; hashes below are the first 16 hex characters of SHA-256.
+
+| Drill | Outcome | Receipt |
+|---|---|---|
+| 2a foundation re-pin and recreation readback | `0 added, 2 changed, 0 destroyed`: `storage_verify` image and the recorded `join_grant` difference | `foundation-plan-2a.txt` `63b30c96f2471459`, `foundation-apply-2a.txt` `2ff98f84e8ac1946` |
+| 2a job on the new image | Execution `m2lvjtx` `Succeeded`; every monitoring link PASS | `monitoring-2a-20261108T152845Z.txt` `5eed11adb394159d` |
+| 2b new runtime identity and privileges | `tonyai_runtime` on both; privileges as intended | `rotation-identity-20261108T214207Z.txt` `4b6b20bc58e88fa5` |
+| 2b deploy | `0 added, 2 changed, 0 destroyed`; readback PASS; readiness 200 | `application-plan-rot1-2.txt` `4fe6a6881326359b`, `rotation-deploy-20261108T214559Z.txt` `f4130a53295cf058` |
+| 2b job on the new version | Execution `a0m5bsm` `Succeeded`; every monitoring link PASS | `foundation-plan-rot1.txt` `e01462dfd18a6a9e`, `rotation-foundation-apply-20261108T215247Z.txt` `6d21962f3bd348b4`, `monitoring-rot1-20261108T215854Z.txt` `5f51cf6de381239d` |
+| 2b probe A on `rot1-1` | PASS: two-tenant login and exports, cleanup included | `smoke-20261108T215659Z.json` `20dde30a7f4d0677` |
+| 2b old password | `FATAL: password authentication failed` through Supavisor; new version connects; old version disabled | `rotation-old-refused-20261108T215944Z.txt` `cbbc22b07c80e509` |
+| 2c Sentry | CLI exit 0 from the live image. Owner's report: event, release and environment visible in the EU region, alert email received | `sentry-check-20261108T220910Z.txt` `3850a717aba017d5` |
+| 2d dependency loss, local | Results in [runbook 06](06-operations.md#readiness-and-authenticated-synthetic-checks) | `dep-loss-20261108T222114Z/report.txt` `23e78459a8837680`, `sink.txt` `cd9947becb500746` |
+
+**Not claimed.** A consistent DB+Storage restore (LP5-03), ACA ingress during an outage, and
+how ACA restarts a failed boot. The first scheduled job run on the new version is due at 02:00 UTC
+on 2026-11-09. Backups were not restored; RPO and RTO are targets until LP5-03 measures them.
+
+### Rotating the runtime credential on hosted QA
+
+Runbook 05's order, with these hosted specifics. Run from a clean checkout at the live source.
+
+1. `gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
+2. Write a manifest with `qa_autodeploy.py inputs` and give it a new `release_id`. Build the new
+   URL from the selected version's URL, changing only the password.
+3. `release_secrets.py store`, select the returned version in the manifest, then
+   `release_secrets.py verify`. Nothing live has changed yet.
+4. `terraform_run.py application plan`: only the secret version, revision suffix and `release` tag
+   may differ, plus the cosmetic `transport` casing and startup-probe order that auto-deploy's PATCHes
+   leave behind. Do this before the password changes.
+5. Change the password (runbook 05 step 5). Run the identity and privilege evidence in the exact
+   API image, because Prisma on macOS refuses the Supabase pooler certificate and the URL's
+   `sslcert` already names the image's path. Mount `infra/scripts/runtime-identity.mjs`,
+   `packages/db/scripts/runtime-role.mjs` and `packages/db/prisma/migrations` read-only at the same
+   paths under `/app`, and pass `DATABASE_URL` with `-e` by name only.
+6. `bash infra/scripts/deploy-apps.sh --backend <file> --inputs <manifest>`. The API drains first.
+7. Copy the last foundation input, changing only `config.monitoring.database_secret_version`.
+   Plan and apply it before the job's next 02:00 UTC run, or that run fails and fires the alert.
+   Start one execution, then run `monitoring_readback.py --hours 26`.
+8. Run probe A.
+9. Try the old password once through Supavisor, reading it from its vault version so that a typo
+   cannot pass as a refusal. Confirm that nothing references the old version, disable it, then
+   `gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
+
+### Incident: the wrong password stored at step 5
+
+**What happened.** On 2026-11-08 our instructions put the password on the clipboard and also gave
+`\password tonyai_runtime` as a command to copy. Copying it replaced the clipboard, so the command's
+text was pasted at both hidden prompts and stored. The first identity check failed, as it should.
+
+**Effect.** The BYPASSRLS runtime role held that guessable text for about 10 minutes, ending about
+21:41 UTC. The API lost new connections and was unavailable from about 21:38 until the deploy,
+with QA idle. The owner read Supabase's logs for the window and reported nothing wrong.
+
+**Recovery, with no paste.** As the owner, compare the verifier in `pg_authid.rolpassword` with the
+selected password offline. Send `ALTER ROLE tonyai_runtime PASSWORD '<client-side SCRAM verifier>'`
+over stdin, which is the same statement `\password` sends. Compare again and require a match, then
+run one identity check. Reselect no old manifest.
+
 ## R004 consolidated L10 acceptance package (prepared 2026-11-02; historical)
 
 Superseded on 2026-11-04 by [ci4-1 L10 acceptance](#ci4-1-l10-acceptance-from-2026-11-04).
@@ -639,7 +703,7 @@ and the underlying response. Prior successful exact-source CI/E2E/Integration
 | E no-factor/localisation | NOT_RUN | No numeric fallback; remaining TR/EN UI/email/export observations |
 | F monitoring/backup/maintenance | PARTIAL:5resources/readbacks, Test acknowledgement, verifier Succeeded; logs0rows; backup/maintenance not run | Recent backup metadata, active routed rules, actual operator acknowledgement, job chain, rollback and return |
 | Numerical emissions | BLOCKED O6/LP4-02 | Authoritative factors/golden results; no synthetic substitute |
-| Full G2/production recovery | OPEN | Consistent DB+Storage restore, isolated outages/hung flights, rotation/Sentry and wider production gates |
+| Full G2/production recovery | G2 MET 2026-11-08 ([G2 closure](#g2-closure-2026-11-08)); restore and production gates OPEN | Consistent DB+Storage restore (LP5-03) and wider production gates (LP2-04) |
 
 ### One approval envelope, separately bounded operations
 

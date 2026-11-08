@@ -52,6 +52,19 @@ a hung connection separately: replacement is eligible once the flight is at leas
 prove recovery when one settles, or record the required operator restart. Do not weaken grants or
 probe customer data to simulate failure. Also test a cold start with DB down.
 
+Measured at G2 (2026-11-08) on `ci17-1`'s API image against local Supabase, not on
+hosted QA, so ACA ingress was not exercised. Database and Storage loss: readiness
+503 at 4.2 s and 6.1 s, liveness 200, no restart, no Sentry event from readiness,
+readiness 200 within the five-second cache of the dependency returning (0 to 6.1 s
+across three runs). A paused (hung) database
+for 76 s: 503 at 7.1 s, liveness 200, and 200 as soon as it resumed, with no operator
+restart. The Storage sweeper may log one `Storage sweep failed` error with a stack
+during a database outage, depending on its timer; that is not a readiness failure and
+sent no Sentry event. A cold start with the database down exits in about 1.5 s
+without opening HTTP, reports one event if a DSN is set, and needs a restart once the
+database is back. The Sentry SDK also posts `client_report` telemetry every 60 s,
+so count events by type, not posts.
+
 ## Scheduled Storage verification and operator delivery
 
 After selecting the deployed API digest, add `config.monitoring` to the private
