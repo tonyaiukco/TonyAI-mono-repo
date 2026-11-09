@@ -13,7 +13,8 @@ def validate_foundation(inputs):
                           config.get('prefix'), config.get('environment'))
     required = {'subscription_id','tenant_id','environment','prefix','resource_group','registry_name',
                 'vault_name','repository','release_sha','owner_object_id'}
-    optional = {'deployer_object_id','runtime_secrets_ready','smtp_secret_ready','apps_ready','monitoring','email'}
+    optional = {'deployer_object_id','runtime_secrets_ready','smtp_secret_ready','apps_ready','monitoring','email','public_hosts',
+                'availability_tests'}
     if not required <= set(config) or set(config) - required - optional:
         raise SafeFailure('Unknown foundation fields; secret values are prohibited.')
     if config['environment'] not in ('staging','production'):
@@ -33,7 +34,7 @@ def validate_foundation(inputs):
                 'repository':r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+','release_sha':r'[a-f0-9]{40}'}
     if any(not isinstance(config[k],str) or not re.fullmatch(p,config[k]) for k,p in patterns.items()):
         raise SafeFailure('Invalid public foundation metadata.')
-    if any(type(config.get(k,False)) is not bool for k in ('runtime_secrets_ready','smtp_secret_ready','apps_ready')):
+    if any(type(config.get(k,False)) is not bool for k in ('runtime_secrets_ready','smtp_secret_ready','apps_ready','availability_tests')):
         raise SafeFailure('Readiness switches must be booleans.')
     if config.get('apps_ready') and not deployer:
         raise SafeFailure('App grants require the verified deployment principal.')
@@ -48,6 +49,15 @@ def validate_foundation(inputs):
                 or any(not isinstance(monitoring[k], str) or not re.fullmatch(p, monitoring[k]) for k,p in patterns.items())):
             raise SafeFailure('Monitoring needs named operator, immutable release references and runtime grants.')
     validate_email(config)
+    hosts = config.get('public_hosts')
+    if hosts is not None:
+        # Same rule as the application's bound hosts; certificates replace bound in this lane.
+        from public_hosts import validate_public_hosts
+        if (not isinstance(hosts, dict) or not {'web', 'api'} <= set(hosts) or set(hosts) - {'web', 'api', 'certificates', 'monitored'}
+                or any(type(hosts.get(k, False)) is not bool for k in ('certificates', 'monitored'))
+                or (hosts.get('monitored') and not hosts.get('certificates'))):
+            raise SafeFailure('Public hosts need web, api and boolean certificates and monitored switches; monitoring needs certificates.')
+        validate_public_hosts({'web': hosts['web'], 'api': hosts['api'], 'bound': False})
     return config
 
 
@@ -59,7 +69,7 @@ def validate_email(config):
         return
     required = {'client_id', 'principal_id', 'tenant_id'}
     if (not isinstance(email, dict) or not required <= set(email)
-            or set(email) - required - {'custom_domain', 'custom_domain_verified'}):
+            or set(email) - required - {'custom_domain', 'custom_domain_verified', 'sender_username'}):
         raise SafeFailure('Email accepts only nonsecret Entra IDs and optional domain settings.')
     if any(not isinstance(email[k], str) or not re.fullmatch(
             r'[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}', email[k])
@@ -74,3 +84,6 @@ def validate_email(config):
             or (domain is not None and (not isinstance(domain, str) or len(domain) > 253
                 or not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}', domain)))):
         raise SafeFailure('Use a DNS domain; link it only after owner-run verification.')
+    sender = email.get('sender_username', 'DoNotReply')
+    if not isinstance(sender, str) or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?', sender):
+        raise SafeFailure('Sender username must be a plain mailbox local part.')

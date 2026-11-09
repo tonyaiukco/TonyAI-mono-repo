@@ -28,19 +28,26 @@ def transfer_runtime(api, vault, ref, journal):
 def run(args):
     config = json.loads(Path(args.config).read_text())
     required = {'organization_id', 'organization_slug', 'name', 'vault', 'web_origin'}
-    if set(config) != required or not all(isinstance(v, str) and v and '<' not in v for v in config.values()):
+    if set(config) - {'public_web_host'} != required or not all(isinstance(v, str) and v and '<' not in v for v in config.values()):
         raise SafeFailure('Complete the nonsecret Supabase configuration first.')
     if not all(re.fullmatch(r'[a-zA-Z0-9_-]+', config[k]) for k in ('organization_id', 'organization_slug', 'name')):
         raise SafeFailure('Invalid project or organization identifier.')
     from terraform_run import clean_environment
     from foundation_contract import validate_foundation
     from session_resources import restore
+    from public_hosts import is_public_host
     clean_environment()
     foundation = validate_foundation(json.loads(Path(args.foundation).read_text()))
     session = restore(foundation['subscription_id'], foundation['resource_group'])
     if (session['VAULT_NAME'] != config['vault'] or session['WEB_ORIGIN'] != config['web_origin']
             or session['AZURE_TENANT_ID'] != foundation['tenant_id']):
         raise SafeFailure('Supabase target does not match the verified Azure foundation.')
+    public_web_host = config.get('public_web_host')
+    hosts = foundation.get('public_hosts') or {}
+    # Before any key is revealed: only the foundation's certified web host may become the site URL.
+    if public_web_host is not None and (not is_public_host(public_web_host) or public_web_host != hosts.get('web')
+                                        or hosts.get('certificates') is not True):
+        raise SafeFailure("public_web_host must be the foundation's web host, and only once its certificate exists.")
     if not sys.stdin.isatty():
         raise SafeFailure('Use a private interactive terminal for hidden token entry.')
     token = getpass.getpass('Supabase management token (hidden, memory only): ')
@@ -51,7 +58,8 @@ def run(args):
             raise SafeFailure('Unexpected management API path.')
         return json_request('https://api.supabase.com' + path, method, token, body)
     vault = Vault(config['vault'])
-    journal = Journal(args.journal, config)
+    # The journal stays bound to the original target; a later public host must not orphan it.
+    journal = Journal(args.journal, {k: v for k, v in config.items() if k != 'public_web_host'})
     try:
         reconcile_only = getattr(args, 'reconcile_auth_only', False)
         if reconcile_only and (journal.data.get('configured') is not True
@@ -68,7 +76,7 @@ def run(args):
                       and key.get('algorithm') in ('ES256', 'RS256')]
             if len(active) != 1:
                 raise SafeFailure('Auth reconciliation needs exactly one active asymmetric signing key; inspect before rotating.')
-            configure_auth(api, ref, config['web_origin'], public, active[0]['id'])
+            configure_auth(api, ref, config['web_origin'], public, active[0]['id'], public_web_host=config.get('public_web_host'))
             print('PASS: existing hosted Auth policy and public JWKS reconciled; no secret transfer or key rotation.')
             return
         if journal.data.get('configured'):
@@ -76,7 +84,7 @@ def run(args):
             return
         public, versions = transfer_runtime(api, vault, ref, journal)
         signing = ensure_signing_key(api, ref, journal)
-        configure_auth(api, ref, config['web_origin'], public, signing)
+        configure_auth(api, ref, config['web_origin'], public, signing, public_web_host=config.get('public_web_host'))
         journal.set(versions=versions, configured=True)
         print('PASS: Stockholm project, private buckets, Auth/JWKS and vault bindings reconciled.')
         print('Project reference: ' + ref + '; version IDs are in the nonsecret journal.')

@@ -14,10 +14,21 @@ variable "foundation" {
     subscription_id = string, tenant_id = string, environment = string,
     resource_group  = string, prefix = string, registry_name = string,
     vault_name      = string, default_domain = string
+    # LP2-04: custom hosts under the reviewed parent domain; bound = TLS live (see design D2).
+    public_hosts = optional(object({ web = string, api = string, bound = bool }))
   })
   validation {
     condition     = contains(["staging", "production"], var.foundation.environment) && can(regex("^[a-z0-9-]+\\.swedencentral\\.azurecontainerapps\\.io$", var.foundation.default_domain)) && can(regex("^[a-z0-9]{3,12}$", var.foundation.prefix)) && can(regex("^[a-z0-9]{5,50}$", var.foundation.registry_name)) && can(regex("^[a-z][a-z0-9-]{1,22}[a-z0-9]$", var.foundation.vault_name))
     error_message = "Application must target the reviewed EU foundation contract."
+  }
+  validation {
+    condition = var.foundation.public_hosts == null ? true : (
+      var.foundation.public_hosts.web != var.foundation.public_hosts.api &&
+      alltrue([for host in [var.foundation.public_hosts.web, var.foundation.public_hosts.api] :
+        length(host) <= 253 && can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+${replace(jsondecode(file("${path.module}/../../config/public-hosts.json")).parent_domain, ".", "\\.")}$", host))
+      ])
+    )
+    error_message = "Public hosts must be distinct lowercase DNS names under the reviewed parent domain."
   }
 }
 variable "release" {
@@ -64,11 +75,21 @@ variable "release" {
 }
 # Operational settings are plain values, never Key Vault secrets.
 locals {
-  stem            = "${var.foundation.prefix}-${var.foundation.environment}"
-  group_id        = "/subscriptions/${var.foundation.subscription_id}/resourceGroups/${var.foundation.resource_group}"
-  environment_id  = "${local.group_id}/providers/Microsoft.App/managedEnvironments/${local.stem}-env"
-  registry        = "${var.foundation.registry_name}.azurecr.io"
-  web_origin      = "https://${local.stem}-web.${var.foundation.default_domain}"
+  stem           = "${var.foundation.prefix}-${var.foundation.environment}"
+  group_id       = "/subscriptions/${var.foundation.subscription_id}/resourceGroups/${var.foundation.resource_group}"
+  environment_id = "${local.group_id}/providers/Microsoft.App/managedEnvironments/${local.stem}-env"
+  registry       = "${var.foundation.registry_name}.azurecr.io"
+  generated_web  = "https://${local.stem}-web.${var.foundation.default_domain}"
+  public_hosts   = var.foundation.public_hosts == null ? {} : { api = var.foundation.public_hosts.api, web = var.foundation.public_hosts.web }
+  bound          = try(var.foundation.public_hosts.bound, false)
+  web_origin     = local.bound ? "https://${local.public_hosts.web}" : local.generated_web
+  # The generated host keeps serving after binding, so it stays an allowed CORS origin.
+  cors_origins = join(",", distinct([local.web_origin, local.generated_web]))
+  # Disabled until the foundation's managed certificate exists, then SNI with it (design D2).
+  custom_domains = { for kind, host in local.public_hosts : kind => [merge(
+    { name = host, bindingType = local.bound ? "SniEnabled" : "Disabled" },
+    { for key, id in { certificateId = "${local.environment_id}/managedCertificates/${local.stem}-${kind}-cert" } : key => id if local.bound }
+  )] }
   supabase_url    = "https://${var.release.supabase_project_ref}.supabase.co"
   identity_ids    = { for kind in ["api", "web"] : kind => "${local.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${local.stem}-${kind}" }
   secret_versions = merge({ database-url = var.release.database_secret_version, supabase-service-role-key = var.release.backend_secret_version }, var.release.mail == null ? {} : { smtp-password = var.release.mail.password_secret_version })
@@ -89,7 +110,7 @@ locals {
     { name = "STORAGE_CLEANUP_HOLD", value = var.release.storage_cleanup_hold ? "1" : "0" },
     { name = "STORAGE_SWEEP_INTERVAL_SECONDS", value = tostring(var.release.storage_sweep_interval_seconds) },
     { name = "LOG_FORMAT", value = "json" }, { name = "SUPABASE_URL", value = local.supabase_url },
-    { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.web_origin },
+    { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.cors_origins },
     { name = "DATABASE_URL", secretRef = "database-url" },
     { name = "SUPABASE_SERVICE_ROLE_KEY", secretRef = "supabase-service-role-key" }
   ], local.mail_env, [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])

@@ -17,8 +17,12 @@ resource "azapi_resource" "app" {
     workloadProfileName = "Consumption"
     configuration = {
       activeRevisionsMode = "Single"
-      ingress             = { external = true, allowInsecure = false, targetPort = each.value.port, transport = "auto" }
-      registries          = [{ server = local.registry, identity = local.identity_ids[each.key] }]
+      # customDomains only once public hosts are configured, so an unset input plans no change.
+      ingress = merge(
+        { external = true, allowInsecure = false, targetPort = each.value.port, transport = "auto" },
+        { for key, domains in { customDomains = try(local.custom_domains[each.key], []) } : key => domains if length(domains) > 0 }
+      )
+      registries = [{ server = local.registry, identity = local.identity_ids[each.key] }]
       secrets = each.key == "api" ? [for name, version in local.secret_versions : {
         name = name, keyVaultUrl = "https://${var.foundation.vault_name}.vault.azure.net/secrets/${name}/${version}", identity = local.identity_ids["api"]
       }] : []

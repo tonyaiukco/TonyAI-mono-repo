@@ -32,6 +32,25 @@ class AuthLifecycleSettingsTests(unittest.TestCase):
         self.assertFalse(expected['mailer_notifications_password_changed_enabled'])
         self.assertIn(ORIGIN + '/auth/confirm', expected['uri_allow_list'].split(','))
 
+    def test_bound_public_host_is_site_url_and_generated_origin_stays_allowed(self):
+        settings = managed_auth_settings(ORIGIN, 'qa.tonyai.io')
+        self.assertEqual(settings['site_url'], 'https://qa.tonyai.io')
+        self.assertEqual(settings['uri_allow_list'].split(','), [
+            'https://qa.tonyai.io', 'https://qa.tonyai.io/login', 'https://qa.tonyai.io/auth/confirm',
+            ORIGIN, ORIGIN + '/login', ORIGIN + '/auth/confirm'])
+        validate_managed_auth_settings(settings, ORIGIN, 'qa.tonyai.io')
+        with self.assertRaises(SafeFailure):
+            validate_managed_auth_settings(managed_auth_settings(ORIGIN), ORIGIN, 'qa.tonyai.io')
+        with self.assertRaises(SafeFailure):
+            validate_managed_auth_settings(settings, ORIGIN)
+
+    def test_public_host_outside_parent_domain_refused_before_any_call(self):
+        def api(*args, **kwargs):
+            raise AssertionError('The management API was called for a refused host.')
+        for host in ('qa.example.com', 'qa.tonyai.io.evil.com', 'tonyai.io', 'https://qa.tonyai.io', 'QA.tonyai.io', ''):
+            with self.subTest(host=host), self.assertRaises(SafeFailure):
+                configure_auth(api, REF, ORIGIN, 'public', 'id', host)
+
     def test_every_managed_setting_missing_wrong_or_wrong_type_refused(self):
         good = managed_auth_settings(ORIGIN)
         validate_managed_auth_settings(good, ORIGIN)

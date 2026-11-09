@@ -194,6 +194,25 @@ class GuardTests(unittest.TestCase):
                 with self.assertRaises(SafeFailure): check_inputs({**env,field:'http://localhost:3000'})
                 request.assert_not_called()
 
+    def test_public_api_host_is_the_build_origin_only_when_both_hosts_are_set(self):
+        env = {'SUPABASE_PROJECT_REF':PROJECT, 'NEXT_PUBLIC_SUPABASE_ANON_KEY':'sb_publishable_synthetic',
+               'NEXT_PUBLIC_SUPABASE_URL':'https://' + PROJECT + '.supabase.co',
+               'PREFIX':'tonyai', 'ACA_DEFAULT_DOMAIN':'example.swedencentral.azurecontainerapps.io',
+               'WEB_HOST':'qa.tonyai.io', 'API_HOST':'api.qa.tonyai.io', 'API_ORIGIN':'https://api.qa.tonyai.io',
+               'NEXT_PUBLIC_API_BASE_URL':'https://api.qa.tonyai.io/api/v1'}
+        with patch('check_browser_key.request', side_effect=[(401,b''),(200,json.dumps(AUTH).encode())]):
+            check_inputs(env)
+        generated = 'https://tonyai-staging-api.example.swedencentral.azurecontainerapps.io'
+        # The unbound stage keeps the generated build origin.
+        with patch('check_browser_key.request', side_effect=[(401,b''),(200,json.dumps(AUTH).encode())]):
+            check_inputs({**env, 'HOSTS_BOUND':'false', 'API_ORIGIN':generated, 'NEXT_PUBLIC_API_BASE_URL':generated + '/api/v1'})
+        for change in ({'API_ORIGIN':generated, 'NEXT_PUBLIC_API_BASE_URL':generated + '/api/v1'},
+                       {'API_HOST':''}, {'API_HOST':'api.qa.evil.io', 'API_ORIGIN':'https://api.qa.evil.io',
+                                         'NEXT_PUBLIC_API_BASE_URL':'https://api.qa.evil.io/api/v1'}):
+            with self.subTest(change=change), patch('check_browser_key.request') as request:
+                with self.assertRaises(SafeFailure): check_inputs({**env, **change})
+                request.assert_not_called()
+
     def test_browser_build_rejects_open_auth_settings_and_missing_key_enforcement(self):
         env = {'SUPABASE_PROJECT_REF':PROJECT, 'NEXT_PUBLIC_SUPABASE_ANON_KEY':'sb_publishable_synthetic',
                'NEXT_PUBLIC_SUPABASE_URL':'https://' + PROJECT + '.supabase.co',

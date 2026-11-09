@@ -32,7 +32,7 @@ def validate_release(inputs):
     require_hosted_target(foundation.get('subscription_id'), foundation.get('resource_group'),
                           foundation.get('prefix'), foundation.get('environment'))
     expected = {'subscription_id', 'tenant_id', 'environment', 'resource_group', 'prefix', 'registry_name', 'vault_name', 'default_domain'}
-    if set(foundation) != expected or foundation['environment'] not in ('staging', 'production'):
+    if set(foundation) - {'public_hosts'} != expected or foundation['environment'] not in ('staging', 'production'):
         raise SafeFailure('Unexpected foundation contract.')
     patterns = {
         'subscription_id': r'[a-f0-9-]{36}', 'tenant_id': r'[a-f0-9-]{36}',
@@ -43,6 +43,8 @@ def validate_release(inputs):
     for key, pattern in patterns.items():
         if not isinstance(foundation[key], str) or not re.fullmatch(pattern, foundation[key]):
             raise SafeFailure('Invalid foundation identifier or domain.')
+    from public_hosts import validate_public_hosts
+    validate_public_hosts(foundation.get('public_hosts'))
     expected = {'source_sha', 'release_id', 'supabase_project_ref', 'api_digest', 'web_digest', 'database_secret_version', 'backend_secret_version', 'storage_cleanup_hold', 'storage_sweep_interval_seconds'}
     if set(release) - {'runtime_limits', 'mail'} != expected:
         raise SafeFailure('Release has missing or unknown fields; secret values are prohibited.')
@@ -104,6 +106,8 @@ def invoke(lane, backend_path, inputs_path, action, before_apply=None):
           '-backend-config=key=' + target['environment'] + ('-selfhost' if lane == 'selfhost' else '') + '.tfstate'])
     if action == 'output':
         call(['output', '-json', 'selfhost_contract' if lane == 'selfhost' else 'application_contract'])
+        if lane == 'foundation':
+            call(['output', '-json', 'dns_contract'])  # LP2-04: nonsecret records the owner enters
         return
     if action == 'approved-apply' or (action == 'apply' and before_apply):
         # The protected environment reviewer approves the release before this

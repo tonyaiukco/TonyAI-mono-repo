@@ -7,7 +7,8 @@
     "prefix": "tonyaiqt",
     "registry_name": "<registry-from-foundation>",
     "vault_name": "<vault-from-foundation>",
-    "default_domain": "<environment-domain>.swedencentral.azurecontainerapps.io"
+    "default_domain": "<environment-domain>.swedencentral.azurecontainerapps.io",
+    "public_hosts": null
   },
   "release": {
     "source_sha": "<image-source-commit-sha>",

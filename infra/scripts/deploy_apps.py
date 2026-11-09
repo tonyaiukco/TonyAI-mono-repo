@@ -10,6 +10,25 @@ from terraform_run import invoke, validate_release
 from runtime_limits import expected_env, validate_limits
 from drain_api import drain, settle, revisions
 from mail_settings import verify_mail_environment
+from public_hosts import web_origins
+
+
+def expected_custom_domains(foundation, group_id, stem, kind):
+    """Design D2: Disabled until bound, then SNI with the foundation's deterministic certificate."""
+    hosts = foundation.get('public_hosts')
+    if not hosts:
+        return []
+    certificate = None
+    if hosts['bound']:
+        certificate = (group_id + '/providers/Microsoft.App/managedEnvironments/' + stem
+                       + '-env/managedCertificates/' + stem + '-' + kind + '-cert').lower()
+    return [(hosts[kind], 'SniEnabled' if hosts['bound'] else 'Disabled', certificate)]
+
+
+def custom_domains(items):
+    # ARM answers null for none, and may echo resource-group casing differently in IDs.
+    return [(item.get('name'), item.get('bindingType'), (item.get('certificateId') or '').lower() or None)
+            for item in items or []]
 
 
 def verify(inputs, read=az):
@@ -39,6 +58,9 @@ def verify(inputs, read=az):
                 raise SafeFailure('Storage operational settings differ from the release.')
             if any(env.get(k, {}).get('value') != v for k, v in expected_env(release).items()):
                 raise SafeFailure('Runtime limits differ from the reviewed release.')
+            # CORS is exactly the release's web origins: a hand-added origin fails the readback.
+            if env.get('WEB_ORIGIN', {}).get('value') != ','.join(web_origins(foundation)):
+                raise SafeFailure('API CORS origins differ from the release.')
             scale = properties['template'].get('scale', {})
             if scale.get('minReplicas') != 1 or scale.get('maxReplicas') != 1:
                 raise SafeFailure('Process-local quotas require exactly one API replica.')
@@ -60,6 +82,8 @@ def verify(inputs, read=az):
         if configuration.get('activeRevisionsMode') != 'Single':
             raise SafeFailure('Application revision mode differs from the release.')
         expected_fqdn = stem + '-' + kind + '.' + foundation['default_domain']
+        if custom_domains(configuration['ingress'].get('customDomains')) != expected_custom_domains(foundation, group_id, stem, kind):
+            raise SafeFailure('The ' + kind + ' custom domain binding differs from the release stage.')
         if (configuration['ingress'].get('allowInsecure') is not False
                 or configuration['ingress'].get('fqdn') != expected_fqdn
                 or properties.get('latestReadyRevisionName') != stem + '-' + kind + '--' + release['release_id']):

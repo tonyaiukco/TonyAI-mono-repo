@@ -178,7 +178,7 @@ MUTANTS = [
     ('deployed secret identity readback removed', 'deploy_apps.py',
      " or actual[name].get('identity') != identity", ''),
     ('Auth exact-origin and lifecycle readback removed', 'supabase_auth.py',
-     '    validate_managed_auth_settings(actual, origin)', '    pass'),
+     '    validate_managed_auth_settings(actual, origin, public_web_host)', '    pass'),
     ('unrecorded app adoption restored', 'configure_oidc.py',
      "        if apps:\n            raise SafeFailure('Unrecorded Entra app already uses the staging name; refusing adoption.')\n        app = az(",
      "        app = apps[0] if apps else az("),
@@ -224,6 +224,29 @@ MUTANTS = [
     ('repository binding removed', 'configure_oidc.py', "if resource.get('tags', {}).get('githubRepository') != repo:", 'if False:'),
     ('bootstrap disable skipped', 'runtime_urls.py', "    vault.disable('bootstrap-db-password', saved['bootstrap_password_version'])", '    pass'),
 
+    # LP2-04 public hosts, staged binding, Auth journal and availability readback.
+    ('public host parent-domain check removed', 'public_hosts.py',
+     '    if not all(is_public_host(value[kind]) for kind in KINDS):', '    if False:'),
+    ('public host bound flag ignored', 'public_hosts.py',
+     "    if hosts and hosts['bound']:\n        return {kind: 'https://' + hosts[kind] for kind in KINDS}", "    if hosts:\n        return {kind: 'https://' + hosts[kind] for kind in KINDS}"),
+    ('custom domain stage readback removed', 'deploy_apps.py',
+     "        if custom_domains(configuration['ingress'].get('customDomains')) != expected_custom_domains(foundation, group_id, stem, kind):", '        if False:'),
+    ('Auth journal rebound to the public host', 'supabase_setup.py',
+     "    journal = Journal(args.journal, {k: v for k, v in config.items() if k != 'public_web_host'})", '    journal = Journal(args.journal, config)'),
+    ('Auth public host check removed', 'supabase_auth.py',
+     '    if public_web_host is not None and not is_public_host(public_web_host):', '    if False:'),
+    ('availability test URL check removed', 'monitoring_readback.py',
+     "url == origins[kind] + path", 'True'),
+    ('live CORS origin readback removed', 'deploy_apps.py',
+     "            if env.get('WEB_ORIGIN', {}).get('value') != ','.join(web_origins(foundation)):", '            if False:'),
+    ('Auth public host accepted before foundation check', 'supabase_setup.py',
+     "    if public_web_host is not None and (not is_public_host(public_web_host) or public_web_host != hosts.get('web')", '    if False and (True'),
+    ('availability readback ignores the opt-in', 'monitoring_readback.py',
+     '    if not availability:\n        return results\n', ''),
+    ('unbound stage from the shell ignored', 'public_hosts.py',
+     "'bound': bound == 'true'", "'bound': True"),
+    ('foundation public host validation removed', 'foundation_contract.py',
+     "        validate_public_hosts({'web': hosts['web'], 'api': hosts['api'], 'bound': False})", '        pass'),
 ]
 
 
@@ -279,7 +302,8 @@ def main():
                         'runtime_urls.py':'test_pooler_metadata.py',
                         'secure_transport.py':'test_review_boundaries.py',
                         'foundation_contract.py':'test_review_boundaries.py',
-                        'supabase_project.py':'test_supabase_resume.py'}
+                        'supabase_project.py':'test_supabase_resume.py',
+                        'public_hosts.py':'test_public_hosts.py'}
             if filename.startswith('.github/'): pattern = 'test_workflow_security.py'
             else: pattern = targeted.get(filename, pattern)
             # Keep a full suite control above; run each mutant against its direct
@@ -296,6 +320,10 @@ def main():
                 'admin bypass check removed': 'test_review_boundaries.py',
                 'main repository preflight skipped': 'test_review_boundaries.py',
                 'repository binding removed': 'test_review_boundaries.py',
+                'foundation public host validation removed': 'test_public_hosts.py',
+                'custom domain stage readback removed': 'test_runtime_deployment.py',
+                'live CORS origin readback removed': 'test_deploy_versions.py',
+                'unbound stage from the shell ignored': 'test_qa_autodeploy.py',
             }
             pattern = overrides.get(name, pattern)
             if name.startswith('mail '): pattern = 'test_mail_settings.py'

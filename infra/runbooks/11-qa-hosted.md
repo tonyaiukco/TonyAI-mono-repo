@@ -407,6 +407,135 @@ integer with no partial error, so a workspace without `AzureDiagnostics` fails c
 This shows where the window's rows landed in the workspace. It is neither a `Dedicated`
 readback nor proof of routing newer than ingestion latency.
 
+## Public hosts and mail domain (LP2-04)
+
+**Goal.** Hosted QA moves to `qa.tonyai.io` (web) and `api.qa.tonyai.io` (API), each with a free ACA managed certificate. Invitation and reset mail moves to `no-reply@tonyai.io` on the verified root domain. Two availability tests alert the operator. The design is OpenSpec `lp2-04-qa-domain-mail`.
+
+**Production is out of scope.** Nothing here touches it (Decisions 2026-11-09, second).
+
+**What stays the same.**
+- DNS stays at Namecheap, and the owner enters every record.
+- Google Workspace keeps the root MX, its SPF include and `google._domainkey`.
+- The generated `*.azurecontainerapps.io` hosts keep serving throughout. Until step 7, nothing user-visible changes.
+
+### Inputs (owner-local, never committed)
+
+Each step names the field it flips. Everything else in the files stays as it was.
+
+| File | Field | Final value |
+|---|---|---|
+| `foundation.json` | `config.email.custom_domain` | `"tonyai.io"` |
+| `foundation.json` | `config.email.custom_domain_verified` | `false` → `true` at step 4 |
+| `foundation.json` | `config.email.sender_username` | `"no-reply"` |
+| `foundation.json` | `config.availability_tests` | `true` from step 2. It is opt-in, so no unrelated foundation apply creates the tests. |
+| `foundation.json` | `config.public_hosts` | `{ "web": "qa.tonyai.io", "api": "api.qa.tonyai.io", "certificates": false, "monitored": false }`; `certificates: true` at step 6, `monitored: true` at step 9 |
+| Application release manifest | `foundation.public_hosts` | `{ "web": …, "api": …, "bound": false }` at step 5, `true` at step 7 |
+| Application release manifest | `release.mail.from` | `"no-reply@tonyai.io"` at step 5 |
+| Application release manifest | `release.release_id` | a new value for each apply |
+| `supabase.json` | `public_web_host` | `"qa.tonyai.io"` at step 7. The journal stays bound to the original five keys. |
+
+### DNS records (Namecheap → Advanced DNS)
+
+| Host | Type | Value | Source |
+|---|---|---|---|
+| `@` | TXT | ACS `Domain` record (`ms-domain-verification=…`), **added beside** `google-site-verification` | `dns_contract.email` |
+| `@` | TXT (SPF) | **Edit the existing record** to `v=spf1 include:_spf.google.com include:spf.protection.outlook.com ~all`. Never add a second `v=spf1` record. | ACS `SPF` record |
+| `selector1-azurecomm-prod-net._domainkey` | CNAME | ACS `DKIM` value | `dns_contract.email` |
+| `selector2-azurecomm-prod-net._domainkey` | CNAME | ACS `DKIM2` value | `dns_contract.email` |
+| `qa` | CNAME | `<stem>-web.<default domain>` | `dns_contract.hosts.web.cname` |
+| `api.qa` | CNAME | `<stem>-api.<default domain>` | `dns_contract.hosts.api.cname` |
+| `asuid.qa`, `asuid.api.qa` | TXT | the environment's verification ID | see below |
+
+Read the selector host names and values from the output, not from this table.
+
+The CNAMEs must point straight at the app hosts. An intermediate CNAME blocks certificate issuance.
+
+`dmarc@tonyai.io` and `no-reply@tonyai.io` already exist as Google Groups. DMARC is `p=none` (added 2026-11-09).
+
+Read the verification ID read-only. It is the same for every app in the environment:
+
+```bash
+az containerapp env show -g tonyai-qatmp-apps -n tonyaiqt-staging-env --query properties.customDomainConfiguration.customDomainVerificationId -o tsv
+```
+
+After each DNS change, Claude Code reads the records from Namecheap's own servers (`dig @dns1.registrar-servers.com`) before the next step.
+
+### Cutover (each step announced; plan read before every apply)
+
+**Before you start.**
+- The `az communication` commands need the extension: `az extension add --name communication`.
+- If `tonyai.io` ever gains CAA records, they must allow DigiCert, ACA's certificate issuer.
+- After every foundation apply, run the plan once more. It must show no changes. A difference that is only ID casing goes to Claude Code; it is never re-applied blindly.
+
+**The steps.**
+
+1. **Merge the PR.** Nothing changes: no input is set yet, and `monitoring_readback.py` checks the availability links only with `--availability`.
+2. **Foundation apply** with the custom domain, `sender_username`, `availability_tests: true` and `public_hosts` (`certificates: false`).
+   - From now on, run `monitoring_readback.py --availability`. Between step 7 and step 9, and in the middle of a rollback after `monitored: false`, it reports the API availability test as FAIL. In that window the readback expects the public host while the test still targets the generated one. Re-run it after step 9.
+   - The plan must add exactly this: the CustomerManaged domain, the App Insights component, one web test (the API's `/api/v1/health/ready`) and its metric alert. Nothing else.
+   - `terraform_run.py foundation output` prints `application_contract`, then `dns_contract`.
+   ```bash
+   python3 infra/scripts/terraform_run.py foundation plan --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
+   python3 infra/scripts/terraform_run.py foundation apply --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
+   python3 infra/scripts/terraform_run.py foundation output --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
+   ```
+   Within 30 minutes the portal's Availability blade must show results for the test, still on the generated API host. If no result appears, the component's `DisableLocalAuth` is the first suspect: stop and report it.
+3. **Enter the DNS records** from the table. Claude Code confirms them on the authoritative servers.
+4. **Verify the domain in ACS**, one call per record type, then confirm all four are `Verified`:
+   ```bash
+   for t in Domain SPF DKIM DKIM2; do az communication email domain initiate-verification -g tonyai-qatmp-apps --email-service-name tonyaiqt-staging-email --domain-name tonyai.io --verification-type $t; done
+   az communication email domain show -g tonyai-qatmp-apps --email-service-name tonyaiqt-staging-email --domain-name tonyai.io --query properties.verificationStates
+   ```
+   - ACS documents its SPF record as ending in `-all`, while the root keeps Google's `~all`. If SPF stays `NotVerified` with `~all`, stop. Changing the root to `-all` also affects Google mail, so that is an owner decision.
+   - Then a foundation apply with `custom_domain_verified: true`. That apply links the domain and creates the `no-reply` sender.
+5. **Application apply** (`deploy-apps.sh`, new `release_id`, same images) with `public_hosts.bound: false` and `mail.from: no-reply@tonyai.io`.
+   - Disable `QA deploy` around it, as for any owner release.
+   - Until step 7, an owner shell running `qa_autodeploy.py inputs` or a probe exports `WEB_HOST`, `API_HOST` and `HOSTS_BOUND=false`. Without them, the readback refuses the live `Disabled` domains.
+   - Each app gains its host with binding `Disabled`, and the readback checks that stage.
+   - Send one reset to a synthetic account. It must arrive from `no-reply@tonyai.io`, in the inbox.
+6. **Foundation apply** with `public_hosts.certificates: true`. Then wait until both certificates read `Succeeded`. The output never refreshes state, so read them live:
+   ```bash
+   az containerapp env certificate list -g tonyai-qatmp-apps -n tonyaiqt-staging-env --managed-certificates-only --query "[].{name:name, subject:properties.subjectName, state:properties.provisioningState}" -o table
+   ```
+   The availability tests stay on the generated hosts. A `Disabled` host serves ACA's default certificate, which would fail the TLS check.
+7. **Application apply** with `bound: true`. From here the owner shell drops `HOSTS_BOUND` (it defaults to `true`).
+   - Both hosts switch to `SniEnabled`, `APP_URL` becomes `https://qa.tonyai.io`, and `WEB_ORIGIN` lists both web origins. The readback checks that exact list.
+   - Then set `public_web_host` (it must equal the foundation's web host, whose certificate exists) and run runbook 02's `supabase_setup.py --reconcile-auth-only`.
+   - Tell QA users they will sign in again once on the new host.
+8. **GitHub `qa` environment:** set `QA_WEB_HOST=qa.tonyai.io` and `QA_API_HOST=api.qa.tonyai.io`, then dispatch `QA deploy`.
+   - The web image is rebuilt with `api.qa.tonyai.io`, and smoke runs on the public hosts.
+   - From now on, export `WEB_HOST` / `API_HOST` beside the other QA variables for `qa_autodeploy.py inputs` and `monitoring_readback.py`.
+9. **Foundation apply** with `public_hosts.monitored: true`. It moves the availability test to `api.qa.tonyai.io`. Make it the same apply that re-pins `storage-verify` to step 8's API image (`monitoring.api_digest`).
+10. **Acceptance:**
+    - One invitation and one reset arrive in the inbox, not spam. The owner's written report is the evidence, and the headers show `spf=pass`, `dkim=pass` and `dmarc=pass` for `tonyai.io`.
+    - `monitoring_readback.py` shows every link PASS, including the availability test on `api.qa.tonyai.io` and its alert.
+    - The hosted no-demo check passes.
+
+**Alerting.** An availability alert fires only when all three locations fail within 15 minutes. A deploy's short API drain therefore does not page the operator.
+
+**Cost.** One test, 3 locations × 4 runs an hour: about 8,800 executions a month, a few USD. There is no web test (owner decision 2026-11-09, option B): it would keep the scale-to-zero web app warm for roughly 25–40 USD a month. Every QA deploy's smoke already checks `/login`.
+
+### Hosted no-demo check
+
+`infra/scripts/hosted_no_demo_check.sql` is a single read-only `SELECT`, so the SQL editor shows its rows. Run it in the Supabase SQL editor, or through the owner `psql` in runbook 05's Linux container on macOS. Every row must read `0` / `PASS`. A `FAIL` names what to remove, which is an owner-reviewed cleanup and never part of this runbook.
+
+### Rollback
+
+Undo in reverse order, one foundation or application apply per row:
+
+| To undo | Do this |
+|---|---|
+| The tests on the public hosts | Foundation apply with `monitored: false` |
+| The web build | Clear the two GitHub variables, then dispatch `QA deploy` |
+| Public origins | Application apply with `bound: false`, or without `public_hosts` |
+| The certificates | Foundation apply with `certificates: false`. Only after unbinding: a bound certificate cannot be removed. |
+| The sender | Set `mail.from` back to the managed `DoNotReply@…` address |
+
+- **Rolling back across the cutover.** `QA rollback` binds a candidate's origins to the live inputs, so it refuses a pre-cutover candidate (generated origins) once the GitHub variables are set, and the reverse. To return to a pre-cutover image, undo the public origins first (rows above), then roll back.
+- **Renaming a host** follows the same order. Unbind it, remove its certificate, then add the new name.
+- **DNS records** are harmless while unbound. If the QA environment is ever deleted, delete the `qa` and `api.qa` CNAMEs and their `asuid` records too, so the names cannot be claimed elsewhere.
+- **Mail posture.** DMARC stays `p=none` until `dmarc=pass` has been observed. Moving to `quarantine` is an open question for the owner.
+
 ## Reset, maintenance and announcements
 
 Application deploys follow [Automatic deploy on merge](#automatic-deploy-on-merge) and need no per-deploy approval;

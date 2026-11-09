@@ -19,12 +19,15 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pooler import SafeFailure  # noqa: E402
 from qa_autodeploy import foundation_from_env, run_az, stem  # noqa: E402
+from public_hosts import public_origins  # noqa: E402
 
 VERSIONS = {'Microsoft.App/managedEnvironments': '2025-01-01', 'Microsoft.App/containerApps': '2025-01-01',
             'Microsoft.App/jobs': '2025-01-01', 'Microsoft.OperationalInsights/workspaces': '2023-09-01',
             'Microsoft.Insights/diagnosticSettings': '2021-05-01-preview',
             'Microsoft.Insights/scheduledQueryRules': '2023-12-01', 'Microsoft.Insights/metricAlerts': '2018-03-01',
-            'Microsoft.Insights/actionGroups': '2023-01-01'}
+            'Microsoft.Insights/actionGroups': '2023-01-01', 'Microsoft.Insights/components': '2020-02-02',
+            'Microsoft.Insights/webtests': '2022-06-15'}
+AVAILABILITY = (('api', '/api/v1/health/ready'),)  # API only: owner option B, 2026-11-09
 LOG_API = 'https://api.loganalytics.io'
 TABLES = ('ContainerAppConsoleLogs', 'ContainerAppSystemLogs')
 SHARED_TABLE_QUERY = 'AzureDiagnostics | summarize rows=count()'
@@ -73,7 +76,7 @@ def same(a, b):
     return isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower()
 
 
-def readback(foundation, reader, hours=26):
+def readback(foundation, reader, hours=26, availability=False):
     """[(status, link, detail)] for every link of the chain, in order."""
     s, results = stem(foundation), []
     def check(link, ok, detail):
@@ -145,6 +148,29 @@ def readback(foundation, reader, hours=26):
         check('API ' + suffix + ' metric alert', alert_properties.get('enabled') is True and routed
               and any(same(scope, api.get('id')) for scope in alert_properties.get('scopes') or []),
               'absent or unreadable' if not alert else 'enabled=' + str(alert_properties.get('enabled')) + ', routed=' + str(routed))
+
+    if not availability:
+        return results
+    # LP2-04 (opt-in, --availability): the tests target the hosts WEB_HOST/API_HOST (or their absence) name.
+    component = reader.arm('Microsoft.Insights/components', s + '-availability') or {}
+    check('availability component', bool(component.get('id'))
+          and (component.get('properties') or {}).get('IngestionMode') == 'LogAnalytics'
+          and same((component.get('properties') or {}).get('WorkspaceResourceId'), logs.get('id')),
+          'present' if component.get('id') else 'absent')
+    origins = public_origins(foundation)
+    for kind, path in AVAILABILITY:
+        test = reader.arm('Microsoft.Insights/webtests', s + '-' + kind + '-availability') or {}
+        test_properties = test.get('properties') or {}
+        url = (test_properties.get('Request') or {}).get('RequestUrl')
+        check(kind + ' availability test', test_properties.get('Enabled') is True and url == origins[kind] + path
+              and (test_properties.get('ValidationRules') or {}).get('SSLCheck') is True,
+              'absent or unreadable' if not test else 'enabled=' + str(test_properties.get('Enabled')) + ', url=' + str(url))
+        alert = reader.arm('Microsoft.Insights/metricAlerts', s + '-' + kind + '-availability') or {}
+        alert_properties = alert.get('properties') or {}
+        routed = any(same(a.get('actionGroupId'), group.get('id')) for a in alert_properties.get('actions') or [])
+        check(kind + ' availability alert', alert_properties.get('enabled') is True and routed
+              and same((alert_properties.get('criteria') or {}).get('webTestId'), test.get('id')),
+              'absent or unreadable' if not alert else 'enabled=' + str(alert_properties.get('enabled')) + ', routed=' + str(routed))
     return results
 
 
@@ -152,11 +178,13 @@ def main(argv=None, env=None):
     import os
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--hours', type=int, default=26, help='row-count window (1-72, default 26 as the alert)')
+    parser.add_argument('--availability', action='store_true',
+                        help='also check the availability tests and alerts (once availability_tests is applied)')
     args = parser.parse_args(argv)
     if not 1 <= args.hours <= 72:
         raise SafeFailure('The window must be 1 to 72 hours.')
     foundation = foundation_from_env(env if env is not None else os.environ)
-    results = readback(foundation, Reader(foundation), args.hours)
+    results = readback(foundation, Reader(foundation), args.hours, args.availability)
     for status, link, detail in results:
         print(status + ': ' + link + ': ' + detail)
     failed = [link for status, link, _ in results if status == 'FAIL']

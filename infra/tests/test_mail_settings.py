@@ -44,6 +44,16 @@ class MailSettingsTests(unittest.TestCase):
             value = inputs(); value['release']['mail'] = bad
             with self.assertRaises(SafeFailure): validate_release(value)
 
+    def test_app_url_follows_bound_public_web_host_only(self):
+        value = inputs(); value['release']['mail'] = mail()
+        foundation = value['foundation']
+        generated = 'https://' + foundation['prefix'] + '-staging-web.' + foundation['default_domain']
+        hosts = {'web': 'qa.tonyai.io', 'api': 'api.qa.tonyai.io'}
+        self.assertEqual(mail_environment({**foundation, 'public_hosts': {**hosts, 'bound': False}}, value['release'])['APP_URL'],
+                         {'value': generated})
+        self.assertEqual(mail_environment({**foundation, 'public_hosts': {**hosts, 'bound': True}}, value['release'])['APP_URL'],
+                         {'value': 'https://qa.tonyai.io'})
+
     def test_every_mail_env_missing_changed_inline_or_duplicate_and_web_refused(self):
         value = inputs(); value['release']['mail'] = mail()
         f, r = value['foundation'], value['release']

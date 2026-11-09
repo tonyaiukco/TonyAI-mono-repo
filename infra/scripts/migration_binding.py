@@ -6,6 +6,7 @@ import re
 import subprocess
 from pooler import SafeFailure
 from terraform_run import validate_release
+from public_hosts import public_origins
 
 ENGINE_COMMIT = 'c2990dca591cba766e3b7ef5d9e8a84796e47ab7'
 ENGINE_SHA256 = '5d42b181631fd20bb0ecc5abcdba72575e7f467a0d52f4d5ef1ff28f0c74e6e9'
@@ -54,8 +55,8 @@ def prepare(source, inputs, candidate, destination):
                 'supabase_project_ref': release['supabase_project_ref'],
                 'lockfile_sha256': hashlib.sha256(lock).hexdigest(),
                 'migrations': [{'name': m['name'], 'sha256': hashlib.sha256(m['sql'].encode()).hexdigest()} for m in migrations]}
-    for kind in ('api', 'web'):
-        expected[kind + '_origin'] = 'https://' + foundation['prefix'] + '-staging-' + kind + '.' + foundation['default_domain']
+    for kind, origin in public_origins(foundation).items():
+        expected[kind + '_origin'] = origin
     if foundation['environment'] != 'staging' or candidate != expected:
         raise SafeFailure('Candidate differs from the selected release, source, lockfile or migrations.')
     schema = committed(source, sha, SCHEMA_PATH).decode()

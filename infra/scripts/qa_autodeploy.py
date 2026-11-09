@@ -50,6 +50,7 @@ from cloud_ops import command, secret  # noqa: E402
 from drain_api import drain, settle, revisions  # noqa: E402
 from migration_binding import ENGINE_COMMIT, ENGINE_SHA256, copy_engine, prepare  # noqa: E402
 from migration_runner import inspect_image, run  # noqa: E402
+from public_hosts import hosts_from_env, public_origins  # noqa: E402
 from pooler import SafeFailure, validate_pooler  # noqa: E402
 from terraform_run import validate_release  # noqa: E402
 
@@ -78,6 +79,9 @@ def foundation_from_env(env=os.environ):
                   'resource_group': env.get('RESOURCE_GROUP', ''), 'prefix': env.get('PREFIX', ''),
                   'registry_name': env.get('ACR_NAME', ''), 'vault_name': env.get('VAULT_NAME', ''),
                   'default_domain': env.get('ACA_DEFAULT_DOMAIN', '')}
+    hosts = hosts_from_env(env)
+    if hosts:
+        foundation['public_hosts'] = hosts
     # Same pattern + hosted-target policy as every reviewed release; placeholders only.
     probe = {'source_sha': 'a' * 40, 'release_id': 'probe', 'supabase_project_ref': 'a' * 20,
              'api_digest': 'sha256:' + 'a' * 64, 'web_digest': 'sha256:' + 'a' * 64,
@@ -309,8 +313,7 @@ def bind_at(candidate, inputs, sha, read_git=git_bytes):
     foundation, release = validate_release(inputs)
     if foundation['environment'] != 'staging' or release['source_sha'] != sha:
         raise SafeFailure('Only the selected staging source can be bound.')
-    origins = {kind + '_origin': 'https://' + foundation['prefix'] + '-staging-' + kind + '.'
-               + foundation['default_domain'] for kind in ('api', 'web')}
+    origins = {kind + '_origin': origin for kind, origin in public_origins(foundation).items()}
     expected = {'schema': 1, 'environment': 'staging', 'source_sha': sha,
                 'api_digest': release['api_digest'], 'web_digest': release['web_digest'],
                 'registry': foundation['registry_name'] + '.azurecr.io',
@@ -597,8 +600,7 @@ def fetch_status(url, opener=urlopen):
 
 
 def smoke(foundation, fetch=fetch_status, sleep=time.sleep, attempts=12):
-    origins = {kind: 'https://' + stem(foundation) + '-' + kind + '.' + foundation['default_domain']
-               for kind in ('api', 'web')}
+    origins = public_origins(foundation)
     for kind, path, expected in SMOKE:
         for attempt in range(attempts):
             status = fetch(origins[kind] + path)

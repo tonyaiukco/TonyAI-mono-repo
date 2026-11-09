@@ -518,6 +518,42 @@ class RolloutTests(unittest.TestCase):
         self.assertIn('was rolled back', str(caught.exception))
         self.assertEqual([k for k, _ in azure.patches][-2:], ['web', 'api'])
 
+    def test_bound_public_hosts_flow_from_variables_to_candidate_binding_and_smoke(self):
+        env = {**QA_ENV, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io'}
+        foundation = qa.foundation_from_env(env)
+        self.assertEqual(foundation['public_hosts'], {'web': 'qa.tonyai.io', 'api': 'api.qa.tonyai.io', 'bound': True})
+        with patch.object(candidate_module, 'clean_source'), \
+                patch.object(candidate_module, 'fingerprint', return_value={'lockfile_sha256': 'f' * 64, 'migrations': []}):
+            build = {'SUPABASE_PROJECT_REF': PROJECT, 'PREFIX': 'tonyaiqt', 'ACA_DEFAULT_DOMAIN': QA_ENV['ACA_DEFAULT_DOMAIN'],
+                     'ACR_NAME': 'tonyaiqtacr', 'ACR_HOST': 'tonyaiqtacr.azurecr.io',
+                     'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io',
+                     'API_ORIGIN': 'https://api.qa.tonyai.io', 'WEB_ORIGIN': 'https://qa.tonyai.io'}
+            candidate = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], build)
+            self.assertEqual((candidate['api_origin'], candidate['web_origin']), ('https://api.qa.tonyai.io', 'https://qa.tonyai.io'))
+            with self.assertRaises(SafeFailure):
+                candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'],
+                                        {**build, 'API_ORIGIN': 'https://' + STEM + '-api.' + QA_ENV['ACA_DEFAULT_DOMAIN']})
+            release = qa.live_release(foundation, live_app('api'), candidate, SHA, 'ci42-1', PROJECT)['release']
+            self.assertEqual(release['release_id'], 'ci42-1')
+            # A generated-origin candidate does not bind to a target with bound public hosts, nor the reverse.
+            with self.assertRaises(SafeFailure):
+                generated = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], {
+                    **{k: v for k, v in build.items() if k not in ('WEB_HOST', 'API_HOST')},
+                    'API_ORIGIN': 'https://' + STEM + '-api.' + QA_ENV['ACA_DEFAULT_DOMAIN'],
+                    'WEB_ORIGIN': 'https://' + STEM + '-web.' + QA_ENV['ACA_DEFAULT_DOMAIN']})
+                qa.live_release(foundation, live_app('api'), generated, SHA, 'ci42-1', PROJECT)
+            with self.assertRaises(SafeFailure):
+                qa.live_release(FOUNDATION, live_app('api'), candidate, SHA, 'ci42-1', PROJECT)
+        seen = []
+        qa.smoke(foundation, lambda url: seen.append(url) or statuses()(url), sleep=lambda s: None)
+        self.assertEqual({u.split('/')[2] for u in seen}, {'api.qa.tonyai.io', 'qa.tonyai.io'})
+
+    def test_half_set_or_foreign_host_variables_are_refused(self):
+        for extra in ({'WEB_HOST': 'qa.tonyai.io'}, {'API_HOST': 'api.qa.tonyai.io'},
+                      {'WEB_HOST': 'qa.evil.io', 'API_HOST': 'api.qa.tonyai.io'}):
+            with self.subTest(extra=extra), self.assertRaises(SafeFailure):
+                qa.foundation_from_env({**QA_ENV, **extra})
+
     def test_unexpected_status_codes_fail_smoke(self):
         for path, code in (('/api/v1/health/ready', 503), ('/login', None), ('/api/v1/health', 500),
                            ('/api/v1/health/synthetic', 200)):
@@ -720,6 +756,31 @@ class ProvenanceTests(unittest.TestCase):
             built = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], env)
         release = qa.live_release_fields(FOUNDATION, live_app('api'), built, SHA, 'ci42-1', PROJECT)
         self.assertEqual(qa.bind_at(built, {'foundation': FOUNDATION, 'release': release}, SHA, git_objects({SHA: TREE})), built)
+
+    def test_git_object_binding_with_bound_public_hosts(self):
+        """Rollback's bind_at expects the public origins once bound, and refuses a pre-cutover candidate."""
+        fingerprint = qa.fingerprint_at(SHA, git_objects({SHA: TREE}))
+        foundation = qa.foundation_from_env({**QA_ENV, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io'})
+        base = {'SUPABASE_PROJECT_REF': PROJECT, 'PREFIX': 'tonyaiqt', 'ACA_DEFAULT_DOMAIN': QA_ENV['ACA_DEFAULT_DOMAIN'],
+                'ACR_NAME': 'tonyaiqtacr', 'ACR_HOST': 'tonyaiqtacr.azurecr.io'}
+        with patch.object(candidate_module, 'clean_source'), patch.object(candidate_module, 'fingerprint', return_value=fingerprint):
+            public = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], {
+                **base, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io',
+                'API_ORIGIN': 'https://api.qa.tonyai.io', 'WEB_ORIGIN': 'https://qa.tonyai.io'})
+            generated = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], {
+                **base, 'API_ORIGIN': 'https://' + STEM + '-api.' + QA_ENV['ACA_DEFAULT_DOMAIN'],
+                'WEB_ORIGIN': 'https://' + STEM + '-web.' + QA_ENV['ACA_DEFAULT_DOMAIN']})
+        release = qa.live_release_fields(FOUNDATION, live_app('api'), generated, SHA, 'ci42-1', PROJECT)
+        self.assertEqual(qa.bind_at(public, {'foundation': foundation, 'release': release}, SHA, git_objects({SHA: TREE})), public)
+        with self.assertRaises(SafeFailure):
+            qa.bind_at(generated, {'foundation': foundation, 'release': release}, SHA, git_objects({SHA: TREE}))
+
+    def test_owner_shell_can_name_the_unbound_stage(self):
+        unbound = qa.foundation_from_env({**QA_ENV, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io', 'HOSTS_BOUND': 'false'})
+        self.assertEqual(unbound['public_hosts'], {'web': 'qa.tonyai.io', 'api': 'api.qa.tonyai.io', 'bound': False})
+        for env in ({'HOSTS_BOUND': 'false'}, {'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io', 'HOSTS_BOUND': 'no'}):
+            with self.subTest(env=env), self.assertRaises(SafeFailure):
+                qa.foundation_from_env({**QA_ENV, **env})
 
     def test_git_objects_match_the_working_tree_fingerprint_of_this_repository(self):
         import subprocess

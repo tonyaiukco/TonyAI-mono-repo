@@ -1,4 +1,10 @@
 /** Public synthetic fixture contract. Credentials are accepted separately in memory. */
+// Copied flat into sealed probe bundles, so no config read; a test binds it to config/public-hosts.json.
+export const PUBLIC_PARENT_DOMAIN = 'tonyai.io';
+const parent = PUBLIC_PARENT_DOMAIN;
+const publicHost = new RegExp(`^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+${parent.replaceAll('.', '\\.')}$`);
+const isPublicOrigin = (origin) => typeof origin === 'string' && origin.length <= 261 && publicHost.test(origin);
+
 export function validateSmoke(target) {
   const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
   if (target.mode === 'ci-local') {
@@ -11,7 +17,8 @@ export function validateSmoke(target) {
   }
   const sweden = target.mode === 'qa-sweden';
   const hosted = target.mode === 'staging' && /^[a-z]{20}$/.test(target.projectRef)
-      && /^https:\/\/[a-z0-9]{3,12}-staging-web\.[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io$/.test(target.web)
+      && (/^https:\/\/[a-z0-9]{3,12}-staging-web\.[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io$/.test(target.web)
+        || isPublicOrigin(target.web))
       && target.supabase === `https://${target.projectRef}.supabase.co`;
   const qa = sweden && !Object.hasOwn(target, 'projectRef')
       && /^https:\/\/tonyai-staging-web\.[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io$/.test(target.web)
@@ -19,8 +26,12 @@ export function validateSmoke(target) {
       && /^[a-z][a-z0-9-]{0,29}$/.test(target.releaseId)
       && /^sha256:[a-f0-9]{64}$/.test(target.apiDigest) && /^sha256:[a-f0-9]{64}$/.test(target.webDigest)
       && /^[a-f0-9]{64}$/.test(target.dbCaSha256);
-  if ((!hosted && !qa)
-      || target.api !== target.web.replace('-staging-web.', '-staging-api.') + '/api/v1'
+  // A bound pair of public hosts has no name relation; generated origins keep theirs.
+  const pair = isPublicOrigin(target.web)
+    ? hosted && typeof target.api === 'string' && target.api.endsWith('/api/v1')
+      && isPublicOrigin(target.api.slice(0, -'/api/v1'.length)) && target.api !== target.web + '/api/v1'
+    : target.api === target.web.replace('-staging-web.', '-staging-api.') + '/api/v1';
+  if ((!hosted && !qa) || !pair
       || !/^[a-f0-9]{40}$/.test(target.sourceSha)
       || !Array.isArray(target.tenants) || target.tenants.length !== 2) {
     throw new Error('Invalid staging smoke target');

@@ -102,6 +102,42 @@ class RuntimeDeploymentTests(unittest.TestCase):
                     else:
                         with self.assertRaises(SafeFailure): verify(contract, read)
 
+    def test_readback_requires_the_custom_domain_stage(self):
+        env = '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/staging/providers/Microsoft.App/managedEnvironments/tonyai-staging-env'
+        def stage(contract, bound):
+            contract['foundation']['public_hosts'] = {'web': 'qa.tonyai.io', 'api': 'api.qa.tonyai.io', 'bound': bound}
+            return contract
+        def domains(kind, binding, certificate=True):
+            host = {'web': 'qa.tonyai.io', 'api': 'api.qa.tonyai.io'}[kind]
+            item = {'name': host, 'bindingType': binding}
+            if certificate: item['certificateId'] = env + '/managedCertificates/tonyai-staging-' + kind + '-cert'
+            return [item]
+        cases = [
+            ('unset, none live', inputs(), {}, True),
+            ('unset, one live', inputs(), {'web': domains('web', 'Disabled', False)}, False),
+            ('unbound, disabled', stage(inputs(), False), {k: domains(k, 'Disabled', False) for k in ('api', 'web')}, True),
+            ('unbound, missing', stage(inputs(), False), {'api': domains('api', 'Disabled', False)}, False),
+            ('bound, sni', stage(inputs(), True), {k: domains(k, 'SniEnabled') for k in ('api', 'web')}, True),
+            ('bound, still disabled', stage(inputs(), True), {'api': domains('api', 'SniEnabled'), 'web': domains('web', 'Disabled')}, False),
+            ('unbound, live already sni', stage(inputs(), False), {k: domains(k, 'SniEnabled') for k in ('api', 'web')}, False),
+            ('unbound, disabled with a certificate', stage(inputs(), False), {k: domains(k, 'Disabled') for k in ('api', 'web')}, False),
+            ('bound, swapped certificate', stage(inputs(), True), {'api': domains('api', 'SniEnabled'),
+                                                                  'web': [{**domains('web', 'SniEnabled')[0], 'certificateId': env + '/managedCertificates/tonyai-staging-api-cert'}]}, False),
+        ]
+        for name, contract, live, ok in cases:
+            with self.subTest(name):
+                apps = {kind: app(kind, contract) for kind in ('api', 'web')}
+                for kind, items in live.items():
+                    apps[kind]['properties']['configuration']['ingress']['customDomains'] = items
+                def read(*args):
+                    if args[:3] == ('containerapp', 'revision', 'list'):
+                        return [{'name': 'tonyai-staging-api--r001', 'properties': {'active': True}}]
+                    return apps['api'] if args[-1].endswith('-api') else apps['web']
+                with contextlib.redirect_stdout(io.StringIO()):
+                    if ok: verify(contract, read)
+                    else:
+                        with self.assertRaises(SafeFailure): verify(contract, read)
+
     def test_all_revisions_exact_command_and_deactivation(self):
         foundation = inputs()['foundation']; calls = []; active = True
         def read(*args):
