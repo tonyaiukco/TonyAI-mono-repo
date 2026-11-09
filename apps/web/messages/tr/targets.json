@@ -25,6 +25,7 @@
   "progressNa": "İlerleme yok",
   "delete": "Hedefi sil",
   "reduction": "−%{value}",
+  "nonAuthoritative": "Bu ilerlemenin dayandığı, yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: {count} / {of}.",
   "notCovered": "Kapsanmıyor — Kapsam 3 envanter toplamına dahil değildir, bu nedenle bu hedefin okunacak bir ilerlemesi yok.",
   "noProgress": "İlerleme henüz hesaplanamıyor — {year} baz yılından sonraki bir yıl için sayılan veri yok.",
   "wayToTarget": "Hedefe giden yolun %{value} kadarı",

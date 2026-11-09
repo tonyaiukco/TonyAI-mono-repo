@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
+import { nonAuthoritativeFigures } from '@/lib/emissions-view';
+import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import { selectsScope3Only } from '@/lib/report-coverage-view';
 import { CATEGORY_SCOPE_MAP, type Category } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -323,6 +325,14 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
                     year: yearText,
                   })}
                 </p>
+                {(() => {
+                  const na = nonAuthoritativeFigures(m);
+                  return na ? (
+                    <NonAuthoritativeWarning testId="intensity-non-authoritative">
+                      {t('intensityNonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale) })}
+                    </NonAuthoritativeWarning>
+                  ) : null;
+                })()}
                 {m.uncalculatedRecordCount > 0 && (
                   <p className="text-xs text-amber-600">
                     {t('intensityUncalculated', { count: formatNumber(m.uncalculatedRecordCount, locale) })}

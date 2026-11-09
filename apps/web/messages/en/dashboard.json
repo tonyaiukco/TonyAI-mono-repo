@@ -1,6 +1,7 @@
 {
   "entryProgress": "{rate}% data entry progress",
   "entryNote": "Data entry progress counts categories whose data a reviewer has approved; anything still waiting for review counts as partial. It is not inventory coverage — the boundary's coverage is shown below.",
+  "nonAuthoritative": "On this page, figures that rest on placeholder (demo) or other non-authoritative factors: <strong>{count} of {of}</strong>, Scope 3 included. They are not authoritative.",
   "scope3Description": "Not covered — outside the total",
   "totalLabel": "Scope 1 + 2 total",
   "totalDescription": "The inventory's total",

@@ -51,6 +51,10 @@ describe('nonAuthoritativeFigures (QA L10)', () => {
   it('labels the figures that do not rest on authoritative releases, out of the calculated ones', () => {
     expect(nonAuthoritativeFigures({ calculatedRecordCount: 7, nonAuthoritativeRecordCount: 3 })).toEqual({ count: 3, of: 7 });
   });
+  it('reads a target row or an intensity card by its own numerator, so another year or Scope 3 cannot trip it', () => {
+    expect(nonAuthoritativeFigures({ calculatedRecordCount: 3, nonAuthoritativeRecordCount: 1 })).toEqual({ count: 1, of: 3 });
+    expect(nonAuthoritativeFigures({ calculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 })).toBeNull();
+  });
   it('says nothing when every figure is authoritative, when there is no summary, or when an older server omits the count', () => {
     expect(nonAuthoritativeFigures({ calculatedRecordCount: 7, nonAuthoritativeRecordCount: 0 })).toBeNull();
     expect(nonAuthoritativeFigures(null)).toBeNull();

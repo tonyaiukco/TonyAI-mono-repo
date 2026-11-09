@@ -28,6 +28,8 @@ import { DecimalNote } from '@/components/i18n/decimal-note';
 import { api } from '@/lib/api';
 import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { LoadMoreButton } from '@/components/ui/load-more-button';
+import { nonAuthoritativeFigures } from '@/lib/emissions-view';
+import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import { checkDecimal, formatNumber, parseYearInput } from '@/lib/i18n/number';
 import { useErrorToast, useStableErrorToast } from '@/lib/i18n/hooks';
 import { TARGET_BASES } from '@/lib/vocabulary';
@@ -362,6 +364,15 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                       </div>
                     </div>
                   )}
+
+                  {(() => {
+                    const na = nonAuthoritativeFigures(p);
+                    return na ? (
+                      <NonAuthoritativeWarning testId="target-non-authoritative">
+                        {t('nonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale) })}
+                      </NonAuthoritativeWarning>
+                    ) : null;
+                  })()}
 
                   <div className="flex justify-between text-sm">
                     <div>

@@ -773,7 +773,8 @@ export class ReportsService {
       // A word, never a number: a Scope 3 figure in this column would be summed
       // with the inventory's (K4). Its records are counted beside it.
       [v.text('excelScope3'), v.text('notCovered'), v.text('scope3NotCovered'),
-        ...(s3.recordCount > 0 ? [v.text('scope3Recorded', { count: s3.recordCount, tonnes: v.fullFigure(s3.calculatedTCo2e) })] : [])],
+        ...(s3.recordCount > 0 ? [v.text('scope3Recorded', { count: s3.recordCount, tonnes: v.fullFigure(s3.calculatedTCo2e) })] : []),
+        ...(s3.nonAuthoritativeRecordCount > 0 ? [v.text('scope3NonAuthoritative', { count: s3.nonAuthoritativeRecordCount })] : [])],
       [],
       [v.label('Category'), v.label('Scope'), v.label('tCO₂e'), v.label('% of total'), v.label('Records')],
       ...data.summary.byCategory.map((c) => [

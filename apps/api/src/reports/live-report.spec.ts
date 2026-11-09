@@ -127,6 +127,18 @@ describe('Scope 3 is not covered (K4)', () => {
     const summary = await sheetRows(await service.generateExcel(user, q), 'Summary');
     expect(summary).toContainEqual(['Scope 1 + 2 total (tCO₂e)', 0.44]);
     expect(summary.find((r) => r[0] === 'Scope 3')!.slice(0, 2)).toEqual(['Scope 3', 'Not covered']);
+    // Their standing is stated beside their tonnes, in the PDF and the workbook.
+    const standing = '1 of them rests on placeholder (demo) or other non-authoritative factors.';
+    expect(html).toContain(standing);
+    expect(summary.find((r) => r[0] === 'Scope 3')).toContain(standing);
+  });
+
+  it('states no Scope 3 standing when no Scope 3 figure is non-authoritative', async () => {
+    const { service } = mocks([rec()]);
+    const data = await service.assemble(user, q);
+    expect(buildReportHtml(data)).not.toContain('of them rest');
+    const summary = await sheetRows(await service.generateExcel(user, q), 'Summary');
+    expect(summary.find((r) => r[0] === 'Scope 3')!.join(' ')).not.toContain('of them rest');
   });
 
   it('reads no Scope 1/2 record for a Scope 3 selection, and prints "Not covered", never 0', async () => {

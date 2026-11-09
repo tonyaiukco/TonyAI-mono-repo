@@ -38,6 +38,8 @@ import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { useRecordWords, useStableErrorToast } from '@/lib/i18n/hooks';
 import { formatNumber } from '@/lib/i18n/number';
+import { nonAuthoritativeFigures } from '@/lib/emissions-view';
+import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import {
   buildKpiData,
   matrixToAlerts,
@@ -76,6 +78,7 @@ function CarbonDashboardInner() {
   // LP3-02 N1: the one reporting selection, carried in the URL.
   const tContext = useTranslations('reportingContext');
   const tDashboard = useTranslations('dashboard');
+  const locale = useLocale();
   const tSubsidiaryStatus = useTranslations('subsidiaryStatus');
   const tCategory = useTranslations('categories');
   const tCommon = useTranslations('common');
@@ -475,6 +478,19 @@ function CarbonDashboardInner() {
 
           {/* LIVE: Emissions Overview from /emissions/summary + /emissions/tracking-matrix */}
           <section className="space-y-4">
+            {(() => {
+              // The figures on this page, Scope 3's tile too (Decisions 2026-11-09).
+              const na = nonAuthoritativeFigures(summary);
+              return na ? (
+                <NonAuthoritativeWarning testId="dashboard-non-authoritative">
+                  {tDashboard.rich('nonAuthoritative', {
+                    count: formatNumber(na.count, locale),
+                    of: formatNumber(na.of, locale),
+                    strong: (chunks) => <strong>{chunks}</strong>,
+                  })}
+                </NonAuthoritativeWarning>
+              ) : null;
+            })()}
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-[#1D1D1F]">{tDashboard('overview.title')}</h2>
               {/* The badge is a claim. Once background refreshes keep failing
