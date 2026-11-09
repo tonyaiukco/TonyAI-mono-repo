@@ -33,7 +33,7 @@ import {
   SLOT_HOLDS_TYPED_MESSAGE,
   SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
-import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
+import { CalculationInputError, FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { InaccessibleEntityError } from './errors';
 import { errorCodeOf, QueryTooBroadError } from '../common/api-error';
 import { AuditService } from '../audit/audit.service';
@@ -3335,6 +3335,19 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
       { billedGcvKcalPerSm3: 9349.174 },
       { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 },
     ]);
+  });
+
+  it('a CSV decimal read as a small NCV is refused in the dry run, naming the range, and nothing is written', async () => {
+    const { prisma, records, service } = build();
+    const sentence = 'A typed net calorific value must be between 7300 and 9396 kcal/Sm³, the range the factor release accepts.';
+    records.previewCreate.mockRejectedValue(new CalculationInputError('ncv_out_of_range', sentence));
+
+    const report = await service.import(dataEntry(), file(gasRow({ ncvKcalPerSm3: '8.250' } as Cells)), DRY);
+
+    expect(records.previewCreate.mock.calls[0][1].parameters).toEqual({ ncvKcalPerSm3: 8.25 });
+    expect(report.errors).toEqual([{ row: 2, column: null, code: 'invalid', message: sentence }]);
+    expect(prisma.importBatch.create).not.toHaveBeenCalled();
+    expect(records.create).not.toHaveBeenCalled();
   });
 
   it.each([

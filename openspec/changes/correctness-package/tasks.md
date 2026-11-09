@@ -2,24 +2,24 @@
 
 ## 1. Contract
 
-- [ ] 1.1 Shared-types, in its own first commit: `total`'s documented meaning (`index.ts`, `report-consistency.ts`), the Scope 3 count block on `EmissionsSummary`, numerator counts on `TargetProgressDTO` and `ReportingIntensityMetric`, the "not covered" flag on target progress, error codes `ncv_out_of_range` and `volume_correction_out_of_range`, gap code `no_included_obligation`, the 0.75 and 30 constants
+- [x] 1.1 Shared-types, in its own first commit: `total`'s documented meaning (`index.ts`, `report-consistency.ts`), the Scope 3 count block on `EmissionsSummary`, numerator counts on `TargetProgressDTO` and `ReportingIntensityMetric`, the "not covered" flag on target progress, error codes `ncv_out_of_range` and `volume_correction_out_of_range`, gap code `no_included_obligation`, the 0.75 and 30 constants
 
 ## 2. Main total
 
-- [ ] 2.1 `addScope`, subsidiary totals and shares count Scope 1 and 2; `percentOfTotal` is 0 on Scope 3 rows; specs with calculated Scope 3 rows
-- [ ] 2.2 Target latest year and guard read Scope 1 and 2; a Scope 3 target returns empty progress with "not covered"; negative specs for a Scope 3 only year
-- [ ] 2.3 Intensity numerator and `uncalculatedRecordCount` read Scope 1 and 2; a Scope 3 only selection returns no metric
-- [ ] 2.4 Emissions page: the empty test, pie, contributors, treemap, percent dash, trend stack and Scope 3 only view; `hint3` copy; targets and intensity panel copy, TR and EN through `localise-ui`
-- [ ] 2.5 Update `reporting-context-reconciliation.int.spec.ts` and `targets.service.spec.ts` to prove the Scope 1+2 total across screens and reports
+- [x] 2.1 `addScope`, subsidiary totals and shares count Scope 1 and 2; `percentOfTotal` is 0 on Scope 3 rows; specs with calculated Scope 3 rows
+- [x] 2.2 Target latest year and guard read Scope 1 and 2; a Scope 3 target returns empty progress with "not covered"; negative specs for a Scope 3 only year
+- [x] 2.3 Intensity numerator and `uncalculatedRecordCount` read Scope 1 and 2; a Scope 3 only selection returns no metric
+- [x] 2.4 Emissions page: the empty test, pie, contributors, treemap, percent dash, trend stack and Scope 3 only view; `hint3` copy; targets and intensity panel copy, TR and EN through `localise-ui`
+- [x] 2.5 Update `reporting-context-reconciliation.int.spec.ts` and `targets.service.spec.ts` to prove the Scope 1+2 total across screens and reports
 
 ## 3. Placeholder warnings
 
-- [ ] 3.1 Dashboard warning from the summary's count; hidden when zero
-- [ ] 3.2 Target rows and intensity cards warn from their own numerator's counts; specs for a target reading another year and for a Scope 3 only placeholder
+- [x] 3.1 Dashboard warning from the summary's count; hidden when zero
+- [x] 3.2 Target rows and intensity cards warn from their own numerator's counts; specs for a target reading another year and for a Scope 3 only placeholder
 
 ## 4. Live report line
 
-- [ ] 4.1 Live PDF and XLSX Scope 3 line state a non-authoritative count in TR and EN; specs prove issued output is unchanged
+- [x] 4.1 Live PDF and XLSX Scope 3 line state a non-authoritative count in TR and EN; specs prove issued output is unchanged
 
 ## 5. Input bounds
 

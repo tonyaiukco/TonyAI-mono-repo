@@ -9,7 +9,7 @@ A typed NCV on a TR natural gas record SHALL lie within the release's `billed_gc
 #### Scenario: A CSV decimal read as a small value
 
 - **WHEN** a TR natural gas row carries the typed NCV `8.250`, read as 8.25
-- **THEN** the dry run refuses that row with `ncv_out_of_range`, and nothing is priced from it
+- **THEN** the dry run refuses that row as invalid, its message names the accepted range, and nothing is priced from it
 
 #### Scenario: Values on the path today
 

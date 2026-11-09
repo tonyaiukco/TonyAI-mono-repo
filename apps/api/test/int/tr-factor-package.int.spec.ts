@@ -121,6 +121,23 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
     expect(await code(billed(10427.1))).toBe('billed_gcv_out_of_range');
   });
 
+  it('bounds a typed NCV by the release\'s own rows and a volume factor by 0.75–30 (Decisions 2026-11-09 (8))', async () => {
+    const typed = (ncvKcalPerSm3: number) =>
+      tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres', parameters: { ncvKcalPerSm3 } });
+    const metered = (volumeCorrectionFactor: number) =>
+      tr({ category: 'Natural Gas', value: 100, unit: 'cubic_metres', parameters: { volumeCorrectionFactor } });
+    // 8,100 and 10,427 × 8,250 / 9,155: the ŞİD's range, by the package's ratio.
+    expect(await code(typed(7300))).toBeNull();
+    expect(await code(typed(9396))).toBeNull();
+    expect(await code(typed(7299))).toBe('ncv_out_of_range');
+    expect(await code(typed(9397))).toBe('ncv_out_of_range');
+    expect(await code(typed(8.25))).toBe('ncv_out_of_range');
+    expect(await code(metered(0.97))).toBeNull();
+    expect(await code(metered(97))).toBe('volume_correction_out_of_range');
+    // A valid bill at the top of the range derives about 7,244, below the typed floor.
+    expect(await code(tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres', parameters: { billedGcvKcalPerSm3: 10427 } }))).toBeNull();
+  });
+
   it('fails closed for 2023 and for UK (owner decision 2026-11-05 (1))', async () => {
     expect(await code(tr({ value: 100, reportingYear: 2023 }))).toBe('no_factor');
     // on_road_petrol, which the e2e suite's TR 2023 fixture does not hold.

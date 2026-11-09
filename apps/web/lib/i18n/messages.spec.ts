@@ -3,6 +3,8 @@ import { MESSAGES } from "@/messages";
 import { CONTEXT_FIELDS } from "@/lib/context-fields";
 import {
   ACTIVITY_VALUE_MAX,
+  VOLUME_CORRECTION_FACTOR_MAX,
+  VOLUME_CORRECTION_FACTOR_MIN,
   API_ERROR_CODES,
   API_ERROR_PARAMS,
   BULK_UPLOAD_ISSUE_CODES,
@@ -227,6 +229,13 @@ describe("the value bound (LP4-04)", () => {
     // from going stale if the constant moves.
     const written = new Intl.NumberFormat(LOCALE_FORMAT_TAGS[locale]).format(ACTIVITY_VALUE_MAX);
     expect(MESSAGES[locale].errors.codes.activity_value_too_large).toContain(written);
+  });
+
+  it.each(SUPPORTED_LOCALES)("%s: volume_correction_out_of_range states the factor's bounds as that language writes them", (locale) => {
+    const format = new Intl.NumberFormat(LOCALE_FORMAT_TAGS[locale]);
+    const sentence = MESSAGES[locale].errors.codes.volume_correction_out_of_range;
+    expect(sentence).toContain(format.format(VOLUME_CORRECTION_FACTOR_MIN));
+    expect(sentence).toContain(format.format(VOLUME_CORRECTION_FACTOR_MAX));
   });
 });
 

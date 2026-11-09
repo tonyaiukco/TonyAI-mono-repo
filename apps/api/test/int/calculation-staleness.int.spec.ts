@@ -469,6 +469,16 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     expect(logged().join()).toMatch(/refused — input/);
   });
 
+  it('refuses at submit a draft holding a value past the input bound, and saving it again names the bound (Decisions 2026-11-09 (8))', async () => {
+    await loadTr();
+    const record = await savedTr(gas({ ncvKcalPerSm3: 8100 }));
+    await owner.activityRecord.update({ where: { id: record.id }, data: { parameters: { ncvKcalPerSm3: 8.25 } } });
+    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.draft);
+    const refused = await failure(lifecycleServices(runtime).records.update(tenant.users.dataEntry, record.id, { parameters: { ncvKcalPerSm3: 8.25 } } as never));
+    expect((refused as { code?: string }).code).toBe('ncv_out_of_range');
+  });
+
   it('bulk submit names a draft whose parameter changed past the API `calculation_stale`, and submits the fresh one', async () => {
     await loadTr();
     const stale = await savedTr(gas({ ncvKcalPerSm3: 8100 }));
