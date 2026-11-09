@@ -134,7 +134,10 @@ class SetupTests(unittest.TestCase):
             auth.assert_called_with(unittest.mock.ANY, REF, TARGET['web_origin'], 'public', 'kid', public_web_host=None)
             # A bound public host joins the same completed journal; the journal target is unchanged.
             config.write_text(json.dumps({**TARGET, 'public_web_host': 'qa.tonyai.io'}))
-            run(args)
+            try:
+                run(args)
+            except SafeFailure as error:
+                self.fail('A public web host must not orphan the completed journal: ' + str(error))
             auth.assert_called_with(unittest.mock.ANY, REF, TARGET['web_origin'], 'public', 'kid', public_web_host='qa.tonyai.io')
             self.assertEqual(json.loads(args.journal.read_text())['target'], TARGET)
             config.write_text(json.dumps(TARGET))

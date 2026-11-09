@@ -45,11 +45,11 @@ class AuthLifecycleSettingsTests(unittest.TestCase):
             validate_managed_auth_settings(settings, ORIGIN)
 
     def test_public_host_outside_parent_domain_refused_before_any_call(self):
-        calls = []
+        def api(*args, **kwargs):
+            raise AssertionError('The management API was called for a refused host.')
         for host in ('qa.example.com', 'qa.tonyai.io.evil.com', 'tonyai.io', 'https://qa.tonyai.io', 'QA.tonyai.io', ''):
             with self.subTest(host=host), self.assertRaises(SafeFailure):
-                configure_auth(lambda *a, **k: calls.append(a), REF, ORIGIN, 'public', 'id', host)
-        self.assertEqual(calls, [])
+                configure_auth(api, REF, ORIGIN, 'public', 'id', host)
 
     def test_every_managed_setting_missing_wrong_or_wrong_type_refused(self):
         good = managed_auth_settings(ORIGIN)
