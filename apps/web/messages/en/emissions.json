@@ -34,8 +34,9 @@
     "total3": "Total Scope 3",
     "hint1": "Direct emissions",
     "hint2": "Purchased energy",
-    "hint3": "Value chain (Phase 2)",
+    "hint3": "Not covered — outside the total",
     "empty": "No committed emissions for the selected filters. Approve activity records in Data Entry to populate analytics.",
+    "onlyScope3": "No Scope 1 or 2 figures for the selected filters. Scope 3 is outside the total and is shown on its own tile.",
     "byScope": "Emissions by Scope",
     "scopeDistribution": "Scope {scope} Category Distribution",
     "share": "{value}% share",
@@ -45,6 +46,7 @@
   },
   "breakdown": {
     "empty": "No category data for the selected filters.",
+    "outsideTotal": "Outside the total",
     "scale": "Category Scale Visualisation",
     "performance": "Category Performance",
     "columns": {
@@ -81,6 +83,7 @@
       "yearly": "yearly"
     },
     "empty": "No {period} data for the selected subsidiaries.",
+    "scope3OutsideTotal": "Scope 3 (outside the total)",
     "title": "Emissions Trend by Scope",
     "change": "Change across the {period} series (first → last)",
     "decreased": "Emissions decreased over the period",

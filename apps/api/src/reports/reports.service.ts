@@ -99,7 +99,7 @@ function inventorySummary(
   withdrawn: WithdrawnReleases,
 ): ReportInventorySummary {
   if (rows.some((r) => r.scope !== 1 && r.scope !== 2)) throw new Error('A live report sums Scope 1/2 records only.');
-  const summary = summariseCounted(rows, nameById, withdrawn);
+  const { scope3Records: _noScope3, ...summary } = summariseCounted(rows, nameById, withdrawn);
   const point = (p: (typeof summary.trend.monthly)[number]) => ({ ...p, scope3: 0 as const });
   return {
     ...summary,

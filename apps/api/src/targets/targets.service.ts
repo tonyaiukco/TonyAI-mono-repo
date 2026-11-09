@@ -261,10 +261,11 @@ export class TargetsService {
       _max: { reportingYear: true },
     });
     // The latest committed year of a subsidiary's records in one scope, or in
-    // every scope for an 'all' target.
+    // Scope 1 and 2 for an 'all' target: Scope 3 is outside the main total, so
+    // its year would have nothing to compare.
     const latestYear = (subsidiaryId: string, scope: number | undefined): number | null =>
       years
-        .filter((g) => g.subsidiaryId === subsidiaryId && (scope === undefined || g.scope === scope))
+        .filter((g) => g.subsidiaryId === subsidiaryId && (scope === undefined ? g.scope !== 3 : g.scope === scope))
         .reduce<number | null>((max, g) => {
           const year = g._max.reportingYear;
           return year !== null && (max === null || year > max) ? year : max;
@@ -305,23 +306,19 @@ export class TargetsService {
     latestCommittedYear: number | null,
     summaryFor: (year: number) => Promise<EmissionsSummary>,
   ): Promise<TargetProgressDTO> {
+    // The inventory does not cover Scope 3, so such a target has no progress
+    // to read. Its row stays, and says so (Decisions 2026-11-09 (3)).
+    if (t.scope === 'scope3') return this.noProgress(t, true);
+
     // The current year comes from records IN THE TARGET'S SCOPE (an 'all'
-    // target reads every scope). Without that a scoped target could resolve to
+    // target reads Scope 1 and 2). Without that a scoped target could resolve to
     // a year that only has other-scope data and then report a fabricated
     // 0 tCO₂e / 100% "on track" — a placeholder value. The latest committed
     // year after the baseline is the latest committed year, when that is
     // after the baseline at all.
     const latest =
       latestCommittedYear !== null && latestCommittedYear > t.baselineYear ? { reportingYear: latestCommittedYear } : null;
-    if (!latest) {
-      return {
-        targetId: t.id,
-        currentYear: t.baselineYear,
-        currentTCo2e: null,
-        progressPercent: null,
-        status: null,
-      };
-    }
+    if (!latest) return this.noProgress(t, false);
 
     const summary = await summaryFor(latest.reportingYear);
 
@@ -332,15 +329,8 @@ export class TargetsService {
     // arithmetic below then reports 0 tCO₂e → 100% → "on_track" against a
     // declared baseline: exactly the fabricated placeholder the guard above was
     // written to prevent, reached through a new door.
-    if (summary.calculatedRecordCount === 0) {
-      return {
-        targetId: t.id,
-        currentYear: t.baselineYear,
-        currentTCo2e: null,
-        progressPercent: null,
-        status: null,
-      };
-    }
+    const calculatedRecordCount = summary.calculatedRecordCount - summary.scope3Records.calculatedRecordCount;
+    if (calculatedRecordCount === 0) return this.noProgress(t, false);
 
     const current = summary.totals.total;
 
@@ -356,6 +346,23 @@ export class TargetsService {
       currentTCo2e: current,
       progressPercent: Math.min(100, Math.max(0, raw)),
       status,
+      notCovered: false,
+      calculatedRecordCount,
+      nonAuthoritativeRecordCount: summary.nonAuthoritativeRecordCount - summary.scope3Records.nonAuthoritativeRecordCount,
+    };
+  }
+
+  /** An honest "n/a": nothing to compare, never a placeholder 0%. */
+  private noProgress(t: TargetDTO, notCovered: boolean): TargetProgressDTO {
+    return {
+      targetId: t.id,
+      currentYear: t.baselineYear,
+      currentTCo2e: null,
+      progressPercent: null,
+      status: null,
+      notCovered,
+      calculatedRecordCount: 0,
+      nonAuthoritativeRecordCount: 0,
     };
   }
 

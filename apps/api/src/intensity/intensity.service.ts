@@ -313,14 +313,24 @@ export class IntensityService {
       // Emissions numerator: only the subsidiaries that have this denominator.
       let emissionsTotal = 0;
       let uncalculatedRecordCount = 0;
+      let calculatedRecordCount = 0;
+      let nonAuthoritativeRecordCount = 0;
       for (const sid of e.subIds) {
         const summary = await summaryOf(sid);
+        const scope3 = summary.scope3Records;
         emissionsTotal += summary.totals.total;
-        uncalculatedRecordCount += summary.uncalculatedRecordCount;
+        uncalculatedRecordCount += summary.uncalculatedRecordCount - scope3.uncalculatedRecordCount;
+        calculatedRecordCount += summary.calculatedRecordCount - scope3.calculatedRecordCount;
+        nonAuthoritativeRecordCount += summary.nonAuthoritativeRecordCount - scope3.nonAuthoritativeRecordCount;
       }
+      // Nothing to compare: a Scope 3 only selection, or no figure at all. A
+      // metric reading 0 would assert a measurement nobody made.
+      if (calculatedRecordCount === 0) continue;
       metrics.push({
         contributingSubsidiaryIds: [...e.subIds].sort(),
         uncalculatedRecordCount,
+        calculatedRecordCount,
+        nonAuthoritativeRecordCount,
         metric: e.metric as IntensityMetricKey,
         unit: e.unit,
         emissionsTotal,

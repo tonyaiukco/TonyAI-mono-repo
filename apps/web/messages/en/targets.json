@@ -25,6 +25,7 @@
   "progressNa": "Progress n/a",
   "delete": "Delete target",
   "reduction": "−{value}%",
+  "notCovered": "Not covered — Scope 3 is outside the inventory's total, so this target has no progress to read.",
   "noProgress": "Progress is not yet available — no committed data for a year after the {year} baseline.",
   "wayToTarget": "{value}% of the way to target",
   "current": "{year} current: {value} tCO₂e",

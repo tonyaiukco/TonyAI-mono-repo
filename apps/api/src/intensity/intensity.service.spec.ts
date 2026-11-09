@@ -75,6 +75,15 @@ const createInput = {
   unit: 'M EUR',
 };
 
+const NO_SCOPE3 = { calculatedRecordCount: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 };
+const summaryOf = (total: number, uncalculatedRecordCount = 0) => ({
+  totals: { total },
+  uncalculatedRecordCount,
+  calculatedRecordCount: 1,
+  nonAuthoritativeRecordCount: 0,
+  scope3Records: NO_SCOPE3,
+});
+
 describe('IntensityService', () => {
   let prisma: PrismaMock;
   let emissions: { summary: ReturnType<typeof vi.fn> };
@@ -192,8 +201,8 @@ describe('IntensityService', () => {
     ]);
     // emissions: sub-1 = 200, sub-2 = 600 → total 800
     emissions.summary
-      .mockResolvedValueOnce({ totals: { total: 200 }, uncalculatedRecordCount: 0 })
-      .mockResolvedValueOnce({ totals: { total: 600 }, uncalculatedRecordCount: 0 });
+      .mockResolvedValueOnce(summaryOf(200, 0))
+      .mockResolvedValueOnce(summaryOf(600, 0));
     const res = await service.intensity(admin, 2024);
     expect(res.metrics).toHaveLength(1);
     const revenue = res.metrics[0];
@@ -208,7 +217,7 @@ describe('IntensityService', () => {
       makeDenominator({ subsidiaryId: 'sub-1', value: 320, unit: 'M EUR' }),
       makeDenominator({ id: 'den-2', subsidiaryId: 'sub-2', value: 480, unit: 'M USD' }),
     ]);
-    emissions.summary.mockResolvedValue({ totals: { total: 100 }, uncalculatedRecordCount: 0 });
+    emissions.summary.mockResolvedValue(summaryOf(100, 0));
     const res = await service.intensity(admin, 2024);
     expect(res.metrics).toHaveLength(2);
     expect(new Set(res.metrics.map((m) => m.unit))).toEqual(new Set(['M EUR', 'M USD']));
@@ -252,15 +261,15 @@ describe('IntensityService', () => {
       makeDenominator({ id: 'den-2', subsidiaryId: 'sub-2', value: 40, unit: 'M USD' }),
     ]);
     emissions.summary
-      .mockResolvedValueOnce({ totals: { total: 100 }, uncalculatedRecordCount: 2 })
-      .mockResolvedValueOnce({ totals: { total: 120 }, uncalculatedRecordCount: 1 });
+      .mockResolvedValueOnce(summaryOf(100, 2))
+      .mockResolvedValueOnce(summaryOf(120, 1));
     const context = { year: 2027, scope: 1 as const, category: 'Fuel' as const };
     const result = await service.contextIntensity({ ...admin, accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3'] }, context);
     expect(result).toEqual({ context, data: {
       selectedSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3'],
       metrics: [
-        { metric: 'revenue', unit: 'M EUR', denominatorTotal: 20, emissionsTotal: 100, intensity: 5, contributingSubsidiaryIds: ['sub-1'], uncalculatedRecordCount: 2 },
-        { metric: 'revenue', unit: 'M USD', denominatorTotal: 40, emissionsTotal: 120, intensity: 3, contributingSubsidiaryIds: ['sub-2'], uncalculatedRecordCount: 1 },
+        { metric: 'revenue', unit: 'M EUR', denominatorTotal: 20, emissionsTotal: 100, intensity: 5, contributingSubsidiaryIds: ['sub-1'], uncalculatedRecordCount: 2, calculatedRecordCount: 1, nonAuthoritativeRecordCount: 0 },
+        { metric: 'revenue', unit: 'M USD', denominatorTotal: 40, emissionsTotal: 120, intensity: 3, contributingSubsidiaryIds: ['sub-2'], uncalculatedRecordCount: 1, calculatedRecordCount: 1, nonAuthoritativeRecordCount: 0 },
       ],
     } });
     expect(emissions.summary.mock.calls.map(([, query]) => query)).toEqual([
@@ -275,7 +284,7 @@ describe('IntensityService', () => {
       makeDenominator({ metric: 'employees', value: 10, unit: 'FTE' }),
       makeDenominator({ id: 'den-2', metric: 'revenue', value: 20, unit: 'M EUR' }),
     ]);
-    emissions.summary.mockResolvedValue({ totals: { total: 40 }, uncalculatedRecordCount: 0 });
+    emissions.summary.mockResolvedValue(summaryOf(40, 0));
     const result = await service.contextIntensity(admin, { year: 2027, subsidiaryId: 'sub-1' });
     expect(emissions.summary).toHaveBeenCalledTimes(1);
     expect(result.data.metrics.map((m) => m.intensity)).toEqual([4, 2]);
@@ -287,9 +296,32 @@ describe('IntensityService', () => {
     await expect(service.contextIntensity(admin, { year: 2027 })).rejects.toBeInstanceOf(QueryTooBroadError);
   });
 
+  it('leaves out a metric with no Scope 1 or 2 figure, and counts its numerator without Scope 3', async () => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValue([
+      makeDenominator({ value: 20, unit: 'M EUR' }),
+      makeDenominator({ id: 'den-2', subsidiaryId: 'sub-2', value: 40, unit: 'M USD' }),
+    ]);
+    emissions.summary
+      .mockResolvedValueOnce({
+        totals: { total: 100 }, calculatedRecordCount: 4, uncalculatedRecordCount: 2, nonAuthoritativeRecordCount: 3,
+        scope3Records: { calculatedRecordCount: 2, uncalculatedRecordCount: 1, nonAuthoritativeRecordCount: 2 },
+      })
+      .mockResolvedValueOnce({
+        totals: { total: 0 }, calculatedRecordCount: 3, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0,
+        scope3Records: { calculatedRecordCount: 3, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 },
+      });
+
+    const result = await service.contextIntensity({ ...admin, accessibleSubsidiaryIds: ['sub-1', 'sub-2'] }, { year: 2027 });
+
+    expect(result.data.metrics).toHaveLength(1);
+    expect(result.data.metrics[0]).toMatchObject({
+      unit: 'M EUR', emissionsTotal: 100, calculatedRecordCount: 2, uncalculatedRecordCount: 1, nonAuthoritativeRecordCount: 1,
+    });
+  });
+
   it('permits physical intensity only for an explicit subsidiary', async () => {
     prisma.subsidiaryDenominator.findMany.mockResolvedValue([makeDenominator({ metric: 'employees', value: 10, unit: 'FTE' })]);
-    emissions.summary.mockResolvedValue({ totals: { total: 30 }, uncalculatedRecordCount: 0 });
+    emissions.summary.mockResolvedValue(summaryOf(30, 0));
     const result = await service.contextIntensity(admin, { year: 2027, subsidiaryId: 'sub-1', scope: 2 });
     expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { subsidiaryId: { in: ['sub-1'] }, year: 2027 },

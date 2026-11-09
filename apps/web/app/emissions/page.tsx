@@ -65,11 +65,12 @@ import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
-import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, LOCALE_FORMAT_TAGS, entityLabel, isCalculated, unitSymbol } from '@/lib/types';
-import type { Locale } from '@/lib/types';
+import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, CATEGORY_SCOPE_MAP, LOCALE_FORMAT_TAGS, entityLabel, isCalculated, unitSymbol } from '@/lib/types';
+import type { Category, Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
 import { emissionsError, nonAuthoritativeFigures, trendLabel } from '@/lib/emissions-view';
+import { selectsScope3Only } from '@/lib/report-coverage-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import {
   VOID_REASON_MAX_LENGTH,
@@ -547,14 +548,20 @@ function EmissionsAnalysisPageInner() {
   const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
   const byCategory = summary?.byCategory ?? [];
   const bySubsidiary = summary?.bySubsidiary ?? [];
+  // Scope 3 sits beside the main total, so a chart of shares shows it only when
+  // it is what the selection asks for (Decisions 2026-11-09 (3)).
+  const scope3Only = !!context && selectsScope3Only(context, (c) => CATEGORY_SCOPE_MAP[c as Category]);
+  const chartedCategories = useMemo(
+    () => (scope3Only ? byCategory : byCategory.filter((c) => c.scope !== 3)),
+    [scope3Only, byCategory],
+  );
 
   // Donut: scope split when unfiltered, else the selected scope's categories.
   const pieData = useMemo(() => {
-    if (scopeFilter === 'all') {
+    if (scopeFilter === 'all' && !scope3Only) {
       return [
         { name: t('scopeName', { scope: 1 }), value: totals.scope1, color: SCOPE_COLORS.scope1 },
         { name: t('scopeName', { scope: 2 }), value: totals.scope2, color: SCOPE_COLORS.scope2 },
-        { name: t('scopeName', { scope: 3 }), value: totals.scope3, color: SCOPE_COLORS.scope3 },
       ].filter((d) => d.value > 0);
     }
     return byCategory.map((c, i) => ({
@@ -562,25 +569,28 @@ function EmissionsAnalysisPageInner() {
       value: c.tCo2e,
       color: CATEGORY_COLORS[i % CATEGORY_COLORS.length],
     }));
-  }, [scopeFilter, totals, byCategory, t, words]);
+  }, [scopeFilter, scope3Only, totals, byCategory, t, words]);
 
-  const chartTitle =
-    scopeFilter === 'all' ? t('summary.byScope') : t('summary.scopeDistribution', { scope: scopeFilter.slice(-1) });
+  const chartTitle = scope3Only
+    ? t('summary.scopeDistribution', { scope: '3' })
+    : scopeFilter === 'all'
+      ? t('summary.byScope')
+      : t('summary.scopeDistribution', { scope: scopeFilter.slice(-1) });
 
   const topContributors = useMemo(() => {
     const source =
-      contributorBasis === 'subsidiary'
+      contributorBasis === 'subsidiary' && !scope3Only
         ? bySubsidiary.map((s) => ({ name: s.subsidiaryName, value: s.tCo2e }))
-        : byCategory.map((c) => ({ name: words.category(c.category), value: c.tCo2e }));
+        : chartedCategories.map((c) => ({ name: words.category(c.category), value: c.tCo2e }));
     return source.slice(0, 5);
-  }, [contributorBasis, bySubsidiary, byCategory, words]);
+  }, [contributorBasis, scope3Only, bySubsidiary, chartedCategories, words]);
 
   const treemapData = useMemo(
     () =>
-      byCategory
+      chartedCategories
         .filter((c) => c.tCo2e > 0)
         .map((c) => ({ name: words.category(c.category), size: c.tCo2e, scope: c.scope, color: scopeColorFor(c.scope) })),
-    [byCategory, words],
+    [chartedCategories, words],
   );
 
   const currentTrendData = useMemo(() => {
@@ -593,11 +603,12 @@ function EmissionsAnalysisPageInner() {
   // Change from the first to the last point of the selected trend series.
   const trendChange = useMemo(() => {
     if (currentTrendData.length < 2) return 0;
-    const first = currentTrendData[0].total;
-    const last = currentTrendData[currentTrendData.length - 1].total;
+    const reading = (p: (typeof currentTrendData)[number]) => (scope3Only ? p.scope3 : p.total);
+    const first = reading(currentTrendData[0]);
+    const last = reading(currentTrendData[currentTrendData.length - 1]);
     if (first === 0) return 0;
     return ((last - first) / first) * 100;
-  }, [currentTrendData]);
+  }, [currentTrendData, scope3Only]);
 
   const unitLabel = tCommon('tco2e');
   const tonnes = (value: number, decimals = 0) => t('tonnes', { value: fixed(value, locale, decimals) });
@@ -791,8 +802,10 @@ function EmissionsAnalysisPageInner() {
 
               {summaryLoading ? (
                 <Skeleton className="h-[360px] w-full" />
-              ) : totals.total === 0 ? (
+              ) : totals.total === 0 && totals.scope3 === 0 ? (
                 <EmptyState message={t('summary.empty')} />
+              ) : totals.total === 0 && !scope3Only ? (
+                <EmptyState message={t('summary.onlyScope3')} />
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Donut */}
@@ -1017,7 +1030,7 @@ function EmissionsAnalysisPageInner() {
                               <TableCell className="text-right font-medium">
                                 {tonnes(category.tCo2e)}
                               </TableCell>
-                              <TableCell className="text-right">{percent(category.percentOfTotal)}</TableCell>
+                              <TableCell className="text-right">{category.scope === 3 ? t('breakdown.outsideTotal') : percent(category.percentOfTotal)}</TableCell>
                               <TableCell className="text-right text-muted-foreground">{fixed(category.recordCount, locale)}</TableCell>
                             </TableRow>
                           ))}
@@ -1274,11 +1287,11 @@ function EmissionsAnalysisPageInner() {
                             <Area
                               type="monotone"
                               dataKey="scope3"
-                              name={t('scopeName', { scope: 3 })}
-                              stackId="1"
+                              name={t('trend.scope3OutsideTotal')}
                               stroke={SCOPE_COLORS.scope3}
+                              strokeDasharray="4 4"
                               fill={SCOPE_COLORS.scope3}
-                              fillOpacity={0.6}
+                              fillOpacity={0.15}
                             />
                           </AreaChart>
                         </ResponsiveContainer>

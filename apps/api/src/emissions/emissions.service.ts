@@ -299,7 +299,8 @@ interface TrendBucket {
   sortKey: number;
 }
 
-/** Add a record's tCO₂e into the right scope field of a scope-split target. */
+/** Add a record's tCO₂e into its scope's field, and Scope 1 and 2 into the main
+ * total: Scope 3 is shown beside the total, never in it (Decisions 2026-11-09 (3)). */
 function addScope(
   target: { scope1: number; scope2: number; scope3: number; total: number },
   scope: number,
@@ -308,7 +309,7 @@ function addScope(
   if (scope === 1) target.scope1 += tCo2e;
   else if (scope === 2) target.scope2 += tCo2e;
   else if (scope === 3) target.scope3 += tCo2e;
-  target.total += tCo2e;
+  if (scope !== 3) target.total += tCo2e;
 }
 
 /** Resolve the calendar quarter (1–4) a record belongs to, or null if it
@@ -335,6 +336,7 @@ export function emptySummary(): EmissionsSummary {
     calculatedRecordCount: 0,
     uncalculatedRecordCount: 0,
     nonAuthoritativeRecordCount: 0,
+    scope3Records: { calculatedRecordCount: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 },
     statusesIncluded: COUNTED_STATUSES,
   };
 }
@@ -418,6 +420,7 @@ export function summariseCounted(
 
   let uncalculatedRecordCount = 0;
   let nonAuthoritativeRecordCount = 0;
+  const scope3Records = { calculatedRecordCount: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 };
 
   for (const r of rows) {
     const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
@@ -429,13 +432,19 @@ export function summariseCounted(
     // `uncalculatedRecordCount`, so the entries are declared, not hidden.
     if (!isCalculated(calc)) {
       uncalculatedRecordCount += 1;
+      if (r.scope === 3) scope3Records.uncalculatedRecordCount += 1;
       continue;
     }
     // Counted like any figure, and declared: a placeholder's tonnes, or a withdrawn
     // release's, must be labelled where they are shown — the report's own test.
-    if (!authoritativeNow(calc, withdrawn)) nonAuthoritativeRecordCount += 1;
+    const nonAuthoritative = !authoritativeNow(calc, withdrawn);
+    if (nonAuthoritative) nonAuthoritativeRecordCount += 1;
     const tCo2e = calc.tCo2e;
     const scope = r.scope;
+    if (scope === 3) {
+      scope3Records.calculatedRecordCount += 1;
+      if (nonAuthoritative) scope3Records.nonAuthoritativeRecordCount += 1;
+    }
 
     addScope(totals, scope, tCo2e);
 
@@ -448,13 +457,15 @@ export function summariseCounted(
     cat.recordCount += 1;
     byCategory.set(r.category, cat);
 
-    const sub = bySubsidiary.get(r.subsidiaryId) ?? {
-      tCo2e: 0,
-      recordCount: 0,
-    };
-    sub.tCo2e += tCo2e;
-    sub.recordCount += 1;
-    bySubsidiary.set(r.subsidiaryId, sub);
+    if (scope !== 3) {
+      const sub = bySubsidiary.get(r.subsidiaryId) ?? {
+        tCo2e: 0,
+        recordCount: 0,
+      };
+      sub.tCo2e += tCo2e;
+      sub.recordCount += 1;
+      bySubsidiary.set(r.subsidiaryId, sub);
+    }
 
     // Yearly — every counted record can be attributed to a year.
     bump(yearly, String(r.reportingYear), r.reportingYear, scope, tCo2e);
@@ -495,7 +506,7 @@ export function summariseCounted(
       scope: v.scope,
       tCo2e: v.tCo2e,
       recordCount: v.recordCount,
-      percentOfTotal: pct(v.tCo2e),
+      percentOfTotal: v.scope === 3 ? 0 : pct(v.tCo2e),
     }))
     .sort((a, b) => b.tCo2e - a.tCo2e);
 
@@ -536,6 +547,7 @@ export function summariseCounted(
     calculatedRecordCount: rows.length - uncalculatedRecordCount,
     uncalculatedRecordCount,
     nonAuthoritativeRecordCount,
+    scope3Records,
     statusesIncluded: COUNTED_STATUSES,
   };
 }

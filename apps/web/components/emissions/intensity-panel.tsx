@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
+import { selectsScope3Only } from '@/lib/report-coverage-view';
+import { CATEGORY_SCOPE_MAP, type Category } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -277,10 +279,18 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
             <Gauge className="h-8 w-8 text-muted-foreground" />
-            <p className="text-sm font-medium text-foreground">{tIntensity('empty', { year: yearText })}</p>
-            <p className="text-sm text-muted-foreground">
-              {canManage ? tIntensity('emptyManage') : tIntensity('emptyView')}
-            </p>
+            {selectsScope3Only(context, (c) => CATEGORY_SCOPE_MAP[c as Category]) ? (
+              <p className="text-sm font-medium text-foreground">{tIntensity('emptyScope3')}</p>
+            ) : denominators.length > 0 ? (
+              <p className="text-sm font-medium text-foreground">{tIntensity('emptyNoFigures', { year: yearText })}</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-foreground">{tIntensity('empty', { year: yearText })}</p>
+                <p className="text-sm text-muted-foreground">
+                  {canManage ? tIntensity('emptyManage') : tIntensity('emptyView')}
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (

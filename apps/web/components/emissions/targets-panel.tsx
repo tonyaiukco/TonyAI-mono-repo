@@ -349,7 +349,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                   {/* Progress bar or honest n/a */}
                   {naProgress ? (
                     <p className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                      {t('noProgress', { year: String(target.baselineYear) })}
+                      {p?.notCovered ? t('notCovered') : t('noProgress', { year: String(target.baselineYear) })}
                     </p>
                   ) : (
                     <div className="space-y-1.5">

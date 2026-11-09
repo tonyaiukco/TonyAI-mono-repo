@@ -66,7 +66,7 @@ const FIXTURE: Row[] = [
   { sub: 'S1', year: 2026, category: 'Natural Gas', periodValue: 'January', status: ActivityRecordStatus.submitted, tCo2e: 888 },
   { sub: 'S2', year: 2026, category: 'Electricity', periodValue: 'March', status: ActivityRecordStatus.under_review, tCo2e: 13 },
   { sub: 'S1', year: 2025, category: 'Natural Gas', periodValue: 'April', status: ActivityRecordStatus.rejected, tCo2e: 777 },
-  // Scope 3 (LP4-03 K4): the dashboard and intensity count it; a report discloses it and never sums it.
+  // Scope 3 (Decisions 2026-11-09 (3)): shown beside the main total on every screen, in none of them; a report discloses it and never sums it.
   { sub: 'S2', year: 2025, category: 'Water', periodValue: 'January', status: ActivityRecordStatus.approved, tCo2e: 3 },
 ];
 /** Revenue (EUR) per year and subsidiary; S2 has none for 2026 — missing, not zero (D14). */
@@ -197,7 +197,8 @@ describe('one reporting context, every surface: two years × two subsidiaries (L
     const rows = FIXTURE.filter((row) => inContext(row, context));
     const committed = rows.filter((row) => COMMITTED.has(row.status));
     const voided = rows.filter((row) => row.status === ActivityRecordStatus.voided);
-    const total = sum(committed);
+    const scope12 = committed.filter((r) => CATEGORY_SCOPE_MAP[r.category] !== 3);
+    const total = sum(scope12);
     const viewer = t.users.consultant.id;
 
     // Dashboard + absolute view: the summary.
@@ -213,7 +214,8 @@ describe('one reporting context, every surface: two years × two subsidiaries (L
     // add up to the summary's, and it is that year's grid.
     const matrix = await json<ReportingMatrixResponse>(viewer, `/emissions/context/tracking-matrix${query(context)}`);
     expect(matrix.data.reportingYear, label).toBe(year);
-    expect(matrix.data.rows.reduce((s, r) => s + r.totalTCo2e, 0), label).toBe(total);
+    // A row's `totalTCo2e` sums every cell, Scope 3 too; the dashboard reads Scope 1 + 2 from its cells.
+    expect(matrix.data.rows.reduce((s, r) => s + r.totalTCo2e, 0), label).toBe(sum(committed));
     for (const sub of ['S1', 'S2'] as const) {
       const row = matrix.data.rows.find((r) => r.subsidiaryId === idOf(sub));
       if (context.subsidiaryId !== undefined && context.subsidiaryId !== idOf(sub)) expect(row, label).toBeUndefined();
@@ -228,12 +230,15 @@ describe('one reporting context, every surface: two years × two subsidiaries (L
       revenue[sub] !== undefined && (context.subsidiaryId === undefined || context.subsidiaryId === idOf(sub)));
     expect(intensity.data.selectedSubsidiaryIds.sort(), label)
       .toEqual((context.subsidiaryId === undefined ? [S1, S2] : [context.subsidiaryId]).sort());
-    if (contributors.length === 0) {
+    const numeratorRows = scope12.filter((r) => contributors.includes(r.sub));
+    // No Scope 1 or 2 figure to divide: a Scope 3 only selection reads no metric, never a 0.
+    if (numeratorRows.length === 0) {
       expect(intensity.data.metrics, label).toEqual([]);
     } else {
       expect(intensity.data.metrics, label).toHaveLength(1);
       const [metric] = intensity.data.metrics;
-      const numerator = sum(committed.filter((r) => contributors.includes(r.sub)));
+      const numerator = sum(numeratorRows);
+      expect(metric.calculatedRecordCount, label).toBe(numeratorRows.length);
       const denominator = contributors.reduce((s, sub) => s + (revenue[sub] ?? 0), 0);
       expect(metric, label).toMatchObject({ metric: 'revenue', unit: 'EUR', emissionsTotal: numerator, denominatorTotal: denominator, uncalculatedRecordCount: 0 });
       expect(metric.contributingSubsidiaryIds.sort(), label).toEqual(contributors.map(idOf).sort());

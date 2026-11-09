@@ -641,6 +641,7 @@ describe('EmissionsService.summary', () => {
       calculatedRecordCount: 0,
       uncalculatedRecordCount: 0,
       nonAuthoritativeRecordCount: 0,
+      scope3Records: { calculatedRecordCount: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 },
       statusesIncluded: [
         ActivityRecordStatus.submitted,
         ActivityRecordStatus.under_review,
@@ -758,6 +759,35 @@ describe('EmissionsService.summary', () => {
     expect(s.nonAuthoritativeRecordCount).toBe(4);
     // Declared, not excluded: every figure stays in the totals.
     expect(s.totals.total).toBe(31);
+  });
+
+  it('keeps Scope 3 beside the main total: totals, shares, subsidiaries, trends and counts', async () => {
+    const user = superAdmin();
+    const figure = (tCo2e: number) => ({ tCo2e, factorId: 'f' });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Fuel', scope: 1, reportingPeriod: 'monthly', periodValue: 'January', calculation: figure(10) }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, reportingPeriod: 'monthly', periodValue: 'January', calculation: figure(30) }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Purchased Goods', scope: 3, reportingPeriod: 'monthly', periodValue: 'January', calculation: figure(60) }),
+      makeRecord({ subsidiaryId: 'sub-2', category: 'Purchased Goods', scope: 3, reportingPeriod: 'monthly', periodValue: 'February', calculation: figure(5) }),
+      makeRecord({
+        subsidiaryId: 'sub-1', category: 'Water', scope: 3, reportingPeriod: 'monthly', periodValue: 'March',
+        calculation: { category: 'Water', scope: 3, reasonCode: 'no_emission_factor', reason: 'No emission factor is available for "Water"' },
+      }),
+    ]);
+    prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' }), makeSubsidiary({ id: 'sub-2' })]);
+
+    const s = await service.summary(user, {});
+
+    expect(s.totals).toEqual({ scope1: 10, scope2: 30, scope3: 65, total: 40 });
+    const goods = s.byCategory.find((c) => c.category === 'Purchased Goods')!;
+    expect(goods).toMatchObject({ scope: 3, tCo2e: 65, percentOfTotal: 0 });
+    expect(s.byCategory.find((c) => c.category === 'Electricity')!.percentOfTotal).toBe(75);
+    // A subsidiary with only Scope 3 figures has no share of the main total.
+    expect(s.bySubsidiary.map((b) => [b.subsidiaryId, b.tCo2e, b.percentOfTotal])).toEqual([['sub-1', 40, 100]]);
+    expect(s.trend.yearly[0]).toMatchObject({ scope3: 65, total: 40 });
+    expect(s.trend.monthly.find((p) => p.period.startsWith('February'))).toMatchObject({ scope3: 5, total: 0 });
+    expect(s.scope3Records).toEqual({ calculatedRecordCount: 2, uncalculatedRecordCount: 1, nonAuthoritativeRecordCount: 2 });
+    expect(s.nonAuthoritativeRecordCount).toBe(4);
   });
 
   it('buckets monthly records into monthly, quarterly and yearly trends', async () => {
