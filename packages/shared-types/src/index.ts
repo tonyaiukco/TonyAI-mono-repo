@@ -1205,6 +1205,14 @@ export interface TargetProgressDTO {
   currentTCo2e: number | null;
   progressPercent: number | null;
   status: TargetStatus | null;
+  /** A Scope 3 target: the inventory does not cover Scope 3, so it has no
+   * progress to compare (Decisions 2026-11-09 (3)). Its row stays. */
+  notCovered: boolean;
+  /** Scope 1 and 2 records with a figure behind `currentTCo2e`, in its year. */
+  calculatedRecordCount: number;
+  /** Of those, the ones not authoritative now (`authoritativeNow`). Counted on
+   * the target's own year and scope, not the selection a page has open. */
+  nonAuthoritativeRecordCount: number;
 }
 
 /** The spec's four intensity denominators (emissions_page.md §2). */
@@ -1291,6 +1299,11 @@ export interface ReportingIntensityMetric extends IntensityMetricResultDTO {
    * because they have no usable figure. The whole-selection summary's count
    * cannot substitute for this numerator-specific coverage disclosure. */
   uncalculatedRecordCount: number;
+  /** Scope 1 and 2 records of the contributing subsidiaries behind
+   * `emissionsTotal`. A metric never reads 0 from none: it is left out. */
+  calculatedRecordCount: number;
+  /** Of those, the ones not authoritative now (`authoritativeNow`). */
+  nonAuthoritativeRecordCount: number;
 }
 
 /** Empty access or an inaccessible selection yields empty ids and metrics.
@@ -2431,6 +2444,10 @@ export const CALCULATION_REFUSAL_CODES = [
   'parameter_missing',
   /** A billed gross calorific value outside the release's accepted range (D11). */
   'billed_gcv_out_of_range',
+  /** A typed net calorific value outside the release's scaled range (Decisions 2026-11-09 (8)). */
+  'ncv_out_of_range',
+  /** A volume correction factor outside `VOLUME_CORRECTION_FACTOR_MIN`–`MAX`. */
+  'volume_correction_out_of_range',
   /** No factor covers this category, activity, geography and year. */
   'no_factor',
   /** Only non-authoritative factors cover it, and they are not allowed here. */
@@ -2467,6 +2484,8 @@ export const CALCULATION_REFUSAL_STATUS: Readonly<
   parameters_not_applicable: 400,
   parameter_missing: 409,
   billed_gcv_out_of_range: 400,
+  ncv_out_of_range: 400,
+  volume_correction_out_of_range: 400,
   no_factor: 404,
   placeholder_refused: 404,
   ambiguous_factor: 409,
@@ -4187,6 +4206,16 @@ export const PERIOD_VALUE_MAX_LENGTH = 32;
 export const ACTIVITY_VALUE_MAX = 1e12;
 
 /**
+ * A meter's volume correction factor's plausibility limits: not factor values,
+ * and provisional until the external review (Decisions 2026-11-09 (8)). They
+ * are calculated from pressure and temperature, because no published table was
+ * found, and they stop a wide error such as 97 for 0.97, not a tenfold slip
+ * inside the range.
+ */
+export const VOLUME_CORRECTION_FACTOR_MIN = 0.75;
+export const VOLUME_CORRECTION_FACTOR_MAX = 30;
+
+/**
  * The upper bound on an `activityUnit`, on both record write DTOs.
  *
  * NOT a refusal that comes earlier than the vocabulary's, and not a bound the
@@ -4733,12 +4762,27 @@ export interface EvidenceUrlDTO {
 // snapshots, so the numbers are the single source of truth and reproducible.
 // ---------------------------------------------------------------------------
 
-/** tCO₂e split by GHG Protocol scope, plus the combined total. */
+/**
+ * tCO₂e split by GHG Protocol scope, plus the inventory's main total.
+ * `total` is Scope 1 + Scope 2 (Decisions 2026-11-09 (3)): `scope3` is shown
+ * beside it, labelled, and is never part of it.
+ */
 export interface EmissionsScopeTotals {
   scope1: number;
   scope2: number;
   scope3: number;
   total: number;
+}
+
+/**
+ * The Scope 3 part of a summary's record counts, so a reader of the main total
+ * can state Scope 1 and 2's by subtraction. Each is a subset of the summary's
+ * top-level count of the same name.
+ */
+export interface EmissionsScope3RecordCounts {
+  calculatedRecordCount: number;
+  uncalculatedRecordCount: number;
+  nonAuthoritativeRecordCount: number;
 }
 
 /** One category's contribution to the total inventory. */
@@ -4747,11 +4791,11 @@ export interface EmissionsByCategory {
   scope: number;
   tCo2e: number;
   recordCount: number;
-  /** Share of the (filtered) grand total, 0–100. */
+  /** Share of the (filtered) main total, 0–100. A Scope 3 row is 0: it is outside that total. */
   percentOfTotal: number;
 }
 
-/** One subsidiary's contribution — used for the "top contributors" view. */
+/** One subsidiary's Scope 1 and 2 contribution — used for the "top contributors" view. */
 export interface EmissionsBySubsidiary {
   subsidiaryId: string;
   subsidiaryName: string;
@@ -4814,6 +4858,8 @@ export interface EmissionsSummary {
    * them by this count, never by a fixed sentence (QA L10).
    */
   nonAuthoritativeRecordCount: number;
+  /** The Scope 3 share of the three counts above. */
+  scope3Records: EmissionsScope3RecordCounts;
   /** Statuses included in the aggregation — drafts, rejected and voided
    *  records are all excluded. */
   statusesIncluded: ActivityRecordStatus[];
