@@ -66,15 +66,23 @@ export function nonAuthoritativeFigures(
 }
 
 /**
- * First to last point of a trend series, in percent, over the points that hold a
- * Scope 1 or 2 figure: a bucket of Scope 3 alone has a main total of 0, which is
- * no reduction (Decisions 2026-11-09 (3)). 0 when there is nothing to compare.
+ * First to last point of a trend series, in percent. A Scope 3 selection reads
+ * Scope 3; any other reads the main total. A bucket holding only the other side's
+ * figures is left out: a Scope 3 only bucket's main total of 0 is no reduction
+ * (Decisions 2026-11-09 (3)), while a measured zero stays. 0 when there is nothing
+ * to compare.
  */
-export function trendChangePercent(points: readonly Pick<EmissionsTrendPoint, 'total'>[]): number {
-  const held = points.filter((p) => p.total > 0);
+export function trendChangePercent(
+  points: readonly Pick<EmissionsTrendPoint, 'total' | 'scope3'>[],
+  scope3Only: boolean,
+): number {
+  const reading = (p: Pick<EmissionsTrendPoint, 'total' | 'scope3'>) => (scope3Only ? p.scope3 : p.total);
+  const other = (p: Pick<EmissionsTrendPoint, 'total' | 'scope3'>) => (scope3Only ? p.total : p.scope3);
+  const held = points.filter((p) => !(reading(p) === 0 && other(p) > 0));
   if (held.length < 2) return 0;
-  const first = held[0].total;
-  return ((held[held.length - 1].total - first) / first) * 100;
+  const first = reading(held[0]);
+  if (first === 0) return 0;
+  return ((reading(held[held.length - 1]) - first) / first) * 100;
 }
 
 /** The live report preview's figures: its Scope 1/2 summary and the Scope 3 tonnes it discloses beside it. */

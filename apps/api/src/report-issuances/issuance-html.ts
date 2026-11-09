@@ -32,7 +32,7 @@ import tr from './i18n/tr.json';
 
 /** The renderer's own version; the issuance records it with the browser's. */
 // v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
-export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v2';
+export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v3';
 
 export interface IssuanceDocument {
   issuanceId: string;
@@ -117,8 +117,7 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
   const date = new Intl.DateTimeFormat(tag, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
   const isDetail = doc.template === 'ghg_protocol_detail';
   const final = doc.status === 'final';
-  // A factor whose data year precedes the reporting year (D07's lag): stated, never a gap.
-  const earlierDataYear = dataset.provenance.records.filter((r) => r.issues.includes('declared_year_fallback')).length;
+  const earlierDataYear = earlierDataYearCount(dataset);
 
   const label = (prefix: 'category' | 'period', value: string): string => {
     const key = `${prefix} ${value}` as IssuanceMessageKey;
@@ -301,6 +300,13 @@ export function datasetNames(dataset: ReportDataset) {
       return byEntity.get(JSON.stringify([subsidiaryId, null]))?.subsidiaryName ?? subsidiaryId;
     },
   };
+}
+
+/** Counted figures on a factor whose data year precedes the reporting year (D07's lag): stated, never a gap. */
+export function earlierDataYearCount(dataset: ReportDataset): number {
+  const [scope1, scope2] = dataset.scopes;
+  const counted = new Set([...scope1.countedRecordIds, ...scope2.countedRecordIds]);
+  return dataset.provenance.records.filter((r) => counted.has(r.recordId) && r.issues.includes('declared_year_fallback')).length;
 }
 
 /** How one retained scope reads: outside an extract's filters, with no included source, or its figure (null: none calculated). */

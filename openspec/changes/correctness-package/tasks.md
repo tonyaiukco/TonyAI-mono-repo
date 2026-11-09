@@ -48,10 +48,10 @@
 
 ## 10. Reviews and records
 
-- [ ] 10.1 Typecheck, lint, `pnpm test`, `test:int`, the changed e2e specs, migration-diff
-- [ ] 10.2 Fresh-eyes pass on the diff: `security-rls`, `qa-auditor`, `architect`, `data-factors`; separate trees; findings fixed or dispositioned
-- [ ] 10.3 Planning file: status, ledger, Open questions closed, the job's scheduled run, Next up
-- [ ] 10.4 Prepare the owner's read-only query for out-of-range hosted records, all-excluded finals and Scope 3 targets; runbook 03's preflight; open the PR
+- [x] 10.1 Typecheck, lint, `pnpm test`, `test:int`, the changed e2e specs, migration-diff
+- [x] 10.2 Fresh-eyes pass on the diff: `security-rls`, `qa-auditor`, `architect`, `data-factors`; separate trees; findings fixed or dispositioned
+- [x] 10.3 Planning file: status, ledger, Open questions closed, the job's scheduled run, Next up
+- [x] 10.4 Prepare the owner's read-only query for out-of-range hosted records, all-excluded finals and Scope 3 targets; runbook 03's preflight; open the PR
 
 ## After merge (owner)
 

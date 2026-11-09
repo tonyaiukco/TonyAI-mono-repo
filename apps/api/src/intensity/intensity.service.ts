@@ -246,8 +246,11 @@ export class IntensityService {
     });
     return {
       year,
-      metrics: data.metrics.map(({ metric, unit, emissionsTotal, denominatorTotal, intensity }) =>
-        ({ metric, unit, emissionsTotal, denominatorTotal, intensity })),
+      // This response has no field to tell a measurement from records waiting for a figure.
+      metrics: data.metrics
+        .filter((m) => m.calculatedRecordCount > 0)
+        .map(({ metric, unit, emissionsTotal, denominatorTotal, intensity }) =>
+          ({ metric, unit, emissionsTotal, denominatorTotal, intensity })),
     };
   }
 

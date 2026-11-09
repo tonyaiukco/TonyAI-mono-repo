@@ -601,7 +601,7 @@ function EmissionsAnalysisPageInner() {
   }, [trendSummary, trendPeriod]);
 
   // Change from the first to the last point of the selected trend series.
-  const trendChange = useMemo(() => trendChangePercent(currentTrendData), [currentTrendData]);
+  const trendChange = useMemo(() => trendChangePercent(currentTrendData, scope3Only), [currentTrendData, scope3Only]);
 
   const unitLabel = tCommon('tco2e');
   const tonnes = (value: number, decimals = 0) => t('tonnes', { value: fixed(value, locale, decimals) });

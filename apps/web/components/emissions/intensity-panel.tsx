@@ -309,13 +309,15 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
                   <span className="text-2xl font-bold text-foreground">{m.calculatedRecordCount === 0 ? '—' : formatNumber(m.intensity, locale, FOUR_DECIMALS)}</span>
                   <span className="text-xs text-muted-foreground">{tIntensity('perUnit', { unit: m.unit })}</span>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {tIntensity('formula', {
-                    emissions: formatNumber(m.emissionsTotal, locale, WHOLE),
-                    denominator: formatNumber(m.denominatorTotal, locale, WHOLE),
-                    unit: m.unit,
-                  })}
-                </p>
+                {m.calculatedRecordCount > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {tIntensity('formula', {
+                      emissions: formatNumber(m.emissionsTotal, locale, WHOLE),
+                      denominator: formatNumber(m.denominatorTotal, locale, WHOLE),
+                      unit: m.unit,
+                    })}
+                  </p>
+                )}
                 {/* Coverage is disclosed, never assumed (D14): a subsidiary
                     without this denominator is missing, not zero. */}
                 <p className="text-xs text-muted-foreground" data-testid="intensity-coverage">

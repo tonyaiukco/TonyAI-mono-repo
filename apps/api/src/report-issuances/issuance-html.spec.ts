@@ -3,7 +3,7 @@ import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
 import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
-import { buildIssuanceHtml, ISSUANCE_CATALOGUES, ISSUANCE_RENDERER, type IssuanceDocument } from './issuance-html';
+import { buildIssuanceHtml, earlierDataYearCount, ISSUANCE_CATALOGUES, ISSUANCE_RENDERER, type IssuanceDocument } from './issuance-html';
 import en from './i18n/en.json';
 import tr from './i18n/tr.json';
 
@@ -104,6 +104,20 @@ describe('buildIssuanceHtml', () => {
     // A scope with sources but no figure still reads "Not calculated".
     const none = datasetOf({ records: fullYear().map((r) => (r.scope === 1 ? { ...r, calculation: UNCALCULATED } : r)) });
     expect(html(none)).not.toContain('This boundary includes no emission source');
+  });
+
+  it('states an earlier data year for counted figures only, and never for a record it does not count', () => {
+    const dataset = datasetOf({});
+    const [scope1, scope2] = dataset.scopes;
+    const counted = scope2.countedRecordIds[0] ?? scope1.countedRecordIds[0];
+    const withIssues = (recordId: string) => ({
+      ...dataset,
+      provenance: { ...dataset.provenance, records: [{ recordId, standing: 'authoritative' as const, issues: ['declared_year_fallback' as const] }] },
+    }) as typeof dataset;
+    expect(earlierDataYearCount(withIssues(counted))).toBe(1);
+    expect(earlierDataYearCount(withIssues('a-draft-not-counted'))).toBe(0);
+    expect(html(withIssues(counted))).toContain('1 counted figure uses a factor from a data year before the reporting year');
+    expect(html(dataset)).not.toContain('a data year before the reporting year');
   });
 
   it('a scope an extract filters out reads "Not in this extract" — never "No included source" (`qa-auditor` re-review P2)', () => {

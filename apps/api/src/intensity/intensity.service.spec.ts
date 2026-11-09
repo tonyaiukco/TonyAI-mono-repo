@@ -328,6 +328,8 @@ describe('IntensityService', () => {
     const result = await service.contextIntensity({ ...admin, accessibleSubsidiaryIds: ['sub-1'] }, { year: 2027 });
 
     expect(result.data.metrics).toEqual([expect.objectContaining({ calculatedRecordCount: 0, uncalculatedRecordCount: 2 })]);
+    // The older response cannot say so, so it reads no metric rather than a 0.
+    expect((await service.intensity({ ...admin, accessibleSubsidiaryIds: ['sub-1'] }, 2027)).metrics).toEqual([]);
   });
 
   it('permits physical intensity only for an explicit subsidiary', async () => {

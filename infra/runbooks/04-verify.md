@@ -266,8 +266,8 @@ psql -X -At -f row-counts.sql | diff source-counts.txt -
   means the load is incomplete.
 - **`SET LOCAL session_replication_role = replica`** may be set only by the owner. It lets
   the load write what the dump holds: the factor library's load rules, its record's
-  writers and the slot rule step aside, while the update, delete and truncate
-  guards do not. Afterwards the owner reconciliation check scans for mixed record
+  writers, the slot rule and the issuance guard's insert checks step aside, so a retained
+  issuance keeps its `issued_at`, while the update, delete and truncate guards do not. Afterwards the owner reconciliation check scans for mixed record
   slots and for `unspecified` rows under an authoritative release, and compares
   each release's rows with its record. It does not repeat the other insert-time
   rules (a row's version against its release's edition, rows added to a withdrawn

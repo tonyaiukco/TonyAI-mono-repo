@@ -21,6 +21,7 @@ import {
   scopeReading,
   withdrawnRecords,
   type IssuanceMessageKey,
+  earlierDataYearCount,
 } from './issuance-html';
 
 /**
@@ -43,7 +44,7 @@ import {
  */
 
 // v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
-export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v2';
+export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v3';
 
 export interface IssuedTablesDocument {
   issuanceId: string;
@@ -141,8 +142,7 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
   const names = datasetNames(dataset);
   const standing = new Map(dataset.provenance.records.map((p) => [p.recordId, p.standing]));
   const final = doc.status === 'final';
-  // A factor whose data year precedes the reporting year (D07's lag): stated, never a gap.
-  const earlierDataYear = dataset.provenance.records.filter((r) => r.issues.includes('declared_year_fallback')).length;
+  const earlierDataYear = earlierDataYearCount(dataset);
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'TonyAI';

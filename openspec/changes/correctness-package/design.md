@@ -35,7 +35,9 @@ The TR releases are sealed, so they cannot gain rows without a new edition. Reta
 
 **D8. Split CSP in `next.config.mjs` `headers()`.** Enforced: `frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'`. Report-only: `default-src 'self'`, scripts and styles `'self' 'unsafe-inline'`, images `'self' data: blob:`, `connect-src` for the API, Supabase and Sentry hosts as fixed at build. There is no report receiver, so violations are read from the browser console in e2e. Rejected: enforcing all now, which could break screens during QA round 2.
 
-**D9. Boot catch extracted for a DB-free spec.** `bootstrap().catch` logs a cautious message, captures to Sentry, awaits the bounded `flushSentry`, and calls `process.exit(1)` whatever the flush does.
+**D9. Boot catch extracted for a DB-free spec.** `bootstrap().catch` logs a cautious message, captures to Sentry, awaits the bounded `flushSentry`, and calls `process.exit(1)` whatever the flush does. Secrets are scrubbed by one helper for the log and Sentry's `beforeSend`, so a runtime error benefits too.
+
+**D10. Added by the review pass.** The issuance guard's insert checks step aside in replica mode, so a dump holding an old all-excluded final restores with its `issued_at`. Issued PDFs and workbooks state how many counted figures use an earlier data year, and both renderers move to v3. The web also sets HSTS in production. A metric with records waiting for a figure keeps its card and shows no intensity, while the older `GET /intensity`, with no field to say so, leaves it out.
 
 ## Risks / Trade-offs
 

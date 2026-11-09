@@ -309,7 +309,7 @@ describe('an issuance over HTTP', () => {
       template: 'executive_summary', options: { includeMethodologyNotes: true, includeEvidenceSummary: false },
       pdf: { mimeType: 'application/pdf' },
     });
-    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v2 \(.+\)$/);
+    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v3 \(.+\)$/);
 
     const dataset = await owner.reportDataset.findUniqueOrThrow({ where: { id: datasetId } });
     expect(issued.datasetFingerprint).toEqual({ algorithm: 'sha256', canonicalization: dataset.canonicalization, hex: dataset.fingerprintHex });
@@ -658,6 +658,14 @@ describe('the guard (TA017) — every writer, the owner included', () => {
       return n;
     });
     expect(restored).toBe(1);
+    // Only a restore's insert: replica mode changes no retained row.
+    for (const statement of [`UPDATE report_issuances SET language = 'en' WHERE id = '${row.id}'`, `DELETE FROM report_issuances WHERE id = '${row.id}'`]) {
+      const refused = await failure(withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+        await tx.$executeRawUnsafe(statement);
+      }));
+      expect(sqlState(refused)).toBe('TA017');
+    }
   }, 60_000);
 
   it('holds the shapes: a final has no gap, a partial at least one, the key is the row\'s own', async () => {
