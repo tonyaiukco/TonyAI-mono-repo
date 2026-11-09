@@ -46,7 +46,7 @@ ACA issues a managed certificate only for a hostname that is already on an app, 
 - **Domain.** `email.custom_domain = "tonyai.io"` (the root, per the owner's ruling). A new `email.sender_username` (default `DoNotReply`) creates `Microsoft.Communication/emailServices/domains/senderUsernames` with display name `TonyAI`. `email_contract.sender` follows it.
 - **Verification.** ACS needs Domain, SPF and DKIM ×2 verified before it sends. Verification is started outside Terraform (`az communication email domain initiate-verification`, one per record type), then `custom_domain_verified = true` links the domain.
 - **Release side.** The application release's `mail.from` becomes `no-reply@tonyai.io`. `mail_settings.py` accepts a sender on a linked custom domain. `smtp-password` is unchanged.
-- **Root SPF.** The root has exactly one SPF record, and it becomes `v=spf1 include:_spf.google.com include:spf.protection.outlook.com ~all`. The runbook says "edit, never add".
+- **Root SPF.** The root has exactly one SPF record, and it becomes `v=spf1 include:_spf.google.com include:spf.protection.outlook.com -all`. The runbook says "edit, never add". It was planned with `~all`; ACS's SPF verification failed on that, and the owner chose `-all` at the cutover (planning file, Decisions 2026-11-10).
 
 ### D4. Availability tests
 

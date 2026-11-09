@@ -43,16 +43,16 @@
 
 - [x] 7.1 `terraform validate` and tftests for both roots, `check_terraform_policy.py`, Python and Node script tests, `pnpm typecheck` and `pnpm test`
 - [x] 7.2 Review seats in parallel on separate tree copies: `security-rls` (Auth allow-list, CORS, CSP, mail sender, hostname validation), `qa-auditor` (tests, negative cases), `devops-cloud` (Terraform, staging, readbacks); fix findings
-- [ ] 7.3 Open the PR; the owner merges
+- [x] 7.3 Open the PR; the owner merges
 
 ## 8. Owner cutover (after merge; each step announced, Claude checks before and after)
 
-- [ ] 8.1 Foundation apply: custom domain `tonyai.io`, sender `no-reply`, App Insights and tests on the generated FQDNs; read `dns_contract`
-- [ ] 8.2 Namecheap records entered; Claude confirms them on the authoritative servers
-- [ ] 8.3 ACS verification initiated and passed; foundation apply with `custom_domain_verified = true`
-- [ ] 8.4 Application apply with `bound = false` and `mail.from = no-reply@tonyai.io`
-- [ ] 8.5 Foundation apply with `certificates = true`; certificates `Succeeded`
-- [ ] 8.6 Application apply with `bound = true`; `supabase_auth.py` with the new origin
-- [ ] 8.7 GitHub `qa` variables set; `QA deploy` dispatched; smoke on the custom hosts
-- [ ] 8.8 Acceptance: invitation and reset in the inbox with SPF, DKIM and DMARC pass; availability tests green; monitoring readback PASS; no-demo check PASS; `storage-verify` re-pinned if needed
-- [ ] 8.9 Record the evidence in runbook 11 and the planning file; archive the change
+- [x] 8.1 Foundation apply: custom domain `tonyai.io`, sender `no-reply`, App Insights and tests on the generated FQDNs; read `dns_contract`
+- [x] 8.2 Namecheap records entered; Claude confirms them on the authoritative servers
+- [x] 8.3 ACS verification initiated and passed; foundation apply with `custom_domain_verified = true`
+- [x] 8.4 Application apply with `bound = false` and `mail.from = no-reply@tonyai.io`
+- [x] 8.5 Foundation apply with `certificates = true`; certificates `Succeeded`
+- [x] 8.6 Application apply with `bound = true`; `supabase_auth.py` with the new origin
+- [x] 8.7 GitHub `qa` variables set; `QA deploy` dispatched; smoke on the custom hosts
+- [x] 8.8 Acceptance: invitation and reset in the inbox with SPF, DKIM and DMARC pass; availability tests green; monitoring readback PASS; no-demo check PASS; `storage-verify` re-pinned if needed
+- [x] 8.9 Record the evidence in runbook 11 and the planning file; archive the change
