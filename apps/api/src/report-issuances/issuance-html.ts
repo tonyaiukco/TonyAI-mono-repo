@@ -117,6 +117,8 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
   const date = new Intl.DateTimeFormat(tag, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
   const isDetail = doc.template === 'ghg_protocol_detail';
   const final = doc.status === 'final';
+  // A factor whose data year precedes the reporting year (D07's lag): stated, never a gap.
+  const earlierDataYear = dataset.provenance.records.filter((r) => r.issues.includes('declared_year_fallback')).length;
 
   const label = (prefix: 'category' | 'period', value: string): string => {
     const key = `${prefix} ${value}` as IssuanceMessageKey;
@@ -251,7 +253,7 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
 ${final ? '' : `<h2>${t('gapsHeading')}</h2>${table([t('colGap'), t('colEntity'), t('colCategory'), t('colSources'), t('colObligations'), t('colRecords')], gapRows, [3, 4, 5])}`}
 <h2>${t('emissionsHeading')}</h2>
 <div class="tiles">${tile(scope1)}${tile(scope2)}</div>
-<p class="note">${t('scope3NotCovered')}</p>
+<p class="note">${t('scope3NotCovered')}${earlierDataYear > 0 ? ` ${t('earlierDataYear', { count: earlierDataYear })}` : ''}</p>
 <h2>${t('boundaryHeading')}</h2>
 <p>${selection}</p>
 <p class="note">${t('boundaryVersion', { version: dataset.boundary.version })} · ${dataset.boundary.decision === 'confirmed' ? t('decisionConfirmed') : t('decisionUnconfirmed')}</p>

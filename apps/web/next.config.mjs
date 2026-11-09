@@ -11,6 +11,7 @@ const baseConfig = {
   images: {
     unoptimized: true,
   },
+  poweredByHeader: false,
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders() }];
   },

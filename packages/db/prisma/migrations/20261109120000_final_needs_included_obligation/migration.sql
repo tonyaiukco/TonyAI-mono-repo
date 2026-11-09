@@ -2,7 +2,8 @@
 -- all-excluded boundary has no figure to certify, so it issues as partial and
 -- names `no_included_obligation`. The trigger fires at insert, so an all-excluded
 -- final issued before this stays retained, unchanged. No dataset or fingerprint
--- changes. CREATE OR REPLACE keeps the function's owner, SECURITY DEFINER setting
+-- changes. A restore, in replica mode, passes this guard, so a dump holding such a
+-- final loads and its issued_at survives. CREATE OR REPLACE keeps the function's owner, SECURITY DEFINER setting
 -- and grants, and the trigger stays attached.
 
 CREATE OR REPLACE FUNCTION "public"."report_issuances_guard"() RETURNS trigger
@@ -30,6 +31,13 @@ BEGIN
     RAISE EXCEPTION USING
       ERRCODE = 'TA017',
       MESSAGE = format('report issuance %s is retained as issued: a correction is a new capture or issuance', OLD."id");
+  END IF;
+  -- A data-only restore writes what the dump holds (session_replication_role =
+  -- replica, a setting only a privileged role may change), so a retained row,
+  -- an all-excluded final from before this rule included, and its issued_at stay
+  -- as they were (infra/runbooks/04-verify.md).
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN NEW;
   END IF;
   -- The database's clock, whatever the insert says.
   NEW."issued_at" := pg_catalog.now();

@@ -14,7 +14,8 @@ const OPERATOR = 'TonyAI Sustainability Team';
  * run or a second spec finds them `already_loaded`, the loader's no-op.
  */
 export async function loadTrReleases(): Promise<void> {
-  const loader = new FactorReleaseLoader(connectLoader(), OPERATOR);
+  const client = connectLoader();
+  const loader = new FactorReleaseLoader(client, OPERATOR);
   for (const name of ['ipcc', 'etkb']) {
     // The dry run first, as an operator would (the factor-release-import skill).
     const dry = await loader.load(read(name), { apply: false });
@@ -22,4 +23,5 @@ export async function loadTrReleases(): Promise<void> {
     const applied = await loader.load(read(name), { apply: true });
     if (!['loaded', 'already_loaded'].includes(applied.outcome)) throw new Error(`${name} load: ${applied.outcome}`);
   }
+  await client.$disconnect();
 }

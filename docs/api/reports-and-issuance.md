@@ -38,7 +38,7 @@ covered" — its committed records counted and their calculated tonnes named in
 `scope3` (`ReportScope3Disclosure`), never summed into a tile, a total or a
 percentage; a Scope 3 selection — `scope=3`, or a Scope 3 category with no
 scope — reads "Not covered" everywhere. `summary` is a `ReportInventorySummary` — Scope 3 the literal 0 —
-not the emissions summary, whose totals include Scope 3. A `scope=3` selection reads no Scope 1/2 record; its tiles and
+and its total equals the emissions summary's main total, Scope 1 + 2 (Decisions 2026-11-09 (3)). A `scope=3` selection reads no Scope 1/2 record; its tiles and
 the workbook's cells read "Not covered", never 0. The PDF prints one decimal of
 the full-precision total; the workbook and CSV print full precision.
 

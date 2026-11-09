@@ -7,7 +7,7 @@ import {
   PHASE_PRODUCTION_SERVER,
 } from 'next/constants.js';
 import nextConfig from './next.config.mjs';
-import { reportOnlyPolicy } from './security-headers.mjs';
+import { reportOnlyPolicy, securityHeaders } from './security-headers.mjs';
 
 /**
  * Guards the dev-memory fix. Next's Turbopack dev server adopts
@@ -73,6 +73,10 @@ for (const phase of [PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD, PHASE_PRO
   assert.equal(byKey['Content-Security-Policy'], "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'");
   assert.match(byKey['Content-Security-Policy-Report-Only'], /default-src 'self'/);
 }
+
+assert.equal(securityHeaders({}).some((h) => h.key === 'Strict-Transport-Security'), false, 'HSTS is for a production image only');
+assert.deepEqual(securityHeaders({ NODE_ENV: 'production' }).find((h) => h.key === 'Strict-Transport-Security').value, 'max-age=31536000');
+assert.equal((await nextConfig(PHASE_PRODUCTION_BUILD)).poweredByHeader, false);
 
 const connectSrc = (env) => /connect-src ([^;]+)/.exec(reportOnlyPolicy(env))[1];
 assert.equal(

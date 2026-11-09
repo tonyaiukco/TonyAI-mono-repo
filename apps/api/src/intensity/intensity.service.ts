@@ -323,9 +323,10 @@ export class IntensityService {
         calculatedRecordCount += summary.calculatedRecordCount - scope3.calculatedRecordCount;
         nonAuthoritativeRecordCount += summary.nonAuthoritativeRecordCount - scope3.nonAuthoritativeRecordCount;
       }
-      // Nothing to compare: a Scope 3 only selection, or no figure at all. A
-      // metric reading 0 would assert a measurement nobody made.
-      if (calculatedRecordCount === 0) continue;
+      // Nothing to compare and nothing to disclose: a Scope 3 only selection, or
+      // no record at all. Records waiting for a figure keep their card, which
+      // states them, and the panel reads no intensity from it.
+      if (calculatedRecordCount === 0 && uncalculatedRecordCount === 0) continue;
       metrics.push({
         contributingSubsidiaryIds: [...e.subIds].sort(),
         uncalculatedRecordCount,

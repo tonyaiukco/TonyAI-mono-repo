@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
-import { emissionsError, liveReportNonAuthoritative, nonAuthoritativeFigures, trendLabel } from './emissions-view';
+import { emissionsError, liveReportNonAuthoritative, nonAuthoritativeFigures, trendChangePercent, trendLabel } from './emissions-view';
 import { copyFor, describeFor, recordWordsFor } from '@/lib/i18n/testing';
 import type { Locale } from '@/lib/types';
 
@@ -44,6 +44,23 @@ describe('trendLabel', () => {
     expect(label('Smarch 2024', 'tr')).toBe('Smarch 2024');
     expect(label('2024-Q5', 'tr')).toBe('2024-Q5');
     expect(label('constructor 2024', 'tr')).toBe('constructor 2024');
+  });
+});
+
+describe('trendChangePercent', () => {
+  const at = (...totals: number[]) => totals.map((total) => ({ total }));
+  it('reads first to last', () => {
+    expect(trendChangePercent(at(100, 80))).toBe(-20);
+    expect(trendChangePercent(at(100, 50, 150))).toBe(50);
+  });
+  it('invents no reduction or stillness from a bucket of Scope 3 alone', () => {
+    expect(trendChangePercent(at(30, 0))).toBe(0);
+    expect(trendChangePercent(at(0, 30))).toBe(0);
+    expect(trendChangePercent(at(20, 0, 30))).toBe(50);
+  });
+  it('says nothing with fewer than two figures', () => {
+    expect(trendChangePercent([])).toBe(0);
+    expect(trendChangePercent(at(5))).toBe(0);
   });
 });
 

@@ -1,3 +1,4 @@
+import { scrubSecrets } from './scrub-secrets';
 /**
  * Sentry is OPT-IN: without `SENTRY_DSN` nothing initialises and every helper
  * below is a no-op, so the wiring ships and reviews now while the account /
@@ -25,6 +26,8 @@ type SentryTransport = () => {
 type SentryEvent = {
   request?: { method?: string; url?: string; [key: string]: unknown };
   tags?: Record<string, unknown>;
+  message?: string;
+  exception?: { values?: { value?: string }[] };
 };
 
 type SentryApi = {
@@ -69,6 +72,11 @@ export async function initSentry(transport?: SentryTransport): Promise<void> {
         };
       }
       if (typeof event.tags?.path === 'string') event.tags.path = event.tags.path.split('?')[0];
+      // An error's own text can name a connection string or a token.
+      if (event.message) event.message = scrubSecrets(event.message);
+      for (const value of event.exception?.values ?? []) {
+        if (value.value) value.value = scrubSecrets(value.value);
+      }
       return event;
     },
     // Compliance: this is a carbon-accounting product — never ship request

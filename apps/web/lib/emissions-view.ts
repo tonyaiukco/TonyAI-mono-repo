@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import type { ErrorDescription } from "@/lib/i18n/errors";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
-import { PERIOD_VALUES, type EmissionsSummary, type ReportScope3Disclosure } from "@/lib/types";
+import { PERIOD_VALUES, type EmissionsSummary, type EmissionsTrendPoint, type ReportScope3Disclosure } from "@/lib/types";
 import type { RecordWords } from "@/lib/vocabulary";
 
 /**
@@ -63,6 +63,18 @@ export function nonAuthoritativeFigures(
 ): { count: number; of: number } | null {
   const count = summary?.nonAuthoritativeRecordCount ?? 0;
   return summary && count > 0 ? { count, of: summary.calculatedRecordCount } : null;
+}
+
+/**
+ * First to last point of a trend series, in percent, over the points that hold a
+ * Scope 1 or 2 figure: a bucket of Scope 3 alone has a main total of 0, which is
+ * no reduction (Decisions 2026-11-09 (3)). 0 when there is nothing to compare.
+ */
+export function trendChangePercent(points: readonly Pick<EmissionsTrendPoint, 'total'>[]): number {
+  const held = points.filter((p) => p.total > 0);
+  if (held.length < 2) return 0;
+  const first = held[0].total;
+  return ((held[held.length - 1].total - first) / first) * 100;
 }
 
 /** The live report preview's figures: its Scope 1/2 summary and the Scope 3 tonnes it discloses beside it. */

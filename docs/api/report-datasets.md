@@ -551,8 +551,10 @@ another language or template is another issuance of the same dataset. The guard
 owner included) admits an insert only of a retained dataset of its own
 organisation whose year, canonicalization, fingerprint and referenced set the
 row repeats, whose gaps are the contract's codes, and — for a final — of an
-inventory whose boundary was confirmed and whose stored coverage holds no gap;
-it stamps `issued_at` from the database's clock; then it refuses every change,
+inventory whose boundary was confirmed, with at least one included obligation and
+no gap in its stored coverage;
+it stamps `issued_at` from the database's clock (a data-only restore, in replica
+mode, writes what the dump holds); then it refuses every change,
 every delete but the organisation's own (as W10) and `TRUNCATE`. Flat CHECKs
 hold the rest: final ⇔ no gap, language, template, lowercase-hex SHA-256 and
 fingerprint, size, the object key the row's own. RLS is on with no client policy

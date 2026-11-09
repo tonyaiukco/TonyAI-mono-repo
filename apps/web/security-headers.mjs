@@ -38,6 +38,8 @@ export function reportOnlyPolicy(env = process.env) {
 
 export function securityHeaders(env = process.env) {
   return [
+    // As the API sets it. A production image's value is fixed at its build.
+    ...(env.NODE_ENV === 'production' ? [{ key: 'Strict-Transport-Security', value: 'max-age=31536000' }] : []),
     { key: 'X-Content-Type-Options', value: 'nosniff' },
     { key: 'X-Frame-Options', value: 'DENY' },
     { key: 'Referrer-Policy', value: 'no-referrer' },

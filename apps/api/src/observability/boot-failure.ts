@@ -1,14 +1,15 @@
 import { captureException, flushSentry } from './sentry';
 import { JsonLogger } from './json-logger';
+import { scrubSecrets } from './scrub-secrets';
 
 /** Past Sentry's own 5 s flush bound: a flush that never settles must not hold the process. */
 const FLUSH_LIMIT_MS = 6_000;
 const MESSAGE_LIMIT = 500;
 
-/** A boot error's text with any connection string taken out: Prisma's can name one. */
+/** A boot error's text, safe for a log and bounded. */
 export function safeBootMessage(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '[url]').slice(0, MESSAGE_LIMIT);
+  return scrubSecrets(text).slice(0, MESSAGE_LIMIT);
 }
 
 export interface BootFailureDeps {
@@ -41,8 +42,8 @@ export async function exitOnBootFailure(error: unknown, deps: BootFailureDeps = 
     deps.capture(error);
     let timer: NodeJS.Timeout | undefined;
     const limit = new Promise((resolve) => {
+      // Not unref'd: with an empty event loop the process would end at 0 before exit(1).
       timer = setTimeout(resolve, deps.flushLimitMs);
-      timer.unref();
     });
     await Promise.race([deps.flush(), limit]).finally(() => clearTimeout(timer));
   } catch {

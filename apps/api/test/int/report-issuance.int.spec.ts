@@ -484,7 +484,9 @@ describe('a counted final on the real TR releases (Decisions 2026-11-09)', () =>
   const GAS_KG = 140.37;
   const within = (actual: number | null, kg: number) => {
     expect(actual).not.toBeNull();
-    expect(Math.abs(actual! - kg / 1000) / (kg / 1000)).toBeLessThan(0.005);
+    // The goldens' own precision, tighter than the package's ±0.5%: it catches a
+    // factor slip such as 0.434 → 0.436.
+    expect(Math.abs(actual! - kg / 1000) / (kg / 1000)).toBeLessThan(0.0001);
   };
 
   function electricityAndGas(): PutInventoryBoundarySubsidiaryRequest {
@@ -541,6 +543,7 @@ describe('a counted final on the real TR releases (Decisions 2026-11-09)', () =>
     const page = render.mock.calls[0][0];
     expect(page).toContain(number.format(scope1.tCo2e!));
     expect(page).toContain(number.format(scope2.tCo2e!));
+    expect(page).toContain(`${MONTHS.length} counted figures use a factor from a data year before the reporting year`);
     const pdf = await download(admin(), issued.issuanceId);
     expect(pdf.bytes.subarray(0, 4).toString()).toBe('%PDF');
     expect(sha256(pdf.bytes)).toBe(issued.pdf.fingerprint.hex);
@@ -560,6 +563,7 @@ describe('a counted final on the real TR releases (Decisions 2026-11-09)', () =>
     workbook.getWorksheet('Summary')!.eachRow((row) => summary.push((row.values as unknown[]).slice(1)));
     expect(summary.find((r) => String(r[0]).startsWith('Scope 1'))?.[1]).toBeCloseTo(scope1.tCo2e!, 9);
     expect(summary.find((r) => String(r[0]).startsWith('Scope 2'))?.[1]).toBeCloseTo(scope2.tCo2e!, 9);
+    expect(summary.some((r) => String(r[1]).includes('a data year before the reporting year'))).toBe(true);
   }, 120_000);
 });
 
@@ -638,6 +642,22 @@ describe('the guard (TA017) — every writer, the owner included', () => {
       status: `'partial'`, gaps: `'[{"code":"looks_fine","sourceIds":[],"obligationIds":[],"recordIds":[]}]'::jsonb`,
     }))).toBe('TA017');
     expect(await refusedWith(insertOf(row, { dataset_id: `'${randomUUID()}'` }))).toBe('TA017');
+  }, 60_000);
+
+  it('lets a data-only restore write what the dump holds: an old all-excluded final, with its own issued_at', async () => {
+    await issue(admin(), { datasetId: await allExcludedDataset(), template: 'executive_summary' });
+    const [row] = await issuanceRows();
+    const asFinal = { status: `'final'`, gaps: `'[]'::jsonb`, issued_at: `'2026-11-01T00:00:00Z'` };
+    expect(await refusedWith(insertOf(row, asFinal))).toBe('TA017');
+    const restored = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+      await tx.$executeRawUnsafe(insertOf(row, asFinal));
+      const [{ n }] = await tx.$queryRawUnsafe<{ n: number }[]>(
+        `SELECT count(*)::int AS n FROM report_issuances WHERE organisation_id = '${row.organisationId}' AND status = 'final' AND issued_at = '2026-11-01T00:00:00Z'`,
+      );
+      return n;
+    });
+    expect(restored).toBe(1);
   }, 60_000);
 
   it('holds the shapes: a final has no gap, a partial at least one, the key is the row\'s own', async () => {

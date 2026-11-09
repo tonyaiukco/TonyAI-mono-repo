@@ -4,7 +4,7 @@
   "view": {
     "absolute": "Absolute",
     "intensity": "Intensity",
-    "intensityLocked": "Configure an intensity denominator to enable this"
+    "intensityLocked": "Intensity needs a configured denominator and Scope 1 or 2 figures for this selection"
   },
   "export": "Export",
   "banner": "Figures are computed from committed activity records with the emission factors of the releases loaded into the factor library, which <strong>need not all be authoritative</strong>; a warning counts any figure in the selection's totals and in the trends that is not. Scope 3 is not covered by this inventory.",

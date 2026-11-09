@@ -277,6 +277,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                     </Select>
                   </Field>
                 </div>
+                <p className="text-xs text-muted-foreground" data-testid="target-coverage-hint">{t('coverageHint')}</p>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label={t('baselineYear')}>
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.baselineYear} onChange={(e) => setForm((f) => ({ ...f, baselineYear: e.target.value }))} />

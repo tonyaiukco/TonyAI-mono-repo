@@ -9,6 +9,7 @@
   "basis": "Temel",
   "scope": "Kapsam",
   "baselineYear": "Baz yıl",
+  "coverageHint": "Baz değeri ve hedefi burada adı geçen kapsamlar için beyan edin. İlerleme Kapsam 1 ve 2'den okunur; Kapsam 3'ü içeren bir baz değer ilerlemeyi yanlış gösterir.",
   "baselineTonnes": "Baz yıl tCO₂e",
   "baselinePlaceholder": "örn. 1600",
   "targetYear": "Hedef yıl",
@@ -27,7 +28,7 @@
   "reduction": "−%{value}",
   "nonAuthoritative": "Bu ilerlemenin dayandığı, yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: {count} / {of}.",
   "notCovered": "Kapsanmıyor — Kapsam 3 envanter toplamına dahil değildir, bu nedenle bu hedefin okunacak bir ilerlemesi yok.",
-  "noProgress": "İlerleme henüz hesaplanamıyor — {year} baz yılından sonraki bir yıl için sayılan veri yok.",
+  "noProgress": "İlerleme henüz yok — {year} baz yılından sonraki bir yıl için, bu hedefin okuduğu kapsamlarda kesinleşmiş değer yok.",
   "wayToTarget": "Hedefe giden yolun %{value} kadarı",
   "current": "{year} güncel: {value} tCO₂e",
   "baseline": "Baz yıl {year}",
@@ -35,7 +36,7 @@
   "tonnes": "{value} tCO₂e",
   "loadMore": "Daha fazla hedef yükle",
   "scopes": {
-    "all": "Tüm kapsamlar",
+    "all": "Kapsam 1 + 2",
     "scope1": "Kapsam 1",
     "scope2": "Kapsam 2",
     "scope3": "Kapsam 3"

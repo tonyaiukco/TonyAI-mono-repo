@@ -69,7 +69,7 @@ import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, CATEGORY_SCOPE_MAP, LOCA
 import type { Category, Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
-import { emissionsError, nonAuthoritativeFigures, trendLabel } from '@/lib/emissions-view';
+import { emissionsError, nonAuthoritativeFigures, trendChangePercent, trendLabel } from '@/lib/emissions-view';
 import { selectsScope3Only } from '@/lib/report-coverage-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import {
@@ -545,9 +545,9 @@ function EmissionsAnalysisPageInner() {
     actorWords,
   );
 
-  const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
-  const byCategory = summary?.byCategory ?? [];
-  const bySubsidiary = summary?.bySubsidiary ?? [];
+  const totals = useMemo(() => summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 }, [summary]);
+  const byCategory = useMemo(() => summary?.byCategory ?? [], [summary]);
+  const bySubsidiary = useMemo(() => summary?.bySubsidiary ?? [], [summary]);
   // Scope 3 sits beside the main total, so a chart of shares shows it only when
   // it is what the selection asks for (Decisions 2026-11-09 (3)).
   const scope3Only = !!context && selectsScope3Only(context, (c) => CATEGORY_SCOPE_MAP[c as Category]);
@@ -601,14 +601,7 @@ function EmissionsAnalysisPageInner() {
   }, [trendSummary, trendPeriod]);
 
   // Change from the first to the last point of the selected trend series.
-  const trendChange = useMemo(() => {
-    if (currentTrendData.length < 2) return 0;
-    const reading = (p: (typeof currentTrendData)[number]) => (scope3Only ? p.scope3 : p.total);
-    const first = reading(currentTrendData[0]);
-    const last = reading(currentTrendData[currentTrendData.length - 1]);
-    if (first === 0) return 0;
-    return ((last - first) / first) * 100;
-  }, [currentTrendData, scope3Only]);
+  const trendChange = useMemo(() => trendChangePercent(currentTrendData), [currentTrendData]);
 
   const unitLabel = tCommon('tco2e');
   const tonnes = (value: number, decimals = 0) => t('tonnes', { value: fixed(value, locale, decimals) });
@@ -869,7 +862,7 @@ function EmissionsAnalysisPageInner() {
                       <div>
                         <CardTitle className="text-base">{t('summary.contributors')}</CardTitle>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {contributorBasis === 'subsidiary' ? t('summary.byCompany') : t('summary.byCategory')}
+                          {contributorBasis === 'subsidiary' && !scope3Only ? t('summary.byCompany') : t('summary.byCategory')}
                         </p>
                       </div>
                       <Select

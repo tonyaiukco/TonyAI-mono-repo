@@ -11,7 +11,7 @@ import { ADMIN_EMAIL, API_BASE, ENTRY_EMAIL, SUB, bearer, getAccessToken, login 
  * deleted (only with their organisation), so this spec owns a year no other
  * spec reads — 2021 — and every assertion holds on a rerun: each run declares
  * a new version (the newest of the last run is confirmed, so a new one may
- * open), captures it, and issues the newest final.
+ * open), captures it, and issues the newest as partial.
  */
 
 const YEAR = 2021;

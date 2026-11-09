@@ -141,6 +141,8 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
   const names = datasetNames(dataset);
   const standing = new Map(dataset.provenance.records.map((p) => [p.recordId, p.standing]));
   const final = doc.status === 'final';
+  // A factor whose data year precedes the reporting year (D07's lag): stated, never a gap.
+  const earlierDataYear = dataset.provenance.records.filter((r) => r.issues.includes('declared_year_fallback')).length;
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'TonyAI';
@@ -171,6 +173,7 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
     // A sentence, never a figure (D08).
     ['', t('noMarketBased')],
     [t('rowScope3'), t('scope3NotCovered')],
+    ...(earlierDataYear > 0 ? [['', t('earlierDataYear', { count: earlierDataYear })]] : []),
     [],
     [t('identityHeading')],
     [t('identityIssuance'), doc.issuanceId],

@@ -319,6 +319,17 @@ describe('IntensityService', () => {
     });
   });
 
+  it('keeps a card for records waiting for a figure, so they stay disclosed', async () => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValue([makeDenominator({ value: 20, unit: 'M EUR' })]);
+    emissions.summary.mockResolvedValue({
+      totals: { total: 0 }, calculatedRecordCount: 0, uncalculatedRecordCount: 2, nonAuthoritativeRecordCount: 0, scope3Records: NO_SCOPE3,
+    });
+
+    const result = await service.contextIntensity({ ...admin, accessibleSubsidiaryIds: ['sub-1'] }, { year: 2027 });
+
+    expect(result.data.metrics).toEqual([expect.objectContaining({ calculatedRecordCount: 0, uncalculatedRecordCount: 2 })]);
+  });
+
   it('permits physical intensity only for an explicit subsidiary', async () => {
     prisma.subsidiaryDenominator.findMany.mockResolvedValue([makeDenominator({ metric: 'employees', value: 10, unit: 'FTE' })]);
     emissions.summary.mockResolvedValue(summaryOf(30, 0));

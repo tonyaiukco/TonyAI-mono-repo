@@ -988,7 +988,7 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'report_datasets', trigger: 'report_datasets_before_truncate', fn: 'report_datasets_before_truncate', type: BEFORE | ON.truncate },
   // LP3-04 PR D: an issuance issues a retained dataset of its organisation —
   // its identity and read rule the dataset's, a final only of a confirmed
-  // inventory without a coverage gap — and is retained: never updated, nor
+  // inventory with an included obligation and without a coverage gap — and is retained: never updated, nor
   // deleted but with its organisation (TA017) — SECURITY DEFINER, to read the
   // dataset whoever inserts — nor truncated.
   { table: 'report_issuances', trigger: 'report_issuances_guard', fn: 'report_issuances_guard', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },

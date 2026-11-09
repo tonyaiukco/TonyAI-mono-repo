@@ -18,7 +18,7 @@ test('targets: seeded progress + create round-trip', async ({ page }) => {
   // assertion; exact % status depends on mutable committed emissions).
   await expect(page.getByText('Manufacturing SBTi 1.5°C')).toBeVisible();
   await expect(page.getByText('Net-zero pathway 2030')).toBeVisible();
-  await expect(page.getByText(/no committed data for a year after the 2026 baseline/i)).toBeVisible();
+  await expect(page.getByText(/no committed figure for a year after the 2026 baseline/i)).toBeVisible();
 
   // Create a target (sentinel name) via the super_admin dialog.
   await page.getByRole('button', { name: 'Add target' }).click();

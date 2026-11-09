@@ -96,15 +96,15 @@ export function naturalGasChain(
   if (edited !== null) {
     // The bill's range scaled by the release's own net-to-gross ratio, from
     // loaded rows (Decisions 2026-11-09 (8)): a CSV's `8.250` reads as 8.25, about
-    // 1,000 times low. Only what the user typed: a valid bill's derived NCV above
-    // can fall below this floor (GCV 10,427 derives about 7,244).
+    // 1,000 times low. Only what the user typed: the billed path's formula above
+    // can derive less than this floor (GCV 10,427 gives about 7,244).
     const ratio = ncv.value / reference(rows, 'reference_gcv').value;
     const lowest = reference(rows, 'billed_gcv_min').value * ratio;
     const highest = reference(rows, 'billed_gcv_max').value * ratio;
     if (edited < lowest || edited > highest) {
       throw new CalculationInputError(
         'ncv_out_of_range',
-        `A typed net calorific value must be between ${Math.ceil(lowest)} and ${Math.floor(highest)} kcal/Sm³, the range the factor release accepts.`,
+        `A typed net calorific value must be between ${Math.ceil(lowest)} and ${Math.floor(highest)} kcal/Sm³, the range derived from the factor release's rows.`,
       );
     }
     return {

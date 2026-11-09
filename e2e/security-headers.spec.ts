@@ -14,6 +14,7 @@ function expectSecurityHeaders(response: APIResponse): void {
   expect(headers['permissions-policy']).toBe('camera=(), microphone=(), geolocation=()');
   expect(headers['content-security-policy']).toBe("frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'");
   expect(headers['content-security-policy-report-only']).toContain("default-src 'self'");
+  expect(headers['x-powered-by']).toBeUndefined();
 }
 
 test('a page and a redirect both carry the security headers', async ({ request }) => {

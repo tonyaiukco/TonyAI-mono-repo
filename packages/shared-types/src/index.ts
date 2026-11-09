@@ -1300,7 +1300,9 @@ export interface ReportingIntensityMetric extends IntensityMetricResultDTO {
    * cannot substitute for this numerator-specific coverage disclosure. */
   uncalculatedRecordCount: number;
   /** Scope 1 and 2 records of the contributing subsidiaries behind
-   * `emissionsTotal`. A metric never reads 0 from none: it is left out. */
+   * `emissionsTotal`. None, with `uncalculatedRecordCount` above zero: `intensity`
+   * is not a measurement, and a screen shows no figure. None of either: the
+   * metric is left out. */
   calculatedRecordCount: number;
   /** Of those, the ones not authoritative now (`authoritativeNow`). */
   nonAuthoritativeRecordCount: number;
@@ -4801,7 +4803,7 @@ export interface EmissionsBySubsidiary {
   subsidiaryName: string;
   tCo2e: number;
   recordCount: number;
-  /** Share of the (filtered) grand total, 0–100. */
+  /** Share of the (filtered) main total, 0–100. */
   percentOfTotal: number;
 }
 

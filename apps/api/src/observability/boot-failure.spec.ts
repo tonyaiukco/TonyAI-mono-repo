@@ -56,7 +56,7 @@ describe('safeBootMessage', () => {
     const secret = 'postgresql://tonyai_runtime:s3cret@db.example.com:5432/postgres?sslmode=require';
     const message = safeBootMessage(new Error(`Can't reach ${secret} now`));
     expect(message).toBe("Can't reach [url] now");
-    expect(safeBootMessage(new Error('redis://u:p@h:1'))).toBe('[url]');
+    expect(safeBootMessage(new Error('host=db password=s3cret'))).toBe('host=db password=[redacted]');
   });
 
   it('keeps the rest of the message, bounded', () => {

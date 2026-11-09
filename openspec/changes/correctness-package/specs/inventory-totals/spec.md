@@ -53,6 +53,16 @@ Target progress and intensity SHALL answer "no comparison" when their selection 
 - **WHEN** intensity is read for a Scope 3 only selection
 - **THEN** it returns no metric, and the panel says why
 
+#### Scenario: Scope 1 or 2 records waiting for a figure
+
+- **WHEN** a metric's numerator holds such records and no figure
+- **THEN** its card stays and discloses them, and shows no intensity
+
+#### Scenario: A trend's last bucket holds only Scope 3
+
+- **WHEN** a trend's first or last bucket has no Scope 1 or 2 figure
+- **THEN** its change reads over the buckets that do, never as a reduction to 0
+
 ### Requirement: Each screen labels its own non-authoritative figures
 
 The dashboard, each target row and each intensity card SHALL warn when the figures they show rest on non-authoritative factors, counted over the same records that produced the figure. When no such figure is present, the warning SHALL NOT appear.

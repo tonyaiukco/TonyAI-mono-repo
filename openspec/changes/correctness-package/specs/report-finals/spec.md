@@ -34,6 +34,11 @@ The rule SHALL NOT change a retained dataset's fingerprint or a stored issuance.
 - **WHEN** an all-excluded final issued before this rule is read
 - **THEN** it is returned unchanged until a later final supersedes it
 
+#### Scenario: A restore
+
+- **WHEN** a data-only restore in replica mode loads a dump holding such a final
+- **THEN** the row loads as it was, its `issued_at` included
+
 ### Requirement: A counted final reconciles on real factors
 
 A final on authoritative TR releases with counted records SHALL show the same figure in its dataset, PDF, XLSX and CSV.
@@ -42,6 +47,15 @@ A final on authoritative TR releases with counted records SHALL show the same fi
 
 - **WHEN** TR records for 2025 are approved and locked, with every obligation met, and a final is issued
 - **THEN** the status is final with no gap, every counted calculation is authoritative, and the outputs reconcile to figures derived independently from the cited release
+
+### Requirement: An issued report states an earlier data year
+
+An issued PDF and workbook SHALL state how many counted figures use a factor from a data year before the reporting year.
+
+#### Scenario: ETKB's 2025 factor
+
+- **WHEN** a final counts 2025 electricity on ETKB's factor, whose data year is 2024
+- **THEN** its PDF and workbook say so, and it is no gap
 
 ### Requirement: The live Scope 3 line states its standing
 

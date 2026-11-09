@@ -8,7 +8,7 @@ Defines the security headers every web response carries, so the browser refuses 
 
 ### Requirement: Every web response carries the security headers
 
-Every web response, redirects included, SHALL carry `X-Content-Type-Options: nosniff`, frame protection, a no-referrer policy and a permissions policy matching the API's.
+Every web response, redirects included, SHALL carry `X-Content-Type-Options: nosniff`, frame protection, a no-referrer policy and a permissions policy matching the API's, and a production image's responses SHALL carry HSTS.
 
 #### Scenario: A page
 
