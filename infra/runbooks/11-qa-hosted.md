@@ -439,7 +439,7 @@ Each step names the field it flips. Everything else in the files stays as it was
 | Host | Type | Value | Source |
 |---|---|---|---|
 | `@` | TXT | ACS `Domain` record (`ms-domain-verification=…`), **added beside** `google-site-verification` | `dns_contract.email` |
-| `@` | TXT (SPF) | **Edit the existing record** to `v=spf1 include:_spf.google.com include:spf.protection.outlook.com ~all`. Never add a second `v=spf1` record. | ACS `SPF` record |
+| `@` | TXT (SPF) | **Edit the existing record** to `v=spf1 include:_spf.google.com include:spf.protection.outlook.com -all`. Never add a second `v=spf1` record. It ends in `-all` (Decisions 2026-11-10). | ACS `SPF` record |
 | `selector1-azurecomm-prod-net._domainkey` | CNAME | ACS `DKIM` value | `dns_contract.email` |
 | `selector2-azurecomm-prod-net._domainkey` | CNAME | ACS `DKIM2` value | `dns_contract.email` |
 | `qa` | CNAME | `<stem>-web.<default domain>` | `dns_contract.hosts.web.cname` |
@@ -486,7 +486,7 @@ After each DNS change, Claude Code reads the records from Namecheap's own server
    for t in Domain SPF DKIM DKIM2; do az communication email domain initiate-verification -g tonyai-qatmp-apps --email-service-name tonyaiqt-staging-email --domain-name tonyai.io --verification-type $t; done
    az communication email domain show -g tonyai-qatmp-apps --email-service-name tonyaiqt-staging-email --domain-name tonyai.io --query properties.verificationStates
    ```
-   - ACS documents its SPF record as ending in `-all`, while the root keeps Google's `~all`. If SPF stays `NotVerified` with `~all`, stop. Changing the root to `-all` also affects Google mail, so that is an owner decision.
+   - ACS's SPF verification failed with Google's `~all`. The owner moved the root to `-all` (Decisions 2026-11-10), and then all four records read `Verified`. A service other than Google Workspace or ACS that sends as `tonyai.io` now fails SPF, so its include goes into the one root record first.
    - Then a foundation apply with `custom_domain_verified: true`. That apply links the domain and creates the `no-reply` sender.
 5. **Application apply** (`deploy-apps.sh`, new `release_id`, same images) with `public_hosts.bound: false` and `mail.from: no-reply@tonyai.io`.
    - Disable `QA deploy` around it, as for any owner release.
@@ -535,6 +535,29 @@ Undo in reverse order, one foundation or application apply per row:
 - **Renaming a host** follows the same order. Unbind it, remove its certificate, then add the new name.
 - **DNS records** are harmless while unbound. If the QA environment is ever deleted, delete the `qa` and `api.qa` CNAMEs and their `asuid` records too, so the names cannot be claimed elsewhere.
 - **Mail posture.** DMARC stays `p=none` until `dmarc=pass` has been observed. Moving to `quarantine` is an open question for the owner.
+
+### Cutover record (2026-11-09 to 2026-11-10)
+
+Hosted QA serves `qa.tonyai.io` and `api.qa.tonyai.io` with managed TLS and sends from `no-reply@tonyai.io`. Live release `ci27-1`: source `8fc3a9a`, API `sha256:a58bea76…`, web `sha256:b1be5df8…`. Receipts are private, under `~/tonyai-evidence-backup/lp2-04/`. Hashes are the first 16 hex characters of SHA-256.
+
+| Step | Outcome | Receipt |
+|---|---|---|
+| 2 foundation | `4 added, 1 changed, 0 destroyed`: the CustomerManaged domain, the App Insights component, the API test and its alert, plus the recorded `join_grant` difference | `foundation-plan-step2.txt` `cedffb5001dea5fc`, `foundation-apply-step2.txt` `3bf0ebe18505c632` |
+| 3 DNS | Every record read on `dns1.registrar-servers.com`. The root SPF ends in `-all` (Decisions 2026-11-10). | — |
+| 4 verification and link | Domain, SPF, DKIM and DKIM2 `Verified`. `1 added, 2 changed, 0 destroyed`: the domain linked and the `no-reply` sender created. The re-plan shows only `join_grant`. | `foundation-plan-step4.txt` `0956dc1ec6fd007c`, `foundation-apply-step4.txt` `43317946d364a8a4`, `foundation-replan-step4.txt` `3fd6cc45434992e2` |
+| 5 sender, hosts `Disabled` | Release `mail1-1` on `ci24-1`'s images, `0 added, 2 changed, 0 destroyed`. Verification and the unbound readback PASS. The reset arrived in the inbox from `no-reply@tonyai.io`, with SPF, DKIM and DMARC `pass` (owner's report). | `application-plan-step5.txt` `84c2977117f8c39e`, `application-apply-step5.txt` `0ecadd823697ffca`, `inputs-mail1-1-20261109T215052Z.json` `6659da207997819c` |
+| 6 certificates | `2 added, 1 changed, 0 destroyed`. Both managed certificates `Succeeded` (CNAME validation). The re-plan shows only `join_grant`. | `foundation-plan-step6.txt` `6256e2d3d6bd9143`, `foundation-apply-step6.txt` `ed41d2d2b1e05812`, `foundation-replan-step6.txt` `b995d1c44b3daf81` |
+| 7 binding and Auth | Release `host1-1`, `0 added, 2 changed, 0 destroyed`: both hosts `SniEnabled`, `APP_URL` `https://qa.tonyai.io`, both web origins in `WEB_ORIGIN`. `qa.tonyai.io` serves `CN=qa.tonyai.io` from DigiCert. Auth reconciled with `public_web_host` PASS. Sign-in and a reset on the new host worked (owner's report). | `application-plan-step7.txt` `77e237c77d77ada2`, `application-apply-step7.txt` `c8057de47e421b49`, `supabase-reconcile-step7.txt` `15c263f059102782` |
+| 8 web build | `QA deploy` run 42710511127 → `ci27-1`: migrations 0, owner check PASS (10 platform-default findings), smoke PASS on the public hosts. The web's CSP `connect-src` names only `https://api.qa.tonyai.io` and the Supabase project. | the run's log |
+| 9 monitoring | `0 added, 3 changed, 0 destroyed`: the test moved to `https://api.qa.tonyai.io/api/v1/health/ready` and `storage-verify` re-pinned to `ci27-1`'s API image. Execution `2okgbj9` `Succeeded`. Every monitoring link PASS. | `foundation-plan-step9.txt` `5204bd5068c0a469`, `foundation-apply-step9.txt` `369f9708e2740728`, `foundation-replan-step9.txt` `4968e4b52e14ec39`, `monitoring-step9-20261109T223524Z.txt` `0b07b5f7ae6c4191` |
+| 10 acceptance | The API test's first results on `api.qa.tonyai.io` passed in all three locations (North Europe and West Europe 22:39, France Central 22:47 UTC; every result since 18:00 on the generated host passed too). An invitation arrived in the inbox from `no-reply@tonyai.io`, linking to `qa.tonyai.io`, with SPF, DKIM and DMARC `pass` (owner's report). The hosted no-demo check reads `0` / `PASS` on every row (owner's report). | — |
+
+**Found on the way.**
+- ACS's SPF verification failed with `~all`. The owner moved the root to `-all`.
+- `.infra-local/staging/supabase.json` in the `hosted-qa-preflight` worktree is an unfilled template. The real configuration is L4's `supabase.candidate.json`, which equals the journal's target.
+- A reset mail sent before step 7 keeps its generated-host link. Gmail threads it with later mails, so check a mail's own date before reading its link.
+
+**Not claimed.** `dmarc=pass` has been observed, but DMARC stays `p=none` until the owner rules on `quarantine`.
 
 ## Reset, maintenance and announcements
 
