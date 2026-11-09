@@ -32,7 +32,7 @@ import tr from './i18n/tr.json';
 
 /** The renderer's own version; the issuance records it with the browser's. */
 // v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
-export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v2';
+export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v3';
 
 export interface IssuanceDocument {
   issuanceId: string;
@@ -54,6 +54,7 @@ const GAP_LABEL: Record<ReportIssuanceGapCode, IssuanceMessageKey> = {
   unlocked_period: 'gapUnlockedPeriod',
   non_authoritative_calculation: 'gapNonAuthoritativeCalculation',
   gwp_set_mismatch: 'gapGwpSetMismatch',
+  no_included_obligation: 'gapNoIncludedObligation',
 };
 
 const COVERAGE_LABEL: Record<ReportCoverageGapCode, IssuanceMessageKey> = {
@@ -116,6 +117,7 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
   const date = new Intl.DateTimeFormat(tag, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
   const isDetail = doc.template === 'ghg_protocol_detail';
   const final = doc.status === 'final';
+  const earlierDataYear = earlierDataYearCount(dataset);
 
   const label = (prefix: 'category' | 'period', value: string): string => {
     const key = `${prefix} ${value}` as IssuanceMessageKey;
@@ -244,11 +246,13 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     <span class="badge ${final ? 'final' : 'partial'}">${final ? t('statusFinal') : t('statusPartial')}</span></div>
 </header>
 <section class="status"><p>${final ? t('statusFinalNote') : t('statusPartialNote', { count: doc.gaps.length })}${
-  final && dataset.coverage.obligations.length === 0 ? ` ${t('finalNoSourcesNote')}` : ''}</p></section>
+  dataset.selection === 'inventory' && dataset.boundary.decision === 'confirmed' && dataset.coverage.obligations.length === 0
+    ? ` ${t('finalNoSourcesNote')}`
+    : ''}</p></section>
 ${final ? '' : `<h2>${t('gapsHeading')}</h2>${table([t('colGap'), t('colEntity'), t('colCategory'), t('colSources'), t('colObligations'), t('colRecords')], gapRows, [3, 4, 5])}`}
 <h2>${t('emissionsHeading')}</h2>
 <div class="tiles">${tile(scope1)}${tile(scope2)}</div>
-<p class="note">${t('scope3NotCovered')}</p>
+<p class="note">${t('scope3NotCovered')}${earlierDataYear > 0 ? ` ${t('earlierDataYear', { count: earlierDataYear })}` : ''}</p>
 <h2>${t('boundaryHeading')}</h2>
 <p>${selection}</p>
 <p class="note">${t('boundaryVersion', { version: dataset.boundary.version })} · ${dataset.boundary.decision === 'confirmed' ? t('decisionConfirmed') : t('decisionUnconfirmed')}</p>
@@ -296,6 +300,13 @@ export function datasetNames(dataset: ReportDataset) {
       return byEntity.get(JSON.stringify([subsidiaryId, null]))?.subsidiaryName ?? subsidiaryId;
     },
   };
+}
+
+/** Counted figures on a factor whose data year precedes the reporting year (D07's lag): stated, never a gap. */
+export function earlierDataYearCount(dataset: ReportDataset): number {
+  const [scope1, scope2] = dataset.scopes;
+  const counted = new Set([...scope1.countedRecordIds, ...scope2.countedRecordIds]);
+  return dataset.provenance.records.filter((r) => counted.has(r.recordId) && r.issues.includes('declared_year_fallback')).length;
 }
 
 /** How one retained scope reads: outside an extract's filters, with no included source, or its figure (null: none calculated). */

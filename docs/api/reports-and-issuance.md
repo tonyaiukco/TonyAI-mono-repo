@@ -38,7 +38,7 @@ covered" — its committed records counted and their calculated tonnes named in
 `scope3` (`ReportScope3Disclosure`), never summed into a tile, a total or a
 percentage; a Scope 3 selection — `scope=3`, or a Scope 3 category with no
 scope — reads "Not covered" everywhere. `summary` is a `ReportInventorySummary` — Scope 3 the literal 0 —
-not the emissions summary, whose totals include Scope 3. A `scope=3` selection reads no Scope 1/2 record; its tiles and
+and its total equals the emissions summary's main total, Scope 1 + 2 (Decisions 2026-11-09 (3)). A `scope=3` selection reads no Scope 1/2 record; its tiles and
 the workbook's cells read "Not covered", never 0. The PDF prints one decimal of
 the full-precision total; the workbook and CSV print full precision.
 
@@ -93,8 +93,8 @@ certificate data exists every report says "No market-based result" (TR
 "Piyasa bazlı sonuç bulunmamaktadır") instead of copying the location-based
 figure: on the PDF tile, as a Summary row in Excel, and in a trailing
 `scope2_market_based` CSV column on every Scope 2 row (English, as every CSV
-cell). The issued renderers are `tonyai-issuance-pdf-v2` and
-`tonyai-issuance-tables-v2`; a retained dataset's fingerprint is unchanged,
+cell). The issued renderers are `tonyai-issuance-pdf-v3` and
+`tonyai-issuance-tables-v3`; a retained dataset's fingerprint is unchanged,
 since neither the dataset nor its assessments moved.
 
 **Issued Excel and CSV (K5).** `GET /report-issuances/:id/xlsx` and `/csv`
@@ -102,7 +102,7 @@ project the issuance's RETAINED dataset — re-read, re-verified as an issue
 verifies it (fingerprint, assessments, frozen version), and bound to the
 issuance by its fingerprint — exactly as its PDF does: the scopes' counted
 records, the same figures, gaps, exclusions and withdrawals
-(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v2`).
+(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v3`).
 Written on request and never stored (no migration, no new bucket); the same
 issuance always yields the same rows and figures under one renderer, which the
 tables name, so an issuance made under v1 now downloads with v2's two trailing
@@ -111,7 +111,7 @@ issuance's language with numeric figures and names the issuance, dataset,
 fingerprint, capture and issue times on its Summary (its file clock is the
 issue time; its labels are the catalogue's current words); the CSV opens with
 one `row_kind: issuance` row — the identity and status, every other cell empty
-— so an issuance with no ledger row (an all-excluded final, an empty extract)
+— so an issuance with no ledger row (an all-excluded inventory, an empty extract)
 still names itself, then carries the issuance, dataset, fingerprint and status
 on every row, the entity's `subsidiary_id` and `location_id`, then
 `calculation_inputs` and `scope2_market_based` last (LP4-02 PR5), and a withdrawn row's

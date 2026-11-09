@@ -244,7 +244,7 @@ describe('the additive report dataset contract', () => {
     expect(REPORT_PROVENANCE_ISSUE_CODES).toEqual(['uncalculated', 'legacy_snapshot', 'placeholder_release',
       'fixture_release', 'withdrawn_release', 'partial_gas_coverage', 'declared_year_fallback', 'gwp_set_mismatch']);
     expect(REPORT_ISSUANCE_GAP_CODES).toEqual(['filtered_extract', 'coverage_gap', 'unapproved_record',
-      'unlocked_period', 'non_authoritative_calculation', 'gwp_set_mismatch']);
+      'unlocked_period', 'non_authoritative_calculation', 'gwp_set_mismatch', 'no_included_obligation']);
   });
 });
 

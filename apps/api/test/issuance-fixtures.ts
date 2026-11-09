@@ -95,7 +95,7 @@ export function frozenBoundary(rows: BoundaryRows = complete(), decision: 'uncon
 }
 
 /** `complete()` with every category of Sub A excluded too — no included source,
- * no obligation: the only final the factor library allows today. */
+ * no obligation, so partial with `no_included_obligation`. */
 export function allExcludedBoundary(decision: 'unconfirmed' | 'confirmed' = 'confirmed'): InventoryBoundarySnapshot {
   const rows = complete();
   return frozenBoundary({

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
-import { emissionsError, liveReportNonAuthoritative, nonAuthoritativeFigures, trendLabel } from './emissions-view';
+import { emissionsError, intensityFigureGap, liveReportNonAuthoritative, nonAuthoritativeFigures, trendChangePercent, trendLabel } from './emissions-view';
 import { copyFor, describeFor, recordWordsFor } from '@/lib/i18n/testing';
 import type { Locale } from '@/lib/types';
 
@@ -47,9 +47,56 @@ describe('trendLabel', () => {
   });
 });
 
+describe('intensityFigureGap (D14)', () => {
+  const ids = ['a', 'b'];
+  it('states how many contributors have a figure when some do not', () => {
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids, contributingWithFigureCount: 1 })).toEqual({ withFigure: 1, contributing: 2 });
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids, contributingWithFigureCount: 0 })).toEqual({ withFigure: 0, contributing: 2 });
+  });
+  it('says nothing when all have one, or when an older server does not say', () => {
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids, contributingWithFigureCount: 2 })).toBeNull();
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids } as never)).toBeNull();
+  });
+});
+
+describe('trendChangePercent', () => {
+  // [Scope 1 + 2 tonnes, its records, Scope 3 tonnes, its records]
+  const at = (...points: [number, number, number, number][]) =>
+    points.map(([total, scope12RecordCount, scope3, scope3RecordCount]) => ({ total, scope12RecordCount, scope3, scope3RecordCount }));
+
+  it('reads the main total first to last', () => {
+    expect(trendChangePercent(at([100, 2, 0, 0], [80, 2, 0, 0]), false)).toBe(-20);
+    expect(trendChangePercent(at([100, 1, 9, 1], [50, 1, 0, 0], [150, 1, 9, 1]), false)).toBe(50);
+  });
+  it('invents no reduction or stillness from a bucket of Scope 3 alone', () => {
+    expect(trendChangePercent(at([30, 1, 0, 0], [0, 0, 5, 1]), false)).toBe(0);
+    expect(trendChangePercent(at([0, 0, 5, 1], [30, 1, 0, 0]), false)).toBe(0);
+    expect(trendChangePercent(at([20, 1, 0, 0], [0, 0, 5, 1], [30, 1, 0, 0]), false)).toBe(50);
+  });
+  it('keeps a measured zero, with Scope 3 beside it or not (Codex review of #292)', () => {
+    expect(trendChangePercent(at([100, 1, 0, 0], [0, 1, 5, 1]), false)).toBe(-100);
+    expect(trendChangePercent(at([100, 1, 0, 0], [0, 1, 0, 0]), false)).toBe(-100);
+    expect(trendChangePercent(at([100, 1, 0, 0], [50, 1, 0, 0], [0, 1, 0, 0]), false)).toBe(-100);
+  });
+  it('reads Scope 3 for a Scope 3 selection, by its own records', () => {
+    expect(trendChangePercent(at([0, 0, 10, 1], [0, 0, 15, 1]), true)).toBe(50);
+    expect(trendChangePercent(at([0, 0, 10, 1], [7, 1, 0, 0], [0, 0, 5, 1]), true)).toBe(-50);
+    expect(trendChangePercent(at([0, 0, 10, 1], [7, 1, 0, 1]), true)).toBe(-100);
+  });
+  it('says nothing with fewer than two figures, or from a zero start', () => {
+    expect(trendChangePercent([], false)).toBe(0);
+    expect(trendChangePercent(at([5, 1, 0, 0]), false)).toBe(0);
+    expect(trendChangePercent(at([0, 1, 0, 0], [5, 1, 0, 0]), false)).toBe(0);
+  });
+});
+
 describe('nonAuthoritativeFigures (QA L10)', () => {
   it('labels the figures that do not rest on authoritative releases, out of the calculated ones', () => {
     expect(nonAuthoritativeFigures({ calculatedRecordCount: 7, nonAuthoritativeRecordCount: 3 })).toEqual({ count: 3, of: 7 });
+  });
+  it('reads a target row or an intensity card by its own numerator, so another year or Scope 3 cannot trip it', () => {
+    expect(nonAuthoritativeFigures({ calculatedRecordCount: 3, nonAuthoritativeRecordCount: 1 })).toEqual({ count: 1, of: 3 });
+    expect(nonAuthoritativeFigures({ calculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 })).toBeNull();
   });
   it('says nothing when every figure is authoritative, when there is no summary, or when an older server omits the count', () => {
     expect(nonAuthoritativeFigures({ calculatedRecordCount: 7, nonAuthoritativeRecordCount: 0 })).toBeNull();

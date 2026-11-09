@@ -1458,12 +1458,55 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       expect(prisma.factorParameter.findMany.mock.calls[0][0].where.releaseId).toBe(release.id);
     });
 
-    it.each([
-      ['a product past a double', 1e-300, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
-      ['the same with a zero reading', 0, { ncvKcalPerSm3: 1e300, volumeCorrectionFactor: 1e300 }],
-      ['a product below a double', 1, { ncvKcalPerSm3: 1e-300, volumeCorrectionFactor: 1e-300 }],
-    ])('refuses %s with a code, rather than storing a number JSON cannot hold', async (_what, value, parameters) => {
-      expect(await code({ ...gas, unit: 'cubic_metres', value, parameters })).toBe('record_parameters_invalid');
+    describe('the typed input bounds (Decisions 2026-11-09 (8))', () => {
+      const typed = (ncvKcalPerSm3: number) => ({ ...gas, parameters: { ncvKcalPerSm3 } });
+      const metered = (volumeCorrectionFactor: number) => ({ ...gas, unit: 'cubic_metres', value: 100, parameters: { volumeCorrectionFactor } });
+      // 8,100 and 10,427 × 8,250 / 9,155, from the fixture release's rows.
+      const LOWEST = (8100 * 8250) / 9155;
+      const HIGHEST = (10427 * 8250) / 9155;
+
+      it.each([8080, 8250, 9000, LOWEST, HIGHEST])('accepts a typed NCV of %s, its bounds included', async (value) => {
+        expect(await code(typed(value))).toBeNull();
+      });
+
+      it.each([
+        ['just below the lower bound', LOWEST - 0.001],
+        ['just above the upper bound', HIGHEST + 0.001],
+        ['a CSV decimal read as a small value', 8.25],
+        ['a dropped digit', 825],
+        ['a value in kWh per Sm³', 10.6],
+        ['a value in MJ per Sm³', 35],
+        ['an extra zero', 82500],
+        ['the DTO floor', 1e-300],
+        ['the DTO ceiling', 1e300],
+      ])('refuses %s', async (_case, value) => {
+        expect(await code(typed(value))).toBe('ncv_out_of_range');
+      });
+
+      it.each([0.75, 0.97, 1, 5.035, 30])('accepts a volume factor of %s, its bounds included', async (value) => {
+        expect(await code(metered(value))).toBeNull();
+      });
+
+      it.each([
+        ['just below the lower bound', 0.7499],
+        ['just above the upper bound', 30.001],
+        ['a factor typed without its decimal point', 97],
+        ['a factor a hundredth of itself', 0.0097],
+        ['the DTO floor', 1e-300],
+        ['the DTO ceiling', 1e300],
+      ])('refuses a volume factor of %s', async (_case, value) => {
+        expect(await code(metered(value))).toBe('volume_correction_out_of_range');
+      });
+
+      it('does not check the effective NCV a valid bill derives, which can fall below the typed floor', async () => {
+        expect((8250 * 9155) / 10427).toBeLessThan(LOWEST);
+        expect(await code({ ...gas, parameters: { billedGcvKcalPerSm3: 10427 } })).toBeNull();
+      });
+
+      it('adds no parameter row to an edited NCV, so an in-range draft does not read as stale', async () => {
+        const result = await engine.compute({ ...gas, parameters: { ncvKcalPerSm3: 8100 } });
+        expect((result as { parameterRows?: unknown[] }).parameterRows ?? []).toEqual([]);
+      });
     });
 
     describe('the billed GCV range (D11, task 5.5)', () => {
@@ -1485,11 +1528,11 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
         expect(await code(billed(value))).toBe('billed_gcv_out_of_range');
       });
 
-      it('answers a release without the range as a library defect, for a billed GCV only', async () => {
+      it('answers a release without the range as a library defect, for a billed GCV and a typed NCV, not a default', async () => {
         prisma.library.parameters = prisma.library.parameters.filter((p) => !String(p.key).startsWith('billed_gcv'));
         expect(await code(billed(9349.174))).toBe('parameter_missing');
+        expect(await code({ ...gas, parameters: { ncvKcalPerSm3: 8100 } })).toBe('parameter_missing');
         expect(await code(gas)).toBeNull();
-        expect(await code({ ...gas, parameters: { ncvKcalPerSm3: 8100 } })).toBeNull();
       });
     });
 

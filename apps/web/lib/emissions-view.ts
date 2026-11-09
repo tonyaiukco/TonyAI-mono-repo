@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import type { ErrorDescription } from "@/lib/i18n/errors";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
-import { PERIOD_VALUES, type EmissionsSummary, type ReportScope3Disclosure } from "@/lib/types";
+import { PERIOD_VALUES, type EmissionsSummary, type EmissionsTrendPoint, type ReportingIntensityMetric, type ReportScope3Disclosure } from "@/lib/types";
 import type { RecordWords } from "@/lib/vocabulary";
 
 /**
@@ -63,6 +63,37 @@ export function nonAuthoritativeFigures(
 ): { count: number; of: number } | null {
   const count = summary?.nonAuthoritativeRecordCount ?? 0;
   return summary && count > 0 ? { count, of: summary.calculatedRecordCount } : null;
+}
+
+/**
+ * A metric whose denominator holds a subsidiary with no Scope 1 or 2 figure: it
+ * reads low if that subsidiary's figures are only missing (D14). Null when every
+ * contributor has a figure, or an older server does not say.
+ */
+export function intensityFigureGap(
+  metric: Pick<ReportingIntensityMetric, 'contributingSubsidiaryIds' | 'contributingWithFigureCount'>,
+): { withFigure: number; contributing: number } | null {
+  const contributing = metric.contributingSubsidiaryIds.length;
+  const withFigure = metric.contributingWithFigureCount ?? contributing;
+  return withFigure < contributing ? { withFigure, contributing } : null;
+}
+
+type TrendReading = Pick<EmissionsTrendPoint, 'total' | 'scope3' | 'scope12RecordCount' | 'scope3RecordCount'>;
+
+/**
+ * First to last point of a trend series, in percent. A Scope 3 selection reads
+ * Scope 3; any other reads the main total. A bucket joins only if it holds a
+ * calculated record on that side: tonnes cannot tell a measured zero, which is a
+ * real reduction, from a bucket of Scope 3 alone, which is none (Decisions
+ * 2026-11-09 (3)). 0 when there is nothing to compare.
+ */
+export function trendChangePercent(points: readonly TrendReading[], scope3Only: boolean): number {
+  const reading = (p: TrendReading) => (scope3Only ? p.scope3 : p.total);
+  const held = points.filter((p) => (scope3Only ? p.scope3RecordCount : p.scope12RecordCount) > 0);
+  if (held.length < 2) return 0;
+  const first = reading(held[0]);
+  if (first === 0) return 0;
+  return ((reading(held[held.length - 1]) - first) / first) * 100;
 }
 
 /** The live report preview's figures: its Scope 1/2 summary and the Scope 3 tonnes it discloses beside it. */

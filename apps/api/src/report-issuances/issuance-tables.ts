@@ -21,6 +21,7 @@ import {
   scopeReading,
   withdrawnRecords,
   type IssuanceMessageKey,
+  earlierDataYearCount,
 } from './issuance-html';
 
 /**
@@ -43,7 +44,7 @@ import {
  */
 
 // v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
-export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v2';
+export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v3';
 
 export interface IssuedTablesDocument {
   issuanceId: string;
@@ -62,6 +63,7 @@ const GAP_KEY: Record<ReportIssuanceGap['code'], IssuanceMessageKey> = {
   unlocked_period: 'gapUnlockedPeriod',
   non_authoritative_calculation: 'gapNonAuthoritativeCalculation',
   gwp_set_mismatch: 'gapGwpSetMismatch',
+  no_included_obligation: 'gapNoIncludedObligation',
 };
 const RECORD_STATUS_KEY: Record<string, IssuanceMessageKey> = {
   submitted: 'recordSubmitted', under_review: 'recordUnderReview', approved: 'recordApproved', locked: 'recordLocked',
@@ -140,6 +142,7 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
   const names = datasetNames(dataset);
   const standing = new Map(dataset.provenance.records.map((p) => [p.recordId, p.standing]));
   const final = doc.status === 'final';
+  const earlierDataYear = earlierDataYearCount(dataset);
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'TonyAI';
@@ -170,6 +173,7 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
     // A sentence, never a figure (D08).
     ['', t('noMarketBased')],
     [t('rowScope3'), t('scope3NotCovered')],
+    ...(earlierDataYear > 0 ? [['', t('earlierDataYear', { count: earlierDataYear })]] : []),
     [],
     [t('identityHeading')],
     [t('identityIssuance'), doc.issuanceId],

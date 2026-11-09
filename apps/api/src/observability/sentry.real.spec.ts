@@ -8,7 +8,7 @@ afterEach(() => { vi.unstubAllEnvs(); });
 it('real SDK emits only allowlisted request data and no transactions, even with tracing requested', async () => {
   vi.stubEnv('SENTRY_DSN', 'http://synthetic@127.0.0.1:1/1');
   vi.stubEnv('SENTRY_TRACES_SAMPLE_RATE', '1');
-  const markers = { jwt: randomUUID(), cookie: randomUUID(), query: randomUUID(), filename: `${randomUUID()}.pdf`, bytes: randomUUID(), token: randomUUID() };
+  const markers = { dbPassword: randomUUID(), jwt: randomUUID(), cookie: randomUUID(), query: randomUUID(), filename: `${randomUUID()}.pdf`, bytes: randomUUID(), token: randomUUID() };
   const envelopes: unknown[] = [];
   const { initSentry, captureException, flushSentry } = await import('./sentry');
   await initSentry(() => ({
@@ -28,7 +28,7 @@ it('real SDK emits only allowlisted request data and no transactions, even with 
     await sdk.startSpan({ name: 'synthetic-upload' }, async () => {
       const port = (server.address() as AddressInfo).port;
       await fetch(`http://127.0.0.1:${port}/storage/v1/object/evidence/${markers.filename}?token=${markers.token}`);
-      captureException(new Error('Synthetic in-request failure'), { path: request.url });
+      captureException(new Error(`Synthetic in-request failure at postgresql://u:${markers.dbPassword}@db.example.com/x`), { path: request.url });
     });
     response.writeHead(500).end('Synthetic failure');
   });

@@ -356,7 +356,7 @@ export interface ReportDataset {
 
 export const REPORT_ISSUANCE_GAP_CODES = [
   'filtered_extract', 'coverage_gap', 'unapproved_record', 'unlocked_period',
-  'non_authoritative_calculation', 'gwp_set_mismatch',
+  'non_authoritative_calculation', 'gwp_set_mismatch', 'no_included_obligation',
 ] as const;
 export type ReportIssuanceGapCode = (typeof REPORT_ISSUANCE_GAP_CODES)[number];
 export interface ReportIssuanceGap {

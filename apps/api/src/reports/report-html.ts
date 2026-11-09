@@ -262,6 +262,8 @@ export function buildReportHtml(data: ReportData): string {
   }
   <p class="note">${v.html('scope3NotCovered')}${
     s3.recordCount > 0 ? ` ${v.html('scope3Recorded', { count: s3.recordCount, tonnes: v.number.format(s3.calculatedTCo2e) })}` : ''
+  }${
+    s3.nonAuthoritativeRecordCount > 0 ? ` ${v.html('scope3NonAuthoritative', { count: s3.nonAuthoritativeRecordCount })}` : ''
   } ${factorNote(data, v)}</p>
 
   <h2>${v.html('coverageHeading')}</h2>

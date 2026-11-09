@@ -95,6 +95,8 @@ const validInput = {
   targetTCo2e: 900,
 };
 
+const NO_SCOPE3 = { calculatedRecordCount: 0, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 };
+
 describe('TargetsService', () => {
   let prisma: PrismaMock;
   let emissions: { summary: ReturnType<typeof vi.fn> };
@@ -178,6 +180,8 @@ describe('TargetsService', () => {
     prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2025 }, { scope: 2, year: 2025 }]));
     emissions.summary.mockImplementation(async (_u: unknown, q: { scope?: number }) => ({
       totals: { total: q.scope === 1 ? 900 : 600 },
+      nonAuthoritativeRecordCount: 0,
+      scope3Records: NO_SCOPE3,
       calculatedRecordCount: 1,
     }));
     const rows = await service.progress(admin, { targetIds: ids });
@@ -268,7 +272,7 @@ describe('TargetsService', () => {
   it('progress computes at_risk from committed emissions after the baseline', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ baselineTCo2e: 900, targetTCo2e: 350 })]);
     prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }]));
-    emissions.summary.mockResolvedValue({ totals: { total: 582 }, calculatedRecordCount: 3 });
+    emissions.summary.mockResolvedValue({ totals: { total: 582 }, calculatedRecordCount: 3, nonAuthoritativeRecordCount: 0, scope3Records: NO_SCOPE3 });
     const [p] = await service.progress(admin, IDS);
     // (900-582)/(900-350)*100 = 57.8% → at_risk
     expect(p.currentYear).toBe(2024);
@@ -279,7 +283,7 @@ describe('TargetsService', () => {
   it('progress clamps to 100 and reports on_track when already past target', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ baselineTCo2e: 5000, targetTCo2e: 2000 })]);
     prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }]));
-    emissions.summary.mockResolvedValue({ totals: { total: 1000 }, calculatedRecordCount: 3 });
+    emissions.summary.mockResolvedValue({ totals: { total: 1000 }, calculatedRecordCount: 3, nonAuthoritativeRecordCount: 0, scope3Records: NO_SCOPE3 });
     const [p] = await service.progress(admin, IDS);
     expect(p.progressPercent).toBe(100);
     expect(p.status).toBe('on_track');
@@ -299,16 +303,80 @@ describe('TargetsService', () => {
       recordCount: 1,
       calculatedRecordCount: 0,
       uncalculatedRecordCount: 1,
+      nonAuthoritativeRecordCount: 0,
+      scope3Records: { calculatedRecordCount: 0, uncalculatedRecordCount: 1, nonAuthoritativeRecordCount: 0 },
     });
 
     const [p] = await service.progress(admin, IDS);
 
-    // Without the second guard this reports 0 tCO₂e against a 900 baseline:
-    // 100% complete, "on_track", from a single water bill.
+    // Without the guard this reports 0 tCO₂e against a 900 baseline: 100%
+    // complete, "on_track", from a single water bill.
     expect(p.currentTCo2e).toBeNull();
     expect(p.progressPercent).toBeNull();
     expect(p.status).toBeNull();
     expect(p.currentYear).toBe(2025); // falls back to the baseline year
+  });
+
+  it('a Scope 3 target keeps its row, reads not covered and reads no summary', async () => {
+    prisma.target.findMany.mockResolvedValue([
+      makeTarget({ scope: 'scope3', baselineYear: 2025, baselineTCo2e: 900, targetTCo2e: 350 }),
+    ]);
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 3, year: 2026 }]));
+
+    const [p] = await service.progress(admin, IDS);
+
+    expect(p).toMatchObject({
+      notCovered: true, currentTCo2e: null, progressPercent: null, status: null,
+      calculatedRecordCount: 0, nonAuthoritativeRecordCount: 0,
+    });
+    expect(emissions.summary).not.toHaveBeenCalled();
+  });
+
+  it('an all-scope target never takes its current year from Scope 3', async () => {
+    prisma.target.findMany.mockResolvedValue([
+      makeTarget({ scope: 'all', baselineYear: 2025, baselineTCo2e: 900, targetTCo2e: 350 }),
+    ]);
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2025 }, { scope: 3, year: 2026 }]));
+
+    const [p] = await service.progress(admin, IDS);
+
+    expect(p).toMatchObject({ notCovered: false, currentYear: 2025, currentTCo2e: null, progressPercent: null, status: null });
+    expect(emissions.summary).not.toHaveBeenCalled();
+  });
+
+  it('a year whose only figures are Scope 3 fabricates no 0 t, 100% or on track', async () => {
+    prisma.target.findMany.mockResolvedValue([
+      makeTarget({ scope: 'all', baselineYear: 2025, baselineTCo2e: 900, targetTCo2e: 350 }),
+    ]);
+    // An uncalculated Scope 1 record sets the year; only Scope 3 has a figure.
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2026 }, { scope: 3, year: 2026 }]));
+    emissions.summary.mockResolvedValue({
+      totals: { total: 0 },
+      calculatedRecordCount: 2,
+      nonAuthoritativeRecordCount: 2,
+      scope3Records: { calculatedRecordCount: 2, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 2 },
+    });
+
+    const [p] = await service.progress(admin, IDS);
+
+    expect(p).toMatchObject({ currentTCo2e: null, progressPercent: null, status: null, calculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 });
+  });
+
+  it("counts a target's non-authoritative figures in its own numerator, without Scope 3's", async () => {
+    prisma.target.findMany.mockResolvedValue([
+      makeTarget({ scope: 'all', baselineYear: 2025, baselineTCo2e: 900, targetTCo2e: 350 }),
+    ]);
+    prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2026 }]));
+    emissions.summary.mockResolvedValue({
+      totals: { total: 582 },
+      calculatedRecordCount: 5,
+      nonAuthoritativeRecordCount: 3,
+      scope3Records: { calculatedRecordCount: 2, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 2 },
+    });
+
+    const [p] = await service.progress(admin, IDS);
+
+    expect(p).toMatchObject({ currentTCo2e: 582, calculatedRecordCount: 3, nonAuthoritativeRecordCount: 1, notCovered: false });
   });
 
   it('progress filters the current-year lookup by the target scope (no fabricated zero)', async () => {
@@ -339,7 +407,7 @@ describe('TargetsService', () => {
       makeTarget({ id: ids[2], subsidiaryId: 'sub-2' }),
     ]);
     prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }, { scope: 1, year: 2025, subsidiaryId: 'sub-2' }]));
-    emissions.summary.mockResolvedValue({ totals: { total: 100 }, calculatedRecordCount: 3 });
+    emissions.summary.mockResolvedValue({ totals: { total: 100 }, calculatedRecordCount: 3, nonAuthoritativeRecordCount: 0, scope3Records: NO_SCOPE3 });
     const rows = await service.progress(admin, { targetIds: ids });
     expect(rows.map((r) => [r.targetId, r.currentYear])).toEqual([[ids[0], 2024], [ids[1], 2024], [ids[2], 2025]]);
     expect(prisma.activityRecord.groupBy).toHaveBeenCalledTimes(1);
@@ -349,7 +417,7 @@ describe('TargetsService', () => {
   it('progress passes the target scope through to the summary query', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ scope: 'scope1' })]);
     prisma.activityRecord.groupBy.mockResolvedValue(latestYears([{ scope: 1, year: 2024 }]));
-    emissions.summary.mockResolvedValue({ totals: { total: 100 }, calculatedRecordCount: 3 });
+    emissions.summary.mockResolvedValue({ totals: { total: 100 }, calculatedRecordCount: 3, nonAuthoritativeRecordCount: 0, scope3Records: NO_SCOPE3 });
     await service.progress(admin, IDS);
     expect(emissions.summary).toHaveBeenCalledWith(
       admin,

@@ -95,18 +95,18 @@ describe('the issued CSV', () => {
 
   it('names its issuance, dataset, fingerprint and status even with no ledger row — never a summable figure (Codex B9 P2-2)', () => {
     const excluded = allExcludedBoundary();
-    const finalV1 = datasetOf({ boundary: excluded, records: [] });
-    const finalV2 = datasetOf({ boundary: { ...excluded, version: 2 }, records: [] });
+    const excludedV1 = datasetOf({ boundary: excluded, records: [] });
+    const excludedV2 = datasetOf({ boundary: { ...excluded, version: 2 }, records: [] });
     const emptyExtract = datasetOf({ selection: { scope: 2 }, records: [] });
     const files = [
-      issuedCsv(doc(finalV1)),
-      issuedCsv(doc(finalV2, { issuanceId: '1550a000-0000-4000-8000-000000000002' })),
+      issuedCsv(doc(excludedV1)),
+      issuedCsv(doc(excludedV2, { issuanceId: '1550a000-0000-4000-8000-000000000002' })),
       issuedCsv(doc(emptyExtract, { issuanceId: '1550a000-0000-4000-8000-000000000003' })),
     ];
     expect(new Set(files).size).toBe(3);
     const expected = [
-      [finalV1, ISSUANCE_ID, 'final'],
-      [finalV2, '1550a000-0000-4000-8000-000000000002', 'final'],
+      [excludedV1, ISSUANCE_ID, 'partial'],
+      [excludedV2, '1550a000-0000-4000-8000-000000000002', 'partial'],
       [emptyExtract, '1550a000-0000-4000-8000-000000000003', 'partial'],
     ] as const;
     files.forEach((csv, i) => {

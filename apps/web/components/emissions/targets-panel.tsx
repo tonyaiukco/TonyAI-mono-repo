@@ -28,6 +28,8 @@ import { DecimalNote } from '@/components/i18n/decimal-note';
 import { api } from '@/lib/api';
 import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { LoadMoreButton } from '@/components/ui/load-more-button';
+import { nonAuthoritativeFigures } from '@/lib/emissions-view';
+import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import { checkDecimal, formatNumber, parseYearInput } from '@/lib/i18n/number';
 import { useErrorToast, useStableErrorToast } from '@/lib/i18n/hooks';
 import { TARGET_BASES } from '@/lib/vocabulary';
@@ -275,6 +277,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                     </Select>
                   </Field>
                 </div>
+                <p className="text-xs text-muted-foreground" data-testid="target-coverage-hint">{t('coverageHint')}</p>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label={t('baselineYear')}>
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.baselineYear} onChange={(e) => setForm((f) => ({ ...f, baselineYear: e.target.value }))} />
@@ -349,7 +352,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                   {/* Progress bar or honest n/a */}
                   {naProgress ? (
                     <p className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                      {t('noProgress', { year: String(target.baselineYear) })}
+                      {p?.notCovered ? t('notCovered') : t('noProgress', { year: String(target.baselineYear) })}
                     </p>
                   ) : (
                     <div className="space-y-1.5">
@@ -362,6 +365,15 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                       </div>
                     </div>
                   )}
+
+                  {(() => {
+                    const na = nonAuthoritativeFigures(p);
+                    return na ? (
+                      <NonAuthoritativeWarning testId="target-non-authoritative">
+                        {t('nonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale) })}
+                      </NonAuthoritativeWarning>
+                    ) : null;
+                  })()}
 
                   <div className="flex justify-between text-sm">
                     <div>

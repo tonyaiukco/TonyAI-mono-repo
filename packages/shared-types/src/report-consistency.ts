@@ -32,11 +32,11 @@ export interface ReportScope3Disclosure {
 
 /** A live report's own summary (K2, K4): the Scope 1/2 committed records it
  * lists, summed — `EmissionsSummary`'s shape with Scope 3 held at the literal
- * 0, so it cannot be summed into a total by mistake. NOT the emissions summary
- * (`GET /emissions/summary`), whose totals include Scope 3: a screen showing
- * both must label them apart. */
+ * 0, so it cannot be summed into a total by mistake. Its total equals the
+ * emissions summary's (`GET /emissions/summary`) for the same records: both are
+ * Scope 1 + Scope 2 (Decisions 2026-11-09 (3)). */
 type InventoryPoint = Omit<EmissionsSummary['trend']['monthly'][number], 'scope3'> & { scope3: 0 };
-export type ReportInventorySummary = Omit<EmissionsSummary, 'totals' | 'trend'> & {
+export type ReportInventorySummary = Omit<EmissionsSummary, 'totals' | 'trend' | 'scope3Records'> & {
   totals: { scope1: number; scope2: number; scope3: 0; total: number };
   trend: { monthly: InventoryPoint[]; quarterly: InventoryPoint[]; yearly: InventoryPoint[] };
 };

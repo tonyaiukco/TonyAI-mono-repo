@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
+import { securityHeaders } from './security-headers.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -9,6 +10,10 @@ const baseConfig = {
   transpilePackages: ["@tonyai/shared-types"],
   images: {
     unoptimized: true,
+  },
+  poweredByHeader: false,
+  async headers() {
+    return [{ source: '/:path*', headers: securityHeaders() }];
   },
 }
 

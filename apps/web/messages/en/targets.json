@@ -9,6 +9,7 @@
   "basis": "Basis",
   "scope": "Scope",
   "baselineYear": "Baseline year",
+  "coverageHint": "Declare the baseline and target for the scopes named here. Progress is read from Scope 1 and 2, so a baseline that includes Scope 3 would misstate it.",
   "baselineTonnes": "Baseline tCO₂e",
   "baselinePlaceholder": "e.g. 1600",
   "targetYear": "Target year",
@@ -25,7 +26,9 @@
   "progressNa": "Progress n/a",
   "delete": "Delete target",
   "reduction": "−{value}%",
-  "noProgress": "Progress is not yet available — no committed data for a year after the {year} baseline.",
+  "nonAuthoritative": "Behind this progress, figures that rest on placeholder (demo) or other non-authoritative factors: {count} of {of}.",
+  "notCovered": "Not covered — Scope 3 is outside the inventory's total, so this target has no progress to read.",
+  "noProgress": "Progress is not yet available — no committed figure for a year after the {year} baseline, in the scopes this target reads.",
   "wayToTarget": "{value}% of the way to target",
   "current": "{year} current: {value} tCO₂e",
   "baseline": "Baseline {year}",
@@ -33,7 +36,7 @@
   "tonnes": "{value} tCO₂e",
   "loadMore": "Load more targets",
   "scopes": {
-    "all": "All scopes",
+    "all": "Scope 1 + 2",
     "scope1": "Scope 1",
     "scope2": "Scope 2",
     "scope3": "Scope 3"

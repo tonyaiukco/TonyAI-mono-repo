@@ -3,7 +3,7 @@ import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
 import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
-import { buildIssuanceHtml, ISSUANCE_CATALOGUES, ISSUANCE_RENDERER, type IssuanceDocument } from './issuance-html';
+import { buildIssuanceHtml, earlierDataYearCount, ISSUANCE_CATALOGUES, ISSUANCE_RENDERER, type IssuanceDocument } from './issuance-html';
 import en from './i18n/en.json';
 import tr from './i18n/tr.json';
 
@@ -83,25 +83,41 @@ describe('buildIssuanceHtml', () => {
     expect(scope1(html(zero))).toContain('<div class="v">0 <span class="u">tCO2e</span></div>');
   });
 
-  it('a final with no included source says so — never "Not calculated" under a final badge (`qa-auditor` P2-1)', () => {
+  it('a confirmed boundary with no included source is partial and says so — never "Not calculated" (Decisions 2026-11-09 (4))', () => {
     const dataset = datasetOf({ boundary: allExcludedBoundary(), records: [], locks: [] });
-    expect(deriveIssuance(dataset).status).toBe('final');
+    expect(deriveIssuance(dataset)).toMatchObject({ status: 'partial', gaps: [expect.objectContaining({ code: 'no_included_obligation' })] });
     for (const template of ['executive_summary', 'ghg_protocol_detail'] as const) {
       const page = html(dataset, { template });
       expect(page).toContain('<div class="v">No included source</div>');
       expect(page).not.toContain('Not calculated');
       expect(page).toContain('This boundary includes no emission source');
+      expect(page).toContain('No included emission source');
+      expect(page).not.toContain('class="badge final"');
       // The exclusions it rests on are in both templates.
       expect(page).toContain('<h2>Named exclusions</h2>');
       expect(page).toContain('<td>No operations</td>');
     }
-    // Not on a partial with no obligation either (`qa-auditor` re-review M7).
+    // An unconfirmed boundary has decided nothing, so it does not say so (`qa-auditor` re-review M7).
     const unconfirmed = datasetOf({ boundary: allExcludedBoundary('unconfirmed'), records: [], locks: [] });
     expect(deriveIssuance(unconfirmed).status).toBe('partial');
     expect(html(unconfirmed)).not.toContain('This boundary includes no emission source');
     // A scope with sources but no figure still reads "Not calculated".
     const none = datasetOf({ records: fullYear().map((r) => (r.scope === 1 ? { ...r, calculation: UNCALCULATED } : r)) });
     expect(html(none)).not.toContain('This boundary includes no emission source');
+  });
+
+  it('states an earlier data year for counted figures only, and never for a record it does not count', () => {
+    const dataset = datasetOf({});
+    const [scope1, scope2] = dataset.scopes;
+    const counted = scope2.countedRecordIds[0] ?? scope1.countedRecordIds[0];
+    const withIssues = (recordId: string) => ({
+      ...dataset,
+      provenance: { ...dataset.provenance, records: [{ recordId, standing: 'authoritative' as const, issues: ['declared_year_fallback' as const] }] },
+    }) as typeof dataset;
+    expect(earlierDataYearCount(withIssues(counted))).toBe(1);
+    expect(earlierDataYearCount(withIssues('a-draft-not-counted'))).toBe(0);
+    expect(html(withIssues(counted))).toContain('1 counted figure uses a factor from a data year before the reporting year');
+    expect(html(dataset)).not.toContain('a data year before the reporting year');
   });
 
   it('a scope an extract filters out reads "Not in this extract" — never "No included source" (`qa-auditor` re-review P2)', () => {

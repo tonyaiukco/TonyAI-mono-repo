@@ -1,6 +1,7 @@
 import { installRuntimeShutdown } from './common/runtime-shutdown';
 import 'reflect-metadata';
 import { initSentry } from './observability/sentry';
+import { exitOnBootFailure } from './observability/boot-failure';
 import { assertAuthConfig } from './auth/token-verifier';
 import { bootFactorPolicy } from './calculations/factor-policy';
 import { NestFactory } from '@nestjs/core';
@@ -48,4 +49,4 @@ async function bootstrap() {
   });
 }
 
-void bootstrap();
+void bootstrap().catch(exitOnBootFailure);

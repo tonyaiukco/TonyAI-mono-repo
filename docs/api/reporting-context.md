@@ -145,8 +145,15 @@ coverage, and each metric's `contributingSubsidiaryIds` identifies the subset wi
 that exact metric/unit denominator. Only those subsidiaries contribute to its
 filtered numerator; the denominator stays annual, without scope/category
 proration. Missing denominators are disclosed as missing coverage, never zero.
+The numerator is Scope 1 + 2, so a Scope 3 only selection has no metric, and a metric
+with no Scope 1 or 2 record is left out. `calculatedRecordCount` and
+`nonAuthoritativeRecordCount` count the numerator's own figures; at zero figures with
+records waiting, a screen shows no intensity. A subsidiary with a denominator and no
+Scope 1 or 2 figure stays in the denominator (D14), since a missing figure cannot be
+told from having none, so `contributingWithFigureCount` states how many have one and
+the card says so when some do not.
 Each metric also returns a non-negative safe-integer `uncalculatedRecordCount`:
-committed records of its contributing subsidiaries, for the same year/scope/category,
+committed Scope 1 and 2 records of its contributing subsidiaries, for the same year/scope/category,
 excluded from `emissionsTotal` because they have no usable figure. The summary's
 count for all selected subsidiaries cannot substitute for this numerator-specific
 disclosure. Metric/unit pairs must be unique, with disjoint contributor sets
@@ -158,9 +165,9 @@ records whose figure is not authoritative now — a placeholder or fixture facto
 conversion, a pre-release snapshot, or a release withdrawn since the calculation
 (the report's own `authoritativeNow`, one read of the cited releases' withdrawals).
 They stay in every total. The report meta's `scope3` carries the same count for the
-Scope 3 tonnes it discloses. Reports (live preview) and Emissions (totals and trends)
-show an explicit placeholder warning whenever a count is above zero; the dashboard,
-targets and intensity do not label these figures yet.
+Scope 3 tonnes it discloses. Reports (live preview), Emissions (totals and trends) and
+the dashboard show an explicit placeholder warning whenever a count is above zero;
+each target row and intensity card warns from its own numerator's counts.
 
 The summary, matrix and intensity context routes require a valid year and refuse
 unknown fields, repeated parameters and conflicting scope/category filters with

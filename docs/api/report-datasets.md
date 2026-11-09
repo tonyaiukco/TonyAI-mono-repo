@@ -501,10 +501,12 @@ calculations (`gwp_set_mismatch` — the capture names two disagreeing sets, and
 the gate also fails closed on a null set beside a named one, K4). Anything else
 is partial, every gap named; final has none. A final is `super_admin`'s (W4):
 a consultant is refused one (`report_final_forbidden`, 403) after the read
-rule, before anything is rendered. **Today no release can be authoritative**
-(the publisher registry admits only the prototype and test publishers until
-LP4-02), so every issuance with counted records is partial; the only final is
-a confirmed boundary whose every category is excluded with its reason.
+rule, before anything is rendered. **A final needs at least one included
+obligation** (Decisions 2026-11-09 (4)): a confirmed inventory whose every
+category is excluded has no figure to certify, so it is partial and names
+`no_included_obligation`. The rule lives in the gate and in the database's
+guard, not in the assessment, so retained datasets and their fingerprints hold,
+and an all-excluded final issued before the rule stays retained, unchanged.
 
 **The PDF (D16, D20).** A pure function of the dataset and the gate's result
 (`issuance-html.ts`), in the issuance's language from the module's own en/tr
@@ -549,8 +551,10 @@ another language or template is another issuance of the same dataset. The guard
 owner included) admits an insert only of a retained dataset of its own
 organisation whose year, canonicalization, fingerprint and referenced set the
 row repeats, whose gaps are the contract's codes, and — for a final — of an
-inventory whose boundary was confirmed and whose stored coverage holds no gap;
-it stamps `issued_at` from the database's clock; then it refuses every change,
+inventory whose boundary was confirmed, with at least one included obligation and
+no gap in its stored coverage;
+it stamps `issued_at` from the database's clock (a data-only restore, in replica
+mode, writes what the dump holds); then it refuses every change,
 every delete but the organisation's own (as W10) and `TRUNCATE`. Flat CHECKs
 hold the rest: final ⇔ no gap, language, template, lowercase-hex SHA-256 and
 fingerprint, size, the object key the row's own. RLS is on with no client policy

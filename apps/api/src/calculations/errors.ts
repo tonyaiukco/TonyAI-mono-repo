@@ -27,6 +27,8 @@ export type InputRefusalCode = Extract<
   | 'parameters_required'
   | 'parameters_not_applicable'
   | 'billed_gcv_out_of_range'
+  | 'ncv_out_of_range'
+  | 'volume_correction_out_of_range'
 >;
 export type CoverageRefusalCode = Extract<
   CalculationRefusalCode,
@@ -46,6 +48,8 @@ export const INPUT_REFUSAL_CODES: readonly InputRefusalCode[] = [
   'parameters_required',
   'parameters_not_applicable',
   'billed_gcv_out_of_range',
+  'ncv_out_of_range',
+  'volume_correction_out_of_range',
 ];
 export const COVERAGE_REFUSAL_CODES: readonly CoverageRefusalCode[] = [
   'no_factor',

@@ -23,6 +23,8 @@
   "allYearsHint": "Compares every reporting year for the selected subsidiaries; the year, scope and category selections do not apply here.",
   "filteredExtract": "Filtered extract: this report covers {filters} only, not the year's whole inventory. Its status describes the filtered records alone.",
   "intensityCoverage": "{contributing} of {selected} selected subsidiaries have this denominator for {year}.",
+  "intensityFigureGap": "{withFigure} of these {contributing} subsidiaries have Scope 1 or 2 figures. This intensity reads low while a subsidiary's figures are missing; for one with no such emissions it is right as it stands.",
+  "intensityNonAuthoritative": "Behind this intensity, figures that rest on placeholder (demo) or other non-authoritative factors: {count} of {of}.",
   "intensityUncalculated": "Committed records without a usable figure, left out of this intensity: {count}.",
   "intensityGroupOnly": "For all accessible subsidiaries only revenue intensity is shown. Select one subsidiary for physical metrics.",
   "filteredView": "Filtered view: these figures cover {filters} only, not the year's whole inventory.",

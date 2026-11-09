@@ -4,7 +4,7 @@
   "view": {
     "absolute": "Mutlak",
     "intensity": "Yoğunluk",
-    "intensityLocked": "Bunu etkinleştirmek için bir yoğunluk paydası tanımlayın"
+    "intensityLocked": "Yoğunluk, bu seçim için tanımlı bir payda ve Kapsam 1 veya 2 değeri gerektirir"
   },
   "export": "Dışa aktar",
   "banner": "Rakamlar, sayılan faaliyet kayıtlarından, faktör kütüphanesine yüklenmiş yayımların emisyon faktörleriyle hesaplanır; bu yayımların <strong>hepsi yetkili olmayabilir</strong> ve seçimin toplamlarında ve eğilimlerde yetkili olmayan rakamlar bir uyarıda sayılır. Kapsam 3 bu envanterin kapsamında değildir.",
@@ -34,8 +34,9 @@
     "total3": "Toplam Kapsam 3",
     "hint1": "Doğrudan emisyonlar",
     "hint2": "Satın alınan enerji",
-    "hint3": "Değer zinciri (2. Aşama)",
+    "hint3": "Kapsanmıyor — toplama dahil değil",
     "empty": "Seçili filtreler için sayılan emisyon yok. Analitiği doldurmak için Veri Girişi'ndeki faaliyet kayıtlarını onaylayın.",
+    "onlyScope3": "Seçili filtreler için Kapsam 1 veya 2 değeri yok. Kapsam 3 toplama dahil değildir ve kendi kartında gösterilir.",
     "byScope": "Kapsama Göre Emisyonlar",
     "scopeDistribution": "Kapsam {scope} Kategori Dağılımı",
     "share": "%{value} pay",
@@ -45,6 +46,7 @@
   },
   "breakdown": {
     "empty": "Seçili filtreler için kategori verisi yok.",
+    "outsideTotal": "Toplama dahil değil",
     "scale": "Kategori Ölçeği Görselleştirmesi",
     "performance": "Kategori Performansı",
     "columns": {
@@ -81,6 +83,7 @@
       "yearly": "yıllık"
     },
     "empty": "Seçili bağlı şirketler için {period} veri yok.",
+    "scope3OutsideTotal": "Kapsam 3 (toplama dahil değil)",
     "title": "Kapsama Göre Emisyon Eğilimi",
     "change": "Seri boyunca değişim ({period}, ilk → son)",
     "decreased": "Emisyonlar dönem boyunca azaldı",

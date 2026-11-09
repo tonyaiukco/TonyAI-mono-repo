@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { REPORT_DATASET_SCHEMA_VERSION, type ReportIssuanceGap } from '@tonyai/shared-types';
 import { complete, SITE_1, SUB, SUB_B, without } from '../../test/boundary-fixtures';
-import {
+import { allExcludedBoundary,
   allLocks, datasetOf, frozenBoundary, fullYear, gasYear, lock, MONTHS, priced, record, refingerprinted, release, rowOf,
   site1Year, site2Year, standing, UNCALCULATED,
 } from '../../test/issuance-fixtures';
@@ -69,6 +69,17 @@ describe('deriveIssuance — final', () => {
 });
 
 describe("deriveIssuance — partial, every gap named (the contract's acceptance table)", () => {
+  it('names no_included_obligation for a confirmed inventory with nothing included: no figure to certify', () => {
+    const issuance = deriveIssuance(datasetOf({ boundary: allExcludedBoundary(), records: [], locks: [] }));
+    expect(issuance.status).toBe('partial');
+    expect(issuance.gaps.map((g) => g.code)).toEqual(['no_included_obligation']);
+  });
+
+  it('holds an extract to filtered_extract alone, even with no obligation in it', () => {
+    const issuance = deriveIssuance(datasetOf({ selection: { scope: 2 }, records: [] }));
+    expect(issuance.gaps.map((g) => g.code)).not.toContain('no_included_obligation');
+  });
+
   it('one approved January record: partial — the missing months are coverage gaps', () => {
     const result = deriveIssuance(datasetOf({ records: [record('r-01')] }));
     expect(result.status).toBe('partial');

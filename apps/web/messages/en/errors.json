@@ -73,6 +73,8 @@
     "parameters_required": "List the equipment for this refrigerant: type, capacity and refill.",
     "parameters_not_applicable": "These calculation inputs do not apply to this record.",
     "parameter_missing": "The factor release is missing a value this calculation needs. Contact your administrator.",
+    "ncv_out_of_range": "The net calorific value is outside the range the factor release accepts. Check the value and its unit (kcal/Sm³).",
+    "volume_correction_out_of_range": "The volume correction factor is outside the accepted range (0.75–30). Check the factor on the bill.",
     "billed_gcv_out_of_range": "The billed gross calorific value is outside the range the factor release accepts. Check the value and its unit (kcal/Sm³) on the bill.",
     "no_factor": "No emission factor covers this category, fuel or gas, geography and year yet.",
     "placeholder_refused": "Only placeholder emission factors cover this entry, and they are not used here.",

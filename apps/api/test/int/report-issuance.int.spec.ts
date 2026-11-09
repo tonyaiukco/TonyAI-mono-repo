@@ -5,12 +5,11 @@
  * writer meets it, and the retained PDF's recovery (LP1-02) failed at each
  * boundary — asserted on the rows and the objects themselves.
  *
- * A final needs every included obligation met by approved, locked records
- * priced on an authoritative release; until LP4-02 opens the publisher
- * registry no release can be authoritative, so the final this spec issues is
- * a confirmed boundary whose every category is excluded with a reason — no
- * obligation, nothing to count (the acceptance table in docs/api/report-datasets.md) — and a metered
- * year on the fixture release is the partial beside it.
+ * A final needs at least one included obligation, each met by approved, locked
+ * records priced on an authoritative release, so the final this spec issues is a
+ * metered TR year on the real ETKB release. A metered year on the fixture
+ * release, and a confirmed boundary whose every category is excluded, are the
+ * partials beside it.
  */
 import 'reflect-metadata';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -21,10 +20,12 @@ import {
   directCalorificBasisFor, scope2MethodFor,
   type PutInventoryBoundarySubsidiaryRequest, type ReportDataset, type ReportIssuance, type ReportIssuanceList,
 } from '@tonyai/shared-types';
+import ExcelJS from 'exceljs';
 import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuditService } from '../../src/audit/audit.service';
 import type { RequestUser } from '../../src/auth/auth.types';
+import { CalculationsService } from '../../src/calculations/calculations.service';
 import { errorCodeOf } from '../../src/common/api-error';
 import { InventoryBoundariesService } from '../../src/inventory-boundary/inventory-boundaries.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
@@ -35,12 +36,15 @@ import { StorageIntentsService, UPLOAD_GRACE_SECONDS, UploadExpiredError } from 
 import { StorageReconcileService } from '../../src/storage/storage-reconcile.service';
 import type { StorageService } from '../../src/storage/storage.service';
 import { apiTokenIssuer, connect, connectOwner, createRecord, createTenant, holdBefore, withRollback, type Tenant } from './db';
-import { failingAuditClient } from './services';
+import { failingAuditClient, INT_FACTOR_POLICY } from './services';
 import { localStorage, objectExists, removeTenantObjects, sha256, tenantObjects } from './storage';
+import { loadTrReleases } from './tr-releases';
 
 const JWT_SECRET = randomBytes(32).toString('hex');
 /** No other spec prices, captures or issues this year. */
 const YEAR = 2078;
+/** A year the real TR releases cover: a final needs authoritative figures. */
+const FINAL_YEAR = 2025;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const INJECTED = 'injected storage failure (LP3-04 PR D test)';
 
@@ -55,6 +59,8 @@ let t: Tenant;
 let S: string;
 let S2: string;
 let L1: string;
+/** S's site in Türkiye, priced on the real TR releases. */
+let LTR: string;
 
 beforeAll(async () => {
   process.env.DATABASE_URL = process.env.INT_RUNTIME_DATABASE_URL;
@@ -76,7 +82,8 @@ beforeAll(async () => {
   owner = connectOwner(2);
   runtime = connect(5);
   releaseId = await fixtureRelease(YEAR);
-}, 60_000);
+  await loadTrReleases();
+}, 120_000);
 
 afterAll(async () => {
   if (releaseId) await dropRelease(releaseId);
@@ -89,6 +96,7 @@ beforeEach(async () => {
   t = await createTenant();
   S = t.subsidiaryId;
   L1 = (await owner.location.create({ data: { subsidiaryId: S, name: 'Int-test L1', geographyCode: 'UK' } })).id;
+  LTR = (await owner.location.create({ data: { subsidiaryId: S, name: 'Int-test LTR', geographyCode: 'TR' } })).id;
   S2 = (await owner.subsidiary.create({
     data: { organisationId: t.organisationId, legalName: `Int-test holding ${randomUUID().slice(0, 8)}`, geographyCode: 'UK' },
   })).id;
@@ -134,19 +142,19 @@ async function dropRelease(id: string): Promise<void> {
 const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
 
 /** S's electricity metered monthly at L1; everything else excluded at the company. No gap. */
-function meteredDeclaration(): PutInventoryBoundarySubsidiaryRequest {
+function meteredDeclaration(site = L1): PutInventoryBoundarySubsidiaryRequest {
   return {
     firstMonth: 1, lastMonth: 12,
-    sites: [{ locationId: L1, firstMonth: 1, lastMonth: 12 }],
+    sites: [{ locationId: site, firstMonth: 1, lastMonth: 12 }],
     attribution: CATEGORIES.map((category) => (category === 'Electricity'
       ? { category, level: 'sites' as const, reportingPeriod: 'monthly' as const }
       : { category, level: 'company' as const, reportingPeriod: 'annual' as const })),
     applicability: [
-      { locationId: L1, category: 'Electricity', applicability: 'included' },
+      { locationId: site, category: 'Electricity', applicability: 'included' },
       ...CATEGORIES.filter((c) => c !== 'Electricity').map((category) => ({ locationId: null, category, applicability: 'excluded' as const, reason: 'Not on site' })),
     ],
     sources: [
-      { locationId: L1, name: 'L1 main meter', mapping: { kind: 'mapped', category: 'Electricity', activityType: null }, applicability: 'included', evidenceReportingPeriod: null },
+      { locationId: site, name: 'L1 main meter', mapping: { kind: 'mapped', category: 'Electricity', activityType: null }, applicability: 'included', evidenceReportingPeriod: null },
     ],
   };
 }
@@ -169,10 +177,10 @@ async function withAccess(user: RequestUser): Promise<RequestUser> {
 }
 
 /** A version of YEAR declaring `declarations`, confirmed unless asked not to. */
-async function version(declarations: Array<[string, PutInventoryBoundarySubsidiaryRequest]>, confirm = true): Promise<string> {
+async function version(declarations: Array<[string, PutInventoryBoundarySubsidiaryRequest]>, confirm = true, reportingYear = YEAR): Promise<string> {
   const service = new InventoryBoundariesService(runtime, new AuditService(runtime));
   const user = await withAccess(admin());
-  const { id } = await service.create(user, { reportingYear: YEAR });
+  const { id } = await service.create(user, { reportingYear });
   for (const [subsidiaryId, declaration] of declarations) await service.putSubsidiary(user, id, subsidiaryId, declaration);
   if (confirm) await service.confirm(user, id);
   return id;
@@ -185,8 +193,20 @@ async function captured(boundaryId: string, filters: Record<string, unknown> = {
   return (JSON.parse(answer.text) as { datasetId: string }).datasetId;
 }
 
-/** The final this database can hold: a confirmed holding, every category excluded with its reason. */
-const finalDataset = async () => captured(await version([[S2, holdingDeclaration()]]));
+/** A confirmed, approved, locked TR year on the real ETKB release: the final, its figures counted. */
+async function finalDataset(): Promise<string> {
+  const boundaryId = await version([[S, meteredDeclaration(LTR)]], true, FINAL_YEAR);
+  for (const periodValue of MONTHS) {
+    await createRecord(owner, t, {
+      locationId: LTR, reportingYear: FINAL_YEAR, periodValue, activityValue: 4180.56, status: ActivityRecordStatus.approved, reviewedBy: admin().id, reviewedAt: new Date(),
+    }, { priced: true });
+    await owner.periodLock.create({ data: { subsidiaryId: S, reportingYear: FINAL_YEAR, reportingPeriod: 'monthly', periodValue, lockedBy: admin().id } });
+  }
+  return captured(boundaryId);
+}
+
+/** A confirmed holding, every category excluded with its reason: no figure to certify, so partial. */
+const allExcludedDataset = async () => captured(await version([[S2, holdingDeclaration()]]));
 
 /** A confirmed, approved, locked year on the fixture release: partial, non_authoritative_calculation only. */
 async function partialDataset(): Promise<{ datasetId: string; recordIds: string[] }> {
@@ -289,14 +309,14 @@ describe('an issuance over HTTP', () => {
       template: 'executive_summary', options: { includeMethodologyNotes: true, includeEvidenceSummary: false },
       pdf: { mimeType: 'application/pdf' },
     });
-    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v2 \(.+\)$/);
+    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v3 \(.+\)$/);
 
     const dataset = await owner.reportDataset.findUniqueOrThrow({ where: { id: datasetId } });
     expect(issued.datasetFingerprint).toEqual({ algorithm: 'sha256', canonicalization: dataset.canonicalization, hex: dataset.fingerprintHex });
 
     const [row] = await issuanceRows();
     expect(row).toMatchObject({
-      id: issued.issuanceId, datasetId, status: 'final', reportingYear: YEAR, artifactId: issued.pdf.artifactId,
+      id: issued.issuanceId, datasetId, status: 'final', reportingYear: FINAL_YEAR, artifactId: issued.pdf.artifactId,
       storagePath: `${t.organisationId}/${issued.pdf.artifactId}.pdf`, sha256: issued.pdf.fingerprint.hex, sizeBytes: issued.pdf.sizeBytes,
       referencedSubsidiaryIds: dataset.referencedSubsidiaryIds,
     });
@@ -318,19 +338,19 @@ describe('an issuance over HTTP', () => {
     // Read back by every reader, as issued.
     expect(JSON.parse((await call(t.users.executiveViewer, 'GET', `/report-issuances/${issued.issuanceId}`)).text)).toEqual(issued);
     // The list names it by summary (LP4-03 K7): gaps counted, the current final named.
-    const list = JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${YEAR}`)).text) as ReportIssuanceList;
+    const list = JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text) as ReportIssuanceList;
     expect(list).toMatchObject({ truncated: false, currentFinalIssuanceId: issued.issuanceId });
     expect(list.items).toEqual([expect.objectContaining({
-      issuanceId: issued.issuanceId, datasetId, status: 'final', gapCount: 0, gapCounts: {}, reportingYear: YEAR,
+      issuanceId: issued.issuanceId, datasetId, status: 'final', gapCount: 0, gapCounts: {}, reportingYear: FINAL_YEAR,
       datasetFingerprint: issued.datasetFingerprint, pdf: { sizeBytes: row.sizeBytes, fingerprint: issued.pdf.fingerprint },
       dataset: expect.objectContaining({ selection: 'inventory', boundary: expect.objectContaining({ decision: 'confirmed' }) }),
     })]);
-    expect(JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${YEAR}&status=partial`)).text))
+    expect(JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${FINAL_YEAR}&status=partial`)).text))
       .toEqual({ items: [], truncated: false, currentFinalIssuanceId: issued.issuanceId });
     const served = await download(t.users.executiveViewer, issued.issuanceId);
     expect(served.status).toBe(200);
     expect(served.headers.get('content-type')).toBe('application/pdf');
-    const name = `tonyai-report-${YEAR}-executive_summary-en-final-${issued.issuedAt.slice(0, 10)}-${issued.issuanceId.slice(0, 8)}`;
+    const name = `tonyai-report-${FINAL_YEAR}-executive_summary-en-final-${issued.issuedAt.slice(0, 10)}-${issued.issuanceId.slice(0, 8)}`;
     expect(served.headers.get('content-disposition')).toBe(`attachment; filename="${name}.pdf"`);
     expect(served.bytes.equals(stored)).toBe(true);
 
@@ -342,8 +362,8 @@ describe('an issuance over HTTP', () => {
     expect(csv.headers.get('cache-control')).toBe('no-store');
     const rows = csvRows(csv.bytes);
     expect(rows.every((r) => r.issuance_id === issued.issuanceId && r.dataset_fingerprint === `sha256:${retained.fingerprint.hex}`)).toBe(true);
-    // An all-excluded final has no ledger row, and its CSV still names it (Codex B9 P2-2).
-    expect(rows).toEqual([expect.objectContaining({ row_kind: 'issuance', issuance_status: 'final', dataset_id: datasetId, tco2e: '' })]);
+    expect(rows.filter((r) => r.row_kind === 'counted')).toHaveLength(MONTHS.length);
+    expect(rows.every((r) => r.issuance_status === 'final' && r.dataset_id === datasetId)).toBe(true);
     for (const scope of [1, 2] as const) {
       const counted = rows.filter((r) => r.row_kind === 'counted' && r.scope === String(scope) && r.tco2e !== 'Not calculated');
       expect(counted.reduce((s, r) => s + Number(r.tco2e), 0)).toBeCloseTo(retained.scopes[scope - 1].tCo2e ?? 0, 9);
@@ -363,7 +383,7 @@ describe('an issuance over HTTP', () => {
     // data_entry reads and issues nothing (W3, W4).
     for (const [method, path, body] of [
       ['POST', '/report-issuances', { datasetId, template: 'ghg_protocol_detail' }],
-      ['GET', `/report-issuances?year=${YEAR}`, undefined],
+      ['GET', `/report-issuances?year=${FINAL_YEAR}`, undefined],
       ['GET', `/report-issuances/${issued.issuanceId}`, undefined],
       ['GET', `/report-issuances/${issued.issuanceId}/pdf`, undefined],
       ['GET', `/report-issuances/${issued.issuanceId}/xlsx`, undefined],
@@ -426,7 +446,7 @@ describe('an issuance over HTTP', () => {
         expect(theirs.code).toBe('report_issuance_not_found');
         expect(theirs.text).toBe(none.text);
       }
-      expect(JSON.parse((await call(other.users.superAdmin, 'GET', `/report-issuances?year=${YEAR}`)).text))
+      expect(JSON.parse((await call(other.users.superAdmin, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text))
         .toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
       const theirPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${datasetId}/issuance-preview`);
       const noPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${randomUUID()}/issuance-preview`);
@@ -439,6 +459,114 @@ describe('an issuance over HTTP', () => {
   }, 60_000);
 });
 
+describe('an all-excluded inventory (Decisions 2026-11-09 (4))', () => {
+  it('previews and issues as partial, names the gap, is no current final, and its fingerprint still verifies', async () => {
+    const datasetId = await allExcludedDataset();
+    expect(JSON.parse((await call(admin(), 'GET', `/report-datasets/${datasetId}/issuance-preview`)).text))
+      .toMatchObject({ datasetId, status: 'partial', gaps: [expect.objectContaining({ code: 'no_included_obligation' })], finalAllowed: false });
+    const answer = await issue(admin(), { datasetId, template: 'executive_summary' });
+    expect(answer.status, answer.text).toBe(201);
+    const issued = issuanceOf(answer);
+    expect(issued).toMatchObject({ status: 'partial', gaps: [expect.objectContaining({ code: 'no_included_obligation' })] });
+    const stored = await owner.reportDataset.findUniqueOrThrow({ where: { id: datasetId } });
+    expect(issued.datasetFingerprint.hex).toBe(stored.fingerprintHex);
+    const list = JSON.parse((await call(admin(), 'GET', `/report-issuances?year=${YEAR}`)).text) as ReportIssuanceList;
+    expect(list.currentFinalIssuanceId).toBeNull();
+    // No ledger row, and its CSV still names it (Codex B9 P2-2).
+    const csv = await download(admin(), issued.issuanceId, 'csv');
+    expect(csvRows(csv.bytes)).toEqual([expect.objectContaining({ row_kind: 'issuance', issuance_status: 'partial', dataset_id: datasetId, tco2e: '' })]);
+  }, 60_000);
+});
+
+describe('a counted final on the real TR releases (Decisions 2026-11-09)', () => {
+  // Golden values from the factor package's §5, not from the code under test.
+  const ELECTRICITY_KG = 1814.36;
+  const GAS_KG = 140.37;
+  const within = (actual: number | null, kg: number) => {
+    expect(actual).not.toBeNull();
+    // The goldens' own precision, tighter than the package's ±0.5%: it catches a
+    // factor slip such as 0.434 → 0.436.
+    expect(Math.abs(actual! - kg / 1000) / (kg / 1000)).toBeLessThan(0.0001);
+  };
+
+  function electricityAndGas(): PutInventoryBoundarySubsidiaryRequest {
+    const included = new Set(['Electricity', 'Natural Gas']);
+    return {
+      firstMonth: 1, lastMonth: 12,
+      sites: [{ locationId: LTR, firstMonth: 1, lastMonth: 12 }],
+      attribution: CATEGORIES.map((category) => (included.has(category)
+        ? { category, level: 'sites' as const, reportingPeriod: 'monthly' as const }
+        : { category, level: 'company' as const, reportingPeriod: 'annual' as const })),
+      applicability: CATEGORIES.map((category) => (included.has(category)
+        ? { locationId: LTR, category, applicability: 'included' as const }
+        : { locationId: null, category, applicability: 'excluded' as const, reason: 'Not at this site' })),
+      sources: [...included].map((category) => ({
+        locationId: LTR, name: `${category} meter`, mapping: { kind: 'mapped' as const, category: category as 'Electricity', activityType: null },
+        applicability: 'included' as const, evidenceReportingPeriod: null,
+      })),
+    };
+  }
+
+  it('is final with no gap, every figure authoritative, and its dataset, PDF, workbook and CSV agree', async () => {
+    const boundaryId = await version([[S, electricityAndGas()]], true, FINAL_YEAR);
+    const engine = new CalculationsService(owner, INT_FACTOR_POLICY);
+    const parameters = { billedGcvKcalPerSm3: 9349.174 };
+    const gas = await engine.compute({ category: 'Natural Gas', geographyCode: 'TR', reportingYear: FINAL_YEAR, value: 73.953103, unit: 'standard_cubic_metres', parameters });
+    for (const periodValue of MONTHS) {
+      const approved = { locationId: LTR, reportingYear: FINAL_YEAR, periodValue, status: ActivityRecordStatus.approved, reviewedBy: admin().id, reviewedAt: new Date() };
+      await createRecord(owner, t, { ...approved, activityValue: 4180.56 }, { priced: true });
+      await createRecord(owner, t, {
+        ...approved, category: 'Natural Gas', scope: 1, activityValue: 73.953103, activityUnit: 'standard_cubic_metres',
+        parameters, calculation: gas as unknown as Prisma.InputJsonValue,
+      });
+      await owner.periodLock.create({ data: { subsidiaryId: S, reportingYear: FINAL_YEAR, reportingPeriod: 'monthly', periodValue, lockedBy: admin().id } });
+    }
+    const datasetId = await captured(boundaryId);
+    const render = vi.spyOn(app.get(PdfRenderer), 'render');
+
+    const answer = await issue(admin(), { datasetId, template: 'executive_summary' });
+    expect(answer.status, answer.text).toBe(201);
+    const issued = issuanceOf(answer);
+    expect(issued).toMatchObject({ status: 'final', gaps: [] });
+
+    const retained = JSON.parse((await owner.reportDataset.findUniqueOrThrow({ where: { id: datasetId } })).content) as ReportDataset;
+    const [scope1, scope2] = retained.scopes;
+    within(scope1.tCo2e, GAS_KG * MONTHS.length);
+    within(scope2.tCo2e, ELECTRICITY_KG * MONTHS.length);
+    expect(retained.provenance.records).toHaveLength(MONTHS.length * 2);
+    expect(retained.provenance.records.every((r) => r.standing === 'authoritative')).toBe(true);
+    // ETKB's 2025 figure rests on its 2024 data year (D07's lag): disclosed, and no gap.
+    expect(retained.provenance.records.filter((r) => r.issues.includes('declared_year_fallback'))).toHaveLength(MONTHS.length);
+
+    // The PDF: what was rendered, and what is retained.
+    const number = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 3 });
+    const page = render.mock.calls[0][0];
+    expect(page).toContain(number.format(scope1.tCo2e!));
+    expect(page).toContain(number.format(scope2.tCo2e!));
+    expect(page).toContain(`${MONTHS.length} counted figures use a factor from a data year before the reporting year`);
+    const pdf = await download(admin(), issued.issuanceId);
+    expect(pdf.bytes.subarray(0, 4).toString()).toBe('%PDF');
+    expect(sha256(pdf.bytes)).toBe(issued.pdf.fingerprint.hex);
+
+    // The CSV: its counted rows sum to the scopes.
+    const rows = csvRows((await download(admin(), issued.issuanceId, 'csv')).bytes).filter((r) => r.row_kind === 'counted');
+    expect(rows).toHaveLength(MONTHS.length * 2);
+    for (const s of retained.scopes.slice(0, 2)) {
+      const sum = rows.filter((r) => r.scope === String(s.scope)).reduce((total, r) => total + Number(r.tco2e), 0);
+      expect(sum).toBeCloseTo(s.tCo2e!, 9);
+    }
+
+    // The workbook: the same figures, as numbers.
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load((await download(admin(), issued.issuanceId, 'xlsx')).bytes as never);
+    const summary: unknown[][] = [];
+    workbook.getWorksheet('Summary')!.eachRow((row) => summary.push((row.values as unknown[]).slice(1)));
+    expect(summary.find((r) => String(r[0]).startsWith('Scope 1'))?.[1]).toBeCloseTo(scope1.tCo2e!, 9);
+    expect(summary.find((r) => String(r[0]).startsWith('Scope 2'))?.[1]).toBeCloseTo(scope2.tCo2e!, 9);
+    expect(summary.some((r) => String(r[1]).includes('a data year before the reporting year'))).toBe(true);
+  }, 120_000);
+});
+
 describe('one organisation, a reader short of one referenced subsidiary (LP4-03, the read rule in SQL)', () => {
   it('lists, reads, downloads and previews nothing of an issuance whose dataset references a subsidiary it lacks', async () => {
     const datasetId = await finalDataset();
@@ -446,8 +574,8 @@ describe('one organisation, a reader short of one referenced subsidiary (LP4-03,
     const service = issuer();
     // Past the role guards, as no HTTP caller can be today (only data_entry is
     // ever partially granted, and it reads no issuance): the SQL's own rule.
-    const short = { ...admin(), accessibleSubsidiaryIds: [S] };
-    expect(await service.list(short, YEAR)).toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
+    const short = { ...admin(), accessibleSubsidiaryIds: [S2] };
+    expect(await service.list(short, FINAL_YEAR)).toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
     for (const read of [
       () => service.get(short, issued.issuanceId),
       () => service.pdfOf(short, issued.issuanceId),
@@ -459,7 +587,7 @@ describe('one organisation, a reader short of one referenced subsidiary (LP4-03,
     expect(errorCodeOf(await failure(service.preview(short, datasetId)))).toBe('report_dataset_not_found');
     // Control: the whole organisation's reader sees it, and it is the current final.
     const whole = await withAccess(admin());
-    expect(await service.list(whole, YEAR)).toMatchObject({ currentFinalIssuanceId: issued.issuanceId, items: [expect.objectContaining({ issuanceId: issued.issuanceId })] });
+    expect(await service.list(whole, FINAL_YEAR)).toMatchObject({ currentFinalIssuanceId: issued.issuanceId, items: [expect.objectContaining({ issuanceId: issued.issuanceId })] });
     expect((await service.tablesOf(whole, issued.issuanceId, 'csv')).filename).toMatch(/\.csv$/);
   }, 60_000);
 });
@@ -509,11 +637,35 @@ describe('the guard (TA017) — every writer, the owner included', () => {
     const [row] = await issuanceRows();
     expect(await refusedWith(insertOf(row, { dataset_fingerprint_hex: `'${'a'.repeat(64)}'` }))).toBe('TA017');
     expect(await refusedWith(insertOf(row, { reporting_year: String(YEAR + 1) }))).toBe('TA017');
-    expect(await refusedWith(insertOf(row, { referenced_subsidiary_ids: `ARRAY['${S}']::uuid[]` }))).toBe('TA017');
+    expect(await refusedWith(insertOf(row, { referenced_subsidiary_ids: `ARRAY['${S2}']::uuid[]` }))).toBe('TA017');
     expect(await refusedWith(insertOf(row, {
       status: `'partial'`, gaps: `'[{"code":"looks_fine","sourceIds":[],"obligationIds":[],"recordIds":[]}]'::jsonb`,
     }))).toBe('TA017');
     expect(await refusedWith(insertOf(row, { dataset_id: `'${randomUUID()}'` }))).toBe('TA017');
+  }, 60_000);
+
+  it('lets a data-only restore write what the dump holds: an old all-excluded final, with its own issued_at', async () => {
+    await issue(admin(), { datasetId: await allExcludedDataset(), template: 'executive_summary' });
+    const [row] = await issuanceRows();
+    const asFinal = { status: `'final'`, gaps: `'[]'::jsonb`, issued_at: `'2026-11-01T00:00:00Z'` };
+    expect(await refusedWith(insertOf(row, asFinal))).toBe('TA017');
+    const restored = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+      await tx.$executeRawUnsafe(insertOf(row, asFinal));
+      const [{ n }] = await tx.$queryRawUnsafe<{ n: number }[]>(
+        `SELECT count(*)::int AS n FROM report_issuances WHERE organisation_id = '${row.organisationId}' AND status = 'final' AND issued_at = '2026-11-01T00:00:00Z'`,
+      );
+      return n;
+    });
+    expect(restored).toBe(1);
+    // Only a restore's insert: replica mode changes no retained row.
+    for (const statement of [`UPDATE report_issuances SET language = 'en' WHERE id = '${row.id}'`, `DELETE FROM report_issuances WHERE id = '${row.id}'`]) {
+      const refused = await failure(withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+        await tx.$executeRawUnsafe(statement);
+      }));
+      expect(sqlState(refused)).toBe('TA017');
+    }
   }, 60_000);
 
   it('holds the shapes: a final has no gap, a partial at least one, the key is the row\'s own', async () => {
@@ -532,11 +684,16 @@ describe('the guard (TA017) — every writer, the owner included', () => {
     const unconfirmed = await owner.reportDataset.findUniqueOrThrow({ where: { id: await captured(open) } });
     const confirmed = await version([[S2, holdingDeclaration()]]);
     const extract = await owner.reportDataset.findUniqueOrThrow({ where: { id: await captured(confirmed, { subsidiaryId: S2 }) } });
-    await issue(admin(), { datasetId: await captured(confirmed), template: 'executive_summary' });
+    // A confirmed inventory with no included obligation: no figure to certify (Decisions 2026-11-09 (4)).
+    const whole = await captured(confirmed);
+    await issue(admin(), { datasetId: whole, template: 'executive_summary' });
     const [row] = await issuanceRows();
+    expect(row.status).toBe('partial');
+    const asFinal = { status: `'final'`, gaps: `'[]'::jsonb` };
+    expect(await refusedWith(insertOf(row, asFinal))).toBe('TA017');
     for (const d of [unconfirmed, extract]) {
       const of = { dataset_id: `'${d.id}'`, dataset_fingerprint_hex: `'${d.fingerprintHex}'` };
-      expect(await refusedWith(insertOf(row, of))).toBe('TA017');
+      expect(await refusedWith(insertOf(row, { ...of, ...asFinal }))).toBe('TA017');
       // As a partial, the same row is admitted.
       await withRollback(owner, (tx) => tx.$executeRawUnsafe(insertOf(row, {
         ...of, status: `'partial'`, gaps: `'[{"code":"coverage_gap","sourceIds":[],"obligationIds":[],"recordIds":[]}]'::jsonb`,

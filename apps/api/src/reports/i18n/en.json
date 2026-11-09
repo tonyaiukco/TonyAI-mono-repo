@@ -26,6 +26,7 @@
   "restatementUncalculated": "{count, plural, one {# of them carry no emissions figure, so withdrawing it removed no tonnage.} other {# of them carry no emissions figure, so withdrawing them removed no tonnage.}}",
   "restatementListed": "{count, plural, one {It counts towards no figure in this report, and it is listed under “Withdrawn from this inventory” below with the reason recorded at the time.} other {They count towards no figure in this report, and they are listed under “Withdrawn from this inventory” below with the reason recorded at the time.}}",
   "scope3NotCovered": "Scope 3 is not covered by this inventory.",
+  "scope3NonAuthoritative": "{count, plural, one {# of them rests} other {# of them rest}} on placeholder (demo) or other non-authoritative factors.",
   "scope3Recorded": "{count, plural, one {# committed Scope 3 record} other {# committed Scope 3 records}} ({tonnes} tCO₂e calculated) {count, plural, one {is} other {are}} outside every figure in this report.",
   "coverageHeading": "Inventory coverage (live)",
   "coverageNoBoundary": "No inventory boundary is declared for {year}. Coverage is unknown, so nothing in this report shows that the inventory is complete.",

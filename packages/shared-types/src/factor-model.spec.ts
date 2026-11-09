@@ -1399,6 +1399,8 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       parameters_not_applicable: 400,
       parameter_missing: 409,
       billed_gcv_out_of_range: 400,
+      ncv_out_of_range: 400,
+      volume_correction_out_of_range: 400,
       no_factor: 404,
       placeholder_refused: 404,
       ambiguous_factor: 409,

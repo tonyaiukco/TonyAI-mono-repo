@@ -1,17 +1,14 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import {
   isCalculated,
   type CalculationInput,
   type CalculationResultV3,
-  type FactorReleaseImport,
 } from '@tonyai/shared-types';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CalculationsService } from '../../src/calculations/calculations.service';
-import { FactorReleaseLoader } from '../../src/factor-releases/factor-release-loader';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { connect, connectLoader, connectOwner } from './db';
+import { connect, connectOwner } from './db';
 import { INT_FACTOR_POLICY } from './services';
+import { loadTrReleases } from './tr-releases';
 
 /**
  * LP4-02 PR5, task 5.2: the two authoritative TR releases loaded through the
@@ -24,9 +21,6 @@ import { INT_FACTOR_POLICY } from './services';
  * each run; a local one keeps them, as hosted QA will once L10 closes.
  */
 
-const DIR = resolve(__dirname, '../../../../packages/db/factor-releases/tr-2026-11');
-const read = (name: string) => JSON.parse(readFileSync(resolve(DIR, `${name}.json`), 'utf8')) as FactorReleaseImport;
-const OPERATOR = 'TonyAI Sustainability Team';
 
 let engine: CalculationsService;
 let owner: PrismaService;
@@ -49,14 +43,7 @@ const placeholderTr = (calculation: string) => {
 beforeAll(async () => {
   owner = connectOwner();
   committedBefore = await committed(owner);
-  const loader = new FactorReleaseLoader(connectLoader(), OPERATOR);
-  for (const name of ['ipcc', 'etkb']) {
-    // The dry run first, as an operator would (the factor-release-import skill).
-    const dry = await loader.load(read(name), { apply: false });
-    expect(['would_load', 'already_loaded']).toContain(dry.outcome);
-    const applied = await loader.load(read(name), { apply: true });
-    expect(['loaded', 'already_loaded']).toContain(applied.outcome);
-  }
+  await loadTrReleases();
   engine = new CalculationsService(connect(), INT_FACTOR_POLICY);
 }, 120_000);
 
@@ -119,6 +106,23 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
     expect(await code(billed(10427))).toBeNull();
     expect(await code(billed(8099.9))).toBe('billed_gcv_out_of_range');
     expect(await code(billed(10427.1))).toBe('billed_gcv_out_of_range');
+  });
+
+  it('bounds a typed NCV by the release\'s own rows and a volume factor by 0.75–30 (Decisions 2026-11-09 (8))', async () => {
+    const typed = (ncvKcalPerSm3: number) =>
+      tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres', parameters: { ncvKcalPerSm3 } });
+    const metered = (volumeCorrectionFactor: number) =>
+      tr({ category: 'Natural Gas', value: 100, unit: 'cubic_metres', parameters: { volumeCorrectionFactor } });
+    // 8,100 and 10,427 × 8,250 / 9,155: the ŞİD's range, by the package's ratio.
+    expect(await code(typed(7300))).toBeNull();
+    expect(await code(typed(9396))).toBeNull();
+    expect(await code(typed(7299))).toBe('ncv_out_of_range');
+    expect(await code(typed(9397))).toBe('ncv_out_of_range');
+    expect(await code(typed(8.25))).toBe('ncv_out_of_range');
+    expect(await code(metered(0.97))).toBeNull();
+    expect(await code(metered(97))).toBe('volume_correction_out_of_range');
+    // A valid bill at the top of the range derives about 7,244, below the typed floor.
+    expect(await code(tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres', parameters: { billedGcvKcalPerSm3: 10427 } }))).toBeNull();
   });
 
   it('fails closed for 2023 and for UK (owner decision 2026-11-05 (1))', async () => {

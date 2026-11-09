@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
+import { intensityFigureGap, nonAuthoritativeFigures } from '@/lib/emissions-view';
+import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
+import { selectsScope3Only } from '@/lib/report-coverage-view';
+import { CATEGORY_SCOPE_MAP, GROUP_INTENSITY_METRICS, type Category } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -277,10 +281,18 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
             <Gauge className="h-8 w-8 text-muted-foreground" />
-            <p className="text-sm font-medium text-foreground">{tIntensity('empty', { year: yearText })}</p>
-            <p className="text-sm text-muted-foreground">
-              {canManage ? tIntensity('emptyManage') : tIntensity('emptyView')}
-            </p>
+            {selectsScope3Only(context, (c) => CATEGORY_SCOPE_MAP[c as Category]) ? (
+              <p className="text-sm font-medium text-foreground">{tIntensity('emptyScope3')}</p>
+            ) : denominators.some((d) => context.subsidiaryId !== undefined || (GROUP_INTENSITY_METRICS as readonly string[]).includes(d.metric)) ? (
+              <p className="text-sm font-medium text-foreground">{tIntensity('emptyNoFigures', { year: yearText })}</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-foreground">{tIntensity('empty', { year: yearText })}</p>
+                <p className="text-sm text-muted-foreground">
+                  {canManage ? tIntensity('emptyManage') : tIntensity('emptyView')}
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -294,16 +306,18 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-bold text-foreground">{formatNumber(m.intensity, locale, FOUR_DECIMALS)}</span>
+                  <span className="text-2xl font-bold text-foreground">{m.calculatedRecordCount === 0 ? '—' : formatNumber(m.intensity, locale, FOUR_DECIMALS)}</span>
                   <span className="text-xs text-muted-foreground">{tIntensity('perUnit', { unit: m.unit })}</span>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {tIntensity('formula', {
-                    emissions: formatNumber(m.emissionsTotal, locale, WHOLE),
-                    denominator: formatNumber(m.denominatorTotal, locale, WHOLE),
-                    unit: m.unit,
-                  })}
-                </p>
+                {m.calculatedRecordCount > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {tIntensity('formula', {
+                      emissions: formatNumber(m.emissionsTotal, locale, WHOLE),
+                      denominator: formatNumber(m.denominatorTotal, locale, WHOLE),
+                      unit: m.unit,
+                    })}
+                  </p>
+                )}
                 {/* Coverage is disclosed, never assumed (D14): a subsidiary
                     without this denominator is missing, not zero. */}
                 <p className="text-xs text-muted-foreground" data-testid="intensity-coverage">
@@ -313,6 +327,22 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
                     year: yearText,
                   })}
                 </p>
+                {(() => {
+                  const gap = intensityFigureGap(m);
+                  return gap ? (
+                    <p className="text-xs text-amber-600" data-testid="intensity-figure-gap">
+                      {t('intensityFigureGap', { withFigure: formatNumber(gap.withFigure, locale), contributing: formatNumber(gap.contributing, locale) })}
+                    </p>
+                  ) : null;
+                })()}
+                {(() => {
+                  const na = nonAuthoritativeFigures(m);
+                  return na ? (
+                    <NonAuthoritativeWarning testId="intensity-non-authoritative">
+                      {t('intensityNonAuthoritative', { count: formatNumber(na.count, locale), of: formatNumber(na.of, locale) })}
+                    </NonAuthoritativeWarning>
+                  ) : null;
+                })()}
                 {m.uncalculatedRecordCount > 0 && (
                   <p className="text-xs text-amber-600">
                     {t('intensityUncalculated', { count: formatNumber(m.uncalculatedRecordCount, locale) })}

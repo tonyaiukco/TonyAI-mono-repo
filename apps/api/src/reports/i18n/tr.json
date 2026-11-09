@@ -26,6 +26,7 @@
   "restatementUncalculated": "{count, plural, one {Bunların # tanesi emisyon rakamı taşımıyor; geri çekilmesi hiçbir tonaj çıkarmadı.} other {Bunların # tanesi emisyon rakamı taşımıyor; geri çekilmeleri hiçbir tonaj çıkarmadı.}}",
   "restatementListed": "{count, plural, one {Bu rapordaki hiçbir rakama dahil değildir ve aşağıda “Bu envanterden geri çekilenler” altında, o sırada kaydedilen gerekçesiyle listelenir.} other {Bu rapordaki hiçbir rakama dahil değildirler ve aşağıda “Bu envanterden geri çekilenler” altında, o sırada kaydedilen gerekçeleriyle listelenirler.}}",
   "scope3NotCovered": "Kapsam 3 bu envanterin kapsamında değildir.",
+  "scope3NonAuthoritative": "{count, plural, one {Bunlardan # tanesi} other {Bunlardan # tanesi}} yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanır.",
   "scope3Recorded": "{count, plural, one {Sayılan # Kapsam 3 kaydı} other {Sayılan # Kapsam 3 kaydı}} ({tonnes} tCO₂e hesaplanmış) bu rapordaki hiçbir rakama dahil değildir.",
   "coverageHeading": "Envanter kapsamı (canlı)",
   "coverageNoBoundary": "{year} için beyan edilmiş bir envanter sınırı yok. Kapsam bilinmiyor; bu yüzden bu rapordaki hiçbir şey envanterin tam olduğunu göstermez.",

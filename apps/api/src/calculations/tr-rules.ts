@@ -6,6 +6,8 @@ import {
   type RefrigerantTerm,
   type SnapshotInput,
   type SnapshotParameterRow,
+  VOLUME_CORRECTION_FACTOR_MAX,
+  VOLUME_CORRECTION_FACTOR_MIN,
 } from '@tonyai/shared-types';
 import { CalculationInputError, FactorLibraryConflictError } from './errors';
 import type { readReleaseParameters } from './factor-lookup';
@@ -55,6 +57,14 @@ export function naturalGasChain(
 ): NaturalGasChain {
   const ncv = reference(rows, 'reference_ncv');
   const volume = parameters?.volumeCorrectionFactor ?? null;
+  // Plausibility limits, provisional until the external review (Decisions
+  // 2026-11-09 (8)): 97 typed for 0.97 would inflate the figure a hundredfold.
+  if (volume !== null && (volume < VOLUME_CORRECTION_FACTOR_MIN || volume > VOLUME_CORRECTION_FACTOR_MAX)) {
+    throw new CalculationInputError(
+      'volume_correction_out_of_range',
+      `A volume correction factor must be between ${VOLUME_CORRECTION_FACTOR_MIN} and ${VOLUME_CORRECTION_FACTOR_MAX}.`,
+    );
+  }
   const volumeInput: SnapshotInput[] = volume === null ? [] : [{ name: 'volumeCorrectionFactor', value: volume, origin: 'user' }];
   const billedGcv = parameters?.billedGcvKcalPerSm3 ?? null;
   if (billedGcv !== null) {
@@ -84,6 +94,19 @@ export function naturalGasChain(
   }
   const edited = parameters?.ncvKcalPerSm3 ?? null;
   if (edited !== null) {
+    // The bill's range scaled by the release's own net-to-gross ratio, from
+    // loaded rows (Decisions 2026-11-09 (8)): a CSV's `8.250` reads as 8.25, about
+    // 1,000 times low. Only what the user typed: the billed path's formula above
+    // can derive less than this floor (GCV 10,427 gives about 7,244).
+    const ratio = ncv.value / reference(rows, 'reference_gcv').value;
+    const lowest = reference(rows, 'billed_gcv_min').value * ratio;
+    const highest = reference(rows, 'billed_gcv_max').value * ratio;
+    if (edited < lowest || edited > highest) {
+      throw new CalculationInputError(
+        'ncv_out_of_range',
+        `A typed net calorific value must be between ${Math.ceil(lowest)} and ${Math.floor(highest)} kcal/Sm³, the range derived from the factor release's rows.`,
+      );
+    }
     return {
       multiplier: edited * KWH_PER_KCAL,
       inputs: [{ name: 'ncvKcalPerSm3', value: edited, origin: 'user' }, ...volumeInput],
