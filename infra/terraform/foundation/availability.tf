@@ -1,10 +1,11 @@
-# LP2-04 design D4: Application Insights only as the home of two standard availability tests.
+# LP2-04 design D4: Application Insights only as the home of one standard availability test.
+# API only (owner, option B, 2026-11-09): a web test would keep the scale-to-zero web app warm.
 # Owner-approved exception (2026-11-09) to "no Application Insights": no SDK, no app telemetry.
 locals {
   availability_locations = ["emea-nl-ams-azr", "emea-gb-db3-azr", "emea-fr-pra-edge"] # West Europe, North Europe, France Central
   # Public hosts only once they serve SNI: before that ACA presents its default certificate.
   monitored = try(var.config.public_hosts.certificates && var.config.public_hosts.monitored, false) ? local.public_hosts : {}
-  availability_targets = { for kind, path in { api = "/api/v1/health/ready", web = "/login" } : kind => (
+  availability_targets = { for kind, path in { api = "/api/v1/health/ready" } : kind => (
     contains(keys(local.monitored), kind)
     ? "https://${local.monitored[kind]}${path}"
     : "https://${local.stem}-${kind}.${azapi_resource.environment.output.properties.defaultDomain}${path}"

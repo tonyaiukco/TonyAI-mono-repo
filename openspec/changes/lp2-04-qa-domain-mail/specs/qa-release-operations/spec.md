@@ -38,7 +38,7 @@ The ACS email configuration SHALL support a CustomerManaged domain with a config
 - **THEN** the Communication service links the custom domain and the email contract's sender is `no-reply@tonyai.io`
 
 ### Requirement: Availability tests alert the operator
-Once its opt-in switch is set, hosted QA SHALL run a standard availability test on the API readiness path and one on the web login path from several locations. Each test SHALL have a metric alert routed to the operator action group. The monitoring readback SHALL fail when a test is disabled, targets an unexpected URL, or has no enabled, routed alert.
+Once its opt-in switch is set, hosted QA SHALL run one standard availability test, on the API readiness path, from several locations, and none on the web app. The test SHALL have a metric alert routed to the operator action group. The availability-aware monitoring readback SHALL fail when the test is disabled, targets an unexpected URL, or has no enabled, routed alert.
 
 #### Scenario: Opt-in off
 - **WHEN** a foundation apply has monitoring configured but the availability switch is off
@@ -46,10 +46,10 @@ Once its opt-in switch is set, hosted QA SHALL run a standard availability test 
 
 #### Scenario: Tests read back
 - **WHEN** the monitoring readback runs after the foundation apply
-- **THEN** it reports both tests enabled on their expected URLs and both alerts enabled and routed to the operator
+- **THEN** it reports the API test enabled on its expected URL and its alert enabled and routed to the operator
 
 #### Scenario: Test disabled out of band
-- **WHEN** one availability test is disabled in the portal
+- **WHEN** the availability test is disabled in the portal
 - **THEN** the readback fails, naming that test
 
 ### Requirement: Hosted QA holds no demo data

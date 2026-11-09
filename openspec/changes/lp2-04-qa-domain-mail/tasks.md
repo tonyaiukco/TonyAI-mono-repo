@@ -25,7 +25,7 @@
 ## 4. Availability tests (D4)
 
 - [x] 4.1 Confirm the 3 EU location IDs and the current per-execution price from Microsoft's documentation
-- [x] 4.2 Foundation: App Insights component (workspace-based, local auth off), two standard web tests with the `hidden-link` tag, two metric alerts routed to `operator`; allowlist the types
+- [x] 4.2 Foundation: App Insights component (workspace-based, local auth off), one standard web test (API readiness; no web test, owner option B) with the `hidden-link` tag, two metric alerts routed to `operator`; allowlist the types
 - [x] 4.3 `monitoring_readback.py`: versions and checks for tests and alerts; tests including a disabled test
 
 ## 5. Hosted no-demo check (D7)

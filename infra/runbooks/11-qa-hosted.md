@@ -472,14 +472,14 @@ After each DNS change, Claude Code reads the records from Namecheap's own server
 1. **Merge the PR.** Nothing changes: no input is set yet, and `monitoring_readback.py` checks the availability links only with `--availability`.
 2. **Foundation apply** with the custom domain, `sender_username`, `availability_tests: true` and `public_hosts` (`certificates: false`).
    - From now on, run `monitoring_readback.py --availability`.
-   - The plan must add exactly this: the CustomerManaged domain, the App Insights component, two web tests and two metric alerts. Nothing else.
+   - The plan must add exactly this: the CustomerManaged domain, the App Insights component, one web test (the API's `/api/v1/health/ready`) and its metric alert. Nothing else.
    - `terraform_run.py foundation output` prints `application_contract`, then `dns_contract`.
    ```bash
    python3 infra/scripts/terraform_run.py foundation plan --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
    python3 infra/scripts/terraform_run.py foundation apply --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
    python3 infra/scripts/terraform_run.py foundation output --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
    ```
-   Within 30 minutes the portal's Availability blade must show results for both tests, still on the generated hosts. If no result appears, the component's `DisableLocalAuth` is the first suspect: stop and report it.
+   Within 30 minutes the portal's Availability blade must show results for the test, still on the generated API host. If no result appears, the component's `DisableLocalAuth` is the first suspect: stop and report it.
 3. **Enter the DNS records** from the table. Claude Code confirms them on the authoritative servers.
 4. **Verify the domain in ACS**, one call per record type, then confirm all four are `Verified`:
    ```bash
@@ -505,15 +505,15 @@ After each DNS change, Claude Code reads the records from Namecheap's own server
 8. **GitHub `qa` environment:** set `QA_WEB_HOST=qa.tonyai.io` and `QA_API_HOST=api.qa.tonyai.io`, then dispatch `QA deploy`.
    - The web image is rebuilt with `api.qa.tonyai.io`, and smoke runs on the public hosts.
    - From now on, export `WEB_HOST` / `API_HOST` beside the other QA variables for `qa_autodeploy.py inputs` and `monitoring_readback.py`.
-9. **Foundation apply** with `public_hosts.monitored: true`. It moves both availability tests to the public hosts. Make it the same apply that re-pins `storage-verify` to step 8's API image (`monitoring.api_digest`).
+9. **Foundation apply** with `public_hosts.monitored: true`. It moves the availability test to `api.qa.tonyai.io`. Make it the same apply that re-pins `storage-verify` to step 8's API image (`monitoring.api_digest`).
 10. **Acceptance:**
     - One invitation and one reset arrive in the inbox, not spam. The owner's written report is the evidence, and the headers show `spf=pass`, `dkim=pass` and `dmarc=pass` for `tonyai.io`.
-    - `monitoring_readback.py` shows every link PASS, including both availability tests on the public hosts and their alerts.
+    - `monitoring_readback.py` shows every link PASS, including the availability test on `api.qa.tonyai.io` and its alert.
     - The hosted no-demo check passes.
 
 **Alerting.** An availability alert fires only when all three locations fail within 15 minutes. A deploy's short API drain therefore does not page the operator.
 
-**Cost.** Both tests run 3 locations × 4 runs an hour, about 17,500 executions a month. The `/login` test also wakes the scale-to-zero web app about every 5 minutes, which keeps it mostly warm.
+**Cost.** One test, 3 locations × 4 runs an hour: about 8,800 executions a month, a few USD. There is no web test (owner decision 2026-11-09, option B): it would keep the scale-to-zero web app warm for roughly 25–40 USD a month. Every QA deploy's smoke already checks `/login`.
 
 ### Hosted no-demo check
 

@@ -52,7 +52,7 @@ def wired():
 
 def availability(api, web):
     resources = {}
-    for kind, url in (('api', api + '/api/v1/health/ready'), ('web', web + '/login')):
+    for kind, url in (('api', api + '/api/v1/health/ready'),):
         test = GROUP + 'Microsoft.Insights/webtests/' + S + '-' + kind + '-availability'
         resources[test] = {'id': test, 'properties': {'Enabled': True, 'Request': {'RequestUrl': url},
                                                       'ValidationRules': {'SSLCheck': True}}}
@@ -94,7 +94,7 @@ class ReadbackTests(unittest.TestCase):
     def test_wired_chain_passes_every_link_with_counts_only(self):
         results, az = run()
         self.assertTrue(all(status == 'PASS' for status, _ in results.values()), results)
-        self.assertEqual(len(results), 16)
+        self.assertEqual(len(results), 14)
         self.assertEqual(results['ContainerAppConsoleLogs rows in 26h'], ('PASS', '40 row(s)'))
         self.assertEqual(results['operator action group'], ('PASS', '1 email receiver(s)'))
         text = json.dumps(results)
@@ -209,9 +209,9 @@ class ReadbackTests(unittest.TestCase):
     def test_each_availability_property_is_load_bearing(self):
         cases = [
             ('api availability alert', lambda r: r[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-api-availability']['properties'].update(enabled=False)),
-            ('web availability alert', lambda r: r[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-web-availability']['properties']['criteria'].update(webTestId=GROUP + 'Microsoft.Insights/webtests/other')),
+            ('api availability alert', lambda r: r[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-api-availability']['properties']['criteria'].update(webTestId=GROUP + 'Microsoft.Insights/webtests/other')),
             ('api availability test', lambda r: r[GROUP + 'Microsoft.Insights/webtests/' + S + '-api-availability']['properties']['ValidationRules'].update(SSLCheck=False)),
-            ('web availability test', lambda r: r[GROUP + 'Microsoft.Insights/webtests/' + S + '-web-availability']['properties']['Request'].update(RequestUrl='https://evil.example/login')),
+            ('api availability test', lambda r: r[GROUP + 'Microsoft.Insights/webtests/' + S + '-api-availability']['properties']['Request'].update(RequestUrl='https://evil.example/api/v1/health/ready')),
             ('availability component', lambda r: r[COMPONENT]['properties'].update(WorkspaceResourceId=GROUP + 'Microsoft.OperationalInsights/workspaces/other')),
             ('availability component', lambda r: r[COMPONENT]['properties'].update(IngestionMode='ApplicationInsights')),
         ]
@@ -224,12 +224,14 @@ class ReadbackTests(unittest.TestCase):
 
     def test_availability_tests_and_alerts_are_checked_per_host(self):
         resources = wired()
-        resources[GROUP + 'Microsoft.Insights/webtests/' + S + '-web-availability']['properties']['Enabled'] = False
-        resources[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-api-availability']['properties']['actions'] = []
+        resources[GROUP + 'Microsoft.Insights/webtests/' + S + '-api-availability']['properties']['Enabled'] = False
         results, _ = run(resources)
-        self.assertEqual(results['web availability test'][0], 'FAIL')
-        self.assertEqual(results['api availability alert'][0], 'FAIL')
-        self.assertEqual(results['api availability test'][0], 'PASS')
+        self.assertEqual(results['api availability test'][0], 'FAIL')
+        self.assertEqual(results['api availability alert'][0], 'PASS')
+        self.assertNotIn('web availability test', results)
+        resources = wired()
+        resources[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-api-availability']['properties']['actions'] = []
+        self.assertEqual(run(resources)[0]['api availability alert'][0], 'FAIL')
         resources = wired()
         del resources[COMPONENT]
         self.assertEqual(run(resources)[0]['availability component'][0], 'FAIL')
@@ -240,7 +242,7 @@ class ReadbackTests(unittest.TestCase):
             az = FakeAz(resources)
             return {link: status for status, link, _ in mr.readback(bound, mr.Reader(bound, az), availability=True)}
         stale = links(wired())
-        self.assertEqual((stale['api availability test'], stale['web availability test']), ('FAIL', 'FAIL'))
+        self.assertEqual(stale['api availability test'], 'FAIL')
         moved = links({**wired(), **availability('https://api.qa.tonyai.io', 'https://qa.tonyai.io')})
         self.assertTrue(all(status == 'PASS' for status in moved.values()), moved)
 

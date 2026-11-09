@@ -27,7 +27,7 @@ VERSIONS = {'Microsoft.App/managedEnvironments': '2025-01-01', 'Microsoft.App/co
             'Microsoft.Insights/scheduledQueryRules': '2023-12-01', 'Microsoft.Insights/metricAlerts': '2018-03-01',
             'Microsoft.Insights/actionGroups': '2023-01-01', 'Microsoft.Insights/components': '2020-02-02',
             'Microsoft.Insights/webtests': '2022-06-15'}
-AVAILABILITY = (('api', '/api/v1/health/ready'), ('web', '/login'))
+AVAILABILITY = (('api', '/api/v1/health/ready'),)  # API only: owner option B, 2026-11-09
 LOG_API = 'https://api.loganalytics.io'
 TABLES = ('ContainerAppConsoleLogs', 'ContainerAppSystemLogs')
 SHARED_TABLE_QUERY = 'AzureDiagnostics | summarize rows=count()'

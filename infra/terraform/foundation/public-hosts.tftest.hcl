@@ -86,8 +86,8 @@ run "unset_hosts_create_no_certificate_and_test_generated_origins" {
     error_message = "No public hosts, no certificates or DNS rows."
   }
   assert {
-    condition     = azapi_resource.availability_test["api"].body.properties.Request.RequestUrl == "https://tonyai-staging-api.example.swedencentral.azurecontainerapps.io/api/v1/health/ready" && azapi_resource.availability_test["web"].body.properties.Request.RequestUrl == "https://tonyai-staging-web.example.swedencentral.azurecontainerapps.io/login"
-    error_message = "Until certificates exist the tests target the generated hosts."
+    condition     = keys(azapi_resource.availability_test) == ["api"] && azapi_resource.availability_test["api"].body.properties.Request.RequestUrl == "https://tonyai-staging-api.example.swedencentral.azurecontainerapps.io/api/v1/health/ready"
+    error_message = "One API test only (owner option B), on the generated host until monitored."
   }
   assert {
     condition     = alltrue([for test in azapi_resource.availability_test : test.body.kind == "standard" && test.body.properties.Enabled && test.body.properties.Frequency == 900 && length(test.body.properties.Locations) == 3 && test.body.properties.ValidationRules.ExpectedHttpStatusCode == 200 && test.body.properties.ValidationRules.SSLCheck && test.body.properties.Request.HttpVerb == "GET"])
@@ -116,7 +116,7 @@ run "hosts_without_certificates_list_dns_only" {
     error_message = "DNS rows are relative to the parent domain and point straight at the app hosts."
   }
   assert {
-    condition     = endswith(azapi_resource.availability_test["web"].body.properties.Request.RequestUrl, ".azurecontainerapps.io/login")
+    condition     = endswith(azapi_resource.availability_test["api"].body.properties.Request.RequestUrl, ".azurecontainerapps.io/api/v1/health/ready")
     error_message = "Tests move to public hosts only with their certificates."
   }
 }
@@ -126,7 +126,7 @@ run "certificates_alone_keep_tests_on_generated_hosts" {
     config = merge(var.config, { public_hosts = { web = "qa.tonyai.io", api = "api.qa.tonyai.io", certificates = true } })
   }
   assert {
-    condition     = length(azapi_resource.certificate) == 2 && endswith(azapi_resource.availability_test["web"].body.properties.Request.RequestUrl, ".azurecontainerapps.io/login")
+    condition     = length(azapi_resource.certificate) == 2 && endswith(azapi_resource.availability_test["api"].body.properties.Request.RequestUrl, ".azurecontainerapps.io/api/v1/health/ready")
     error_message = "Until the hosts serve SNI the tests stay on the generated hosts (ACA serves its default certificate)."
   }
 }
@@ -147,7 +147,7 @@ run "certificates_for_each_host_and_tests_follow" {
     error_message = "One CNAME-validated certificate per host, named as the application root expects."
   }
   assert {
-    condition     = azapi_resource.availability_test["api"].body.properties.Request.RequestUrl == "https://api.qa.tonyai.io/api/v1/health/ready" && azapi_resource.availability_test["web"].body.properties.Request.RequestUrl == "https://qa.tonyai.io/login"
+    condition     = azapi_resource.availability_test["api"].body.properties.Request.RequestUrl == "https://api.qa.tonyai.io/api/v1/health/ready" && length(azapi_resource.availability_alert) == 1
     error_message = "With certificates the tests target the public hosts."
   }
 }

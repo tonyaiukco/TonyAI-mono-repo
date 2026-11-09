@@ -46,7 +46,7 @@ blindly. Review sanitization and rotate any leaked credential before proceeding.
 [Azure Monitor log routing](https://learn.microsoft.com/en-us/azure/container-apps/log-options)
 replaces Bicep's Log Analytics shared-key path. Diagnostics target workspace ID and
 resource-specific `ContainerAppConsoleLogs` / `ContainerAppSystemLogs` tables.
-There is no Application Insights duplication: no SDK sends application telemetry. The one exception (LP2-04, owner decision 2026-11-09) is a workspace-based component, with local auth off, that only holds two standard availability tests (`availability.tf`). Their results land in the same workspace.
+There is no Application Insights duplication: no SDK sends application telemetry. The one exception (LP2-04, owner decision 2026-11-09) is a workspace-based component, with local auth off, that only holds one standard availability test (`availability.tf`). Their results land in the same workspace.
 
 The [Azure Blob backend](https://developer.hashicorp.com/terraform/language/backend/azurerm)
 uses `use_azuread_auth=true`, Blob leases for concurrent-write locking, no access
