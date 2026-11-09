@@ -33,6 +33,7 @@
   "gapUnapprovedRecord": "Records not approved",
   "gapUnlockedPeriod": "Periods not locked",
   "gapNonAuthoritativeCalculation": "Figures not on an authoritative factor release",
+  "gapNoIncludedObligation": "No included emission source",
   "gapGwpSetMismatch": "More than one GWP set",
   "colGap": "Gap",
   "colSources": "Sources",

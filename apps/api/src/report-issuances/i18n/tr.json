@@ -33,6 +33,7 @@
   "gapUnapprovedRecord": "Onaylanmamış kayıtlar",
   "gapUnlockedPeriod": "Kilitlenmemiş dönemler",
   "gapNonAuthoritativeCalculation": "Yetkili bir faktör sürümüne dayanmayan rakamlar",
+  "gapNoIncludedObligation": "Dahil edilmiş emisyon kaynağı yok",
   "gapGwpSetMismatch": "Birden fazla GWP seti",
   "colGap": "Eksik",
   "colSources": "Kaynaklar",

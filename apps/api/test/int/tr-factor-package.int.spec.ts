@@ -1,17 +1,14 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import {
   isCalculated,
   type CalculationInput,
   type CalculationResultV3,
-  type FactorReleaseImport,
 } from '@tonyai/shared-types';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CalculationsService } from '../../src/calculations/calculations.service';
-import { FactorReleaseLoader } from '../../src/factor-releases/factor-release-loader';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { connect, connectLoader, connectOwner } from './db';
+import { connect, connectOwner } from './db';
 import { INT_FACTOR_POLICY } from './services';
+import { loadTrReleases } from './tr-releases';
 
 /**
  * LP4-02 PR5, task 5.2: the two authoritative TR releases loaded through the
@@ -24,9 +21,6 @@ import { INT_FACTOR_POLICY } from './services';
  * each run; a local one keeps them, as hosted QA will once L10 closes.
  */
 
-const DIR = resolve(__dirname, '../../../../packages/db/factor-releases/tr-2026-11');
-const read = (name: string) => JSON.parse(readFileSync(resolve(DIR, `${name}.json`), 'utf8')) as FactorReleaseImport;
-const OPERATOR = 'TonyAI Sustainability Team';
 
 let engine: CalculationsService;
 let owner: PrismaService;
@@ -49,14 +43,7 @@ const placeholderTr = (calculation: string) => {
 beforeAll(async () => {
   owner = connectOwner();
   committedBefore = await committed(owner);
-  const loader = new FactorReleaseLoader(connectLoader(), OPERATOR);
-  for (const name of ['ipcc', 'etkb']) {
-    // The dry run first, as an operator would (the factor-release-import skill).
-    const dry = await loader.load(read(name), { apply: false });
-    expect(['would_load', 'already_loaded']).toContain(dry.outcome);
-    const applied = await loader.load(read(name), { apply: true });
-    expect(['loaded', 'already_loaded']).toContain(applied.outcome);
-  }
+  await loadTrReleases();
   engine = new CalculationsService(connect(), INT_FACTOR_POLICY);
 }, 120_000);
 

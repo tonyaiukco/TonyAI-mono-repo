@@ -162,6 +162,7 @@
     "unapproved_record": "Records not approved",
     "unlocked_period": "Periods not locked",
     "non_authoritative_calculation": "Figures not on an authoritative factor release",
-    "gwp_set_mismatch": "More than one GWP set"
+    "gwp_set_mismatch": "More than one GWP set",
+    "no_included_obligation": "No included emission source"
   }
 }

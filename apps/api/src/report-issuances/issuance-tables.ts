@@ -62,6 +62,7 @@ const GAP_KEY: Record<ReportIssuanceGap['code'], IssuanceMessageKey> = {
   unlocked_period: 'gapUnlockedPeriod',
   non_authoritative_calculation: 'gapNonAuthoritativeCalculation',
   gwp_set_mismatch: 'gapGwpSetMismatch',
+  no_included_obligation: 'gapNoIncludedObligation',
 };
 const RECORD_STATUS_KEY: Record<string, IssuanceMessageKey> = {
   submitted: 'recordSubmitted', under_review: 'recordUnderReview', approved: 'recordApproved', locked: 'recordLocked',

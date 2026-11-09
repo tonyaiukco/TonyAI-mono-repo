@@ -23,9 +23,9 @@
 
 ## 5. Input bounds
 
-- [ ] 5.1 `naturalGasChain` refuses a typed NCV out of the scaled range and a volume factor out of 0.75–30; a release lacking a row answers `parameter_missing`; billed path and `rowsUsed` unchanged
-- [ ] 5.2 Wire both codes through the error registry, status map, catalogues and bulk row mapping (read `bulk-upload.service.ts`'s mapping first); a bulk `8.250` is refused in the dry run
-- [ ] 5.3 Update `calculations.service.spec.ts`'s extreme-value and missing-range cases; add boundary values, golden value and stale-draft specs; `docs/api/endpoints.md`, `docs/md_docs/calculation_logic.md`
+- [x] 5.1 `naturalGasChain` refuses a typed NCV out of the scaled range and a volume factor out of 0.75–30; a release lacking a row answers `parameter_missing`; billed path and `rowsUsed` unchanged
+- [x] 5.2 Wire both codes through the error registry, status map, catalogues and bulk row mapping (read `bulk-upload.service.ts`'s mapping first); a bulk `8.250` is refused in the dry run
+- [x] 5.3 Update `calculations.service.spec.ts`'s extreme-value and missing-range cases; add boundary values, golden value and stale-draft specs; `docs/api/endpoints.md`, `docs/md_docs/calculation_logic.md`
 
 ## 6. Counted final
 

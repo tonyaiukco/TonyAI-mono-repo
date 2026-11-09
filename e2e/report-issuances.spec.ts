@@ -19,7 +19,9 @@ const CATEGORIES = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', '
 
 /**
  * A confirmed holding version for YEAR: TonyAI Trading, every category excluded
- * with its reason — the final the factor library allows. `reuse` takes a
+ * with its reason, so an issuance is partial and names the gap. This suite loads
+ * no TR release, so it cannot reach a final: that is `report-issuance.int.spec.ts`
+ * and G4's hosted pass. `reuse` takes a
  * confirmed newest version as it is (only this spec writes YEAR), so a reader
  * test adds no version to a long-lived database.
  */
@@ -54,7 +56,7 @@ async function confirmedHoldingVersion(request: APIRequestContext, { reuse = fal
 
 const issuedUrl = `/reports?year=${YEAR}&subsidiaryId=all&scope=all&category=all&tab=issued`;
 
-test('issued reports: capture, check, issue a final and download its PDF, workbook and CSV', async ({ page, request }) => {
+test('issued reports: capture, check, issue an all-excluded inventory as partial and download its PDF, workbook and CSV', async ({ page, request }) => {
   const version = await confirmedHoldingVersion(request);
   await login(page, ADMIN_EMAIL);
   await page.goto(issuedUrl);
@@ -78,21 +80,22 @@ test('issued reports: capture, check, issue a final and download its PDF, workbo
 
   // Check: the gate's own derivation, nothing written.
   await dataset.getByRole('button', { name: 'Check' }).click();
-  await expect(dataset.getByTestId('issuance-preview')).toHaveText('Qualifies as a final report.');
+  await expect(dataset.getByTestId('issuance-preview')).toContainText('Partial — gaps that block a final report: 1.');
+  await expect(dataset.getByTestId('issuance-preview-gaps')).toContainText('No included emission source');
 
-  // Issue: a final, in English.
+  // Issue: a partial, in English.
   await dataset.getByRole('button', { name: 'Issue' }).click();
   const dialog = page.getByRole('dialog', { name: 'Issue a report' });
   await expect(dialog).toBeVisible();
   // The dialog says what it will issue before anything irreversible happens.
-  await expect(dialog.getByTestId('issuance-preview')).toHaveAttribute('data-status', 'final');
+  await expect(dialog.getByTestId('issuance-preview')).toHaveAttribute('data-status', 'partial');
   await dialog.getByRole('button', { name: 'Issue' }).click();
-  await expect(page.getByText('Final report issued').first()).toBeVisible();
+  await expect(page.getByText('Partial report issued').first()).toBeVisible();
 
-  // The newest issuance is first, final and current.
+  // The newest issuance is first, and partial: no figure to certify.
   const issued = page.getByTestId('issuance-row').first();
-  await expect(issued).toHaveAttribute('data-status', 'final');
-  await expect(issued).toContainText('Current final');
+  await expect(issued).toHaveAttribute('data-status', 'partial');
+  await expect(issued).not.toContainText('Current final');
   await expect(issued).toContainText('Executive Summary · English');
 
   // Its three files: the retained PDF, and the workbook and CSV of its retained dataset — one name.
@@ -105,7 +108,7 @@ test('issued reports: capture, check, issue a final and download its PDF, workbo
     const path = await download.path();
     expect(readFileSync(path!).subarray(0, 32).toString('utf8').startsWith(magic), button).toBe(true);
   }
-  expect(names[0]).toMatch(new RegExp(`^tonyai-report-${YEAR}-executive_summary-en-final-\\d{4}-\\d{2}-\\d{2}-[0-9a-f]{8}\\.pdf$`));
+  expect(names[0]).toMatch(new RegExp(`^tonyai-report-${YEAR}-executive_summary-en-partial-\\d{4}-\\d{2}-\\d{2}-[0-9a-f]{8}\\.pdf$`));
   expect(names.map((n) => n.replace(/\.[a-z]+$/, ''))).toEqual(Array(3).fill(names[0].replace(/\.pdf$/, '')));
   expect(names.map((n) => n.split('.').pop())).toEqual(['pdf', 'xlsx', 'csv']);
 });

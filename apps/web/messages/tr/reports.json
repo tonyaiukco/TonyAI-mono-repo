@@ -162,6 +162,7 @@
     "unapproved_record": "Onaylanmamış kayıtlar",
     "unlocked_period": "Kilitlenmemiş dönemler",
     "non_authoritative_calculation": "Yetkili bir faktör sürümüne dayanmayan rakamlar",
-    "gwp_set_mismatch": "Birden fazla GWP seti"
+    "gwp_set_mismatch": "Birden fazla GWP seti",
+    "no_included_obligation": "Dahil edilmiş emisyon kaynağı yok"
   }
 }

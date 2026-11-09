@@ -111,7 +111,7 @@ issuance's language with numeric figures and names the issuance, dataset,
 fingerprint, capture and issue times on its Summary (its file clock is the
 issue time; its labels are the catalogue's current words); the CSV opens with
 one `row_kind: issuance` row — the identity and status, every other cell empty
-— so an issuance with no ledger row (an all-excluded final, an empty extract)
+— so an issuance with no ledger row (an all-excluded inventory, an empty extract)
 still names itself, then carries the issuance, dataset, fingerprint and status
 on every row, the entity's `subsidiary_id` and `location_id`, then
 `calculation_inputs` and `scope2_market_based` last (LP4-02 PR5), and a withdrawn row's

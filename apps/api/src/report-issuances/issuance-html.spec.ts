@@ -83,19 +83,21 @@ describe('buildIssuanceHtml', () => {
     expect(scope1(html(zero))).toContain('<div class="v">0 <span class="u">tCO2e</span></div>');
   });
 
-  it('a final with no included source says so — never "Not calculated" under a final badge (`qa-auditor` P2-1)', () => {
+  it('a confirmed boundary with no included source is partial and says so — never "Not calculated" (Decisions 2026-11-09 (4))', () => {
     const dataset = datasetOf({ boundary: allExcludedBoundary(), records: [], locks: [] });
-    expect(deriveIssuance(dataset).status).toBe('final');
+    expect(deriveIssuance(dataset)).toMatchObject({ status: 'partial', gaps: [expect.objectContaining({ code: 'no_included_obligation' })] });
     for (const template of ['executive_summary', 'ghg_protocol_detail'] as const) {
       const page = html(dataset, { template });
       expect(page).toContain('<div class="v">No included source</div>');
       expect(page).not.toContain('Not calculated');
       expect(page).toContain('This boundary includes no emission source');
+      expect(page).toContain('No included emission source');
+      expect(page).not.toContain('class="badge final"');
       // The exclusions it rests on are in both templates.
       expect(page).toContain('<h2>Named exclusions</h2>');
       expect(page).toContain('<td>No operations</td>');
     }
-    // Not on a partial with no obligation either (`qa-auditor` re-review M7).
+    // An unconfirmed boundary has decided nothing, so it does not say so (`qa-auditor` re-review M7).
     const unconfirmed = datasetOf({ boundary: allExcludedBoundary('unconfirmed'), records: [], locks: [] });
     expect(deriveIssuance(unconfirmed).status).toBe('partial');
     expect(html(unconfirmed)).not.toContain('This boundary includes no emission source');

@@ -184,8 +184,8 @@ type Included = InventorySource & { applicability: 'included' };
 
 /**
  * The issuance's status and gaps from the retained dataset alone (D13; docs/api/report-datasets.md
- * "The issuance"). Final requires, of the selection's included obligations:
- * the inventory, its boundary confirmed and without a coverage gap (missing
+ * "The issuance"). Final requires at least one included obligation and, of the
+ * selection's included obligations: the inventory, its boundary confirmed and without a coverage gap (missing
  * records or evidence, attribution, applicability, unmapped records — the
  * dataset's own coverage gaps); every satisfying record approved or locked;
  * every obligation's period locked, matched exactly on (subsidiaryId,
@@ -200,6 +200,9 @@ export function deriveIssuance(dataset: ReportDataset): IssuanceStatus {
   const year = dataset.boundary.reportingYear;
 
   if (dataset.selection === 'extract') gaps.push(gap('filtered_extract'));
+  // An all-excluded inventory has no figure to certify (Decisions 2026-11-09 (4)).
+  // Here and not in the assessment, so retained datasets and fingerprints hold.
+  if (dataset.selection === 'inventory' && dataset.coverage.obligations.length === 0) gaps.push(gap('no_included_obligation'));
 
   // One per coverage gap, carrying its own code, entity and category.
   for (const g of dataset.coverage.gaps) gaps.push(coverageGap(g));

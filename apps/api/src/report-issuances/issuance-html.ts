@@ -54,6 +54,7 @@ const GAP_LABEL: Record<ReportIssuanceGapCode, IssuanceMessageKey> = {
   unlocked_period: 'gapUnlockedPeriod',
   non_authoritative_calculation: 'gapNonAuthoritativeCalculation',
   gwp_set_mismatch: 'gapGwpSetMismatch',
+  no_included_obligation: 'gapNoIncludedObligation',
 };
 
 const COVERAGE_LABEL: Record<ReportCoverageGapCode, IssuanceMessageKey> = {
@@ -244,7 +245,9 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     <span class="badge ${final ? 'final' : 'partial'}">${final ? t('statusFinal') : t('statusPartial')}</span></div>
 </header>
 <section class="status"><p>${final ? t('statusFinalNote') : t('statusPartialNote', { count: doc.gaps.length })}${
-  final && dataset.coverage.obligations.length === 0 ? ` ${t('finalNoSourcesNote')}` : ''}</p></section>
+  dataset.selection === 'inventory' && dataset.boundary.decision === 'confirmed' && dataset.coverage.obligations.length === 0
+    ? ` ${t('finalNoSourcesNote')}`
+    : ''}</p></section>
 ${final ? '' : `<h2>${t('gapsHeading')}</h2>${table([t('colGap'), t('colEntity'), t('colCategory'), t('colSources'), t('colObligations'), t('colRecords')], gapRows, [3, 4, 5])}`}
 <h2>${t('emissionsHeading')}</h2>
 <div class="tiles">${tile(scope1)}${tile(scope2)}</div>
