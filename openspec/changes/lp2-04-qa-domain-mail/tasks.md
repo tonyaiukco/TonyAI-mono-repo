@@ -2,12 +2,12 @@
 
 ## 1. Public hosts and one origin derivation (D1, D6)
 
-- [ ] 1.1 Add the parent domain `tonyai.io` to `infra/config/deployment-policy.json`, and add `public_origins(foundation)` with `public_hosts` validation to `terraform_run.py` (optional key in the foundation contract; hosts under the parent domain, distinct, `bound` boolean)
-- [ ] 1.2 Switch `candidate.py` (create/bind), `qa_autodeploy.py` (`foundation_from_env`, `bind_at`, `smoke`), `session_resources.py` and `check_browser_key.py` to `public_origins`
-- [ ] 1.3 `smoke-contract.mjs`: accept a bound pair of custom hosts under the parent domain, replacing the `-staging-web.` → `-staging-api.` rewrite with an explicit pair check
-- [ ] 1.4 `supabase_auth.py` / `auth_settings.py`: accept the custom web origin; the allow-list carries both origins' paths when bound
-- [ ] 1.5 `deploy-qa.yml`: optional `QA_WEB_HOST` / `QA_API_HOST` with fallback to today's origins
-- [ ] 1.6 Tests: unit tests for each script's absent, unbound, bound and outside-domain cases; update the existing fixtures
+- [x] 1.1 Add the parent domain `tonyai.io` to `infra/config/deployment-policy.json`, and add `public_origins(foundation)` with `public_hosts` validation to `terraform_run.py` (optional key in the foundation contract; hosts under the parent domain, distinct, `bound` boolean)
+- [x] 1.2 Switch `candidate.py` (create/bind), `qa_autodeploy.py` (`foundation_from_env`, `bind_at`, `smoke`), `session_resources.py` and `check_browser_key.py` to `public_origins`
+- [x] 1.3 `smoke-contract.mjs`: accept a bound pair of custom hosts under the parent domain, replacing the `-staging-web.` → `-staging-api.` rewrite with an explicit pair check
+- [x] 1.4 `supabase_auth.py` / `auth_settings.py`: accept the custom web origin; the allow-list carries both origins' paths when bound
+- [x] 1.5 `deploy-qa.yml`: optional `QA_WEB_HOST` / `QA_API_HOST` with fallback to today's origins
+- [x] 1.6 Tests: unit tests for each script's absent, unbound, bound and outside-domain cases; update the existing fixtures
 
 ## 2. Staged custom-domain binding (D2)
 

@@ -15,11 +15,14 @@ def validate_auth_settings(settings):
         raise SafeFailure('Auth must disable signup, anonymous, phone, SAML and all unused providers.')
 
 
-def managed_auth_settings(origin):
-    """Management API names for the LP4-01 policy in supabase/config.toml."""
+def managed_auth_settings(origin, public_web_host=None):
+    """Management API names for the LP4-01 policy in supabase/config.toml.
+
+    A bound public web host becomes the site URL; the generated origin stays allowed."""
+    origins = (('https://' + public_web_host,) if public_web_host else ()) + (origin,)
     return {
-        'site_url': origin,
-        'uri_allow_list': ','.join((origin, origin + '/login', origin + '/auth/confirm')),
+        'site_url': origins[0],
+        'uri_allow_list': ','.join(o + path for o in origins for path in ('', '/login', '/auth/confirm')),
         'disable_signup': True,
         # The provider switch also controls password sign-in. Keep it enabled.
         'external_email_enabled': True,
@@ -39,9 +42,9 @@ def managed_auth_settings(origin):
     }
 
 
-def validate_managed_auth_settings(settings, origin):
+def validate_managed_auth_settings(settings, origin, public_web_host=None):
     """Private management readback, never the reduced public /settings response."""
-    for key, expected in managed_auth_settings(origin).items():
+    for key, expected in managed_auth_settings(origin, public_web_host).items():
         if type(settings.get(key)) is not type(expected) or settings[key] != expected:
             raise SafeFailure('Auth lifecycle setting drift: ' + key + '.')
     if any(value is not False for key, value in settings.items()

@@ -43,8 +43,11 @@ jobs:
       VAULT_NAME: ${{ vars.QA_VAULT_NAME }}
       SUPABASE_PROJECT_REF: ${{ vars.QA_SUPABASE_PROJECT_REF }}
       SUPABASE_URL: https://${{ vars.QA_SUPABASE_PROJECT_REF }}.supabase.co
-      API_ORIGIN: https://${{ vars.QA_PREFIX }}-staging-api.${{ vars.QA_ACA_DEFAULT_DOMAIN }}
-      WEB_ORIGIN: https://${{ vars.QA_PREFIX }}-staging-web.${{ vars.QA_ACA_DEFAULT_DOMAIN }}
+      # Public hosts (LP2-04): set both only once their TLS binding is live; unset keeps the generated origins.
+      WEB_HOST: ${{ vars.QA_WEB_HOST }}
+      API_HOST: ${{ vars.QA_API_HOST }}
+      API_ORIGIN: ${{ vars.QA_API_HOST != '' && format('https://{0}', vars.QA_API_HOST) || format('https://{0}-staging-api.{1}', vars.QA_PREFIX, vars.QA_ACA_DEFAULT_DOMAIN) }}
+      WEB_ORIGIN: ${{ vars.QA_WEB_HOST != '' && format('https://{0}', vars.QA_WEB_HOST) || format('https://{0}-staging-web.{1}', vars.QA_PREFIX, vars.QA_ACA_DEFAULT_DOMAIN) }}
       # Public, build-time browser key; never a backend/service-role key.
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.QA_SUPABASE_PUBLIC_KEY }}
     steps:

@@ -12,6 +12,7 @@ from cloud_ops import secret
 from hosted_smoke import prepared
 from hosted_probe_runner import run as run_probe, validate_receipt_location
 from pooler import SafeFailure
+from public_hosts import public_host_env
 
 
 def run(candidate, inputs, journal, helper_sha, source):
@@ -22,7 +23,7 @@ def run(candidate, inputs, journal, helper_sha, source):
         check_inputs({'SUPABASE_PROJECT_REF': release['supabase_project_ref'], 'NEXT_PUBLIC_SUPABASE_ANON_KEY': public,
                       'PREFIX': foundation['prefix'], 'ACA_DEFAULT_DOMAIN': foundation['default_domain'],
                       'API_ORIGIN': candidate['api_origin'], 'NEXT_PUBLIC_API_BASE_URL': candidate['api_origin'] + '/api/v1',
-                      'NEXT_PUBLIC_SUPABASE_URL': 'https://' + release['supabase_project_ref'] + '.supabase.co'})
+                      'NEXT_PUBLIC_SUPABASE_URL': 'https://' + release['supabase_project_ref'] + '.supabase.co', **public_host_env(foundation)})
         user_id = getpass.getpass('Approved disposable Auth user UUID: ')
         if not re.fullmatch(r'[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}', user_id):
             raise SafeFailure('An exact approved disposable identity is required.')

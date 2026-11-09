@@ -31,7 +31,8 @@ def mail_environment(foundation, release):
     mail = validate_mail(release)
     if mail is None:
         return {}
-    origin = 'https://' + foundation['prefix'] + '-' + foundation['environment'] + '-web.' + foundation['default_domain']
+    from public_hosts import public_origins
+    origin = public_origins(foundation)['web']
     return {'SMTP_HOST': {'value': mail['host']}, 'SMTP_PORT': {'value': str(mail['port'])},
             'SMTP_SECURE': {'value': str(mail['secure']).lower()}, 'SMTP_USER': {'value': mail['user']},
             'SMTP_PASSWORD': {'secretRef': 'smtp-password'}, 'MAIL_FROM': {'value': mail['from']},

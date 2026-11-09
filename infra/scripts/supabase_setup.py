@@ -28,7 +28,7 @@ def transfer_runtime(api, vault, ref, journal):
 def run(args):
     config = json.loads(Path(args.config).read_text())
     required = {'organization_id', 'organization_slug', 'name', 'vault', 'web_origin'}
-    if set(config) != required or not all(isinstance(v, str) and v and '<' not in v for v in config.values()):
+    if set(config) - {'public_web_host'} != required or not all(isinstance(v, str) and v and '<' not in v for v in config.values()):
         raise SafeFailure('Complete the nonsecret Supabase configuration first.')
     if not all(re.fullmatch(r'[a-zA-Z0-9_-]+', config[k]) for k in ('organization_id', 'organization_slug', 'name')):
         raise SafeFailure('Invalid project or organization identifier.')
@@ -68,7 +68,7 @@ def run(args):
                       and key.get('algorithm') in ('ES256', 'RS256')]
             if len(active) != 1:
                 raise SafeFailure('Auth reconciliation needs exactly one active asymmetric signing key; inspect before rotating.')
-            configure_auth(api, ref, config['web_origin'], public, active[0]['id'])
+            configure_auth(api, ref, config['web_origin'], public, active[0]['id'], config.get('public_web_host'))
             print('PASS: existing hosted Auth policy and public JWKS reconciled; no secret transfer or key rotation.')
             return
         if journal.data.get('configured'):
@@ -76,7 +76,7 @@ def run(args):
             return
         public, versions = transfer_runtime(api, vault, ref, journal)
         signing = ensure_signing_key(api, ref, journal)
-        configure_auth(api, ref, config['web_origin'], public, signing)
+        configure_auth(api, ref, config['web_origin'], public, signing, config.get('public_web_host'))
         journal.set(versions=versions, configured=True)
         print('PASS: Stockholm project, private buckets, Auth/JWKS and vault bindings reconciled.')
         print('Project reference: ' + ref + '; version IDs are in the nonsecret journal.')

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { validateSmoke } from '../scripts/smoke-contract.mjs';
+import { readFileSync } from 'node:fs';
+import { PUBLIC_PARENT_DOMAIN, validateSmoke } from '../scripts/smoke-contract.mjs';
 
 const fixture = () => ({
   mode: 'staging', sourceSha: 'a'.repeat(40), projectRef: 'abcdefghijklmnopqrst',
@@ -46,4 +47,30 @@ test('local demo mode requires CI and three exact loopback origins', () => {
       assert.throws(() => validateSmoke({ ...target, [field]: 'https://project.invalid' }));
     }
   } finally { if (previous === undefined) delete process.env.CI; else process.env.CI = previous; }
+});
+
+const publicFixture = () => ({ ...fixture(), web: 'https://qa.tonyai.io', api: 'https://api.qa.tonyai.io/api/v1' });
+
+test('a bound public host pair under the parent domain is accepted', () => {
+  assert.equal(validateSmoke(publicFixture()).web, 'https://qa.tonyai.io');
+});
+
+test('public hosts outside the parent domain, reused or unpaired are refused', () => {
+  for (const change of [
+    { web: 'https://qa.example.com' },
+    { api: 'https://api.qa.example.com/api/v1' },
+    { web: 'https://qa.tonyai.io.evil.com' },
+    { api: 'https://qa.tonyai.io/api/v1' },
+    { api: 'https://api.qa.tonyai.io' },
+    { api: 'https://tonyai-staging-api.real.swedencentral.azurecontainerapps.io/api/v1' },
+    { web: 'https://tonyai.io' },
+    { web: 'http://qa.tonyai.io' },
+  ]) {
+    assert.throws(() => validateSmoke({ ...publicFixture(), ...change }), /Invalid staging smoke target/, JSON.stringify(change));
+  }
+});
+
+test('the inlined parent domain matches the reviewed config', () => {
+  const config = JSON.parse(readFileSync(new URL('../config/public-hosts.json', import.meta.url), 'utf8'));
+  assert.equal(PUBLIC_PARENT_DOMAIN, config.parent_domain);
 });

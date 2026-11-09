@@ -16,6 +16,7 @@ from check_browser_key import check_inputs
 from cloud_ops import secret, request, write_private_journal
 from deploy_apps import verify
 from pooler import SafeFailure, validate_pooler
+from public_hosts import public_host_env
 from terraform_run import ROOT
 
 
@@ -143,7 +144,7 @@ def execute(candidate, inputs, journal_path, cleanup_only=False, direct_secret_v
     check_inputs({'SUPABASE_PROJECT_REF': r['supabase_project_ref'], 'NEXT_PUBLIC_SUPABASE_ANON_KEY': public,
                   'PREFIX': f['prefix'], 'ACA_DEFAULT_DOMAIN': f['default_domain'],
                   'API_ORIGIN': candidate['api_origin'], 'NEXT_PUBLIC_API_BASE_URL': candidate['api_origin'] + '/api/v1',
-                  'NEXT_PUBLIC_SUPABASE_URL': 'https://' + r['supabase_project_ref'] + '.supabase.co'})
+                  'NEXT_PUBLIC_SUPABASE_URL': 'https://' + r['supabase_project_ref'] + '.supabase.co', **public_host_env(f)})
     target = target_for(candidate)
     # Intent is durable before any Auth POST; no passwords/tokens in this file.
     journal = {'candidate': candidate, 'target': target, 'auth_create_observations': []}

@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pooler import SafeFailure
 from terraform_run import ROOT, validate_release
+from public_hosts import hosts_from_env, public_origins
 
 
 def fingerprint(root=ROOT):
@@ -40,7 +41,8 @@ def create(sha, api_digest, web_digest, env=os.environ):
             or not re.fullmatch(r'[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io', domain)
             or not re.fullmatch(r'[a-z0-9]{5,50}', env.get('ACR_NAME', ''))):
         raise SafeFailure('Invalid staging build contract.')
-    origins = {kind + '_origin': 'https://' + prefix + '-staging-' + kind + '.' + domain for kind in ('api', 'web')}
+    target = {'prefix': prefix, 'environment': 'staging', 'default_domain': domain, 'public_hosts': hosts_from_env(env)}
+    origins = {kind + '_origin': origin for kind, origin in public_origins(target).items()}
     if any(env.get(key.upper()) != value for key, value in origins.items()) or env.get('ACR_HOST') != env['ACR_NAME'] + '.azurecr.io':
         raise SafeFailure('Build origins or registry differ from the contract.')
     return {'schema': 1, 'environment': 'staging', 'source_sha': sha,
@@ -56,8 +58,11 @@ def bind(candidate, inputs, sha):
     env = {'SUPABASE_PROJECT_REF': release['supabase_project_ref'], 'PREFIX': foundation['prefix'],
            'ACA_DEFAULT_DOMAIN': foundation['default_domain'], 'ACR_NAME': foundation['registry_name'],
            'ACR_HOST': foundation['registry_name'] + '.azurecr.io'}
-    for kind in ('api', 'web'):
-        env[kind.upper() + '_ORIGIN'] = 'https://' + foundation['prefix'] + '-staging-' + kind + '.' + foundation['default_domain']
+    hosts = foundation.get('public_hosts')
+    if hosts and hosts['bound']:
+        env.update(WEB_HOST=hosts['web'], API_HOST=hosts['api'])
+    for kind, origin in public_origins(foundation).items():
+        env[kind.upper() + '_ORIGIN'] = origin
     expected = create(sha, release['api_digest'], release['web_digest'], env)
     if candidate != expected:
         raise SafeFailure('Candidate provenance differs from source, migrations, lockfile or release target.')

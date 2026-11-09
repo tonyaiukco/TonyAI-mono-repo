@@ -46,6 +46,8 @@ jobs:
       RESOURCE_GROUP: ${{ vars.QA_RESOURCE_GROUP }}
       PREFIX: ${{ vars.QA_PREFIX }}
       ACA_DEFAULT_DOMAIN: ${{ vars.QA_ACA_DEFAULT_DOMAIN }}
+      WEB_HOST: ${{ vars.QA_WEB_HOST }}
+      API_HOST: ${{ vars.QA_API_HOST }}
       ACR_NAME: ${{ vars.QA_ACR_NAME }}
       VAULT_NAME: ${{ vars.QA_VAULT_NAME }}
       SUPABASE_PROJECT_REF: ${{ vars.QA_SUPABASE_PROJECT_REF }}

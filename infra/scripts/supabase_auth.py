@@ -2,6 +2,7 @@
 import json
 import re
 from auth_settings import managed_auth_settings, validate_auth_settings, validate_managed_auth_settings
+from public_hosts import is_public_host
 from cloud_ops import request, require_success
 from pooler import SafeFailure
 
@@ -35,19 +36,21 @@ def ensure_signing_key(api, ref, journal):
     return identity
 
 
-def configure_auth(api, ref, origin, public_key, signing_id):
+def configure_auth(api, ref, origin, public_key, signing_id, public_web_host=None):
     if not re.fullmatch(r'https://[a-z0-9-]+\.[a-z0-9-]+\.swedencentral\.azurecontainerapps\.io', origin):
         raise SafeFailure('Expected an exact HTTPS Azure staging origin.')
+    if public_web_host is not None and not is_public_host(public_web_host):
+        raise SafeFailure('Public web host must be a DNS name under the reviewed parent domain.')
     path = '/v1/projects/' + ref + '/config/auth'
     current = api(path)  # May contain secrets: stays in process memory, never saved.
     desired = {key: False for key in current if key.startswith('external_') and key.endswith('_enabled')}
-    desired.update(managed_auth_settings(origin))
+    desired.update(managed_auth_settings(origin, public_web_host))
     changed = any(type(current.get(key)) is not type(value) or current[key] != value
                   for key, value in desired.items())
     if changed:
         api(path, 'PATCH', desired)
     actual = api(path)
-    validate_managed_auth_settings(actual, origin)
+    validate_managed_auth_settings(actual, origin, public_web_host)
     base = 'https://' + ref + '.supabase.co/auth/v1'
     settings = json.loads(require_success(request(base + '/settings', key=public_key)))
     validate_auth_settings(settings)
