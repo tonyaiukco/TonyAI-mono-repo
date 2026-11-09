@@ -31,14 +31,14 @@ The ACS email configuration SHALL support a CustomerManaged domain with a config
 
 #### Scenario: DNS contract before verification
 - **WHEN** foundation is applied with a custom domain that is not yet verified
-- **THEN** its output lists the Domain, SPF, DKIM and DKIM2 records, the CNAME and `asuid` records for each public host, and the sender is still on the managed domain
+- **THEN** its output lists the Domain, SPF, DKIM and DKIM2 records, the CNAME record and `asuid` host name for each public host, and the sender is still on the managed domain
 
 #### Scenario: Verified domain
 - **WHEN** `custom_domain_verified` is true and the sender username is `no-reply`
 - **THEN** the Communication service links the custom domain and the email contract's sender is `no-reply@tonyai.io`
 
 ### Requirement: Availability tests alert the operator
-Hosted QA SHALL run a standard availability test on the API health path and one on the web login path from several locations. Each test SHALL have a metric alert routed to the operator action group. The monitoring readback SHALL fail when a test is disabled, targets an unexpected URL, or has no enabled, routed alert.
+Hosted QA SHALL run a standard availability test on the API readiness path and one on the web login path from several locations. Each test SHALL have a metric alert routed to the operator action group. The monitoring readback SHALL fail when a test is disabled, targets an unexpected URL, or has no enabled, routed alert.
 
 #### Scenario: Tests read back
 - **WHEN** the monitoring readback runs after the foundation apply

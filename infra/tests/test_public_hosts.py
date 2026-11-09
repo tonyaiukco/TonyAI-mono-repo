@@ -8,6 +8,7 @@ from pooler import SafeFailure
 from public_hosts import (generated_origins, hosts_from_env, public_host_env, public_origins,
                           validate_public_hosts, web_origins)
 from terraform_run import validate_release
+from foundation_contract import validate_foundation
 
 FOUNDATION = {'subscription_id': '00000000-0000-0000-0000-000000000001',
               'tenant_id': '00000000-0000-0000-0000-000000000002', 'environment': 'staging',
@@ -75,6 +76,25 @@ class PublicHostsTests(unittest.TestCase):
             with self.subTest(env=env), self.assertRaises(SafeFailure):
                 hosts_from_env(env)
 
+
+    def test_foundation_contract_accepts_hosts_and_sender_and_refuses_the_rest(self):
+        config = {'subscription_id': '00000000-0000-0000-0000-000000000001', 'tenant_id': '00000000-0000-0000-0000-000000000002',
+                  'owner_object_id': '00000000-0000-0000-0000-000000000003', 'environment': 'staging', 'prefix': 'tonyai',
+                  'resource_group': 'staging', 'registry_name': 'registry', 'vault_name': 'vault',
+                  'repository': 'owner/repo', 'release_sha': 'a' * 40,
+                  'email': {'client_id': '00000000-0000-0000-0000-000000000010', 'principal_id': '00000000-0000-0000-0000-000000000011',
+                            'tenant_id': '00000000-0000-0000-0000-000000000002', 'custom_domain': 'tonyai.io'}}
+        validate_foundation({'config': config})
+        for hosts in (HOSTS, {**HOSTS, 'certificates': True}):
+            validate_foundation({'config': {**config, 'public_hosts': hosts}})
+        validate_foundation({'config': {**config, 'email': {**config['email'], 'sender_username': 'no-reply'}}})
+        for bad in ({**HOSTS, 'web': 'qa.evil.io'}, {**HOSTS, 'certificates': 'yes'}, {**HOSTS, 'bound': True},
+                    {'web': 'qa.tonyai.io'}, {**HOSTS, 'api': 'qa.tonyai.io'}, 'qa.tonyai.io'):
+            with self.subTest(hosts=bad), self.assertRaises(SafeFailure):
+                validate_foundation({'config': {**config, 'public_hosts': bad}})
+        for sender in ('no reply', 'no-reply@tonyai.io', '', '-x', 'a' * 65, 1):
+            with self.subTest(sender=sender), self.assertRaises(SafeFailure):
+                validate_foundation({'config': {**config, 'email': {**config['email'], 'sender_username': sender}}})
 
 if __name__ == '__main__':
     unittest.main()

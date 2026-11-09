@@ -13,7 +13,10 @@ ALLOWED = {
         'Microsoft.Authorization/roleDefinitions', 'Microsoft.App/jobs',
         'Microsoft.Insights/actionGroups', 'Microsoft.Insights/scheduledQueryRules', 'Microsoft.Insights/metricAlerts',
         'Microsoft.Communication/emailServices', 'Microsoft.Communication/emailServices/domains',
-        'Microsoft.Communication/communicationServices', 'Microsoft.Communication/communicationServices/smtpUsernames'},
+        'Microsoft.Communication/communicationServices', 'Microsoft.Communication/communicationServices/smtpUsernames',
+        # LP2-04: sender name on the verified domain, managed TLS for public hosts, availability tests.
+        'Microsoft.Communication/emailServices/domains/senderUsernames', 'Microsoft.App/managedEnvironments/managedCertificates',
+        'Microsoft.Insights/components', 'Microsoft.Insights/webtests'},
     'application': {'Microsoft.App/containerApps'},
     'selfhost': {'Microsoft.Resources/resourceGroups', 'Microsoft.Network/virtualNetworks',
         'Microsoft.Network/networkSecurityGroups',

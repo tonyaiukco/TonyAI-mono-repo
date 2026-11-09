@@ -37,6 +37,15 @@ resource "azapi_resource" "email_custom_domain" {
   response_export_values = ["properties.mailFromSenderDomain", "properties.verificationRecords"]
   lifecycle { prevent_destroy = true }
 }
+# A custom sender exists only on a verified domain; ACS's DoNotReply needs no resource.
+resource "azapi_resource" "sender" {
+  for_each               = { for key, email in local.email : key => email if email.custom_domain_verified && email.sender_username != "DoNotReply" }
+  type                   = "Microsoft.Communication/emailServices/domains/senderUsernames@2023-03-31"
+  name                   = each.value.sender_username
+  parent_id              = azapi_resource.email_custom_domain[each.key].id
+  body                   = { properties = { username = each.value.sender_username, displayName = "TonyAI" } }
+  response_export_values = []
+}
 resource "azapi_resource" "communication" {
   for_each  = local.email
   type      = "Microsoft.Communication/communicationServices@2023-03-31"
@@ -99,7 +108,7 @@ output "email_contract" {
   value = { for key, email in local.email : key => {
     host                       = "smtp.azurecomm.net", port = 587, secure = false
     username                   = azapi_resource.smtp_username[key].body.properties.username
-    sender                     = "DoNotReply@${email.custom_domain_verified ? azapi_resource.email_custom_domain[key].output.properties.mailFromSenderDomain : azapi_resource.email_domain[key].output.properties.mailFromSenderDomain}"
+    sender                     = email.custom_domain_verified ? "${email.sender_username}@${azapi_resource.email_custom_domain[key].output.properties.mailFromSenderDomain}" : "DoNotReply@${azapi_resource.email_domain[key].output.properties.mailFromSenderDomain}"
     custom_domain_verification = try(azapi_resource.email_custom_domain[key].output.properties.verificationRecords, null)
   } }
 }

@@ -178,7 +178,7 @@ MUTANTS = [
     ('deployed secret identity readback removed', 'deploy_apps.py',
      " or actual[name].get('identity') != identity", ''),
     ('Auth exact-origin and lifecycle readback removed', 'supabase_auth.py',
-     '    validate_managed_auth_settings(actual, origin)', '    pass'),
+     '    validate_managed_auth_settings(actual, origin, public_web_host)', '    pass'),
     ('unrecorded app adoption restored', 'configure_oidc.py',
      "        if apps:\n            raise SafeFailure('Unrecorded Entra app already uses the staging name; refusing adoption.')\n        app = az(",
      "        app = apps[0] if apps else az("),

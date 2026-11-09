@@ -11,33 +11,33 @@
 
 ## 2. Staged custom-domain binding (D2)
 
-- [ ] 2.1 Application root: `public_hosts` in the `foundation` variable (validated), `customDomains` per stage, `WEB_ORIGIN` / `APP_URL` from the bound origins, and the deterministic `certificateId`
-- [ ] 2.2 Foundation root: export `customDomainVerificationId`; `public_hosts` with a `certificates` switch; one `managedCertificates` per host
-- [ ] 2.3 `deploy_apps.py` readback of the custom-domain stage; confirm `qa_autodeploy` verification keeps the binding
-- [ ] 2.4 Allowlist `Microsoft.App/managedEnvironments/managedCertificates` in `check_terraform_policy.py`; tftests for the three stages
+- [x] 2.1 Application root: `public_hosts` in the `foundation` variable (validated), `customDomains` per stage, `WEB_ORIGIN` / `APP_URL` from the bound origins, and the deterministic `certificateId`
+- [x] 2.2 Foundation root: export `customDomainVerificationId`; `public_hosts` with a `certificates` switch; one `managedCertificates` per host
+- [x] 2.3 `deploy_apps.py` readback of the custom-domain stage; confirm `qa_autodeploy` verification keeps the binding
+- [x] 2.4 Allowlist `Microsoft.App/managedEnvironments/managedCertificates` in `check_terraform_policy.py`; tftests for the three stages
 
 ## 3. Mail from the custom domain (D3, D5)
 
-- [ ] 3.1 Foundation: `email.sender_username` and `senderUsernames` resource; `email_contract.sender` follows it; allowlist the type
-- [ ] 3.2 `dns_contract` output: ACS records mapped to Namecheap host and value (SPF rendered as the merged root record), CNAME and `asuid` rows
-- [ ] 3.3 `mail_settings.py`: accept a sender on the linked custom domain; tests
+- [x] 3.1 Foundation: `email.sender_username` and `senderUsernames` resource; `email_contract.sender` follows it; allowlist the type
+- [x] 3.2 `dns_contract` output: ACS records mapped to Namecheap host and value (SPF rendered as the merged root record), CNAME and `asuid` rows
+- [x] 3.3 `mail_settings.py`: accept a sender on the linked custom domain; tests
 
 ## 4. Availability tests (D4)
 
-- [ ] 4.1 Confirm the 3 EU location IDs and the current per-execution price from Microsoft's documentation
-- [ ] 4.2 Foundation: App Insights component (workspace-based, local auth off), two standard web tests with the `hidden-link` tag, two metric alerts routed to `operator`; allowlist the types
-- [ ] 4.3 `monitoring_readback.py`: versions and checks for tests and alerts; tests including a disabled test
+- [x] 4.1 Confirm the 3 EU location IDs and the current per-execution price from Microsoft's documentation
+- [x] 4.2 Foundation: App Insights component (workspace-based, local auth off), two standard web tests with the `hidden-link` tag, two metric alerts routed to `operator`; allowlist the types
+- [x] 4.3 `monitoring_readback.py`: versions and checks for tests and alerts; tests including a disabled test
 
 ## 5. Hosted no-demo check (D7)
 
-- [ ] 5.1 `infra/scripts/hosted_no_demo_check.sql`, read-only, one row per check
-- [ ] 5.2 Drift test binding its identifiers to `seed.ts` and `factor-library.ts`
+- [x] 5.1 `infra/scripts/hosted_no_demo_check.sql`, read-only, one row per check
+- [x] 5.2 Drift test binding its identifiers to `seed.ts` and `factor-library.ts`
 
 ## 6. Docs and planning file
 
-- [ ] 6.1 Runbook 11: cutover procedure (Migration Plan steps 1–9), DNS table, "edit SPF, never add", rollback
-- [ ] 6.2 Example configs (`foundation.example.json`, `application.example.json`, `supabase.example.json`), `terraform/README.md` (the App Insights exception), and `docs/architecture/` where hosting or observability is described
-- [ ] 6.3 Planning file: Decisions 2026-11-09 (domain, hostnames, sender, App Insights exception, QA-only scope, prod deploy removed from LP2-04), LP2-04 card and ledger, Current status, Next up, Open questions (Gmail spam now addressed by this change)
+- [x] 6.1 Runbook 11: cutover procedure (Migration Plan steps 1–9), DNS table, "edit SPF, never add", rollback
+- [x] 6.2 Example configs (`foundation.example.json`, `application.example.json`, `supabase.example.json`), `terraform/README.md` (the App Insights exception), and `docs/architecture/` where hosting or observability is described
+- [x] 6.3 Planning file: Decisions 2026-11-09 (domain, hostnames, sender, App Insights exception, QA-only scope, prod deploy removed from LP2-04), LP2-04 card and ledger, Current status, Next up, Open questions (Gmail spam now addressed by this change)
 
 ## 7. Verification and review
 

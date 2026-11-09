@@ -21,6 +21,7 @@ S = 'tonyaiqt-staging'
 LOGS = GROUP + 'Microsoft.OperationalInsights/workspaces/' + S + '-logs'
 API = GROUP + 'Microsoft.App/containerApps/' + S + '-api'
 OPERATOR = GROUP + 'Microsoft.Insights/actionGroups/' + S + '-operator'
+COMPONENT = GROUP + 'Microsoft.Insights/components/' + S + '-availability'
 IMAGE = 'tonyaiqtacr.azurecr.io/tonyai/api@sha256:' + '1' * 64
 WORKSPACE = '11111111-2222-3333-4444-555555555555'
 
@@ -44,7 +45,20 @@ def wired():
             'enabled': True, 'scopes': [LOGS], 'actions': {'actionGroups': [OPERATOR]}}},
         **{GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-api-' + suffix: {'properties': {
             'enabled': True, 'scopes': [API], 'actions': [{'actionGroupId': OPERATOR}]}} for suffix in ('http-5xx', 'restarts')},
+        COMPONENT: {'id': COMPONENT, 'properties': {'IngestionMode': 'LogAnalytics', 'WorkspaceResourceId': LOGS}},
+        **availability('https://' + S + '-api.' + ENV['ACA_DEFAULT_DOMAIN'], 'https://' + S + '-web.' + ENV['ACA_DEFAULT_DOMAIN']),
     }
+
+
+def availability(api, web):
+    resources = {}
+    for kind, url in (('api', api + '/api/v1/health/ready'), ('web', web + '/login')):
+        test = GROUP + 'Microsoft.Insights/webtests/' + S + '-' + kind + '-availability'
+        resources[test] = {'id': test, 'properties': {'Enabled': True, 'Request': {'RequestUrl': url},
+                                                      'ValidationRules': {'SSLCheck': True}}}
+        resources[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-' + kind + '-availability'] = {'properties': {
+            'enabled': True, 'criteria': {'webTestId': test.upper()}, 'actions': [{'actionGroupId': OPERATOR}]}}
+    return resources
 
 
 class FakeAz:
@@ -80,7 +94,7 @@ class ReadbackTests(unittest.TestCase):
     def test_wired_chain_passes_every_link_with_counts_only(self):
         results, az = run()
         self.assertTrue(all(status == 'PASS' for status, _ in results.values()), results)
-        self.assertEqual(len(results), 11)
+        self.assertEqual(len(results), 16)
         self.assertEqual(results['ContainerAppConsoleLogs rows in 26h'], ('PASS', '40 row(s)'))
         self.assertEqual(results['operator action group'], ('PASS', '1 email receiver(s)'))
         text = json.dumps(results)
@@ -184,6 +198,28 @@ class ReadbackTests(unittest.TestCase):
         for link in ('storage-verify log alert', 'API restarts metric alert', 'operator action group'):
             self.assertEqual(results[link][0], 'FAIL', link)
         self.assertEqual(results['API http-5xx metric alert'][0], 'PASS')
+
+    def test_availability_tests_and_alerts_are_checked_per_host(self):
+        resources = wired()
+        resources[GROUP + 'Microsoft.Insights/webtests/' + S + '-web-availability']['properties']['Enabled'] = False
+        resources[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-api-availability']['properties']['actions'] = []
+        results, _ = run(resources)
+        self.assertEqual(results['web availability test'][0], 'FAIL')
+        self.assertEqual(results['api availability alert'][0], 'FAIL')
+        self.assertEqual(results['api availability test'][0], 'PASS')
+        resources = wired()
+        del resources[COMPONENT]
+        self.assertEqual(run(resources)[0]['availability component'][0], 'FAIL')
+
+    def test_bound_hosts_expect_the_tests_on_the_public_origins(self):
+        bound = mr.foundation_from_env({**ENV, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io'})
+        def links(resources):
+            az = FakeAz(resources)
+            return {link: status for status, link, _ in mr.readback(bound, mr.Reader(bound, az))}
+        stale = links(wired())
+        self.assertEqual((stale['api availability test'], stale['web availability test']), ('FAIL', 'FAIL'))
+        moved = links({**wired(), **availability('https://api.qa.tonyai.io', 'https://qa.tonyai.io')})
+        self.assertTrue(all(status == 'PASS' for status in moved.values()), moved)
 
     def test_only_reads(self):
         _, az = run()

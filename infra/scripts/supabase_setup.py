@@ -51,7 +51,8 @@ def run(args):
             raise SafeFailure('Unexpected management API path.')
         return json_request('https://api.supabase.com' + path, method, token, body)
     vault = Vault(config['vault'])
-    journal = Journal(args.journal, config)
+    # The journal stays bound to the original target; a later public host must not orphan it.
+    journal = Journal(args.journal, {k: v for k, v in config.items() if k != 'public_web_host'})
     try:
         reconcile_only = getattr(args, 'reconcile_auth_only', False)
         if reconcile_only and (journal.data.get('configured') is not True
@@ -68,7 +69,7 @@ def run(args):
                       and key.get('algorithm') in ('ES256', 'RS256')]
             if len(active) != 1:
                 raise SafeFailure('Auth reconciliation needs exactly one active asymmetric signing key; inspect before rotating.')
-            configure_auth(api, ref, config['web_origin'], public, active[0]['id'], config.get('public_web_host'))
+            configure_auth(api, ref, config['web_origin'], public, active[0]['id'], public_web_host=config.get('public_web_host'))
             print('PASS: existing hosted Auth policy and public JWKS reconciled; no secret transfer or key rotation.')
             return
         if journal.data.get('configured'):
@@ -76,7 +77,7 @@ def run(args):
             return
         public, versions = transfer_runtime(api, vault, ref, journal)
         signing = ensure_signing_key(api, ref, journal)
-        configure_auth(api, ref, config['web_origin'], public, signing, config.get('public_web_host'))
+        configure_auth(api, ref, config['web_origin'], public, signing, public_web_host=config.get('public_web_host'))
         journal.set(versions=versions, configured=True)
         print('PASS: Stockholm project, private buckets, Auth/JWKS and vault bindings reconciled.')
         print('Project reference: ' + ref + '; version IDs are in the nonsecret journal.')

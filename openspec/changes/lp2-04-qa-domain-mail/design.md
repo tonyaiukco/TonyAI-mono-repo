@@ -18,8 +18,8 @@ ACS already models a CustomerManaged domain. It is linked to the Communication s
 
 ### D1. One `public_hosts` input, one derivation
 
-- **The input.** The application root's `foundation` contract gains an optional `public_hosts = { web, api, bound }`. Each host must be a lowercase DNS name under `tonyai.io`; that parent domain is the one constant, kept in `infra/config/deployment-policy.json`. The web and API hosts must differ.
-- **One derivation per language.** Python gets `public_origins(foundation)` in `terraform_run.py`, beside `validate_release`, and every Python caller uses it. `smoke-contract.mjs` mirrors the same rule.
+- **The input.** The application root's `foundation` contract gains an optional `public_hosts = { web, api, bound }`. Each host must be a lowercase DNS name under `tonyai.io`; that parent domain is the one constant, kept in `infra/config/public-hosts.json`. It is not in `deployment-policy.json`, whose hash the paused self-hosted receipts pin. `smoke-contract.mjs` inlines it, because it is copied flat into sealed probe bundles, and a test binds the two. The web and API hosts must differ.
+- **One derivation per language.** Python gets `public_origins(foundation)` in `infra/scripts/public_hosts.py`, validated by `validate_release`, and every Python caller uses it. `smoke-contract.mjs` mirrors the same rule.
 - **Before binding.** While `public_hosts` is absent or `bound = false`, the origins are the generated ones, exactly as today.
 - **After binding (`bound = true`):**
   - The public origins are the custom hosts.
@@ -37,7 +37,7 @@ ACA issues a managed certificate only for a hostname that is already on an app, 
 2. **Foundation, `public_hosts.certificates = true`:** `Microsoft.App/managedEnvironments/managedCertificates`, one per host, named `<stem>-<kind>-cert`, with `subjectName` set to the host and `domainControlValidation = "CNAME"`.
 3. **Application, `bound = true`:** `bindingType = "SniEnabled"`, plus `certificateId` built from the environment ID and the deterministic name. The application root never reads foundation state.
 
-**Where things live.** The certificates are environment children, so they belong in the foundation lane. The deployer identity keeps only Reader and join on the environment. The environment exports `customDomainConfiguration.customDomainVerificationId`, and a new `dns_contract` output lists every record the owner enters (D5).
+**Where things live.** The certificates are environment children, so they belong in the foundation lane. The deployer identity keeps only Reader and join on the environment. The environment resource itself is not touched: changing its exported values would risk an in-place PUT of a `prevent_destroy` resource. The `asuid` verification ID is read with `az containerapp env show` (read-only), and a new `dns_contract` output lists the other records the owner enters (D5).
 
 **Readback.** `deploy_apps.py` and `qa_autodeploy.verify` (through `comparable`) check that `customDomains` matches the stage exactly. Autodeploy's merge patch never sends `ingress`, so it preserves the binding.
 
@@ -51,7 +51,7 @@ ACA issues a managed certificate only for a hostname that is already on an app, 
 ### D4. Availability tests
 
 - **Component.** `Microsoft.Insights/components` (`kind = web`, `WorkspaceResourceId` set to the existing workspace, `IngestionMode = LogAnalytics`, `DisableLocalAuth = true`). No SDK writes to it.
-- **Tests.** Two `Microsoft.Insights/webtests` of kind `standard`: GET `/api/v1/health` and GET `/login`, expecting 200, with an SSL check and a warning 7 days before certificate expiry. They run every 900 s from 3 EU locations (exact location IDs are confirmed from Microsoft's list during implementation), with retries on. Each test carries the required `hidden-link:<component>` tag.
+- **Tests.** Two `Microsoft.Insights/webtests` of kind `standard`: GET `/api/v1/health/ready` (the documented uptime target, `docs/architecture/observability.md`) and GET `/login`, expecting 200, with an SSL check and a warning 7 days before certificate expiry. They run every 900 s from West Europe (`emea-nl-ams-azr`), North Europe (`emea-gb-db3-azr`) and France Central (`emea-fr-pra-edge`), confirmed from Microsoft's population-tag table, with retries on. Each test carries the required `hidden-link:<component>` tag.
 - **What they target.** The custom hosts once `public_hosts.certificates` is set in the foundation config; until then, the generated FQDNs.
 - **Alerting.** One `metricAlerts` rule per test, using `WebtestLocationAvailabilityCriteria` with `failedLocationCount = 2`, routed to the existing `operator` action group.
 - **Readback.** `monitoring_readback.py` gains the three types in `VERSIONS` and checks that each test is enabled, targets the expected URL, and has its alert enabled and routed.
@@ -64,7 +64,7 @@ The `dns_contract` output contains only nonsecret records:
 - the four ACS `verificationRecords` (Domain TXT, SPF, DKIM, DKIM2), mapped to Namecheap host and value,
 - `qa` CNAME → `<stem>-web.<default_domain>`,
 - `api.qa` CNAME → `<stem>-api.<default_domain>`,
-- `asuid.qa` and `asuid.api.qa` TXT → the verification ID.
+- `asuid.qa` and `asuid.api.qa` TXT → the verification ID, read with `az` (D2).
 
 The SPF row is rendered as the merged value with the instruction to edit the existing record. Runbook 11 gets the same table.
 
@@ -100,5 +100,4 @@ The SPF row is rendered as the merged value with the instruction to edit the exi
 
 ## Open Questions
 
-- The exact availability-test location IDs for 3 EU locations, confirmed from Microsoft's list during implementation.
 - Whether ACA requires the `asuid` TXT before the `Disabled` add (documented as yes). Claude checks DNS before step 5 either way.

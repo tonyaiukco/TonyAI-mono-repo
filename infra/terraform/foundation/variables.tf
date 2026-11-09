@@ -17,7 +17,8 @@ variable "config" {
       var.config.email.tenant_id == var.config.tenant_id &&
       !contains([var.config.owner_object_id, var.config.deployer_object_id], var.config.email.principal_id) &&
       (!var.config.email.custom_domain_verified || var.config.email.custom_domain != null) &&
-      (var.config.email.custom_domain == null ? true : length(var.config.email.custom_domain) <= 253 && can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", var.config.email.custom_domain)))
+      (var.config.email.custom_domain == null ? true : length(var.config.email.custom_domain) <= 253 && can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", var.config.email.custom_domain))) &&
+      can(regex("^[A-Za-z0-9]([A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$", var.config.email.sender_username))
     )
     error_message = "Hosted QA needs nonsecret ACS identities in this tenant, a separate SMTP principal and an optional verified DNS domain."
   }
@@ -40,6 +41,13 @@ variable "config" {
       client_id              = string, principal_id = string, tenant_id = string
       custom_domain          = optional(string)
       custom_domain_verified = optional(bool, false)
+      # Sender local part on the verified custom domain; ACS's default stays until it is verified.
+      sender_username = optional(string, "DoNotReply")
+    }))
+    # LP2-04 design D2: hosts under the reviewed parent domain; certificates once the apps carry them.
+    public_hosts = optional(object({
+      web          = string, api = string
+      certificates = optional(bool, false)
     }))
     monitoring = optional(object({
       operator_name           = string, operator_email = string,
@@ -54,6 +62,15 @@ variable "config" {
   validation {
     condition     = alltrue([for id in [var.config.subscription_id, var.config.tenant_id, var.config.owner_object_id] : can(regex("^[a-f0-9-]{36}$", id))]) && (var.config.deployer_object_id == "" || can(regex("^[a-f0-9-]{36}$", var.config.deployer_object_id))) && (!var.config.apps_ready || var.config.deployer_object_id != "")
     error_message = "Supply nonsecret UUIDs; app grants require a verified OIDC principal."
+  }
+  validation {
+    condition = var.config.public_hosts == null ? true : (
+      var.config.public_hosts.web != var.config.public_hosts.api &&
+      alltrue([for host in [var.config.public_hosts.web, var.config.public_hosts.api] :
+        length(host) <= 253 && can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+${replace(jsondecode(file("${path.module}/../../config/public-hosts.json")).parent_domain, ".", "\\.")}$", host))
+      ])
+    )
+    error_message = "Public hosts must be distinct lowercase DNS names under the reviewed parent domain."
   }
   validation {
     condition = var.config.monitoring == null ? true : (

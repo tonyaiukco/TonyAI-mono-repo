@@ -19,7 +19,9 @@
       "principal_id": "<smtp-service-principal-object-uuid>",
       "tenant_id": "<tenant-uuid>",
       "custom_domain": null,
-      "custom_domain_verified": false
-    }
+      "custom_domain_verified": false,
+      "sender_username": "DoNotReply"
+    },
+    "public_hosts": null
   }
 }
