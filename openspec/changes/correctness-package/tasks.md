@@ -29,7 +29,7 @@
 
 ## 6. Counted final
 
-- [x] 6.1 Extract `loadTrReleases()` and add `counted-final.int.spec.ts`: final with no gap, authoritative links, dataset, PDF, XLSX and CSV reconcile to the golden values
+- [x] 6.1 Extract `loadTrReleases()` and add the counted final to `report-issuance.int.spec.ts`: final with no gap, authoritative links, dataset, PDF, XLSX and CSV reconcile to the golden values
 
 ## 7. Final rule
 
@@ -39,12 +39,12 @@
 
 ## 8. Web headers
 
-- [ ] 8.1 Headers and the split CSP in `next.config.mjs`, with a config test
-- [ ] 8.2 E2E: headers on `/login` and on a redirect; no report-only violation on dashboard, Emissions and Reports; `docs/architecture/security.md`
+- [x] 8.1 Headers and the split CSP in `next.config.mjs`, with a config test
+- [x] 8.2 E2E: headers on `/login` and on a redirect; no report-only violation on dashboard, Emissions and Reports; `docs/architecture/security.md`
 
 ## 9. Boot
 
-- [ ] 9.1 Extract the boot failure handler with a DB-free spec (flush before exit; exit 1 on flush failure or timeout; no connection string logged); update `flushSentry`'s comment; verify with the database down, Sentry on and off
+- [x] 9.1 Extract the boot failure handler with a DB-free spec (flush before exit; exit 1 on flush failure or timeout; no connection string logged); update `flushSentry`'s comment; verify with the database down, Sentry on and off
 
 ## 10. Reviews and records
 
