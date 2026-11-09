@@ -471,7 +471,7 @@ After each DNS change, Claude Code reads the records from Namecheap's own server
 
 1. **Merge the PR.** Nothing changes: no input is set yet, and `monitoring_readback.py` checks the availability links only with `--availability`.
 2. **Foundation apply** with the custom domain, `sender_username`, `availability_tests: true` and `public_hosts` (`certificates: false`).
-   - From now on, run `monitoring_readback.py --availability`.
+   - From now on, run `monitoring_readback.py --availability`. Between step 7 and step 9, and in the middle of a rollback after `monitored: false`, it reports the API availability test as FAIL. In that window the readback expects the public host while the test still targets the generated one. Re-run it after step 9.
    - The plan must add exactly this: the CustomerManaged domain, the App Insights component, one web test (the API's `/api/v1/health/ready`) and its metric alert. Nothing else.
    - `terraform_run.py foundation output` prints `application_contract`, then `dns_contract`.
    ```bash

@@ -203,6 +203,9 @@ class GuardTests(unittest.TestCase):
         with patch('check_browser_key.request', side_effect=[(401,b''),(200,json.dumps(AUTH).encode())]):
             check_inputs(env)
         generated = 'https://tonyai-staging-api.example.swedencentral.azurecontainerapps.io'
+        # The unbound stage keeps the generated build origin.
+        with patch('check_browser_key.request', side_effect=[(401,b''),(200,json.dumps(AUTH).encode())]):
+            check_inputs({**env, 'HOSTS_BOUND':'false', 'API_ORIGIN':generated, 'NEXT_PUBLIC_API_BASE_URL':generated + '/api/v1'})
         for change in ({'API_ORIGIN':generated, 'NEXT_PUBLIC_API_BASE_URL':generated + '/api/v1'},
                        {'API_HOST':''}, {'API_HOST':'api.qa.evil.io', 'API_ORIGIN':'https://api.qa.evil.io',
                                          'NEXT_PUBLIC_API_BASE_URL':'https://api.qa.evil.io/api/v1'}):

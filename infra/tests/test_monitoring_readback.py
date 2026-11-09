@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import monitoring_readback as mr
@@ -254,6 +255,17 @@ class ReadbackTests(unittest.TestCase):
                                                 and url.endswith('/query')), argv)
             self.assertTrue(url.startswith(('https://management.azure.com' + GROUP[:-len('/providers/')], mr.LOG_API)), url)
         self.assertEqual(sum(1 for argv in az.calls if argv[argv.index('--method') + 1] == 'post'), 4)
+
+    def test_main_passes_the_availability_flag(self):
+        for argv, expected in (([], False), (['--availability'], True)):
+            seen = []
+            def fake(foundation, reader, hours, availability):
+                seen.append(availability)
+                return [('PASS', 'link', 'ok')]
+            with self.subTest(argv=argv), unittest.mock.patch.object(mr, 'readback', side_effect=fake), \
+                    unittest.mock.patch('sys.stdout'):
+                self.assertEqual(mr.main(argv, ENV), 0)
+            self.assertEqual(seen, [expected])
 
     def test_main_bounds_the_window(self):
         with self.assertRaises(SafeFailure):

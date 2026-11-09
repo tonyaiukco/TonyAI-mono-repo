@@ -88,6 +88,10 @@ class PublicHostsTests(unittest.TestCase):
         for hosts in (HOSTS, {**HOSTS, 'certificates': True}, {**HOSTS, 'certificates': True, 'monitored': True}):
             validate_foundation({'config': {**config, 'public_hosts': hosts}})
         validate_foundation({'config': {**config, 'email': {**config['email'], 'sender_username': 'no-reply'}}})
+        validate_foundation({'config': {**config, 'availability_tests': True}})
+        for flag in ('true', 1, None):
+            with self.subTest(availability_tests=flag), self.assertRaises(SafeFailure):
+                validate_foundation({'config': {**config, 'availability_tests': flag}})
         for bad in ({**HOSTS, 'web': 'qa.evil.io'}, {**HOSTS, 'certificates': 'yes'}, {**HOSTS, 'bound': True},
                     {**HOSTS, 'monitored': True}, {**HOSTS, 'certificates': True, 'monitored': 1},
                     {'web': 'qa.tonyai.io'}, {**HOSTS, 'api': 'qa.tonyai.io'}, 'qa.tonyai.io'):

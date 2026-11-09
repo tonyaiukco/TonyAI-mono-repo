@@ -38,7 +38,8 @@ def app(kind, contract):
 class DeploymentVersionTests(unittest.TestCase):
     def test_live_cors_origins_must_equal_the_release(self):
         contract = inputs()
-        for value, ok in ((None, True), ('https://evil.example', False), ('', False)):
+        appended = ','.join(web_origins(contract['foundation']) + ['https://evil.example'])
+        for value, ok in ((None, True), ('https://evil.example', False), ('', False), (appended, False)):
             api = app('api', contract)
             env = api['properties']['template']['containers'][0]['env']
             if value is not None:

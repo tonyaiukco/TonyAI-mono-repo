@@ -100,6 +100,10 @@ class CandidateTests(unittest.TestCase):
             with patch('terraform_run.subprocess.run') as run, self.assertRaises(SafeFailure):
                 invoke('foundation', backend, release, 'approved-apply')
             run.assert_not_called()
+            with patch('terraform_run.subprocess.run', return_value=Mock(returncode=0)) as run:
+                invoke('foundation', backend, release, 'output')
+                outputs = [call.args[0][-1] for call in run.call_args_list if 'output' in call.args[0]]
+                self.assertEqual(outputs, ['application_contract', 'dns_contract'])
 
     def test_rls_demo_guard_refuses_remote_before_fetch(self):
         for url in ['https://project.invalid', 'http://localhost.evil.test', 'http://localhost@evil.test',
