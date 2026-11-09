@@ -48,27 +48,33 @@ describe('trendLabel', () => {
 });
 
 describe('trendChangePercent', () => {
-  const at = (...points: [total: number, scope3: number][]) => points.map(([total, scope3]) => ({ total, scope3 }));
+  // [Scope 1 + 2 tonnes, its records, Scope 3 tonnes, its records]
+  const at = (...points: [number, number, number, number][]) =>
+    points.map(([total, scope12RecordCount, scope3, scope3RecordCount]) => ({ total, scope12RecordCount, scope3, scope3RecordCount }));
+
   it('reads the main total first to last', () => {
-    expect(trendChangePercent(at([100, 0], [80, 0]), false)).toBe(-20);
-    expect(trendChangePercent(at([100, 9], [50, 0], [150, 9]), false)).toBe(50);
+    expect(trendChangePercent(at([100, 2, 0, 0], [80, 2, 0, 0]), false)).toBe(-20);
+    expect(trendChangePercent(at([100, 1, 9, 1], [50, 1, 0, 0], [150, 1, 9, 1]), false)).toBe(50);
   });
   it('invents no reduction or stillness from a bucket of Scope 3 alone', () => {
-    expect(trendChangePercent(at([30, 0], [0, 5]), false)).toBe(0);
-    expect(trendChangePercent(at([0, 5], [30, 0]), false)).toBe(0);
-    expect(trendChangePercent(at([20, 0], [0, 5], [30, 0]), false)).toBe(50);
+    expect(trendChangePercent(at([30, 1, 0, 0], [0, 0, 5, 1]), false)).toBe(0);
+    expect(trendChangePercent(at([0, 0, 5, 1], [30, 1, 0, 0]), false)).toBe(0);
+    expect(trendChangePercent(at([20, 1, 0, 0], [0, 0, 5, 1], [30, 1, 0, 0]), false)).toBe(50);
   });
-  it('keeps a measured zero', () => {
-    expect(trendChangePercent(at([100, 0], [0, 0]), false)).toBe(-100);
-    expect(trendChangePercent(at([100, 0], [50, 0], [0, 0]), false)).toBe(-100);
+  it('keeps a measured zero, with Scope 3 beside it or not (Codex review of #292)', () => {
+    expect(trendChangePercent(at([100, 1, 0, 0], [0, 1, 5, 1]), false)).toBe(-100);
+    expect(trendChangePercent(at([100, 1, 0, 0], [0, 1, 0, 0]), false)).toBe(-100);
+    expect(trendChangePercent(at([100, 1, 0, 0], [50, 1, 0, 0], [0, 1, 0, 0]), false)).toBe(-100);
   });
-  it('reads Scope 3 for a Scope 3 selection', () => {
-    expect(trendChangePercent(at([0, 10], [0, 15]), true)).toBe(50);
-    expect(trendChangePercent(at([0, 10], [7, 0], [0, 5]), true)).toBe(-50);
+  it('reads Scope 3 for a Scope 3 selection, by its own records', () => {
+    expect(trendChangePercent(at([0, 0, 10, 1], [0, 0, 15, 1]), true)).toBe(50);
+    expect(trendChangePercent(at([0, 0, 10, 1], [7, 1, 0, 0], [0, 0, 5, 1]), true)).toBe(-50);
+    expect(trendChangePercent(at([0, 0, 10, 1], [7, 1, 0, 1]), true)).toBe(-100);
   });
-  it('says nothing with fewer than two figures', () => {
+  it('says nothing with fewer than two figures, or from a zero start', () => {
     expect(trendChangePercent([], false)).toBe(0);
-    expect(trendChangePercent(at([5, 0]), false)).toBe(0);
+    expect(trendChangePercent(at([5, 1, 0, 0]), false)).toBe(0);
+    expect(trendChangePercent(at([0, 1, 0, 0], [5, 1, 0, 0]), false)).toBe(0);
   });
 });
 

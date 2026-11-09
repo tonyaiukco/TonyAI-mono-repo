@@ -410,12 +410,14 @@ export function summariseCounted(
     let bucket = map.get(label);
     if (!bucket) {
       bucket = {
-        point: { period: label, scope1: 0, scope2: 0, scope3: 0, total: 0 },
+        point: { period: label, scope1: 0, scope2: 0, scope3: 0, total: 0, scope12RecordCount: 0, scope3RecordCount: 0 },
         sortKey,
       };
       map.set(label, bucket);
     }
     addScope(bucket.point, scope, tCo2e);
+    if (scope === 3) bucket.point.scope3RecordCount += 1;
+    else bucket.point.scope12RecordCount += 1;
   };
 
   let uncalculatedRecordCount = 0;

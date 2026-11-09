@@ -60,8 +60,13 @@ Target progress and intensity SHALL answer "no comparison" when their selection 
 
 #### Scenario: A trend's last bucket holds only Scope 3
 
-- **WHEN** a trend's first or last bucket has no Scope 1 or 2 figure
+- **WHEN** a trend's first or last bucket has no calculated Scope 1 or 2 record
 - **THEN** its change reads over the buckets that do, never as a reduction to 0
+
+#### Scenario: A measured zero beside Scope 3
+
+- **WHEN** the last bucket holds a calculated Scope 1 or 2 record of 0 t and Scope 3 figures, after a bucket of 100 t
+- **THEN** the change reads -100%, because that bucket has a figure
 
 ### Requirement: Each screen labels its own non-authoritative figures
 

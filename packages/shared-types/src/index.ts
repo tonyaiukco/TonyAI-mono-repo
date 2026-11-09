@@ -4820,6 +4820,11 @@ export interface EmissionsTrendPoint {
   scope2: number;
   scope3: number;
   total: number;
+  /** Scope 1 and 2 records with a figure in this bucket. A `total` of 0 with none
+   * is no figure; with some it is a measured zero. Tonnes cannot tell them apart. */
+  scope12RecordCount: number;
+  /** Scope 3 records with a figure in this bucket: the same test for `scope3`. */
+  scope3RecordCount: number;
 }
 
 /**

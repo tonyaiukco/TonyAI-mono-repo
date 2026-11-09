@@ -785,7 +785,9 @@ describe('EmissionsService.summary', () => {
     // A subsidiary with only Scope 3 figures has no share of the main total.
     expect(s.bySubsidiary.map((b) => [b.subsidiaryId, b.tCo2e, b.percentOfTotal])).toEqual([['sub-1', 40, 100]]);
     expect(s.trend.yearly[0]).toMatchObject({ scope3: 65, total: 40 });
-    expect(s.trend.monthly.find((p) => p.period.startsWith('February'))).toMatchObject({ scope3: 5, total: 0 });
+    expect(s.trend.monthly.find((p) => p.period.startsWith('February'))).toMatchObject({ scope3: 5, total: 0, scope12RecordCount: 0, scope3RecordCount: 1 });
+    // A measured zero is a record: the point says so, where its tonnes cannot.
+    expect(s.trend.yearly[0]).toMatchObject({ scope12RecordCount: 2, scope3RecordCount: 2 });
     expect(s.scope3Records).toEqual({ calculatedRecordCount: 2, uncalculatedRecordCount: 1, nonAuthoritativeRecordCount: 2 });
     expect(s.nonAuthoritativeRecordCount).toBe(4);
   });
