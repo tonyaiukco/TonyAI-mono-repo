@@ -23,6 +23,7 @@
   "allYearsHint": "Seçili bağlı şirketlerin tüm raporlama yıllarını karşılaştırır; yıl, kapsam ve kategori seçimleri burada uygulanmaz.",
   "filteredExtract": "Filtrelenmiş döküm: bu rapor yılın tüm envanterini değil, yalnızca {filters} kapsamını içerir. Gösterilen durum yalnızca filtrelenen kayıtları anlatır.",
   "intensityCoverage": "Seçili {selected} bağlı şirketten {contributing} tanesinin {year} için bu paydası var.",
+  "intensityFigureGap": "Bu {contributing} bağlı şirketin {withFigure} tanesinde Kapsam 1 veya 2 değeri var. Bir şirketin değerleri eksikken bu yoğunluk düşük okunur; bu tür emisyonu olmayan bir şirket için olduğu gibi doğrudur.",
   "intensityNonAuthoritative": "Bu yoğunluğun dayandığı, yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: {count} / {of}.",
   "intensityUncalculated": "Kullanılabilir değeri olmadığı için bu yoğunluğa dahil edilmeyen kesinleşmiş kayıt: {count}.",
   "intensityGroupOnly": "Erişilebilir tüm bağlı şirketler için yalnızca gelir yoğunluğu gösterilir. Fiziksel metrikler için tek bir bağlı şirket seçin.",

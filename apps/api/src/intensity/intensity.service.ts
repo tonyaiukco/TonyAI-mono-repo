@@ -318,6 +318,7 @@ export class IntensityService {
       let uncalculatedRecordCount = 0;
       let calculatedRecordCount = 0;
       let nonAuthoritativeRecordCount = 0;
+      let contributingWithFigureCount = 0;
       for (const sid of e.subIds) {
         const summary = await summaryOf(sid);
         const scope3 = summary.scope3Records;
@@ -325,6 +326,7 @@ export class IntensityService {
         uncalculatedRecordCount += summary.uncalculatedRecordCount - scope3.uncalculatedRecordCount;
         calculatedRecordCount += summary.calculatedRecordCount - scope3.calculatedRecordCount;
         nonAuthoritativeRecordCount += summary.nonAuthoritativeRecordCount - scope3.nonAuthoritativeRecordCount;
+        if (summary.calculatedRecordCount - scope3.calculatedRecordCount > 0) contributingWithFigureCount += 1;
       }
       // Nothing to compare and nothing to disclose: a Scope 3 only selection, or
       // no record at all. Records waiting for a figure keep their card, which
@@ -335,6 +337,7 @@ export class IntensityService {
         uncalculatedRecordCount,
         calculatedRecordCount,
         nonAuthoritativeRecordCount,
+        contributingWithFigureCount,
         metric: e.metric as IntensityMetricKey,
         unit: e.unit,
         emissionsTotal,

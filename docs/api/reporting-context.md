@@ -148,7 +148,10 @@ proration. Missing denominators are disclosed as missing coverage, never zero.
 The numerator is Scope 1 + 2, so a Scope 3 only selection has no metric, and a metric
 with no Scope 1 or 2 record is left out. `calculatedRecordCount` and
 `nonAuthoritativeRecordCount` count the numerator's own figures; at zero figures with
-records waiting, a screen shows no intensity.
+records waiting, a screen shows no intensity. A subsidiary with a denominator and no
+Scope 1 or 2 figure stays in the denominator (D14), since a missing figure cannot be
+told from having none, so `contributingWithFigureCount` states how many have one and
+the card says so when some do not.
 Each metric also returns a non-negative safe-integer `uncalculatedRecordCount`:
 committed Scope 1 and 2 records of its contributing subsidiaries, for the same year/scope/category,
 excluded from `emissionsTotal` because they have no usable figure. The summary's

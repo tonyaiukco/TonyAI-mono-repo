@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
-import { emissionsError, liveReportNonAuthoritative, nonAuthoritativeFigures, trendChangePercent, trendLabel } from './emissions-view';
+import { emissionsError, intensityFigureGap, liveReportNonAuthoritative, nonAuthoritativeFigures, trendChangePercent, trendLabel } from './emissions-view';
 import { copyFor, describeFor, recordWordsFor } from '@/lib/i18n/testing';
 import type { Locale } from '@/lib/types';
 
@@ -44,6 +44,18 @@ describe('trendLabel', () => {
     expect(label('Smarch 2024', 'tr')).toBe('Smarch 2024');
     expect(label('2024-Q5', 'tr')).toBe('2024-Q5');
     expect(label('constructor 2024', 'tr')).toBe('constructor 2024');
+  });
+});
+
+describe('intensityFigureGap (D14)', () => {
+  const ids = ['a', 'b'];
+  it('states how many contributors have a figure when some do not', () => {
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids, contributingWithFigureCount: 1 })).toEqual({ withFigure: 1, contributing: 2 });
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids, contributingWithFigureCount: 0 })).toEqual({ withFigure: 0, contributing: 2 });
+  });
+  it('says nothing when all have one, or when an older server does not say', () => {
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids, contributingWithFigureCount: 2 })).toBeNull();
+    expect(intensityFigureGap({ contributingSubsidiaryIds: ids } as never)).toBeNull();
   });
 });
 

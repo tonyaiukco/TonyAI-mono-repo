@@ -1306,6 +1306,10 @@ export interface ReportingIntensityMetric extends IntensityMetricResultDTO {
   calculatedRecordCount: number;
   /** Of those, the ones not authoritative now (`authoritativeNow`). */
   nonAuthoritativeRecordCount: number;
+  /** Of `contributingSubsidiaryIds`, those with a Scope 1 or 2 figure. The others
+   * stay in the denominator (D14; owner decision 2026-11-09), so a screen states
+   * it: their figures may be missing, which reads low, or they may have none. */
+  contributingWithFigureCount: number;
 }
 
 /** Empty access or an inaccessible selection yields empty ids and metrics.

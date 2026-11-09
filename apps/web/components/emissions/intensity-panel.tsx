@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { nonAuthoritativeFigures } from '@/lib/emissions-view';
+import { intensityFigureGap, nonAuthoritativeFigures } from '@/lib/emissions-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import { selectsScope3Only } from '@/lib/report-coverage-view';
 import { CATEGORY_SCOPE_MAP, GROUP_INTENSITY_METRICS, type Category } from '@/lib/types';
@@ -327,6 +327,14 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, context }: I
                     year: yearText,
                   })}
                 </p>
+                {(() => {
+                  const gap = intensityFigureGap(m);
+                  return gap ? (
+                    <p className="text-xs text-amber-600" data-testid="intensity-figure-gap">
+                      {t('intensityFigureGap', { withFigure: formatNumber(gap.withFigure, locale), contributing: formatNumber(gap.contributing, locale) })}
+                    </p>
+                  ) : null;
+                })()}
                 {(() => {
                   const na = nonAuthoritativeFigures(m);
                   return na ? (

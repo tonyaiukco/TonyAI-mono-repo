@@ -268,8 +268,8 @@ describe('IntensityService', () => {
     expect(result).toEqual({ context, data: {
       selectedSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3'],
       metrics: [
-        { metric: 'revenue', unit: 'M EUR', denominatorTotal: 20, emissionsTotal: 100, intensity: 5, contributingSubsidiaryIds: ['sub-1'], uncalculatedRecordCount: 2, calculatedRecordCount: 1, nonAuthoritativeRecordCount: 0 },
-        { metric: 'revenue', unit: 'M USD', denominatorTotal: 40, emissionsTotal: 120, intensity: 3, contributingSubsidiaryIds: ['sub-2'], uncalculatedRecordCount: 1, calculatedRecordCount: 1, nonAuthoritativeRecordCount: 0 },
+        { metric: 'revenue', unit: 'M EUR', denominatorTotal: 20, emissionsTotal: 100, intensity: 5, contributingSubsidiaryIds: ['sub-1'], uncalculatedRecordCount: 2, calculatedRecordCount: 1, nonAuthoritativeRecordCount: 0, contributingWithFigureCount: 1 },
+        { metric: 'revenue', unit: 'M USD', denominatorTotal: 40, emissionsTotal: 120, intensity: 3, contributingSubsidiaryIds: ['sub-2'], uncalculatedRecordCount: 1, calculatedRecordCount: 1, nonAuthoritativeRecordCount: 0, contributingWithFigureCount: 1 },
       ],
     } });
     expect(emissions.summary.mock.calls.map(([, query]) => query)).toEqual([
@@ -317,6 +317,24 @@ describe('IntensityService', () => {
     expect(result.data.metrics[0]).toMatchObject({
       unit: 'M EUR', emissionsTotal: 100, calculatedRecordCount: 2, uncalculatedRecordCount: 1, nonAuthoritativeRecordCount: 1,
     });
+  });
+
+  it('keeps a subsidiary with no Scope 1 or 2 figure in the denominator, and states how many have one (D14)', async () => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValue([
+      makeDenominator({ value: 20, unit: 'M EUR' }),
+      makeDenominator({ id: 'den-2', subsidiaryId: 'sub-2', value: 80, unit: 'M EUR' }),
+    ]);
+    const onlyScope3 = { calculatedRecordCount: 3, uncalculatedRecordCount: 0, nonAuthoritativeRecordCount: 0 };
+    emissions.summary
+      .mockResolvedValueOnce(summaryOf(100))
+      .mockResolvedValueOnce({ ...summaryOf(0), calculatedRecordCount: 3, scope3Records: onlyScope3 });
+
+    const result = await service.contextIntensity({ ...admin, accessibleSubsidiaryIds: ['sub-1', 'sub-2'] }, { year: 2027 });
+
+    expect(result.data.metrics).toEqual([expect.objectContaining({
+      denominatorTotal: 100, emissionsTotal: 100, intensity: 1,
+      contributingSubsidiaryIds: ['sub-1', 'sub-2'], contributingWithFigureCount: 1,
+    })]);
   });
 
   it('keeps a card for records waiting for a figure, so they stay disclosed', async () => {

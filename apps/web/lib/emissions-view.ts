@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import type { ErrorDescription } from "@/lib/i18n/errors";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
-import { PERIOD_VALUES, type EmissionsSummary, type EmissionsTrendPoint, type ReportScope3Disclosure } from "@/lib/types";
+import { PERIOD_VALUES, type EmissionsSummary, type EmissionsTrendPoint, type ReportingIntensityMetric, type ReportScope3Disclosure } from "@/lib/types";
 import type { RecordWords } from "@/lib/vocabulary";
 
 /**
@@ -63,6 +63,19 @@ export function nonAuthoritativeFigures(
 ): { count: number; of: number } | null {
   const count = summary?.nonAuthoritativeRecordCount ?? 0;
   return summary && count > 0 ? { count, of: summary.calculatedRecordCount } : null;
+}
+
+/**
+ * A metric whose denominator holds a subsidiary with no Scope 1 or 2 figure: it
+ * reads low if that subsidiary's figures are only missing (D14). Null when every
+ * contributor has a figure, or an older server does not say.
+ */
+export function intensityFigureGap(
+  metric: Pick<ReportingIntensityMetric, 'contributingSubsidiaryIds' | 'contributingWithFigureCount'>,
+): { withFigure: number; contributing: number } | null {
+  const contributing = metric.contributingSubsidiaryIds.length;
+  const withFigure = metric.contributingWithFigureCount ?? contributing;
+  return withFigure < contributing ? { withFigure, contributing } : null;
 }
 
 type TrendReading = Pick<EmissionsTrendPoint, 'total' | 'scope3' | 'scope12RecordCount' | 'scope3RecordCount'>;

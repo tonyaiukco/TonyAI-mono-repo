@@ -239,6 +239,7 @@ describe('one reporting context, every surface: two years × two subsidiaries (L
       const [metric] = intensity.data.metrics;
       const numerator = sum(numeratorRows);
       expect(metric.calculatedRecordCount, label).toBe(numeratorRows.length);
+      expect(metric.contributingWithFigureCount, label).toBe(new Set(numeratorRows.map((r) => r.sub)).size);
       const denominator = contributors.reduce((s, sub) => s + (revenue[sub] ?? 0), 0);
       expect(metric, label).toMatchObject({ metric: 'revenue', unit: 'EUR', emissionsTotal: numerator, denominatorTotal: denominator, uncalculatedRecordCount: 0 });
       expect(metric.contributingSubsidiaryIds.sort(), label).toEqual(contributors.map(idOf).sort());

@@ -58,6 +58,11 @@ Target progress and intensity SHALL answer "no comparison" when their selection 
 - **WHEN** a metric's numerator holds such records and no figure
 - **THEN** its card stays and discloses them, and shows no intensity
 
+#### Scenario: A contributor with no Scope 1 or 2 figure
+
+- **WHEN** a subsidiary with a denominator has no Scope 1 or 2 figure and another has one
+- **THEN** its denominator still counts, the figure is unchanged, and the card states how many contributors have a figure
+
 #### Scenario: A trend's last bucket holds only Scope 3
 
 - **WHEN** a trend's first or last bucket has no calculated Scope 1 or 2 record
