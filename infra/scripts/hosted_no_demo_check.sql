@@ -1,7 +1,7 @@
--- Hosted no-demo check (LP2-04, #259 follow-up). Read-only; run as the owner in the
+-- Hosted no-demo check (LP2-04, #259 follow-up). One read-only SELECT (the Supabase SQL editor
+-- shows only the last statement's rows); run as the owner in the
 -- Supabase SQL editor or the owner psql (runbook 05's container on macOS). Every row
 -- must read 0 / PASS. Identifiers are bound to the seed by infra/tests/test_hosted_no_demo_check.py.
-begin transaction read only;
 with checks(name, found) as (
   select 'seed_auth_users', (select count(*) from auth.users where lower(email) like '%@tonyai.local')
   union all
@@ -16,4 +16,3 @@ with checks(name, found) as (
 select name, found, case when found = 0 then 'PASS' else 'FAIL' end as verdict from checks
 union all
 select 'overall', (select sum(found) from checks), case when (select sum(found) from checks) = 0 then 'PASS' else 'FAIL' end;
-rollback;

@@ -237,6 +237,14 @@ MUTANTS = [
      '    if public_web_host is not None and not is_public_host(public_web_host):', '    if False:'),
     ('availability test URL check removed', 'monitoring_readback.py',
      "url == origins[kind] + path", 'True'),
+    ('live CORS origin readback removed', 'deploy_apps.py',
+     "            if env.get('WEB_ORIGIN', {}).get('value') != ','.join(web_origins(foundation)):", '            if False:'),
+    ('Auth public host accepted before foundation check', 'supabase_setup.py',
+     "    if public_web_host is not None and (not is_public_host(public_web_host) or public_web_host != hosts.get('web')", '    if False and (True'),
+    ('availability readback ignores the opt-in', 'monitoring_readback.py',
+     '    if not availability:\n        return results\n', ''),
+    ('unbound stage from the shell ignored', 'public_hosts.py',
+     "'bound': bound == 'true'", "'bound': True"),
     ('foundation public host validation removed', 'foundation_contract.py',
      "        validate_public_hosts({'web': hosts['web'], 'api': hosts['api'], 'bound': False})", '        pass'),
 ]
@@ -314,6 +322,8 @@ def main():
                 'repository binding removed': 'test_review_boundaries.py',
                 'foundation public host validation removed': 'test_public_hosts.py',
                 'custom domain stage readback removed': 'test_runtime_deployment.py',
+                'live CORS origin readback removed': 'test_deploy_versions.py',
+                'unbound stage from the shell ignored': 'test_qa_autodeploy.py',
             }
             pattern = overrides.get(name, pattern)
             if name.startswith('mail '): pattern = 'test_mail_settings.py'

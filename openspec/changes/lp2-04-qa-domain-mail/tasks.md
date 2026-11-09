@@ -2,8 +2,8 @@
 
 ## 1. Public hosts and one origin derivation (D1, D6)
 
-- [x] 1.1 Add the parent domain `tonyai.io` to `infra/config/deployment-policy.json`, and add `public_origins(foundation)` with `public_hosts` validation to `terraform_run.py` (optional key in the foundation contract; hosts under the parent domain, distinct, `bound` boolean)
-- [x] 1.2 Switch `candidate.py` (create/bind), `qa_autodeploy.py` (`foundation_from_env`, `bind_at`, `smoke`), `session_resources.py` and `check_browser_key.py` to `public_origins`
+- [x] 1.1 Add the parent domain `tonyai.io` in `infra/config/public-hosts.json` (not `deployment-policy.json`, whose hash the paused self-hosted receipts pin), and `public_origins(foundation)` in `infra/scripts/public_hosts.py`, validated from `terraform_run.validate_release` (optional key; hosts under the parent domain, distinct, `bound` boolean)
+- [x] 1.2 Switch `candidate.py` (create/bind), `qa_autodeploy.py` (`foundation_from_env`, `bind_at`, `smoke`), `migration_binding.py`, `mail_settings.py`, `check_browser_key.py`, `cloud_smoke.py` and `hosted_storage_probe.py` to `public_origins`. `session_resources.py` keeps the generated origin: it binds the Supabase setup journal to the Azure readback, and the public host is a separate `public_web_host` (task 1.4)
 - [x] 1.3 `smoke-contract.mjs`: accept a bound pair of custom hosts under the parent domain, replacing the `-staging-web.` → `-staging-api.` rewrite with an explicit pair check
 - [x] 1.4 `supabase_auth.py` / `auth_settings.py`: accept the custom web origin; the allow-list carries both origins' paths when bound
 - [x] 1.5 `deploy-qa.yml`: optional `QA_WEB_HOST` / `QA_API_HOST` with fallback to today's origins
@@ -36,13 +36,13 @@
 ## 6. Docs and planning file
 
 - [x] 6.1 Runbook 11: cutover procedure (Migration Plan steps 1–9), DNS table, "edit SPF, never add", rollback
-- [x] 6.2 Example configs (`foundation.example.json`, `application.example.json`, `supabase.example.json`), `terraform/README.md` (the App Insights exception), and `docs/architecture/` where hosting or observability is described
+- [x] 6.2 Example configs (`foundation.example.json`, `application.example.json`; `supabase.example.json` stays as is, because `public_web_host` is set only at the cutover's step 7 and is documented there), `terraform/README.md` (the App Insights exception), and `docs/architecture/` where hosting or observability is described
 - [x] 6.3 Planning file: Decisions 2026-11-09 (domain, hostnames, sender, App Insights exception, QA-only scope, prod deploy removed from LP2-04), LP2-04 card and ledger, Current status, Next up, Open questions (Gmail spam now addressed by this change)
 
 ## 7. Verification and review
 
-- [ ] 7.1 `terraform validate` and tftests for both roots, `check_terraform_policy.py`, Python and Node script tests, `pnpm typecheck` and `pnpm test`
-- [ ] 7.2 Review seats in parallel on separate tree copies: `security-rls` (Auth allow-list, CORS, CSP, mail sender, hostname validation), `qa-auditor` (tests, negative cases), `devops-cloud` (Terraform, staging, readbacks); fix findings
+- [x] 7.1 `terraform validate` and tftests for both roots, `check_terraform_policy.py`, Python and Node script tests, `pnpm typecheck` and `pnpm test`
+- [x] 7.2 Review seats in parallel on separate tree copies: `security-rls` (Auth allow-list, CORS, CSP, mail sender, hostname validation), `qa-auditor` (tests, negative cases), `devops-cloud` (Terraform, staging, readbacks); fix findings
 - [ ] 7.3 Open the PR; the owner merges
 
 ## 8. Owner cutover (after merge; each step announced, Claude checks before and after)

@@ -49,11 +49,16 @@ def web_origins(foundation):
 
 
 def hosts_from_env(env):
-    """Workflow variables WEB_HOST/API_HOST: both or neither; set only after binding."""
-    web, api = env.get('WEB_HOST', ''), env.get('API_HOST', '')
+    """WEB_HOST/API_HOST: both or neither. Workflows set them only once bound; an owner shell
+    between runbook 11's steps 5 and 7 adds HOSTS_BOUND=false to describe the unbound stage."""
+    web, api, bound = env.get('WEB_HOST', ''), env.get('API_HOST', ''), env.get('HOSTS_BOUND', 'true')
     if not web and not api:
+        if bound != 'true':
+            raise SafeFailure('HOSTS_BOUND needs WEB_HOST and API_HOST.')
         return None
-    return validate_public_hosts({'web': web, 'api': api, 'bound': True})
+    if bound not in ('true', 'false'):
+        raise SafeFailure('HOSTS_BOUND must be true or false.')
+    return validate_public_hosts({'web': web, 'api': api, 'bound': bound == 'true'})
 
 
 def public_host_env(foundation):

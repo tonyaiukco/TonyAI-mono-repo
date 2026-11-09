@@ -48,6 +48,7 @@ variables {
     deployer_object_id    = "00000000-0000-0000-0000-000000000005"
     runtime_secrets_ready = true
     apps_ready            = true
+    availability_tests    = true
     monitoring = {
       operator_name           = "Test Operator", operator_email = "operator@example.invalid"
       api_digest              = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -97,8 +98,8 @@ run "unset_hosts_create_no_certificate_and_test_generated_origins" {
     error_message = "Workspace-based component with local auth disabled; no separate ingestion."
   }
   assert {
-    condition     = alltrue([for kind, alert in azapi_resource.availability_alert : alert.body.properties.enabled && alert.body.properties.criteria.failedLocationCount == 2 && alert.body.properties.actions[0].actionGroupId == azapi_resource.operator["enabled"].id && alert.body.properties.criteria.webTestId == azapi_resource.availability_test[kind].id])
-    error_message = "Each test alerts the operator when two locations fail."
+    condition     = alltrue([for kind, alert in azapi_resource.availability_alert : alert.body.properties.enabled && alert.body.properties.criteria.failedLocationCount == 3 && alert.body.properties.actions[0].actionGroupId == azapi_resource.operator["enabled"].id && alert.body.properties.criteria.webTestId == azapi_resource.availability_test[kind].id])
+    error_message = "Each test alerts the operator when all three locations fail."
   }
   assert {
     condition     = length(azapi_resource.sender) == 0 && startswith(output.email_contract.enabled.sender, "DoNotReply@")
@@ -119,10 +120,27 @@ run "hosts_without_certificates_list_dns_only" {
     error_message = "Tests move to public hosts only with their certificates."
   }
 }
-run "certificates_for_each_host_and_tests_follow" {
+run "certificates_alone_keep_tests_on_generated_hosts" {
   command = plan
   variables {
     config = merge(var.config, { public_hosts = { web = "qa.tonyai.io", api = "api.qa.tonyai.io", certificates = true } })
+  }
+  assert {
+    condition     = length(azapi_resource.certificate) == 2 && endswith(azapi_resource.availability_test["web"].body.properties.Request.RequestUrl, ".azurecontainerapps.io/login")
+    error_message = "Until the hosts serve SNI the tests stay on the generated hosts (ACA serves its default certificate)."
+  }
+}
+run "monitoring_without_certificates_rejected" {
+  command = plan
+  variables {
+    config = merge(var.config, { public_hosts = { web = "qa.tonyai.io", api = "api.qa.tonyai.io", monitored = true } })
+  }
+  expect_failures = [var.config]
+}
+run "certificates_for_each_host_and_tests_follow" {
+  command = plan
+  variables {
+    config = merge(var.config, { public_hosts = { web = "qa.tonyai.io", api = "api.qa.tonyai.io", certificates = true, monitored = true } })
   }
   assert {
     condition     = azapi_resource.certificate["web"].name == "tonyai-staging-web-cert" && azapi_resource.certificate["web"].body.properties.subjectName == "qa.tonyai.io" && azapi_resource.certificate["api"].body.properties.subjectName == "api.qa.tonyai.io" && alltrue([for cert in azapi_resource.certificate : cert.body.properties.domainControlValidation == "CNAME" && cert.parent_id == azapi_resource.environment.id])
@@ -156,6 +174,16 @@ run "malformed_sender_rejected" {
     config = merge(var.config, { email = merge(var.config.email, { sender_username = "no reply@" }) })
   }
   expect_failures = [var.config]
+}
+run "availability_is_opt_in" {
+  command = plan
+  variables {
+    config = merge(var.config, { availability_tests = false })
+  }
+  assert {
+    condition     = length(azapi_resource.insights) == 0 && length(azapi_resource.availability_test) == 0 && length(azapi_resource.availability_alert) == 0
+    error_message = "An unrelated foundation apply (monitoring set, opt-in off) must not create the tests."
+  }
 }
 run "no_availability_without_monitoring" {
   command = plan

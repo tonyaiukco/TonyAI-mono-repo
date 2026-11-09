@@ -13,7 +13,8 @@ def validate_foundation(inputs):
                           config.get('prefix'), config.get('environment'))
     required = {'subscription_id','tenant_id','environment','prefix','resource_group','registry_name',
                 'vault_name','repository','release_sha','owner_object_id'}
-    optional = {'deployer_object_id','runtime_secrets_ready','smtp_secret_ready','apps_ready','monitoring','email','public_hosts'}
+    optional = {'deployer_object_id','runtime_secrets_ready','smtp_secret_ready','apps_ready','monitoring','email','public_hosts',
+                'availability_tests'}
     if not required <= set(config) or set(config) - required - optional:
         raise SafeFailure('Unknown foundation fields; secret values are prohibited.')
     if config['environment'] not in ('staging','production'):
@@ -33,7 +34,7 @@ def validate_foundation(inputs):
                 'repository':r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+','release_sha':r'[a-f0-9]{40}'}
     if any(not isinstance(config[k],str) or not re.fullmatch(p,config[k]) for k,p in patterns.items()):
         raise SafeFailure('Invalid public foundation metadata.')
-    if any(type(config.get(k,False)) is not bool for k in ('runtime_secrets_ready','smtp_secret_ready','apps_ready')):
+    if any(type(config.get(k,False)) is not bool for k in ('runtime_secrets_ready','smtp_secret_ready','apps_ready','availability_tests')):
         raise SafeFailure('Readiness switches must be booleans.')
     if config.get('apps_ready') and not deployer:
         raise SafeFailure('App grants require the verified deployment principal.')
@@ -52,9 +53,10 @@ def validate_foundation(inputs):
     if hosts is not None:
         # Same rule as the application's bound hosts; certificates replace bound in this lane.
         from public_hosts import validate_public_hosts
-        if (not isinstance(hosts, dict) or not {'web', 'api'} <= set(hosts) or set(hosts) - {'web', 'api', 'certificates'}
-                or type(hosts.get('certificates', False)) is not bool):
-            raise SafeFailure('Public hosts need web, api and an optional boolean certificates switch.')
+        if (not isinstance(hosts, dict) or not {'web', 'api'} <= set(hosts) or set(hosts) - {'web', 'api', 'certificates', 'monitored'}
+                or any(type(hosts.get(k, False)) is not bool for k in ('certificates', 'monitored'))
+                or (hosts.get('monitored') and not hosts.get('certificates'))):
+            raise SafeFailure('Public hosts need web, api and boolean certificates and monitored switches; monitoring needs certificates.')
         validate_public_hosts({'web': hosts['web'], 'api': hosts['api'], 'bound': False})
     return config
 

@@ -757,6 +757,31 @@ class ProvenanceTests(unittest.TestCase):
         release = qa.live_release_fields(FOUNDATION, live_app('api'), built, SHA, 'ci42-1', PROJECT)
         self.assertEqual(qa.bind_at(built, {'foundation': FOUNDATION, 'release': release}, SHA, git_objects({SHA: TREE})), built)
 
+    def test_git_object_binding_with_bound_public_hosts(self):
+        """Rollback's bind_at expects the public origins once bound, and refuses a pre-cutover candidate."""
+        fingerprint = qa.fingerprint_at(SHA, git_objects({SHA: TREE}))
+        foundation = qa.foundation_from_env({**QA_ENV, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io'})
+        base = {'SUPABASE_PROJECT_REF': PROJECT, 'PREFIX': 'tonyaiqt', 'ACA_DEFAULT_DOMAIN': QA_ENV['ACA_DEFAULT_DOMAIN'],
+                'ACR_NAME': 'tonyaiqtacr', 'ACR_HOST': 'tonyaiqtacr.azurecr.io'}
+        with patch.object(candidate_module, 'clean_source'), patch.object(candidate_module, 'fingerprint', return_value=fingerprint):
+            public = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], {
+                **base, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io',
+                'API_ORIGIN': 'https://api.qa.tonyai.io', 'WEB_ORIGIN': 'https://qa.tonyai.io'})
+            generated = candidate_module.create(SHA, CANDIDATE['api_digest'], CANDIDATE['web_digest'], {
+                **base, 'API_ORIGIN': 'https://' + STEM + '-api.' + QA_ENV['ACA_DEFAULT_DOMAIN'],
+                'WEB_ORIGIN': 'https://' + STEM + '-web.' + QA_ENV['ACA_DEFAULT_DOMAIN']})
+        release = qa.live_release_fields(FOUNDATION, live_app('api'), generated, SHA, 'ci42-1', PROJECT)
+        self.assertEqual(qa.bind_at(public, {'foundation': foundation, 'release': release}, SHA, git_objects({SHA: TREE})), public)
+        with self.assertRaises(SafeFailure):
+            qa.bind_at(generated, {'foundation': foundation, 'release': release}, SHA, git_objects({SHA: TREE}))
+
+    def test_owner_shell_can_name_the_unbound_stage(self):
+        unbound = qa.foundation_from_env({**QA_ENV, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io', 'HOSTS_BOUND': 'false'})
+        self.assertEqual(unbound['public_hosts'], {'web': 'qa.tonyai.io', 'api': 'api.qa.tonyai.io', 'bound': False})
+        for env in ({'HOSTS_BOUND': 'false'}, {'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io', 'HOSTS_BOUND': 'no'}):
+            with self.subTest(env=env), self.assertRaises(SafeFailure):
+                qa.foundation_from_env({**QA_ENV, **env})
+
     def test_git_objects_match_the_working_tree_fingerprint_of_this_repository(self):
         import subprocess
         dirty = subprocess.run(['git', 'status', '--porcelain', '--', 'packages/db/prisma/migrations', 'pnpm-lock.yaml'],

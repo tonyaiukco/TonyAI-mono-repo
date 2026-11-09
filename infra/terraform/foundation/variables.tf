@@ -36,7 +36,9 @@ variable "config" {
     deployer_object_id    = optional(string, "")
     runtime_secrets_ready = optional(bool, false)
     smtp_secret_ready     = optional(bool, false)
-    apps_ready            = optional(bool, false)
+    # LP2-04 design D4: opt-in, so an unrelated foundation apply never creates the tests.
+    availability_tests = optional(bool, false)
+    apps_ready         = optional(bool, false)
     email = optional(object({
       client_id              = string, principal_id = string, tenant_id = string
       custom_domain          = optional(string)
@@ -48,6 +50,8 @@ variable "config" {
     public_hosts = optional(object({
       web          = string, api = string
       certificates = optional(bool, false)
+      # Set only after the application binds the hosts with SNI (runbook 11 step 9).
+      monitored = optional(bool, false)
     }))
     monitoring = optional(object({
       operator_name           = string, operator_email = string,
@@ -71,6 +75,10 @@ variable "config" {
       ])
     )
     error_message = "Public hosts must be distinct lowercase DNS names under the reviewed parent domain."
+  }
+  validation {
+    condition     = var.config.public_hosts == null ? true : (!var.config.public_hosts.monitored || var.config.public_hosts.certificates)
+    error_message = "Availability tests move to public hosts only after their certificates exist."
   }
   validation {
     condition = var.config.monitoring == null ? true : (

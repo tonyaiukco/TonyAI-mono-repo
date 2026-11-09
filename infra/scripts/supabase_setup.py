@@ -35,12 +35,19 @@ def run(args):
     from terraform_run import clean_environment
     from foundation_contract import validate_foundation
     from session_resources import restore
+    from public_hosts import is_public_host
     clean_environment()
     foundation = validate_foundation(json.loads(Path(args.foundation).read_text()))
     session = restore(foundation['subscription_id'], foundation['resource_group'])
     if (session['VAULT_NAME'] != config['vault'] or session['WEB_ORIGIN'] != config['web_origin']
             or session['AZURE_TENANT_ID'] != foundation['tenant_id']):
         raise SafeFailure('Supabase target does not match the verified Azure foundation.')
+    public_web_host = config.get('public_web_host')
+    hosts = foundation.get('public_hosts') or {}
+    # Before any key is revealed: only the foundation's certified web host may become the site URL.
+    if public_web_host is not None and (not is_public_host(public_web_host) or public_web_host != hosts.get('web')
+                                        or hosts.get('certificates') is not True):
+        raise SafeFailure("public_web_host must be the foundation's web host, and only once its certificate exists.")
     if not sys.stdin.isatty():
         raise SafeFailure('Use a private interactive terminal for hidden token entry.')
     token = getpass.getpass('Supabase management token (hidden, memory only): ')

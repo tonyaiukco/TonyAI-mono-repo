@@ -109,7 +109,9 @@ class SetupTests(unittest.TestCase):
             foundation = Path(directory) / 'foundation.json'; foundation.write_text('{}')
             args = SimpleNamespace(config=config, foundation=foundation, journal=Path(directory) / 'j.json', reconcile_auth_only=True)
             stack.enter_context(patch('terraform_run.clean_environment'))
-            stack.enter_context(patch('foundation_contract.validate_foundation', return_value={'subscription_id':'sub','resource_group':'group','tenant_id':'tenant'}))
+            foundation_config = {'subscription_id':'sub','resource_group':'group','tenant_id':'tenant',
+                                 'public_hosts': {'web': 'qa.tonyai.io', 'api': 'api.qa.tonyai.io', 'certificates': True}}
+            stack.enter_context(patch('foundation_contract.validate_foundation', return_value=foundation_config))
             stack.enter_context(patch('session_resources.restore', return_value={'VAULT_NAME':TARGET['vault'],'WEB_ORIGIN':TARGET['web_origin'],'AZURE_TENANT_ID':'tenant'}))
             stack.enter_context(patch('supabase_setup.getpass.getpass', return_value='synthetic'))
             stack.enter_context(patch('supabase_setup.sys.stdin.isatty', return_value=True))
@@ -140,6 +142,14 @@ class SetupTests(unittest.TestCase):
                 self.fail('A public web host must not orphan the completed journal: ' + str(error))
             auth.assert_called_with(unittest.mock.ANY, REF, TARGET['web_origin'], 'public', 'kid', public_web_host='qa.tonyai.io')
             self.assertEqual(json.loads(args.journal.read_text())['target'], TARGET)
+            # Any other host, or one whose certificate does not exist yet, stops before a key is read.
+            calls = auth.call_count
+            for host, certified in (('other.tonyai.io', True), ('qa.evil.io', True), ('qa.tonyai.io', False)):
+                foundation_config['public_hosts']['certificates'] = certified
+                config.write_text(json.dumps({**TARGET, 'public_web_host': host}))
+                with self.subTest(host=host, certified=certified), self.assertRaises(SafeFailure): run(args)
+            foundation_config['public_hosts']['certificates'] = True
+            self.assertEqual(auth.call_count, calls)
             config.write_text(json.dumps(TARGET))
             transfer.assert_not_called(); signing.assert_not_called()
             self.assertTrue(all(call.args[1] == 'GET' for call in api.call_args_list))

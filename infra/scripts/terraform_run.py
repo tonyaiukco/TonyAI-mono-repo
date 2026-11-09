@@ -106,6 +106,8 @@ def invoke(lane, backend_path, inputs_path, action, before_apply=None):
           '-backend-config=key=' + target['environment'] + ('-selfhost' if lane == 'selfhost' else '') + '.tfstate'])
     if action == 'output':
         call(['output', '-json', 'selfhost_contract' if lane == 'selfhost' else 'application_contract'])
+        if lane == 'foundation':
+            call(['output', '-json', 'dns_contract'])  # LP2-04: nonsecret records the owner enters
         return
     if action == 'approved-apply' or (action == 'apply' and before_apply):
         # The protected environment reviewer approves the release before this

@@ -52,21 +52,21 @@ ACA issues a managed certificate only for a hostname that is already on an app, 
 
 - **Component.** `Microsoft.Insights/components` (`kind = web`, `WorkspaceResourceId` set to the existing workspace, `IngestionMode = LogAnalytics`, `DisableLocalAuth = true`). No SDK writes to it.
 - **Tests.** Two `Microsoft.Insights/webtests` of kind `standard`: GET `/api/v1/health/ready` (the documented uptime target, `docs/architecture/observability.md`) and GET `/login`, expecting 200, with an SSL check and a warning 7 days before certificate expiry. They run every 900 s from West Europe (`emea-nl-ams-azr`), North Europe (`emea-gb-db3-azr`) and France Central (`emea-fr-pra-edge`), confirmed from Microsoft's population-tag table, with retries on. Each test carries the required `hidden-link:<component>` tag.
-- **What they target.** The custom hosts once `public_hosts.certificates` is set in the foundation config; until then, the generated FQDNs.
-- **Alerting.** One `metricAlerts` rule per test, using `WebtestLocationAvailabilityCriteria` with `failedLocationCount = 2`, routed to the existing `operator` action group.
+- **What they target.** The generated FQDNs until `public_hosts.monitored` is set (it requires `certificates`, and the runbook sets it only after the hosts serve SNI); then the custom hosts. A `Disabled` host serves ACA's default certificate, which would fail the TLS check (devops review).
+- **Alerting.** One `metricAlerts` rule per test, using `WebtestLocationAvailabilityCriteria` with `failedLocationCount = 3` so a deploy's API drain does not page, routed to the existing `operator` action group. The new resources set `ignore_casing` because ARM echoes IDs in its own casing.
 - **Readback.** `monitoring_readback.py` gains the three types in `VERSIONS` and checks that each test is enabled, targets the expected URL, and has its alert enabled and routed.
-- **Cost.** Microsoft's pricing page did not render its rate. A third-party listing reports $0.0005 per execution per location. 2 × 3 × 4/h × 730 h ≈ 17,520 executions a month, about 9 USD. The plan is shown to the owner before the apply. The tests also wake the scale-to-zero web app every 15 minutes, which adds a small compute cost.
+- **Cost.** Microsoft's pricing page did not render its rate. A third-party listing reports $0.0005 per execution per location. 2 × 3 × 4/h × 730 h ≈ 17,520 executions a month, about 9–21 USD depending on the rate. The plan is shown to the owner before the apply. The `/login` test also wakes the scale-to-zero web app about every 5 minutes (3 staggered locations), which keeps it mostly warm: roughly 25–40 USD a month of compute (devops review). This is put to the owner before the apply.
 
 ### D5. DNS contract
 
-The `dns_contract` output contains only nonsecret records:
+The `dns_contract` output (printed by `terraform_run.py foundation output`) contains only nonsecret records:
 
-- the four ACS `verificationRecords` (Domain TXT, SPF, DKIM, DKIM2), mapped to Namecheap host and value,
+- the four ACS `verificationRecords` (Domain TXT, SPF, DKIM, DKIM2) as ACS returns them; runbook 11 maps them to Namecheap host and value,
 - `qa` CNAME → `<stem>-web.<default_domain>`,
 - `api.qa` CNAME → `<stem>-api.<default_domain>`,
 - `asuid.qa` and `asuid.api.qa` TXT → the verification ID, read with `az` (D2).
 
-The SPF row is rendered as the merged value with the instruction to edit the existing record. Runbook 11 gets the same table.
+Runbook 11 renders the SPF row as the merged value, with the instruction to edit the existing record. Certificate state is read live with `az`, because `terraform output` never refreshes state.
 
 ### D6. Build and workflow
 
@@ -91,10 +91,11 @@ The SPF row is rendered as the merged value with the instruction to edit the exi
 3. Namecheap: enter the records. Claude checks them on the authoritative servers.
 4. Initiate ACS verification. Once verified, foundation apply with `custom_domain_verified = true`.
 5. Application apply (new `release_id`, same images) with `public_hosts.bound = false` and `mail.from = no-reply@tonyai.io`.
-6. Foundation apply with `public_hosts.certificates = true` (tests switch to the custom hosts). Wait for the certificates to read `Succeeded`.
+6. Foundation apply with `public_hosts.certificates = true` (the tests stay on the generated hosts). Wait for the certificates to read `Succeeded`.
 7. Application apply with `bound = true`. Run `supabase_auth.py` with the new origin.
 8. Set the GitHub `qa` variables, then dispatch `QA deploy` (the web rebuild). Smoke runs on the custom hosts.
-9. Acceptance: one invitation and one reset arrive in the inbox with SPF, DKIM and DMARC `pass`. The availability tests are green and the monitoring readback passes. The no-demo check passes. Re-pin `storage-verify` if the deploy produced a release candidate.
+9. Foundation apply with `monitored = true` (tests move), together with the `storage-verify` re-pin.
+10. Acceptance: one invitation and one reset arrive in the inbox with SPF, DKIM and DMARC `pass`. The availability tests are green and the monitoring readback passes. The no-demo check passes. Re-pin `storage-verify` if the deploy produced a release candidate.
 
 **Rollback:** an application apply with `bound = false`, or without `public_hosts`, restores today's origins. Clearing the GitHub variables plus a deploy restores the web build. The mail sender reverts through `mail.from`.
 

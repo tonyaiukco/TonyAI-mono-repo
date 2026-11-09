@@ -30,8 +30,9 @@ class HostedNoDemoCheckTests(unittest.TestCase):
 
     def test_the_check_only_reads(self):
         statements = re.sub(r'--[^\n]*', '', SQL).lower()
-        self.assertIn('begin transaction read only;', statements)
-        self.assertTrue(statements.strip().endswith('rollback;'))
+        # One statement only: the SQL editor shows the last statement's rows, and a SELECT writes nothing.
+        self.assertTrue(statements.strip().startswith('with checks(') and statements.strip().endswith(';'))
+        self.assertEqual(statements.count(';'), 1)
         for verb in ('insert', 'update', 'delete', 'truncate', 'drop', 'alter', 'grant', 'create', 'commit'):
             self.assertIsNone(re.search(r'\b' + verb + r'\b', statements), verb)
 

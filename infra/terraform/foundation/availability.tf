@@ -2,15 +2,17 @@
 # Owner-approved exception (2026-11-09) to "no Application Insights": no SDK, no app telemetry.
 locals {
   availability_locations = ["emea-nl-ams-azr", "emea-gb-db3-azr", "emea-fr-pra-edge"] # West Europe, North Europe, France Central
+  # Public hosts only once they serve SNI: before that ACA presents its default certificate.
+  monitored = try(var.config.public_hosts.certificates && var.config.public_hosts.monitored, false) ? local.public_hosts : {}
   availability_targets = { for kind, path in { api = "/api/v1/health/ready", web = "/login" } : kind => (
-    contains(keys(local.certificates), kind)
-    ? "https://${local.certificates[kind]}${path}"
+    contains(keys(local.monitored), kind)
+    ? "https://${local.monitored[kind]}${path}"
     : "https://${local.stem}-${kind}.${azapi_resource.environment.output.properties.defaultDomain}${path}"
   ) }
-  availability = length(local.monitoring) == 0 ? {} : local.availability_targets
+  availability = length(local.monitoring) == 0 || !var.config.availability_tests ? {} : local.availability_targets
 }
 resource "azapi_resource" "insights" {
-  for_each  = local.monitoring
+  for_each  = length(local.availability) == 0 ? {} : local.monitoring
   type      = "Microsoft.Insights/components@2020-02-02"
   name      = "${local.stem}-availability"
   parent_id = azapi_resource.group.id
@@ -26,6 +28,7 @@ resource "azapi_resource" "insights" {
     }
   }
   response_export_values = []
+  ignore_casing          = true # ARM echoes resource IDs in its own casing.
 }
 resource "azapi_resource" "availability_test" {
   for_each  = local.availability
@@ -51,6 +54,7 @@ resource "azapi_resource" "availability_test" {
     }
   }
   response_export_values = []
+  ignore_casing          = true # ARM echoes resource IDs in its own casing.
 }
 resource "azapi_resource" "availability_alert" {
   for_each  = local.availability
@@ -60,7 +64,7 @@ resource "azapi_resource" "availability_alert" {
   location  = "global"
   tags      = local.tags
   body = { properties = {
-    description         = "The ${each.key} availability test fails from two of three locations. Follow runbook 06."
+    description         = "The ${each.key} availability test fails from all three locations. Follow runbook 06."
     enabled             = true
     severity            = 1
     evaluationFrequency = "PT5M"
@@ -71,9 +75,10 @@ resource "azapi_resource" "availability_alert" {
       "odata.type"        = "Microsoft.Azure.Monitor.WebtestLocationAvailabilityCriteria"
       webTestId           = azapi_resource.availability_test[each.key].id
       componentId         = azapi_resource.insights["enabled"].id
-      failedLocationCount = 2
+      failedLocationCount = 3
     }
     actions = [{ actionGroupId = azapi_resource.operator["enabled"].id }]
   } }
   response_export_values = []
+  ignore_casing          = true # ARM echoes resource IDs in its own casing.
 }

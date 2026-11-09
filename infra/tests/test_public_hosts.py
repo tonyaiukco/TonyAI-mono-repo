@@ -85,10 +85,11 @@ class PublicHostsTests(unittest.TestCase):
                   'email': {'client_id': '00000000-0000-0000-0000-000000000010', 'principal_id': '00000000-0000-0000-0000-000000000011',
                             'tenant_id': '00000000-0000-0000-0000-000000000002', 'custom_domain': 'tonyai.io'}}
         validate_foundation({'config': config})
-        for hosts in (HOSTS, {**HOSTS, 'certificates': True}):
+        for hosts in (HOSTS, {**HOSTS, 'certificates': True}, {**HOSTS, 'certificates': True, 'monitored': True}):
             validate_foundation({'config': {**config, 'public_hosts': hosts}})
         validate_foundation({'config': {**config, 'email': {**config['email'], 'sender_username': 'no-reply'}}})
         for bad in ({**HOSTS, 'web': 'qa.evil.io'}, {**HOSTS, 'certificates': 'yes'}, {**HOSTS, 'bound': True},
+                    {**HOSTS, 'monitored': True}, {**HOSTS, 'certificates': True, 'monitored': 1},
                     {'web': 'qa.tonyai.io'}, {**HOSTS, 'api': 'qa.tonyai.io'}, 'qa.tonyai.io'):
             with self.subTest(hosts=bad), self.assertRaises(SafeFailure):
                 validate_foundation({'config': {**config, 'public_hosts': bad}})

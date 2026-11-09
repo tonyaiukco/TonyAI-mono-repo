@@ -85,9 +85,9 @@ class FakeAz:
         return json.dumps({'tables': [{'rows': [[self.counts[key]]]}]})
 
 
-def run(resources=None, counts=None):
+def run(resources=None, counts=None, availability=True):
     az = FakeAz(resources, counts)
-    return {link: (status, detail) for status, link, detail in mr.readback(FOUNDATION, mr.Reader(FOUNDATION, az))}, az
+    return {link: (status, detail) for status, link, detail in mr.readback(FOUNDATION, mr.Reader(FOUNDATION, az), availability=availability)}, az
 
 
 class ReadbackTests(unittest.TestCase):
@@ -199,6 +199,29 @@ class ReadbackTests(unittest.TestCase):
             self.assertEqual(results[link][0], 'FAIL', link)
         self.assertEqual(results['API http-5xx metric alert'][0], 'PASS')
 
+    def test_availability_links_are_opt_in(self):
+        resources = {path: value for path, value in wired().items() if 'webtests' not in path and 'availability' not in path}
+        results, _ = run(resources, availability=False)
+        self.assertEqual(len(results), 11)
+        self.assertTrue(all(status == 'PASS' for status, _ in results.values()), results)
+        self.assertEqual(run(resources)[0]['availability component'][0], 'FAIL')
+
+    def test_each_availability_property_is_load_bearing(self):
+        cases = [
+            ('api availability alert', lambda r: r[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-api-availability']['properties'].update(enabled=False)),
+            ('web availability alert', lambda r: r[GROUP + 'Microsoft.Insights/metricAlerts/' + S + '-web-availability']['properties']['criteria'].update(webTestId=GROUP + 'Microsoft.Insights/webtests/other')),
+            ('api availability test', lambda r: r[GROUP + 'Microsoft.Insights/webtests/' + S + '-api-availability']['properties']['ValidationRules'].update(SSLCheck=False)),
+            ('web availability test', lambda r: r[GROUP + 'Microsoft.Insights/webtests/' + S + '-web-availability']['properties']['Request'].update(RequestUrl='https://evil.example/login')),
+            ('availability component', lambda r: r[COMPONENT]['properties'].update(WorkspaceResourceId=GROUP + 'Microsoft.OperationalInsights/workspaces/other')),
+            ('availability component', lambda r: r[COMPONENT]['properties'].update(IngestionMode='ApplicationInsights')),
+        ]
+        for link, change in cases:
+            resources = wired(); change(resources)
+            results, _ = run(resources)
+            with self.subTest(link=link):
+                self.assertEqual(results[link][0], 'FAIL')
+                self.assertEqual(sum(status == 'FAIL' for status, _ in results.values()), 1)
+
     def test_availability_tests_and_alerts_are_checked_per_host(self):
         resources = wired()
         resources[GROUP + 'Microsoft.Insights/webtests/' + S + '-web-availability']['properties']['Enabled'] = False
@@ -215,7 +238,7 @@ class ReadbackTests(unittest.TestCase):
         bound = mr.foundation_from_env({**ENV, 'WEB_HOST': 'qa.tonyai.io', 'API_HOST': 'api.qa.tonyai.io'})
         def links(resources):
             az = FakeAz(resources)
-            return {link: status for status, link, _ in mr.readback(bound, mr.Reader(bound, az))}
+            return {link: status for status, link, _ in mr.readback(bound, mr.Reader(bound, az), availability=True)}
         stale = links(wired())
         self.assertEqual((stale['api availability test'], stale['web availability test']), ('FAIL', 'FAIL'))
         moved = links({**wired(), **availability('https://api.qa.tonyai.io', 'https://qa.tonyai.io')})

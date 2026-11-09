@@ -119,6 +119,8 @@ class RuntimeDeploymentTests(unittest.TestCase):
             ('unbound, missing', stage(inputs(), False), {'api': domains('api', 'Disabled', False)}, False),
             ('bound, sni', stage(inputs(), True), {k: domains(k, 'SniEnabled') for k in ('api', 'web')}, True),
             ('bound, still disabled', stage(inputs(), True), {'api': domains('api', 'SniEnabled'), 'web': domains('web', 'Disabled')}, False),
+            ('unbound, live already sni', stage(inputs(), False), {k: domains(k, 'SniEnabled') for k in ('api', 'web')}, False),
+            ('unbound, disabled with a certificate', stage(inputs(), False), {k: domains(k, 'Disabled') for k in ('api', 'web')}, False),
             ('bound, swapped certificate', stage(inputs(), True), {'api': domains('api', 'SniEnabled'),
                                                                   'web': [{**domains('web', 'SniEnabled')[0], 'certificateId': env + '/managedCertificates/tonyai-staging-api-cert'}]}, False),
         ]

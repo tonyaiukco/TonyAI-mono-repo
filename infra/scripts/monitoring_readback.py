@@ -76,7 +76,7 @@ def same(a, b):
     return isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower()
 
 
-def readback(foundation, reader, hours=26):
+def readback(foundation, reader, hours=26, availability=False):
     """[(status, link, detail)] for every link of the chain, in order."""
     s, results = stem(foundation), []
     def check(link, ok, detail):
@@ -149,7 +149,9 @@ def readback(foundation, reader, hours=26):
               and any(same(scope, api.get('id')) for scope in alert_properties.get('scopes') or []),
               'absent or unreadable' if not alert else 'enabled=' + str(alert_properties.get('enabled')) + ', routed=' + str(routed))
 
-    # LP2-04: the tests target the hosts the exported WEB_HOST/API_HOST (or their absence) name.
+    if not availability:
+        return results
+    # LP2-04 (opt-in, --availability): the tests target the hosts WEB_HOST/API_HOST (or their absence) name.
     component = reader.arm('Microsoft.Insights/components', s + '-availability') or {}
     check('availability component', bool(component.get('id'))
           and (component.get('properties') or {}).get('IngestionMode') == 'LogAnalytics'
@@ -176,11 +178,13 @@ def main(argv=None, env=None):
     import os
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--hours', type=int, default=26, help='row-count window (1-72, default 26 as the alert)')
+    parser.add_argument('--availability', action='store_true',
+                        help='also check the availability tests and alerts (once availability_tests is applied)')
     args = parser.parse_args(argv)
     if not 1 <= args.hours <= 72:
         raise SafeFailure('The window must be 1 to 72 hours.')
     foundation = foundation_from_env(env if env is not None else os.environ)
-    results = readback(foundation, Reader(foundation), args.hours)
+    results = readback(foundation, Reader(foundation), args.hours, args.availability)
     for status, link, detail in results:
         print(status + ': ' + link + ': ' + detail)
     failed = [link for status, link, _ in results if status == 'FAIL']

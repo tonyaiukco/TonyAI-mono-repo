@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from deploy_apps import verify
+from public_hosts import web_origins
 from runtime_limits import expected_env
 from terraform_run import validate_release
 from pooler import SafeFailure
@@ -29,12 +30,31 @@ def app(kind, contract):
     secrets = [{'name':name,'identity':identity,'keyVaultUrl':'https://vault.vault.azure.net/secrets/'+name+'/'+r[field]}
                for name,field in [('database-url','database_secret_version'),('supabase-service-role-key','backend_secret_version')]] if kind=='api' else []
     return {'properties': {
-        'template': {'terminationGracePeriodSeconds': 120, 'scale': {'minReplicas': 1, 'maxReplicas': 1}, 'containers':[{'resources': {'cpu': 1, 'memory': '2Gi'}, 'env': [{'name': 'STORAGE_CLEANUP_HOLD', 'value': '1' if r.get('storage_cleanup_hold') else '0'}, {'name': 'STORAGE_SWEEP_INTERVAL_SECONDS', 'value': str(r.get('storage_sweep_interval_seconds', 300))}, {'name': 'DATABASE_URL', 'secretRef': 'database-url'}] + [{'name': k, 'value': v} for k, v in expected_env(r).items()], 'probes': [{'type': t, 'httpGet': {'path': '/api/v1/health/ready' if t == 'Readiness' else '/api/v1/health'}} for t in ('Startup', 'Liveness', 'Readiness')], 'image':'registry.azurecr.io/tonyai/'+kind+'@'+r[kind+'_digest']}]},
+        'template': {'terminationGracePeriodSeconds': 120, 'scale': {'minReplicas': 1, 'maxReplicas': 1}, 'containers':[{'resources': {'cpu': 1, 'memory': '2Gi'}, 'env': [{'name': 'STORAGE_CLEANUP_HOLD', 'value': '1' if r.get('storage_cleanup_hold') else '0'}, {'name': 'STORAGE_SWEEP_INTERVAL_SECONDS', 'value': str(r.get('storage_sweep_interval_seconds', 300))}, {'name': 'DATABASE_URL', 'secretRef': 'database-url'}] + [{'name': k, 'value': v} for k, v in expected_env(r).items()] + ([{'name': 'WEB_ORIGIN', 'value': ','.join(web_origins(f))}] if kind == 'api' else []), 'probes': [{'type': t, 'httpGet': {'path': '/api/v1/health/ready' if t == 'Readiness' else '/api/v1/health'}} for t in ('Startup', 'Liveness', 'Readiness')], 'image':'registry.azurecr.io/tonyai/'+kind+'@'+r[kind+'_digest']}]},
         'configuration': {'activeRevisionsMode': 'Single', 'ingress': {'allowInsecure':False,'fqdn':'tonyai-staging-'+kind+'.'+f['default_domain']},'secrets':secrets},
         'latestReadyRevisionName':'tonyai-staging-'+kind+'--'+r['release_id']}}
 
 
 class DeploymentVersionTests(unittest.TestCase):
+    def test_live_cors_origins_must_equal_the_release(self):
+        contract = inputs()
+        for value, ok in ((None, True), ('https://evil.example', False), ('', False)):
+            api = app('api', contract)
+            env = api['properties']['template']['containers'][0]['env']
+            if value is not None:
+                next(item for item in env if item['name'] == 'WEB_ORIGIN')['value'] = value
+            def read(*args):
+                if args[:3] == ('containerapp', 'revision', 'list'): return [{'name': 'tonyai-staging-api--r001', 'properties': {'active': True}}]
+                return api if args[-1].endswith('-api') else app('web', contract)
+            with self.subTest(value=value), contextlib.redirect_stdout(io.StringIO()):
+                if ok: verify(contract, read)
+                else:
+                    with self.assertRaises(SafeFailure): verify(contract, read)
+        api = app('api', contract)
+        api['properties']['template']['containers'][0]['env'] = [e for e in api['properties']['template']['containers'][0]['env'] if e['name'] != 'WEB_ORIGIN']
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SafeFailure):
+            verify(contract, lambda *a: [{'name': 'tonyai-staging-api--r001', 'properties': {'active': True}}] if a[:3] == ('containerapp', 'revision', 'list') else (api if a[-1].endswith('-api') else app('web', contract)))
+
     def test_arm_null_value_beside_runtime_secret_reference_is_allowed(self):
         contract = inputs()
         def read(*args):
