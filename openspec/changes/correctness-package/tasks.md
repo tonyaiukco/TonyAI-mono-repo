@@ -29,13 +29,13 @@
 
 ## 6. Counted final
 
-- [ ] 6.1 Extract `loadTrReleases()` and add `counted-final.int.spec.ts`: final with no gap, authoritative links, dataset, PDF, XLSX and CSV reconcile to the golden values
+- [x] 6.1 Extract `loadTrReleases()` and add `counted-final.int.spec.ts`: final with no gap, authoritative links, dataset, PDF, XLSX and CSV reconcile to the golden values
 
 ## 7. Final rule
 
-- [ ] 7.1 `deriveIssuance` adds `no_included_obligation`; catalogues in `issuance-html`, `issuance-tables`, report and web messages
-- [ ] 7.2 Migration replaces `report_issuances_guard` (code list and floor); inspect for the spurious DROP; `runtime-role` trigger body entry; guard specs for a direct write
-- [ ] 7.3 Move `report-issuance.int.spec.ts`, `issuance-html`, `issuance-tables` and `e2e/report-issuances.spec.ts` to the new rule; a retained all-excluded dataset still issues as partial with its fingerprint intact; rewrite `docs/api/report-datasets.md`'s stale final paragraph
+- [x] 7.1 `deriveIssuance` adds `no_included_obligation`; catalogues in `issuance-html`, `issuance-tables`, report and web messages
+- [x] 7.2 Migration replaces `report_issuances_guard` (code list and floor); inspect for the spurious DROP; `runtime-role` trigger body entry; guard specs for a direct write
+- [x] 7.3 Move `report-issuance.int.spec.ts`, `issuance-html`, `issuance-tables` and `e2e/report-issuances.spec.ts` to the new rule; a retained all-excluded dataset still issues as partial with its fingerprint intact; rewrite `docs/api/report-datasets.md`'s stale final paragraph
 
 ## 8. Web headers
 

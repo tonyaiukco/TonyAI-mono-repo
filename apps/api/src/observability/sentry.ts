@@ -106,7 +106,7 @@ export function captureException(
   });
 }
 
-/** Used only by the owner-run synthetic reporter before its process exits. */
+/** Before a process exits: the owner-run synthetic reporter, and a failed boot. */
 export async function flushSentry(): Promise<boolean> {
   return sentry ? sentry.flush(5_000) : false;
 }

@@ -7,6 +7,7 @@ import {
   PHASE_PRODUCTION_SERVER,
 } from 'next/constants.js';
 import nextConfig from './next.config.mjs';
+import { reportOnlyPolicy } from './security-headers.mjs';
 
 /**
  * Guards the dev-memory fix. Next's Turbopack dev server adopts
@@ -58,3 +59,30 @@ for (const [phase, config] of [
 }
 
 console.log('next.config.mjs: dev/runtime/build phases OK (4 assertions + 3 shared checks)');
+
+// Every phase serves the security headers (Decisions 2026-11-09). The policies
+// are read from the build's NEXT_PUBLIC_* values, so a bad one must not fail it.
+for (const phase of [PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD, PHASE_PRODUCTION_SERVER]) {
+  const rules = await (await nextConfig(phase)).headers();
+  assert.equal(rules[0].source, '/:path*', 'the headers must cover every route');
+  const byKey = Object.fromEntries(rules[0].headers.map((h) => [h.key, h.value]));
+  assert.equal(byKey['X-Content-Type-Options'], 'nosniff');
+  assert.equal(byKey['X-Frame-Options'], 'DENY');
+  assert.equal(byKey['Referrer-Policy'], 'no-referrer');
+  assert.equal(byKey['Permissions-Policy'], 'camera=(), microphone=(), geolocation=()');
+  assert.equal(byKey['Content-Security-Policy'], "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'");
+  assert.match(byKey['Content-Security-Policy-Report-Only'], /default-src 'self'/);
+}
+
+const connectSrc = (env) => /connect-src ([^;]+)/.exec(reportOnlyPolicy(env))[1];
+assert.equal(
+  connectSrc({
+    NEXT_PUBLIC_API_BASE_URL: 'https://api.example.com/api/v1',
+    NEXT_PUBLIC_SUPABASE_URL: 'https://abc.supabase.co',
+    NEXT_PUBLIC_SENTRY_DSN: 'https://key@o1.ingest.de.sentry.io/2',
+  }),
+  "'self' https://api.example.com https://abc.supabase.co https://o1.ingest.de.sentry.io",
+  'connect-src names the origins only, and no key',
+);
+assert.equal(connectSrc({}), "'self'");
+assert.equal(connectSrc({ NEXT_PUBLIC_API_BASE_URL: 'not a url' }), "'self'");
