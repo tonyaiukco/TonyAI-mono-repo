@@ -41,8 +41,8 @@
  * This SQL does not call the service and shares no code with it. That is the
  * point: an independent reimplementation can DISAGREE with the implementation,
  * which is the only way question 2 has an answer. The cost is that a change to
- * `detectAnomaly` must be mirrored here in the SAME PR — the constants below
- * are the whole of it.
+ * `detectAnomaly` must be mirrored in the SAME PR — the constants and the SQL
+ * in `anomaly-probe.lib.mjs` are the whole of it.
  *
  * SAFETY
  * ------
@@ -55,28 +55,21 @@
  *   node packages/db/scripts/anomaly-probe.mjs
  *   node packages/db/scripts/anomaly-probe.mjs --allow-remote
  *
- * Exit code: 1 when the stored verdict disagrees with the rule (real drift),
+ * Exit code: 1 when the stored verdict — flag, count or average — disagrees
+ * with the rule (real drift),
  * 0 otherwise — a weak baseline is a fact to look at, not a failure.
  */
 import 'dotenv/config';
 import { PrismaClient } from '../generated/client/index.js';
 
-/* ---- the rule, mirrored from apps/api/src/activity-records/activity-records.service.ts ---- */
-
-/** VAR §4.2 — more than 50% from the rolling average. */
-const ANOMALY_THRESHOLD = 0.5;
-/** VAR §4.1 — the rolling average is over the previous 3 comparable periods. */
-const BASELINE_MAX_PERIODS = 3;
-/**
- * How many of those periods must actually carry a figure for the rule to run
- * (`ANOMALY_MIN_PRIORS`). One since 2026-11-11 (BUG-R2-07): one or two is a
- * limited-history verdict. It was three from 2026-08-27 until then. Kept as
- * its own constant because section 3 still reports the shortfall — "2 of 3"
- * is the finding, and a single constant could not express it.
- */
-const BASELINE_MIN_PERIODS = 1;
-/** COUNTED_STATUSES — the only statuses that seed a baseline. `voided` never does. */
-const BASELINE_STATUSES = ['submitted', 'under_review', 'approved', 'locked'];
+import {
+  ANOMALY_THRESHOLD,
+  BASE_SQL,
+  BASELINE_MAX_PERIODS,
+  BASELINE_MIN_PERIODS,
+  DRIFT_WHERE,
+  LEGACY_WHERE,
+} from './anomaly-probe.lib.mjs';
 
 const args = process.argv.slice(2);
 const allowRemote = args.includes('--allow-remote');
@@ -97,66 +90,6 @@ if (!isLocal && !allowRemote) {
 }
 
 const prisma = new PrismaClient();
-
-/**
- * The baseline, per record. No parameters are interpolated from input — the
- * only substitutions are the constants above — so `$queryRawUnsafe` here is a
- * static string, used because the three reports share this prefix and a tagged
- * template cannot be concatenated.
- */
-const BASE_SQL = `
-WITH r AS (
-  SELECT id, subsidiary_id, location_id, category, activity_type, reporting_period,
-         reporting_year, period_value, status, anomaly_flag,
-         -- A count of 1-2 beside a NULL average, unflagged: scored before
-         -- 2026-11-11, when such a window was not evaluated. Kept, never
-         -- re-scored. COALESCE because a NULL count makes the BETWEEN NULL,
-         -- and "NOT NULL" would drop that row from the drift report below.
-         -- Unflagged only: the old rule never flagged a short window, so a
-         -- flag here is a row no writer produced and must stay drift.
-         COALESCE(anomaly_baseline_prior_count BETWEEN ${BASELINE_MIN_PERIODS} AND ${BASELINE_MAX_PERIODS - 1}
-            AND anomaly_baseline_tco2e IS NULL AND NOT anomaly_flag, false) AS legacy,
-         reporting_year * 100 + COALESCE(CASE reporting_period
-           WHEN 'monthly'   THEN array_position(ARRAY['January','February','March','April','May','June','July','August','September','October','November','December'], period_value) - 1
-           WHEN 'quarterly' THEN array_position(ARRAY['Q1','Q2','Q3','Q4'], period_value)
-           ELSE 0 END, 0) AS key,
-         CASE WHEN jsonb_typeof(calculation->'factorId') = 'string'
-                   AND length(calculation->>'factorId') > 0
-                   AND jsonb_typeof(calculation->'tCo2e') = 'number'
-              THEN (calculation->>'tCo2e')::float8 END AS tco2e
-  FROM activity_records
-),
-counted AS (
-  SELECT * FROM r WHERE status = ANY(ARRAY[${BASELINE_STATUSES.map((s) => `'${s}'`).join(',')}]::"ActivityRecordStatus"[])
-),
-scored AS (
-  SELECT c.*, s.legal_name AS sub, l.name AS loc, p.slots, p.priors, p.baseline
-  FROM counted c
-  JOIN subsidiaries s ON s.id = c.subsidiary_id
-  LEFT JOIN locations l ON l.id = c.location_id
-  LEFT JOIN LATERAL (
-    SELECT count(*)::int AS slots, count(t.tco2e)::int AS priors, avg(t.tco2e) AS baseline
-    FROM (
-      SELECT b.tco2e FROM counted b
-      WHERE b.subsidiary_id = c.subsidiary_id
-        AND b.location_id IS NOT DISTINCT FROM c.location_id
-        AND b.category = c.category
-        AND b.activity_type IS NOT DISTINCT FROM c.activity_type
-        AND b.reporting_period = c.reporting_period
-        AND b.key < c.key
-        AND b.id <> c.id
-      ORDER BY b.key DESC
-      LIMIT ${BASELINE_MAX_PERIODS}
-    ) t
-  ) p ON TRUE
-),
-verdict AS (
-  SELECT *, CASE
-    WHEN tco2e IS NULL THEN false
-    WHEN priors < ${BASELINE_MIN_PERIODS} OR baseline IS NULL OR baseline = 0 THEN false
-    ELSE abs(tco2e - baseline) / baseline > ${ANOMALY_THRESHOLD} END AS computed
-  FROM scored
-)`;
 
 const q = (sql) => prisma.$queryRawUnsafe(`${BASE_SQL}\n${sql}`);
 const entity = (row) => row.loc ?? '-- whole company --';
@@ -198,18 +131,20 @@ async function main() {
 
   const drift = await q(`
     SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e,
-           priors, baseline, anomaly_flag, computed
-    FROM verdict WHERE anomaly_flag <> computed AND NOT legacy ORDER BY sub, category, key;`);
+           priors, baseline, anomaly_flag, computed,
+           stored_priors, stored_baseline, expected_priors, expected_baseline
+    FROM verdict WHERE ${DRIFT_WHERE} ORDER BY sub, category, key;`);
 
-  console.log(`\n2. Drift — stored anomaly_flag vs the rule over today's pool`);
+  console.log(`\n2. Drift — the stored verdict (flag, count, average) vs the rule over today's pool`);
   if (drift.length === 0) {
     console.log('   none. Every stored verdict still matches the pool beneath it.');
   } else {
     for (const row of drift) {
       console.log(
         `   ${row.id}  ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)}` +
-          ` [${row.status}]\n     stored ${row.anomaly_flag} → rule says ${row.computed}` +
-          ` (${row.tco2e?.toFixed(3)} tCO₂e vs baseline ${row.baseline?.toFixed(3)} over ${row.priors} prior(s))`,
+          ` [${row.status}] ${row.tco2e?.toFixed(3)} tCO₂e\n` +
+          `     stored: flag ${row.anomaly_flag}, ${row.stored_priors ?? 'no'} prior(s), average ${row.stored_baseline?.toFixed(3) ?? 'none'}\n` +
+          `     rule:   flag ${row.computed}, ${row.expected_priors ?? 'no'} prior(s), average ${row.expected_baseline?.toFixed(3) ?? 'none'}`,
       );
     }
   }
@@ -217,7 +152,7 @@ async function main() {
   const legacy = await q(`
     SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e,
            priors, baseline, anomaly_flag, computed
-    FROM verdict WHERE legacy ORDER BY sub, category, key;`);
+    FROM verdict WHERE ${LEGACY_WHERE} ORDER BY sub, category, key;`);
   const legacyFlaggedNow = legacy.filter((row) => row.anomaly_flag !== row.computed);
 
   console.log(

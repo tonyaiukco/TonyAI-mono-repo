@@ -190,6 +190,14 @@ An unflagged record scored on one or two periods before the short-history check 
 - **WHEN** a committed record holds a flag beside a count of 1 or 2 and no average, which no version of the rule ever wrote
 - **THEN** the consistency tools report it as drift, not as a known difference
 
+#### Scenario: A stored verdict is checked whole, not by its flag alone
+- **WHEN** a committed record is stored as flagged on 1 earlier period with no average, and the rule flags it today as well
+- **THEN** the consistency probe reports it as drift, because its stored average is not the rule's
+
+#### Scenario: A stale count or average is drift although the flag still holds
+- **WHEN** a committed record's stored count or average no longer matches its history, and its flag does
+- **THEN** the consistency probe reports it as drift
+
 #### Scenario: The consistency probe on an upgraded database
 - **WHEN** the probe runs on a database that holds committed records scored before the change
 - **THEN** it lists them as a known difference and does not report drift for them

@@ -128,6 +128,14 @@ Owner decision, 2026-11-11, from the architect seat's finding. `anomaly:recomput
 
 Alternative considered: leave the tool as it was (Decision 2 of 2026-08-27 lets it rewrite records in review). Rejected by the owner: the reviewer loses nothing, because the record reads "not checked" and can be rejected, and the resubmit meets the gate.
 
+### D7b. The probe compares the whole verdict
+
+Owner's review, 2026-11-11 (P2). `anomaly:probe` compared the stored flag with the recomputed flag and nothing else. A record flagged on one earlier period with no stored average passed, because the rule flags it today too: the flags agree and the verdict is still one no version of the rule wrote. The re-score tool caught it (it has always compared flag, count and average); the independent SQL probe did not.
+
+The drift predicate now compares all three: the flag, the count (null for a record with no figure) and the average (null below the minimum, otherwise within a relative tolerance of 1e-9, for the gap between Postgres's `avg()` and the API's fold). Kept verdicts stay excused. The probe therefore also reports a pool that moved without flipping the flag, as the re-score tool does, so the two tools agree on what is stale.
+
+The rule and the SQL moved to `anomaly-probe.lib.mjs`, which imports nothing, so the integration suite runs the script's own query on rows built for the purpose (`anomaly-probe.int.spec.ts`).
+
 ### D8. The seed follows the rule
 
 `rollingBaseline` in `packages/db/prisma/seed.ts` returns the average for one to three figures, through the contract's constants. The seed's existing guards (a staged flag must agree with its window) stay, so a seeded record that would now flag fails the seed loudly, not silently.

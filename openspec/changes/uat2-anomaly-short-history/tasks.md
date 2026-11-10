@@ -66,6 +66,12 @@
 - [x] 7.1 In `packages/db/scripts/anomaly-recompute.lib.mjs`, make `classify` return `unexplained_flag` for a submitted or under-review record that the rule would newly flag and that carries no variance reason (design D7a); the shell reads `varianceReason`, reports these records in their own group and counts them as drift that remains. Add tests: both in-review statuses are refused; a draft and a rejected record are rewritten; a record with a reason is rewritten; a blank reason does not excuse; an approved record stays `terminal_status`; a change with no new flag, and a flag that no longer holds, are still rewritten. Verify with `pnpm --filter @tonyai/db test` and a dry run on the local database.
 - [x] 7.2 Update the spec (two scenarios), `docs/development/commands.md`, `docs/md_docs/validation_anomaly_rules.md` §4.1 and the status file (the decision, and the open question it closes). Verify with `openspec validate uat2-anomaly-short-history --strict`.
 
+## 8. The probe compares the whole verdict (owner's review, P2)
+
+- [x] 8.1 Move the probe's rule constants and SQL to `packages/db/scripts/anomaly-probe.lib.mjs` (with a `.d.mts`), and make its drift predicate compare the flag, the count and the average, with a relative tolerance on the average (design D7b). The script prints the stored and the recomputed verdict for each drifted row. Verify with `pnpm anomaly:probe` on the local database: no drift, the 20 kept verdicts listed.
+- [x] 8.2 Add `apps/api/test/int/anomaly-probe.int.spec.ts`: the script's own query over real tables, with one series each for a flagged verdict with no average (drift although the flags agree), the same verdict stored correctly, a kept verdict, a stale count, a stale average, a missing count, and an average inside the tolerance; and a series stored as the rule stores it (no drift). Verify with the integration run of that file, and by showing that it fails when the predicate is set back to the flag alone.
+- [x] 8.3 Update the spec (two scenarios), `docs/development/commands.md` and the status file, which states that BUG-R2-07 is partly met until K4. Verify with `openspec validate uat2-anomaly-short-history --strict`.
+
 ## Workflow follow-up
 
 - Open the pull request from `feat/uat2-anomaly-tier2` when the owner asks; the owner merges.
