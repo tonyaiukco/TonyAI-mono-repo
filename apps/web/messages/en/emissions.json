@@ -151,5 +151,9 @@
     "cannotUndo": "It cannot be undone.",
     "withdrawn": "Withdrawn — {tonnes} tCO₂e left the inventory.",
     "withdrawnNoFigure": "Withdrawn — the entry no longer counts towards any total."
+  },
+  "copy": {
+    "action": "Copy to new draft",
+    "explain": "This figure was withdrawn. To correct it, copy it into a new draft on Data Entry, fix the values, attach its evidence and send it for review."
   }
 }

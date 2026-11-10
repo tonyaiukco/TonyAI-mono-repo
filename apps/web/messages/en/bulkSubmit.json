@@ -1,8 +1,8 @@
 {
   "blockedOne": "The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.",
   "blockedMany": "All {count} imported records need an evidence file before they can be submitted, and an import cannot attach one. Under Previous submissions, attach each invoice to the records it evidences — one file can cover several.",
-  "confirmOne": "Send 1 record for review. Only a reviewer can send it back — there is no way to un-submit it yourself.",
-  "confirmMany": "Send {count} records for review. Only a reviewer can send them back — there is no way to un-submit them yourself.",
+  "confirmOne": "Send 1 record for review. You can recall it yourself only until a reviewer opens it; after that, only the reviewer can send it back.",
+  "confirmMany": "Send {count} records for review. You can recall each one yourself only until a reviewer opens it; after that, only the reviewer can send it back.",
   "refusedHeadline": "No records were submitted.",
   "refusedOne": "It needs attention first — see below.",
   "refusedMany": "All {count} need attention first — see below.",

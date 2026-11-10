@@ -21,6 +21,10 @@ import {
   RecordChangedError,
   SelfApprovalRefusedError,
   SubmitAuthorRefusedError,
+  AuthorOnlyRefusedError,
+  EvidenceDetachRequiredError,
+  ReviewVersionRequiredError,
+  RecordNotRecallableError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
   ActivityTypeSlotConflictError,
@@ -51,6 +55,8 @@ import {
   type RecordParameters,
   type ReportingPeriod,
   mayAuthorRecords,
+  isRecallable,
+  EDITABLE_RECORD_STATUSES,
   normalizeRecordParameters,
   recordActivityTypesFor,
   REPORTING_PERIODS,
@@ -254,15 +260,45 @@ const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
 // own super_admin: an external advisor should not be able to sign off the
 // numbers their client will report. Matches permissions_and_roles.md §3.
 const APPROVE_ROLES = new Set(['super_admin']);
+/**
+ * A review decision is about the submission the reviewer saw (BUG-R2-03
+ * review, P1). Since an author may recall a submitted record, edit it and
+ * submit it again, a reviewer who opened the record before that would
+ * otherwise approve a figure they never saw. The client names the
+ * `submittedAt` it was shown; any other submission is a lost race (409).
+ * Absent, nothing is compared (an older client, a script).
+ */
+/**
+ * What the HTTP layer passes when a request names no submission at all
+ * (BUG-R2-03 owner review P1): over HTTP the field is required, and its
+ * absence is refused right after the role check — so a role refusal still
+ * comes first. In-process callers that pass nothing are not compared.
+ */
+export const SUBMISSION_NOT_NAMED: unique symbol = Symbol('submission not named');
+export type SeenSubmission = string | null | typeof SUBMISSION_NOT_NAMED;
+
+function assertSubmissionNamed(seenSubmittedAt: SeenSubmission | undefined): void {
+  if (seenSubmittedAt === SUBMISSION_NOT_NAMED) throw new ReviewVersionRequiredError();
+}
+
+function assertSameSubmission(record: { submittedAt: Date | null }, seenSubmittedAt: SeenSubmission | undefined): void {
+  if (seenSubmittedAt === undefined || seenSubmittedAt === SUBMISSION_NOT_NAMED) return;
+  const seen = seenSubmittedAt === null ? null : Date.parse(seenSubmittedAt);
+  const now = record.submittedAt ? record.submittedAt.getTime() : null;
+  if (seen !== now) throw new RecordChangedError();
+}
+
 // Statuses in which a record may still be edited or deleted by an author.
 // Exported so the subsidiary delete guard can tell a removable draft from a
 // committed record it must refuse over — if the two lists drifted, that guard
 // would start offering advice ("delete the drafts first") that the record
 // endpoint refuses to carry out.
-export const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
-  ActivityRecordStatus.draft,
-  ActivityRecordStatus.rejected,
-]);
+// Built from the contract's list (BUG-R2-03 review), so the screens'
+// `mayEditRecord`, this gate and the trigger pin in record-triggers.spec.ts
+// read one list.
+export const EDITABLE_STATUSES = new Set<ActivityRecordStatus>(
+  EDITABLE_RECORD_STATUSES.map((status) => ActivityRecordStatus[status]),
+);
 
 // A rejected record must be able to come BACK. Rejecting is the reviewer's
 // routine action, editing a rejected record is already allowed, and `rejected`
@@ -579,8 +615,31 @@ export class ActivityRecordsService {
     }
   }
 
-  /** Author-or-super_admin gate for edit/delete on a mutable record. */
-  private assertCanMutate(user: RequestUser, record: ActivityRecord): void {
+  /**
+   * The edit gate: an author role, the record's own author — `super_admin`
+   * included, never exempt (BUG-R2-03, decision 2026-11-10 (fourth), 5) — and
+   * an editable status. Before, a super_admin could edit a colleague's draft
+   * and approve it once submitted, which D01 (creator ≠ approver) could not
+   * see. `mayEditRecord` in the contract is the same rule for the screens.
+   */
+  private assertCanEdit(user: RequestUser, record: ActivityRecord): void {
+    if (!mayAuthorRecords(user)) {
+      throw new ForbiddenException(
+        'Your role may not modify activity records',
+      );
+    }
+    if (record.createdBy !== user.id) {
+      throw new AuthorOnlyRefusedError('edit');
+    }
+    this.assertEditableStatus(record);
+  }
+
+  /**
+   * The delete gate: author or `super_admin`, as before BUG-R2-03. A draft
+   * counts towards nothing, so an administrator removing a colleague's
+   * abandoned draft changes no figure anyone will approve.
+   */
+  private assertCanDelete(user: RequestUser, record: ActivityRecord): void {
     if (!mayAuthorRecords(user)) {
       throw new ForbiddenException(
         'Your role may not modify activity records',
@@ -591,6 +650,10 @@ export class ActivityRecordsService {
         'You may only modify activity records you created',
       );
     }
+    this.assertEditableStatus(record);
+  }
+
+  private assertEditableStatus(record: ActivityRecord): void {
     if (!EDITABLE_STATUSES.has(record.status)) {
       throw new BadRequestException(
         errorBody('record_not_editable', `Cannot modify a record in status "${record.status}"`, {
@@ -1158,7 +1221,7 @@ export class ActivityRecordsService {
     dto: UpdateActivityRecordDto,
   ): Promise<ActivityRecordDTO> {
     const existing = await this.loadScoped(user, id);
-    this.assertCanMutate(user, existing);
+    this.assertCanEdit(user, existing);
 
     // Resolve the effective values (dto overrides existing) so we can recompute.
     const category = (dto.category ?? existing.category) as Category;
@@ -1279,9 +1342,15 @@ export class ActivityRecordsService {
     }
     if (dto.varianceReason !== undefined) data.varianceReason = dto.varianceReason;
 
+    // BUG-R2-03 (owner decision D1): the files this edit takes off the record.
+    const detachIds = [...new Set(dto.detachEvidenceIds ?? [])];
+    const changesCategory = category !== existing.category;
+
     let updated: WrittenRecord;
+    let evidenceCount: number;
+    let removedFiles: { id: string; storagePath: string }[];
     try {
-      updated = await this.withLockedRecord(
+      ({ row: updated, evidenceCount, removedFiles } = await this.withLockedRecord(
         existing,
         async (tx, current) => {
           // Everything above was computed from `existing` — the snapshot, the
@@ -1292,25 +1361,46 @@ export class ActivityRecordsService {
           if (changedSince(existing, current)) throw new RecordChangedError();
           await this.assertPeriodNotLocked(periodOf(current), tx);
           if (moves) await this.assertPeriodNotLocked(target, tx);
+          // The record's files, read under its row lock: an upload linking a
+          // file checks the link's key with FOR KEY SHARE on this row, which
+          // the lock blocks, so the set cannot grow before this commits.
+          const linked = await this.evidence.fileIdsFor(current.id, tx);
+          const linkedSet = new Set(linked);
+          if (detachIds.some((fileId) => !linkedSet.has(fileId))) {
+            throw new ResourceNotFoundError('evidence_not_found');
+          }
+          // A file filed under the old category cannot evidence the new one,
+          // and only the user may decide to delete it: the request must name
+          // them all. Refused before anything is written.
+          if (changesCategory && linked.some((fileId) => !detachIds.includes(fileId))) {
+            throw new EvidenceDetachRequiredError(linked.length);
+          }
           const row = await tx.activityRecord.update({
             where: { id, status: current.status },
             data,
             include: WRITTEN_RECORD_INCLUDE,
           });
+          // Records before files, the protocol's order: the row is locked
+          // above, the files are locked inside the helper.
+          const gone = await this.evidence.detachLinksInTx(tx, user, id, detachIds);
+          const count = linked.length - detachIds.length;
           await this.auditCreateUpdateDelete(
             user,
             'update',
             id,
             {
               before: this.toAuditSnapshot(current),
-              after: this.toAuditSnapshot(row, row._count.evidenceLinks),
+              after: this.toAuditSnapshot(row, count),
+              ...(detachIds.length > 0
+                ? { evidence: { detachedFileIds: detachIds, deletedFileIds: gone.map((f) => f.id) } }
+                : {}),
             },
             tx,
           );
-          return row;
+          return { row, evidenceCount: count, removedFiles: gone };
         },
         moves ? [target] : [],
-      );
+      ));
     } catch (e) {
       // Re-targeting can collide with an existing record for the new entity.
       if (
@@ -1329,9 +1419,11 @@ export class ActivityRecordsService {
       if (trigger === 'TA001') throw new SnapshotImmutableError();
       throw e;
     }
+    // Only the files that went with the commit; their rows are already gone.
+    await this.evidence.removeBlobs(removedFiles.map((f) => f.storagePath));
     return this.toDTO(
       updated,
-      updated._count.evidenceLinks,
+      evidenceCount,
       await this.actorsFor(user, [updated]),
     );
   }
@@ -1341,7 +1433,7 @@ export class ActivityRecordsService {
     id: string,
   ): Promise<{ id: string; deleted: true }> {
     const existing = await this.loadScoped(user, id);
-    this.assertCanMutate(user, existing);
+    this.assertCanDelete(user, existing);
     // Period-lock gate (FR §4.2): no deletions in a closed period. An early
     // answer; asked again under the lock.
     await this.assertPeriodNotLocked(periodOf(existing));
@@ -1362,7 +1454,7 @@ export class ActivityRecordsService {
     // it; and the file rows go in this transaction, so the one audit row that
     // names them commits with them. Only their blobs wait for the commit.
     const deleted = await this.withLockedRecord(existing, async (tx, current) => {
-      regate(existing, current, () => this.assertCanMutate(user, current));
+      regate(existing, current, () => this.assertCanDelete(user, current));
       await this.assertPeriodNotLocked(periodOf(current), tx);
       const fileIds = await this.evidence.fileIdsFor(current.id, tx);
       await lockEvidenceRows(tx, fileIds);
@@ -1497,6 +1589,43 @@ export class ActivityRecordsService {
   }
 
   /**
+   * Recall a submitted record to `draft` (BUG-R2-03, decision 2026-11-10
+   * (fourth), 1): its author takes it back before review starts, edits it and
+   * submits it again. Only from `submitted` — once a reviewer has taken it into
+   * review, the reviewer returns it (reject), so nobody approves a figure that
+   * changed while they were looking at it. Only the author, `super_admin`
+   * included, as with submit (D02).
+   *
+   * The inputs and the figure do not change: the database freezes them on
+   * this step too (`activity_records_snapshot_immutable` tests OLD.status).
+   * `submittedAt` is cleared (a draft has not been submitted); the review
+   * note and the anomaly verdict are kept, as a resubmit keeps them. Races
+   * with `startReview`, `approve` and `reject` are settled by the row lock:
+   * whichever locks first wins, and the other sees a status it cannot act on.
+   */
+  async recall(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
+    const seen = await this.loadScoped(user, id);
+    if (!mayAuthorRecords(user)) {
+      throw new ForbiddenException(
+        'Your role may not modify activity records',
+      );
+    }
+    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+      regate(seen, record, () => {
+        if (!isRecallable(record.status)) {
+          throw new RecordNotRecallableError(record.status);
+        }
+        if (record.createdBy !== user.id) {
+          throw new AuthorOnlyRefusedError('recall');
+        }
+      });
+      await this.assertPeriodNotLocked(periodOf(record), tx);
+      return this.transition(tx, user, record, ActivityRecordStatus.draft);
+    });
+    return this.writtenDTO(user, updated);
+  }
+
+  /**
    * Take a submitted record into review (FR §6.3): submitted → under_review.
    * Marks that a reviewer is actively looking at it; approve/reject remain the
    * only exits. Same reviewer RBAC + period-lock gate as approve/reject.
@@ -1526,11 +1655,12 @@ export class ActivityRecordsService {
     return this.writtenDTO(user, updated);
   }
 
-  async approve(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
+  async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!APPROVE_ROLES.has(user.role)) {
       throw new ForbiddenException('Only a super_admin may approve records');
     }
+    assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recompute(user, seen);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
@@ -1546,6 +1676,7 @@ export class ActivityRecordsService {
             ),
           );
         }
+        assertSameSubmission(record, seenSubmittedAt);
       });
       // Segregation of duties (decision D01, 2026-09-29): the approver is
       // neither the creator nor the submitter, `super_admin` included. Only
@@ -1592,7 +1723,7 @@ export class ActivityRecordsService {
    * reviewer accepted must not be quietly edited away. But it left a record
    * entered in error with no exit at all — update, remove, submit, review,
    * approve and reject all refuse both statuses, and `super_admin` does not
-   * override it, because `assertCanMutate` checks role and status
+   * override it, because `assertCanEdit` checks role and status
    * independently. Deleting was the only remedy and the API refuses that too.
    *
    * So this does not delete. The row stays, keeps its immutable calculation
@@ -1651,6 +1782,7 @@ export class ActivityRecordsService {
     user: RequestUser,
     id: string,
     varianceReason: string,
+    seenSubmittedAt?: SeenSubmission,
   ): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
@@ -1658,6 +1790,7 @@ export class ActivityRecordsService {
         'Only a consultant or super_admin may reject records',
       );
     }
+    assertSubmissionNamed(seenSubmittedAt);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
         if (
@@ -1672,6 +1805,7 @@ export class ActivityRecordsService {
             ),
           );
         }
+        assertSameSubmission(record, seenSubmittedAt);
       });
       // Period-lock gate (defense-in-depth): symmetric with approve.
       await this.assertPeriodNotLocked(periodOf(record), tx);
@@ -1691,6 +1825,8 @@ export class ActivityRecordsService {
    */
   private static readonly TRANSITION_ACTIONS: Record<string, AuditAction> = {
     [ActivityRecordStatus.submitted]: 'submit',
+    // The only transition INTO draft: the author's recall (BUG-R2-03).
+    [ActivityRecordStatus.draft]: 'recall',
     [ActivityRecordStatus.under_review]: 'review',
     [ActivityRecordStatus.approved]: 'approve',
     [ActivityRecordStatus.rejected]: 'reject',
@@ -1714,8 +1850,12 @@ export class ActivityRecordsService {
       after?: ActivityRecordAuditSnapshot;
       /** A delete's evidence: every file the record held, and those it was the
        *  last to hold, deleted with it. The record's row is the only audit row
-       *  a record delete writes, so this is the only trace of those files. */
-      evidence?: { fileIds: string[]; deletedFileIds: string[] };
+       *  a record delete writes, so this is the only trace of those files.
+       *  An edit's (BUG-R2-03): the files it took off the record and those it
+       *  deleted — each also has its own `detach` or `delete` row. */
+      evidence?:
+        | { fileIds: string[]; deletedFileIds: string[] }
+        | { detachedFileIds: string[]; deletedFileIds: string[] };
     },
     tx: Prisma.TransactionClient,
   ): Promise<void> {
@@ -1789,6 +1929,9 @@ export class ActivityRecordsService {
         ...(status === ActivityRecordStatus.submitted
           ? { submittedAt: new Date() }
           : {}),
+        // A recalled record is a draft again: it is not in the review queue,
+        // and the queue's clock starts afresh at its next submit (BUG-R2-03).
+        ...(status === ActivityRecordStatus.draft ? { submittedAt: null } : {}),
         ...(isVoid
           ? {
               voidReason: extra.voidReason,

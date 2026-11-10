@@ -188,6 +188,89 @@ describe('F03 — edit, submit and approve', () => {
   });
 });
 
+describe('BUG-R2-03 — recall and review', () => {
+  const water = { category: 'Water', activityUnit: 'cubic_metres' };
+
+  /** A record its author has submitted — the only status recall accepts. */
+  async function submittedRecord() {
+    const { record } = await submittableDraft(water);
+    await lifecycleServices(b).records.submit(tenant.users.dataEntry, record.id);
+    return record;
+  }
+
+  it('a recall held before its write: the review waits, then is a lost race — the record is the author\'s draft again', async () => {
+    const record = await submittedRecord();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.recall(tenant.users.dataEntry, record.id),
+      (s) => s.records.startReview(tenant.users.consultant, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
+    expect(await auditActions(record.id)).toEqual(['recall', 'submit']);
+    const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+    expect(final.submittedAt).toBeNull();
+    expect(final.activityValue).toBe(record.activityValue);
+  });
+
+  it('a review held before its write: the recall waits, then is a lost race — the record stays under review', async () => {
+    const record = await submittedRecord();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.startReview(tenant.users.consultant, record.id),
+      (s) => s.records.recall(tenant.users.dataEntry, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.under_review);
+    expect(await auditActions(record.id)).toEqual(['review', 'submit']);
+  });
+
+  it('a recall held before its write: the approval waits, then is a lost race — nothing approved that its author took back', async () => {
+    const record = await submittedRecord();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.recall(tenant.users.dataEntry, record.id),
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
+    expect(await auditActions(record.id)).toEqual(['recall', 'submit']);
+  });
+
+  it('an approval held before its write: the recall waits, then is a lost race — the approved figure stays', async () => {
+    const record = await submittedRecord();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.recall(tenant.users.dataEntry, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.approved);
+    expect(await auditActions(record.id)).toEqual(['approve', 'submit']);
+  });
+
+  it('the recalled draft is edited and submitted again with the new figure', async () => {
+    const record = await submittedRecord();
+    const svc = lifecycleServices(b).records;
+    await svc.recall(tenant.users.dataEntry, record.id);
+    await svc.update(tenant.users.dataEntry, record.id, { activityValue: 321 });
+    await svc.submit(tenant.users.dataEntry, record.id);
+    const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+    expect(final.status).toBe(ActivityRecordStatus.submitted);
+    expect(final.activityValue).toBe(321);
+    expect(final.submittedAt).not.toBeNull();
+    expect(await auditActions(record.id)).toEqual(['recall', 'submit', 'submit', 'update']);
+  });
+});
+
 describe('F03 — submit and period lock', () => {
   it('a submit held before its write: the lock waits, then counts the submitted record and refuses', async () => {
     const { record } = await submittableDraft();

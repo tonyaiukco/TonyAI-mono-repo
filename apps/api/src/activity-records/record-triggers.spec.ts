@@ -62,7 +62,7 @@ describe('the activity_records integrity triggers', () => {
     expect(body).not.toContain('SECURITY DEFINER');
   });
 
-  it("LP4-01 changes only K5's location test: otherwise LP3-03's body, word for word, with LP4-02's parameters", () => {
+  it("LP4-01 changes only K5's location test: otherwise LP3-03's body, word for word, with LP4-02's parameters and the recall step", () => {
     const original = sql.slice(
       sql.indexOf('CREATE FUNCTION "public"."activity_records_snapshot_immutable"()'),
       sql.indexOf('$fn$;', sql.indexOf('CREATE FUNCTION "public"."activity_records_snapshot_immutable"()')),
@@ -76,11 +76,13 @@ describe('the activity_records integrity triggers', () => {
       '    OR (NEW."location_id" IS DISTINCT FROM OLD."location_id"',
       `        AND (NEW."location_id" IS NOT NULL OR current_user <> ${OWNER}))`,
     ]);
-    // Since then: the pinned search path (LP3-04) and LP4-02's parameters (D3).
+    // Since then: the pinned search path (LP3-04), LP4-02's parameters (D3)
+    // and the author's recall (BUG-R2-03).
     expect(added).toEqual([
       'SET search_path = pg_catalog, pg_temp',
       '    OR NEW."parameters" IS DISTINCT FROM OLD."parameters"',
       '    OR NEW."location_id" IS DISTINCT FROM OLD."location_id"',
+      "       'submitted>draft',",
     ]);
   });
 
@@ -186,22 +188,26 @@ describe('the activity_records integrity triggers', () => {
     const body = functionBody('activity_records_snapshot_immutable');
     const list = /= ANY \(ARRAY\[([^\]]*)\]\)/.exec(body)?.[1] ?? '';
     const allowed = [...list.matchAll(/'([a-z_]+>[a-z_]+)'/g)].map((m) => m[1]).sort();
-    // Each from the service's own gate: submit (draft | rejected), startReview
-    // (submitted), approve and reject (submitted | under_review), void
-    // (approved), and the period lock's bulk lock and unlock.
+    // Each from the service's own gate: submit (draft | rejected), recall
+    // (submitted, BUG-R2-03), startReview (submitted), approve and reject
+    // (submitted | under_review), void (approved), and the period lock's bulk
+    // lock and unlock.
     expect(allowed).toEqual(
       [
         'draft>submitted', 'rejected>submitted',
+        'submitted>draft',
         'submitted>under_review',
         'submitted>approved', 'under_review>approved',
         'submitted>rejected', 'under_review>rejected',
         'approved>voided', 'approved>locked', 'locked>approved',
       ].sort(),
     );
-    // Nothing enters draft after creation; every way back to an editable
-    // status passes through review's rejection.
-    expect(allowed.filter((t) => t.endsWith('>draft'))).toEqual([]);
-    expect(allowed.filter((t) => [...EDITABLE_STATUSES].some((e) => t.endsWith(`>${e}`)))).toEqual([
+    // The only way into draft after creation is the author's recall, and only
+    // from submitted — never from review or a committed figure. Every other way
+    // back to an editable status passes through review's rejection.
+    expect(allowed.filter((t) => t.endsWith('>draft'))).toEqual(['submitted>draft']);
+    expect(allowed.filter((t) => [...EDITABLE_STATUSES].some((e) => t.endsWith(`>${e}`))).sort()).toEqual([
+      'submitted>draft',
       'submitted>rejected',
       'under_review>rejected',
     ]);

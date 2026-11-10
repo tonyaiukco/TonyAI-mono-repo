@@ -41,6 +41,7 @@ import {
   RefreshCw,
   Info,
   Lock,
+  Copy,
 } from 'lucide-react';
 import {
   PieChart as RechartsPieChart,
@@ -65,7 +66,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
-import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, CATEGORY_SCOPE_MAP, LOCALE_FORMAT_TAGS, entityLabel, isCalculated, unitSymbol } from '@/lib/types';
+import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, CATEGORY_SCOPE_MAP, LOCALE_FORMAT_TAGS, entityLabel, isCalculated, mayCopyVoidedRecord, unitSymbol } from '@/lib/types';
 import type { Category, Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
@@ -1537,6 +1538,24 @@ function EmissionsAnalysisPageInner() {
                     <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
                       {selectedRecord.reviewNote}
                     </p>
+                  </div>
+                )}
+
+                {/* D04's re-entry (BUG-R2-03): a voided figure is corrected by a
+                    new record, pre-filled on Data Entry from this one. Offered
+                    to its author and to a super_admin; the create decides. */}
+                {mayCopyVoidedRecord(user, selectedRecord) && (
+                  <div className="border-t border-border pt-4">
+                    <p className="text-xs text-muted-foreground mb-3">{t('copy.explain')}</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => router.push(`/data-entry?copyFrom=${encodeURIComponent(selectedRecord.id)}`)}
+                    >
+                      <Copy className="h-4 w-4" />
+                      {t('copy.action')}
+                    </Button>
                   </div>
                 )}
 

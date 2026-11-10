@@ -32,6 +32,10 @@ export const RESUBMIT_AUTHOR_REFUSAL =
   'You may only resubmit activity records you created';
 export const SUBMIT_AUTHOR_REFUSAL =
   'You may only submit activity records you created';
+export const EDIT_AUTHOR_REFUSAL =
+  'You may only edit activity records you created';
+export const RECALL_AUTHOR_REFUSAL =
+  'You may only recall activity records you created';
 export const SELF_APPROVAL_REFUSAL =
   'You created this record, so someone else must approve it.';
 export const RECORD_CHANGED_MESSAGE =
@@ -86,6 +90,54 @@ export class SubmitAuthorRefusedError extends ForbiddenException {
 }
 
 /**
+ * Only a record's author edits or recalls it (BUG-R2-03, decision 2026-11-10
+ * (fourth), 5) — `super_admin` included, the same rule as submitting (D02).
+ * It closes the gap where a super_admin edited a colleague's draft and then
+ * approved it, which D01 alone could not see. Deleting a draft is NOT covered:
+ * a super_admin may still remove one (see `assertCanDelete`).
+ */
+export class AuthorOnlyRefusedError extends ForbiddenException {
+  constructor(action: 'edit' | 'recall') {
+    super(errorBody('record_author_forbidden', action === 'edit' ? EDIT_AUTHOR_REFUSAL : RECALL_AUTHOR_REFUSAL));
+  }
+}
+
+/**
+ * Recall moves `submitted` back to `draft` and nothing else (BUG-R2-03): a
+ * record under review is returned by its reviewer (reject), so no reviewer
+ * approves a figure that changed while they were looking at it.
+ */
+export class RecordNotRecallableError extends BadRequestException {
+  constructor(status: string) {
+    super(
+      errorBody(
+        'record_not_recallable',
+        `Only a submitted record can be recalled (current status "${status}"). Once review has started, the reviewer returns it.`,
+        { status },
+      ),
+    );
+  }
+}
+
+/**
+ * An edit that changes a record's category left an evidence file attached
+ * (BUG-R2-03, owner decision D1). A file filed under the old category cannot
+ * evidence the new one, and the user confirms every removal, so the request
+ * must name them all; nothing was written.
+ */
+export class EvidenceDetachRequiredError extends BadRequestException {
+  constructor(linked: number) {
+    super(
+      errorBody(
+        'evidence_detach_required',
+        `Changing the category removes this record's ${linked} evidence file(s): name every one in detachEvidenceIds.`,
+        { linked },
+      ),
+    );
+  }
+}
+
+/**
  * Segregation of duties (decision D01, 2026-09-29): the approver is neither the
  * record's creator nor its submitter, `super_admin` included. One comparison
  * covers both because only the author may submit (`SubmitAuthorRefusedError`).
@@ -105,6 +157,23 @@ export class SelfApprovalRefusedError extends ForbiddenException {
 export class RecordChangedError extends ConflictException {
   constructor() {
     super(errorBody('record_changed', RECORD_CHANGED_MESSAGE));
+  }
+}
+
+export const REVIEW_VERSION_REQUIRED_MESSAGE =
+  'This page does not say which submission you saw. Reload it to see the record as it stands, then decide again.';
+
+/**
+ * An approve or reject that does not name the submission the reviewer saw
+ * (`seenSubmittedAt`, BUG-R2-03 owner review P1). Since an author can recall,
+ * change and resubmit a record, a decision with no version could land on a
+ * figure nobody reviewed — e.g. from a review tab opened before the deploy.
+ * The code is `record_changed` on purpose: every client, an old one included,
+ * already words it as "reload and try again", which is the remedy.
+ */
+export class ReviewVersionRequiredError extends ConflictException {
+  constructor() {
+    super(errorBody('record_changed', REVIEW_VERSION_REQUIRED_MESSAGE));
   }
 }
 

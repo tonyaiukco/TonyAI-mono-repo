@@ -297,9 +297,22 @@ export async function listAllPages<T>(request: APIRequestContext, token: string,
   throw new Error(`GET ${path}: the traversal did not end`);
 }
 
+/**
+ * The record's `submittedAt` as a reviewer would see it now — the
+ * `seenSubmittedAt` an approve or reject must name (BUG-R2-03).
+ */
+export async function seenSubmittedAt(request: APIRequestContext, token: string, id: string): Promise<string | null> {
+  const res = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+  if (!res.ok()) throw new Error(`read for seenSubmittedAt failed: ${res.status()} ${await res.text()}`);
+  return ((await res.json()) as { submittedAt: string | null }).submittedAt;
+}
+
 /** Approve a submitted record (super_admin only, and never the record's creator — D01). */
 export async function approveRecord(request: APIRequestContext, token: string, id: string): Promise<void> {
-  const res = await request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(token) });
+  const res = await request.post(`${API_BASE}/activity-records/${id}/approve`, {
+    headers: bearer(token),
+    data: { seenSubmittedAt: await seenSubmittedAt(request, token, id) },
+  });
   if (!res.ok()) throw new Error(`approve failed: ${res.status()} ${await res.text()}`);
 }
 

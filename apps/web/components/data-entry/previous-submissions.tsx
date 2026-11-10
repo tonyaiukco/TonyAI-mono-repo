@@ -8,9 +8,12 @@ import {
   Ban,
   CheckCircle2,
   Clock,
+  Copy,
   Loader2,
   Paperclip,
+  Pencil,
   Send,
+  Undo2,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { recordActions, type RecordActions } from "@/lib/record-edit-view";
 import { api } from "@/lib/api";
 import { formatTCo2e } from "@/lib/calculation-display";
 import {
@@ -142,6 +146,12 @@ export interface PreviousSubmissionsProps {
   onLoadMore: () => void;
   /** Open a record in the form beside this list. */
   onOpen: (record: ActivityRecordPageItemDTO) => void;
+  /** Open the record in Edit mode — only offered where `recordActions` allows it (BUG-R2-03). */
+  onEdit: (record: ActivityRecordPageItemDTO) => void;
+  /** Recall a submitted record to draft, after the user confirms (BUG-R2-03). */
+  onRecall: (record: ActivityRecordPageItemDTO) => void;
+  /** Pre-fill a new draft from a voided record (BUG-R2-03). */
+  onCopy: (record: ActivityRecordPageItemDTO) => void;
   /** `null` while `api.me()` is in flight — no checkboxes until it lands. */
   user: AuthUser | null;
   /** Refetch after a submit: statuses on screen have changed. */
@@ -170,6 +180,51 @@ function categoryWithActivity(
   return `${category} (${label})`;
 }
 
+/**
+ * Edit, Recall and Copy to new draft for one row (BUG-R2-03): siblings of the
+ * row button, never children, for the reason the checkbox above is one. Each
+ * names its record, so two rows' buttons are never the same control to a
+ * screen reader.
+ */
+function RowActions({
+  actions,
+  record,
+  onEdit,
+  onRecall,
+  onCopy,
+}: {
+  actions: RecordActions;
+  record: string;
+  onEdit: () => void;
+  onRecall: () => void;
+  onCopy: () => void;
+}) {
+  const t = useTranslations("dataEntry");
+  if (!actions.edit && !actions.recall && !actions.copy) return null;
+  return (
+    <div className="flex shrink-0 flex-col gap-1 pt-1">
+      {actions.edit && (
+        <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={onEdit} aria-label={t("rowActions.editRecord", { record })}>
+          <Pencil className="h-3.5 w-3.5" />
+          {t("rowActions.edit")}
+        </Button>
+      )}
+      {actions.recall && (
+        <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={onRecall} aria-label={t("rowActions.recallRecord", { record })}>
+          <Undo2 className="h-3.5 w-3.5" />
+          {t("rowActions.recall")}
+        </Button>
+      )}
+      {actions.copy && (
+        <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={onCopy} aria-label={t("rowActions.copyRecord", { record })}>
+          <Copy className="h-3.5 w-3.5" />
+          {t("rowActions.copy")}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function PreviousSubmissions({
   records,
   loading,
@@ -178,6 +233,9 @@ export function PreviousSubmissions({
   loadingMore,
   onLoadMore,
   onOpen,
+  onEdit,
+  onRecall,
+  onCopy,
   user,
   onSubmitted,
   onEvidenceAttached,
@@ -616,6 +674,13 @@ export function PreviousSubmissions({
                       )}
                     </div>
                   </button>
+                  <RowActions
+                    actions={recordActions(user, r)}
+                    record={`${words.period(r.periodValue)} ${r.reportingYear} ${categoryWithActivity(r, words, t)}`}
+                    onEdit={() => onEdit(r)}
+                    onRecall={() => onRecall(r)}
+                    onCopy={() => onCopy(r)}
+                  />
                 </div>
               );
             })}

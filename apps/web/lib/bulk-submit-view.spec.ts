@@ -207,14 +207,15 @@ describe('SUBMIT_ISSUE_LABEL', () => {
 });
 
 describe('submitConfirmation', () => {
-  it('says the thing there is no undo for', () => {
-    // There is no author-side unsubmit anywhere in the API — only a reviewer
-    // can send a record back. That is the fact a confirm dialog exists to put
-    // in front of someone about to move four hundred records.
+  it('says how long the author can still take them back', () => {
+    // The author may recall a submitted record only until a reviewer opens it
+    // (BUG-R2-03); after that, only the reviewer can send it back. That is the
+    // fact a confirm dialog exists to put in front of someone about to move
+    // four hundred records.
     const text = submitConfirmation(2);
     expect(text).toContain('2 records');
-    expect(text).toMatch(/only a reviewer can send them back/i);
-    expect(text).toMatch(/un-submit them yourself/i);
+    expect(text).toMatch(/recall each one yourself only until a reviewer opens it/i);
+    expect(text).toMatch(/only the reviewer can send it back/i);
   });
 
   it('uses the singular for one — including the pronoun', () => {
@@ -222,8 +223,7 @@ describe('submitConfirmation', () => {
     // though more than one record were leaving.
     const text = submitConfirmation(1);
     expect(text).toContain('1 record ');
-    expect(text).toContain('Only a reviewer can send it back');
-    expect(text).toContain('un-submit it yourself');
+    expect(text).toContain('You can recall it yourself only until a reviewer opens it');
     expect(text).not.toMatch(/\bthem\b/);
   });
 });

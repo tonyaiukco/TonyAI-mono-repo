@@ -2588,7 +2588,8 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   variance_reason_required: 400,
   record_create_forbidden: 403,
   record_submit_forbidden: 403,
-  /** Only a record's author submits or resubmits it (D02). */
+  /** Only a record's author submits, resubmits (D02), edits or recalls it
+   *  (BUG-R2-03) — `super_admin` included. No params. */
   record_author_forbidden: 403,
   /** Segregation of duties (D01). */
   self_approval_forbidden: 403,
@@ -2743,6 +2744,13 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   record_not_approvable: 400,
   record_not_voidable: 400,
   record_not_rejectable: 400,
+  /** BUG-R2-03: only a `submitted` record is recalled; once in review, the
+   *  reviewer returns it. */
+  record_not_recallable: 400,
+  /** BUG-R2-03: an edit that changes the category left a linked evidence file
+   *  attached — every one must be named in `detachEvidenceIds`. params:
+   *  `linked` — how many files the record has. */
+  evidence_detach_required: 400,
   /** The bulk upload's file-level refusals (M3); its per-row sentences, and
    *  the refusals naming a cell or a caller's column, stay generic. */
   bulk_file_missing: 400,
@@ -2808,6 +2816,8 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     record_not_approvable: Object.freeze(['status']),
     record_not_voidable: Object.freeze(['status']),
     record_not_rejectable: Object.freeze(['status']),
+    record_not_recallable: Object.freeze(['status']),
+    evidence_detach_required: Object.freeze(['linked']),
     bulk_too_many_rows: Object.freeze(['rows', 'max']),
     bulk_workbook_too_large: Object.freeze(['limitMb']),
   });
@@ -4155,11 +4165,40 @@ export interface CreateActivityRecordInput {
 /** All fields optional; `subsidiaryId` is immutable and cannot be changed here. */
 export type UpdateActivityRecordInput = Partial<
   Omit<CreateActivityRecordInput, 'subsidiaryId'>
->;
+> & {
+  /**
+   * Evidence files to take off the record in the edit's own transaction
+   * (BUG-R2-03). A category change MUST name every linked file, or it is
+   * refused with `evidence_detach_required`; other edits may name any of them.
+   * A file left with no link is deleted, as a detach does — a file can be
+   * linked only by uploading it.
+   */
+  detachEvidenceIds?: string[];
+};
 
 /** Body of POST /activity-records/:id/reject — the reviewer's variance reason. */
 export interface RejectInput {
   varianceReason: string;
+  /** See `ApproveInput.seenSubmittedAt`. Required. */
+  seenSubmittedAt: string | null;
+}
+
+/**
+ * Body of POST /activity-records/:id/approve (BUG-R2-03 review).
+ */
+export interface ApproveInput {
+  /**
+   * The record's `submittedAt` as the reviewer saw it. Since an author can
+   * recall a submitted record, edit it and submit it again, the figure under a
+   * reviewer's eyes is no longer frozen from submit to decision. A decision
+   * sent with a different submission time than the record now has is refused
+   * as `record_changed` (409), so nobody approves or rejects a figure they did
+   * not see. REQUIRED: a request without it is refused the same way, so a
+   * client from before this field (an old review tab) is told to reload rather
+   * than decide on a figure recalled and resubmitted behind it. `null` names
+   * a record that has no submission time.
+   */
+  seenSubmittedAt: string | null;
 }
 
 /**
@@ -4732,6 +4771,14 @@ export const EVIDENCE_MAX_SIZE_BYTES = 10 * 1024 * 1024;
  * (`BULK_SUBMIT_MAX_IDS`, the same number); a spec pins the two together.
  */
 export const EVIDENCE_MAX_LINKED_RECORDS = 1000;
+
+/**
+ * The most evidence files one edit may take off its record
+ * (`UpdateActivityRecordInput.detachEvidenceIds`, BUG-R2-03). A bound on the
+ * body, not on a record's files: a record holding more cannot change category
+ * in one edit, and its author removes some files first.
+ */
+export const EVIDENCE_DETACH_MAX_IDS = 200;
 
 /**
  * One record an evidence file backs — what a reviewer needs to judge whether
@@ -5318,6 +5365,12 @@ export const AUDIT_ACTIONS = [
   // it and a refusal is never mistaken for a record that was created.
   'bulk_import',
   'bulk_submit',
+  /** A submitted record taken back to `draft` by its author before review
+   *  started (BUG-R2-03). Its own verb, not `update`: the inputs did not
+   *  change, the record left the review queue, and "who pulled this back
+   *  and when" must be filterable. Never "withdraw" — that word is the
+   *  screens' name for a void. */
+  'recall',
   /** An evidence file taken off ONE record while it still backs others
    *  (`entity: 'evidence'`, `diff.before.recordId`). Taking off the LAST link
    *  deletes the file, and that row is a `delete`. */
@@ -5968,6 +6021,94 @@ export function isSubmittable(
   status: string,
 ): status is (typeof SUBMITTABLE_STATUSES)[number] {
   return (SUBMITTABLE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * The statuses a record's inputs can be edited in (BUG-R2-03). The same pair
+ * as `SUBMITTABLE_STATUSES` today, but a separate list: one is "may change",
+ * the other "may enter review", and a future status could sit in one only.
+ * The database's `activity_records_snapshot_immutable` trigger freezes the
+ * inputs in every other status.
+ */
+export const EDITABLE_RECORD_STATUSES = [
+  'draft',
+  'rejected',
+] as const satisfies readonly ActivityRecordStatus[];
+
+/**
+ * The statuses a record can be RECALLED from — back to `draft` by its author
+ * (BUG-R2-03, decision 2026-11-10 (fourth)). Only `submitted`: once a reviewer
+ * has taken it into review, the reviewer returns it (reject), so nobody
+ * approves a figure that changed while they were looking at it.
+ *
+ * Called "recall", never "withdraw": the screens already say "Withdrawn" for a
+ * voided record.
+ */
+export const RECALLABLE_STATUSES = [
+  'submitted',
+] as const satisfies readonly ActivityRecordStatus[];
+
+/** True when a record can be recalled to `draft`. */
+export function isRecallable(
+  status: string,
+): status is (typeof RECALLABLE_STATUSES)[number] {
+  return (RECALLABLE_STATUSES as readonly string[]).includes(status);
+}
+
+/** The part of a record the author-only rules below read. */
+export interface RecordAuthorship {
+  status: string;
+  createdBy: string | null;
+}
+
+/**
+ * Whether `user` may edit `record`'s inputs (BUG-R2-03, decision 2026-11-10
+ * (fourth), 5): an author role, the record's own author — `super_admin`
+ * included, never exempt — and an editable status. Closes the 2026-10-03
+ * segregation-of-duties gap where a super_admin could edit a colleague's
+ * draft and later approve it. The API enforces it; Data Entry mirrors it to
+ * decide where Edit is offered. A locked period is a separate refusal.
+ */
+export function mayEditRecord(
+  user: { id: string; role: string } | null | undefined,
+  record: RecordAuthorship,
+): boolean {
+  return (
+    !!user &&
+    mayAuthorRecords(user) &&
+    record.createdBy === user.id &&
+    (EDITABLE_RECORD_STATUSES as readonly string[]).includes(record.status)
+  );
+}
+
+/** Whether `user` may recall `record` to `draft`: its author, while submitted. */
+export function mayRecallRecord(
+  user: { id: string; role: string } | null | undefined,
+  record: RecordAuthorship,
+): boolean {
+  return (
+    !!user &&
+    mayAuthorRecords(user) &&
+    record.createdBy === user.id &&
+    isRecallable(record.status)
+  );
+}
+
+/**
+ * Whether `user` is offered "Copy to new draft" on `record` (D04's re-entry,
+ * BUG-R2-03): a voided record, to its author or a super_admin. The copy is an
+ * ordinary create, so the create's own rules still decide whether it saves.
+ */
+export function mayCopyVoidedRecord(
+  user: { id: string; role: string } | null | undefined,
+  record: RecordAuthorship,
+): boolean {
+  return (
+    !!user &&
+    mayAuthorRecords(user) &&
+    record.status === 'voided' &&
+    (record.createdBy === user.id || user.role === 'super_admin')
+  );
 }
 
 /**

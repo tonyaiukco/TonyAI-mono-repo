@@ -193,10 +193,11 @@ describe('K5 — a snapshot that has left draft never changes', () => {
 
 describe('K5 — a status changes only by a step of the review lifecycle', () => {
   const STATUSES = Object.values(ActivityRecordStatus);
-  // The API's gates: submit, startReview, approve, reject, void, and the
-  // period lock's bulk lock and unlock (record-triggers.spec pins the list).
+  // The API's gates: submit, recall (BUG-R2-03), startReview, approve, reject,
+  // void, and the period lock's bulk lock and unlock (record-triggers.spec pins
+  // the list).
   const ALLOWED = new Set([
-    'draft>submitted', 'rejected>submitted', 'submitted>under_review',
+    'draft>submitted', 'rejected>submitted', 'submitted>draft', 'submitted>under_review',
     'submitted>approved', 'under_review>approved', 'submitted>rejected', 'under_review>rejected',
     'approved>voided', 'approved>locked', 'locked>approved',
   ]);
@@ -222,6 +223,24 @@ describe('K5 — a status changes only by a step of the review lifecycle', () =>
       );
       expect(sqlstateOf(e)).toBe('TA001');
     }
+  });
+
+  it('tests OLD on a recall too: recalling and rewriting in ONE statement is refused (BUG-R2-03)', async () => {
+    // submitted → draft is a lifecycle step since the recall; the inputs are
+    // still frozen on that step, because the record was submitted when it began.
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.submitted });
+    for (const client of [runtime, owner]) {
+      const e = await failure(
+        client.activityRecord.update({
+          where: { id: rec.id },
+          data: { status: ActivityRecordStatus.draft, activityValue: 1 },
+        }),
+      );
+      expect(sqlstateOf(e)).toBe('TA001');
+    }
+    const after = await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } });
+    expect(after.status).toBe(ActivityRecordStatus.submitted);
+    expect(after.activityValue).toBe(rec.activityValue);
   });
 
   it('refuses the whole walk: approved → submitted → rejected → edit → submitted → approved', async () => {

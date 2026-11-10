@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   Matches,
   IsIn,
   IsInt,
@@ -21,6 +23,7 @@ import {
   ACTIVITY_UNIT_MAX_LENGTH,
   ACTIVITY_VALUE_MAX,
   CATEGORIES,
+  EVIDENCE_DETACH_MAX_IDS,
   EXPLANATION_MAX_LENGTH,
   PERIOD_VALUE_MAX_LENGTH,
   REPORTING_PERIODS,
@@ -129,4 +132,19 @@ export class UpdateActivityRecordDto {
   @Transform(blankToNull)
   @MaxLength(EXPLANATION_MAX_LENGTH)
   varianceReason?: string | null;
+
+  // BUG-R2-03 (owner decision D1): evidence files to take off the record in
+  // the edit's own transaction. A category change must name every linked
+  // file (the service refuses `evidence_detach_required` otherwise); any other
+  // edit may name some. Lowercased like every other id, so an UPPERCASE id
+  // matches the stored one.
+  @IsOptional()
+  @Transform(({ value }) =>
+    Array.isArray(value) ? value.map((v) => (typeof v === 'string' ? v.toLowerCase() : v)) : value,
+  )
+  @IsArray()
+  @ArrayMaxSize(EVIDENCE_DETACH_MAX_IDS)
+  @IsString({ each: true })
+  @Matches(UUID_SHAPE, { each: true, message: ID_SHAPE_MESSAGE })
+  detachEvidenceIds?: string[];
 }

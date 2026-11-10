@@ -81,6 +81,6 @@ test('data entry: draft → live preview → evidence → submit → approve →
   // be in the same row as our record.
   await page.reload();
   await selectSubsidiary(page, 'TonyAI Energy (TR)');
-  const row = page.getByRole('button', { name: /Q1 2026/ });
+  const row = page.getByRole('button', { name: /^Q1 2026/ });
   await expect(row).toContainText('Approved');
 });

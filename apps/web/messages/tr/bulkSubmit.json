@@ -1,8 +1,8 @@
 {
   "blockedOne": "İçe aktarılan kaydın gönderilebilmesi için bir kanıt dosyası gerekiyor ve içe aktarma dosya ekleyemez. Faturasını eklemek için aşağıda kaydı açın.",
   "blockedMany": "İçe aktarılan {count} kaydın tümü için gönderimden önce bir kanıt dosyası gerekiyor ve içe aktarma dosya ekleyemez. Önceki gönderimler altında her faturayı kanıtladığı kayıtlara ekleyin — bir dosya birden fazla kaydı kapsayabilir.",
-  "confirmOne": "1 kaydı incelemeye gönder. Yalnızca bir inceleyici geri gönderebilir — gönderimi kendiniz geri alamazsınız.",
-  "confirmMany": "{count} kaydı incelemeye gönder. Yalnızca bir inceleyici geri gönderebilir — gönderimi kendiniz geri alamazsınız.",
+  "confirmOne": "1 kaydı incelemeye gönder. Bir inceleyici açana kadar gönderimi kendiniz geri alabilirsiniz; sonrasında kaydı yalnızca inceleyici geri gönderebilir.",
+  "confirmMany": "{count} kaydı incelemeye gönder. Bir inceleyici açana kadar her birinin gönderimini kendiniz geri alabilirsiniz; sonrasında kaydı yalnızca inceleyici geri gönderebilir.",
   "refusedHeadline": "Hiçbir kayıt gönderilmedi.",
   "refusedOne": "Önce ilgilenilmesi gerekiyor — aşağıya bakın.",
   "refusedMany": "{count} kaydın tümüyle önce ilgilenilmesi gerekiyor — aşağıya bakın.",

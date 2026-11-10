@@ -151,5 +151,9 @@
     "cannotUndo": "Geri alınamaz.",
     "withdrawn": "Geri çekildi — {tonnes} tCO₂e envanterden çıktı.",
     "withdrawnNoFigure": "Geri çekildi — giriş artık hiçbir toplama sayılmıyor."
+  },
+  "copy": {
+    "action": "Yeni taslağa kopyala",
+    "explain": "Bu değer geri çekildi. Düzeltmek için Veri Girişi'nde yeni bir taslağa kopyalayın, değerleri düzeltin, kanıtını ekleyin ve incelemeye gönderin."
   }
 }

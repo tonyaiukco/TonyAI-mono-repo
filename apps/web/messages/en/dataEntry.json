@@ -410,5 +410,47 @@
     "wholeCompany": "the whole company",
     "withFigure": "Saving moves this record from {from} to {to}. It is not copied — the emission factor is recalculated for its geography.",
     "withoutFigure": "Saving moves this record from {from} to {to}. It is not copied — and no emission factor resolves for it today, so it stays \"Not calculated\"."
+  },
+  "rowActions": {
+    "edit": "Edit",
+    "editRecord": "Edit {record}",
+    "recall": "Recall",
+    "recallRecord": "Recall {record}",
+    "copy": "Copy to new draft",
+    "copyRecord": "Copy {record} to a new draft"
+  },
+  "edit": {
+    "category": "Category: {from} → {to}",
+    "activityType": "Type: {from} → {to}",
+    "year": "Reporting year: {from} → {to}",
+    "period": "Period: {from} → {to}",
+    "location": "Location: {from} → {to}",
+    "none": "none"
+  },
+  "editMode": {
+    "title": "Editing record {id}",
+    "hint": "Saving changes this record itself — no new record is created.",
+    "cancel": "Cancel editing",
+    "saved": "Changes saved to the record.",
+    "savedAnomalous": "Changes saved to the record. The value deviates from its history — add a variance comment before submitting.",
+    "evidence": {
+      "removeAllTitle": "Changing the category removes this record's {count} evidence file(s):",
+      "deletionWarning": "A file that backs no other record is deleted and must be uploaded again.",
+      "confirmRemoveAll": "Remove the {count} file(s) and save",
+      "chooseTitle": "Keep or remove each file for the changed record:",
+      "removeFile": "Remove {fileName}"
+    }
+  },
+  "recall": {
+    "title": "Recall this submission?",
+    "body": "{record} leaves the review queue and becomes your draft again. You can edit it and submit it again.",
+    "cancel": "Keep it submitted",
+    "confirm": "Recall to draft",
+    "recalling": "Recalling…",
+    "done": "Recalled to draft. Edit it, then submit it again."
+  },
+  "copy": {
+    "loaded": "A new draft is filled in from the voided record. Check the values, save it and attach its evidence.",
+    "notVoided": "Only a voided record can be copied to a new draft."
   }
 }

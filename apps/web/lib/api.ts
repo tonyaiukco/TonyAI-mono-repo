@@ -2,6 +2,7 @@ import type {
   ReleaseParametersDTO,
   ReleaseParametersQuery,
   ActivityRecordDTO,
+  ApproveInput,
   CaptureReportDatasetRequest,
   CreateInventoryBoundaryRequest,
   InventoryBoundaryVersionDTO,
@@ -538,7 +539,7 @@ export const api = {
   activityRecordMetadata: (params: ActivityRecordPageFilters = {}) =>
     apiFetch<ActivityRecordListMetadataDTO>(`/activity-records/metadata${boundedQuery(params, ACTIVITY_FILTER_KEYS)}`),
   getActivityRecord: (id: string) =>
-    apiFetch<ActivityRecordDTO>(`/activity-records/${id}`),
+    apiFetch<ActivityRecordDTO>(`/activity-records/${encodeURIComponent(id)}`),
   createActivityRecord: (body: CreateActivityRecordInput) =>
     apiFetch<ActivityRecordDTO>("/activity-records", {
       method: "POST",
@@ -553,6 +554,11 @@ export const api = {
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/submit`, {
       method: "POST",
     }),
+  /** Take the caller's own submitted record back to draft before review (BUG-R2-03). */
+  recallActivityRecord: (id: string) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}/recall`, {
+      method: "POST",
+    }),
 
   // The review verbs. Each is a POST with no body except `reject`, which
   // carries the reason the submitter will read. The role rules (consultant may
@@ -563,9 +569,10 @@ export const api = {
       method: "POST",
     }),
 
-  approveActivityRecord: (id: string) =>
+  approveActivityRecord: (id: string, body: ApproveInput) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/approve`, {
       method: "POST",
+      body: JSON.stringify(body),
     }),
 
   rejectActivityRecord: (id: string, body: RejectInput) =>

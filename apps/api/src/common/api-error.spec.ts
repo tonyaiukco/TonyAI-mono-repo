@@ -26,7 +26,10 @@ import {
   DuplicateActivityRecordError,
   EvidenceRequiredError,
   ApprovalEvidenceMissingError,
+  AuthorOnlyRefusedError,
+  EvidenceDetachRequiredError,
   PeriodLockedError,
+  RecordNotRecallableError,
   RecordChangedError,
   SelfApprovalRefusedError,
   SnapshotImmutableError,
@@ -202,6 +205,8 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   record_not_approvable: () => new BadRequestException(errorBody('record_not_approvable', 'x', { status: 'draft' })),
   record_not_voidable: () => new BadRequestException(errorBody('record_not_voidable', 'x', { status: 'locked' })),
   record_not_rejectable: () => new BadRequestException(errorBody('record_not_rejectable', 'x', { status: 'draft' })),
+  record_not_recallable: () => new RecordNotRecallableError('under_review'),
+  evidence_detach_required: () => new EvidenceDetachRequiredError(2),
   bulk_file_missing: () => new BadRequestException(errorBody('bulk_file_missing', 'x')),
   bulk_file_type: () => new BadRequestException(errorBody('bulk_file_type', 'x')),
   bulk_file_empty: () => new BadRequestException(errorBody('bulk_file_empty', 'x')),
@@ -271,6 +276,9 @@ describe('every domain code, as the client receives it', () => {
     expect(new ResourceNotFoundError('record_not_found')).toBeInstanceOf(NotFoundException);
     expect(new ResourceNotFoundError('record_not_found').message).toBe('Activity record not found');
     expect(new SubmitAuthorRefusedError(true).message).toMatch(/resubmit/);
+    expect(new AuthorOnlyRefusedError('edit').message).toMatch(/edit/);
+    expect(new AuthorOnlyRefusedError('recall').message).toMatch(/recall/);
+    expect(new AuthorOnlyRefusedError('edit').getStatus()).toBe(403);
   });
 
   it('carries canonical params — period and year as stored, category as stored', () => {

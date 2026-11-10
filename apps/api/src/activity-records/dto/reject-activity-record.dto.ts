@@ -1,6 +1,6 @@
 import { Transform } from 'class-transformer';
 import { trimmed } from '../../common/trimmed';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsISO8601, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { EXPLANATION_MAX_LENGTH } from '@tonyai/shared-types';
 
 /**
@@ -20,4 +20,10 @@ export class RejectActivityRecordDto {
   @MinLength(1)
   @MaxLength(EXPLANATION_MAX_LENGTH)
   varianceReason!: string;
+
+  // BUG-R2-03 review: the record's `submittedAt` as the reviewer saw it (see
+  // ApproveActivityRecordDto). Optional, as on approve.
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  seenSubmittedAt?: string | null;
 }

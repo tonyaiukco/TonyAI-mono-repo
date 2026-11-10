@@ -16,6 +16,7 @@ import {
   selectSubsidiary,
   serviceReadRecords,
   SUB,
+  seenSubmittedAt,
 } from './helpers';
 
 /**
@@ -130,9 +131,10 @@ test('sends the drafts that were ticked, and leaves the rest a draft', async ({
     );
 
     await page.locator('[data-testid="drafts-submit-button"]').click();
-    // The sentence this dialog exists for: there is no author-side un-submit.
+    // The sentence this dialog exists for: the author's recall ends once a
+    // reviewer opens the record (BUG-R2-03).
     await expect(page.getByRole('dialog')).toContainText(
-      /Only a reviewer can send it back/,
+      /only the reviewer can send it back/,
     );
     await page.locator('[data-testid="drafts-submit-confirm"]').click();
 
@@ -241,7 +243,10 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
     await expect(mineBox).toBeChecked();
     await expect(page.locator('[data-testid="drafts-submit-bar"]')).toBeVisible();
 
-    // The admin override permits edits/evidence, but never another author's submit.
+    // A super_admin neither submits nor edits another author's draft (D02;
+    // BUG-R2-03 closed the edit half, which let an admin change a colleague's
+    // figure and then approve it): the row opens nothing and says why, and no
+    // Edit action is offered on it.
     await switchUser(page, ADMIN_EMAIL);
     await page.goto('/data-entry');
     await selectSubsidiary(page, OPTION);
@@ -249,10 +254,10 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
     await expect(list.getByRole('checkbox', {
       name: new RegExp(`Select Q1 ${E2E_YEAR} ${E2E_BULK_CATEGORY}`),
     })).toHaveCount(0);
+    await expect(list.getByRole('button', { name: new RegExp(`^Edit Q1 ${E2E_YEAR} ${E2E_BULK_CATEGORY}`) })).toHaveCount(0);
     await row('Q1', E2E_BULK_CATEGORY).click();
-    await expect(page.getByText(`Editing draft ${mine.slice(0, 8)}` , { exact: false })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Submit for review', exact: true })).toHaveCount(0);
+    await expect(page.getByText(/only its author can change it/)).toBeVisible();
+    await expect(page.getByText(`Editing draft ${mine.slice(0, 8)}` , { exact: false })).toHaveCount(0);
 
     // Nothing moved: this test only looked.
     const rows = await serviceReadRecords(request, `id=in.("${theirs}","${needsInvoice}")`);
@@ -287,7 +292,7 @@ test('a rejected record is not offered, and the row says to open it alone', asyn
     if (!submitted.ok()) throw new Error(`submit failed: ${submitted.status()}`);
     const rejected = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
       headers: bearer(adminToken),
-      data: { varianceReason: 'E2E: sent back so the row can be looked at.' },
+      data: { varianceReason: 'E2E: sent back so the row can be looked at.', seenSubmittedAt: await seenSubmittedAt(request, adminToken, id) },
     });
     if (!rejected.ok()) throw new Error(`reject failed: ${rejected.status()}`);
 
