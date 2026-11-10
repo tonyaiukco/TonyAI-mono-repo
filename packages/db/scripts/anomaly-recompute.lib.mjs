@@ -22,6 +22,7 @@ import {
   canonicalPeriodValue,
   isCalculated,
   isLegacyShortWindowVerdict,
+  PENDING_REVIEW_STATUSES,
   PERIOD_VALUES,
 } from '@tonyai/shared-types';
 
@@ -177,7 +178,7 @@ export function findStale(scoreable, pools, lockedPeriods) {
     const stored = storedVerdict(item.row);
     const fresh = freshVerdict(item, pools);
     if (verdictsAgree(stored, fresh)) continue;
-    stale.push({ item, stored, fresh, disposition: classify(item.row, lockedPeriods) });
+    stale.push({ item, stored, fresh, disposition: classify(item.row, lockedPeriods, { stored, fresh }) });
   }
   return { stale, keptLegacy };
 }
@@ -193,10 +194,31 @@ export function findStale(scoreable, pools, lockedPeriods) {
  * immutability boundary is period-shaped; an exclusion that is only
  * status-shaped writes into closed periods with a null actor, which is the
  * shape an auditor reads as tampering.
+ *
+ * A THIRD refusal, when the verdicts are given (owner decision 2026-11-11):
+ * `unexplained_flag`. A record waiting for review is not given a flag it was
+ * submitted without, unless it already carries a variance reason. The API
+ * never lets a flagged record into review unexplained, and its author is not
+ * there to be asked — so the rewrite would hand the reviewer a warning nobody
+ * answered. It has been possible since this tool existed, at three earlier
+ * periods; since one is enough (BUG-R2-07) it would be common: submit
+ * February, then January, and February gains a flag. Reported instead. The
+ * reviewer who doubts the figure rejects it, and the resubmit meets the gate.
+ * Every other rewrite of a record in review stands — a count, an average, or
+ * a flag that no longer holds.
  */
-export function classify(row, lockedPeriods) {
+export function classify(row, lockedPeriods, verdicts) {
   if (!REWRITABLE.includes(row.status)) return 'terminal_status';
   if (lockedPeriods.has(lockKey(row))) return 'locked_period';
+  if (
+    verdicts &&
+    PENDING_REVIEW_STATUSES.includes(row.status) &&
+    verdicts.fresh.anomalous &&
+    !verdicts.stored.anomalous &&
+    !row.varianceReason?.trim()
+  ) {
+    return 'unexplained_flag';
+  }
   return 'rewritable';
 }
 
@@ -207,8 +229,9 @@ export function classify(row, lockedPeriods) {
  * wired to a cron would have read green.
  *
  * 0 — nothing stale, or everything stale was repaired.
- * 1 — drift remains: unrepaired (dry run), refused (terminal or closed period),
- *     or skipped because the row moved mid-run.
+ * 1 — drift remains: unrepaired (dry run), refused (terminal, closed period,
+ *     or a flag a record in review cannot be given), or skipped because the
+ *     row moved mid-run.
  */
 export function exitCodeFor({ stale, unrepairable, skipped, applied }) {
   if (!applied) return stale > 0 ? 1 : 0;

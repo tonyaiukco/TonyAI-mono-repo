@@ -153,7 +153,7 @@ The anomaly column of every report and CSV export SHALL state a short-history ve
 - **THEN** its anomaly cell says it was within range against limited history of 2 periods, and is not left empty
 
 ### Requirement: The verdict is stored with the record
-A record SHALL carry its verdict: the flag, how many periods it rested on, and the average. The verdict SHALL be worked out when the record is created, updated or submitted, and not when it is read. No action in the application on an earlier period SHALL change a later record's stored verdict. Only the operator's re-score tool rewrites a stored verdict, and never on an approved or locked record.
+A record SHALL carry its verdict: the flag, how many periods it rested on, and the average. The verdict SHALL be worked out when the record is created, updated or submitted, and not when it is read. No action in the application on an earlier period SHALL change a later record's stored verdict. Only the operator's re-score tool rewrites a stored verdict. It SHALL NOT rewrite an approved or locked record, and SHALL NOT give a record in review a flag while that record carries no variance reason.
 
 #### Scenario: An earlier period changes afterwards
 - **WHEN** a record was submitted as within range, and the earlier period it was compared with is then recalled and edited
@@ -162,6 +162,14 @@ A record SHALL carry its verdict: the flag, how many periods it rested on, and t
 #### Scenario: The re-score tool repairs a record that is still open
 - **WHEN** an operator runs the re-score tool with apply, and a draft, rejected, submitted or under-review record's stored verdict no longer matches its history
 - **THEN** that record's verdict is rewritten with an audit row, and an approved or locked record in the same state is reported and left unchanged
+
+#### Scenario: The re-score tool does not hand a reviewer an unanswered flag
+- **WHEN** February is submitted as not checked, January is committed afterwards more than 50% away, and the re-score tool runs with apply
+- **THEN** February is reported as a record the rule would now flag, its stored verdict is unchanged, and the tool reports that drift remains
+
+#### Scenario: A record in review that already explains itself is repaired
+- **WHEN** the same February record carries a variance reason
+- **THEN** the re-score tool writes the flag and the average it was judged against
 
 #### Scenario: Recall keeps the verdict until the next save
 - **WHEN** an author recalls a submitted record

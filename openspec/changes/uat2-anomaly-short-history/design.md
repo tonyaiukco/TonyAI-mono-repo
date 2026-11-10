@@ -120,6 +120,14 @@ The tools excuse only an UNFLAGGED legacy verdict (security review, 2026-11-11).
 
 Alternative considered: re-score records waiting in review. It creates a state the normal flow cannot produce: a submitted, flagged record with no variance reason, whose author never saw the warning. Rejected by the owner.
 
+### D7a. The re-score tool does not flag a record in review that has no reason
+
+Owner decision, 2026-11-11, from the architect seat's finding. `anomaly:recompute` rewrote any stale verdict on a submitted or under-review record. When an earlier period is committed after a later one was submitted, the later record goes from not checked to a limited-history verdict and can gain a flag with no variance reason. That is the state D7 rejects, reached by another road, and one earlier period makes it common.
+
+`classify` gains a third refusal, `unexplained_flag`: the record is in review, the rule would now flag it, the stored verdict has no flag, and the record carries no variance reason. It is reported and left alone, and counts as drift that remains (exit 1), like the other two refusals. Every other rewrite of a record in review stands: a count, an average, or a flag that no longer holds.
+
+Alternative considered: leave the tool as it was (Decision 2 of 2026-08-27 lets it rewrite records in review). Rejected by the owner: the reviewer loses nothing, because the record reads "not checked" and can be rejected, and the resubmit meets the gate.
+
 ### D8. The seed follows the rule
 
 `rollingBaseline` in `packages/db/prisma/seed.ts` returns the average for one to three figures, through the contract's constants. The seed's existing guards (a staged flag must agree with its window) stay, so a seeded record that would now flag fails the seed loudly, not silently.

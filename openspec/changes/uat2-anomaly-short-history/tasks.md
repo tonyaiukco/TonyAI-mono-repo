@@ -61,6 +61,11 @@
 - [x] 6.2 Commit, then run the fresh-eyes review pass in parallel, each seat in its own copy of the tree: `security-rls` (the submit gate cannot be passed without a reason on limited history; tenant scoping of the history query is unchanged), `qa-auditor` (the D4 table, the flipped assertions, mutation of the minimum and the threshold) and `architect` (the contract surface: constants, predicates, no DTO change). Only one seat runs `test:int`. Verify by recording what each seat verified and resolving every correctness, security or data-integrity finding; file the rest under Open questions.
 - [x] 6.3 Update `docs/roadmap_docs/project_status_roadmap_phases.md`: Current status and Next up; a Decisions entry for 2026-11-11 with the seven decisions, stating that it supersedes Decision 1 of 2026-08-27 and keeps Decision 2; Open questions for the look-back limit, stale stored verdicts after an earlier period changes, and the unmeasured hosted QA count; and the note for QA that the first period stays unchecked until K4. Verify that the file names this change and the pull request once it exists.
 
+## 7. The re-score tool and records in review (owner decision after the review)
+
+- [x] 7.1 In `packages/db/scripts/anomaly-recompute.lib.mjs`, make `classify` return `unexplained_flag` for a submitted or under-review record that the rule would newly flag and that carries no variance reason (design D7a); the shell reads `varianceReason`, reports these records in their own group and counts them as drift that remains. Add tests: both in-review statuses are refused; a draft and a rejected record are rewritten; a record with a reason is rewritten; a blank reason does not excuse; an approved record stays `terminal_status`; a change with no new flag, and a flag that no longer holds, are still rewritten. Verify with `pnpm --filter @tonyai/db test` and a dry run on the local database.
+- [x] 7.2 Update the spec (two scenarios), `docs/development/commands.md`, `docs/md_docs/validation_anomaly_rules.md` §4.1 and the status file (the decision, and the open question it closes). Verify with `openspec validate uat2-anomaly-short-history --strict`.
+
 ## Workflow follow-up
 
 - Open the pull request from `feat/uat2-anomaly-tier2` when the owner asks; the owner merges.

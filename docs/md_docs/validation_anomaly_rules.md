@@ -104,6 +104,16 @@ rejected record is checked under the current rule at its next save or submit.
 `pnpm anomaly:probe` lists the kept verdicts as a known difference, not as
 drift, and `pnpm anomaly:recompute` leaves them alone on committed records.
 
+#### The re-score tool never hands a reviewer an unanswered flag
+`pnpm anomaly:recompute` repairs a stored verdict whose history has moved. On a
+record waiting for review it does so with one exception (owner decision
+2026-11-11): if the rule would now flag the record and it carries no variance
+reason, the tool reports it and leaves it. A flagged record cannot be submitted
+without a reason, so a flag written afterwards is a warning its author never
+saw. It arises when an earlier period is committed after a later one was
+submitted, which one earlier period is now enough to cause. The reviewer who
+doubts the figure rejects it, and the resubmit asks for the reason.
+
 Only records in a **counted** status (`submitted`, `under_review`, `approved`,
 `locked`) seed a baseline — an unreviewed draft would add noise, and a withdrawn
 (`voided`) figure has been taken out of the inventory. The window is **not**

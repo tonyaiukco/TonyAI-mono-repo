@@ -145,6 +145,9 @@ async function main() {
       anomalyFlag: true,
       anomalyBaselinePriorCount: true,
       anomalyBaselineTCo2e: true,
+      // Read, never written: a record in review is given a new flag only when
+      // it already explains itself (`classify`, `unexplained_flag`).
+      varianceReason: true,
       updatedAt: true,
       subsidiary: { select: { legalName: true, organisationId: true } },
     },
@@ -187,11 +190,16 @@ async function main() {
   const rewritable = stale.filter((s) => s.disposition === 'rewritable');
   const terminal = stale.filter((s) => s.disposition === 'terminal_status');
   const inLockedPeriod = stale.filter((s) => s.disposition === 'locked_period');
+  const unexplainedFlag = stale.filter((s) => s.disposition === 'unexplained_flag');
 
   for (const group of [
     { label: 'Stale and rewritable', rows: rewritable },
     { label: 'Stale, but the record is terminal — reported, not touched', rows: terminal },
     { label: 'Stale, but the PERIOD is closed — reported, not touched', rows: inLockedPeriod },
+    {
+      label: 'In review, and the rule would now flag it with no variance reason on file — reported, not touched',
+      rows: unexplainedFlag,
+    },
   ]) {
     if (group.rows.length === 0) continue;
     console.log(`\n${group.label} (${group.rows.length}):`);
@@ -205,14 +213,16 @@ async function main() {
     }
   }
 
-  const unrepairable = terminal.length + inLockedPeriod.length;
+  const unrepairable = terminal.length + inLockedPeriod.length + unexplainedFlag.length;
   if (unrepairable > 0) {
     console.log(
       `\n${unrepairable} record(s) are stale and this tool will not rewrite them:\n` +
         `  ${terminal.length} because the record itself is approved or locked — its verdict is\n` +
         '  already in issued reports;\n' +
         `  ${inLockedPeriod.length} because the reporting period is closed, which the API refuses to\n` +
-        '  write into at all.\n' +
+        '  write into at all;\n' +
+        `  ${unexplainedFlag.length} because the record is in review and would gain a flag its author\n` +
+        '  never saw — the reviewer may reject it, and the resubmit asks for the reason.\n' +
         'Each is a decision, not a repair.',
     );
   }

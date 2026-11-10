@@ -314,8 +314,8 @@ describe('verdicts scored before the short-history check', () => {
 describe('findStale', () => {
   // The series: January approved at 10, then the subject at 19.8 (+98%).
   const january = rec({ id: 'jan', periodValue: 'January', status: 'approved', anomalyBaselinePriorCount: 0 });
-  const run = (subject) => {
-    const rows = [january, subject];
+  const run = (subject, prior = january) => {
+    const rows = [prior, subject];
     const indexed = rows.map(indexRecord);
     return findStale(indexed, buildPools(indexed), new Set());
   };
@@ -361,6 +361,73 @@ describe('findStale', () => {
     );
     expect(stale).toHaveLength(1);
     expect(stale[0].fresh).toEqual({ anomalous: true, priorCount: 1, baseline: 10 });
+  });
+
+  // Owner decision 2026-11-11: a record in review is not handed a flag its
+  // author never saw. Stored as "not checked" (January was committed after
+  // February was submitted); the rule flags it against January today.
+  describe('a record the rule would newly flag', () => {
+    const unchecked = (over) => february({ anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null, ...over });
+
+    it.each(['submitted', 'under_review'])('is reported and left alone while %s', (status) => {
+      const { stale } = run(unchecked({ status }));
+      expect(stale).toHaveLength(1);
+      expect(stale[0].fresh.anomalous).toBe(true);
+      expect(stale[0].disposition).toBe('unexplained_flag');
+    });
+
+    it.each(['draft', 'rejected'])('is rewritten while %s — its author meets the gate at submit', (status) => {
+      expect(run(unchecked({ status })).stale[0].disposition).toBe('rewritable');
+    });
+
+    it('is rewritten in review when it already carries a variance reason', () => {
+      const { stale } = run(unchecked({ status: 'submitted', varianceReason: 'Second shift added' }));
+      expect(stale[0].disposition).toBe('rewritable');
+    });
+
+    it('is not excused by a blank variance reason', () => {
+      expect(run(unchecked({ status: 'submitted', varianceReason: '   ' })).stale[0].disposition).toBe(
+        'unexplained_flag',
+      );
+    });
+
+    it('stays terminal when approved: the older refusal is named first', () => {
+      expect(run(unchecked({ status: 'approved' })).stale[0].disposition).toBe('terminal_status');
+    });
+  });
+
+  it('still rewrites a record in review whose verdict changed WITHOUT gaining a flag', () => {
+    // 11 against January's 10: within range, on one period. Count and average
+    // are filled in; nothing the author would have had to answer appears.
+    const { stale } = run(
+      february({
+        status: 'submitted',
+        calculation: { factorId: 'f-1', tCo2e: 11 },
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({
+      disposition: 'rewritable',
+      fresh: { anomalous: false, priorCount: 1, baseline: 10 },
+    });
+  });
+
+  it('still clears a flag in review that no longer holds', () => {
+    // Flagged against an average of 5 at submit; the only prior is 19 today.
+    const { stale } = run(
+      february({
+        status: 'under_review',
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 5,
+        varianceReason: null,
+      }),
+      rec({ id: 'jan', periodValue: 'January', status: 'approved', calculation: { factorId: 'f-1', tCo2e: 19 }, anomalyBaselinePriorCount: 0 }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({ disposition: 'rewritable', fresh: { anomalous: false } });
   });
 
   it('finds nothing stale when every stored verdict is today\'s', () => {
