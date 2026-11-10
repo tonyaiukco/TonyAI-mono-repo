@@ -201,6 +201,15 @@ extension. Measured on 2026-11-03, CI on `main` takes 3–7 minutes.
    that.
    Migrations are not rolled back, so keep them additive (expand first, contract
    in a later release).
+   Container Apps listings (revisions, replicas, apps) are read page by page:
+   Azure pages revisions at 20, and each app keeps up to 100 inactive ones. Each
+   `nextLink` must be the listing's own next page on `management.azure.com`, at
+   the pinned api-version with a skip token. A foreign link, a repeated page or
+   more than 20 pages is refused as an incomplete listing. Until 2026-11-10 any
+   `nextLink` was refused: once the API app passed 20 revisions, run 42889302849
+   failed with `Incomplete Container Apps listing` and `ROLLBACK INCOMPLETE for
+   api`. That run left the new API image serving and the web on the previous
+   release; a re-run was bound to fail the same way until the fix.
 
 Migrations that runbook 03 gives an owner `owner-psql` preflight (for example
 LP3-03) now apply without one. For such a migration, run its preflight before

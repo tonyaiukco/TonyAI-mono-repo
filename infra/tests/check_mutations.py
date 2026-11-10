@@ -120,6 +120,11 @@ MUTANTS = [
     ('qa deploy main head check removed', 'qa_autodeploy.py', '    if sha != head:', '    if False:'),
     ('qa deploy drift check removed', 'qa_autodeploy.py', '    if comparable(before) != comparable(after):', '    if False:'),
     ('qa deploy rollback removed', 'qa_autodeploy.py', '                update(foundation, kind, before[kind], previous, rid + \'-rb\', source, read, patch, sleep, attempts)\n', ''),
+    # QA deploy run 42889302849: listings are now read page by page, and each page link is validated.
+    ('qa deploy listing accepts another resource as its next page', 'qa_autodeploy.py', "            or url.path.lower() != path.lower() or url.params or url.fragment", "            or url.params or url.fragment"),
+    ('qa deploy listing accepts another api-version on its next page', 'qa_autodeploy.py', "            or query.get('api-version') != [API_VERSION]", "            or False"),
+    ('qa deploy listing loop guard removed', 'qa_autodeploy.py', "            if link in seen:", "            if False:"),
+    ('qa deploy listing page cap removed', 'qa_autodeploy.py', "            if read == MAX_LISTING_PAGES:", "            if False:"),
     ('qa deploy API drain removed', 'qa_autodeploy.py', '        drain(foundation, rid, read=read, sleep=sleep, attempts=attempts)\n', '        pass\n'),
     ('qa deploy engine download sends the default User-Agent', 'qa_autodeploy.py', "opener(Request(ENGINE_URL, headers={'User-Agent': USER_AGENT}), timeout=120)", 'opener(ENGINE_URL, timeout=120)'),
     ('qa deploy engine download failure not named', 'qa_autodeploy.py', "    except (OSError, EOFError, zlib.error):\n        raise SafeFailure('Schema-engine download failed or returned an unreadable archive.') from None\n", ''),
