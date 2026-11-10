@@ -66,19 +66,15 @@
 import 'dotenv/config';
 import {
   buildPools,
-  classify,
   exitCodeFor,
-  freshVerdict,
+  findStale,
   indexRecord,
   isLoopback,
-  keepsLegacyVerdict,
   lockKey,
   parseArgs,
   parseHost,
   REWRITABLE,
   shouldScore,
-  storedVerdict,
-  verdictsAgree,
 } from './anomaly-recompute.lib.mjs';
 import { PrismaClient } from '../generated/client/index.js';
 
@@ -166,20 +162,9 @@ async function main() {
   // not score — narrowing the pool would change the verdicts themselves.
   const pools = buildPools(records.map(indexRecord));
 
-  const stale = [];
-  let keptLegacy = 0;
-  for (const item of scoreable) {
-    // Scored before the short-history check and committed since: kept as it
-    // is, and not drift (see `keepsLegacyVerdict`).
-    if (keepsLegacyVerdict(item.row)) {
-      keptLegacy++;
-      continue;
-    }
-    const stored = storedVerdict(item.row);
-    const fresh = freshVerdict(item, pools);
-    if (verdictsAgree(stored, fresh)) continue;
-    stale.push({ item, stored, fresh, disposition: classify(item.row, lockedPeriods) });
-  }
+  // A verdict scored before the short-history check and committed since is
+  // kept as it is, and is not drift (see `keepsLegacyVerdict`).
+  const { stale, keptLegacy } = findStale(scoreable, pools, lockedPeriods);
 
   console.log(
     `Checked ${scoreable.length} record(s)` +

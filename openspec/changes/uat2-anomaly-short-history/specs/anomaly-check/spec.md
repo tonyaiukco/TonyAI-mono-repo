@@ -153,18 +153,22 @@ The anomaly column of every report and CSV export SHALL state a short-history ve
 - **THEN** its anomaly cell says it was within range against limited history of 2 periods, and is not left empty
 
 ### Requirement: The verdict is stored with the record
-A record SHALL carry its verdict: the flag, how many periods it rested on, and the average. The verdict SHALL be worked out when the record is created, updated or submitted, and not when it is read. A later change to an earlier period SHALL NOT change a stored verdict.
+A record SHALL carry its verdict: the flag, how many periods it rested on, and the average. The verdict SHALL be worked out when the record is created, updated or submitted, and not when it is read. No action in the application on an earlier period SHALL change a later record's stored verdict. Only the operator's re-score tool rewrites a stored verdict, and never on an approved or locked record.
 
 #### Scenario: An earlier period changes afterwards
 - **WHEN** a record was submitted as within range, and the earlier period it was compared with is then recalled and edited
 - **THEN** the submitted record's stored verdict is unchanged
+
+#### Scenario: The re-score tool repairs a record that is still open
+- **WHEN** an operator runs the re-score tool with apply, and a draft, rejected, submitted or under-review record's stored verdict no longer matches its history
+- **THEN** that record's verdict is rewritten with an audit row, and an approved or locked record in the same state is reported and left unchanged
 
 #### Scenario: Recall keeps the verdict until the next save
 - **WHEN** an author recalls a submitted record
 - **THEN** the draft shows the verdict it was submitted with, until it is saved or submitted again
 
 ### Requirement: Verdicts scored before the short-history check are kept
-A record scored on one or two periods before the short-history check existed SHALL keep its not-checked verdict and SHALL say that it was scored before that check existed. No committed record SHALL be re-scored because the rule changed. An approved or locked record's verdict SHALL never be rewritten. The consistency tools SHALL report these earlier verdicts as a known difference and not as drift.
+An unflagged record scored on one or two periods before the short-history check existed SHALL keep its not-checked verdict and SHALL say that it was scored before that check existed. No committed record SHALL be re-scored because the rule changed. An approved or locked record's verdict SHALL never be rewritten. The consistency tools SHALL report these earlier verdicts as a known difference and not as drift.
 
 #### Scenario: An approved record from before the change
 - **WHEN** a record approved before the change, with 2 earlier periods and no stored average, is opened
@@ -173,6 +177,10 @@ A record scored on one or two periods before the short-history check existed SHA
 #### Scenario: A draft from before the change is checked at its next save
 - **WHEN** a draft scored before the change is saved or submitted
 - **THEN** it is checked under the short-history rule
+
+#### Scenario: A flagged row in the earlier shape is not excused
+- **WHEN** a committed record holds a flag beside a count of 1 or 2 and no average, which no version of the rule ever wrote
+- **THEN** the consistency tools report it as drift, not as a known difference
 
 #### Scenario: The consistency probe on an upgraded database
 - **WHEN** the probe runs on a database that holds committed records scored before the change

@@ -132,9 +132,15 @@ export function freshVerdict(item, pools) {
  *
  * Only COMMITTED records: a draft or a rejected record is re-scored at its
  * next save or submit anyway, so re-scoring it here says nothing new.
+ *
+ * Only UNFLAGGED ones: the old rule never flagged a short window, so a flag
+ * beside a count of 1–2 and no average is a row no writer ever produced —
+ * corruption or a direct write. That must stay loud, not be filed as history.
  */
 export const keepsLegacyVerdict = (row) =>
-  COUNTED_STATUSES.includes(row.status) && isLegacyShortWindowVerdict(row);
+  COUNTED_STATUSES.includes(row.status) &&
+  row.anomalyFlag === false &&
+  isLegacyShortWindowVerdict(row);
 
 export const storedVerdict = (row) => ({
   anomalous: row.anomalyFlag,
@@ -148,6 +154,32 @@ export function verdictsAgree(stored, fresh) {
     stored.priorCount === fresh.priorCount &&
     sameBaseline(stored.baseline, fresh.baseline)
   );
+}
+
+/**
+ * Every scoreable record whose stored verdict is not the one it would get
+ * today, with what may be done about it — and how many verdicts were kept
+ * because they predate the short-history check.
+ *
+ * Here rather than in the shell so the skip is testable: the shell's loop was
+ * the one place `keepsLegacyVerdict` could be dropped with every test green,
+ * and dropping it lets `--apply` put a flag on a submitted record whose author
+ * never saw one.
+ */
+export function findStale(scoreable, pools, lockedPeriods) {
+  const stale = [];
+  let keptLegacy = 0;
+  for (const item of scoreable) {
+    if (keepsLegacyVerdict(item.row)) {
+      keptLegacy++;
+      continue;
+    }
+    const stored = storedVerdict(item.row);
+    const fresh = freshVerdict(item, pools);
+    if (verdictsAgree(stored, fresh)) continue;
+    stale.push({ item, stored, fresh, disposition: classify(item.row, lockedPeriods) });
+  }
+  return { stale, keptLegacy };
 }
 
 /**

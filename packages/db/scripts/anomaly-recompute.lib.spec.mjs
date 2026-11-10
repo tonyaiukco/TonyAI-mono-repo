@@ -4,6 +4,7 @@ import {
   buildPools,
   classify,
   exitCodeFor,
+  findStale,
   freshVerdict,
   indexRecord,
   isLoopback,
@@ -300,6 +301,74 @@ describe('verdicts scored before the short-history check', () => {
     expect(
       keepsLegacyVerdict(legacy({ status: 'approved', anomalyBaselinePriorCount: count })),
     ).toBe(false);
+  });
+
+  it('does not keep a FLAGGED one — no writer ever produced that row', () => {
+    // The old rule never flagged a short window. A flag beside a count of 1–2
+    // and no average is corruption or a direct write, and must stay drift.
+    expect(keepsLegacyVerdict(legacy({ status: 'approved', anomalyFlag: true }))).toBe(false);
+    expect(keepsLegacyVerdict(legacy({ status: 'submitted', anomalyFlag: true }))).toBe(false);
+  });
+});
+
+describe('findStale', () => {
+  // The series: January approved at 10, then the subject at 19.8 (+98%).
+  const january = rec({ id: 'jan', periodValue: 'January', status: 'approved', anomalyBaselinePriorCount: 0 });
+  const run = (subject) => {
+    const rows = [january, subject];
+    const indexed = rows.map(indexRecord);
+    return findStale(indexed, buildPools(indexed), new Set());
+  };
+  const february = (over) =>
+    rec({ id: 'feb', periodValue: 'February', calculation: { factorId: 'f-1', tCo2e: 19.8 }, ...over });
+
+  it.each(['submitted', 'under_review', 'approved', 'locked'])(
+    'leaves a %s verdict scored before the short-history check alone, though the rule would flag it',
+    (status) => {
+      const { stale, keptLegacy } = run(
+        february({ status, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: null }),
+      );
+      expect(stale).toEqual([]);
+      expect(keptLegacy).toBe(1);
+    },
+  );
+
+  it('re-scores a DRAFT scored before the short-history check', () => {
+    const { stale, keptLegacy } = run(
+      february({ status: 'draft', anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: null }),
+    );
+    expect(keptLegacy).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({
+      disposition: 'rewritable',
+      fresh: { anomalous: true, priorCount: 1, baseline: 10 },
+    });
+  });
+
+  it('reports a flagged legacy-shaped row as stale, and refuses to rewrite it when approved', () => {
+    const { stale, keptLegacy } = run(
+      february({ status: 'approved', anomalyFlag: true, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: null }),
+    );
+    expect(keptLegacy).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0].disposition).toBe('terminal_status');
+  });
+
+  it('reports a verdict the current rule wrote, once its pool has moved', () => {
+    // Stored against an average of 15; the only prior is 10 today.
+    const { stale } = run(
+      february({ status: 'submitted', anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 15 }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0].fresh).toEqual({ anomalous: true, priorCount: 1, baseline: 10 });
+  });
+
+  it('finds nothing stale when every stored verdict is today\'s', () => {
+    const { stale, keptLegacy } = run(
+      february({ status: 'submitted', anomalyFlag: true, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 10 }),
+    );
+    expect(stale).toEqual([]);
+    expect(keptLegacy).toBe(0);
   });
 });
 

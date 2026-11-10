@@ -108,10 +108,14 @@ const BASE_SQL = `
 WITH r AS (
   SELECT id, subsidiary_id, location_id, category, activity_type, reporting_period,
          reporting_year, period_value, status, anomaly_flag,
-         -- A count of 1-2 beside a NULL average: scored before 2026-11-11,
-         -- when such a window was not evaluated. Kept, never re-scored.
-         (anomaly_baseline_prior_count BETWEEN ${BASELINE_MIN_PERIODS} AND ${BASELINE_MAX_PERIODS - 1}
-            AND anomaly_baseline_tco2e IS NULL) AS legacy,
+         -- A count of 1-2 beside a NULL average, unflagged: scored before
+         -- 2026-11-11, when such a window was not evaluated. Kept, never
+         -- re-scored. COALESCE because a NULL count makes the BETWEEN NULL,
+         -- and "NOT NULL" would drop that row from the drift report below.
+         -- Unflagged only: the old rule never flagged a short window, so a
+         -- flag here is a row no writer produced and must stay drift.
+         COALESCE(anomaly_baseline_prior_count BETWEEN ${BASELINE_MIN_PERIODS} AND ${BASELINE_MAX_PERIODS - 1}
+            AND anomaly_baseline_tco2e IS NULL AND NOT anomaly_flag, false) AS legacy,
          reporting_year * 100 + COALESCE(CASE reporting_period
            WHEN 'monthly'   THEN array_position(ARRAY['January','February','March','April','May','June','July','August','September','October','November','December'], period_value) - 1
            WHEN 'quarterly' THEN array_position(ARRAY['Q1','Q2','Q3','Q4'], period_value)
@@ -235,17 +239,24 @@ async function main() {
   }
 
   const weak = await q(`
-    SELECT sub, loc, category, period_value, reporting_year, status, tco2e, priors
+    SELECT sub, loc, category, period_value, reporting_year, status, tco2e, priors, baseline, legacy
     FROM verdict WHERE priors < ${BASELINE_MAX_PERIODS} ORDER BY sub, loc NULLS FIRST, category, key;`);
 
   console.log(
     `\n3. Records on less than VAR §4.1's three-period window (${weak.length} of ${total})`,
   );
   for (const row of weak) {
+    // What the pool supports TODAY, and whether the stored verdict used it: a
+    // row kept from before the short-history check has the priors and was
+    // still not checked, and a zero average yields no ratio at any count.
     const gate =
       row.priors === 0
         ? 'NOT EVALUATED — no prior period'
-        : `limited history — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
+        : row.legacy
+          ? `NOT EVALUATED — scored before the short-history check (${row.priors} of ${BASELINE_MAX_PERIODS} priors today)`
+          : Number(row.baseline) === 0
+            ? `NOT EVALUATED — ${row.priors} prior(s) averaging zero`
+            : `limited history — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
     console.log(
       `   ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)} ` +
         `[${row.status}] ${row.tco2e?.toFixed(3)} tCO₂e — ${gate}`,

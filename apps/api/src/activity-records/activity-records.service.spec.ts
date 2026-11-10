@@ -2598,6 +2598,25 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(false);
   });
 
+  it('judges against an old period when nothing newer exists — the window has no age limit', async () => {
+    // The only earlier period of the series is two years back. It is still the
+    // history: the window is the most recent periods there ARE, not the last
+    // few on the calendar. (A limit is an open question, not a rule.)
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('March', 10, 2022)]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), MONTHLY_DTO);
+
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyBaselinePriorCount).toBe(1);
+    expect(data.anomalyBaselineTCo2e).toBe(10);
+    expect(data.anomalyFlag).toBe(true);
+  });
+
   it('excludes later periods and the record itself from its own baseline', async () => {
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));

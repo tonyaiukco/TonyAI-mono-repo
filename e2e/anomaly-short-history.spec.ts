@@ -5,6 +5,7 @@ import periodsTr from '../apps/web/messages/tr/periods.json';
 import {
   API_BASE,
   bearer,
+  E2E_YEAR,
   login,
   switchUser,
   pickByFieldLabel,
@@ -31,12 +32,15 @@ import {
  * range says "on limited history" instead of saying nothing.
  *
  * Lane: `SUB.gas` / quarterly `E2E_YEAR` / Electricity, whole company, Q2–Q4.
- * No other spec commits a record in this series: `gates.spec.ts` leaves a Q1
- * DRAFT here, which is no one's history, and `reports.spec.ts` writes its Q2
- * at the London site, which is a different series. Q1 is left alone so that
- * draft and this series never meet. Everything written here is deleted in the
- * `finally`, because a committed record left behind is history for whoever
- * uses this lane next.
+ * No other spec COMMITS a record in this series, and only a committed record
+ * is history. `gates.spec.ts` leaves a Q1 draft here and
+ * `turkish-filenames.spec.ts` a Q3 draft; `review-queue.spec.ts` posts a Q4 as
+ * the consultant and is refused; `reports.spec.ts` writes its Q2 at the London
+ * site, a different series. All of them run after this file (one worker, in
+ * file order). Everything written here is deleted in the `finally`, by its
+ * place in the lane and not by an id collected on the way, so a step that
+ * fails after a save still cleans up: a committed record left behind is
+ * history for whoever uses this lane next.
  */
 
 const OPTION = 'TonyAI Gas (UK)';
@@ -64,10 +68,9 @@ test('the second period is gated on limited history, and the third says what it 
   request,
 }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const ids: string[] = [];
   try {
     // Q2: the first period of the series, committed through the API.
-    ids.push(await createCommittedRecord(request, token, { ...LANE, periodValue: 'Q2', activityValue: 10_000 }));
+    await createCommittedRecord(request, token, { ...LANE, periodValue: 'Q2', activityValue: 10_000 });
 
     await login(page, ADMIN_EMAIL);
     await page.goto('/data-entry');
@@ -78,7 +81,6 @@ test('the second period is gated on limited history, and the third says what it 
     await page.getByPlaceholder('e.g. 45000').fill('20000');
     await page.getByRole('button', { name: 'Save draft' }).click();
     await expect(page.getByText(/Draft saved/)).toBeVisible();
-    ids.push(await findRecordId(request, token, { ...LANE, periodValue: 'Q3' }));
 
     // The banner names its basis: the only earlier period, limited history.
     await expect(page.getByText(/the only earlier period for this reporting entity/)).toBeVisible();
@@ -106,35 +108,51 @@ test('the second period is gated on limited history, and the third says what it 
     await page.getByPlaceholder('e.g. 45000').fill('14000');
     await page.getByRole('button', { name: 'Save draft' }).click();
     await expect(page.getByText(/Draft saved/)).toBeVisible();
-    ids.push(await findRecordId(request, token, { ...LANE, periodValue: 'Q4' }));
 
     await expect(page.getByText(anomalyEn.cleanLimited.headline, { exact: false })).toBeVisible();
     await expect(page.getByText(/the average of the 2 earlier periods/)).toBeVisible();
     await expect(page.getByText(/limited history \(2 periods\)/)).toBeVisible();
     await expect(page.getByLabel('Reason for variance *')).toHaveCount(0);
 
+    // No flag, so no reason is asked for: with its file, Q4 goes to review.
+    await page.locator('[data-testid="evidence-vault-input"]').setInputFiles(EVIDENCE_FIXTURE);
+    await expect(page.getByText('Evidence uploaded')).toBeVisible();
+    await page.getByRole('button', { name: 'Submit for review' }).click();
+    await expect(page.getByText('Submitted for review')).toBeVisible();
+
     // The reviewer reads the same basis on the flagged record, with the reason.
     await switchUser(page, CONSULTANT_EMAIL);
     await page.goto('/review');
-    await page
-      .locator('table tbody tr', { hasText: 'TonyAI Gas' })
-      .filter({ hasText: 'Q3 2026' })
-      .click();
+    const row = (period: string) =>
+      page.locator('table tbody tr', { hasText: 'TonyAI Gas' }).filter({ hasText: period });
+    await row(`Q3 ${E2E_YEAR}`).click();
     await expect(page.getByText(anomalyEn.flagged.headline)).toBeVisible();
     await expect(page.getByText(/limited history \(1 period\)/)).toBeVisible();
     await expect(page.getByText(VARIANCE, { exact: false })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // ...and on the unflagged one: "nothing was flagged" is not left to stand
+    // for a check against two periods.
+    await row(`Q4 ${E2E_YEAR}`).click();
+    await expect(page.getByText(anomalyEn.cleanLimited.headline, { exact: true })).toBeVisible();
+    await expect(page.getByText(/limited history \(2 periods\)/)).toBeVisible();
+    await expect(page.getByText(anomalyEn.flagged.headline)).toHaveCount(0);
+    await page.keyboard.press('Escape');
 
     // ...and in Turkish, from the catalogue: the same record, the same basis.
     await setReviewerLanguage('tr');
     await page.goto('/review');
-    await page
-      .locator('table tbody tr', { hasText: 'TonyAI Gas' })
-      .filter({ hasText: periodsTr.values.Q3 })
-      .click();
+    await row(periodsTr.values.Q3).click();
     await expect(page.getByText(anomalyTr.flagged.headline)).toBeVisible();
     await expect(page.getByText(/kısıtlı geçmişe dayanıyor \(1 dönem\)/)).toBeVisible();
   } finally {
     await setReviewerLanguage('en');
+    // By tuple, so a record saved just before a failed step is found too.
+    const ids: string[] = [];
+    for (const periodValue of ['Q2', 'Q3', 'Q4']) {
+      const id = await findRecordId(request, token, { ...LANE, periodValue }).catch(() => null);
+      if (id) ids.push(id);
+    }
     await deleteRecordsAsService(request, ids);
   }
 });

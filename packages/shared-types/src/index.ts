@@ -5231,8 +5231,9 @@ export interface TrackingMatrixCell {
   anomaly: boolean;
   /**
    * Committed records in this cell that HAVE a figure but that the anomaly rule
-   * never ran on — a window shorter than `ANOMALY_BASELINE_PERIODS`, or one
-   * averaging to zero (see `isAnomalyEvaluated`).
+   * never ran on — no earlier period, an average of zero, or a verdict kept
+   * from before the short-history check (see `isAnomalyEvaluated`). A record
+   * checked on one or two periods is NOT counted here: it was checked.
    *
    * `anomaly: false` alone overstates: it reads as "checked, nothing unusual"
    * for a cell nobody checked. This counter is deliberately NOT a cap on the

@@ -49,7 +49,9 @@ The refusal keeps its code and its params. `variance_reason_required` has no par
 
 `ANOMALY_MIN_PRIORS` is 1, as QA asked. With a minimum of 2, an annual category would stay unchecked through its second year.
 
-The cost is accepted: one period is a noisy measure, and a season change or a partial first period can raise a flag. The price of a false flag is one sentence of explanation. Moving to 2 later is a one-constant change.
+The cost is accepted: one period is a noisy measure, and a season change or a partial first period can raise a flag. The price of a false flag is one sentence of explanation.
+
+Moving to 2 later is NOT a one-constant change (architect review, 2026-11-11). `isAnomalyEvaluated` and `isLegacyShortWindowVerdict` both read the current minimum, so verdicts already stored on one period would read "not evaluated" while possibly still flagged. Raising the minimum would need a rule for those stored verdicts, as this change needed one for the old ones.
 
 ### D4. The basis is derived, not stored
 
@@ -86,7 +88,7 @@ Alternative considered: a stored `anomaly_basis` enum. It needs a migration and 
 | Clean, full | unchanged | unchanged |
 | Clean, limited | "Within range on limited history" | compared with the average of N earlier periods |
 | Not checked, no history | unchanged | no earlier period; the sentence "needs 3 periods" is removed |
-| Not checked, scored before | unchanged | scored before the short-history check existed; checked again at the next save or submit |
+| Not checked, scored before | unchanged | scored when the check needed three earlier periods, and it had fewer |
 
 The tone set (`flagged`, `clean`, `not_evaluated`) does not change. The emissions drawer prints every statement, so it needs no change. Data Entry and the review sheet print a statement only for a flag or for a record that was not checked, and nothing for a clean one. A clean verdict on limited history must not go unsaid there, so the statement carries a `qualified` field (not checked, or clean on limited history) and both screens show their neutral card when it is set. Found during implementation, 2026-11-11: the first draft of this section said no screen needed a change.
 
@@ -107,6 +109,10 @@ The matrix note ("N records not checked — too few comparable periods") is rewo
 ### D7. Existing verdicts are a known difference
 
 No record is re-scored when this change is deployed. A stored verdict with count 1 or 2 and a null average can only have been written by the old rule, because the new rule always stores an average when it holds at least one figure. `isLegacyShortWindowVerdict(record)` in the contract package names that state.
+
+The sentence shown for such a record does not promise a re-check: the screens do not know the record's status, and an approved record is never saved again. A draft is re-scored at its next save, which replaces the sentence.
+
+The tools excuse only an UNFLAGGED legacy verdict (security review, 2026-11-11). The old rule never flagged a short window, so a flag beside a count of 1–2 and no average is a row no writer produced. It stays drift.
 
 - **Screens and exports** give such a record its own sentence (D6).
 - **`anomaly:probe`** lists these records in their own section and does not count them as drift. Its exit code is unaffected by them.

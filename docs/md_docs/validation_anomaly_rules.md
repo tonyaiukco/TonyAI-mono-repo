@@ -62,6 +62,7 @@ The baseline is the rolling average of the previous 3 comparable periods for the
 - `subsidiaryId`
 - `locationId` — **including `NULL`**, which is its own pool (see the deviation below)
 - `categoryKey`
+- `activityType` — diesel and petrol of one site are separate series (LP3-03); an untyped record pools only with untyped ones
 - `reportingPeriod` (the granularity: monthly, quarterly, annual)
 
 **The window is the three most recent earlier periods; one figure in it is
