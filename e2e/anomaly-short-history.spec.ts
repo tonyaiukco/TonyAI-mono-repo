@@ -145,6 +145,14 @@ test('the second period is gated on limited history, and the third says what it 
     await row(periodsTr.values.Q3).click();
     await expect(page.getByText(anomalyTr.flagged.headline)).toBeVisible();
     await expect(page.getByText(/kısıtlı geçmişe dayanıyor \(1 dönem\)/)).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // The unflagged one too: the Turkish reviewer is told it was checked
+    // against two periods, in the catalogue's words.
+    await row(periodsTr.values.Q4).click();
+    await expect(page.getByText(anomalyTr.cleanLimited.headline, { exact: true })).toBeVisible();
+    await expect(page.getByText(/kısıtlı geçmişe dayanıyor \(2 dönem\)/)).toBeVisible();
+    await expect(page.getByText(anomalyTr.flagged.headline)).toHaveCount(0);
   } finally {
     await setReviewerLanguage('en');
     // By tuple, so a record saved just before a failed step is found too.
