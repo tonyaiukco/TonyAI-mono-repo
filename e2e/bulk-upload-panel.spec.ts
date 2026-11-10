@@ -323,8 +323,9 @@ test('a non-evidence import offers the submit button, and it moves the records',
     await expect(page.getByText(/1 record imported as a draft\./)).toBeVisible();
 
     await page.locator('[data-testid="bulk-submit-button"]').click();
-    // The sentence the dialog exists for: there is no author-side un-submit.
-    await expect(page.getByText(/Only a reviewer can send it back/)).toBeVisible();
+    // The sentence the dialog exists for: the author's recall ends once a
+    // reviewer opens the record (BUG-R2-03).
+    await expect(page.getByText(/only the reviewer can send it back/)).toBeVisible();
     await page.locator('[data-testid="bulk-submit-confirm"]').click();
 
     await expect(page.getByText(/now in the review queue/i)).toBeVisible();

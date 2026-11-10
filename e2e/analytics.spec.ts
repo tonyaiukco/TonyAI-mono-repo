@@ -175,7 +175,7 @@ test('moving the form off a loaded record stops targeting it', async ({
   await page.goto(
     `/data-entry?subsidiaryId=${SUB.logistics}&category=Fuel&year=${E2E_YEAR}`,
   );
-  await page.getByRole('button', { name: /Q4 2026/ }).click();
+  await page.getByRole('button', { name: /^Q4 2026/ }).click();
   await expect(page.getByText(/Editing draft/)).toBeVisible();
 
   // Move to a different period — the same form, a different reporting entity.

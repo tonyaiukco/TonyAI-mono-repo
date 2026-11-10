@@ -206,7 +206,7 @@ test('mobile combustion: an opened draft keeps its own unit until its type chang
     const quantity = page.getByPlaceholder(en.activityValuePlaceholder);
     const open = async (periodValue: string) => {
       await page.goto(`/data-entry?subsidiaryId=${SUB.logistics}&category=Mobile%20Combustion&year=${E2E_TR_INPUTS_YEAR}`);
-      await page.getByRole('button', { name: new RegExp(`${periodValue} ${E2E_TR_INPUTS_YEAR}`) }).click();
+      await page.getByRole('button', { name: new RegExp(`^${periodValue} ${E2E_TR_INPUTS_YEAR}`) }).click();
       await expect(page.getByText(/Editing draft/)).toBeVisible();
     };
 
@@ -306,7 +306,7 @@ test('evidence: a new mobile record submitted without a file stays open on its d
     await expect(page.getByText(en.evidenceBeforeSubmit)).toBeVisible();
     expect(submits).toHaveLength(0);
     // The draft just saved is listed without a reload.
-    await expect(page.getByRole('button', { name: new RegExp(`Q1 ${E2E_TR_INPUTS_YEAR}`) })).toBeVisible();
+    await expect(page.getByRole('button', { name: new RegExp(`^Q1 ${E2E_TR_INPUTS_YEAR}`) })).toBeVisible();
     await expect(page.getByText(enEvidence.requiredNote)).toBeVisible();
     await expect(vault).toBeAttached();
     const draft = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });

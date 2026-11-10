@@ -79,7 +79,7 @@ test('the name renders unmangled in the evidence vault', async ({ page, request 
 
     await login(page, ADMIN_EMAIL);
     await page.goto(`/data-entry?subsidiaryId=${SUB.gas}&category=Electricity&year=${E2E_YEAR}`);
-    await page.getByRole('button', { name: /Q3 2026/ }).first().click();
+    await page.getByRole('button', { name: /^Q3 2026/ }).first().click();
     await expect(page.getByText(TURKISH_NAME)).toBeVisible();
   } finally {
     await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) });

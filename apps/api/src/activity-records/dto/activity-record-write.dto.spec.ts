@@ -7,6 +7,7 @@ import {
   ACTIVITY_UNITS,
   ACTIVITY_UNIT_MAX_LENGTH,
   ACTIVITY_VALUE_MAX,
+  EVIDENCE_DETACH_MAX_IDS,
   EXPLANATION_MAX_LENGTH,
   PERIOD_VALUE_MAX_LENGTH,
 } from '@tonyai/shared-types';
@@ -493,5 +494,29 @@ describe('UpdateActivityRecordDto — parameters with no category named', () => 
 
   it("still refuses what is no category's object", () => {
     expect(parseExactly(UpdateActivityRecordDto, { parameters: 'x' }).map((e) => e.property)).toEqual(['parameters']);
+  });
+});
+
+describe('detachEvidenceIds — the files an edit takes off its record (BUG-R2-03)', () => {
+  const EV = 'c4444444-4444-4444-8444-44444444000c';
+
+  it('is optional on update, and lowercased like every other id', () => {
+    expect(parseExactly(UpdateActivityRecordDto, { activityValue: 1 })).toHaveLength(0);
+    const { dto, errors } = parse(UpdateActivityRecordDto, { detachEvidenceIds: [EV.toUpperCase()] });
+    expect(errors).toHaveLength(0);
+    expect((dto as UpdateActivityRecordDto).detachEvidenceIds).toEqual([EV]);
+  });
+
+  it.each([
+    ['not an array', EV],
+    ['a non-UUID entry', [EV, 'ev-1']],
+    ['a non-string entry', [42]],
+    ['more ids than the cap', Array.from({ length: EVIDENCE_DETACH_MAX_IDS + 1 }, () => EV)],
+  ])('refuses %s', (_name, value) => {
+    expect(parse(UpdateActivityRecordDto, { detachEvidenceIds: value }).errors.length).toBeGreaterThan(0);
+  });
+
+  it('is not part of a create', () => {
+    expect(parse(CreateActivityRecordDto, { detachEvidenceIds: [EV] }).errors.length).toBeGreaterThan(0);
   });
 });

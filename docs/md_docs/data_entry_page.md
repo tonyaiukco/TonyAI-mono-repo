@@ -233,6 +233,33 @@ Bulk upload is not an action-bar action — it has its own panel on the page (§
 
 ---
 
+### Edit, Recall and Copy to new draft (BUG-R2-03)
+A record is held in the form in one of two ways:
+- **Opened** — a Previous submissions row, a dashboard link, or the record just saved. A changed location re-files it in place, with the move notice. A changed category, year or period starts a **new** record (`Now entering a new record.`), and the opened record is left as it was. This guards against the implicit overwrite that once turned a Fuel Q3 draft into Q4.
+- **Edit mode** — entered only by the `Edit` action: on a Previous submissions row, or beside `Editing draft …` for the open record. It is offered only to the record's **author**, `super_admin` included (a `super_admin` cannot edit a colleague's record; they reject it with a note), on a `draft` or `rejected` record in an open period. In Edit mode, the following change the **same** record on save:
+  - activity value
+  - category
+  - activity type
+  - reporting year
+  - period
+  - location
+
+  A band lists each change (`Category: Fuel → Electricity`, `Period: Q3 → Q1`, …), and `Cancel editing` puts the form back to the record as stored. A category change clears the activity type, unit and category inputs. The subsidiary never changes; choosing another subsidiary leaves Edit mode.
+
+What happens to the record's evidence files in Edit mode:
+- **Category change:** the band lists every file and warns that a file backing no other record is deleted and must be uploaded again. Save and Submit stay disabled until the user ticks `Remove the N file(s) and save`. The API refuses a category change that leaves a file attached (`evidence_detach_required`).
+- **Type, year, period or location change:** each file has a `Remove …` choice and is kept unless it is ticked, with the same deletion warning.
+- **Value change:** files are untouched.
+
+`Recall` shows on the author's own `submitted` rows. After a confirmation (`Recall this submission?`), the record leaves the review queue and is a draft again, ready to edit and resubmit. Once a reviewer has taken it into review it cannot be recalled (`record_not_recallable`); the reviewer returns it by rejecting it.
+
+`Copy to new draft` shows on a `voided` record, to its author and to a `super_admin`. It is on the Previous submissions row and in the Emissions record drawer, which opens `/data-entry?copyFrom=<id>`. It is D04's re-entry:
+- The form opens as a **new** record filled with the voided record's values. No file and no variance comment are copied.
+- The subsidiary stays selectable. Switching it keeps the values and clears only the location.
+- Saving creates a draft whose author is the user who copied it, and it follows the normal review path.
+
+---
+
 ## 9. Bulk Upload and Bulk Submit
 
 This page can import many records at once and send many drafts for review at once. The importer is a `Bulk upload` panel on the page itself, not a modal workflow — the only dialogs are the confirmations before importing and before submitting. Bulk submit is offered in two places: by the panel, for the rows it has just imported, and by a checkbox list on `Previous submissions`, for drafts already on the list.
@@ -286,7 +313,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - **drafts only**: a `rejected` record is resubmitted on its own, so the reviewer's note gets read
 - **only records the user entered** — a `super_admin` included (decision D02, 2026-09-29: only the author submits)
 - at most 1,000 records per submission, and 10 submissions per minute per user
-- **no dry run, but always a confirmation**: `Send these for review?` states the count and that only a reviewer can send the records back — there is no author-side un-submit
+- **no dry run, but always a confirmation**: `Send these for review?` states the count and that the author can recall a record only until a reviewer opens it; after that only the reviewer can send it back (§8)
 - the result is a verdict plus a per-record failure list in the server's own words. The anomaly verdict is recomputed at submit time, so the screen never tries to predict it
 
 #### From the Bulk Upload Panel
@@ -341,7 +368,7 @@ If record status is `locked`:
 If record status is `submitted` or `approved`:
 - fields become read only for `data_entry`
 - audit visibility remains available
-- unlock or revision actions shown only if permitted by role
+- a `submitted` record can be recalled to draft by its author before review starts (§8); an approved figure is corrected by void and `Copy to new draft`
 
 ---
 

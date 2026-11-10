@@ -6,6 +6,13 @@ import {
   API_ERROR_STATUS,
   CATEGORY_SCOPE_MAP,
   mayAuthorRecords,
+  mayEditRecord,
+  mayRecallRecord,
+  mayCopyVoidedRecord,
+  isRecallable,
+  RECALLABLE_STATUSES,
+  EDITABLE_RECORD_STATUSES,
+  AUDIT_ACTIONS,
   acceptsBulkSubmit,
   BULK_SUBMITTABLE_STATUSES,
   isSubmittable,
@@ -826,6 +833,63 @@ describe('mayAuthorRecords — the one record-write rule', () => {
   it('refuses a signed-out shell', () => {
     expect(mayAuthorRecords(null)).toBe(false);
     expect(mayAuthorRecords(undefined)).toBe(false);
+  });
+});
+
+describe('record edit, recall and copy (BUG-R2-03)', () => {
+  const author = { id: 'u-author', role: 'data_entry' };
+  const admin = { id: 'u-admin', role: 'super_admin' };
+  const consultant = { id: 'u-consultant', role: 'consultant' };
+  const ALL = ['draft', 'submitted', 'under_review', 'approved', 'rejected', 'locked', 'voided'];
+
+  it('pins the edit and recall sets at the source', () => {
+    expect(EDITABLE_RECORD_STATUSES).toEqual(['draft', 'rejected']);
+    expect(RECALLABLE_STATUSES).toEqual(['submitted']);
+    expect(isRecallable('submitted')).toBe(true);
+    for (const status of ALL.filter((s) => s !== 'submitted')) expect(isRecallable(status)).toBe(false);
+    for (const junk of ['', 'Submitted', ' submitted']) expect(isRecallable(junk)).toBe(false);
+  });
+
+  it('lets only the author edit, in an editable status — super_admin is not exempt', () => {
+    for (const status of ALL) {
+      const editable = status === 'draft' || status === 'rejected';
+      expect(mayEditRecord(author, { status, createdBy: author.id })).toBe(editable);
+      expect(mayEditRecord(admin, { status, createdBy: author.id })).toBe(false);
+    }
+    expect(mayEditRecord(admin, { status: 'draft', createdBy: admin.id })).toBe(true);
+    expect(mayEditRecord(consultant, { status: 'draft', createdBy: consultant.id })).toBe(false);
+    expect(mayEditRecord(null, { status: 'draft', createdBy: author.id })).toBe(false);
+    expect(mayEditRecord(author, { status: 'draft', createdBy: null })).toBe(false);
+  });
+
+  it('lets only the author recall, and only while submitted', () => {
+    for (const status of ALL) {
+      expect(mayRecallRecord(author, { status, createdBy: author.id })).toBe(status === 'submitted');
+      expect(mayRecallRecord(admin, { status, createdBy: author.id })).toBe(false);
+    }
+    expect(mayRecallRecord(consultant, { status: 'submitted', createdBy: consultant.id })).toBe(false);
+  });
+
+  it('offers copy on a voided record to its author and to super_admin only', () => {
+    expect(mayCopyVoidedRecord(author, { status: 'voided', createdBy: author.id })).toBe(true);
+    expect(mayCopyVoidedRecord(admin, { status: 'voided', createdBy: author.id })).toBe(true);
+    expect(mayCopyVoidedRecord({ id: 'u-other', role: 'data_entry' }, { status: 'voided', createdBy: author.id })).toBe(false);
+    expect(mayCopyVoidedRecord(consultant, { status: 'voided', createdBy: consultant.id })).toBe(false);
+    for (const status of ALL.filter((s) => s !== 'voided')) {
+      expect(mayCopyVoidedRecord(author, { status, createdBy: author.id })).toBe(false);
+    }
+  });
+
+  it('records a recall as its own audit verb', () => {
+    expect(AUDIT_ACTIONS).toContain('recall');
+    expect(AUDIT_ACTIONS).not.toContain('withdraw');
+  });
+
+  it('registers the two new refusals with their params', () => {
+    expect(API_ERROR_STATUS.record_not_recallable).toBe(400);
+    expect(API_ERROR_PARAMS.record_not_recallable).toEqual(['status']);
+    expect(API_ERROR_STATUS.evidence_detach_required).toBe(400);
+    expect(API_ERROR_PARAMS.evidence_detach_required).toEqual(['linked']);
   });
 });
 

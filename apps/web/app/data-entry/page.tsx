@@ -16,6 +16,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -29,6 +38,7 @@ import {
   Info,
   Leaf,
   MoveRight,
+  Pencil,
   Save,
   Send,
 } from "lucide-react";
@@ -96,6 +106,7 @@ import {
   isInvoiceTracked,
   MARINE_GAS_OIL_ACTIVITY_TYPE,
   mayAuthorRecords,
+  mayEditRecord,
   needsEvidenceBeforeSubmit,
   offeredActivityTypes,
   PERIOD_VALUES,
@@ -122,12 +133,16 @@ import { CONTEXT_FIELDS, contextFieldSet } from "@/lib/context-fields";
 import type { Messages } from "@/messages";
 import { geographyName } from "@/lib/vocabulary";
 import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
+import { copyPrefill, describeEdit, evidencePlan, type EditIdentity } from "@/lib/record-edit-view";
 
 // --- Static option sets -----------------------------------------------------
 
 
 /** In the order the select lists them; labelled by the catalogue's `periods.granularity`. */
 const PERIODS: readonly ReportingPeriod[] = ["quarterly", "monthly", "annual"];
+
+/** A record id as the API spells one; `?copyFrom=` takes nothing else. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The canonical vocabulary, from the contract rather than a local copy: this
 // dropdown decides what a user can send, and the server now stores exactly
@@ -308,6 +323,30 @@ function DataEntryPageInner() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingCreatedBy, setEditingCreatedBy] = useState<string | null>(null);
   const canSubmit = canSubmitEntry(user, editingId, editingCreatedBy);
+  // Edit mode (BUG-R2-03): entered only by the Edit action. In it, a change of
+  // category, type, year, period or location re-files the SAME record, and the
+  // band says so before the save; outside it, the moved-off guard below starts
+  // a new record as it always has.
+  const [editMode, setEditMode] = useState(false);
+  // The open record's files while in Edit mode, for the band's evidence part.
+  const [editFiles, setEditFiles] = useState<{ id: string; fileName: string }[]>([]);
+  // The files the user chose to remove on a type, year, period or location
+  // change; and the confirmation a category change needs (owner decision D1).
+  const [removedFiles, setRemovedFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
+  // False while the open record's files are being read: Save waits, so the
+  // band never shows "no files" for a record that has some.
+  const [editFilesReady, setEditFilesReady] = useState(false);
+  // Bumped to read the open record's files again for the band: Edit chosen
+  // (again), a file added or removed in the vault, a refusal naming files.
+  // Its own counter, not `evidenceVersion`, which remounts the vault.
+  const [editFilesVersion, setEditFilesVersion] = useState(0);
+  // Set while the form holds a copy of a voided record: a subsidiary switch
+  // then keeps the copied values and clears only the location.
+  const [copying, setCopying] = useState(false);
+  // The submitted record whose recall waits for the user's confirmation.
+  const [recallTarget, setRecallTarget] = useState<ActivityRecordPageItemDTO | null>(null);
+  const [recalling, setRecalling] = useState(false);
   const [saving, setSaving] = useState<null | "draft" | "submit">(null);
 
   const selectedSubsidiary = useMemo(
@@ -379,6 +418,42 @@ function DataEntryPageInner() {
     );
   }, [editingId, editingTuple, locationId, availableLocations, t, locale]);
 
+  // --- Edit mode (BUG-R2-03) ---------------------------------------------------
+  // The record as stored and the form as it stands, in the band's terms.
+  const editOriginal: EditIdentity | null = editMode && editingId && editingTuple ? editingTuple : null;
+  const editForm: EditIdentity = {
+    category,
+    activityType: activityType || null,
+    reportingYear,
+    reportingPeriod,
+    periodValue,
+    locationId,
+  };
+  const editLines = useMemo(() => {
+    if (!editOriginal) return [];
+    const names = new Map(availableLocations.map((l) => [l.id, l.name]));
+    return describeEdit(
+      editOriginal,
+      editForm,
+      {
+        category: (c) => tCategories(c as Category),
+        activityType: (c, value) =>
+          CATEGORY_ACTIVITY_TYPES[c as Category]?.types.some((type) => type.value === value)
+            ? t(`activityTypes.${value}` as ActivityTypeKey)
+            : value,
+        period: (value) => recordWords.period(value),
+        location: (id) => (id ? (names.get(id) ?? t("move.anotherSite")) : t("move.wholeCompany")),
+      },
+      { t, locale },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `editForm` is rebuilt from these
+  }, [editOriginal, category, activityType, reportingYear, reportingPeriod, periodValue, locationId, availableLocations, t, locale, recordWords]);
+  const plan = editOriginal
+    ? evidencePlan(editOriginal, editForm, editFiles.map((f) => f.id), removedFiles, confirmRemoveAll)
+    : { mode: "none" as const, detachIds: [] as string[], needsConfirmation: false };
+  // Save waits for the confirmation, and in Edit mode for the file list itself.
+  const saveBlocked = plan.needsConfirmation || (editOriginal !== null && !editFilesReady);
+
   // Sent as a JSON number (D15). Zero and below are not activity: the form has
   // always asked for a value above zero. Above ACTIVITY_VALUE_MAX it is refused
   // here, in the user's language, before the preview or the save would answer
@@ -448,11 +523,46 @@ function DataEntryPageInner() {
   // gained.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
 
+  // The open record's files, read when Edit mode starts and after its vault
+  // changes, so the band names what a category change would remove.
+  useEffect(() => {
+    if (!editMode || !editingId) return;
+    let cancelled = false;
+    setEditFilesReady(false);
+    void (async () => {
+      try {
+        const files: { id: string; fileName: string }[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await api.listEvidencePage(editingId, { limit: 100, ...(cursor ? { cursor } : {}) });
+          files.push(...page.items.map((f) => ({ id: f.id, fileName: f.fileName })));
+          cursor = page.nextCursor ?? undefined;
+        } while (cursor && !cancelled);
+        if (!cancelled) {
+          setEditFiles(files);
+          setEditFilesReady(true);
+        }
+      } catch (e) {
+        if (!cancelled) stableErrorToast(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editMode, editingId, evidenceVersion, editFilesVersion, stableErrorToast]);
+
+  // A confirmation is for the files and the category on screen when it was
+  // given: a new category, or a file list read again, asks again.
+  useEffect(() => setConfirmRemoveAll(false), [category, editFiles]);
+
   const handleEvidenceCountChange = useCallback(
     (count: number) => {
       setRecords((rows) =>
         rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)),
       );
+      // The band lists the record's files in Edit mode: a file added or
+      // removed in the vault is read again there too.
+      setEditFilesVersion((v) => v + 1);
     },
     [editingId],
   );
@@ -563,6 +673,14 @@ function DataEntryPageInner() {
         if (wantedYear === null) {
           toast.error(t("invalidLinkYear"));
           if (list[0]) setSubsidiaryId(list[0].id);
+          return;
+        }
+        // "Copy to new draft" from another screen (BUG-R2-03): the voided
+        // record's own values, read from the API, fill the form.
+        const copyFrom = searchParams.get("copyFrom");
+        if (copyFrom) {
+          // Anything but a record id leaves the form on its default subsidiary.
+          if (!(await startCopy(copyFrom)) && list[0]) setSubsidiaryId(list[0].id);
           return;
         }
         const wantedSub = searchParams.get("subsidiaryId");
@@ -849,20 +967,21 @@ function DataEntryPageInner() {
    * category produced a 409 with no way to continue the record. That is also
    * exactly where a tracking-matrix cell lands you.
    *
-   * Only `draft` and `rejected` are editable server-side (`EDITABLE_STATUSES`),
+   * Only `draft` and `rejected` are editable server-side (`EDITABLE_RECORD_STATUSES`),
    * so anything else is shown, not opened — offering a form that the API will
    * refuse to save is worse than saying why.
    */
-  function loadRecord(rec: ActivityRecordPageItemDTO) {
+  function loadRecord(rec: ActivityRecordPageItemDTO, mode: "open" | "edit" = "open") {
     if (rec.status !== "draft" && rec.status !== "rejected") {
       toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;
     }
-    // The API allows an author (or a super_admin) to modify a record, so a
-    // colleague's draft would open, accept typing, and only then 403. On a deep
-    // link this happens with no click at all — the user would be looking at
-    // someone else's figures believing they were their own.
-    if (user && user.role !== "super_admin" && rec.createdBy !== user.id) {
+    // Only a record's author edits it, super_admin included (BUG-R2-03,
+    // `mayEditRecord`), so a colleague's draft would open, accept typing, and
+    // only then 403. On a deep link this happens with no click at all — the
+    // user would be looking at someone else's figures believing they were
+    // their own.
+    if (user && !mayEditRecord(user, rec)) {
       toast.info(t("notYourRecord"));
       return;
     }
@@ -878,6 +997,17 @@ function DataEntryPageInner() {
       );
       return;
     }
+    fillForm(rec);
+    setEditMode(mode === "edit");
+    // `fillForm` cleared the band's files; Edit on the record already open in
+    // Edit mode changes none of the reader's other inputs (QA re-review P2).
+    if (mode === "edit") setEditFilesVersion((v) => v + 1);
+  }
+
+  /** The form set to a saved record's values; the record is then the open one. */
+  function fillForm(rec: ActivityRecordDTO) {
+    clearEditChoices();
+    setCopying(false);
     setEditingId(rec.id);
     setEditingCreatedBy(rec.createdBy);
     setSubsidiaryId(rec.subsidiaryId);
@@ -921,7 +1051,8 @@ function DataEntryPageInner() {
    * and `movingTo` below makes it visible before it is saved.
    */
   useEffect(() => {
-    if (!editingId || !editingTuple) return;
+    // In Edit mode the user asked to re-file THIS record: nothing is dropped.
+    if (!editingId || !editingTuple || editMode) return;
     const movedOff = hasMovedOffRecord(editingTuple, {
       category,
       reportingYear,
@@ -937,6 +1068,7 @@ function DataEntryPageInner() {
   }, [
     editingId,
     editingTuple,
+    editMode,
     category,
     reportingYear,
     reportingPeriod,
@@ -944,7 +1076,17 @@ function DataEntryPageInner() {
     locationId,
   ]);
 
+  function clearEditChoices() {
+    setEditMode(false);
+    setEditFilesReady(false);
+    setEditFiles([]);
+    setRemovedFiles(new Set());
+    setConfirmRemoveAll(false);
+  }
+
   function resetForm() {
+    clearEditChoices();
+    setCopying(false);
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
@@ -1015,6 +1157,9 @@ function DataEntryPageInner() {
         // Sent on every edit, null included: a record moved off the TR rules
         // (another category or unit) clears what it no longer takes (D3).
         parameters: recordParameters,
+        // The files the band says go (owner decision D1); the API refuses a
+        // category change that leaves one attached.
+        ...(editMode && plan.detachIds.length > 0 ? { detachEvidenceIds: plan.detachIds } : {}),
       });
     }
     return api.createActivityRecord({
@@ -1034,6 +1179,11 @@ function DataEntryPageInner() {
   }
 
   function showSaveError(e: unknown, moving: boolean) {
+    // The record's files changed under the band (one was uploaded elsewhere):
+    // read them again so the next confirmation names them all.
+    if (e instanceof ApiError && (e.code === "evidence_detach_required" || e.code === "evidence_not_found")) {
+      setEditFilesVersion((v) => v + 1);
+    }
     const { title, description } = saveErrorDescription(e, moving, describeError, t);
     toast.error(title, description ? { description } : undefined);
   }
@@ -1047,10 +1197,20 @@ function DataEntryPageInner() {
     try {
       const rec = await persist();
       if (!rec) return;
+      // A saved copy is an ordinary draft from here on (QA review P1): a later
+      // subsidiary switch must reset the form, not carry this record along.
+      setCopying(false);
+      const wasEditing = editMode;
+      afterEditSaved();
       setEditingId(rec.id);
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       setVerdict(verdictOf(rec));
+      if (wasEditing) {
+        toast.success(t(rec.anomalyFlag ? "editMode.savedAnomalous" : "editMode.saved"));
+        await refreshRecords(subsidiaryId);
+        return;
+      }
       // Composed, not branched. A move is the operation most likely to RAISE
       // the anomaly flag — the baseline is keyed on the reporting entity, so
       // the value is re-scored against a different pool of periods — and an
@@ -1079,6 +1239,8 @@ function DataEntryPageInner() {
     try {
       const rec = await persist();
       if (!rec) return;
+      setCopying(false);
+      afterEditSaved();
       // Keep the saved record "current" so that if submit is blocked (evidence
       // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
@@ -1119,6 +1281,83 @@ function DataEntryPageInner() {
       showSaveError(e, wasMoving);
     } finally {
       setSaving(null);
+    }
+  }
+
+  /** A save in Edit mode lands: leave it, and let the vault re-read the files. */
+  function afterEditSaved() {
+    if (!editMode) return;
+    clearEditChoices();
+    setEvidenceVersion((v) => v + 1);
+  }
+
+  /** Cancel Edit mode: the form goes back to the record as stored. */
+  async function cancelEdit() {
+    if (!editingId) return;
+    try {
+      const rec = await api.getActivityRecord(editingId);
+      fillForm(rec);
+    } catch (e) {
+      errorToast(e);
+      resetForm();
+    }
+  }
+
+  /** Recall the confirmed record to draft (BUG-R2-03); the API decides. */
+  async function confirmRecall() {
+    const target = recallTarget;
+    if (!target) return;
+    setRecalling(true);
+    try {
+      await api.recallActivityRecord(target.id);
+      toast.success(t("recall.done"));
+      setRecallTarget(null);
+      await refreshRecords(subsidiaryId);
+    } catch (e) {
+      errorToast(e);
+      setRecallTarget(null);
+      await refreshRecords(subsidiaryId);
+    } finally {
+      setRecalling(false);
+    }
+  }
+
+  /**
+   * "Copy to new draft" (D04's re-entry, BUG-R2-03): a new record pre-filled
+   * from a voided one — no id, no file — saved by whoever copies it, under the
+   * create's own rules.
+   */
+  async function startCopy(id: string): Promise<boolean> {
+    if (!UUID_SHAPE.test(id)) {
+      toast.info(t("copy.notVoided"));
+      return false;
+    }
+    try {
+      const rec = await api.getActivityRecord(id);
+      if (rec.status !== "voided") {
+        toast.info(t("copy.notVoided"));
+        return false;
+      }
+      const values = copyPrefill(rec);
+      resetForm();
+      setCopying(true);
+      setSubsidiaryId(values.subsidiaryId);
+      setLocationId(values.locationId);
+      setReportingYear(values.reportingYear);
+      setReportingPeriod(values.reportingPeriod);
+      setPeriodValue(values.periodValue);
+      setCategory(values.category as Category);
+      setActivityType(values.activityType);
+      activity.setValue(values.activityValue);
+      setActivityUnit(values.activityUnit);
+      setContext((values.input as ContextValues | null) ?? {});
+      setContextEpoch((n) => n + 1);
+      resetInputs(values.parameters);
+      toast.info(t("copy.loaded"));
+      return true;
+    } catch (e) {
+      errorToast(e);
+      return false;
     }
   }
 
@@ -1183,6 +1422,10 @@ function DataEntryPageInner() {
                         onValueChange={(v) => {
                           setSubsidiaryId(v);
                           setLocationId("");
+                          // A copy of a voided record may be filed under another
+                          // subsidiary (BUG-R2-03): its values stay, and only the
+                          // location — the old subsidiary's — goes.
+                          if (copying && !editingId) return;
                           resetForm();
                         }}
                       >
@@ -1273,7 +1516,10 @@ function DataEntryPageInner() {
                         // a silently blank control, and a request the API now
                         // rejects.
                         const allowed = unitsForRecord(next, effectiveGeography);
-                        if (!allowed.some((u) => u.value === activityUnit)) {
+                        // In Edit mode the unit is chosen afresh for the new
+                        // category (BUG-R2-03): a kWh figure must not slide
+                        // into another category's kWh unnoticed.
+                        if (editMode || !allowed.some((u) => u.value === activityUnit)) {
                           setActivityUnit(allowed[0]?.value ?? "kWh");
                         }
                       }}
@@ -1702,11 +1948,96 @@ function DataEntryPageInner() {
                   </Card>
                 )}
 
+              {/* Edit mode (BUG-R2-03): what the save will change, said before
+                  it happens, and what becomes of the record's files. */}
+              {editMode && editingId && (
+                <Card className="border-primary/40 bg-primary/5" data-testid="edit-mode-band">
+                  <CardContent className="space-y-3 pt-5 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2">
+                        <Pencil className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {t("editMode.title", { id: editingId.slice(0, 8) })}
+                          </p>
+                          <p className="text-muted-foreground">{t("editMode.hint")}</p>
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => void cancelEdit()} disabled={isBusy}>
+                        {t("editMode.cancel")}
+                      </Button>
+                    </div>
+                    {editLines.length > 0 && (
+                      <ul role="status" className="list-disc space-y-1 pl-6 text-foreground">
+                        {editLines.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {plan.mode === "removeAll" && (
+                      <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50/60 p-3 text-amber-900">
+                        <p className="font-medium">{t("editMode.evidence.removeAllTitle", { count: editFiles.length })}</p>
+                        <ul className="list-disc pl-6">
+                          {editFiles.map((f) => (
+                            <li key={f.id}>{f.fileName}</li>
+                          ))}
+                        </ul>
+                        <p>{t("editMode.evidence.deletionWarning")}</p>
+                        <label className="flex items-center gap-2">
+                          <Checkbox
+                            checked={confirmRemoveAll}
+                            onCheckedChange={(v) => setConfirmRemoveAll(v === true)}
+                            aria-label={t("editMode.evidence.confirmRemoveAll", { count: editFiles.length })}
+                          />
+                          <span>{t("editMode.evidence.confirmRemoveAll", { count: editFiles.length })}</span>
+                        </label>
+                      </div>
+                    )}
+                    {plan.mode === "choose" && (
+                      <div className="space-y-2 rounded-md border border-border bg-background p-3">
+                        <p className="font-medium text-foreground">{t("editMode.evidence.chooseTitle")}</p>
+                        <p className="text-muted-foreground">{t("editMode.evidence.deletionWarning")}</p>
+                        {editFiles.map((f) => (
+                          <label key={f.id} className="flex items-center gap-2">
+                            <Checkbox
+                              checked={removedFiles.has(f.id)}
+                              onCheckedChange={(v) =>
+                                setRemovedFiles((prev) => {
+                                  const next = new Set(prev);
+                                  if (v === true) next.add(f.id);
+                                  else next.delete(f.id);
+                                  return next;
+                                })
+                              }
+                              aria-label={t("editMode.evidence.removeFile", { fileName: f.fileName })}
+                            />
+                            <span>{t("editMode.evidence.removeFile", { fileName: f.fileName })}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Actions */}
               <div className="flex items-center justify-end gap-2">
                 {editingId && (
                   <span className="mr-auto flex items-center gap-2 text-sm text-muted-foreground">
                     {t("editingDraft", { id: editingId.slice(0, 8) })}
+                    {/* Edit mode on the open record (BUG-R2-03): its author only,
+                        and never while already in it. */}
+                    {!editMode && user && editingCreatedBy === user.id && mayAuthorRecords(user) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1 px-2"
+                        onClick={() => setEditMode(true)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        {t("rowActions.edit")}
+                      </Button>
+                    )}
                     {/* The only way out of edit mode used to be a successful
                         submit or a page reload — and a cell click can now put
                         you here without asking. */}
@@ -1724,7 +2055,7 @@ function DataEntryPageInner() {
                   variant="outline"
                   className="gap-2"
                   onClick={handleSaveDraft}
-                  disabled={isBusy || !hasValidInput}
+                  disabled={isBusy || !hasValidInput || saveBlocked}
                 >
                   <Save className="h-4 w-4" />
                   {saving === "draft" ? t("saving") : t("saveDraft")}
@@ -1732,7 +2063,7 @@ function DataEntryPageInner() {
                 {canSubmit && <Button
                   className="gap-2"
                   onClick={handleSubmit}
-                  disabled={isBusy || !hasValidInput}
+                  disabled={isBusy || !hasValidInput || saveBlocked}
                 >
                   <Send className="h-4 w-4" />
                   {saving === "submit" ? t("submitting") : t("submit")}
@@ -1787,7 +2118,10 @@ function DataEntryPageInner() {
                 hasMore={recordsCursor !== null}
                 loadingMore={recordsLoadingMore}
                 onLoadMore={() => void loadMoreRecords()}
-                onOpen={loadRecord}
+                onOpen={(r) => loadRecord(r)}
+                onEdit={(r) => loadRecord(r, "edit")}
+                onRecall={(r) => setRecallTarget(r)}
+                onCopy={(r) => void startCopy(r.id)}
                 user={user}
                 onSubmitted={() => void refreshRecords(subsidiaryId)}
                 onEvidenceAttached={() => {
@@ -1799,6 +2133,31 @@ function DataEntryPageInner() {
           </div>
         </div>
       </main>
+
+      {/* Recall's confirmation (BUG-R2-03): a submitted record leaves the
+          review queue and becomes the author's draft again. */}
+      <Dialog open={recallTarget !== null} onOpenChange={(open) => !open && !recalling && setRecallTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("recall.title")}</DialogTitle>
+            <DialogDescription>
+              {recallTarget
+                ? t("recall.body", {
+                    record: `${recordWords.period(recallTarget.periodValue)} ${recallTarget.reportingYear} ${tCategories(recallTarget.category as Category)}`,
+                  })
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRecallTarget(null)} disabled={recalling}>
+              {t("recall.cancel")}
+            </Button>
+            <Button onClick={() => void confirmRecall()} disabled={recalling}>
+              {recalling ? t("recall.recalling") : t("recall.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

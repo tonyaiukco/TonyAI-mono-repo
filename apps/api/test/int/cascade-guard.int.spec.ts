@@ -217,6 +217,17 @@ describe('LP4-01 — a record is born a draft and moved by the API alone', () =>
     }
   });
 
+  it('refuses the service role recalling a submitted record to draft (TA005) — the recall is the API\'s, author-gated (BUG-R2-03)', async () => {
+    const id = randomUUID();
+    try {
+      await owner.activityRecord.create({ data: { ...recordData('October', ActivityRecordStatus.submitted), id } });
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { status: 'draft' }))).toEqual({ ok: false, code: 'TA005' });
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.submitted);
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
   it("lets the API's login move a draft (submit), and the owner insert a committed record (fixtures, a restore)", async () => {
     const moved = await withRollback(runtime, async (tx) => {
       const rec = await createRecord(tx as unknown as PrismaService, tenant, { periodValue: 'August' });

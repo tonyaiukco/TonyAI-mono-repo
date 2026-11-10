@@ -21,6 +21,7 @@ import {
   type EvidenceLinkRefusal,
   type EvidenceLinkRefusedDTO,
   mayAuthorRecords,
+  EDITABLE_RECORD_STATUSES,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
@@ -59,10 +60,10 @@ const SIGNED_URL_TTL_SECONDS = 60;
 // Mirrors activity-records: who may attach/remove evidence, and while the parent
 // record is still editable (evidence is frozen once a record is committed).
 // Mirrors activity-records: a consultant is review-only (decision 2026-07-30).
-const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
-  ActivityRecordStatus.draft,
-  ActivityRecordStatus.rejected,
-]);
+// The contract's list, as the record edit gate reads it (BUG-R2-03 review).
+const EDITABLE_STATUSES = new Set<ActivityRecordStatus>(
+  EDITABLE_RECORD_STATUSES.map((status) => ActivityRecordStatus[status]),
+);
 
 const ROLE_REFUSAL = 'Your role may not modify evidence';
 const RECORD_NOT_FOUND = 'Activity record not found';
@@ -573,35 +574,7 @@ export class EvidenceService {
         const locked = await this.lockedRecordIds([current], tx);
         const refusal = this.refusalFor(user, current, locked.has(current.id));
         if (refusal) throw lockedRefusal(refusal, record, current);
-        await lockEvidenceRows(tx, [evidence.id]);
-        // The file as it is now, under its lock — the audit row's "before".
-        const file = await tx.evidence.findUnique({
-          where: { id: evidence.id },
-          include: WITH_LINKED_RECORDS,
-        });
-        if (!file) throw new ResourceNotFoundError('evidence_not_found');
-
-        // From here on the DATABASE's ids, never the path's: the route accepts
-        // either case, and an uppercase id once made a deleted file answer
-        // `fileDeleted: false` and audit as a `detach` under an id no lookup finds.
-        const { count } = await tx.activityRecordEvidence.deleteMany({
-          where: { activityRecordId: current.id, evidenceId: file.id },
-        });
-        // A concurrent detach of the same link got there first: it answers and
-        // audits the change; this request changed nothing.
-        if (count === 0) throw new ResourceNotFoundError('evidence_not_found');
-        const deleted = await this.deleteUnlinkedRows([file.id], tx);
-        await this.audit.record(
-          user,
-          {
-            action: deleted.length > 0 ? 'delete' : 'detach',
-            entity: 'evidence',
-            entityId: file.id,
-            diff: { before: { ...this.auditSnapshot(file), recordId: current.id } },
-          },
-          tx,
-        );
-        return deleted;
+        return this.detachLinksInTx(tx, user, current.id, [evidence.id]);
       }, LIFECYCLE_TX);
     } catch (error) {
       throw asLostRace(error);
@@ -708,6 +681,64 @@ export class EvidenceService {
     }
     await this.removeBlobs([file.storagePath]);
     return { id: evidence.id, deleted: true };
+  }
+
+  /**
+   * Take `fileIds` off one record inside the caller's transaction — the core
+   * of `detach`, shared with the record edit that re-files a record
+   * (BUG-R2-03). The caller has locked the record's period and row and
+   * re-checked that the record is editable; this locks the files (records
+   * before files, the protocol's order, in key order), removes each link,
+   * deletes the files left with no link, and writes each file's audit row:
+   * `delete` when the file went, `detach` when it still backs another record.
+   * Returns the deleted files, whose blobs the caller removes after commit.
+   *
+   * A named file that is not linked to the record — never was, or a
+   * concurrent detach got there first — is `evidence_not_found`, and the
+   * caller's transaction rolls back with it.
+   */
+  async detachLinksInTx(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    recordId: string,
+    fileIds: string[],
+  ): Promise<{ id: string; storagePath: string }[]> {
+    const ids = [...new Set(fileIds)].sort();
+    if (ids.length === 0) return [];
+    await lockEvidenceRows(tx, ids);
+    // Each file as it is now, under its lock — the audit row's "before".
+    const files: EvidenceWithLinks[] = [];
+    for (const fileId of ids) {
+      const file = await tx.evidence.findUnique({ where: { id: fileId }, include: WITH_LINKED_RECORDS });
+      if (!file) throw new ResourceNotFoundError('evidence_not_found');
+      files.push(file);
+    }
+    for (const file of files) {
+      // From here on the DATABASE's ids, never the caller's: the route accepts
+      // either case, and an uppercase id once made a deleted file answer
+      // `fileDeleted: false` and audit as a `detach` under an id no lookup finds.
+      const { count } = await tx.activityRecordEvidence.deleteMany({
+        where: { activityRecordId: recordId, evidenceId: file.id },
+      });
+      // Not linked to this record, or a concurrent detach of the same link got
+      // there first: it answers and audits the change; this request changes nothing.
+      if (count === 0) throw new ResourceNotFoundError('evidence_not_found');
+    }
+    const deleted = await this.deleteUnlinkedRows(files.map((f) => f.id), tx);
+    const gone = new Set(deleted.map((f) => f.id));
+    for (const file of files) {
+      await this.audit.record(
+        user,
+        {
+          action: gone.has(file.id) ? 'delete' : 'detach',
+          entity: 'evidence',
+          entityId: file.id,
+          diff: { before: { ...this.auditSnapshot(file), recordId } },
+        },
+        tx,
+      );
+    }
+    return deleted;
   }
 
   /**

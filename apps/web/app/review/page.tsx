@@ -321,9 +321,14 @@ export default function ReviewPage() {
         verb === "review"
           ? await api.reviewActivityRecord(record.id)
           : verb === "approve"
-            ? await api.approveActivityRecord(record.id)
+            ? // The submission the reviewer is looking at (BUG-R2-03): an author
+              // may since have recalled, edited and resubmitted it, and then
+              // the API refuses with `record_changed` rather than approve a
+              // figure nobody here saw.
+              await api.approveActivityRecord(record.id, { seenSubmittedAt: record.submittedAt })
             : await api.rejectActivityRecord(record.id, {
                 varianceReason: reason.trim(),
+                seenSubmittedAt: record.submittedAt,
               });
 
       const stillPending = (

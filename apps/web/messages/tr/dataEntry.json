@@ -410,5 +410,47 @@
     "wholeCompany": "tüm şirket",
     "withFigure": "Kaydetmek bu kaydı {from} konumundan {to} konumuna taşır. Kopyalanmaz — emisyon faktörü coğrafyasına göre yeniden hesaplanır.",
     "withoutFigure": "Kaydetmek bu kaydı {from} konumundan {to} konumuna taşır. Kopyalanmaz — bugün için hiçbir emisyon faktörü bulunmuyor, bu yüzden \"Hesaplanmadı\" olarak kalır."
+  },
+  "rowActions": {
+    "edit": "Düzenle",
+    "editRecord": "{record} kaydını düzenle",
+    "recall": "Geri al",
+    "recallRecord": "{record} gönderimini geri al",
+    "copy": "Yeni taslağa kopyala",
+    "copyRecord": "{record} kaydını yeni taslağa kopyala"
+  },
+  "edit": {
+    "category": "Kategori: {from} → {to}",
+    "activityType": "Tür: {from} → {to}",
+    "year": "Raporlama yılı: {from} → {to}",
+    "period": "Dönem: {from} → {to}",
+    "location": "Lokasyon: {from} → {to}",
+    "none": "yok"
+  },
+  "editMode": {
+    "title": "{id} kaydı düzenleniyor",
+    "hint": "Kaydetmek bu kaydın kendisini değiştirir — yeni kayıt oluşturulmaz.",
+    "cancel": "Düzenlemeyi iptal et",
+    "saved": "Değişiklikler kayda kaydedildi.",
+    "savedAnomalous": "Değişiklikler kayda kaydedildi. Değer geçmişinden sapıyor — göndermeden önce bir sapma açıklaması ekleyin.",
+    "evidence": {
+      "removeAllTitle": "Kategoriyi değiştirmek bu kaydın {count} kanıt dosyasını kaldırır:",
+      "deletionWarning": "Başka bir kayda bağlı olmayan dosya silinir ve yeniden yüklenmesi gerekir.",
+      "confirmRemoveAll": "{count} dosyayı kaldır ve kaydet",
+      "chooseTitle": "Değişen kayıt için her dosyayı tutun ya da kaldırın:",
+      "removeFile": "{fileName} dosyasını kaldır"
+    }
+  },
+  "recall": {
+    "title": "Bu gönderim geri alınsın mı?",
+    "body": "{record} inceleme kuyruğundan çıkar ve yeniden taslağınız olur. Düzenleyip yeniden gönderebilirsiniz.",
+    "cancel": "Gönderilmiş kalsın",
+    "confirm": "Taslağa geri al",
+    "recalling": "Geri alınıyor…",
+    "done": "Taslağa geri alındı. Düzenleyip yeniden gönderin."
+  },
+  "copy": {
+    "loaded": "Geçersiz kılınan kayıttan yeni bir taslak dolduruldu. Değerleri kontrol edin, kaydedin ve kanıtını ekleyin.",
+    "notVoided": "Yalnızca geçersiz kılınmış bir kayıt yeni taslağa kopyalanabilir."
   }
 }
