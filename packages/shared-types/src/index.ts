@@ -2580,6 +2580,11 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   activity_value_too_large: 400,
   /** params: `category` (canonical, from `CATEGORIES`). */
   evidence_required: 400,
+  /** K3: approving a record of an evidence-required category with no file
+   *  attached — one submitted before the category needed one. The approver
+   *  cannot attach a file (evidence is locked after submit), so the copy says
+   *  to reject the record to its author. params: `category`. */
+  approval_evidence_missing: 400,
   variance_reason_required: 400,
   record_create_forbidden: 403,
   record_submit_forbidden: 403,
@@ -2783,6 +2788,7 @@ export const API_ERROR_CODES = Object.freeze(Object.keys(API_ERROR_STATUS)) as r
 export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly string[]>>> =
   Object.freeze({
     evidence_required: Object.freeze(['category']),
+    approval_evidence_missing: Object.freeze(['category']),
     period_locked: Object.freeze(['period', 'year']),
     location_in_boundary: Object.freeze(['count']),
     location_has_records: Object.freeze(['count']),
@@ -4578,8 +4584,17 @@ export interface CreatePeriodLockInput {
 
 /**
  * Categories that require at least one evidence file before a record may be
- * submitted / counted as "complete" (FR §4.1 "categories configured as evidence
- * required"). Scope 1 & 2 billed inputs are invoice/meter/fuel-log backed.
+ * submitted or approved, and before it counts as "complete" (FR §4.1
+ * "categories configured as evidence required").
+ *
+ * **Every Scope 1 and Scope 2 category** (K3, owner decision 2026-11-10, QA
+ * finding BUG-R2-02). The first cut (2026-07-06) listed only the billed inputs,
+ * Electricity, Natural Gas and Fuel, because they were the only categories with
+ * factors; Mobile Combustion, Refrigerants and Fugitive Gas became calculable in
+ * LP4-02 and were never added, so a fleet or refrigerant figure reached review
+ * with nothing behind it. A spec pins "every Scope 1–2 category is here", so a
+ * new one cannot be left out silently again. The list stays explicit rather than
+ * derived from `CATEGORY_SCOPE_MAP` because of the one Scope 3 entry below.
  *
  * `Water` was added in WP17, and the reasoning is worth keeping because the
  * first cut got it wrong. It was left out on the grounds that there is "no
@@ -4598,6 +4613,9 @@ export const EVIDENCE_REQUIRED_CATEGORIES: Category[] = [
   'Electricity',
   'Natural Gas',
   'Fuel',
+  'Mobile Combustion',
+  'Refrigerants',
+  'Fugitive Gas',
   'Water',
 ];
 
@@ -4637,15 +4655,18 @@ export function needsEvidenceBeforeSubmit(row: {
  * overlap.** They answer different questions, and Fuel is the case that proves
  * the two sets are not the same one:
  *
- * | Category    | Evidence-required (submit gate) | Invoice-tracked (denominator)  |
- * | ----------- | ------------------------------- | ------------------------------ |
- * | Electricity | yes                             | yes                            |
- * | Natural Gas | yes                             | yes                            |
- * | Fuel        | yes                             | **no** — not a metered utility |
- * | Water       | yes                             | yes                            |
+ * | Category          | Evidence-required (commit gate) | Invoice-tracked (denominator)  |
+ * | ----------------- | ------------------------------- | ------------------------------ |
+ * | Electricity       | yes                             | yes                            |
+ * | Natural Gas       | yes                             | yes                            |
+ * | Fuel              | yes                             | **no** — not a metered utility |
+ * | Mobile Combustion | yes (K3)                        | no                             |
+ * | Refrigerants      | yes (K3)                        | no                             |
+ * | Fugitive Gas      | yes (K3)                        | no                             |
+ * | Water             | yes                             | yes                            |
  *
- * Reusing the evidence list as the denominator would give Fuel a
- * `locations × 12 months` requirement it should not have.
+ * Reusing the evidence list as the denominator would give Fuel, a fleet or a
+ * chiller a `locations × 12 months` requirement it should not have.
  *
  * The completeness engine that consumes this ships in the next PR. It is
  * declared here because `compute()` already depends on it: the invariant

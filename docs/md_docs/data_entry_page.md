@@ -158,7 +158,10 @@ Drag and drop uploader with click to browse fallback
 - remove action where permitted. On a shared file it reads `Remove from this record` and takes the file off this record only; the toast says whether the file is gone (`Evidence removed`) or still backs others (`Removed from this record — q1.pdf still backs 2 other records.`)
 
 ### Validation Rule
-If the selected category is configured as evidence required, completion status cannot become complete unless at least one evidence file is attached.
+Every Scope 1 and Scope 2 category requires evidence: Electricity, Natural Gas, Fuel, Mobile Combustion, Refrigerants and Fugitive Gas (the last three since K3, 2026-11-10, QA finding BUG-R2-02). Water does too, because its invoice is the only check its reading gets. The other Scope 3 categories do not. For an evidence-required record:
+- completion status cannot become complete unless at least one evidence file is attached;
+- **Submit** saves the record first. With no file, the form keeps the saved draft open with this vault on screen and asks for a file (`Saved. Attach at least one evidence file below, then submit again.`) instead of sending the submit. The API refuses such a submit anyway (`evidence_required`);
+- **Approve** refuses a record that reached review without a file, which records of the three K3 categories could do before 2026-11-10 (`approval_evidence_missing`). Files are locked after submit, so the reviewer rejects the record and its author attaches one and submits again.
 
 ### One File for Several Records
 One document can evidence several records of the same subsidiary (WP8 decision 3a) — e.g. a quarterly invoice behind three monthly records, or the invoice behind the drafts of an import. It is attached from **Previous submissions** (§9.2), not from the vault, and the vault of each record then lists it. Attaching and removing follow the record's own rules: its author or a `super_admin`, while it is a `draft` or `rejected`, and while its period is open.
@@ -290,7 +293,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - after a real import (not a dry run), `Send N records for review` sends the rows just imported
 - rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button, and points to Previous submissions, where one file can be attached to several of the drafts
 - after a submission, `Previous submissions` and the `Data collection status` panel refresh, even when the request fails
-- **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure
+- **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure. With the TR releases loaded the same holds for Mobile Combustion, Refrigerants and Fugitive Gas (K3): only the other Scope 3 categories go straight from an import to review
 
 #### From Recent Imports
 - each applied import shows its file name, date and time, who imported it, and its outcome (`2 imported · 1 refused`); a batch whose outcome was never recorded (the import was interrupted) says so rather than showing zero

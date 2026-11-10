@@ -39,6 +39,7 @@
   "submitted": "İncelemeye gönderildi",
   "movedSubmitted": "{entity} birimine taşındı, incelemeye gönderildi",
   "anomalousBeforeSubmit": "Bu değer olağandışı görünüyor — göndermeden önce bir sapma açıklaması ekleyin.",
+  "evidenceBeforeSubmit": "Kaydedildi. Aşağıya en az bir kanıt dosyası ekleyin, ardından yeniden gönderin.",
   "aSite": "bir lokasyon",
   "theWholeCompany": "tüm şirket",
   "duplicateAdvice": "Devam etmek için kaydı “Previous submissions” listesinden açın.",

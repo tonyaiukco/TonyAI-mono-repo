@@ -5,19 +5,26 @@ import trCategories from '../apps/web/messages/tr/categories.json';
 import enCategories from '../apps/web/messages/en/categories.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
 import enUnits from '../apps/web/messages/en/units.json';
+import enEvidence from '../apps/web/messages/en/evidence.json';
+import enErrors from '../apps/web/messages/en/errors.json';
+import enReview from '../apps/web/messages/en/review.json';
 import {
   API_BASE,
   E2E_TR_INPUTS,
   E2E_TR_INPUTS_YEAR,
+  ADMIN_EMAIL,
   ENTRY_EMAIL,
+  EVIDENCE_FIXTURE,
   SUB,
   bearer,
   cleanupTrInputsFixture,
+  deleteRecordsAsService,
   findRecordId,
   getAccessToken,
   login,
   pickByFieldLabel,
   seedTrInputsFixture,
+  submitAsOwnerPastEvidenceGate,
 } from './helpers';
 
 /**
@@ -265,4 +272,79 @@ test('gas-network leakage: a Fugitive Gas record in Sm³', async ({ page, reques
     expect(record.parameters).toBeNull();
     expect(record.calculation.kgCo2e).toBe(1000);
   });
+});
+
+test('evidence: a new mobile record submitted without a file stays open on its draft until one is attached (K3, BUG-R2-02)', async ({ page, request }) => {
+  await openForm(page, 'Mobile Combustion');
+  await pickByFieldLabel(page, en.period, enPeriods.granularity.quarterly);
+  await pickByFieldLabel(page, en.periodValue, enPeriods.values.Q1);
+  await pickByFieldLabel(page, en.vehicleMode, en.activityTypes[E2E_TR_INPUTS.mode]);
+  await page.getByPlaceholder(en.activityValuePlaceholder).fill('100');
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.3');
+
+  // Straight to Submit, never saved: what QA did. The form saves the draft,
+  // keeps it open with the vault on screen, and sends no submit.
+  // The click saves the record: its id comes from the create's own answer, so
+  // the `finally` reclaims it even when an assertion below fails (a leaked 2023
+  // draft would collide on the next local run — the teardown sweeps only E2E_YEAR).
+  const created = page.waitForResponse(
+    (r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'),
+  );
+  await page.getByRole('button', { name: en.submit }).click();
+  const saved = await created;
+  expect(saved.status()).toBe(201);
+  const id = (await saved.json()).id as string;
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const vault = page.locator('[data-testid="evidence-vault-input"]');
+  try {
+    await expect(page.getByText(en.evidenceBeforeSubmit)).toBeVisible();
+    await expect(page.getByText(enEvidence.requiredNote)).toBeVisible();
+    await expect(vault).toBeAttached();
+    const draft = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+    expect((await draft.json()).status).toBe('draft');
+
+    await vault.setInputFiles(EVIDENCE_FIXTURE);
+    await expect(page.getByText(enEvidence.uploaded)).toBeVisible();
+    await page.getByRole('button', { name: en.submit }).click();
+    await expect(page.getByText(en.submitted)).toBeVisible();
+
+    const after = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+    expect((await after.json()).status).toBe('submitted');
+  } finally {
+    // Submitted: the API refuses to delete it, so the service role does.
+    await deleteRecordsAsService(request, [id]);
+  }
+});
+
+test('evidence: a record submitted before K3 without a file is refused at approve, and the reviewer is told to return it (K3)', async ({ page, request }) => {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const created = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.logistics, locationId: null, reportingYear: E2E_TR_INPUTS_YEAR, reportingPeriod: 'quarterly',
+      periodValue: 'Q2', category: 'Mobile Combustion', activityType: E2E_TR_INPUTS.mode, activityValue: 100,
+      activityUnit: 'litres', varianceReason: null, input: null,
+    },
+  });
+  expect(created.status()).toBe(201);
+  const id = (await created.json()).id as string;
+  try {
+    await submitAsOwnerPastEvidenceGate(id);
+
+    await login(page, ADMIN_EMAIL);
+    await page.goto('/review');
+    await page
+      .locator('table tbody tr', { hasText: 'TonyAI Logistics' })
+      .filter({ hasText: `Q2 ${E2E_TR_INPUTS_YEAR}` })
+      .click();
+    await page.getByRole('dialog').getByRole('button', { name: enReview.sheet.approve, exact: true }).click();
+    await expect(
+      page.getByText(enErrors.codes.approval_evidence_missing.replace('{category}', enCategories['Mobile Combustion'])),
+    ).toBeVisible();
+
+    const after = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+    expect((await after.json()).status).toBe('submitted');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
 });

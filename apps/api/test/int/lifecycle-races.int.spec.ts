@@ -435,7 +435,12 @@ describe('F03 — a REJECTED record moved into a period being locked (D03)', () 
 });
 
 describe('F03 — approve, reject and submit, against each other', () => {
-  const underReview = () => createRecord(a, tenant, { status: ActivityRecordStatus.under_review }, { priced: true });
+  // With its invoice: approve checks it (K3), and a record under review holds one.
+  const underReview = async () => {
+    const record = await createRecord(a, tenant, { status: ActivityRecordStatus.under_review }, { priced: true });
+    await attachEvidence(a, tenant, [record.id]);
+    return record;
+  };
 
   it('a reject held before its write: the approve waits, then is a lost race — nothing is approved unresubmitted', async () => {
     const record = await underReview();

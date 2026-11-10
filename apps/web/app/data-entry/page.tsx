@@ -96,6 +96,7 @@ import {
   isInvoiceTracked,
   MARINE_GAS_OIL_ACTIVITY_TYPE,
   mayAuthorRecords,
+  needsEvidenceBeforeSubmit,
   offeredActivityTypes,
   PERIOD_VALUES,
   selectableReportingYears,
@@ -1084,6 +1085,16 @@ function DataEntryPageInner() {
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       setVerdict(verdictOf(rec));
+      // Mirror the server evidence gate (K3, BUG-R2-02): an evidence-required
+      // record with no file stays open as the record just saved, with the vault
+      // — which needs its id — on screen to take the file, and no submit is
+      // sent to be refused. (QA saw no vault because, before K3, a Mobile
+      // Combustion submit succeeded and the form reset.) The count is the saved
+      // record's own (create and update return it); the API stays the final word.
+      if (needsEvidenceBeforeSubmit(rec)) {
+        toast.error(t("evidenceBeforeSubmit"));
+        return;
+      }
       // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
       // a variance comment before it can be submitted.
       if (rec.anomalyFlag && !varianceReason.trim()) {

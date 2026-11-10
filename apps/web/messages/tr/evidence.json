@@ -2,7 +2,7 @@
   "title": "Kanıt",
   "required": "Zorunlu",
   "filesCount": "{count} dosya",
-  "requiredNote": "Bu kategori, gönderilmeden önce en az bir destekleyici dosya (fatura, sayaç kaydı, …) gerektirir.",
+  "requiredNote": "Bu kategori, gönderilmeden önce en az bir destekleyici dosya (fatura, sayaç okuması, yakıt fişi veya taşıt kartı dökümü, servis ya da kaçak raporu, …) gerektirir.",
   "uploading": "Yükleniyor…",
   "chooseFiles": "Dosya seç",
   "accepted": "PDF, JPG, PNG, XLSX, CSV · en fazla 10 MB",

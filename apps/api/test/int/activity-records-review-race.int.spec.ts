@@ -9,6 +9,7 @@ import { INT_FACTOR_POLICY } from './services';
 import type { EvidenceService } from '../../src/evidence/evidence.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  attachEvidence,
   backendPid,
   connect,
   createRecord,
@@ -114,6 +115,8 @@ async function interleaveStartReviewWithApprove() {
     { status: ActivityRecordStatus.submitted, submittedAt: new Date() },
     { priced: true },
   );
+  // A submitted Electricity record holds its invoice: approve checks it (K3).
+  await attachEvidence(a, tenant, [record.id]);
   // Both write shapes a fix might use: `update`, or `updateMany` with the
   // expected status in its WHERE.
   const hold = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
@@ -148,6 +151,8 @@ async function interleaveApproveWithStartReview() {
     { status: ActivityRecordStatus.submitted, submittedAt: new Date() },
     { priced: true },
   );
+  // A submitted Electricity record holds its invoice: approve checks it (K3).
+  await attachEvidence(a, tenant, [record.id]);
   const hold = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
   const pidB = await backendPid(b);
 

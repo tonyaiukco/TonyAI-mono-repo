@@ -25,6 +25,7 @@ import {
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
   EvidenceRequiredError,
+  ApprovalEvidenceMissingError,
   PeriodLockedError,
   RecordChangedError,
   SelfApprovalRefusedError,
@@ -113,6 +114,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
     throw new Error('the pipe accepted a non-UUID');
   },
   evidence_required: () => new EvidenceRequiredError('Electricity'),
+  approval_evidence_missing: () => new ApprovalEvidenceMissingError('Mobile Combustion'),
   variance_reason_required: () => new VarianceReasonRequiredError(),
   record_create_forbidden: () => new CreateRoleRefusedError(),
   record_submit_forbidden: () => new SubmitRoleRefusedError(),
@@ -265,6 +267,7 @@ describe('every domain code, as the client receives it', () => {
     expect(new RecordChangedError()).toBeInstanceOf(ConflictException);
     expect(new SelfApprovalRefusedError()).toBeInstanceOf(ForbiddenException);
     expect(new EvidenceRequiredError('Electricity')).toBeInstanceOf(BadRequestException);
+    expect(new ApprovalEvidenceMissingError('Refrigerants')).toBeInstanceOf(BadRequestException);
     expect(new ResourceNotFoundError('record_not_found')).toBeInstanceOf(NotFoundException);
     expect(new ResourceNotFoundError('record_not_found').message).toBe('Activity record not found');
     expect(new SubmitAuthorRefusedError(true).message).toMatch(/resubmit/);

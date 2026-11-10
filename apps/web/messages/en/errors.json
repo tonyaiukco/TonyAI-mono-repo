@@ -40,6 +40,7 @@
     "invalid_id": "That link or id is not valid.",
     "activity_value_too_large": "The activity value is too large: enter at most 1,000,000,000,000.",
     "evidence_required": "{category} requires at least one evidence file before submitting.",
+    "approval_evidence_missing": "This {category} record has no evidence file. Reject it so its author can attach one and submit it again.",
     "variance_reason_required": "This value deviates significantly from the historical average — add a variance comment before submitting.",
     "record_create_forbidden": "Your role may not create activity records.",
     "record_submit_forbidden": "Your role may not submit activity records.",

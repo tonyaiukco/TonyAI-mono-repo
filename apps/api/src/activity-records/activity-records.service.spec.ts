@@ -23,6 +23,7 @@ import {
   DuplicateActivityRecordError,
   EVIDENCE_REFUSAL_FRAGMENT,
   EvidenceRequiredError,
+  ApprovalEvidenceMissingError,
   PeriodLockedError,
   RESUBMIT_AUTHOR_REFUSAL,
   RecordChangedError,
@@ -4496,6 +4497,147 @@ describe('ActivityRecordsService — a typed category’s record names its type 
     bare.prisma.activityRecord.findUnique.mockResolvedValue(untyped('Fuel', { calculation: bare.calc.snapshot }));
     bare.prisma.activityRecordEvidence.count.mockResolvedValue(0);
     await expect(bare.service.submit(dataEntry(), 'rec-t')).rejects.toBeInstanceOf(EvidenceRequiredError);
+  });
+});
+
+describe('ActivityRecordsService — every Scope 1–2 category needs a file before it is committed (K3)', () => {
+  // Decision K3 (owner, 2026-11-10; QA BUG-R2-02): Mobile Combustion,
+  // Refrigerants and Fugitive Gas join the evidence-required set, and the
+  // check runs at approve as well as submit — after the record's own gates and
+  // the period lock, before C8 and K11 — so a record submitted before the rule
+  // is not approved without one. No exemption by date or audit row (C8).
+  type RecordOver = Omit<Partial<ActivityRecord>, 'calculation'> & { calculation?: unknown };
+  const TYPE: Record<string, string | null> = {
+    'Mobile Combustion': 'on_road_diesel',
+    Refrigerants: 'R-32',
+    'Fugitive Gas': null,
+    Waste: null,
+  };
+  const UNIT: Record<string, string> = {
+    'Mobile Combustion': 'litres',
+    Refrigerants: 'kg',
+    'Fugitive Gas': 'standard_cubic_metres',
+    Waste: 'tonnes',
+  };
+  const NEW_SET = ['Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
+
+  function arrange(category: string, over: RecordOver = {}, files = 0) {
+    const scope = CATEGORY_SCOPE_MAP[category as keyof typeof CATEGORY_SCOPE_MAP];
+    const ctx = build(scope);
+    const record = makeRecord({
+      id: 'rec-v',
+      category,
+      scope,
+      activityType: TYPE[category],
+      activityUnit: UNIT[category],
+      status: ActivityRecordStatus.draft,
+      createdBy: 'user-entry',
+      calculation: ctx.calc.snapshot,
+      ...over,
+    } as Partial<ActivityRecord>);
+    ctx.prisma.activityRecord.findUnique.mockResolvedValue(record);
+    ctx.prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ ...record, ...data }));
+    ctx.prisma.activityRecordEvidence.count.mockResolvedValue(files);
+    return ctx;
+  }
+
+  async function caught(promise: Promise<unknown>) {
+    return promise.then(
+      () => null,
+      (e: unknown) => e,
+    );
+  }
+
+  describe('submit', () => {
+    it.each(NEW_SET)('refuses a %s draft with no file — evidence_required, nothing written', async (category) => {
+      const { prisma, service } = arrange(category);
+      const error = await caught(service.submit(dataEntry(), 'rec-v'));
+      expect(error).toBeInstanceOf(EvidenceRequiredError);
+      expect((error as EvidenceRequiredError).getResponse()).toMatchObject({
+        code: 'evidence_required',
+        params: { category },
+      });
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+      // THIS record's files, not any link anywhere.
+      expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({ where: { activityRecordId: 'rec-v' } });
+    });
+
+    it.each(NEW_SET)('submits a %s draft with one file', async (category) => {
+      const { service } = arrange(category, {}, 1);
+      expect((await service.submit(dataEntry(), 'rec-v')).status).toBe(ActivityRecordStatus.submitted);
+    });
+
+    it('refuses a rejected Refrigerants record resubmitted without a file', async () => {
+      const { prisma, service } = arrange('Refrigerants', { status: ActivityRecordStatus.rejected });
+      await expect(service.submit(dataEntry(), 'rec-v')).rejects.toBeInstanceOf(EvidenceRequiredError);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('names a locked period before the missing file at submit', async () => {
+      const { prisma, service } = arrange('Mobile Combustion');
+      prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+      await expect(service.submit(dataEntry(), 'rec-v')).rejects.toBeInstanceOf(PeriodLockedError);
+    });
+
+    it('submits a Waste draft with no file, and never counts its files', async () => {
+      const { prisma, service } = arrange('Waste');
+      expect((await service.submit(dataEntry(), 'rec-v')).status).toBe(ActivityRecordStatus.submitted);
+      expect(prisma.activityRecordEvidence.count).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('approve', () => {
+    it.each([
+      ['Mobile Combustion', ActivityRecordStatus.submitted],
+      ['Mobile Combustion', ActivityRecordStatus.under_review],
+      ['Fugitive Gas', ActivityRecordStatus.submitted],
+      ['Fugitive Gas', ActivityRecordStatus.under_review],
+      ['Refrigerants', ActivityRecordStatus.submitted],
+    ] as const)('refuses a %s record (%s) with no file — approval_evidence_missing, nothing written', async (category, status) => {
+      const { prisma, service } = arrange(category, { status });
+      const error = await caught(service.approve(superAdmin(), 'rec-v'));
+      expect(error).toBeInstanceOf(ApprovalEvidenceMissingError);
+      expect((error as ApprovalEvidenceMissingError).getStatus()).toBe(400);
+      expect((error as ApprovalEvidenceMissingError).getResponse()).toMatchObject({
+        code: 'approval_evidence_missing',
+        params: { category },
+      });
+      // The approver is told the remedy open to them: return it to the author.
+      expect((error as Error).message).toMatch(/reject the record/);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+      expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({ where: { activityRecordId: 'rec-v' } });
+    });
+
+    it.each(NEW_SET)('approves a submitted %s record with one file', async (category) => {
+      const { service } = arrange(category, { status: ActivityRecordStatus.submitted }, 1);
+      expect((await service.approve(superAdmin(), 'rec-v')).status).toBe(ActivityRecordStatus.approved);
+    });
+
+    it('approves a submitted Waste record with no file, and never counts its files', async () => {
+      const { prisma, service } = arrange('Waste', { status: ActivityRecordStatus.submitted });
+      expect((await service.approve(superAdmin(), 'rec-v')).status).toBe(ActivityRecordStatus.approved);
+      expect(prisma.activityRecordEvidence.count).not.toHaveBeenCalled();
+    });
+
+    it('names self-approval and a locked period before the missing file', async () => {
+      const self = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted, createdBy: 'user-admin' });
+      await expect(self.service.approve(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(SelfApprovalRefusedError);
+      const locked = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted });
+      locked.prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+      await expect(locked.service.approve(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(PeriodLockedError);
+    });
+
+    it('names the missing file before a missing type (C8) and before a stale figure (K11)', async () => {
+      const untyped = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted, activityType: null });
+      await expect(untyped.service.approve(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(ApprovalEvidenceMissingError);
+      const stale = arrange('Refrigerants', {
+        status: ActivityRecordStatus.submitted,
+        calculation: { tCo2e: 0.0001, factorId: 'factor-1' },
+      });
+      await expect(stale.service.approve(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(ApprovalEvidenceMissingError);
+    });
   });
 });
 

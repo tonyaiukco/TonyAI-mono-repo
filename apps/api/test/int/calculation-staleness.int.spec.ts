@@ -299,6 +299,8 @@ describe('C8 — an untyped record of a typed category is not committed', () => 
       calculation: { tCo2e: 0.026841, factorId: 'pre-lp3-03' },
       status: ActivityRecordStatus.submitted,
     });
+    // Its fuel log, as a submitted Fuel record has: approve checks it before C8 (K3).
+    await attachEvidence(owner, tenant, [record.id]);
     const refused = await failure(lifecycleServices(runtime).records.approve(tenant.users.superAdmin, record.id));
     expect(refused).toBeInstanceOf(CalculationInputError);
     expect((refused as CalculationInputError).code).toBe('activity_type_required');
