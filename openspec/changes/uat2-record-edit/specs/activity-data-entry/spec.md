@@ -65,11 +65,15 @@ Data Entry SHALL offer Recall on each `submitted` record that the user created. 
 - **THEN** a toast says that the record is in review and can be returned only by the reviewer, and it stays under review
 
 ### Requirement: A late answer never overwrites a newer form
-When the user opens another record, starts a new one, or copies one while an earlier Cancel or Copy is still waiting for the API, the earlier answer SHALL be dropped. It SHALL NOT refill the form or overwrite what the user has typed since.
+When the user opens another record, starts a new one, copies one or switches subsidiary while an earlier Cancel or Copy is still waiting for the API, the earlier answer SHALL be dropped. It SHALL NOT refill the form or overwrite what the user has typed since.
 
 #### Scenario: Cancel answers after another record was opened
 - **WHEN** the user cancels Edit mode on record A, then opens record B in Edit mode and types a value before A's read returns
 - **THEN** the form still holds record B and the typed value
+
+#### Scenario: A second Copy answers after a subsidiary switch
+- **WHEN** a copied draft is on screen, the user copies a second voided record, then switches subsidiary and types a value before the second copy's read returns
+- **THEN** the form keeps the chosen subsidiary and the typed value
 
 ### Requirement: A voided record can be copied to a new draft
 A voided record SHALL offer Copy to new draft to its author and to a `super_admin`. Copy SHALL open the form for a new record, pre-filled with the voided record's values. The subsidiary SHALL stay selectable. No file SHALL be copied. Saving SHALL create a new draft whose author is the user who copied it.

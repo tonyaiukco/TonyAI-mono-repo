@@ -6,6 +6,7 @@ import {
   E2E_BULK_CATEGORY,
   E2E_BULK_UNIT,
   E2E_YEAR,
+  EVIDENCE_FIXTURE,
   SUB,
   approveRecord,
   attachEvidence,
@@ -36,6 +37,7 @@ import {
 
 const SUBSIDIARY = SUB.logistics;
 const OPTION = 'TonyAI Logistics (TR)';
+const OTHER_OPTION = 'TonyAI Energy (TR)';
 const MONTHS = ['July', 'August', 'September', 'October', 'November', 'December'];
 const LANE_QUERY =
   `subsidiary_id=eq.${SUBSIDIARY}&reporting_year=eq.${E2E_YEAR}` +
@@ -57,6 +59,16 @@ async function createWasteDraft(
   token: string,
   periodValue: string,
 ): Promise<string> {
+  return createDraft(request, token, periodValue, E2E_BULK_CATEGORY, E2E_BULK_UNIT);
+}
+
+async function createDraft(
+  request: Parameters<typeof serviceReadRecords>[0],
+  token: string,
+  periodValue: string,
+  category: string,
+  activityUnit: string,
+): Promise<string> {
   const res = await request.post(`${API_BASE}/activity-records`, {
     headers: bearer(token),
     data: {
@@ -64,12 +76,12 @@ async function createWasteDraft(
       reportingYear: E2E_YEAR,
       reportingPeriod: 'monthly',
       periodValue,
-      category: E2E_BULK_CATEGORY,
+      category,
       activityValue: 3,
-      activityUnit: E2E_BULK_UNIT,
+      activityUnit,
     },
   });
-  if (!res.ok()) throw new Error(`createWasteDraft failed: ${res.status()} ${await res.text()}`);
+  if (!res.ok()) throw new Error(`createDraft failed: ${res.status()} ${await res.text()}`);
   return (await res.json()).id as string;
 }
 
@@ -206,10 +218,13 @@ test('the author recalls a submitted record, edits it and submits it again; a su
   expect(record).toMatchObject({ id, status: 'submitted', activityValue: 7 });
 });
 
-test('a voided record is copied into a new draft by its author, who submits it', async ({ page, request }) => {
+test('a voided evidence-required record is copied into a new draft, which needs its own file before it is submitted', async ({ page, request }) => {
+  // Water: evidence-required (K3) and priced by no factor, so the full D04
+  // re-entry runs — void, copy, the evidence gate, a file, submit.
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);
   const adminToken = await getAccessToken(request, ADMIN_EMAIL);
-  const id = await createWasteDraft(request, entryToken, 'September');
+  const id = await createDraft(request, entryToken, 'September', 'Water', 'cubic_metres');
+  await attachEvidence(request, entryToken, id);
   await post(request, entryToken, `/activity-records/${id}/submit`);
   // A decision that names no submission — a review tab from before this
   // release — is told to reload, never applied (owner review P1).
@@ -217,25 +232,79 @@ test('a voided record is copied into a new draft by its author, who submits it',
   expect(bare.status()).toBe(409);
   expect((await bare.json()).code).toBe('record_changed');
   await approveRecord(request, adminToken, id);
-  await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: wrong quantity on the waste note' });
+  await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: wrong meter reading' });
 
   await login(page, ENTRY_EMAIL);
   await openDataEntry(page);
-  await listOf(page).getByRole('button', { name: `Copy September ${E2E_YEAR} ${E2E_BULK_CATEGORY} to a new draft` }).click();
+  await listOf(page).getByRole('button', { name: `Copy September ${E2E_YEAR} Water to a new draft` }).click();
   await expect(page.getByText(/A new draft is filled in from the voided record/)).toBeVisible();
-  // A NEW record: nothing is being edited.
+  // A NEW record: nothing is being edited, and no file came with the copy.
   await expect(page.getByText(/Editing draft/)).toHaveCount(0);
   await expect(page.getByPlaceholder('e.g. 45000')).toHaveValue('3');
-
   await page.getByPlaceholder('e.g. 45000').fill('4');
+
+  // Submit saves the draft, and the evidence gate holds it with the vault open.
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
+  const vaultInput = page.locator('[data-testid="evidence-vault-input"]');
+  await expect(vaultInput).toBeAttached();
+  await expect(page.getByText('Submitted for review', { exact: true })).toHaveCount(0);
+  await vaultInput.setInputFiles(EVIDENCE_FIXTURE);
+  await expect(page.getByText('Evidence uploaded')).toBeVisible();
   await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
   await expect(page.getByText('Submitted for review', { exact: true })).toBeVisible();
 
   const rows = await serviceReadRecords(
     request,
-    `subsidiary_id=eq.${SUBSIDIARY}&reporting_year=eq.${E2E_YEAR}&period_value=eq.September&category=eq.${E2E_BULK_CATEGORY}`,
+    `subsidiary_id=eq.${SUBSIDIARY}&reporting_year=eq.${E2E_YEAR}&period_value=eq.September&category=eq.Water`,
   );
   const fresh = rows.find((r) => r.id !== id);
   expect(rows.find((r) => r.id === id)?.status).toBe('voided');
   expect(fresh).toMatchObject({ status: 'submitted', activity_value: 4 });
+  const copied = await (await request.get(`${API_BASE}/activity-records/${String(fresh?.id)}`, { headers: bearer(entryToken) })).json();
+  expect(copied.evidenceCount).toBe(1);
+  // Its author is the user who copied it.
+  expect(copied.createdBy).toBe(String(rows.find((r) => r.id === id)?.created_by));
+});
+
+test('a second Copy answering after a subsidiary switch never overwrites the switched form (review P2)', async ({ page, request }) => {
+  const entryToken = await getAccessToken(request, ENTRY_EMAIL);
+  const adminToken = await getAccessToken(request, ADMIN_EMAIL);
+  const voided: string[] = [];
+  // Months no other test here writes Waste into.
+  for (const month of ['September', 'November']) {
+    const id = await createDraft(request, entryToken, month, E2E_BULK_CATEGORY, E2E_BULK_UNIT);
+    await post(request, entryToken, `/activity-records/${id}/submit`);
+    await approveRecord(request, adminToken, id);
+    await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: copy race' });
+    voided.push(id);
+  }
+
+  // A super_admin: Copy is theirs on any voided record, and they see a second subsidiary.
+  await login(page, ADMIN_EMAIL);
+  await openDataEntry(page);
+  await listOf(page).getByRole('button', { name: `Copy September ${E2E_YEAR} ${E2E_BULK_CATEGORY} to a new draft` }).click();
+  await expect(page.getByText(/A new draft is filled in from the voided record/)).toBeVisible();
+
+  // Hold the second Copy's read until the subsidiary has been switched.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const readReached = new Promise<void>((resolve) => (reached = resolve));
+  await page.route(`**/api/v1/activity-records/${voided[1]}`, async (route) => {
+    reached();
+    await held;
+    await route.continue();
+  });
+  await listOf(page).getByRole('button', { name: `Copy November ${E2E_YEAR} ${E2E_BULK_CATEGORY} to a new draft` }).click();
+  await readReached;
+  await selectSubsidiary(page, OTHER_OPTION);
+  await page.getByPlaceholder('e.g. 45000').fill('77');
+
+  release();
+  await page.waitForResponse((r) => r.url().endsWith(`/activity-records/${voided[1]}`));
+  // The late copy was dropped: the subsidiary and the typed value stand.
+  const subsidiaryField = page.locator('div.space-y-2', { has: page.getByText('Subsidiary', { exact: true }) });
+  await expect(subsidiaryField.getByRole('combobox')).toContainText(OTHER_OPTION);
+  await expect(page.getByPlaceholder('e.g. 45000')).toHaveValue('77');
+  await page.unroute(`**/api/v1/activity-records/${voided[1]}`);
 });

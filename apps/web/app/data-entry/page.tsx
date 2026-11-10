@@ -1432,6 +1432,10 @@ function DataEntryPageInner() {
                       <Select
                         value={subsidiaryId}
                         onValueChange={(v) => {
+                          // Every switch gives the form a new subject, so an
+                          // answer still on its way (a second Copy, a Cancel)
+                          // is dropped rather than refilling it (review P2).
+                          formSessions.begin();
                           setSubsidiaryId(v);
                           setLocationId("");
                           // A copy of a voided record may be filed under another

@@ -61,7 +61,11 @@
   - **Owner review (2026-11-10):** two more fixes.
     - P1: an absent `seenSubmittedAt` skipped the check, so an old review tab could approve an unseen figure. It is now required over HTTP.
     - P2: a late Cancel or Copy answer refilled the form over the next record. Form sessions now drop stale answers, with an e2e test shown to fail without the fix.
-  - **Measured locally (after the owner review):** unit tests api 3,670, web 1,145, shared-types 405, db 203; integration 1,085; typecheck and `pnpm build` green. Full e2e: 176 passed, 2 failed. Both failures are the known local-only ones: `security-headers` under `next dev`, and `data-entry-happy` once the integration suite has loaded the TR releases.
+  - **Owner review, second round:** three more fixes.
+    - P2: a subsidiary switch on a copied form did not begin a new form session, so a late second Copy overwrote it. Every switch now begins one; the new e2e test fails without the fix.
+    - P2: `pnpm lint` failed on a useless initial value (`no-useless-assignment`). Lint now joins the local gate.
+    - QA gap: the copy e2e now runs the full re-entry on an evidence-required Water record: void, copy, the evidence gate, a file through the vault, submit.
+  - **Measured locally (after the owner's second review):** `pnpm lint` 0 errors (3 earlier warnings); unit tests api 3,670, web 1,145, shared-types 405, db 203; integration 1,085; typecheck and `pnpm build` green. Full e2e: 177 passed, 2 failed. Both failures are the known local-only ones: `security-headers` under `next dev`, and `data-entry-happy` once the integration suite has loaded the TR releases.
   - **New and changed tests:**
     - new `e2e/record-edit.spec.ts`: Edit mode with Cancel and Edit twice, recall, copy;
     - four e2e row locators anchored, because Edit, Recall and Copy now name their row;

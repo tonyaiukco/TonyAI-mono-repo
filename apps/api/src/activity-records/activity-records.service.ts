@@ -1348,7 +1348,7 @@ export class ActivityRecordsService {
 
     let updated: WrittenRecord;
     let evidenceCount: number;
-    let removedFiles: { id: string; storagePath: string }[] = [];
+    let removedFiles: { id: string; storagePath: string }[];
     try {
       ({ row: updated, evidenceCount, removedFiles } = await this.withLockedRecord(
         existing,
