@@ -61,7 +61,7 @@ See proposal.md for why. The relevant state today:
 - **Inputs stay frozen on the recall write itself.** The input-freeze branch tests `OLD.status`, and that is `submitted` on this step. One write that moves to `draft` and also changes a value is still refused, as the spec requires.
 - **The writer trigger** (`activity_records_lifecycle_writer`) is unchanged. Only the runtime role moves statuses.
 - **The pin:** `packages/db/scripts/runtime-role.mjs` derives each trigger function's expected body from the last migration that defines it, so no hand pin is needed. The integrity check reads the new body.
-- **Rollout:** expand-only. Before merging, run runbook 03's owner-psql migration preflight; automation does not run it.
+- **Rollout:** expand-only. Runbook 03 defines no preflight for this migration, and a function replacement takes no table lock. Before merging, the owner instead checks read-only on hosted QA that the last applied migration is `20261110120000_uat2_marine_gas_oil_mapping` and that the function's `md5(prosrc)` is LP4-02's (`5d4fdcb1e8358de13a3c6f62a43e1867`); after deploy it reads `8cbd6503265779c19f6468183bd93598`.
 - **Alternative rejected:** a separate `recall` status. It would need every reader of the status (matrix, queues, reports) to learn a new value, for no gain over `draft`.
 
 ### D3. The edit gate splits from the delete gate
@@ -122,7 +122,7 @@ The web adds TR and EN copy for the Edit, Recall and Copy actions, the band, the
 
 ## Migration Plan
 
-1. One forward migration, expand-only (D2). QA deploy applies it on merge, after the owner's runbook 03 preflight.
+1. One forward migration, expand-only (D2). QA deploy applies it on merge, after the owner's read-only check (D2, Rollout).
 2. No data migration. Records already submitted can be recalled from the moment the API ships.
 3. **Rollback:** redeploying the previous image is safe. The extra transition is unused by old code. Removing the transition later is a separate contract migration.
 

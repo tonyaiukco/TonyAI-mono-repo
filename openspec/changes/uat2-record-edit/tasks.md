@@ -130,6 +130,6 @@
 
 ## Workflow follow-up
 
-- Open the PR from `feat/uat2-record-edit`. The owner runs runbook 03's migration preflight before merging, and the owner merges.
+- Open the PR from `feat/uat2-record-edit` (#300). The owner runs the read-only hosted check in design D2 (done 2026-11-10: last migration `20261110120000…`, function hash LP4-02's), and the owner merges.
 - After the merge, confirm CI, Integration and the QA deploy (which applies the migration) are green, and record the run ids in the status file.
 - Archive the change (`/opsx:archive`), which creates the `record-lifecycle` spec and merges the deltas, and verify the archived result.
