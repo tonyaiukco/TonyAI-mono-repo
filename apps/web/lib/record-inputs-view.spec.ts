@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { EquipmentLines, NaturalGasInputs, type ReferenceState } from '@/components/data-entry/record-inputs';
 import { checkDecimal, parseLocaleDecimal } from '@/lib/i18n/number';
 import { MESSAGES } from '@/messages';
+
 import {
   ACTIVITY_VALUE_MAX,
   offeredActivityTypes,
@@ -28,6 +29,9 @@ import {
   referenceValue,
   type EquipmentLineDraft,
 } from './record-inputs-view';
+
+const enEntry = MESSAGES.en.dataEntry;
+const trEntry = MESSAGES.tr.dataEntry;
 
 // Display fixture only: these numbers stand in for a release's parameters and
 // are not a source. The form must show whatever the release holds.
@@ -72,9 +76,31 @@ describe('which inputs a record takes (D11)', () => {
     expect(unitsForRecord('Fugitive Gas', 'TR').map((u) => u.value)).toEqual(['standard_cubic_metres']);
   });
 
-  it('asks a TR mobile record for one of the five vehicle modes', () => {
+  it('offers TR marine gas oil by mass, and keeps a TR vehicle mode in litres (UAT2 BUG-R2-11)', () => {
+    // kg first: the unit a new MGO record starts on.
+    expect(unitsForRecord('Mobile Combustion', 'TR', 'marine_gas_oil').map((u) => u.value)).toEqual(['kg', 'tonnes']);
+    expect(unitsForRecord('Mobile Combustion', 'TR', 'on_road_diesel').map((u) => u.value)).toEqual(['litres']);
+    expect(unitsForRecord('Mobile Combustion', 'TR', null).map((u) => u.value)).toEqual(['litres']);
+    // Outside the TR rules the category's whole list, whatever the type.
+    expect(new Set(unitsForRecord('Mobile Combustion', 'UK', 'marine_gas_oil').map((u) => u.value))).toEqual(
+      new Set(['litres', 'uk_gallons', 'us_gallons', 'kg', 'tonnes']),
+    );
+  });
+
+  it('names marine gas oil as marine fuel, never as the stationary gas oil (UAT2 BUG-R2-11)', () => {
+    for (const catalogue of [enEntry, trEntry]) {
+      expect(catalogue.activityTypes.marine_gas_oil).toMatch(/MGO/);
+      expect(catalogue.activityTypes.marine_gas_oil).not.toBe(catalogue.activityTypes.gas_oil);
+    }
+    expect(enEntry.activityTypes.marine_gas_oil).toMatch(/^Marine gas oil/);
+    // "Deniz motorini" is marine diesel; "gaz yağı" would read as kerosene.
+    expect(trEntry.activityTypes.marine_gas_oil).toMatch(/^Deniz motorini/);
+    expect(trEntry.activityTypes.marine_gas_oil.toLowerCase()).not.toMatch(/gaz ?yağı/);
+  });
+
+  it('asks a TR mobile record for one of the five vehicle modes or marine gas oil', () => {
     expect(offeredActivityTypes('Mobile Combustion', 'TR').map((t) => t.value)).toEqual([
-      'on_road_petrol', 'on_road_diesel', 'on_road_lpg', 'off_road_petrol', 'off_road_diesel',
+      'on_road_petrol', 'on_road_diesel', 'on_road_lpg', 'off_road_petrol', 'off_road_diesel', 'marine_gas_oil',
     ]);
     expect(offeredActivityTypes('Mobile Combustion', 'UK').map((t) => t.value)).toContain('diesel');
     expect(offeredActivityTypes('Fuel', 'TR').map((t) => t.value)).toEqual(expect.arrayContaining(['petrol', 'coal', 'lng']));

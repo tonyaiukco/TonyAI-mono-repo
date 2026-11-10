@@ -1057,7 +1057,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['inventory_sources', 'inventory_sources_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
   ['inventory_sources', 'inventory_sources_included_key_check', '8dd7ef5d1dcbce5b18d5ce7e1cb88f4a'],
   ['inventory_sources', 'inventory_sources_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
-  ['inventory_sources', 'inventory_sources_mapping_check', '780b5ba7d0697011aea061de5a77688e'],
+  ['inventory_sources', 'inventory_sources_mapping_check', '575c7582aee7c961547d93833b9308d1'],
   ['inventory_sources', 'inventory_sources_name_check', '89abd8a30af4e8ea9fe6138919107443'],
   // LP3-04 PR C: what a retained dataset row is (V5).
   ['report_datasets', 'report_datasets_fingerprint_check', '63204d1bbd98e2266744f4d2a7eb9a0c'],

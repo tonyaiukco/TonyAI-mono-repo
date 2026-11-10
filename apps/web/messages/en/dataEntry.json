@@ -9,7 +9,7 @@
   "wholeCompany": "Whole company",
   "category": "Category",
   "fuelOrGas": "Fuel or gas",
-  "vehicleMode": "Vehicle mode",
+  "vehicleMode": "Vehicle mode or vessel fuel",
   "chooseOne": "Choose one",
   "notSpecifiedLegacy": "Not specified (entered before fuels were tracked)",
   "reportingYear": "Reporting year",
@@ -95,7 +95,8 @@
     "off_road_diesel": "Off-road diesel",
     "R-22": "R-22 (HCFC-22)",
     "HFC-227ea": "HFC-227ea",
-    "SF6": "SF6 (sulphur hexafluoride)"
+    "SF6": "SF6 (sulphur hexafluoride)",
+    "marine_gas_oil": "Marine gas oil (MGO, vessels)"
   },
   "equipmentTypes": {
     "fire_suppression_system": "Fire suppression system",
@@ -184,7 +185,8 @@
     "choice": {
       "default": "default rate",
       "alternative": "alternative rate"
-    }
+    },
+    "marineGasOilScope": "Marine gas oil covers vessels your organisation owns or operates (Scope 1), including a bareboat charter it operates. Leave out vessels you charter but do not operate (voyage or time charter) and third-party shipping: they are Scope 3, outside this inventory. Enter the mass on the Bunker Delivery Note, in kg or tonnes."
   },
   "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",
   "selectAllLoaded": "Select all {count} loaded",

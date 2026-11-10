@@ -978,6 +978,9 @@ export const E2E_TR_INPUTS = {
   mode: 'on_road_diesel',
   modeFactor: 3,
   leakageFactor: 20,
+  /** Marine gas oil per kg (UAT2 BUG-R2-11): a round 2, not the IPCC edition's 3.2179. */
+  marineGasOil: 'marine_gas_oil',
+  marineGasOilFactor: 2,
 } as const;
 
 export async function seedTrInputsFixture(): Promise<void> {
@@ -988,6 +991,7 @@ export async function seedTrInputsFixture(): Promise<void> {
     ['Natural Gas', 'natural_gas', 'net', f.gasFactor, 'kgCO2e/kWh', 'kWh'],
     ['Refrigerants', f.refrigerant, 'not_applicable', f.refrigerantFactor, 'kgCO2e/kg', 'kg'],
     ['Mobile Combustion', f.mode, 'not_applicable', f.modeFactor, 'kgCO2e/litre', 'litres'],
+    ['Mobile Combustion', f.marineGasOil, 'not_applicable', f.marineGasOilFactor, 'kgCO2e/kg', 'kg'],
     ['Fugitive Gas', 'gas_network_leakage', 'not_applicable', f.leakageFactor, 'kgCO2e/Sm3', 'standard_cubic_metres'],
   ] as const;
   await withOwner((owner) =>

@@ -94,6 +94,7 @@ import {
   isProvenanceSnapshot,
   canonicalPeriodValue,
   isInvoiceTracked,
+  MARINE_GAS_OIL_ACTIVITY_TYPE,
   mayAuthorRecords,
   offeredActivityTypes,
   PERIOD_VALUES,
@@ -336,12 +337,22 @@ function DataEntryPageInner() {
     return spec ? [...offered, spec] : offered;
   }, [category, effectiveGeography, editingTuple]);
   const isTypedCategory = activityTypes.length > 0;
+  // An opened record still on its own category and type keeps its own unit
+  // listed; once its type is changed it is narrowed like a new record, so a
+  // vehicle mode's litres never stay on marine gas oil or the reverse.
+  const onOwnType =
+    editingId !== null &&
+    editingTuple?.category === category &&
+    (editingTuple.activityType ?? "") === activityType;
+  // A TR mobile record's units follow its type: litres for a vehicle mode,
+  // kg or tonnes for marine gas oil (UAT2 BUG-R2-11).
   const unitOptions = useMemo(() => {
-    const offered = unitsForRecord(category, effectiveGeography);
-    if (!editingId || offered.some((u) => u.value === activityUnit)) return offered;
+    const offered = unitsForRecord(category, effectiveGeography, activityType);
+    if (!onOwnType || offered.some((u) => u.value === activityUnit)) return offered;
     const own = unitsForCategory(category).find((u) => u.value === activityUnit);
     return own ? [...offered, own] : offered;
-  }, [category, effectiveGeography, editingId, activityUnit]);
+  }, [category, effectiveGeography, activityType, onOwnType, activityUnit]);
+  const marineGasOil = category === "Mobile Combustion" && activityType === MARINE_GAS_OIL_ACTIVITY_TYPE;
   const inputMode = recordInputMode(category, effectiveGeography, activityUnit);
   const refrigerantMode = inputMode === "refrigerant";
   const vehicleModes = category === "Mobile Combustion" && effectiveGeography !== null && usesTrCalculationRules(effectiveGeography);
@@ -790,9 +801,12 @@ function DataEntryPageInner() {
   // by a link) may hold a unit or type they do not offer: picked again rather
   // than left bound to a value the select no longer lists. A typed value is
   // cleared with the unit, never re-read as another unit's quantity.
+  // A type chosen under them re-narrows the unit too: a vehicle mode takes
+  // litres, marine gas oil starts on kg. An opened record is left alone only
+  // while it is on its own type; a changed type is narrowed the same way.
   useEffect(() => {
-    if (editingId) return;
-    const units = unitsForRecord(category, effectiveGeography);
+    if (onOwnType) return;
+    const units = unitsForRecord(category, effectiveGeography, activityType);
     if (units.length > 0 && !units.some((u) => u.value === activityUnit)) {
       setActivityUnit(units[0].value);
       if (activity.text.trim() !== "") {
@@ -804,7 +818,7 @@ function DataEntryPageInner() {
       setActivityType("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, effectiveGeography, editingId, activityUnit, activityType]);
+  }, [category, effectiveGeography, onOwnType, activityUnit, activityType]);
 
   // The capacity method is annual (D7): a new TR refrigerant record is filed
   // on the year. An opened one keeps its own period; the preview names the
@@ -1284,6 +1298,10 @@ function DataEntryPageInner() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {/* What MGO covers and what it does not (Scope 1 only). */}
+                      {marineGasOil && (
+                        <p className="text-xs text-muted-foreground">{t("inputs.marineGasOilScope")}</p>
+                      )}
                     </Field>
                   )}
 
