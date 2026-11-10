@@ -26,6 +26,16 @@
  *     whose attribution changed hands restarts its run-up mid-year, which is
  *     indistinguishable on every screen from a series that simply began there.
  *
+ * KNOWN DIFFERENCE, NOT DRIFT (BUG-R2-07, 2026-11-11)
+ * ---------------------------------------------------
+ * Until 2026-11-11 a record with one or two priors was stored as "not
+ * evaluated": a prior count of 1 or 2 beside a NULL average. The rule now
+ * judges such a window, but those verdicts are KEPT, not re-scored (owner
+ * decision) — a committed record would otherwise gain a flag its author never
+ * saw. So where the rule would flag one today, that is reported in its own
+ * section and does not count as drift: nothing moved beneath the record, the
+ * rule did. `anomaly:recompute` leaves the same records alone.
+ *
  * THE RULE IS REIMPLEMENTED HERE, DELIBERATELY
  * --------------------------------------------
  * This SQL does not call the service and shares no code with it. That is the
@@ -58,13 +68,13 @@ const ANOMALY_THRESHOLD = 0.5;
 /** VAR §4.1 — the rolling average is over the previous 3 comparable periods. */
 const BASELINE_MAX_PERIODS = 3;
 /**
- * How many of those periods must actually carry a figure for the rule to run.
- * Equal to the window since 2026-08-27: the implementation used to evaluate on
- * as few as ONE, which VAR §4.1 does not sanction and no surface disclosed.
- * Kept as its own constant because section 3 still reports the shortfall —
- * "2 of 3" is the finding, and a single constant could not express it.
+ * How many of those periods must actually carry a figure for the rule to run
+ * (`ANOMALY_MIN_PRIORS`). One since 2026-11-11 (BUG-R2-07): one or two is a
+ * limited-history verdict. It was three from 2026-08-27 until then. Kept as
+ * its own constant because section 3 still reports the shortfall — "2 of 3"
+ * is the finding, and a single constant could not express it.
  */
-const BASELINE_MIN_PERIODS = 3;
+const BASELINE_MIN_PERIODS = 1;
 /** COUNTED_STATUSES — the only statuses that seed a baseline. `voided` never does. */
 const BASELINE_STATUSES = ['submitted', 'under_review', 'approved', 'locked'];
 
@@ -98,6 +108,10 @@ const BASE_SQL = `
 WITH r AS (
   SELECT id, subsidiary_id, location_id, category, activity_type, reporting_period,
          reporting_year, period_value, status, anomaly_flag,
+         -- A count of 1-2 beside a NULL average: scored before 2026-11-11,
+         -- when such a window was not evaluated. Kept, never re-scored.
+         (anomaly_baseline_prior_count BETWEEN ${BASELINE_MIN_PERIODS} AND ${BASELINE_MAX_PERIODS - 1}
+            AND anomaly_baseline_tco2e IS NULL) AS legacy,
          reporting_year * 100 + COALESCE(CASE reporting_period
            WHEN 'monthly'   THEN array_position(ARRAY['January','February','March','April','May','June','July','August','September','October','November','December'], period_value) - 1
            WHEN 'quarterly' THEN array_position(ARRAY['Q1','Q2','Q3','Q4'], period_value)
@@ -149,7 +163,7 @@ async function main() {
   console.log(`Target:  ${target}${isLocal ? ' (local)' : '  ** REMOTE **'}`);
   console.log(
     `Rule:    key = subsidiary + location + category + granularity · ` +
-      `${BASELINE_MIN_PERIODS} priors required of a ${BASELINE_MAX_PERIODS}-period window · ` +
+      `at least ${BASELINE_MIN_PERIODS} prior of a ${BASELINE_MAX_PERIODS}-period window · ` +
       `threshold ${ANOMALY_THRESHOLD * 100}%\n`,
   );
 
@@ -181,7 +195,7 @@ async function main() {
   const drift = await q(`
     SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e,
            priors, baseline, anomaly_flag, computed
-    FROM verdict WHERE anomaly_flag <> computed ORDER BY sub, category, key;`);
+    FROM verdict WHERE anomaly_flag <> computed AND NOT legacy ORDER BY sub, category, key;`);
 
   console.log(`\n2. Drift — stored anomaly_flag vs the rule over today's pool`);
   if (drift.length === 0) {
@@ -196,18 +210,42 @@ async function main() {
     }
   }
 
+  const legacy = await q(`
+    SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e,
+           priors, baseline, anomaly_flag, computed
+    FROM verdict WHERE legacy ORDER BY sub, category, key;`);
+  const legacyFlaggedNow = legacy.filter((row) => row.anomaly_flag !== row.computed);
+
+  console.log(
+    `
+2b. Known difference — ${legacy.length} verdict(s) scored before the short-history check (kept, not drift)`,
+  );
+  if (legacyFlaggedNow.length === 0) {
+    console.log('   none of them would be flagged by the rule today.');
+  } else {
+    console.log(`   ${legacyFlaggedNow.length} would be flagged by the rule today:`);
+    for (const row of legacyFlaggedNow) {
+      console.log(
+        `   ${row.id}  ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)}` +
+          ` [${row.status}]
+     ${row.tco2e?.toFixed(3)} tCO₂e vs baseline ${row.baseline?.toFixed(3)}` +
+          ` over ${row.priors} prior(s)`,
+      );
+    }
+  }
+
   const weak = await q(`
     SELECT sub, loc, category, period_value, reporting_year, status, tco2e, priors
     FROM verdict WHERE priors < ${BASELINE_MAX_PERIODS} ORDER BY sub, loc NULLS FIRST, category, key;`);
 
   console.log(
-    `\n3. Records scored on a baseline weaker than VAR §4.1's three periods (${weak.length} of ${total})`,
+    `\n3. Records on less than VAR §4.1's three-period window (${weak.length} of ${total})`,
   );
   for (const row of weak) {
     const gate =
       row.priors === 0
         ? 'NOT EVALUATED — no prior period'
-        : `thin — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
+        : `limited history — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
     console.log(
       `   ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)} ` +
         `[${row.status}] ${row.tco2e?.toFixed(3)} tCO₂e — ${gate}`,

@@ -818,6 +818,31 @@ describe('BulkUploadService — warnings', () => {
     ).toMatchObject({ row: 2, column: 'varianceReason' });
   });
 
+  it('warns the same way when the row is anomalous against ONE earlier period', async () => {
+    // BUG-R2-07: a limited-history flag blocks submit exactly as a full one
+    // does, so the dry run has to say so for the second month of a new series.
+    const { records, service } = build();
+    records.previewCreate.mockResolvedValue({
+      subsidiaryId: SUB_1,
+      locationId: null,
+      periodValue: 'February',
+      calculation: SNAPSHOT,
+      scope: 2,
+      verdict: { anomalous: true, priorCount: 1, baseline: 0.1 },
+    });
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ periodValue: 'February' })]),
+      DRY,
+    );
+
+    expect(report.accepted).toHaveLength(1);
+    expect(
+      report.warnings.find((w) => w.code === 'would_block_submit'),
+    ).toMatchObject({ row: 2, column: 'varianceReason' });
+  });
+
   it('stays quiet when the anomalous row explains itself', async () => {
     const { records, service } = build();
     records.previewCreate.mockResolvedValue({

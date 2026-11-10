@@ -10,9 +10,10 @@ import {
   ActivityRecordStatus,
 } from '../generated/client';
 import {
-  ANOMALY_BASELINE_PERIODS,
   ANOMALY_THRESHOLD,
   COUNTED_STATUSES,
+  computeAnomalyVerdict,
+  type AnomalyVerdict,
   CALCULATION_GAS,
   MONTH_NAMES,
   factorActivityTypeFor,
@@ -40,12 +41,12 @@ const SEED_RECORD_STATUS = ActivityRecordStatus.approved;
 // policy. Keep the existing local-stack default until its owner upgrades it.
 const SEED_PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
 
-/** The average of a window, or null unless it is full — one definition for
- *  both loops, so the site series cannot drift from the company series. */
-function rollingBaseline(priors: number[]): number | null {
-  return priors.length === ANOMALY_BASELINE_PERIODS
-    ? priors.reduce((sum, v) => sum + v, 0) / priors.length
-    : null;
+/** The verdict the API would store for a record written after `written` (its
+ *  series so far, oldest first) — the contract's own rule, not a copy of it, so
+ *  neither loop can drift from the other or from the gate. Since 2026-11-11 one
+ *  or two earlier periods are judged too, on limited history (BUG-R2-07). */
+function seedVerdict(tCo2e: number, written: number[]): AnomalyVerdict {
+  return computeAnomalyVerdict(tCo2e, [...written].reverse());
 }
 
 // The seed writes organisations, profiles, grants and reference data, which
@@ -886,31 +887,26 @@ const LOCATION_ACTIVITY = [
       const kgCo2e = activityValue * factor.factorValue;
       const tCo2e = kgCo2e / 1000;
       const isAnomaly = spec.anomaly?.month === month;
-      const priors = writtenTCo2e.slice(-ANOMALY_BASELINE_PERIODS);
-      const baselineTCo2e = rollingBaseline(priors);
-      // A staged anomaly on a record the rule could never have evaluated would
-      // ship a row no code path can produce: flagged, with the baseline that
-      // decided it declared absent. Caught here rather than in a screenshot.
-      if (isAnomaly && baselineTCo2e === null) {
+      const verdict = seedVerdict(tCo2e, writtenTCo2e);
+      const baselineTCo2e = verdict.baseline;
+      // The staged flag must be the one the rule gives, in BOTH directions. A
+      // staged anomaly the rule would not raise ships a row no code path can
+      // produce — flagged beside an average that implies a 5% deviation, which
+      // the screens now print. And a record the rule WOULD flag, stored
+      // unflagged, is the same contradiction the other way round: possible
+      // since one or two earlier periods are judged, where a large step early
+      // in a series used to go unevaluated.
+      if (isAnomaly !== verdict.anomalous) {
+        const judged =
+          baselineTCo2e === null
+            ? `has no earlier period to be judged against`
+            : `is ${isAnomaly ? 'within' : 'more than'} ${ANOMALY_THRESHOLD * 100}% ` +
+              `${isAnomaly ? 'of' : 'from'} its baseline (${baselineTCo2e.toFixed(3)} tCO2e ` +
+              `over ${verdict.priorCount} period(s))`;
         throw new Error(
-          `Seed stages an anomaly for ${subsidiary.tradingName}/${spec.category} at ` +
-            `${MONTHS[month]}, which has only ${priors.length} prior period(s) — ` +
-            `VAR §4.1 needs ${ANOMALY_BASELINE_PERIODS}.`,
-        );
-      }
-      // ...and that the staged flag AGREES with the window it claims. Checking
-      // only that a baseline exists let the seed ship a flagged record whose
-      // own stored average implies a 5% deviation — a contradiction the screens
-      // now render, since they print the average beside the warning.
-      if (
-        isAnomaly &&
-        baselineTCo2e !== null &&
-        Math.abs(tCo2e - baselineTCo2e) / baselineTCo2e <= ANOMALY_THRESHOLD
-      ) {
-        throw new Error(
-          `Seed stages an anomaly for ${subsidiary.tradingName}/${spec.category} at ` +
-            `${MONTHS[month]} whose value (${tCo2e.toFixed(3)} tCO2e) is within ` +
-            `${ANOMALY_THRESHOLD * 100}% of its own baseline (${baselineTCo2e.toFixed(3)}).`,
+          `Seed ${isAnomaly ? 'stages an anomaly' : 'stages no anomaly'} for ` +
+            `${subsidiary.tradingName}/${spec.category} at ${MONTHS[month]}, whose value ` +
+            `(${tCo2e.toFixed(3)} tCO2e) ${judged}.`,
         );
       }
 
@@ -950,7 +946,7 @@ const LOCATION_ACTIVITY = [
         calculation,
         createdBy: adminId,
         anomalyFlag: isAnomaly,
-        anomalyBaselinePriorCount: priors.length,
+        anomalyBaselinePriorCount: verdict.priorCount,
         anomalyBaselineTCo2e: baselineTCo2e,
         varianceReason: isAnomaly
           ? 'Prototype anomaly: unusually high activity vs seasonal baseline.'
@@ -992,6 +988,14 @@ const LOCATION_ACTIVITY = [
         factorUnit: factor.factorUnit, methodology: factor.methodology, source: factor.source, version: factor.release.edition,
         ...snapshotProvenance(factor, LOCATION_YEAR),
       };
+      const siteVerdict = seedVerdict(kgCo2e / 1000, siteWrittenTCo2e);
+      // Written unflagged below, so the rule must agree (see the company loop).
+      if (siteVerdict.anomalous) {
+        throw new Error(
+          `Seed writes ${spec.location.name}/${spec.category} at ${periodValue} unflagged, but the rule flags it ` +
+            `against ${siteVerdict.baseline?.toFixed(3)} tCO2e over ${siteVerdict.priorCount} period(s).`,
+        );
+      }
       const { id: recordId } = await findOrCreateRecord({
         subsidiaryId: subsidiary.id,
         locationId: spec.location.id,
@@ -1008,14 +1012,10 @@ const LOCATION_ACTIVITY = [
         // Three months per site (LOCATION_MONTHS) means this series never
         // reaches a full window today: 0, then 1, then 2 priors. That is not a
         // gap in the seed — it is what a site's first quarter genuinely looks
-        // like, and the surfaces now say "not evaluated" rather than "clean".
-        // The average is DERIVED rather than hardcoded null: a fourth month
-        // would otherwise ship a record claiming three priors and no baseline,
-        // which is the row the migration's third guard refuses.
-        anomalyBaselinePriorCount: siteWrittenTCo2e.slice(-ANOMALY_BASELINE_PERIODS).length,
-        anomalyBaselineTCo2e: rollingBaseline(
-          siteWrittenTCo2e.slice(-ANOMALY_BASELINE_PERIODS),
-        ),
+        // like: the first month is not evaluated, the next two are judged on
+        // limited history, and the surfaces say which.
+        anomalyBaselinePriorCount: siteVerdict.priorCount,
+        anomalyBaselineTCo2e: siteVerdict.baseline,
         varianceReason: null,
       });
       activityCount++;

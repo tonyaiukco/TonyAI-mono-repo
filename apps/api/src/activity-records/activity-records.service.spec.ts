@@ -2572,9 +2572,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
   it('does not flag a value within 50% of the baseline', async () => {
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-    // Baseline avg = 15; current = 19.8 → +32% → within threshold. Three priors,
-    // deliberately: with two this would pass because the rule never RAN, which
-    // is a different claim from the one the test makes.
+    // Baseline avg = 15; current = 19.8 → +32% → within threshold.
     prisma.activityRecord.findMany.mockResolvedValue([
       priorMonth('December', 15, 2023),
       priorMonth('January', 15),
@@ -2703,13 +2701,16 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     expect(data.anomalyBaselineTCo2e).toBe(10);
   });
 
-  it('does not evaluate a value scored on fewer than three priors, and records how many it had', async () => {
+  // BUG-R2-07 (2026-11-11): one or two priors are a limited-history verdict.
+  // From 2026-08-27 until then this exact case asserted the opposite — flag
+  // false, average null — because the rule needed three.
+  it('judges a value on two priors against their average, and records how many it had', async () => {
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-    // 19.8 against an average of 10 is +98% — the old rule flagged exactly this.
+    // 19.8 against an average of 10 is +98%.
     prisma.activityRecord.findMany.mockResolvedValue([
-      priorMonth('January', 10),
-      priorMonth('February', 10),
+      priorMonth('January', 8),
+      priorMonth('February', 12),
     ]);
     prisma.activityRecord.create.mockImplementation(({ data }: any) =>
       makeRecord({ ...data, id: 'rec-new' }),
@@ -2718,14 +2719,50 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     const dto = await service.create(dataEntry(), MONTHLY_DTO);
 
     const { data } = prisma.activityRecord.create.mock.calls[0][0];
-    expect(data.anomalyFlag).toBe(false);
+    expect(data.anomalyFlag).toBe(true);
     expect(data.anomalyBaselinePriorCount).toBe(2);
-    // Null, not the two-period average: a number here would be an average no
-    // rule used, and a screen would show it as the thing the value was judged
-    // against.
-    expect(data.anomalyBaselineTCo2e).toBeNull();
+    // The average the rule USED, so a screen can show what the value was
+    // judged against — and the count beside it says it was only two periods.
+    expect(data.anomalyBaselineTCo2e).toBe(10);
+    expect(dto.anomalyFlag).toBe(true);
     expect(dto.anomalyBaselinePriorCount).toBe(2);
-    expect(dto.anomalyBaselineTCo2e).toBeNull();
+    expect(dto.anomalyBaselineTCo2e).toBe(10);
+  });
+
+  it.each([
+    [10, true], // +98%
+    [15, false], // +32%
+    [45, true], // -56%: a collapse against the only period there is
+  ])('judges a value on ONE prior of %d → flag %s', async (prior, flagged) => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', prior)]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), MONTHLY_DTO);
+
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(flagged);
+    expect(data.anomalyBaselinePriorCount).toBe(1);
+    expect(data.anomalyBaselineTCo2e).toBe(prior);
+  });
+
+  it('does not flag against a single prior of zero — there is no ratio to take', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 0)]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), MONTHLY_DTO);
+
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(false);
+    expect(data.anomalyBaselinePriorCount).toBe(1);
+    expect(data.anomalyBaselineTCo2e).toBe(0);
   });
 
   it('persists the baseline it judged against when the window is full', async () => {
@@ -2747,11 +2784,13 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     expect(dto.anomalyFlag).toBe(true); // 19.8 vs 10 → +98%
   });
 
-  it('a prior without a figure consumes a slot, leaving the window short', async () => {
+  it('a prior without a figure consumes a slot, leaving the window on limited history', async () => {
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
     prisma.activityRecord.findMany.mockResolvedValue([
-      priorMonth('November', 10, 2023), // older — must NOT be pulled in to fill the gap
+      // Older — must NOT be pulled in to fill the gap. 100, so that pulling it
+      // in would move the average to 40 and clear the flag.
+      priorMonth('November', 100, 2023),
       priorMonth('December', 10, 2023),
       priorMonth('January', 10),
       // An invoice-tracked category with no factor: stored, committed, and
@@ -2769,11 +2808,12 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
 
     await service.create(dataEntry(), MONTHLY_DTO);
 
-    // Two figures out of three slots → the rule does not run, even though a
+    // Two figures out of three slots → judged on those two, even though a
     // fourth comparable period exists just outside the window.
     const { data } = prisma.activityRecord.create.mock.calls[0][0];
     expect(data.anomalyBaselinePriorCount).toBe(2);
-    expect(data.anomalyFlag).toBe(false);
+    expect(data.anomalyBaselineTCo2e).toBe(10);
+    expect(data.anomalyFlag).toBe(true); // 19.8 vs 10
   });
 
   it('reports a full window that averages to zero rather than hiding it', async () => {
@@ -2988,6 +3028,88 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(true);
   });
 
+  // BUG-R2-07: a flag on limited history is the same gate, not a softer one.
+  it.each([
+    ['one prior', () => [priorMonth('February', 10)]],
+    ['two priors', () => [priorMonth('January', 8), priorMonth('February', 12)]],
+  ])('blocks submit of a value anomalous against %s when there is no comment', async (_label, priors) => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit());
+    prisma.activityRecord.findMany.mockResolvedValue(priors());
+
+    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(
+      VarianceReasonRequiredError,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('allows that submit once a variance comment is present, and stores the one-period verdict', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit({ varianceReason: 'New line commissioned' }));
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 10)]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', ...data }));
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    const { data } = prisma.activityRecord.update.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(true);
+    expect(data.anomalyBaselinePriorCount).toBe(1);
+    expect(data.anomalyBaselineTCo2e).toBe(10);
+  });
+
+  it('judges a draft saved as "not checked" against a prior committed since', async () => {
+    // The draft was saved when its series was empty, so it stores count 0 and
+    // no flag. A period before it has been submitted in the meantime. The gate
+    // must read today's pool, not the verdict the draft carries.
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      draftForSubmit({ anomalyFlag: false, anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 10)]);
+
+    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(
+      VarianceReasonRequiredError,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('does not block submit against a single prior of zero', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit());
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 0)]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', ...data }));
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
+  });
+
+  it('approve does not check the flag: a flagged record with no comment is approved', async () => {
+    // The gate is at submit. Approve reads no pool and asks for no reason, so a
+    // record flagged on any basis is the reviewer's to judge, not the API's to
+    // refuse — which is why the flag must not get past submit unexplained.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-a',
+        status: ActivityRecordStatus.submitted,
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 10,
+        varianceReason: null,
+      }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 10)]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-a', status: data.status }),
+    );
+
+    const dto = await service.approve(superAdmin(), 'rec-a');
+    expect(dto.status).toBe(ActivityRecordStatus.approved);
+  });
+
   // The provenance is written at THREE moments, and until these two tests
   // existed only the first was asserted: dropping the write at update or at
   // submit, or hardcoding it, left the whole suite green. Each test arranges a
@@ -3032,12 +3154,13 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       draftForSubmit({ anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 99 }),
     );
-    // Two priors now — fewer than the record claims to have been scored on, and
-    // fewer than the rule needs. Both halves of the stale claim must be
-    // replaced, not just the flag.
+    // Two priors now — fewer than the record claims to have been scored on,
+    // with a different average. Both halves of the stale claim must be
+    // replaced, not just the flag. 15 each, so 19.8 is within range (+32%) and
+    // the submit is not refused for a missing comment.
     prisma.activityRecord.findMany.mockResolvedValue([
-      priorMonth('January', 10),
-      priorMonth('February', 10),
+      priorMonth('January', 15),
+      priorMonth('February', 15),
     ]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) =>
       makeRecord({ id: 'rec-s', ...data }),
@@ -3047,6 +3170,26 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
 
     const { data } = prisma.activityRecord.update.mock.calls[0][0];
     expect(data.anomalyBaselinePriorCount).toBe(2);
+    expect(data.anomalyBaselineTCo2e).toBe(15);
+    expect(data.anomalyFlag).toBe(false);
+  });
+
+  it('submit clears a stale full-window claim when no earlier period is left', async () => {
+    // The priors the record was scored on have since been voided. The stored
+    // count and average must both go, not survive beside a fresh flag.
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      draftForSubmit({ anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 99 }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-s', ...data }),
+    );
+
+    await service.submit(dataEntry(), 'rec-s');
+
+    const { data } = prisma.activityRecord.update.mock.calls[0][0];
+    expect(data.anomalyBaselinePriorCount).toBe(0);
     expect(data.anomalyBaselineTCo2e).toBeNull();
     expect(data.anomalyFlag).toBe(false);
   });

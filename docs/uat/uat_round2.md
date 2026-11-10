@@ -227,23 +227,36 @@ correctly invisible.
 
 ### 4.7 The anomaly check says what it judged against (WP21)
 
-The rule needs **three** prior committed periods. Fewer than three means the rule
-**did not run** — reported as *not evaluated*, which is a different claim from
-*not anomalous*.
+The rule compares a record with the average of its **three** most recent prior
+committed periods. Since 2026-11-11 (BUG-R2-07) **one or two** are enough: the
+record is then checked on *limited history*, and every screen says so. With no
+prior period the rule **does not run** — reported as *not evaluated*, which is a
+different claim from *not anomalous*. Limits for that first period (a
+plausibility range, a manual flag) are not built yet; they are a separate
+decision (K4).
+
+A record that was committed **before** this change with one or two priors keeps
+its old verdict: *not checked*, with a sentence saying it was scored when three
+periods were needed. A database seeded before the change shows that sentence
+where a freshly seeded one shows a limited-history verdict; ANOM-02 gives both.
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| ANOM-01 | `/emissions` → **History** → open **TonyAI Energy · Electricity · January 2026**. *(The list does not show which site a row belongs to — the panel's **Reporting Entity** field does, and it must read **Istanbul HQ**. January is unique: the company's own series starts in April.)* | The panel states: *"No earlier committed period exists for this reporting entity, so there is no history to compare against. The check needs 3."* | |
-| ANOM-02 | Open **March 2026** for the same site | *"Only 2 earlier committed periods exist for this reporting entity; the check needs 3."* | |
+| ANOM-01 | `/emissions` → **History** → open **TonyAI Energy · Electricity · January 2026**. *(The list does not show which site a row belongs to — the panel's **Reporting Entity** field does, and it must read **Istanbul HQ**. January is unique: the company's own series starts in April.)* | The panel states: *"No earlier committed period exists for this reporting entity, so there is no history to compare against."* It does not say that three periods are needed | |
+| ANOM-02 | Open **March 2026** for the same site | On a database seeded after 2026-11-11: *"Compared against 17.6 tCO₂e, the average of the 2 earlier periods for this reporting entity, and within 50%. The check rests on limited history (2 periods)."* On one seeded before: *"This entry was scored when the check needed 3 earlier committed periods. It had fewer (2), so it was not checked."* | |
 | ANOM-03 | Open a record with a full history (e.g. TonyAI Gas · Electricity · June 2026) | It names the average it was compared against — a number, not just a verdict | |
 | ANOM-04 | Open **TonyAI Logistics · Fuel · July 2026** (the one seeded anomaly) | Flagged, and the text names the historical average it deviates from and the >50% threshold | |
 | ANOM-05 | As `entry@tonyai.local`: **TonyAI Energy · Location = Istanbul HQ · Electricity · April 2026**, enter ~**400,000** kWh → Save draft | Amber banner naming the average it deviates from (that site has three priors at 17.6 tCO₂e), and a mandatory **Reason for variance** — submit is blocked until it is filled. *(Pick that exact series: most other 2026 months are already taken, and the free ones have no history to deviate from.)* | |
-| ANOM-06 | Export CSV and read the `anomaly_flag` column (**do §4.4 first**, or the `Withdrawn` reading will not appear) | Five distinct readings: `yes`, blank (checked and clean), `Not evaluated (n of 3 priors)`, `Not evaluated (no figure)` — for a category that produces no tonnage, so §4.8's Water record — and `Withdrawn`. A blank must never be confused with "never checked" | |
+| ANOM-06 | Export CSV and read the `anomaly_flag` column (**do §4.4 first**, or the `Withdrawn` reading will not appear) | Distinct readings: `yes`, blank (checked against a full history and clean), `within range (limited history: n periods)`, `Not evaluated (no earlier period)`, `Not evaluated (scored before the short-history check)` on a database seeded before 2026-11-11, `Not evaluated (no figure)` — for a category that produces no tonnage, so §4.8's Water record — and `Withdrawn`. After ANOM-08 the column also holds `yes (limited history: 1 period)`. A blank must never be confused with "never checked", nor with "checked against one period" | |
 | ANOM-07 | Judge the wording | Does *"Not checked for anomalies"* read as reassuring or as a warning? It is meant as neither — it is a statement of what the system does not know | |
+| ANOM-08 | The short-history check (BUG-R2-07). As `entry@tonyai.local`, pick a **quarterly** series that holds no record yet (the seed writes monthly records only), for example **TonyAI Logistics · Electricity · Quarterly · Q1 2026**. Enter **10,000** kWh, attach a file and submit. Then enter **Q2** for the same series at **20,000** kWh → Save draft | Q1 saves as *"Not checked for anomalies"* (no earlier period). Q2 shows the amber banner: compared against the only earlier period, a deviation of more than 50%, *"The check rests on limited history (1 period)"*, with a mandatory **Reason for variance**. Submit is refused until the reason is filled, then succeeds | |
+| ANOM-09 | For the same series enter **Q3** at **14,000** kWh → Save draft | No amber banner. A neutral note: *"Within range on limited history"*, compared against the average of the 2 earlier periods | |
+| ANOM-10 | As `review@tonyai.local`, open the Q2 record of ANOM-08 in `/review`; then open the tracking matrix as `admin@tonyai.local` | The review sheet shows the flag, the same limited-history sentence and the author's reason. The matrix cell for that series is amber, as for any flag | |
 
-> **A short history deliberately does not turn a cell amber.** The first months of
-> any new site are always short. If you think a tester would read the green as
-> *"checked"*, tell us — that is a decision we would revisit.
+> **A record that was not checked deliberately does not turn a cell amber.** The
+> first period of any new series has nothing to be compared with. If you think a
+> tester would read the green as *"checked"*, tell us — that is a decision we
+> would revisit. A **flag** on limited history does turn the cell amber.
 
 ### 4.8 A category with no emission factor (WP17)
 

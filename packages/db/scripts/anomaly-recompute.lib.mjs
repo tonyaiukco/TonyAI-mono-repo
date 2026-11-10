@@ -21,6 +21,7 @@ import {
   COUNTED_STATUSES,
   canonicalPeriodValue,
   isCalculated,
+  isLegacyShortWindowVerdict,
   PERIOD_VALUES,
 } from '@tonyai/shared-types';
 
@@ -117,6 +118,23 @@ export function freshVerdict(item, pools) {
       .map((p) => p.tCo2e),
   );
 }
+
+/**
+ * A verdict this tool leaves as it is although the rule would now give another.
+ *
+ * Until 2026-11-11 a window of one or two priors was not evaluated, and a
+ * committed record scored then still says so (a count of 1–2 beside a null
+ * average). The rule changed underneath it; its pool did not. Re-scoring it
+ * would put a flag on a record whose author never saw the warning and never
+ * explained it — a state the API cannot produce, on a record already in front
+ * of a reviewer or already approved (owner decision 2026-11-11, BUG-R2-07).
+ * So it is neither repaired nor counted as drift.
+ *
+ * Only COMMITTED records: a draft or a rejected record is re-scored at its
+ * next save or submit anyway, so re-scoring it here says nothing new.
+ */
+export const keepsLegacyVerdict = (row) =>
+  COUNTED_STATUSES.includes(row.status) && isLegacyShortWindowVerdict(row);
 
 export const storedVerdict = (row) => ({
   anomalous: row.anomalyFlag,

@@ -4039,24 +4039,28 @@ export interface ActivityRecordDTO {
    *
    * `anomalyFlag: false` is not one claim but three — "clean against three
    * priors", "clean against fewer", and "never evaluated" — and until these
-   * fields existed nothing on the wire could tell them apart. **THREE STATES:**
+   * fields existed nothing on the wire could tell them apart. **THE COUNT:**
    *
    * - `null` — the pool was never queried, because the record carries no figure
    *   of its own. It may still sit on a full year of neighbours: "has no figure"
    *   and "has no priors" are different facts about different rows, and a `0`
    *   for both forced every reader outside TypeScript to re-implement
    *   `isCalculated()` to separate them.
-   * - `0`–`2` — a short window. The rule did NOT run; the record is *not
+   * - `0` — no earlier period. The rule did NOT run; the record is *not
    *   evaluated*, which is not the same claim as *not anomalous*.
-   * - `ANOMALY_BASELINE_PERIODS` — evaluated, and `anomalyBaselineTCo2e` is the
-   *   average it was judged against.
+   * - `1`–`2` — evaluated on LIMITED history (BUG-R2-07, 2026-11-11), and
+   *   `anomalyBaselineTCo2e` is the average of those periods.
+   * - `ANOMALY_BASELINE_PERIODS` — evaluated on a full window.
    *
-   * `anomalyBaselineTCo2e` is non-null exactly when the count is
-   * `ANOMALY_BASELINE_PERIODS`. **A value of `0` there is a fourth state**: a
-   * full window whose average is zero yields no ratio, so the verdict is vacuous
-   * rather than clean — 500 tCO₂e against three zero priors is reported
-   * identically to a value in line with its history. Present it as *not
-   * evaluated*, never as a baseline that was met.
+   * `anomalyBaselineTCo2e` is non-null whenever the count is at least
+   * `ANOMALY_MIN_PRIORS`, with ONE exception: a count of `1`–`2` beside a null
+   * average is a verdict written before the short-history check existed, when
+   * such a window was not evaluated (`isLegacyShortWindowVerdict`). **A value
+   * of `0` is a further state**: an average of zero yields no ratio, so the
+   * verdict is vacuous rather than clean — 500 tCO₂e against zero priors is
+   * reported identically to a value in line with its history. Present it as
+   * *not evaluated*, never as a baseline that was met. Read these through
+   * `anomalyBasis()` and `isAnomalyEvaluated()`, never by hand.
    *
    * Not to be confused with `TargetDTO.baselineTCo2e`, which is a reduction
    * target's baseline-YEAR emissions and an unrelated quantity. Hence the
@@ -4443,15 +4447,8 @@ export const ANOMALY_THRESHOLD = 0.5;
 
 /**
  * VAR §4.1 — the rolling average is over the previous 3 comparable periods.
- * This is BOTH the window and the requirement: fewer than three priors with a
- * figure means the rule does not run.
- *
- * The implementation used to take "up to 3, minimum 1", which the spec does not
- * sanction and no surface disclosed: the gate degraded from a three-period
- * average to a single-period comparison with nothing recording that it had.
- * Measured before the change (`pnpm anomaly:probe`), 30 of 96 committed records
- * sat below three and NONE of them was flagged — so applying the spec literally
- * moved no figure, only what the absence of a flag is allowed to mean.
+ * This is the WINDOW: the rule never looks further back, and a window holding
+ * three figures is a full-history verdict.
  *
  * Both numbers live here rather than in `activity-records.service.ts` because
  * the API is no longer the only thing that has to state the rule: a screen that
@@ -4459,6 +4456,21 @@ export const ANOMALY_THRESHOLD = 0.5;
  * second copy in `apps/web` is how the two halves come to disagree.
  */
 export const ANOMALY_BASELINE_PERIODS = 3;
+
+/**
+ * The fewest figures the window must hold for the rule to run (BUG-R2-07,
+ * owner decision 2026-11-11). One or two is a LIMITED-history verdict: the same
+ * threshold against the average of what is there, and every surface says so.
+ *
+ * From 2026-08-27 to 2026-11-11 this was three ("three priors, or the rule does
+ * not run"), chosen because the earlier "up to 3, minimum 1" degraded the gate
+ * to a single-period comparison with nothing recording that it had. What was
+ * missing then was the disclosure, not the comparison: a business in its first
+ * year, a quarterly reporter until its fourth quarter and an annual category
+ * until its fourth year were never checked at all. The count beside every
+ * verdict is what makes the short window sayable — see `anomalyBasis`.
+ */
+export const ANOMALY_MIN_PRIORS = 1;
 
 /**
  * The VAR §4 outcome AND what it was decided against.
@@ -4475,7 +4487,8 @@ export interface AnomalyVerdict {
   /** Comparable periods that carried a figure, 0..`ANOMALY_BASELINE_PERIODS` —
    *  or null when the pool was never queried at all. */
   priorCount: number | null;
-  /** The rolling average — non-null exactly when the rule ran on a full window. */
+  /** The average of those periods — non-null exactly when there were at least
+   *  `ANOMALY_MIN_PRIORS` of them. Zero means no ratio could be taken. */
   baseline: number | null;
 }
 
@@ -4494,8 +4507,8 @@ export function anomalyNotEvaluated(priorCount: number | null = null): AnomalyVe
  * caller's job (it needs a database); judging it is this function's.
  *
  * The split matters: the caller can be a Prisma query or a script holding rows
- * in memory, and neither may re-derive the window, the drop rule, the strict
- * three, the zero-baseline case or the threshold comparison. Reimplementing the
+ * in memory, and neither may re-derive the window, the drop rule, the minimum,
+ * the zero-baseline case or the threshold comparison. Reimplementing the
  * fold is how two writers of the same column come to disagree by a ULP — which
  * was measured, at 3.6e-16, between this arithmetic and Postgres's `avg()`.
  */
@@ -4507,19 +4520,19 @@ export function computeAnomalyVerdict(
     .slice(0, ANOMALY_BASELINE_PERIODS)
     // Dropped, not zero-filled: a zero would deflate the average and
     // manufacture a false anomaly. The slot it occupied is still spent, which
-    // is what leaves the window short below.
+    // is what can leave the window short below.
     .filter((v): v is number => v !== null);
 
-  // VAR §4.1 requires the previous THREE periods, so a short window means the
-  // rule does not run rather than running on whatever is left. The count is
-  // reported either way: it is the difference between "checked and clean" and
-  // "never checked".
-  if (priorValues.length < ANOMALY_BASELINE_PERIODS) {
+  // No figure to compare with means the rule does not run. One or two is a
+  // limited-history verdict rather than none (`ANOMALY_MIN_PRIORS`). The count
+  // is reported either way: it is the difference between "checked and clean",
+  // "checked on less" and "never checked".
+  if (priorValues.length < ANOMALY_MIN_PRIORS) {
     return anomalyNotEvaluated(priorValues.length);
   }
   const baseline = priorValues.reduce((sum, v) => sum + v, 0) / priorValues.length;
-  // A full window averaging to zero yields no ratio. Still REPORTED rather than
-  // nulled: three priors that are all zero is a fact about the series.
+  // An average of zero yields no ratio. Still REPORTED rather than nulled:
+  // priors that are all zero is a fact about the series.
   if (baseline === 0) {
     return { anomalous: false, priorCount: priorValues.length, baseline };
   }
@@ -4535,28 +4548,81 @@ export function computeAnomalyVerdict(
  *
  * One predicate everywhere, for the same reason `isCalculated()` is one: the
  * question has four wrong answers and they all look like `anomalyFlag: false`.
- * A record is evaluated only when the window was full AND the average it was
- * judged against is a usable divisor:
+ * A record is evaluated only when the window held at least one figure AND the
+ * average it was judged against is a usable divisor:
  *
  * - `anomalyBaselinePriorCount === null` — no figure of its own, no pool queried.
- * - `< ANOMALY_BASELINE_PERIODS` — a short window; VAR §4.1 needs three.
- * - `anomalyBaselineTCo2e === null` — the average was never taken.
- * - `anomalyBaselineTCo2e === 0` — a full window that averages to zero yields no
- *   ratio, so the verdict is vacuous: 500 tCO₂e against three zero priors reads
- *   exactly like a value in line with its history. The subtlest of the four,
- *   and the one a hand-written check at a call site would miss.
+ * - `< ANOMALY_MIN_PRIORS` — no earlier period to compare with.
+ * - `anomalyBaselineTCo2e === null` — the average was never taken. With a count
+ *   of one or two this is a verdict from before the short-history check
+ *   (`isLegacyShortWindowVerdict`), which did not evaluate such a window.
+ * - `anomalyBaselineTCo2e === 0` — an average of zero yields no ratio, so the
+ *   verdict is vacuous: 500 tCO₂e against zero priors reads exactly like a
+ *   value in line with its history. The subtlest of the four, and the one a
+ *   hand-written check at a call site would miss.
  *
  * When this is false, "not anomalous" is not a claim anyone made — and any
- * surface that renders a blank, a tick or a green cell is overstating.
+ * surface that renders a blank, a tick or a green cell is overstating. When it
+ * is true, `anomalyBasis` says HOW MUCH history the claim rests on.
  */
 export function isAnomalyEvaluated(record: {
   anomalyBaselinePriorCount: number | null;
   anomalyBaselineTCo2e: number | null;
 }): boolean {
+  const priors = record.anomalyBaselinePriorCount;
   return (
-    record.anomalyBaselinePriorCount === ANOMALY_BASELINE_PERIODS &&
+    priors !== null &&
+    priors >= ANOMALY_MIN_PRIORS &&
+    // Not above the window: a count the rule cannot produce means its writer
+    // disagrees with this reader, and "evaluated" is the wrong conclusion to
+    // draw from a contradiction.
+    priors <= ANOMALY_BASELINE_PERIODS &&
     record.anomalyBaselineTCo2e !== null &&
     record.anomalyBaselineTCo2e !== 0
+  );
+}
+
+/** How much history an evaluated verdict rests on. */
+export type AnomalyBasis = 'full' | 'limited';
+
+/**
+ * What an evaluated verdict was taken against — `full` for a window of
+ * `ANOMALY_BASELINE_PERIODS` figures, `limited` for fewer — or null when the
+ * rule did not run (`isAnomalyEvaluated` is false).
+ *
+ * Derived from the stored count, not stored beside it: a column would say
+ * nothing the count does not. A verdict on one period is a weaker claim than
+ * one on three, and a surface that words them alike is overstating the first —
+ * which is exactly what the 2026-08-27 rule was written to prevent.
+ */
+export function anomalyBasis(record: {
+  anomalyBaselinePriorCount: number | null;
+  anomalyBaselineTCo2e: number | null;
+}): AnomalyBasis | null {
+  if (!isAnomalyEvaluated(record)) return null;
+  return record.anomalyBaselinePriorCount === ANOMALY_BASELINE_PERIODS ? 'full' : 'limited';
+}
+
+/**
+ * Is this a verdict written BEFORE the short-history check existed?
+ *
+ * A count of one or two beside a null average can have no other author: the
+ * rule now always stores an average once the window holds a figure. Such a
+ * record was not evaluated, and it is NOT re-scored because the rule changed
+ * (owner decision 2026-11-11) — a committed record would otherwise gain a flag
+ * its author never saw and never explained. It says so instead, and the
+ * consistency tools report it as a known difference rather than as drift.
+ */
+export function isLegacyShortWindowVerdict(record: {
+  anomalyBaselinePriorCount: number | null;
+  anomalyBaselineTCo2e: number | null;
+}): boolean {
+  const priors = record.anomalyBaselinePriorCount;
+  return (
+    priors !== null &&
+    priors >= ANOMALY_MIN_PRIORS &&
+    priors < ANOMALY_BASELINE_PERIODS &&
+    record.anomalyBaselineTCo2e === null
   );
 }
 

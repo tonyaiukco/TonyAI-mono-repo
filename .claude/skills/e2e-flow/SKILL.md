@@ -27,6 +27,9 @@ in `e2e/helpers.ts`.
   exhausts a bucket a file of its own.
 - **One subsidiary (or period value) per test.** Distinct tuples avoid the `NULLS NOT DISTINCT` 409 and
   keep anomaly baselines from bleeding across tests (the baseline is per subsidiary+category+period).
+  **One committed earlier period is enough to raise a flag** (since 2026-11-11): a second committed
+  record in someone else's series, more than 50% away, is refused at submit for a missing variance
+  reason. Check the lane for committed records before you add one, and delete yours in `finally`.
 - **Arrange heavy state via the API, act via the UI.** Building a committed record (draft → evidence →
   submit) or an anomaly baseline through the UI is slow/flaky — use `createCommittedRecord`. Every
   Scope 1 and 2 category (and Water) is evidence-required since K3, at submit AND approve, so committing

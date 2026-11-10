@@ -20,6 +20,7 @@ import {
   isLocale,
   FACTOR_STATUS_RANK,
   isAnomalyEvaluated,
+  isLegacyShortWindowVerdict,
   isAuthoritativeSnapshot,
   isCalculated,
   isProvenanceSnapshot,
@@ -583,6 +584,7 @@ export class ReportsService {
         anomalyFlag: r.anomalyFlag,
         anomalyEvaluated: isAnomalyEvaluated(r),
         anomalyBaselinePriorCount: r.anomalyBaselinePriorCount,
+        anomalyLegacy: isLegacyShortWindowVerdict(r),
       };
     };
 

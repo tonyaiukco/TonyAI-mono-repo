@@ -891,8 +891,9 @@ describe('EmissionsService.trackingMatrix', () => {
     prisma.activityRecord.findMany.mockResolvedValue([
       // Evaluated and clean.
       makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity' }),
-      // A short window — the rule did not run. Before WP21 this was
-      // indistinguishable from the row above on every surface.
+      // A verdict kept from before the short-history check (count without an
+      // average): the rule did not run on it and it is not re-scored. Before
+      // WP21 this was indistinguishable from the row above on every surface.
       makeRecord({
         subsidiaryId: 'sub-1',
         category: 'Electricity',
@@ -935,11 +936,82 @@ describe('EmissionsService.trackingMatrix', () => {
 
     expect(cell.notEvaluatedRecordCount).toBe(2);
     expect(cell.uncalculatedRecordCount).toBe(1);
-    // Deliberately NOT a cap (decision 2026-08-27): a short window is the
-    // normal state of a new series' first months, and amber-forever is not a
+    // Deliberately NOT a cap (decision 2026-08-27): an unchecked record is the
+    // normal state of a new series' first period, and amber-forever is not a
     // warning. The count is the disclosure; the colour is not.
     expect(cell.anomaly).toBe(false);
     expect(cell.status).not.toBe('missing');
+  });
+
+  // BUG-R2-07 (2026-11-11): a record checked on one or two periods IS checked.
+  it('counts only unchecked records: a limited-history verdict leaves the not-evaluated count', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      // The first period of the series: nothing to compare with.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'January',
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+      // Checked on one period, and on two: clean on limited history.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'February',
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 9,
+      }),
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'March',
+        anomalyBaselinePriorCount: 2,
+        anomalyBaselineTCo2e: 9.5,
+      }),
+      // One period that averages zero: a count and an average, and no ratio.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'April',
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 0,
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    expect(cell.notEvaluatedRecordCount).toBe(2); // January and April
+    expect(cell.anomaly).toBe(false);
+  });
+
+  it('turns the cell amber for a flag on limited history, exactly as for any flag', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'February',
+        status: ActivityRecordStatus.submitted,
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 4,
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    expect(cell.anomaly).toBe(true);
+    expect(cell.notEvaluatedRecordCount).toBe(0);
   });
 
   it('returns an empty matrix for an empty accessible set without hitting the DB', async () => {

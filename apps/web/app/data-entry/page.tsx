@@ -1944,13 +1944,15 @@ function DataEntryPageInner() {
               )}
 
               {/* The other half of VAR §4, and the half that was invisible: a
-                  saved record the rule could NOT run on. Rendering nothing here
-                  told the author "fine" about a value nobody checked. Neutral,
-                  not amber — a short window is the normal state of a new
-                  series' first months and is not something to act on. */}
+                  saved record the rule could NOT run on, or ran on with only
+                  one or two earlier periods. Rendering nothing here told the
+                  author "fine" about a value nobody checked, or checked on
+                  less than it looks. Neutral, not amber — this is the normal
+                  state of a new series' first months and is not something to
+                  act on. */}
               {editingId !== null &&
                 !anomalyFlag &&
-                anomalyStatement(verdict, tAnomaly, locale).tone === "not_evaluated" && (
+                anomalyStatement(verdict, tAnomaly, locale).qualified && (
                   <Card className="border-slate-200 bg-slate-50/60">
                     <CardContent className="flex items-start gap-2 pt-5 text-sm text-slate-600">
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />

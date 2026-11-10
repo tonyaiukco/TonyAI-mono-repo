@@ -7,6 +7,7 @@ import {
   freshVerdict,
   indexRecord,
   isLoopback,
+  keepsLegacyVerdict,
   lockKey,
   parseArgs,
   parseHost,
@@ -240,6 +241,65 @@ describe('freshVerdict', () => {
       priorCount: null,
       baseline: null,
     });
+  });
+});
+
+// BUG-R2-07 (2026-11-11): one or two priors are judged, on limited history.
+describe('freshVerdict on a short window', () => {
+  const pool = (rows) => buildPools(rows.map(indexRecord));
+  const prior = (periodValue, tCo2e) =>
+    rec({ id: `p-${periodValue}`, periodValue, status: 'approved', calculation: { factorId: 'f-1', tCo2e } });
+
+  it('judges a record against ONE committed prior', () => {
+    const subject = indexRecord(
+      rec({ id: 'subject', periodValue: 'February', calculation: { factorId: 'f-1', tCo2e: 19.8 } }),
+    );
+    expect(freshVerdict(subject, pool([prior('January', 10)]))).toEqual({
+      anomalous: true,
+      priorCount: 1,
+      baseline: 10,
+    });
+  });
+
+  it('averages TWO committed priors', () => {
+    const subject = indexRecord(
+      rec({ id: 'subject', periodValue: 'March', calculation: { factorId: 'f-1', tCo2e: 14 } }),
+    );
+    expect(freshVerdict(subject, pool([prior('January', 8), prior('February', 12)]))).toEqual({
+      anomalous: false,
+      priorCount: 2,
+      baseline: 10,
+    });
+  });
+});
+
+describe('verdicts scored before the short-history check', () => {
+  const legacy = (over = {}) =>
+    rec({ anomalyFlag: false, anomalyBaselinePriorCount: 2, anomalyBaselineTCo2e: null, ...over });
+
+  it.each(['submitted', 'under_review', 'approved', 'locked'])(
+    'keeps one on a %s record: the rule changed, its pool did not',
+    (status) => {
+      expect(keepsLegacyVerdict(legacy({ status }))).toBe(true);
+      expect(keepsLegacyVerdict(legacy({ status, anomalyBaselinePriorCount: 1 }))).toBe(true);
+    },
+  );
+
+  it.each(['draft', 'rejected'])('re-scores one on a %s record, as its next save would', (status) => {
+    expect(keepsLegacyVerdict(legacy({ status }))).toBe(false);
+  });
+
+  it('does not keep a verdict the current rule wrote', () => {
+    // A count of 1–2 WITH an average is a limited-history verdict. If its pool
+    // has moved it is ordinary drift, to be repaired or refused like any other.
+    expect(keepsLegacyVerdict(legacy({ status: 'submitted', anomalyBaselineTCo2e: 10 }))).toBe(false);
+    expect(keepsLegacyVerdict(legacy({ status: 'approved', anomalyBaselineTCo2e: 0 }))).toBe(false);
+  });
+
+  it.each([null, 0, 3])('does not keep a verdict with a count of %s', (count) => {
+    expect(
+      keepsLegacyVerdict(legacy({ status: 'approved', anomalyBaselinePriorCount: count })),
+    ).toBe(false);
   });
 });
 

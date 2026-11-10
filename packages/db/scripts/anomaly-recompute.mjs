@@ -71,6 +71,7 @@ import {
   freshVerdict,
   indexRecord,
   isLoopback,
+  keepsLegacyVerdict,
   lockKey,
   parseArgs,
   parseHost,
@@ -166,7 +167,14 @@ async function main() {
   const pools = buildPools(records.map(indexRecord));
 
   const stale = [];
+  let keptLegacy = 0;
   for (const item of scoreable) {
+    // Scored before the short-history check and committed since: kept as it
+    // is, and not drift (see `keepsLegacyVerdict`).
+    if (keepsLegacyVerdict(item.row)) {
+      keptLegacy++;
+      continue;
+    }
     const stored = storedVerdict(item.row);
     const fresh = freshVerdict(item, pools);
     if (verdictsAgree(stored, fresh)) continue;
@@ -180,6 +188,12 @@ async function main() {
         : '') +
       `; ${stale.length} carry a stale verdict.`,
   );
+  if (keptLegacy > 0) {
+    console.log(
+      `${keptLegacy} committed record(s) were scored before the short-history check ` +
+        `(2026-11-11) and keep that verdict: not re-scored, not drift.`,
+    );
+  }
   if (stale.length === 0) {
     console.log('\nNothing to repair.');
     return exitCodeFor({ stale: 0, unrepairable: 0, skipped: 0, applied: apply });

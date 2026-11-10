@@ -573,18 +573,44 @@ describe('ReportsService', () => {
   });
 
   it('the anomaly column says "not evaluated" instead of leaving a blank the rule never earned', async () => {
-    // A blank in that column has always meant "checked, nothing unusual".
-    // Since the rule needs three priors, a blank would also cover "never
-    // checked" — 30 of 96 committed records on the dev database — inside the
+    // A blank in that column has always meant "checked, nothing unusual". A
+    // blank that also covered "never checked" would make that claim inside the
     // artifact an auditor keeps. Same instinct as `Not calculated`.
     stubRecords(prisma, [
       makeRecord({ id: 'rec-clean' }),
       makeRecord({ id: 'rec-flagged', periodValue: 'February', anomalyFlag: true }),
+      // A count without an average: scored before the short-history check
+      // (2026-11-11), when two priors were not evaluated. Kept, not re-scored.
       makeRecord({
-        id: 'rec-thin',
+        id: 'rec-scored-before',
         periodValue: 'March',
         anomalyBaselinePriorCount: 2,
         anomalyBaselineTCo2e: null,
+      }),
+      makeRecord({
+        id: 'rec-first',
+        periodValue: 'June',
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+      makeRecord({
+        id: 'rec-limited-flagged',
+        periodValue: 'July',
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 4,
+      }),
+      makeRecord({
+        id: 'rec-limited-clean',
+        periodValue: 'August',
+        anomalyBaselinePriorCount: 2,
+        anomalyBaselineTCo2e: 9,
+      }),
+      makeRecord({
+        id: 'rec-limited-zero',
+        periodValue: 'September',
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 0,
       }),
       makeRecord({
         id: 'rec-no-figure',
@@ -606,14 +632,27 @@ describe('ReportsService', () => {
 
     // Checked and clean: still a blank, as it always was.
     expect(cellFor('January')).toContain('');
-    expect(rows.find((r) => r.includes('February'))).toContain('yes');
-    // ...and the three absences each say which one they are, because "no
-    // figure to compare" and "not enough history" have different remedies.
-    expect(rows.find((r) => r.includes('March'))).toContain('Not evaluated (2 of 3 priors)');
+    const february = cellFor('February');
+    expect(february).toContain('yes');
+    // A full-history flag carries no qualifier.
+    expect(february.join(',')).not.toContain('limited history');
+    // ...and the absences each say which one they are, because "no figure to
+    // compare" and "no earlier period" have different remedies.
+    expect(rows.find((r) => r.includes('March'))).toContain(
+      'Not evaluated (scored before the short-history check)',
+    );
     expect(rows.find((r) => r.includes('April'))).toContain('Not evaluated (no figure)');
-    // A full window that averages zero yields no ratio — reported as its own
-    // absence rather than as "3 of 3", which would read as evaluated.
+    // A window that averages zero yields no ratio — reported as its own
+    // absence rather than by its count, which would read as evaluated.
     expect(rows.find((r) => r.includes('May'))).toContain('Not evaluated (baseline is zero)');
+    expect(rows.find((r) => r.includes('September'))).toContain('Not evaluated (baseline is zero)');
+    expect(rows.find((r) => r.includes('June'))).toContain('Not evaluated (no earlier period)');
+    // BUG-R2-07: a verdict on one or two periods names its basis on BOTH
+    // outcomes — a blank would claim a full-history check that did not happen.
+    expect(rows.find((r) => r.includes('July'))).toContain('yes (limited history: 1 period)');
+    expect(rows.find((r) => r.includes('August'))).toContain(
+      'within range (limited history: 2 periods)',
+    );
   });
 
   // --- HTML builder (pure) --------------------------------------------------
@@ -1804,7 +1843,7 @@ describe('report column descriptors', () => {
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
-    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false,
     anomalyBaselinePriorCount: 3,
   };
   const withdrawnRow: ReportWithdrawnRow = {
@@ -2065,7 +2104,7 @@ describe('no column can opt out of CSV neutralisation', () => {
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
-    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false,
     anomalyBaselinePriorCount: 3,
   };
 

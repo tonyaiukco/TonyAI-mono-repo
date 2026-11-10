@@ -1,5 +1,4 @@
 import { CATEGORY_ACTIVITY_TYPES, CATEGORY_SCOPE_MAP, entityLabel, UNSPECIFIED_ACTIVITY_TYPE, type Category } from '@tonyai/shared-types';
-import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
 import { escapeHtmlText } from '../common/html-escape';
 import { NO_MARKET_BASED, NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
@@ -9,6 +8,7 @@ import type {
   ReportWithdrawnRow,
   ReportWithdrawnTotals,
 } from './report-data';
+import { anomalyColumnState } from './report-data';
 import { EN_VOCABULARY, type ReportVocabulary } from './report-vocabulary';
 
 /**
@@ -42,11 +42,11 @@ export { NOT_CALCULATED };
 /**
  * What the anomaly column says for a record the VAR §4 rule never ran on.
  *
- * A blank in that column has always meant "checked, nothing unusual". Since
- * 2026-08-27 the rule needs three priors, so a blank would also cover "never
- * checked" — and on the dev database that is 30 of 96 committed records, in the
- * artifact an auditor keeps. Same instinct as NOT_CALCULATED above: say the
- * absence rather than print something indistinguishable from a measurement.
+ * A blank in that column has always meant "checked against a full history,
+ * nothing unusual". A blank that also covered "never checked" would put that
+ * claim on records nobody checked, in the artifact an auditor keeps. Same
+ * instinct as NOT_CALCULATED above: say the absence rather than print something
+ * indistinguishable from a measurement.
  */
 export const NOT_EVALUATED = 'Not evaluated';
 
@@ -56,20 +56,26 @@ export const NOT_EVALUATED = 'Not evaluated';
  * WP20 shipped a CSV and an Excel from one request that disagreed about
  * withdrawn rows for precisely this reason.
  */
-export function anomalyCell(r: {
-  anomalyFlag: boolean;
-  anomalyEvaluated: boolean;
-  anomalyBaselinePriorCount: number | null;
-}): string {
-  if (r.anomalyFlag) return 'yes';
-  if (r.anomalyEvaluated) return '';
-  const priors = r.anomalyBaselinePriorCount;
-  // Each absence names itself: the reader of a filed report cannot ask which
-  // one it was, and the three have different remedies — a factor, more months,
-  // or nothing at all.
-  if (priors === null) return `${NOT_EVALUATED} (no figure)`;
-  if (priors >= ANOMALY_BASELINE_PERIODS) return `${NOT_EVALUATED} (baseline is zero)`;
-  return `${NOT_EVALUATED} (${priors} of ${ANOMALY_BASELINE_PERIODS} priors)`;
+export function anomalyCell(r: Parameters<typeof anomalyColumnState>[0]): string {
+  const periods = (n: number | null) => `${n} ${n === 1 ? 'period' : 'periods'}`;
+  switch (anomalyColumnState(r)) {
+    case 'flagged':
+      return 'yes';
+    case 'flagged_limited':
+      return `yes (limited history: ${periods(r.anomalyBaselinePriorCount)})`;
+    case 'clean':
+      return '';
+    case 'clean_limited':
+      return `within range (limited history: ${periods(r.anomalyBaselinePriorCount)})`;
+    case 'no_figure':
+      return `${NOT_EVALUATED} (no figure)`;
+    case 'no_history':
+      return `${NOT_EVALUATED} (no earlier period)`;
+    case 'scored_before':
+      return `${NOT_EVALUATED} (scored before the short-history check)`;
+    case 'zero_average':
+      return `${NOT_EVALUATED} (baseline is zero)`;
+  }
 }
 
 /**

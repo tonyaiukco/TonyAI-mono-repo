@@ -94,10 +94,10 @@ test('each refusal a seeded database can reach names its own record, code and se
 }) => {
   // Five of the seven `BULK_SUBMIT_ISSUE_CODES`. `unexpected` is unreachable by
   // design — it is the catch-all for an exception nobody classified — and
-  // `variance_reason_required` needs an anomaly baseline (three committed
-  // priors in the same subsidiary+category+period) that costs more to arrange
-  // than the refusal is worth proving twice: the import already warns
-  // `would_block_submit` for it, and that path has unit coverage.
+  // `variance_reason_required` needs an anomaly baseline (a committed earlier
+  // period in the same series) and is not worth proving twice here: the
+  // import already warns `would_block_submit` for it, the bulk path's mapping
+  // has unit coverage, and `anomaly-short-history.spec.ts` proves the gate.
   // `not_submittable` is the second test below.
   const adminToken = await getAccessToken(request, ADMIN_EMAIL);
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);

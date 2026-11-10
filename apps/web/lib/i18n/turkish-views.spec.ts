@@ -88,10 +88,10 @@ describe('one and many are worded apart (each pair, both languages)', () => {
   });
   it('anomaly', () => {
     const { t } = copyFor('anomaly', 'en');
-    const one = anomalyStatement({ anomalyFlag: false, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: null }, t, 'en');
-    const two = anomalyStatement({ anomalyFlag: false, anomalyBaselinePriorCount: 2, anomalyBaselineTCo2e: null }, t, 'en');
-    expect(one.detail).toMatch(/^Only 1 earlier committed period exists/);
-    expect(two.detail).toMatch(/^Only 2 earlier committed periods exist/);
+    const one = anomalyStatement({ anomalyFlag: false, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 10 }, t, 'en');
+    const two = anomalyStatement({ anomalyFlag: false, anomalyBaselinePriorCount: 2, anomalyBaselineTCo2e: 10 }, t, 'en');
+    expect(one.detail).toMatch(/the only earlier period .* limited history \(1 period\)\.$/);
+    expect(two.detail).toMatch(/the average of the 2 earlier periods .* limited history \(2 periods\)\.$/);
   });
   it('bulk upload rows', () => {
     expect(rowCount(1, up('en'))).toBe('1 row');

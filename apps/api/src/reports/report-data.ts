@@ -9,6 +9,7 @@ import type {
   ReportStatus,
   ReportTemplate,
 } from '@tonyai/shared-types';
+import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
 
 /**
  * The shapes a generated report is assembled INTO, before any writer sees them.
@@ -99,11 +100,57 @@ export interface ReportLedgerRow {
    *  a statement a filed report may make. Derived once here through the shared
    *  `isAnomalyEvaluated` predicate so no writer re-derives it. */
   anomalyEvaluated: boolean;
-  /** The window it was judged against: null (no figure of its own), 0–2 (short)
-   *  or 3 (evaluated). Printed inside the anomaly column rather than as a new
-   *  column — the ledger already carries ten hand-maintained column literals
-   *  across three writers, and this adds no eleventh. */
+  /** The window it was judged against: null (no figure of its own), 0 (no
+   *  earlier period), 1–2 (limited history) or 3 (full). Printed inside the
+   *  anomaly column rather than as a new column — the ledger already carries
+   *  ten hand-maintained column literals across three writers, and this adds
+   *  no eleventh. */
   anomalyBaselinePriorCount: number | null;
+  /** A verdict written before the short-history check existed: a count of 1–2
+   *  that was NOT evaluated and is not re-scored (`isLegacyShortWindowVerdict`).
+   *  Carried because the count alone cannot tell it from a zero average. */
+  anomalyLegacy: boolean;
+}
+
+/** What the anomaly column has to say about one row — see `anomalyColumnState`. */
+export type AnomalyColumnState =
+  | 'flagged'
+  | 'flagged_limited'
+  | 'clean'
+  | 'clean_limited'
+  | 'no_figure'
+  | 'no_history'
+  | 'scored_before'
+  | 'zero_average';
+
+/**
+ * The ONE reading of a row's verdict for every export writer. The CSV and the
+ * localised vocabulary each word the result; neither decides it, because two
+ * decision ladders are how one request came to produce a CSV and an Excel that
+ * disagreed (WP20).
+ *
+ * A verdict on one or two periods is a weaker claim than one on three, so a
+ * filed report names it on BOTH outcomes: a blank cell has always meant
+ * "checked against its history, nothing unusual", and a one-period comparison
+ * has not earned that.
+ */
+export function anomalyColumnState(r: {
+  anomalyFlag: boolean;
+  anomalyEvaluated: boolean;
+  anomalyBaselinePriorCount: number | null;
+  anomalyLegacy: boolean;
+}): AnomalyColumnState {
+  const priors = r.anomalyBaselinePriorCount;
+  const limited = r.anomalyEvaluated && priors !== null && priors < ANOMALY_BASELINE_PERIODS;
+  if (r.anomalyFlag) return limited ? 'flagged_limited' : 'flagged';
+  if (r.anomalyEvaluated) return limited ? 'clean_limited' : 'clean';
+  // Each absence names itself: the reader of a filed report cannot ask which
+  // one it was, and they have different remedies — a factor, an earlier
+  // period, or nothing at all.
+  if (priors === null) return 'no_figure';
+  if (priors === 0) return 'no_history';
+  if (r.anomalyLegacy) return 'scored_before';
+  return 'zero_average';
 }
 
 /**
