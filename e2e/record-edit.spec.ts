@@ -139,6 +139,43 @@ test('Edit mode re-files the same record — category and period — after the e
   expect(old).toHaveLength(0);
 });
 
+test('a late Cancel of one record never refills the form over the record opened after it (owner review P2)', async ({ page, request }) => {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const first = await createWasteDraft(request, token, 'July');
+  const second = await createWasteDraft(request, token, 'August');
+
+  await login(page, ENTRY_EMAIL);
+  await openDataEntry(page);
+  await listOf(page).getByRole('button', { name: `Edit July ${E2E_YEAR} ${E2E_BULK_CATEGORY}` }).click();
+  const band = page.getByTestId('edit-mode-band');
+  await expect(band).toContainText(first.slice(0, 8));
+
+  // Hold Cancel's read of the first record until the user has moved on.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const readReached = new Promise<void>((resolve) => (reached = resolve));
+  await page.route(`**/api/v1/activity-records/${first}`, async (route) => {
+    reached();
+    await held;
+    await route.continue();
+  });
+  await band.getByRole('button', { name: 'Cancel editing' }).click();
+  await readReached;
+
+  await listOf(page).getByRole('button', { name: `Edit August ${E2E_YEAR} ${E2E_BULK_CATEGORY}` }).click();
+  await expect(band).toContainText(second.slice(0, 8));
+  await page.getByPlaceholder('e.g. 45000').fill('55');
+
+  release();
+  await page.waitForResponse((r) => r.url().endsWith(`/activity-records/${first}`));
+  // The first record's late answer was dropped: the form still holds the
+  // second record and what the user typed.
+  await expect(band).toContainText(second.slice(0, 8));
+  await expect(page.getByPlaceholder('e.g. 45000')).toHaveValue('55');
+  await page.unroute(`**/api/v1/activity-records/${first}`);
+});
+
 test('the author recalls a submitted record, edits it and submits it again; a super_admin is offered neither', async ({ page, request }) => {
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const id = await createWasteDraft(request, token, 'December');
@@ -174,6 +211,11 @@ test('a voided record is copied into a new draft by its author, who submits it',
   const adminToken = await getAccessToken(request, ADMIN_EMAIL);
   const id = await createWasteDraft(request, entryToken, 'September');
   await post(request, entryToken, `/activity-records/${id}/submit`);
+  // A decision that names no submission — a review tab from before this
+  // release — is told to reload, never applied (owner review P1).
+  const bare = await request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(adminToken) });
+  expect(bare.status()).toBe(409);
+  expect((await bare.json()).code).toBe('record_changed');
   await approveRecord(request, adminToken, id);
   await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: wrong quantity on the waste note' });
 

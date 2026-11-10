@@ -16,6 +16,7 @@ import {
   selectSubsidiary,
   serviceReadRecords,
   SUB,
+  seenSubmittedAt,
 } from './helpers';
 
 /**
@@ -291,7 +292,7 @@ test('a rejected record is not offered, and the row says to open it alone', asyn
     if (!submitted.ok()) throw new Error(`submit failed: ${submitted.status()}`);
     const rejected = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
       headers: bearer(adminToken),
-      data: { varianceReason: 'E2E: sent back so the row can be looked at.' },
+      data: { varianceReason: 'E2E: sent back so the row can be looked at.', seenSubmittedAt: await seenSubmittedAt(request, adminToken, id) },
     });
     if (!rejected.ok()) throw new Error(`reject failed: ${rejected.status()}`);
 

@@ -16,7 +16,7 @@ import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
   mayEditRecord,
 } from '@tonyai/shared-types';
 import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
-import { ActivityRecordsService, evidenceReadyWhere } from './activity-records.service';
+import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere } from './activity-records.service';
 import {
   CALCULATION_STALE_MESSAGE,
   CalculationStaleError,
@@ -27,6 +27,7 @@ import {
   ApprovalEvidenceMissingError,
   AuthorOnlyRefusedError,
   EvidenceDetachRequiredError,
+  ReviewVersionRequiredError,
   PeriodLockedError,
   RecordNotRecallableError,
   RESUBMIT_AUTHOR_REFUSAL,
@@ -1640,6 +1641,28 @@ describe('ActivityRecordsService — a decision names the submission it saw (BUG
     pending(prisma);
     const dto = await service.reject(consultant(), 'rec-v', 'reason');
     expect(dto.status).toBe(ActivityRecordStatus.rejected);
+  });
+
+  it('refuses a decision that names no submission as record_changed, telling the client to reload (owner review P1)', async () => {
+    const { prisma, service } = build();
+    pending(prisma);
+    for (const call of [
+      () => service.approve(superAdmin(), 'rec-v', SUBMISSION_NOT_NAMED),
+      () => service.reject(consultant(), 'rec-v', 'reason', SUBMISSION_NOT_NAMED),
+    ]) {
+      const refusal = await call().catch((e) => e);
+      expect(refusal).toBeInstanceOf(ReviewVersionRequiredError);
+      expect(errorCodeOf(refusal)).toBe('record_changed');
+      expect(refusal.message).toMatch(/Reload it/);
+    }
+    expect(prisma.tx.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('names the role before the missing submission: a consultant approving is still a 403', async () => {
+    const { prisma, service } = build();
+    pending(prisma);
+    await expect(service.approve(consultant(), 'rec-v', SUBMISSION_NOT_NAMED)).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('names a wrong status before a stale submission', async () => {

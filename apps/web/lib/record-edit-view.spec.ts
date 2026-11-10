@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   copyPrefill,
+  createFormSessions,
   describeEdit as describeEditIn,
   evidencePlan,
   recordActions,
@@ -181,5 +182,25 @@ describe('copyPrefill — a voided record into a NEW draft', () => {
     });
     expect(prefill).not.toHaveProperty('id');
     expect(prefill).not.toHaveProperty('evidenceCount');
+  });
+});
+
+describe('createFormSessions — a late answer never overwrites a newer form (owner review P2)', () => {
+  it('keeps only the latest session current', () => {
+    const sessions = createFormSessions();
+    const cancelOfA = sessions.begin();
+    expect(sessions.isCurrent(cancelOfA)).toBe(true);
+    const openedB = sessions.begin();
+    expect(sessions.isCurrent(cancelOfA)).toBe(false);
+    expect(sessions.isCurrent(openedB)).toBe(true);
+  });
+
+  it('is per form: two forms do not share sessions', () => {
+    const a = createFormSessions();
+    const b = createFormSessions();
+    const token = a.begin();
+    b.begin();
+    b.begin();
+    expect(a.isCurrent(token)).toBe(true);
   });
 });

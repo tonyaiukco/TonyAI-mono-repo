@@ -133,7 +133,7 @@ import { CONTEXT_FIELDS, contextFieldSet } from "@/lib/context-fields";
 import type { Messages } from "@/messages";
 import { geographyName } from "@/lib/vocabulary";
 import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
-import { copyPrefill, describeEdit, evidencePlan, type EditIdentity } from "@/lib/record-edit-view";
+import { copyPrefill, createFormSessions, describeEdit, evidencePlan, type EditIdentity } from "@/lib/record-edit-view";
 
 // --- Static option sets -----------------------------------------------------
 
@@ -347,6 +347,9 @@ function DataEntryPageInner() {
   // The submitted record whose recall waits for the user's confirmation.
   const [recallTarget, setRecallTarget] = useState<ActivityRecordPageItemDTO | null>(null);
   const [recalling, setRecalling] = useState(false);
+  // Which action the form currently belongs to (owner review P2): a Cancel or
+  // Copy answer that arrives after the user opened something else is dropped.
+  const formSessions = useRef(createFormSessions()).current;
   const [saving, setSaving] = useState<null | "draft" | "submit">(null);
 
   const selectedSubsidiary = useMemo(
@@ -972,6 +975,7 @@ function DataEntryPageInner() {
    * refuse to save is worse than saying why.
    */
   function loadRecord(rec: ActivityRecordPageItemDTO, mode: "open" | "edit" = "open") {
+    formSessions.begin();
     if (rec.status !== "draft" && rec.status !== "rejected") {
       toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;
@@ -1085,6 +1089,7 @@ function DataEntryPageInner() {
   }
 
   function resetForm() {
+    formSessions.begin();
     clearEditChoices();
     setCopying(false);
     activity.setValue(null);
@@ -1294,10 +1299,14 @@ function DataEntryPageInner() {
   /** Cancel Edit mode: the form goes back to the record as stored. */
   async function cancelEdit() {
     if (!editingId) return;
+    const session = formSessions.begin();
     try {
       const rec = await api.getActivityRecord(editingId);
+      // The user opened or started something else meanwhile: leave it alone.
+      if (!formSessions.isCurrent(session)) return;
       fillForm(rec);
     } catch (e) {
+      if (!formSessions.isCurrent(session)) return;
       errorToast(e);
       resetForm();
     }
@@ -1332,8 +1341,11 @@ function DataEntryPageInner() {
       toast.info(t("copy.notVoided"));
       return false;
     }
+    const session = formSessions.begin();
     try {
       const rec = await api.getActivityRecord(id);
+      // A later action owns the form now; this copy would overwrite it.
+      if (!formSessions.isCurrent(session)) return false;
       if (rec.status !== "voided") {
         toast.info(t("copy.notVoided"));
         return false;
@@ -1356,7 +1368,7 @@ function DataEntryPageInner() {
       toast.info(t("copy.loaded"));
       return true;
     } catch (e) {
-      errorToast(e);
+      if (formSessions.isCurrent(session)) errorToast(e);
       return false;
     }
   }

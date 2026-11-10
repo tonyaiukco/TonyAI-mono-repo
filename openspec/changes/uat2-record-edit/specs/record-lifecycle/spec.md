@@ -110,7 +110,7 @@ An approved or locked record SHALL never return to `draft`. Its correction SHALL
 - **THEN** the new draft is accepted and the voided record keeps its reason and figure
 
 ### Requirement: A review decision is about the submission the reviewer saw
-An approve or reject request MAY name the record's `submittedAt` as the reviewer saw it. When it names one that differs from the record's current `submittedAt`, the request SHALL be refused with `record_changed`, and nothing SHALL change. The review screen SHALL always name it. A request that names none SHALL not be compared.
+An approve or reject request over the API SHALL name the record's `submittedAt` as the reviewer saw it, or `null` for a record with none. When it names a different value from the record's current `submittedAt`, or names none, the request SHALL be refused with `record_changed` after the role check, and nothing SHALL change.
 
 #### Scenario: Approving a submission that was recalled and resubmitted since
 - **WHEN** a reviewer opens a submitted record, its author recalls it, changes the value and submits it again, and the reviewer then approves with the first submission time
@@ -119,3 +119,11 @@ An approve or reject request MAY name the record's `submittedAt` as the reviewer
 #### Scenario: Approving the submission seen
 - **WHEN** the reviewer approves with the record's current submission time
 - **THEN** the record is approved
+
+#### Scenario: A review tab from before this release
+- **WHEN** a client approves or rejects without naming any submission
+- **THEN** the request is refused with `record_changed`, whose copy tells the reviewer to reload
+
+#### Scenario: A role refusal still comes first
+- **WHEN** a consultant approves without naming any submission
+- **THEN** the request is refused as forbidden, not as `record_changed`

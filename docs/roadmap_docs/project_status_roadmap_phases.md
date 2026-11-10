@@ -47,7 +47,7 @@
   - **Recall:** `POST /activity-records/:id/recall` lets the author move a `submitted` record back to `draft` before review starts. Audit verb `recall`; `submittedAt` cleared. Migration `20261111120000_uat2_record_recall` adds only `submitted>draft` to the lifecycle trigger, and the inputs stay frozen on that step.
   - **Author-only edit:** the edit gate is author-only, `super_admin` included, which closes the 2026-10-03 SoD gap. Delete is unchanged.
   - **Evidence on edit:** `PATCH` takes `detachEvidenceIds[]` and detaches them in the edit's own transaction. A category change must name every linked file (`evidence_detach_required`).
-  - **Review guard:** approve and reject take an optional `seenSubmittedAt` and refuse a recalled-and-resubmitted figure as `record_changed`. The review screen sends it.
+  - **Review guard:** approve and reject must name `seenSubmittedAt` over HTTP. A recalled-and-resubmitted figure, or a request that names none (e.g. a review tab opened before this release), is refused as `record_changed` after the role check. The review screen sends it.
   - **Data Entry:** an explicit Edit mode with a band of from → to changes, Cancel, and a keep/remove choice for evidence; Recall with a confirmation; and "Copy to new draft" on a voided record, also from the Emissions drawer (`?copyFrom=`). A record opened without Edit keeps the old new-record guard.
   - **Reviews:** `security-rls`, `qa-auditor` and an `architect` seat. Fixed:
     - P1: approving a figure changed after it was seen (the `seenSubmittedAt` guard).
@@ -58,7 +58,10 @@
     - Several P3s.
 
     Re-review of the fix delta: no P0 or P1. Filed: Open questions.
-  - **Measured locally:** unit tests api 3,666, web 1,143, shared-types 405, db 203; integration 1,085; `pnpm build` green. Full e2e: 175 passed, 2 failed. Both failures are the known local-only ones: `security-headers` under `next dev`, and `data-entry-happy` once the integration suite has loaded the TR releases.
+  - **Owner review (2026-11-10):** two more fixes.
+    - P1: an absent `seenSubmittedAt` skipped the check, so an old review tab could approve an unseen figure. It is now required over HTTP.
+    - P2: a late Cancel or Copy answer refilled the form over the next record. Form sessions now drop stale answers, with an e2e test shown to fail without the fix.
+  - **Measured locally (after the owner review):** unit tests api 3,670, web 1,145, shared-types 405, db 203; integration 1,085; typecheck and `pnpm build` green. Full e2e: 176 passed, 2 failed. Both failures are the known local-only ones: `security-headers` under `next dev`, and `data-entry-happy` once the integration suite has loaded the TR releases.
   - **New and changed tests:**
     - new `e2e/record-edit.spec.ts`: Edit mode with Cancel and Edit twice, recall, copy;
     - four e2e row locators anchored, because Edit, Recall and Copy now name their row;

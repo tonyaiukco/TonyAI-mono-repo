@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
   login, bearer, getAccessToken, pickByFieldLabel, cleanupE2ESubsidiaries,
   ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD, EVIDENCE_FIXTURE,
+  seenSubmittedAt,
 } from './helpers';
 
 /**
@@ -96,7 +97,10 @@ test('a subsidiary holding committed records cannot be deleted', async ({ reques
   await request.post(`${API_BASE}/activity-records/${rec.id}/submit`, { headers: bearer(token) });
   // The other super_admin approves: nobody approves a record they created (D01).
   const approver = await getAccessToken(request, APPROVER_EMAIL);
-  const approved = await request.post(`${API_BASE}/activity-records/${rec.id}/approve`, { headers: bearer(approver) });
+  const approved = await request.post(`${API_BASE}/activity-records/${rec.id}/approve`, {
+    headers: bearer(approver),
+    data: { seenSubmittedAt: await seenSubmittedAt(request, approver, rec.id) },
+  });
   expect((await approved.json()).status).toBe('approved');
 
   const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
@@ -138,7 +142,7 @@ test('a record awaiting review blocks the delete WITHOUT calling it permanent', 
   // Follow it: a reviewer sends the record back, and the subsidiary really does
   // become disposable. This is the assertion the old copy contradicted.
   expect((await request.post(`${API_BASE}/activity-records/${rec.id}/reject`, {
-    headers: bearer(token), data: { varianceReason: 'E2E: sent back' },
+    headers: bearer(token), data: { varianceReason: 'E2E: sent back', seenSubmittedAt: await seenSubmittedAt(request, token, rec.id) },
   })).status()).toBe(200);
   expect((await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) })).status()).toBe(200);
   expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);

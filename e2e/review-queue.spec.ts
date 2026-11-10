@@ -12,6 +12,7 @@ import {
   ENTRY_EMAIL,
   API_BASE,
   SUB,
+  seenSubmittedAt,
 } from './helpers';
 
 /**
@@ -403,7 +404,7 @@ test('the API — not the UI — is what stops a consultant approving', async ({
 
   const reject = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
     headers: bearer(consultant),
-    data: { varianceReason: 'meter reading missing' },
+    data: { varianceReason: 'meter reading missing', seenSubmittedAt: await seenSubmittedAt(request, consultant, id) },
   });
   expect(reject.status()).toBe(200);
   expect((await reject.json()).status).toBe('rejected');

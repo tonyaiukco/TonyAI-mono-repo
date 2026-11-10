@@ -160,6 +160,23 @@ export class RecordChangedError extends ConflictException {
   }
 }
 
+export const REVIEW_VERSION_REQUIRED_MESSAGE =
+  'This page does not say which submission you saw. Reload it to see the record as it stands, then decide again.';
+
+/**
+ * An approve or reject that does not name the submission the reviewer saw
+ * (`seenSubmittedAt`, BUG-R2-03 owner review P1). Since an author can recall,
+ * change and resubmit a record, a decision with no version could land on a
+ * figure nobody reviewed — e.g. from a review tab opened before the deploy.
+ * The code is `record_changed` on purpose: every client, an old one included,
+ * already words it as "reload and try again", which is the remedy.
+ */
+export class ReviewVersionRequiredError extends ConflictException {
+  constructor() {
+    super(errorBody('record_changed', REVIEW_VERSION_REQUIRED_MESSAGE));
+  }
+}
+
 /** An evidence-required category with no file attached yet. */
 export class EvidenceRequiredError extends BadRequestException {
   constructor(category: string) {

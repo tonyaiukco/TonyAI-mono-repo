@@ -4179,13 +4179,12 @@ export type UpdateActivityRecordInput = Partial<
 /** Body of POST /activity-records/:id/reject — the reviewer's variance reason. */
 export interface RejectInput {
   varianceReason: string;
-  /** See `ApproveInput.seenSubmittedAt`. */
-  seenSubmittedAt?: string | null;
+  /** See `ApproveInput.seenSubmittedAt`. Required. */
+  seenSubmittedAt: string | null;
 }
 
 /**
- * Body of POST /activity-records/:id/approve (BUG-R2-03 review). Optional, so
- * an older client still approves; the review screen always sends it.
+ * Body of POST /activity-records/:id/approve (BUG-R2-03 review).
  */
 export interface ApproveInput {
   /**
@@ -4194,9 +4193,12 @@ export interface ApproveInput {
    * reviewer's eyes is no longer frozen from submit to decision. A decision
    * sent with a different submission time than the record now has is refused
    * as `record_changed` (409), so nobody approves or rejects a figure they did
-   * not see.
+   * not see. REQUIRED: a request without it is refused the same way, so a
+   * client from before this field (an old review tab) is told to reload rather
+   * than decide on a figure recalled and resubmitted behind it. `null` names
+   * a record that has no submission time.
    */
-  seenSubmittedAt?: string | null;
+  seenSubmittedAt: string | null;
 }
 
 /**

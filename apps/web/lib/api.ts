@@ -569,7 +569,7 @@ export const api = {
       method: "POST",
     }),
 
-  approveActivityRecord: (id: string, body: ApproveInput = {}) =>
+  approveActivityRecord: (id: string, body: ApproveInput) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/approve`, {
       method: "POST",
       body: JSON.stringify(body),

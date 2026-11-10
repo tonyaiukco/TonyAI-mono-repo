@@ -558,8 +558,9 @@ const ID_ROUTES: Route[] = [
   { name: 'PATCH /activity-records/:id (B location)', method: 'PATCH', path: () => `/activity-records/${dataA.recordId}`, body: (i) => ({ locationId: i.locationId }), own: { role: 'dataEntry' } },
   { name: 'POST /activity-records/:id/submit', method: 'POST', path: (i) => `/activity-records/${i.recordId}/submit`, own: { role: 'dataEntry', ok: created } },
   { name: 'POST /activity-records/:id/review', method: 'POST', path: (i) => `/activity-records/${i.recordId}/review`, own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
-  { name: 'POST /activity-records/:id/approve', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
-  { name: 'POST /activity-records/:id/reject', method: 'POST', path: (i) => `/activity-records/${i.recordId}/reject`, body: () => ({ varianceReason: 'please recheck the meter reading' }), own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
+  // `seenSubmittedAt` is required over HTTP (BUG-R2-03); the prepared record was never submitted through the API, so it has none.
+  { name: 'POST /activity-records/:id/approve', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, body: () => ({ seenSubmittedAt: null }), own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
+  { name: 'POST /activity-records/:id/reject', method: 'POST', path: (i) => `/activity-records/${i.recordId}/reject`, body: () => ({ varianceReason: 'please recheck the meter reading', seenSubmittedAt: null }), own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
   { name: 'POST /activity-records/:id/void', method: 'POST', path: (i) => `/activity-records/${i.recordId}/void`, body: () => ({ voidReason: 'entered against the wrong site' }), own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.approved), ok: created } },
   { name: 'POST /activity-records/bulk-submit', method: 'POST', path: () => '/activity-records/bulk-submit', body: (i) => ({ recordIds: [i.recordId] }), own: { role: 'dataEntry', ok: differs } },
   // evidence

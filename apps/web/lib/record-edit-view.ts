@@ -162,6 +162,29 @@ export function recordActions(user: ActingUser | null, record: ActionableRecord)
   };
 }
 
+/**
+ * The form's sessions (BUG-R2-03 owner review P2). Every action that gives the
+ * form a new subject — opening a record, starting over, Cancel, Copy — begins
+ * one; a request started under an earlier session lands on a form that has
+ * moved on, and its answer is dropped instead of overwriting what the user is
+ * now typing. A late Cancel of record A must never refill the form over
+ * record B.
+ */
+export interface FormSessions {
+  /** Begin a new session and return its token. */
+  begin(): number;
+  /** True while no later session has begun. */
+  isCurrent(token: number): boolean;
+}
+
+export function createFormSessions(): FormSessions {
+  let current = 0;
+  return {
+    begin: () => (current += 1),
+    isCurrent: (token) => token === current,
+  };
+}
+
 /** The form a "Copy to new draft" opens: the voided record's values, no id, no file. */
 export interface CopyPrefill {
   subsidiaryId: string;

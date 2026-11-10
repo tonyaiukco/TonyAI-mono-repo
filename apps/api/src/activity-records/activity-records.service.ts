@@ -23,6 +23,7 @@ import {
   SubmitAuthorRefusedError,
   AuthorOnlyRefusedError,
   EvidenceDetachRequiredError,
+  ReviewVersionRequiredError,
   RecordNotRecallableError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
@@ -267,8 +268,21 @@ const APPROVE_ROLES = new Set(['super_admin']);
  * `submittedAt` it was shown; any other submission is a lost race (409).
  * Absent, nothing is compared (an older client, a script).
  */
-function assertSameSubmission(record: { submittedAt: Date | null }, seenSubmittedAt: string | null | undefined): void {
-  if (seenSubmittedAt === undefined) return;
+/**
+ * What the HTTP layer passes when a request names no submission at all
+ * (BUG-R2-03 owner review P1): over HTTP the field is required, and its
+ * absence is refused right after the role check — so a role refusal still
+ * comes first. In-process callers that pass nothing are not compared.
+ */
+export const SUBMISSION_NOT_NAMED: unique symbol = Symbol('submission not named');
+export type SeenSubmission = string | null | typeof SUBMISSION_NOT_NAMED;
+
+function assertSubmissionNamed(seenSubmittedAt: SeenSubmission | undefined): void {
+  if (seenSubmittedAt === SUBMISSION_NOT_NAMED) throw new ReviewVersionRequiredError();
+}
+
+function assertSameSubmission(record: { submittedAt: Date | null }, seenSubmittedAt: SeenSubmission | undefined): void {
+  if (seenSubmittedAt === undefined || seenSubmittedAt === SUBMISSION_NOT_NAMED) return;
   const seen = seenSubmittedAt === null ? null : Date.parse(seenSubmittedAt);
   const now = record.submittedAt ? record.submittedAt.getTime() : null;
   if (seen !== now) throw new RecordChangedError();
@@ -1641,11 +1655,12 @@ export class ActivityRecordsService {
     return this.writtenDTO(user, updated);
   }
 
-  async approve(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<ActivityRecordDTO> {
+  async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!APPROVE_ROLES.has(user.role)) {
       throw new ForbiddenException('Only a super_admin may approve records');
     }
+    assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recompute(user, seen);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
@@ -1767,7 +1782,7 @@ export class ActivityRecordsService {
     user: RequestUser,
     id: string,
     varianceReason: string,
-    seenSubmittedAt?: string | null,
+    seenSubmittedAt?: SeenSubmission,
   ): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
@@ -1775,6 +1790,7 @@ export class ActivityRecordsService {
         'Only a consultant or super_admin may reject records',
       );
     }
+    assertSubmissionNamed(seenSubmittedAt);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
         if (
