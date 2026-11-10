@@ -153,6 +153,7 @@
   "activity On-road LPG": "On-road LPG",
   "activity Off-road petrol": "Off-road petrol",
   "activity Off-road diesel": "Off-road diesel",
+  "activity Marine gas oil (MGO, vessels)": "Marine gas oil (MGO, vessels)",
   "activity HFC-227ea": "HFC-227ea",
   "activity SF6 (sulphur hexafluoride)": "SF6 (sulphur hexafluoride)",
   "coverageNotCovered": "Scope 3 is not covered by this inventory, so no boundary applies to this selection.",

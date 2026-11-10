@@ -9,7 +9,7 @@
   "wholeCompany": "Tüm şirket",
   "category": "Kategori",
   "fuelOrGas": "Yakıt veya gaz",
-  "vehicleMode": "Araç kullanım modu",
+  "vehicleMode": "Araç kullanım modu veya gemi yakıtı",
   "chooseOne": "Birini seçin",
   "notSpecifiedLegacy": "Belirtilmemiş (yakıt türleri izlenmeden önce girilmiş)",
   "reportingYear": "Raporlama yılı",
@@ -95,7 +95,8 @@
     "off_road_diesel": "Yol dışı – dizel",
     "R-22": "R-22 (HCFC-22)",
     "HFC-227ea": "HFC-227ea",
-    "SF6": "SF6 (kükürt hekzaflorür)"
+    "SF6": "SF6 (kükürt hekzaflorür)",
+    "marine_gas_oil": "Deniz motorini (MGO, gemiler)"
   },
   "equipmentTypes": {
     "fire_suppression_system": "Yangın söndürme sistemi",
@@ -184,7 +185,8 @@
     "choice": {
       "default": "varsayılan oran",
       "alternative": "alternatif oran"
-    }
+    },
+    "marineGasOilScope": "Deniz motorini, kuruluşunuzun sahip olduğu veya işlettiği gemileri kapsar (Kapsam 1); işlettiğiniz çıplak (bareboat) kiralama gemiler de buna dahildir. Kiraladığınız ama işletmediğiniz gemileri (sefer veya süre kiralaması) ve üçüncü taraf deniz taşımacılığını eklemeyin: bunlar Kapsam 3'tür ve bu envanterin dışındadır. Yakıt teslim belgesindeki (Bunker Delivery Note) kütleyi kg veya ton olarak girin."
   },
   "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",
   "selectAllLoaded": "Yüklenen {count} kaydın tümünü seç",

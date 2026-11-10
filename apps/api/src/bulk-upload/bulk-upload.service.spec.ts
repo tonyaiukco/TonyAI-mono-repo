@@ -2633,6 +2633,21 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     expect(report.accepted).toEqual([expect.objectContaining({ recordId: 'rec-' + seq, activityType: 'gas_oil' })]);
   });
 
+  it('applies a marine gas oil row in tonnes through create, as the form would (UAT2 BUG-R2-11)', async () => {
+    const { records, service } = build();
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ category: 'Mobile Combustion', activityType: 'marine_gas_oil', activityUnit: 'tonnes', activityValue: '12.5' })]),
+      { dryRun: false },
+    );
+    expect(report.errors).toEqual([]);
+    expect(records.create).toHaveBeenCalledTimes(1);
+    expect(records.create.mock.calls[0][1]).toMatchObject({
+      category: 'Mobile Combustion', activityType: 'marine_gas_oil', activityUnit: 'tonnes', activityValue: 12.5,
+    });
+    expect(report.accepted).toEqual([expect.objectContaining({ activityType: 'marine_gas_oil' })]);
+  });
+
   it('refuses an activity type its category does not have, on its column, before any service call', async () => {
     const { records, service } = build();
 

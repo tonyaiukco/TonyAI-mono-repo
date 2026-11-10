@@ -266,7 +266,9 @@ export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
   // Fuel-based first (LP3-03, T4): the fuel a fleet bought — litres of liquid
   // fuel, kilograms of CNG. Distance-based activity (km by vehicle class)
   // needs its own activity types and waits for the holding's source list (D05).
-  'Mobile Combustion': ['litres', 'uk_gallons', 'us_gallons', 'kg'],
+  // Tonnes for marine gas oil, which a Bunker Delivery Note states by mass; any
+  // other mobile type entered by mass finds no per-kg factor and fails closed.
+  'Mobile Combustion': ['litres', 'uk_gallons', 'us_gallons', 'kg', 'tonnes'],
   // Leakage is reported as a mass of refrigerant, priced by that gas's GWP.
   Refrigerants: ['kg'],
   // Fugitive emissions from gas network leakage, reported in Sm³ and priced
@@ -431,6 +433,10 @@ export const CATEGORY_ACTIVITY_TYPES: Partial<
       { value: 'on_road_lpg', label: 'On-road LPG' },
       { value: 'off_road_petrol', label: 'Off-road petrol' },
       { value: 'off_road_diesel', label: 'Off-road diesel' },
+      // Marine gas oil (UAT2 BUG-R2-11): the fuel of vessels the organisation
+      // owns or operates, priced per kg from the supplementary IPCC edition
+      // (water-borne navigation). Not the stationary Fuel type `gas_oil`.
+      { value: 'marine_gas_oil', label: 'Marine gas oil (MGO, vessels)' },
     ],
   },
   // ASHRAE designations, written exactly so; an import canonicalises aliases
@@ -3356,30 +3362,50 @@ export const MOBILE_MODE_ACTIVITY_TYPES = Object.freeze([
 ] as const);
 
 /**
+ * Marine gas oil (UAT2 BUG-R2-11): the TR Mobile Combustion type priced per
+ * kg, from the supplementary IPCC edition, beside the per-litre vehicle modes.
+ */
+export const MARINE_GAS_OIL_ACTIVITY_TYPE = 'marine_gas_oil';
+
+/** The units a TR marine gas oil record is offered: a Bunker Delivery Note's mass. */
+export const MARINE_GAS_OIL_UNITS = Object.freeze(['kg', 'tonnes'] as const);
+
+/**
  * The activity types Data Entry offers a NEW record (LP4-02
  * PR4). Under the TR rules a Mobile Combustion record names one of the five
- * vehicle modes, since the TR releases price no other; every other case is the
- * category's whole list. A stored record keeps whatever type it already names
- * (`isRecordActivityTypeAllowed` is unchanged).
+ * vehicle modes or marine gas oil, since the TR releases price no other; every
+ * other case is the category's whole list. A stored record keeps whatever type
+ * it already names (`isRecordActivityTypeAllowed` is unchanged).
  */
 export function offeredActivityTypes(category: string, geographyCode: string | null): readonly ActivityTypeSpec[] {
   const types = recordActivityTypesFor(category);
   if (category !== 'Mobile Combustion' || geographyCode === null || !usesTrCalculationRules(geographyCode)) return types;
-  return types.filter((t) => (MOBILE_MODE_ACTIVITY_TYPES as readonly string[]).includes(t.value));
+  return types.filter(
+    (t) => (MOBILE_MODE_ACTIVITY_TYPES as readonly string[]).includes(t.value) || t.value === MARINE_GAS_OIL_ACTIVITY_TYPE,
+  );
 }
 
 /**
  * The units Data Entry offers a NEW record (LP4-02 PR4, D11): the category's
  * own (`unitsForCategory`), narrowed under the TR rules to what the engine
  * prices there. TR natural gas is a volume, Sm³ or metered m³, because a bill's
- * kWh is gross and is refused; a TR vehicle mode is per litre.
+ * kWh is gross and is refused; a TR vehicle mode is per litre, and TR marine
+ * gas oil a mass, kg or tonnes (`activityType` names which one is chosen).
  */
-export function unitsForRecord(category: string, geographyCode: string | null): readonly ActivityUnitSpec[] {
+export function unitsForRecord(
+  category: string,
+  geographyCode: string | null,
+  activityType?: string | null,
+): readonly ActivityUnitSpec[] {
   const units = unitsForCategory(category);
   if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return units;
   const only = (values: readonly string[]) => units.filter((u) => values.includes(u.value));
   if (category === 'Natural Gas') return only(['standard_cubic_metres', 'cubic_metres']);
-  if (category === 'Mobile Combustion') return only(['litres']);
+  if (category === 'Mobile Combustion') {
+    if (activityType !== MARINE_GAS_OIL_ACTIVITY_TYPE) return only(['litres']);
+    // In MARINE_GAS_OIL_UNITS' order, so kg is the one a new record starts on.
+    return MARINE_GAS_OIL_UNITS.flatMap((value) => units.filter((u) => u.value === value));
+  }
   return units;
 }
 

@@ -58,6 +58,13 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
    overlaps another live edition of its publisher on any factor identity is
    refused unless it supersedes that edition (D8), on a dry run too. A withdrawn release
    never prices a new record; committed snapshots keep citing it.
+   `--supersedes` names ONE edition: a release cannot replace two live editions
+   at once, so keep an erratum's coverage inside the one it supersedes.
+   **Load order is permanent.** Ordinals are counted per publisher, withdrawn
+   releases included, so loading a higher ordinal first refuses the lower one
+   for good (an authoritative release cannot be deleted). IPCC today:
+   `tr-2026-11/ipcc.json` (ordinal 1) BEFORE `tr-mgo-2026-11/ipcc-mgo.json`
+   (ordinal 2, UAT2); a TR-package erratum then takes IPCC ordinal 3+ but ETKB 2.
 6. **`--operator` names a firm or a role, never a person** — it is recorded as
    the actor of every event in `factor_release_events` and as a withdrawal's
    `withdrawn_by`.

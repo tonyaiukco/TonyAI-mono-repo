@@ -166,13 +166,15 @@ describe('units for the factor model (LP3-03)', () => {
     expect(CATEGORY_UNITS.Refrigerants).toEqual(['kg']);
   });
 
-  it('measures mobile combustion in fuel volumes only (fuel-based, T4)', () => {
-    // Litres of liquid fuel, kilograms of CNG — never a distance yet.
+  it('measures mobile combustion in fuel quantities only (fuel-based, T4)', () => {
+    // Litres of liquid fuel, kilograms of CNG, tonnes of marine gas oil (UAT2
+    // BUG-R2-11) — never a distance yet.
     expect(CATEGORY_UNITS['Mobile Combustion']).toEqual([
       'litres',
       'uk_gallons',
       'us_gallons',
       'kg',
+      'tonnes',
     ]);
   });
 
@@ -1452,12 +1454,14 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
         implicit: undefined,
         values: ['diesel', 'petrol', 'gas_oil', 'fuel_oil', 'burning_oil', 'lpg', 'lng', 'coal'],
       },
-      // LP4-02 PR2 task 2.2: five mode types added to Mobile Combustion.
+      // LP4-02 PR2 task 2.2: five mode types added to Mobile Combustion;
+      // UAT2 BUG-R2-11: marine gas oil.
       'Mobile Combustion': {
         implicit: undefined,
         values: [
           'diesel', 'petrol', 'lpg', 'cng',
           'on_road_petrol', 'on_road_diesel', 'on_road_lpg', 'off_road_petrol', 'off_road_diesel',
+          'marine_gas_oil',
         ],
       },
       // LP4-02 PR2 task 2.2: R-22, HFC-227ea, SF6 added to Refrigerants.
