@@ -1031,6 +1031,29 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(cell('Purchased Goods').status).toBe('complete'); // evidence not required
   });
 
+  it.each(['Mobile Combustion', 'Refrigerants', 'Fugitive Gas'])(
+    'keeps an approved %s cell incomplete with no file attached (K3)',
+    async (category) => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
+      prisma.activityRecord.findMany.mockResolvedValue([
+        // An approved record from before K3: committed without a file, and it
+        // can no longer gain one (evidence is locked after submit).
+        makeRecord({ subsidiaryId: 'sub-1', category, scope: 1, status: ActivityRecordStatus.approved, calculation: { tCo2e: 3, factorId: 'f-1' }, _count: { evidenceLinks: 0 } } as Partial<ActivityRecord>),
+      ]);
+      const m = await service.trackingMatrix(user, {});
+      const cell = m.rows[0].cells.find((c) => c.category === category)!;
+      expect(cell.status).toBe('incomplete');
+      expect(cell.tCo2e).toBe(3); // the figure still counts
+
+      prisma.activityRecord.findMany.mockResolvedValue([
+        makeRecord({ subsidiaryId: 'sub-1', category, scope: 1, status: ActivityRecordStatus.approved, calculation: { tCo2e: 3, factorId: 'f-1' }, _count: { evidenceLinks: 1 } } as Partial<ActivityRecord>),
+      ]);
+      const withFile = await service.trackingMatrix(user, {});
+      expect(withFile.rows[0].cells.find((c) => c.category === category)!.status).toBe('complete');
+    },
+  );
+
   it('a factor-less record leaves its cell short of complete until the invoice is attached', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);

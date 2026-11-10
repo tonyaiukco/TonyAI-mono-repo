@@ -4,6 +4,7 @@ import {
   normalizeRecordParameters,
   API_ERROR_PARAMS,
   API_ERROR_STATUS,
+  CATEGORY_SCOPE_MAP,
   mayAuthorRecords,
   acceptsBulkSubmit,
   BULK_SUBMITTABLE_STATUSES,
@@ -180,6 +181,29 @@ describe('category rule sets', () => {
     // inherit a `locations × 12 months` denominator.
     expect(isEvidenceRequired('Fuel')).toBe(true);
     expect(isInvoiceTracked('Fuel')).toBe(false);
+  });
+
+  it('requires evidence for every Scope 1 and Scope 2 category (K3)', () => {
+    // The gap BUG-R2-02 found: Mobile Combustion, Refrigerants and Fugitive Gas
+    // became calculable after the list was written and were never added. A new
+    // Scope 1–2 category fails here until someone decides its evidence rule.
+    const scope12 = CATEGORIES.filter((c) => CATEGORY_SCOPE_MAP[c] !== 3);
+    expect(scope12.length).toBeGreaterThan(0);
+    for (const category of scope12) {
+      expect(isEvidenceRequired(category)).toBe(true);
+    }
+    for (const category of ['Mobile Combustion', 'Refrigerants', 'Fugitive Gas']) {
+      expect(isEvidenceRequired(category)).toBe(true);
+    }
+  });
+
+  it('requires evidence for Water alone among Scope 3 categories', () => {
+    const scope3Required = CATEGORIES.filter(
+      (c) => CATEGORY_SCOPE_MAP[c] === 3 && isEvidenceRequired(c),
+    );
+    expect(scope3Required).toEqual(['Water']);
+    expect(isEvidenceRequired('Waste')).toBe(false);
+    expect(isEvidenceRequired('Business Travel')).toBe(false);
   });
 
   it('requires evidence for every invoice-tracked category', () => {
@@ -681,6 +705,17 @@ describe('bulk upload — the column contract', () => {
   });
 });
 
+describe('approval_evidence_missing (K3)', () => {
+  it('is a 400 naming the category, as evidence_required is', () => {
+    expect(API_ERROR_STATUS.approval_evidence_missing).toBe(400);
+    expect(API_ERROR_PARAMS.approval_evidence_missing).toEqual(['category']);
+  });
+
+  it('is not a bulk-submit outcome — bulk submit never approves', () => {
+    expect(BULK_SUBMIT_ISSUE_CODES as readonly string[]).not.toContain('approval_evidence_missing');
+  });
+});
+
 describe('bulk submit — the code list', () => {
   it('covers submit preconditions and the reserved LP4-05 deadline outcome', () => {
     // One code per refusal gate. PR A publishes the deadline gate before PR B
@@ -757,6 +792,14 @@ describe('needsEvidenceBeforeSubmit', () => {
     expect(needsEvidenceBeforeSubmit({ category: 'Electricity', evidenceCount: 1 })).toBe(false);
     expect(needsEvidenceBeforeSubmit({ category: 'Business Travel', evidenceCount: 0 })).toBe(false);
   });
+
+  it.each(['Mobile Combustion', 'Refrigerants', 'Fugitive Gas'])(
+    'holds back %s with no file and lets it through with one (K3)',
+    (category) => {
+      expect(needsEvidenceBeforeSubmit({ category, evidenceCount: 0 })).toBe(true);
+      expect(needsEvidenceBeforeSubmit({ category, evidenceCount: 1 })).toBe(false);
+    },
+  );
 
   it('covers every evidence-required category and nothing else', () => {
     for (const category of EVIDENCE_REQUIRED_CATEGORIES) {

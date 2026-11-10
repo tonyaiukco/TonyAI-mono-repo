@@ -1247,6 +1247,24 @@ export async function deleteRecordsAsService(
 }
 
 /**
+ * Move a draft to `submitted` as the database OWNER, past the API's submit
+ * gate — the state a record of Mobile Combustion, Refrigerants or Fugitive Gas
+ * could reach without a file before K3 (2026-11-10). Only the approve gate can
+ * be shown on such a record, and the API offers no way to build one, by
+ * design. Local or CI only, like every owner step; the caller deletes the
+ * record with `deleteRecordsAsService`.
+ */
+export async function submitAsOwnerPastEvidenceGate(recordId: string): Promise<void> {
+  const moved = await withOwner((owner) =>
+    owner.$executeRawUnsafe(
+      `UPDATE activity_records SET status = 'submitted', submitted_at = now() WHERE id = $1::uuid AND status = 'draft'`,
+      recordId,
+    ),
+  );
+  if (moved !== 1) throw new Error(`submitAsOwnerPastEvidenceGate: expected one draft ${recordId}, moved ${moved}`);
+}
+
+/**
  * Wait out the import route's rate-limit window.
  *
  * The route allows five requests per minute PER USER, the whole bulk group runs

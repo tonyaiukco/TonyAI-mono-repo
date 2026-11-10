@@ -29,9 +29,10 @@ in `e2e/helpers.ts`.
   keep anomaly baselines from bleeding across tests (the baseline is per subsidiary+category+period).
 - **Arrange heavy state via the API, act via the UI.** Building a committed record (draft → evidence →
   submit) or an anomaly baseline through the UI is slow/flaky — use `createCommittedRecord`. Every
-  category the seed's factor library covers is evidence-required, so committing always needs a file —
-  and so does anything a bulk import produces. `seedE2EFactor` opens a non-evidence lane for the cases
-  that need one.
+  Scope 1 and 2 category (and Water) is evidence-required since K3, at submit AND approve, so committing
+  always needs a file. The API offers no way to build a submitted record without one; to show the approve
+  gate, use `submitAsOwnerPastEvidenceGate`. Anything a bulk import produces needs a file too;
+  `seedE2EFactor` opens a non-evidence lane (Waste) for the cases that need one.
 - **Approve via the API** — `getAccessToken` + `approveRecord` for any flow that needs an approved
   record (`/review` has an Approve button; `review-queue.spec.ts` covers it). **The approver may not be
   the record's creator** (decision D01): a record created with `ADMIN_EMAIL`'s token is approved with

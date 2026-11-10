@@ -12,6 +12,7 @@ import {
   type ActivityRecord,
 } from '@tonyai/db';
 import {
+  ApprovalEvidenceMissingError,
   CalculationStaleError,
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
@@ -1556,6 +1557,18 @@ export class ActivityRecordsService {
       // Period-lock gate (defense-in-depth): no review transitions in a closed
       // period.
       await this.assertPeriodNotLocked(periodOf(record), tx);
+      // K3, as at submit and in the same place in the order: a record of an
+      // evidence-required category submitted before its category needed a file
+      // (Mobile Combustion, Refrigerants, Fugitive Gas until 2026-11-10) is not
+      // approved without one. No exemption by date or audit row — both are
+      // forgeable (C8's decision). Counted under the row lock; a detach is
+      // refused once the record is submitted, so the count holds.
+      const evidenceCount = isEvidenceRequired(record.category)
+        ? await tx.activityRecordEvidence.count({ where: { activityRecordId: record.id } })
+        : 0;
+      if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
+        throw new ApprovalEvidenceMissingError(record.category);
+      }
       // C8, as at submit: an untyped record of a typed category — one
       // submitted before the rule — is returned to its author to name its type.
       assertActivityTypeNamed(record.category, record.activityType ?? null);

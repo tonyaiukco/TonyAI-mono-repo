@@ -39,6 +39,7 @@
   "submitted": "Submitted for review",
   "movedSubmitted": "Moved to {entity}, submitted for review",
   "anomalousBeforeSubmit": "This value looks anomalous — add a variance comment before submitting.",
+  "evidenceBeforeSubmit": "Saved. Attach at least one evidence file below, then submit again.",
   "aSite": "a site",
   "theWholeCompany": "the whole company",
   "duplicateAdvice": "Open it from Previous submissions to continue it.",

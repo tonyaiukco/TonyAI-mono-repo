@@ -38,6 +38,9 @@ export const RECORD_CHANGED_MESSAGE =
   'This record was changed by someone else while your request was in progress. Reload it and try again.';
 export const EVIDENCE_REFUSAL_FRAGMENT =
   'requires at least one evidence file before submitting';
+/** K3: the approver cannot attach a file (evidence is locked after submit). */
+export const APPROVAL_EVIDENCE_REFUSAL_FRAGMENT =
+  'has no evidence file — reject the record so its author can attach one';
 export const VARIANCE_REFUSAL =
   'This value deviates significantly from the historical average — add a variance comment before submitting.';
 
@@ -109,6 +112,24 @@ export class RecordChangedError extends ConflictException {
 export class EvidenceRequiredError extends BadRequestException {
   constructor(category: string) {
     super(errorBody('evidence_required', `Category "${category}" ${EVIDENCE_REFUSAL_FRAGMENT}.`, { category }));
+  }
+}
+
+/**
+ * K3: approving an evidence-required record with no file attached — one
+ * submitted before its category needed one. Its own code, because
+ * `evidence_required`'s copy says "before submitting" and an approver does not
+ * submit: the only remedy open to them is to reject the record.
+ */
+export class ApprovalEvidenceMissingError extends BadRequestException {
+  constructor(category: string) {
+    super(
+      errorBody(
+        'approval_evidence_missing',
+        `This ${category} record ${APPROVAL_EVIDENCE_REFUSAL_FRAGMENT}.`,
+        { category },
+      ),
+    );
   }
 }
 

@@ -246,7 +246,7 @@ describe('ImportBatchesService — submitting a batch', () => {
       createdBy: 'user-entry',
       // Only drafts not waiting for an evidence file — what the button counted.
       OR: [
-        { category: { notIn: ['Electricity', 'Natural Gas', 'Fuel', 'Water'] } },
+        { category: { notIn: ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas', 'Water'] } },
         { evidenceLinks: { some: {} } },
       ],
     });

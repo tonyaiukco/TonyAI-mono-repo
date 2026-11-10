@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
+import dataEntryEn from '../apps/web/messages/en/dataEntry.json';
 import {
   login,
   pickByFieldLabel,
@@ -38,9 +39,13 @@ test('gate: evidence-required category blocks submit until a file is attached', 
   await page.getByRole('button', { name: 'Save draft' }).click();
   await expect(page.getByText('Draft saved')).toBeVisible();
 
-  // Submit without uploading evidence → API 400, surfaced as a toast.
+  // Submit without uploading evidence: the form mirrors the API's gate (K3),
+  // keeps the saved draft open and asks for the file in the vault on screen.
+  // The API's own refusal (`evidence_required`) is pinned by
+  // bulk-submit-refusals.spec.ts and the integration suite.
   await page.getByRole('button', { name: 'Submit for review' }).click();
-  await expect(page.getByText(/requires at least one evidence file/i)).toBeVisible();
+  await expect(page.getByText(dataEntryEn.evidenceBeforeSubmit)).toBeVisible();
+  await expect(page.locator('[data-testid="evidence-vault-input"]')).toBeAttached();
 });
 
 test("gate: Data Entry's live preview never takes the user's submit admission (API)", async ({ request }) => {

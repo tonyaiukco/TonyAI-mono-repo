@@ -2,7 +2,7 @@
   "title": "Evidence",
   "required": "Required",
   "filesCount": "{count} file(s)",
-  "requiredNote": "This category requires at least one supporting file (invoice, meter record, …) before it can be submitted.",
+  "requiredNote": "This category requires at least one supporting file (an invoice, a meter reading, a fuel receipt or fuel-card statement, a service or leak report, …) before it can be submitted.",
   "uploading": "Uploading…",
   "chooseFiles": "Choose files",
   "accepted": "PDF, JPG, PNG, XLSX, CSV · max 10 MB",

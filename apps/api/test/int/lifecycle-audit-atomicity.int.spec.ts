@@ -162,6 +162,8 @@ const cases: Case[] = [
     name: 'approve',
     arrange: async () => {
       const r = await createRecord(prisma, tenant, { status: ActivityRecordStatus.submitted }, { priced: true });
+      // Approve checks the file a submitted Electricity record holds (K3).
+      await attachEvidence(prisma, tenant, [r.id]);
       return { record: r.id };
     },
     act: (s, ids) => s.records.approve(tenant.users.superAdmin, ids.record),

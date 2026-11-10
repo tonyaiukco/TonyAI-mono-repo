@@ -107,12 +107,12 @@ export interface SubmitEligibility {
  * Evidence-required categories are held back rather than sent and refused: the
  * server would reject every one of them, and a report that is entirely
  * `evidence_required` teaches a user nothing they were not already warned
- * about during the import. **On the seeded demo data this holds back
- * everything** — the factor library covers only Electricity, Natural Gas and
- * Fuel, all three of which require evidence, so the set of rows that can be
- * imported and the set that can be bulk-submitted are disjoint. That is a
- * property of the seeded factor library, not of this code, and the copy says
- * so rather than presenting an empty result as a failure.
+ * about during the import. **On pilot data this holds back almost
+ * everything** — every Scope 1 and Scope 2 category requires evidence (K3,
+ * 2026-11-10), and so does Water, so only the other Scope 3 rows can go
+ * straight from an import to review. That is a property of the evidence rule,
+ * not of this code, and the copy says so rather than presenting an empty
+ * result as a failure.
  *
  * The anomaly cases are NOT pre-excluded: the row type carries `anomalous` but
  * not `varianceReason`, so a row flagged at import may well have an

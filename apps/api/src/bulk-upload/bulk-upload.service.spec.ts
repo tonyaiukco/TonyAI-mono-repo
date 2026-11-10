@@ -885,6 +885,29 @@ describe('BulkUploadService — warnings', () => {
     expect(report.warnings.map((w) => [w.row, w.code])).toEqual([[2, 'evidence_required']]);
   });
 
+  it.each([
+    ['Mobile Combustion', { category: 'Mobile Combustion', activityType: 'on_road_diesel', activityUnit: 'litres' }],
+    ['Fugitive Gas', { category: 'Fugitive Gas', activityUnit: 'standard_cubic_metres' }],
+  ])('warns that a %s row needs an evidence file before it can be submitted (K3)', async (_label, fields) => {
+    // Every Scope 1–2 category is evidence-required since K3 (2026-11-10);
+    // the warning reads the shared list, so these rows carry it as an
+    // electricity row does.
+    const { service } = build();
+    const report = await service.import(dataEntry(), csvFile([row(fields)]), DRY);
+    expect(report.errors).toEqual([]);
+    expect(report.warnings.map((w) => [w.row, w.code])).toEqual([[2, 'evidence_required']]);
+  });
+
+  it('does not warn on a Waste row, which needs no evidence (Scope 3)', async () => {
+    const { service } = build();
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ category: 'Waste', activityUnit: 'tonnes' })]),
+      DRY,
+    );
+    expect(report.warnings.filter((w) => w.code === 'evidence_required')).toEqual([]);
+  });
+
   it('drops a row’s warnings when the preview refuses it', async () => {
     // The measured shape: an electricity row the record service refuses (a
     // period its granularity does not have) AFTER the evidence warning had
