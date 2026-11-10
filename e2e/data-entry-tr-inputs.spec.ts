@@ -290,6 +290,12 @@ test('evidence: a new mobile record submitted without a file stays open on its d
   const created = page.waitForResponse(
     (r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'),
   );
+  // Every submit the page sends: the pre-check must send none, so removing it
+  // fails here rather than passing on the API's own refusal.
+  const submits: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && /\/activity-records\/[^/]+\/submit$/.test(new URL(r.url()).pathname)) submits.push(r.url());
+  });
   await page.getByRole('button', { name: en.submit }).click();
   const saved = await created;
   expect(saved.status()).toBe(201);
@@ -298,6 +304,9 @@ test('evidence: a new mobile record submitted without a file stays open on its d
   const vault = page.locator('[data-testid="evidence-vault-input"]');
   try {
     await expect(page.getByText(en.evidenceBeforeSubmit)).toBeVisible();
+    expect(submits).toHaveLength(0);
+    // The draft just saved is listed without a reload.
+    await expect(page.getByRole('button', { name: new RegExp(`Q1 ${E2E_TR_INPUTS_YEAR}`) })).toBeVisible();
     await expect(page.getByText(enEvidence.requiredNote)).toBeVisible();
     await expect(vault).toBeAttached();
     const draft = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
@@ -307,6 +316,7 @@ test('evidence: a new mobile record submitted without a file stays open on its d
     await expect(page.getByText(enEvidence.uploaded)).toBeVisible();
     await page.getByRole('button', { name: en.submit }).click();
     await expect(page.getByText(en.submitted)).toBeVisible();
+    expect(submits).toHaveLength(1);
 
     const after = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
     expect((await after.json()).status).toBe('submitted');

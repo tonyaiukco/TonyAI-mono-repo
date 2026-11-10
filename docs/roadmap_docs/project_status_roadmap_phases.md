@@ -1502,7 +1502,6 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 
 **UAT round 2 / K3 notes (2026-11-10; filed per the pre-pilot rule):**
 
-- **Previous submissions does not list a draft right after the pre-check stops a submit**: the early return skips `refreshRecords`, as the anomaly pre-check's already did. A reload shows it.
 - **Untested corners:** no e2e test that a Waste record submits in one click; the e2e test does not assert the form reset, the Turkish note or the note for Refrigerants and Fugitive Gas; the bulk send-drafts action is tested through its query on the database and its where-shape, not end to end.
 - **Estimated refrigerant records have no receipt:** for a capacity-method record, an equipment register or a method note is the evidence. The vault accepts any file type, so this works, but the copy does not say it.
 - **`gates.spec.ts` no longer shows the API's single-record `evidence_required` toast**: the pre-check answers first. The copy stays covered by the web error tests, and the refusal by the integration and bulk e2e tests.
