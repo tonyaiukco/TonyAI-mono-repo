@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CATEGORY_ACTIVITY_TYPES, COUNTED_STATUSES, REPORTING_PERIODS, type Category } from '@tonyai/shared-types';
-import { BODY_COLUMNS, TRAILING_COLUMNS } from './report-columns';
+import { anomalyCell, BODY_COLUMNS, TRAILING_COLUMNS } from './report-columns';
 import { EN_VOCABULARY, plainDigits, REPORT_CATALOGUES, reportVocabulary } from './report-vocabulary';
 
 /**
@@ -88,5 +88,46 @@ describe('the Turkish catalogue covers every word a live PDF or workbook prints'
     expect(EN_VOCABULARY.entity({ locationId: null })).toBe('Whole company');
     expect(EN_VOCABULARY.number.format(1234.56)).toBe('1,234.6');
     expect(tr.number.format(1234.56)).toBe('1.234,6');
+  });
+});
+
+// BUG-R2-07 (2026-11-11): the anomaly column names what a verdict rests on.
+// One table for three writers — the CSV cell must be the English vocabulary's
+// cell word for word, or one request yields two files that disagree.
+describe('the anomaly column, state by state', () => {
+  const base = { anomalyFlag: false, anomalyEvaluated: false, anomalyBaselinePriorCount: null, anomalyLegacy: false };
+  it.each([
+    ['a full-history flag', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 3 },
+      'yes', 'evet'],
+    ['a flag on one period', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 1 },
+      'yes (limited history: 1 period)', 'evet (kısıtlı geçmiş: 1 dönem)'],
+    ['a flag on two periods', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 2 },
+      'yes (limited history: 2 periods)', 'evet (kısıtlı geçmiş: 2 dönem)'],
+    ['clean on a full history', { anomalyEvaluated: true, anomalyBaselinePriorCount: 3 },
+      '', ''],
+    ['clean on one period', { anomalyEvaluated: true, anomalyBaselinePriorCount: 1 },
+      'within range (limited history: 1 period)', 'aralık içinde (kısıtlı geçmiş: 1 dönem)'],
+    ['clean on two periods', { anomalyEvaluated: true, anomalyBaselinePriorCount: 2 },
+      'within range (limited history: 2 periods)', 'aralık içinde (kısıtlı geçmiş: 2 dönem)'],
+    ['no figure of its own', {},
+      'Not evaluated (no figure)', 'Değerlendirilmedi (rakam yok)'],
+    ['no earlier period', { anomalyBaselinePriorCount: 0 },
+      'Not evaluated (no earlier period)', 'Değerlendirilmedi (önceki dönem yok)'],
+    ['scored before the short-history check', { anomalyBaselinePriorCount: 2, anomalyLegacy: true },
+      'Not evaluated (scored before the short-history check)',
+      'Değerlendirilmedi (kısa geçmiş kontrolünden önce puanlandı)'],
+    ['one period averaging zero', { anomalyBaselinePriorCount: 1 },
+      'Not evaluated (baseline is zero)', 'Değerlendirilmedi (taban değer sıfır)'],
+    ['a full window averaging zero', { anomalyBaselinePriorCount: 3 },
+      'Not evaluated (baseline is zero)', 'Değerlendirilmedi (taban değer sıfır)'],
+    // A flag the rule could not have raised (no usable average) carries no
+    // qualifier: "limited history" is a claim about a check that ran.
+    ['a flag beside a verdict that was not evaluated', { anomalyFlag: true, anomalyBaselinePriorCount: 2, anomalyLegacy: true },
+      'yes', 'evet'],
+  ])('%s', (_name, over, english, turkish) => {
+    const r = { ...base, ...over };
+    expect(anomalyCell(r)).toBe(english);
+    expect(EN_VOCABULARY.anomaly(r)).toBe(english);
+    expect(tr.anomaly(r)).toBe(turkish);
   });
 });

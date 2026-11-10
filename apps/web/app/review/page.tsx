@@ -740,10 +740,11 @@ export default function ReviewPage() {
               )}
 
               {/* The absence of a flag is not a verdict when the rule never
-                  ran. A reviewer approving on the strength of "nothing was
-                  flagged" is the exact failure this states out loud. */}
+                  ran, and a weaker one when it ran on one or two periods. A
+                  reviewer approving on the strength of "nothing was flagged"
+                  is the exact failure this states out loud. */}
               {!selected.anomalyFlag &&
-                anomalyStatement(selected, tAnomaly, locale).tone === "not_evaluated" && (
+                anomalyStatement(selected, tAnomaly, locale).qualified && (
                   <div className="rounded-lg border bg-muted/40 p-3 space-y-1">
                     <p className="font-medium">
                       {anomalyStatement(selected, tAnomaly, locale).headline}

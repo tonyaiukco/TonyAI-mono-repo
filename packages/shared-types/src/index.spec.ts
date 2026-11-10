@@ -19,6 +19,9 @@ import {
   needsEvidenceBeforeSubmit,
   SUBMITTABLE_STATUSES,
   ANOMALY_BASELINE_PERIODS,
+  ANOMALY_MIN_PRIORS,
+  anomalyBasis,
+  isLegacyShortWindowVerdict,
   anomalyNotEvaluated,
   computeAnomalyVerdict,
   ANOMALY_THRESHOLD,
@@ -530,11 +533,23 @@ describe('the anomaly rule (VAR §4)', () => {
     expect(ANOMALY_BASELINE_PERIODS).toBe(3);
   });
 
+  it('runs on as little as one earlier period (BUG-R2-07, 2026-11-11)', () => {
+    // Pinned for the same reason as the two above: raising this to 2 or 3
+    // silently takes every first-year series back out of the gate.
+    expect(ANOMALY_MIN_PRIORS).toBe(1);
+  });
+
   describe('isAnomalyEvaluated', () => {
     const evaluated = { anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 41.2 };
 
-    it('is true only on a full window with a usable divisor', () => {
+    it('is true on a full window with a usable divisor', () => {
       expect(isAnomalyEvaluated(evaluated)).toBe(true);
+    });
+
+    it.each([1, 2])('is true on a limited window of %i priors with an average', (priors) => {
+      expect(
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: 41.2 }),
+      ).toBe(true);
     });
 
     it('is false when the pool was never queried', () => {
@@ -543,9 +558,26 @@ describe('the anomaly rule (VAR §4)', () => {
       ).toBe(false);
     });
 
-    it.each([0, 1, 2])('is false on a window of %i priors', (priors) => {
+    it('is false with no earlier period', () => {
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: null }),
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }),
+      ).toBe(false);
+    });
+
+    it.each([1, 2])(
+      'is false on a verdict of %i priors written before the short-history check',
+      (priors) => {
+        // Count without an average: the old rule's "not evaluated". It stays
+        // not evaluated — the record is not re-scored because the rule changed.
+        expect(
+          isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: null }),
+        ).toBe(false);
+      },
+    );
+
+    it.each([1, 2])('is false when a limited window of %i averages to zero', (priors) => {
+      expect(
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: 0 }),
       ).toBe(false);
     });
 
@@ -565,12 +597,35 @@ describe('the anomaly rule (VAR §4)', () => {
     });
 
     it('does not treat a count above the window as evaluated', () => {
-      // Equality, not `>=`: a count above the window means the rule that
+      // Bounded above: a count above the window means the rule that
       // produced it disagrees with the one reading it, and "evaluated" would be
       // the wrong thing to conclude from a contradiction.
       expect(
         isAnomalyEvaluated({ anomalyBaselinePriorCount: 4, anomalyBaselineTCo2e: 41.2 }),
       ).toBe(false);
+    });
+  });
+
+  // Design D4's table, row by row: what the three stored columns mean.
+  describe('anomalyBasis and isLegacyShortWindowVerdict', () => {
+    it.each([
+      // [count, average, basis, legacy]
+      [null, null, null, false], // no figure of its own
+      [0, null, null, false], // no earlier period
+      [1, null, null, true], // scored before the short-history check
+      [2, null, null, true],
+      [1, 0, null, false], // zero average
+      [2, 0, null, false],
+      [1, 10, 'limited', false],
+      [2, 10, 'limited', false],
+      [3, 0, null, false],
+      [3, null, null, false], // a full window with no average is not legacy
+      [3, 10, 'full', false],
+      [4, 10, null, false], // a count the rule cannot produce
+    ] as const)('count %s, average %s → basis %s, legacy %s', (count, average, basis, legacy) => {
+      const record = { anomalyBaselinePriorCount: count, anomalyBaselineTCo2e: average };
+      expect(anomalyBasis(record)).toBe(basis);
+      expect(isLegacyShortWindowVerdict(record)).toBe(legacy);
     });
   });
 });
@@ -593,23 +648,56 @@ describe('computeAnomalyVerdict', () => {
     expect(computeAnomalyVerdict(15, [10, 10, 10]).anomalous).toBe(false);
   });
 
-  it.each([[[10, 10]], [[10]], [[]]])(
-    'does not run on a window of %j — the count is reported, the baseline is not',
-    (priors) => {
-      const v = computeAnomalyVerdict(19.8, priors as number[]);
-      expect(v.anomalous).toBe(false);
-      expect(v.priorCount).toBe((priors as number[]).length);
-      expect(v.baseline).toBeNull();
-    },
-  );
+  it('does not run with no earlier period — the count is reported, the baseline is not', () => {
+    expect(computeAnomalyVerdict(19.8, [])).toEqual({
+      anomalous: false,
+      priorCount: 0,
+      baseline: null,
+    });
+  });
+
+  // BUG-R2-07: one or two earlier periods are a limited-history verdict, under
+  // the same threshold. Binary-exact values, so each is the boundary itself.
+  it.each([
+    [16, true],
+    [15, false], // exactly 50% above: §4.2 says MORE than
+    [5, false], // exactly 50% below
+    [4, true],
+  ])('judges %d against ONE prior of 10 → anomalous %s', (current, anomalous) => {
+    expect(computeAnomalyVerdict(current, [10])).toEqual({
+      anomalous,
+      priorCount: 1,
+      baseline: 10,
+    });
+  });
+
+  it('averages TWO priors', () => {
+    expect(computeAnomalyVerdict(14, [8, 12])).toEqual({
+      anomalous: false,
+      priorCount: 2,
+      baseline: 10,
+    });
+    expect(computeAnomalyVerdict(19.8, [8, 12]).anomalous).toBe(true);
+  });
 
   it('lets a figureless prior consume a slot rather than reaching past it', () => {
     // Four comparable periods exist, one of them without a figure. The window
-    // is still three, so two figures remain and the rule does not run — it does
-    // NOT reach back to the fourth to refill the window.
-    const v = computeAnomalyVerdict(19.8, [null, 10, 10, 10]);
-    expect(v.priorCount).toBe(2);
-    expect(v.anomalous).toBe(false);
+    // is still three, so two figures remain and the verdict is on limited
+    // history — it does NOT reach back to the fourth to refill the window. The
+    // fourth is 40 here so that reaching it would move the average to 20.
+    expect(computeAnomalyVerdict(19.8, [10, null, 10, 40])).toEqual({
+      anomalous: true,
+      priorCount: 2,
+      baseline: 10,
+    });
+  });
+
+  it('does not run on a window of figureless priors only', () => {
+    expect(computeAnomalyVerdict(19.8, [null, null, null, 10])).toEqual({
+      anomalous: false,
+      priorCount: 0,
+      baseline: null,
+    });
   });
 
   it('reports a full window that averages zero instead of hiding it', () => {
@@ -618,6 +706,14 @@ describe('computeAnomalyVerdict', () => {
       priorCount: 3,
       baseline: 0,
     });
+  });
+
+  it('reports a single zero prior the same way: no ratio, no flag', () => {
+    const v = computeAnomalyVerdict(500, [0]);
+    expect(v).toEqual({ anomalous: false, priorCount: 1, baseline: 0 });
+    expect(
+      isAnomalyEvaluated({ anomalyBaselinePriorCount: v.priorCount, anomalyBaselineTCo2e: v.baseline }),
+    ).toBe(false);
   });
 
   it('ignores priors beyond the window', () => {

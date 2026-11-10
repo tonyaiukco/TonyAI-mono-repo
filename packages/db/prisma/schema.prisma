@@ -297,20 +297,26 @@ model ActivityRecord {
   createdBy                 String                   @map("created_by") @db.Uuid
   anomalyFlag               Boolean                  @default(false) @map("anomaly_flag")
   // What the flag above was decided against: how many comparable periods
-  // carried a figure, and their rolling average. VAR §4.1 requires three, so a
-  // count below it means the rule did NOT run and the average is null --
-  // `anomalyFlag: false` said all three of "clean against three", "clean
-  // against fewer" and "never evaluated" until these columns existed.
+  // carried a figure, and their average. VAR §4.1's window is three; one or
+  // two is a limited-history verdict (BUG-R2-07, 2026-11-11) and none means
+  // the rule did NOT run -- `anomalyFlag: false` said all three of "clean
+  // against three", "clean against fewer" and "never evaluated" until these
+  // columns existed.
   //
-  // THREE states, readable in plain SQL with no join and no JSON parsing:
+  // The count, readable in plain SQL with no join and no JSON parsing:
   //   NULL  -- the pool was never queried (this record carries no figure of its
   //            own, so there is nothing to deviate). It may still sit on a full
   //            year of neighbours; "no figure" and "no priors" are different
   //            facts, and a column that said 0 for both forced every non-
   //            TypeScript reader to re-implement isCalculated() to tell them
   //            apart -- three copies of that predicate already exist.
-  //   0..2  -- a short window: the rule did not run.
-  //   3     -- evaluated, and `anomalyBaselineTCo2e` is the average it used.
+  //   0     -- no earlier period: the rule did not run.
+  //   1..2  -- evaluated on limited history; `anomalyBaselineTCo2e` is the
+  //            average of those periods. A NULL average beside this count is
+  //            a verdict written before 2026-11-11, when such a window was
+  //            not evaluated; it is kept, not re-scored.
+  //   3     -- evaluated on a full window.
+  // An average of 0 yields no ratio, at any count: not evaluated.
   //
   // Named `anomalyBaseline*` and not `baseline*`: `Target.baselineTCo2e` in
   // this same schema is a reduction target's baseline-year emissions, an

@@ -31,7 +31,7 @@ Round 2 also introduces things round 1 never saw, and they change what the app
 | **A subsidiary can be measured per location** | `TonyAI Energy` is tracked as **one monthly invoice per site**, so its cells read `3/24` rather than a yes/no tick. | This is round-1 **DASH-3**. It is also honest about the gap: 9 of its electricity entries are filed for the whole company and close no site invoice. |
 | **An approved figure can be withdrawn** | Approved records are immutable, so a wrong one is *withdrawn* with a reason instead of edited or deleted. | A double-counted month can now be corrected without falsifying history. |
 | **Reports say what was taken out** | PDF, Excel and CSV all disclose withdrawals and name the **reporting entity** (site or whole company) of every row. | An export can no longer drop a figure silently. |
-| **The anomaly check says what it judged against** | It needs **three** prior periods. Fewer than three means *not evaluated* — which is a different claim from *not anomalous*. | Round 1 could not tell "checked and clean" from "never checked". |
+| **The anomaly check says what it judged against** | It compares a record with up to **three** prior periods. One or two are enough (since 2026-11-11): the record is then checked on *limited history*. None means *not evaluated* — which is a different claim from *not anomalous*. | Round 1 could not tell "checked and clean" from "never checked". |
 | **There is an audit-trail screen** | `/audit`, super_admin only. | Round 1 was told the audit log existed but had no UI. It has one now. |
 | **Every record says who touched it** *(new in 2026-09-02)* | The review queue names who **entered** a record and how long it has been **waiting**; the detail panels name who entered it and who **decided** it; a withdrawal names who withdrew it. | Round 1 could see *that* a record was approved but never *by whom* — the person was reachable only through `/audit`, which only an admin can open. |
 | **Exports name the withdrawer, and open cleanly on Windows** *(new in 2026-09-02)* | Every export carries the withdrawer's **user id** — an opaque id, deliberately not a name (§6.5) — and the CSV now opens as UTF-8 in Excel on Windows. | Round 1 never opened an export on Windows, where Turkish names came out mojibaked. |
@@ -227,23 +227,36 @@ correctly invisible.
 
 ### 4.7 The anomaly check says what it judged against (WP21)
 
-The rule needs **three** prior committed periods. Fewer than three means the rule
-**did not run** — reported as *not evaluated*, which is a different claim from
-*not anomalous*.
+The rule compares a record with the average of its **three** most recent prior
+committed periods. Since 2026-11-11 (BUG-R2-07) **one or two** are enough: the
+record is then checked on *limited history*, and every screen says so. With no
+prior period the rule **does not run** — reported as *not evaluated*, which is a
+different claim from *not anomalous*. Limits for that first period (a
+plausibility range, a manual flag) are not built yet; they are a separate
+decision (K4).
+
+A record that was committed **before** this change with one or two priors keeps
+its old verdict: *not checked*, with a sentence saying it was scored when three
+periods were needed. A database seeded before the change shows that sentence
+where a freshly seeded one shows a limited-history verdict; ANOM-02 gives both.
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| ANOM-01 | `/emissions` → **History** → open **TonyAI Energy · Electricity · January 2026**. *(The list does not show which site a row belongs to — the panel's **Reporting Entity** field does, and it must read **Istanbul HQ**. January is unique: the company's own series starts in April.)* | The panel states: *"No earlier committed period exists for this reporting entity, so there is no history to compare against. The check needs 3."* | |
-| ANOM-02 | Open **March 2026** for the same site | *"Only 2 earlier committed periods exist for this reporting entity; the check needs 3."* | |
+| ANOM-01 | `/emissions` → **History** → open **TonyAI Energy · Electricity · January 2026**. *(The list does not show which site a row belongs to — the panel's **Reporting Entity** field does, and it must read **Istanbul HQ**. January is unique: the company's own series starts in April.)* | The panel states: *"No earlier committed period exists for this reporting entity, so there is no history to compare against."* It does not say that three periods are needed | |
+| ANOM-02 | Open **March 2026** for the same site | On a database seeded after 2026-11-11: *"Compared against 17.6 tCO₂e, the average of the 2 earlier periods for this reporting entity, and within 50%. The check rests on limited history (2 periods)."* On one seeded before: *"This entry was scored when the check needed 3 earlier committed periods. It had fewer (2), so it was not checked."* | |
 | ANOM-03 | Open a record with a full history (e.g. TonyAI Gas · Electricity · June 2026) | It names the average it was compared against — a number, not just a verdict | |
 | ANOM-04 | Open **TonyAI Logistics · Fuel · July 2026** (the one seeded anomaly) | Flagged, and the text names the historical average it deviates from and the >50% threshold | |
 | ANOM-05 | As `entry@tonyai.local`: **TonyAI Energy · Location = Istanbul HQ · Electricity · April 2026**, enter ~**400,000** kWh → Save draft | Amber banner naming the average it deviates from (that site has three priors at 17.6 tCO₂e), and a mandatory **Reason for variance** — submit is blocked until it is filled. *(Pick that exact series: most other 2026 months are already taken, and the free ones have no history to deviate from.)* | |
-| ANOM-06 | Export CSV and read the `anomaly_flag` column (**do §4.4 first**, or the `Withdrawn` reading will not appear) | Five distinct readings: `yes`, blank (checked and clean), `Not evaluated (n of 3 priors)`, `Not evaluated (no figure)` — for a category that produces no tonnage, so §4.8's Water record — and `Withdrawn`. A blank must never be confused with "never checked" | |
+| ANOM-06 | Export CSV and read the `anomaly_flag` column (**do §4.4 first**, or the `Withdrawn` reading will not appear) | Distinct readings: `yes`, blank (checked against a full history and clean), `within range (limited history: n periods)`, `Not evaluated (no earlier period)`, `Not evaluated (scored before the short-history check)` on a database seeded before 2026-11-11, `Not evaluated (no figure)` — for a category that produces no tonnage, so §4.8's Water record — and `Withdrawn`. After ANOM-08 the column also holds `yes (limited history: 1 period)`. A blank must never be confused with "never checked", nor with "checked against one period" | |
 | ANOM-07 | Judge the wording | Does *"Not checked for anomalies"* read as reassuring or as a warning? It is meant as neither — it is a statement of what the system does not know | |
+| ANOM-08 | The short-history check (BUG-R2-07). As `entry@tonyai.local`, pick a **quarterly** series that holds no record yet (the seed writes monthly records only), for example **TonyAI Logistics · Electricity · Quarterly · Q1 2026**. Enter **10,000** kWh, attach a file and submit. Then enter **Q2** for the same series at **20,000** kWh → Save draft | Q1 saves as *"Not checked for anomalies"* (no earlier period). Q2 shows the amber banner: compared against the only earlier period, a deviation of more than 50%, *"The check rests on limited history (1 period)"*, with a mandatory **Reason for variance**. Submit is refused until the reason is filled, then succeeds | |
+| ANOM-09 | For the same series enter **Q3** at **14,000** kWh → Save draft | No amber banner. A neutral note: *"Within range on limited history"*, compared against the average of the 2 earlier periods | |
+| ANOM-10 | As `review@tonyai.local`, open the Q2 record of ANOM-08 in `/review`; then open the tracking matrix as `admin@tonyai.local` | The review sheet shows the flag, the same limited-history sentence and the author's reason. The matrix cell for that series is amber, as for any flag | |
 
-> **A short history deliberately does not turn a cell amber.** The first months of
-> any new site are always short. If you think a tester would read the green as
-> *"checked"*, tell us — that is a decision we would revisit.
+> **A record that was not checked deliberately does not turn a cell amber.** The
+> first period of any new series has nothing to be compared with. If you think a
+> tester would read the green as *"checked"*, tell us — that is a decision we
+> would revisit. A **flag** on limited history does turn the cell amber.
 
 ### 4.8 A category with no emission factor (WP17)
 
@@ -376,7 +389,7 @@ evidence and this catalogue update, not an invented live acceptance run.
 Not bugs — decisions. Round 2 exists partly to test these.
 
 1. **Does green now mean what you expect?** A cell is green only when every entry in it has been accepted. Amber means *something is left to look at* — awaiting review, flagged as anomalous, missing a file, or still a draft. Is one amber for four different reasons useful, or does it need to distinguish them?
-2. **Is "not evaluated" understood?** A record with fewer than three prior periods was never checked. We report that but deliberately do **not** colour the cell amber for it. Right call?
+2. **Is "not evaluated" understood?** A record with no prior period was never checked. We report that but deliberately do **not** colour the cell amber for it. Right call? And is "limited history (1 period)" clear as a weaker check than a three-period one?
 3. **Is withdrawal the right model?** An approved figure cannot be edited, only withdrawn with a reason and replaced. Does that match how your organisation restates a published number?
 4. **Is the per-location view worth the extra reading?** `3 of 24` carries more information than a tick, but it also demands more of the reader. Would you want it on every subsidiary, or only where invoices really are per site?
 5. **The withdrawer, named two different ways — is the split defensible?** The *screen* names the person (*Withdrawn by Tony Admin*). Every *export* carries their **opaque user id** instead, and never their name. The reasoning: a filed report cannot be recalled, so putting a natural person's name into one is a data-protection commitment we have not yet answered (erasure, redaction), while the id still lets a verifier with system access identify who acted. **Is that id enough for your auditor, or does a filed report have to carry the name?** This is the question we would most like answered this round.

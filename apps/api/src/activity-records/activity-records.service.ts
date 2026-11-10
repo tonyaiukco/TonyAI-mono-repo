@@ -320,15 +320,16 @@ const SUBMITTABLE_STATUSES = new Set<ActivityRecordStatus>(
 // calculated tCO₂e. Only committed rows feed the baseline (unreviewed drafts
 // would add noise). Warning-based, never auto-rejection (VAR §8).
 //
-// THREE priors are REQUIRED, not "up to three" (decision 2026-08-27). Under the
-// old reading the gate quietly degraded to a single-period comparison — a
-// two-period average, or one month against one month — with nothing recording
-// that it had, because `anomalyFlag: false` cannot distinguish "checked" from
-// "not checkable". Fewer than three now means NOT EVALUATED, and the record
-// says which via `baselinePriorCount`.
+// ONE prior with a figure is enough (BUG-R2-07, decision 2026-11-11, which
+// supersedes "three priors or the rule does not run" of 2026-08-27). One or two
+// is a LIMITED-history verdict under the same threshold, none is NOT EVALUATED,
+// and the record says which via `baselinePriorCount` — the count is what lets
+// a screen tell a one-period comparison from a three-period average, which
+// `anomalyFlag` alone never could.
 //
-// Both numbers live in @tonyai/shared-types: a screen has to state the same
-// rule now that "2 of 3" is something it must be able to say.
+// The window, the minimum and the threshold live in @tonyai/shared-types: a
+// screen has to state the same rule now that "on 2 periods" is something it
+// must be able to say.
 // The SAME list the inventory counts — a sixth hand-written copy of it lived
 // here, character-identical, in the file this rule is most likely to be edited
 // from. A record that counts towards the totals is exactly a record that should
@@ -862,7 +863,7 @@ export class ActivityRecordsService {
    * Anomaly check (VAR §4): anomalous when `currentTCo2e` deviates > ±50% from
    * the rolling average of the previous 3 committed periods for the same
    * reporting entity (subsidiary + location + category) at the same granularity.
-   * Fewer than three priors → the rule does not run. Warning-only.
+   * No prior with a figure → the rule does not run. Warning-only.
    *
    * The key includes `locationId` and the granularity, which VAR §4.1 does not
    * name — a deliberate deviation, now written into the spec: comparing a site

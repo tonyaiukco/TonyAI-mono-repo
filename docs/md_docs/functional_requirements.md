@@ -167,7 +167,9 @@ Changes to locked records must create a revision entry with:
 ### 4.4 Anomaly Detection
 Records with more than 50 percent variance from the rolling average of the
 previous **3** comparable periods for the same reporting entity must be flagged.
-Fewer than three priors carrying a figure means the record is **not evaluated**
+With one or two priors carrying a figure the record is checked against their
+average and the surface must say that the verdict rests on **limited history**
+(since 2026-11-11, BUG-R2-07). With no prior the record is **not evaluated**
 rather than clean, and the surface must say so.
 
 The normative rule — the full baseline key, the counted statuses that seed it,

@@ -786,6 +786,29 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     expect(report.submitted.map((r) => r.recordId)).toEqual(['a', 'c']);
     expect(report.failed[0].recordId).toBe('b');
   });
+
+  it('sends the first period of a new series and holds back the second for its variance reason', async () => {
+    // BUG-R2-07: one earlier period is enough for the rule to run, so within
+    // ONE batch January's submit is the history February is judged against.
+    // Sent February-first on purpose: the order that makes that true is this
+    // service's, not the caller's.
+    const { records, service } = build([
+      candidate({ id: 'feb', periodValue: 'February' }),
+      candidate({ id: 'jan', periodValue: 'January' }),
+    ]);
+    records.submit.mockImplementation(async (_user: unknown, id: string) => {
+      if (id === 'feb') throw new VarianceReasonRequiredError();
+      return record({ id });
+    });
+
+    const report = await service.submitMany(dataEntry(), ids('feb', 'jan'));
+
+    expect(records.submit.mock.calls.map((c) => c[1])).toEqual(['jan', 'feb']);
+    expect(report.submitted.map((r) => r.recordId)).toEqual(['jan']);
+    expect(report.failed).toEqual([
+      expect.objectContaining({ recordId: 'feb', code: 'variance_reason_required' }),
+    ]);
+  });
 });
 
 describe('BulkSubmitService — the audit row', () => {

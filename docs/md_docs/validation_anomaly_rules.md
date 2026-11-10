@@ -62,19 +62,57 @@ The baseline is the rolling average of the previous 3 comparable periods for the
 - `subsidiaryId`
 - `locationId` — **including `NULL`**, which is its own pool (see the deviation below)
 - `categoryKey`
+- `activityType` — diesel and petrol of one site are separate series (LP3-03); an untyped record pools only with untyped ones
 - `reportingPeriod` (the granularity: monthly, quarterly, annual)
 
-**Three priors are required.** Fewer than three comparable periods carrying a
-figure means the rule does **not** run: the record is *not evaluated*, which is
-a different claim from *not anomalous*, and every surface must say which. The
+**The window is the three most recent earlier periods; one figure in it is
+enough for the rule to run** (owner decision 2026-11-11, BUG-R2-07). What the
+window holds decides the verdict's basis:
+
+| Figures in the window | Verdict |
+|---|---|
+| 3 | Full history: compared with their average. |
+| 1 or 2 | **Limited history**: compared with the average of those, under the same threshold. |
+| 0 | *Not evaluated*: there is nothing to compare with. |
+
+A limited-history verdict is a weaker claim than a full one, and *not evaluated*
+is a different claim from *not anomalous*. Every surface must say which of the
+three it is showing, with the number of periods for a limited verdict. The
 record carries `baselinePriorCount` (0–3) and `baselineTCo2e` (the average, or
 null when the rule did not run) beside `anomalyFlag` for exactly that reason.
+
+An average of **zero** yields no ratio, whatever the count: the record is *not
+evaluated* and is never flagged.
 
 A prior that carries **no figure** — an invoice-tracked category with no seeded
 factor — occupies one of the three slots and is then dropped rather than
 zero-filled (zero-filling would deflate the average and manufacture a false
-anomaly). A short window is a short window; the rule does not reach further back
-to refill it.
+anomaly). The rule does not reach further back to refill the slot, so such a
+window is judged on limited history. The window has no age limit: when nothing
+newer exists, a period from two years ago is still the history.
+
+A record with no earlier period stays *not evaluated*. Plausibility limits and
+a manual flag for that case are a separate, undecided matter (K4).
+
+#### Verdicts written before 2026-11-11
+From 2026-08-27 to 2026-11-11 the rule needed three figures, and a record with
+one or two was stored as *not evaluated*: a count of 1 or 2 beside a null
+average. Those verdicts are **kept, not re-scored** — a committed record would
+otherwise gain a flag its author never saw and never explained. Such a record
+says that it was scored before the short-history check existed. A draft or a
+rejected record is checked under the current rule at its next save or submit.
+`pnpm anomaly:probe` lists the kept verdicts as a known difference, not as
+drift, and `pnpm anomaly:recompute` leaves them alone on committed records.
+
+#### The re-score tool never hands a reviewer an unanswered flag
+`pnpm anomaly:recompute` repairs a stored verdict whose history has moved. On a
+record waiting for review it does so with one exception (owner decision
+2026-11-11): if the rule would now flag the record and it carries no variance
+reason, the tool reports it and leaves it. A flagged record cannot be submitted
+without a reason, so a flag written afterwards is a warning its author never
+saw. It arises when an earlier period is committed after a later one was
+submitted, which one earlier period is now enough to cause. The reviewer who
+doubts the figure rejects it, and the resubmit asks for the reason.
 
 Only records in a **counted** status (`submitted`, `under_review`, `approved`,
 `locked`) seed a baseline — an unreviewed draft would add noise, and a withdrawn
@@ -82,14 +120,15 @@ Only records in a **counted** status (`submitted`, `under_review`, `approved`,
 year-scoped: the year enters only through the period's ordinal, so December
 seeds the following January.
 
-#### A short window does NOT cap the completeness cell (decision 2026-08-27)
+#### A record that was not evaluated does NOT cap the completeness cell (decision 2026-08-27)
 A record the rule did not run on is not "clean", but it does not turn its
 tracking-matrix cell amber either. Capping on it would paint every new site's
-first quarter amber until its fourth month — permanently, for a subsidiary
-reporting quarterly in its first year — and a warning that is always on is not
-a warning. The cell reports `notEvaluatedRecordCount` instead and the surfaces
-state it, which is the disclosure without the false alarm. Revisit if UAT round
-2 shows testers reading a green cell as "checked".
+first period amber, and a warning that is always on is not a warning. The cell
+reports `notEvaluatedRecordCount` instead and the surfaces state it, which is
+the disclosure without the false alarm. Since 2026-11-11 that count holds only
+records with no earlier period, a zero average, or a verdict kept from before
+the short-history check. A **flag** on limited history turns the cell amber and
+raises the dashboard alert exactly as a full-history flag does.
 
 #### Deviation from the original specification (deliberate, 2026-07-08 / 2026-08-27)
 The key above is **not** the one this document carried until 2026-08-27, which
@@ -109,10 +148,15 @@ granularity. What changed and why:
   is what makes those months visible instead of silent.
 - **`reportingPeriod` was added** — an ordinal is only comparable within one
   granularity, so a quarter must never seed a month's baseline.
-- **"the previous 3" is now enforced as three**, not as "up to three". The
-  implementation accepted a single prior until 2026-08-27, so the gate could
-  degrade from a three-period average to one month against one month with
-  nothing recording that it had.
+- **"the previous 3" was enforced as exactly three from 2026-08-27 to
+  2026-11-11.** Before that the implementation accepted a single prior with
+  nothing recording that it had, so the gate could degrade from a three-period
+  average to one month against one month unseen. The strict reading fixed the
+  silence at the cost of the check: a first-year business, a quarterly reporter
+  until its fourth quarter and an annual category until its fourth year were
+  never evaluated (UAT round 2, BUG-R2-07). Since 2026-11-11 one or two periods
+  are evaluated again, as *limited history*, and the count that was missing in
+  the first version is what every surface now states.
 
 ### 4.2 Trigger Threshold
 An anomaly is triggered when the current calculated result differs by more than 50 percent from the rolling average baseline.

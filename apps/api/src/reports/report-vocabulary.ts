@@ -1,6 +1,5 @@
 import { IntlMessageFormat } from 'intl-messageformat';
 import {
-  ANOMALY_BASELINE_PERIODS,
   CATEGORY_ACTIVITY_TYPES,
   LOCALE_FORMAT_TAGS,
   UNSPECIFIED_ACTIVITY_TYPE,
@@ -9,6 +8,7 @@ import {
 } from '@tonyai/shared-types';
 import { escapeHtmlText } from '../common/html-escape';
 import { ISSUANCE_CATALOGUES, type IssuanceMessageKey } from '../report-issuances/issuance-html';
+import { anomalyColumnState } from './report-data';
 import en from './i18n/en.json';
 import tr from './i18n/tr.json';
 
@@ -48,7 +48,7 @@ export interface ReportVocabulary {
   recordStatus(status: string): string;
   entity(r: { locationId?: string | null; locationName?: string | null }): string;
   activityType(r: { category: string; activityType: string | null }): string;
-  anomaly(r: { anomalyFlag: boolean; anomalyEvaluated: boolean; anomalyBaselinePriorCount: number | null }): string;
+  anomaly(r: Parameters<typeof anomalyColumnState>[0]): string;
   readonly notCalculated: string;
   /**
    * A stored figure in full inside a text cell (the workbook's notes, K6):
@@ -125,12 +125,25 @@ export function reportVocabulary(locale: Locale): ReportVocabulary {
       return keyed(`activity ${english}`, english);
     },
     anomaly(r) {
-      if (r.anomalyFlag) return text('anomalyYes');
-      if (r.anomalyEvaluated) return '';
-      const priors = r.anomalyBaselinePriorCount;
-      if (priors === null) return text('notEvaluatedNoFigure');
-      if (priors >= ANOMALY_BASELINE_PERIODS) return text('notEvaluatedZeroBaseline');
-      return text('notEvaluatedPriors', { priors, needed: ANOMALY_BASELINE_PERIODS });
+      const priors = r.anomalyBaselinePriorCount ?? 0;
+      switch (anomalyColumnState(r)) {
+        case 'flagged':
+          return text('anomalyYes');
+        case 'flagged_limited':
+          return text('anomalyYesLimited', { priors });
+        case 'clean':
+          return '';
+        case 'clean_limited':
+          return text('anomalyCleanLimited', { priors });
+        case 'no_figure':
+          return text('notEvaluatedNoFigure');
+        case 'no_history':
+          return text('notEvaluatedNoHistory');
+        case 'scored_before':
+          return text('notEvaluatedScoredBefore');
+        case 'zero_average':
+          return text('notEvaluatedZeroBaseline');
+      }
     },
     notCalculated: text('notCalculated'),
     fullFigure(n) {

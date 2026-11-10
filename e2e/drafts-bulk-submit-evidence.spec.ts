@@ -43,10 +43,11 @@ import {
  * writes either tuple or holds a lock on either period (`rbac-tenant` tries to
  * lock Energy Q4 as data_entry and is refused). The other Energy Q3/Q4 rows are
  * in other categories, and the specs that write them also delete them. The anomaly
- * rule needs three committed priors in the same series, and a draft never
- * counts. The only quarterly Energy Fuel record any spec commits belongs to
- * `review-queue`, which runs after this file, so the rule cannot hold the
- * submit back.
+ * rule runs on as little as one committed earlier period of the same series
+ * (2026-11-11), and a draft never counts. The only quarterly Energy Fuel
+ * record any spec commits is `review-queue`'s Q2 at 800 litres, which runs
+ * after this file; were it there first, this file's Q3 at 640 litres is 20%
+ * below it, inside the 50% threshold. So the rule cannot hold the submit back.
  */
 const SUBSIDIARY = SUB.energy;
 const OPTION = 'TonyAI Energy (TR)';

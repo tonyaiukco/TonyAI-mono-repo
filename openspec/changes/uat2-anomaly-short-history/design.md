@@ -1,0 +1,165 @@
+# Design
+
+## Context
+
+See `proposal.md` for the motivation. The facts below were read from the code on 2026-11-11.
+
+- The rule lives in the contract package: `ANOMALY_THRESHOLD` (0.5), `ANOMALY_BASELINE_PERIODS` (3, both the window and the minimum), `computeAnomalyVerdict` and `isAnomalyEvaluated` in `packages/shared-types/src/index.ts`. The API, the seed and the re-score tool all call it, so no second copy of the arithmetic exists.
+- `ActivityRecordsService.detectAnomaly` selects the history and passes it, newest first, to `computeAnomalyVerdict`. The comparison is on tCO2e, not on the activity amount.
+- The verdict is stored on the record in three columns: `anomalyFlag`, `anomalyBaselinePriorCount` and `anomalyBaselineTCo2e`. It is written on create, update and submit. No database constraint ties the columns together, and they are outside the approved-snapshot immutability trigger.
+- One flag drives six things: the submit gate (`variance_reason_required`), Data Entry's copy of that gate, bulk upload's `would_block_submit` warning, the amber tracking cell, the dashboard alert and the report anomaly column.
+- Approve has no anomaly gate. Recall keeps the stored verdict.
+- Today a record with one or two earlier periods is stored as flag false, count 1 or 2, average null.
+- Decision 2 of 2026-08-27 stands: the re-score tool never rewrites an approved or locked record.
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- Run the check on one or two earlier periods with the smallest change to the rule's single implementation.
+- Make every surface say which basis a verdict has, so that a weak check is never shown as a strong one.
+- Leave existing committed records untouched and keep the consistency tools quiet about them.
+- Leave room for the third tier without building any of it.
+
+**Non-Goals:**
+
+- Plausibility ranges or a manual flag for records with no history (K4).
+- A year-on-year baseline.
+- Re-scoring later records when an earlier period is edited, recalled or voided.
+- A limit on how old a comparable period may be.
+- Any new column, migration, endpoint or error code.
+
+## Decisions
+
+### D1. The baseline is the average of the one or two figures in the window
+
+The window stays the three most recent earlier periods. `computeAnomalyVerdict` evaluates when the window holds at least `ANOMALY_MIN_PRIORS` (1) figures and averages what it holds.
+
+Alternative considered: the same period of the previous year. It handles seasonality better, but it needs twelve months of history, so it does nothing for the first-year case QA reported. It would also need its own history query and a stored basis column. Rejected by the owner on 2026-11-11.
+
+### D2. A short-history flag blocks submit like any flag
+
+`anomalyFlag` keeps its single meaning. The submit gate, Data Entry's copy, bulk upload's warning and bulk submit need no logic change.
+
+Alternative considered: a warning that does not block. It needs a second signal, and each of the six consumers would have to decide whether that signal blocks. Approve has no anomaly gate, so a non-blocking flag would reach the reviewer with no explanation attached. Rejected by the owner.
+
+The refusal keeps its code and its params. `variance_reason_required` has no params, and its message ("deviates significantly from the historical average") is true for either basis. The basis is stated by the verdict statement shown beside the variance field, not by the refusal toast.
+
+### D3. One earlier period is enough
+
+`ANOMALY_MIN_PRIORS` is 1, as QA asked. With a minimum of 2, an annual category would stay unchecked through its second year.
+
+The cost is accepted: one period is a noisy measure, and a season change or a partial first period can raise a flag. The price of a false flag is one sentence of explanation.
+
+Moving to 2 later is NOT a one-constant change (architect review, 2026-11-11). `isAnomalyEvaluated` and `isLegacyShortWindowVerdict` both read the current minimum, so verdicts already stored on one period would read "not evaluated" while possibly still flagged. Raising the minimum would need a rule for those stored verdicts, as this change needed one for the old ones.
+
+### D4. The basis is derived, not stored
+
+A helper in the contract package, `anomalyBasis(record)`, returns `full`, `limited` or `null` (not checked) from the stored count and average:
+
+| Stored count | Stored average | Meaning |
+|---|---|---|
+| null | null | Not checked: the record has no figure |
+| 0 | null | Not checked: no earlier period |
+| 1 or 2 | null | Not checked: scored before this change (D7) |
+| 1 or 2 | 0 | Not checked: the average is zero |
+| 1 or 2 | above 0 | Checked on limited history |
+| 3 | 0 | Not checked: the average is zero |
+| 3 | above 0 | Checked on full history |
+
+`isAnomalyEvaluated` becomes "count at least 1, average neither null nor zero". Every consumer already calls it, so the tracking matrix's not-checked count and the report's `anomalyEvaluated` follow without their own change.
+
+Alternative considered: a stored `anomaly_basis` enum. It needs a migration and a backfill, and tells nothing the count does not. A column is justified when the third tier arrives, because a plausibility verdict has no period count.
+
+### D5. Edge cases follow the full-history rule
+
+- A zero average is "not checked", stored as average 0 with its count, as today for three zero periods.
+- A period with no figure occupies a place in the window. A window of [10, none, 10] is therefore checked on 2 periods; today it is not checked at all.
+- No look-back limit. See Open Questions.
+
+### D6. Wording per surface
+
+`apps/web/lib/anomaly-view.ts` gains branches, keyed on `anomalyBasis`:
+
+| State | Headline | Detail says |
+|---|---|---|
+| Flagged, full | unchanged | unchanged |
+| Flagged, limited | unchanged | more than 50% against limited history of N periods, with the average |
+| Clean, full | unchanged | unchanged |
+| Clean, limited | "Within range on limited history" | compared with the average of N earlier periods |
+| Not checked, no history | unchanged | no earlier period; the sentence "needs 3 periods" is removed |
+| Not checked, scored before | unchanged | scored when the check needed three earlier periods, and it had fewer |
+
+The tone set (`flagged`, `clean`, `not_evaluated`) does not change. The emissions drawer prints every statement, so it needs no change. Data Entry and the review sheet print a statement only for a flag or for a record that was not checked, and nothing for a clean one. A clean verdict on limited history must not go unsaid there, so the statement carries a `qualified` field (not checked, or clean on limited history) and both screens show their neutral card when it is set. Found during implementation, 2026-11-11: the first draft of this section said no screen needed a change.
+
+The report anomaly column (`anomalyCell` and the vocabulary's `anomaly`) becomes:
+
+| State | Cell |
+|---|---|
+| Flagged, full | `yes` (unchanged) |
+| Flagged, limited | `yes (limited history: N periods)` |
+| Clean, full | empty (unchanged) |
+| Clean, limited | `within range (limited history: N periods)` |
+| Not checked, no history | `Not evaluated (no earlier period)` |
+| Not checked, scored before | `Not evaluated (scored before the short-history check)` |
+| Not checked, no figure or zero average | unchanged |
+
+The matrix note ("N records not checked — too few comparable periods") is reworded so that it no longer names a period count as the cause.
+
+### D7. Existing verdicts are a known difference
+
+No record is re-scored when this change is deployed. A stored verdict with count 1 or 2 and a null average can only have been written by the old rule, because the new rule always stores an average when it holds at least one figure. `isLegacyShortWindowVerdict(record)` in the contract package names that state.
+
+The sentence shown for such a record does not promise a re-check: the screens do not know the record's status, and an approved record is never saved again. A draft is re-scored at its next save, which replaces the sentence.
+
+The tools excuse only an UNFLAGGED legacy verdict (security review, 2026-11-11). The old rule never flagged a short window, so a flag beside a count of 1–2 and no average is a row no writer produced. It stays drift.
+
+- **Screens and exports** give such a record its own sentence (D6).
+- **`anomaly:probe`** lists these records in their own section and does not count them as drift. Its exit code is unaffected by them.
+- **`anomaly:recompute`** leaves a legacy verdict alone on a committed record (submitted, under review, approved, locked) and does not count it as unrepaired. On a draft or a rejected record it re-scores as it does today, because the next save would do the same.
+
+Alternative considered: re-score records waiting in review. It creates a state the normal flow cannot produce: a submitted, flagged record with no variance reason, whose author never saw the warning. Rejected by the owner.
+
+### D7a. The re-score tool does not flag a record in review that has no reason
+
+Owner decision, 2026-11-11, from the architect seat's finding. `anomaly:recompute` rewrote any stale verdict on a submitted or under-review record. When an earlier period is committed after a later one was submitted, the later record goes from not checked to a limited-history verdict and can gain a flag with no variance reason. That is the state D7 rejects, reached by another road, and one earlier period makes it common.
+
+`classify` gains a third refusal, `unexplained_flag`: the record is in review, the rule would now flag it, the stored verdict has no flag, and the record carries no variance reason. It is reported and left alone, and counts as drift that remains (exit 1), like the other two refusals. Every other rewrite of a record in review stands: a count, an average, or a flag that no longer holds.
+
+Alternative considered: leave the tool as it was (Decision 2 of 2026-08-27 lets it rewrite records in review). Rejected by the owner: the reviewer loses nothing, because the record reads "not checked" and can be rejected, and the resubmit meets the gate.
+
+### D7b. The probe compares the whole verdict
+
+Owner's review, 2026-11-11 (P2). `anomaly:probe` compared the stored flag with the recomputed flag and nothing else. A record flagged on one earlier period with no stored average passed, because the rule flags it today too: the flags agree and the verdict is still one no version of the rule wrote. The re-score tool caught it (it has always compared flag, count and average); the independent SQL probe did not.
+
+The drift predicate now compares all three: the flag, the count (null for a record with no figure) and the average (null below the minimum, otherwise within a relative tolerance of 1e-9, for the gap between Postgres's `avg()` and the API's fold). Kept verdicts stay excused. The probe therefore also reports a pool that moved without flipping the flag, as the re-score tool does, so the two tools agree on what is stale.
+
+The rule and the SQL moved to `anomaly-probe.lib.mjs`, which imports nothing, so the integration suite runs the script's own query on rows built for the purpose (`anomaly-probe.int.spec.ts`).
+
+### D8. The seed follows the rule
+
+`rollingBaseline` in `packages/db/prisma/seed.ts` returns the average for one to three figures, through the contract's constants. The seed's existing guards (a staged flag must agree with its window) stay, so a seeded record that would now flag fails the seed loudly, not silently.
+
+### D9. Constraints for the third tier
+
+- A manual flag cannot reuse `anomalyFlag`, the count or the average: every save and submit overwrites them. It needs its own column.
+- A count of 0 stays "not checked". Plausibility limits take over that state later.
+- If a basis column is added then, it should have room for `plausibility` and `manual`.
+
+## Risks / Trade-offs
+
+- **False flags on one period** (season change, partial first period) → The cost is one sentence, the statement names the number of periods, and the minimum is one constant.
+- **Hosted QA drafts newly blocked at submit** → This is the behaviour QA will retest. Count the affected records with `anomaly:probe` (read-only) before deploy.
+- **Bulk submit of a new year:** the second and third periods are now checked against the first → The refusal names the record; the user adds a reason and sends again. Covered by a bulk-submit test.
+- **A stored verdict goes stale faster.** One period changing moves a one-period average by up to 100%, against about a third for three periods → The submit gate works the verdict out again, so enforcement is right. Only the badge on an already submitted record can be stale. Unchanged in kind from today; recorded as an open question in the status file.
+- **Existing assertions pin "two priors: not evaluated"** in the shared-types, API, reports and web specs → Each is flipped deliberately in the task that changes its subject, never deleted.
+- **An e2e spec may rely on a large jump with one or two priors passing** → Each spec's value series is re-traced under the new rule before the suite is run.
+- **The first period still says "not checked"** → QA is told that this is K4's subject, in the status file and the UAT catalogue.
+
+## Migration Plan
+
+No schema change and no data change. Deploy is the normal image deploy. Rollback is the previous image: under it, a verdict written by the new rule (count 1 or 2 with an average) keeps its flag and its submit gate if flagged, and reads as "not evaluated" if clean. Both are re-scored on their next save.
+
+## Open Questions
+
+- Should history older than a set number of periods be ignored? It applies to both tiers and is not a defect, so it is filed under Open questions in the status file and does not change this change.

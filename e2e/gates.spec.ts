@@ -75,10 +75,10 @@ test('gate: anomalous value shows the banner and blocks submit without a varianc
   page,
   request,
 }) => {
-  // Arrange a baseline via the API: THREE committed quarterly priors at a normal
-  // value. Two was enough until 2026-08-27, when VAR §4.1's "previous 3" started
-  // being enforced as three — with two the rule does not run at all, so this
-  // spec would have gone green on a banner that never appeared.
+  // Arrange a FULL baseline via the API: three committed quarterly priors at a
+  // normal value, so the banner asserted below is the full-history sentence.
+  // One or two priors raise a flag too (BUG-R2-07, 2026-11-11), with the
+  // limited-history sentence; `anomaly-short-history.spec.ts` covers that.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   await createCommittedRecord(request, token, {
     subsidiaryId: SUB.mfg,

@@ -4,9 +4,11 @@ import {
   buildPools,
   classify,
   exitCodeFor,
+  findStale,
   freshVerdict,
   indexRecord,
   isLoopback,
+  keepsLegacyVerdict,
   lockKey,
   parseArgs,
   parseHost,
@@ -240,6 +242,200 @@ describe('freshVerdict', () => {
       priorCount: null,
       baseline: null,
     });
+  });
+});
+
+// BUG-R2-07 (2026-11-11): one or two priors are judged, on limited history.
+describe('freshVerdict on a short window', () => {
+  const pool = (rows) => buildPools(rows.map(indexRecord));
+  const prior = (periodValue, tCo2e) =>
+    rec({ id: `p-${periodValue}`, periodValue, status: 'approved', calculation: { factorId: 'f-1', tCo2e } });
+
+  it('judges a record against ONE committed prior', () => {
+    const subject = indexRecord(
+      rec({ id: 'subject', periodValue: 'February', calculation: { factorId: 'f-1', tCo2e: 19.8 } }),
+    );
+    expect(freshVerdict(subject, pool([prior('January', 10)]))).toEqual({
+      anomalous: true,
+      priorCount: 1,
+      baseline: 10,
+    });
+  });
+
+  it('averages TWO committed priors', () => {
+    const subject = indexRecord(
+      rec({ id: 'subject', periodValue: 'March', calculation: { factorId: 'f-1', tCo2e: 14 } }),
+    );
+    expect(freshVerdict(subject, pool([prior('January', 8), prior('February', 12)]))).toEqual({
+      anomalous: false,
+      priorCount: 2,
+      baseline: 10,
+    });
+  });
+});
+
+describe('verdicts scored before the short-history check', () => {
+  const legacy = (over = {}) =>
+    rec({ anomalyFlag: false, anomalyBaselinePriorCount: 2, anomalyBaselineTCo2e: null, ...over });
+
+  it.each(['submitted', 'under_review', 'approved', 'locked'])(
+    'keeps one on a %s record: the rule changed, its pool did not',
+    (status) => {
+      expect(keepsLegacyVerdict(legacy({ status }))).toBe(true);
+      expect(keepsLegacyVerdict(legacy({ status, anomalyBaselinePriorCount: 1 }))).toBe(true);
+    },
+  );
+
+  it.each(['draft', 'rejected'])('re-scores one on a %s record, as its next save would', (status) => {
+    expect(keepsLegacyVerdict(legacy({ status }))).toBe(false);
+  });
+
+  it('does not keep a verdict the current rule wrote', () => {
+    // A count of 1–2 WITH an average is a limited-history verdict. If its pool
+    // has moved it is ordinary drift, to be repaired or refused like any other.
+    expect(keepsLegacyVerdict(legacy({ status: 'submitted', anomalyBaselineTCo2e: 10 }))).toBe(false);
+    expect(keepsLegacyVerdict(legacy({ status: 'approved', anomalyBaselineTCo2e: 0 }))).toBe(false);
+  });
+
+  it.each([null, 0, 3])('does not keep a verdict with a count of %s', (count) => {
+    expect(
+      keepsLegacyVerdict(legacy({ status: 'approved', anomalyBaselinePriorCount: count })),
+    ).toBe(false);
+  });
+
+  it('does not keep a FLAGGED one — no writer ever produced that row', () => {
+    // The old rule never flagged a short window. A flag beside a count of 1–2
+    // and no average is corruption or a direct write, and must stay drift.
+    expect(keepsLegacyVerdict(legacy({ status: 'approved', anomalyFlag: true }))).toBe(false);
+    expect(keepsLegacyVerdict(legacy({ status: 'submitted', anomalyFlag: true }))).toBe(false);
+  });
+});
+
+describe('findStale', () => {
+  // The series: January approved at 10, then the subject at 19.8 (+98%).
+  const january = rec({ id: 'jan', periodValue: 'January', status: 'approved', anomalyBaselinePriorCount: 0 });
+  const run = (subject, prior = january) => {
+    const rows = [prior, subject];
+    const indexed = rows.map(indexRecord);
+    return findStale(indexed, buildPools(indexed), new Set());
+  };
+  const february = (over) =>
+    rec({ id: 'feb', periodValue: 'February', calculation: { factorId: 'f-1', tCo2e: 19.8 }, ...over });
+
+  it.each(['submitted', 'under_review', 'approved', 'locked'])(
+    'leaves a %s verdict scored before the short-history check alone, though the rule would flag it',
+    (status) => {
+      const { stale, keptLegacy } = run(
+        february({ status, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: null }),
+      );
+      expect(stale).toEqual([]);
+      expect(keptLegacy).toBe(1);
+    },
+  );
+
+  it('re-scores a DRAFT scored before the short-history check', () => {
+    const { stale, keptLegacy } = run(
+      february({ status: 'draft', anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: null }),
+    );
+    expect(keptLegacy).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({
+      disposition: 'rewritable',
+      fresh: { anomalous: true, priorCount: 1, baseline: 10 },
+    });
+  });
+
+  it('reports a flagged legacy-shaped row as stale, and refuses to rewrite it when approved', () => {
+    const { stale, keptLegacy } = run(
+      february({ status: 'approved', anomalyFlag: true, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: null }),
+    );
+    expect(keptLegacy).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0].disposition).toBe('terminal_status');
+  });
+
+  it('reports a verdict the current rule wrote, once its pool has moved', () => {
+    // Stored against an average of 15; the only prior is 10 today.
+    const { stale } = run(
+      february({ status: 'submitted', anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 15 }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0].fresh).toEqual({ anomalous: true, priorCount: 1, baseline: 10 });
+  });
+
+  // Owner decision 2026-11-11: a record in review is not handed a flag its
+  // author never saw. Stored as "not checked" (January was committed after
+  // February was submitted); the rule flags it against January today.
+  describe('a record the rule would newly flag', () => {
+    const unchecked = (over) => february({ anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null, ...over });
+
+    it.each(['submitted', 'under_review'])('is reported and left alone while %s', (status) => {
+      const { stale } = run(unchecked({ status }));
+      expect(stale).toHaveLength(1);
+      expect(stale[0].fresh.anomalous).toBe(true);
+      expect(stale[0].disposition).toBe('unexplained_flag');
+    });
+
+    it.each(['draft', 'rejected'])('is rewritten while %s — its author meets the gate at submit', (status) => {
+      expect(run(unchecked({ status })).stale[0].disposition).toBe('rewritable');
+    });
+
+    it('is rewritten in review when it already carries a variance reason', () => {
+      const { stale } = run(unchecked({ status: 'submitted', varianceReason: 'Second shift added' }));
+      expect(stale[0].disposition).toBe('rewritable');
+    });
+
+    it('is not excused by a blank variance reason', () => {
+      expect(run(unchecked({ status: 'submitted', varianceReason: '   ' })).stale[0].disposition).toBe(
+        'unexplained_flag',
+      );
+    });
+
+    it('stays terminal when approved: the older refusal is named first', () => {
+      expect(run(unchecked({ status: 'approved' })).stale[0].disposition).toBe('terminal_status');
+    });
+  });
+
+  it('still rewrites a record in review whose verdict changed WITHOUT gaining a flag', () => {
+    // 11 against January's 10: within range, on one period. Count and average
+    // are filled in; nothing the author would have had to answer appears.
+    const { stale } = run(
+      february({
+        status: 'submitted',
+        calculation: { factorId: 'f-1', tCo2e: 11 },
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({
+      disposition: 'rewritable',
+      fresh: { anomalous: false, priorCount: 1, baseline: 10 },
+    });
+  });
+
+  it('still clears a flag in review that no longer holds', () => {
+    // Flagged against an average of 5 at submit; the only prior is 19 today.
+    const { stale } = run(
+      february({
+        status: 'under_review',
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 1,
+        anomalyBaselineTCo2e: 5,
+        varianceReason: null,
+      }),
+      rec({ id: 'jan', periodValue: 'January', status: 'approved', calculation: { factorId: 'f-1', tCo2e: 19 }, anomalyBaselinePriorCount: 0 }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({ disposition: 'rewritable', fresh: { anomalous: false } });
+  });
+
+  it('finds nothing stale when every stored verdict is today\'s', () => {
+    const { stale, keptLegacy } = run(
+      february({ status: 'submitted', anomalyFlag: true, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 10 }),
+    );
+    expect(stale).toEqual([]);
+    expect(keptLegacy).toBe(0);
   });
 });
 

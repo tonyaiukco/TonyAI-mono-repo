@@ -3,7 +3,8 @@ import type { ViewTranslator } from '@/lib/i18n/view-translator';
 import {
   ANOMALY_BASELINE_PERIODS,
   ANOMALY_THRESHOLD,
-  isAnomalyEvaluated,
+  anomalyBasis,
+  isLegacyShortWindowVerdict,
   type Locale,
 } from '@/lib/types';
 
@@ -17,9 +18,10 @@ import {
  * two of them.
  *
  * The distinction it exists to carry: `anomalyFlag: false` is not one claim.
- * Since 2026-08-27 the rule needs three comparable periods carrying a figure,
- * so a record on a shorter window was never checked at all — and a screen that
- * renders nothing for it says "fine" about data nobody looked at.
+ * A record may have been checked against three periods, checked against one or
+ * two (limited history, BUG-R2-07, 2026-11-11), or never checked at all — and a
+ * screen that words these alike says "fine" about data nobody looked at, or
+ * claims a three-period average for a one-period comparison.
  */
 export type AnomalyTone = 'flagged' | 'clean' | 'not_evaluated';
 
@@ -29,6 +31,14 @@ export interface AnomalyStatement {
   /** The sentence under the headline. Always names the window, so a reader
    *  never has to ask what "historical average" meant for THIS record. */
   detail: string;
+  /**
+   * True when an unflagged record must still be given its statement: it was
+   * not checked, or it is clean on LIMITED history. A screen that shows a
+   * verdict only when there is a flag (Data Entry, the review sheet) renders
+   * nothing for "checked against three periods, clean" — and nothing must not
+   * also stand for "never checked" or "checked against one".
+   */
+  qualified: boolean;
 }
 
 /** Enough of an activity record to state its verdict. Structural on purpose —
@@ -47,15 +57,20 @@ export type AnomalyKey =
   | 'tonnes'
   | 'flagged.headline'
   | 'flagged.detail'
+  | 'flagged.detailLimitedOne'
+  | 'flagged.detailLimited'
   | 'flagged.detailNoBaseline'
   | 'clean.headline'
   | 'clean.detail'
+  | 'cleanLimited.headline'
+  | 'cleanLimited.detailOne'
+  | 'cleanLimited.detail'
   | 'notEvaluated.headline'
   | 'notEvaluated.noFigure'
   | 'notEvaluated.zeroAverage'
+  | 'notEvaluated.zeroAverageLimited'
   | 'notEvaluated.noHistory'
-  | 'notEvaluated.oneEarlier'
-  | 'notEvaluated.someEarlier'
+  | 'notEvaluated.scoredBefore'
   | 'note.one'
   | 'note.other';
 
@@ -71,6 +86,22 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
   const priors = record.anomalyBaselinePriorCount;
   const baseline = record.anomalyBaselineTCo2e;
   const periods = ANOMALY_BASELINE_PERIODS;
+  // `limited` — judged on one or two periods. A weaker claim than `full`, so
+  // both the warning and the all-clear name the number of periods.
+  const basis = anomalyBasis(record);
+
+  if (record.anomalyFlag && basis === 'limited') {
+    const values = { baseline: tonnes(baseline as number, t, locale), percent: pct };
+    return {
+      tone: 'flagged',
+      headline: t('flagged.headline'),
+      detail:
+        priors === 1
+          ? t('flagged.detailLimitedOne', values)
+          : t('flagged.detailLimited', { ...values, count: priors as number }),
+      qualified: false,
+    };
+  }
 
   if (record.anomalyFlag) {
     return {
@@ -86,14 +117,31 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
         baseline === null
           ? t('flagged.detailNoBaseline')
           : t('flagged.detail', { baseline: tonnes(baseline, t, locale), periods, percent: pct }),
+      qualified: false,
     };
   }
 
-  if (isAnomalyEvaluated(record)) {
+  if (basis === 'limited') {
+    // Its own headline: "Within the expected range" has always meant a
+    // three-period average, and one period has not earned that sentence.
+    const values = { baseline: tonnes(baseline as number, t, locale), percent: pct };
+    return {
+      tone: 'clean',
+      headline: t('cleanLimited.headline'),
+      detail:
+        priors === 1
+          ? t('cleanLimited.detailOne', values)
+          : t('cleanLimited.detail', { ...values, count: priors as number }),
+      qualified: true,
+    };
+  }
+
+  if (basis === 'full') {
     return {
       tone: 'clean',
       headline: t('clean.headline'),
       detail: t('clean.detail', { baseline: tonnes(baseline as number, t, locale), periods, percent: pct }),
+      qualified: false,
     };
   }
 
@@ -102,22 +150,33 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
   // zero" are three different things to do something about.
   const headline = t('notEvaluated.headline');
   if (priors === null) {
-    return { tone: 'not_evaluated', headline, detail: t('notEvaluated.noFigure') };
+    return { tone: 'not_evaluated', headline, detail: t('notEvaluated.noFigure'), qualified: true };
   }
 
-  if (priors >= ANOMALY_BASELINE_PERIODS) {
-    return { tone: 'not_evaluated', headline, detail: t('notEvaluated.zeroAverage', { periods }) };
+  if (priors === 0) {
+    return { tone: 'not_evaluated', headline, detail: t('notEvaluated.noHistory'), qualified: true };
+  }
+
+  // Scored when one or two periods were not enough for the rule to run, and
+  // not re-scored since (a committed record keeps the verdict it was given).
+  // Said as what happened, not as a rule: one period IS enough today.
+  if (isLegacyShortWindowVerdict(record)) {
+    return {
+      tone: 'not_evaluated',
+      headline,
+      detail: t('notEvaluated.scoredBefore', { count: priors, periods }),
+      qualified: true,
+    };
   }
 
   return {
     tone: 'not_evaluated',
     headline,
     detail:
-      priors === 0
-        ? t('notEvaluated.noHistory', { periods })
-        : priors === 1
-          ? t('notEvaluated.oneEarlier', { periods })
-          : t('notEvaluated.someEarlier', { count: priors, periods }),
+      priors >= ANOMALY_BASELINE_PERIODS
+        ? t('notEvaluated.zeroAverage', { periods })
+        : t('notEvaluated.zeroAverageLimited'),
+    qualified: true,
   };
 }
 

@@ -26,13 +26,23 @@
  *     whose attribution changed hands restarts its run-up mid-year, which is
  *     indistinguishable on every screen from a series that simply began there.
  *
+ * KNOWN DIFFERENCE, NOT DRIFT (BUG-R2-07, 2026-11-11)
+ * ---------------------------------------------------
+ * Until 2026-11-11 a record with one or two priors was stored as "not
+ * evaluated": a prior count of 1 or 2 beside a NULL average. The rule now
+ * judges such a window, but those verdicts are KEPT, not re-scored (owner
+ * decision) — a committed record would otherwise gain a flag its author never
+ * saw. So where the rule would flag one today, that is reported in its own
+ * section and does not count as drift: nothing moved beneath the record, the
+ * rule did. `anomaly:recompute` leaves the same records alone.
+ *
  * THE RULE IS REIMPLEMENTED HERE, DELIBERATELY
  * --------------------------------------------
  * This SQL does not call the service and shares no code with it. That is the
  * point: an independent reimplementation can DISAGREE with the implementation,
  * which is the only way question 2 has an answer. The cost is that a change to
- * `detectAnomaly` must be mirrored here in the SAME PR — the constants below
- * are the whole of it.
+ * `detectAnomaly` must be mirrored in the SAME PR — the constants and the SQL
+ * in `anomaly-probe.lib.mjs` are the whole of it.
  *
  * SAFETY
  * ------
@@ -45,28 +55,21 @@
  *   node packages/db/scripts/anomaly-probe.mjs
  *   node packages/db/scripts/anomaly-probe.mjs --allow-remote
  *
- * Exit code: 1 when the stored verdict disagrees with the rule (real drift),
+ * Exit code: 1 when the stored verdict — flag, count or average — disagrees
+ * with the rule (real drift),
  * 0 otherwise — a weak baseline is a fact to look at, not a failure.
  */
 import 'dotenv/config';
 import { PrismaClient } from '../generated/client/index.js';
 
-/* ---- the rule, mirrored from apps/api/src/activity-records/activity-records.service.ts ---- */
-
-/** VAR §4.2 — more than 50% from the rolling average. */
-const ANOMALY_THRESHOLD = 0.5;
-/** VAR §4.1 — the rolling average is over the previous 3 comparable periods. */
-const BASELINE_MAX_PERIODS = 3;
-/**
- * How many of those periods must actually carry a figure for the rule to run.
- * Equal to the window since 2026-08-27: the implementation used to evaluate on
- * as few as ONE, which VAR §4.1 does not sanction and no surface disclosed.
- * Kept as its own constant because section 3 still reports the shortfall —
- * "2 of 3" is the finding, and a single constant could not express it.
- */
-const BASELINE_MIN_PERIODS = 3;
-/** COUNTED_STATUSES — the only statuses that seed a baseline. `voided` never does. */
-const BASELINE_STATUSES = ['submitted', 'under_review', 'approved', 'locked'];
+import {
+  ANOMALY_THRESHOLD,
+  BASE_SQL,
+  BASELINE_MAX_PERIODS,
+  BASELINE_MIN_PERIODS,
+  DRIFT_WHERE,
+  LEGACY_WHERE,
+} from './anomaly-probe.lib.mjs';
 
 const args = process.argv.slice(2);
 const allowRemote = args.includes('--allow-remote');
@@ -88,58 +91,6 @@ if (!isLocal && !allowRemote) {
 
 const prisma = new PrismaClient();
 
-/**
- * The baseline, per record. No parameters are interpolated from input — the
- * only substitutions are the constants above — so `$queryRawUnsafe` here is a
- * static string, used because the three reports share this prefix and a tagged
- * template cannot be concatenated.
- */
-const BASE_SQL = `
-WITH r AS (
-  SELECT id, subsidiary_id, location_id, category, activity_type, reporting_period,
-         reporting_year, period_value, status, anomaly_flag,
-         reporting_year * 100 + COALESCE(CASE reporting_period
-           WHEN 'monthly'   THEN array_position(ARRAY['January','February','March','April','May','June','July','August','September','October','November','December'], period_value) - 1
-           WHEN 'quarterly' THEN array_position(ARRAY['Q1','Q2','Q3','Q4'], period_value)
-           ELSE 0 END, 0) AS key,
-         CASE WHEN jsonb_typeof(calculation->'factorId') = 'string'
-                   AND length(calculation->>'factorId') > 0
-                   AND jsonb_typeof(calculation->'tCo2e') = 'number'
-              THEN (calculation->>'tCo2e')::float8 END AS tco2e
-  FROM activity_records
-),
-counted AS (
-  SELECT * FROM r WHERE status = ANY(ARRAY[${BASELINE_STATUSES.map((s) => `'${s}'`).join(',')}]::"ActivityRecordStatus"[])
-),
-scored AS (
-  SELECT c.*, s.legal_name AS sub, l.name AS loc, p.slots, p.priors, p.baseline
-  FROM counted c
-  JOIN subsidiaries s ON s.id = c.subsidiary_id
-  LEFT JOIN locations l ON l.id = c.location_id
-  LEFT JOIN LATERAL (
-    SELECT count(*)::int AS slots, count(t.tco2e)::int AS priors, avg(t.tco2e) AS baseline
-    FROM (
-      SELECT b.tco2e FROM counted b
-      WHERE b.subsidiary_id = c.subsidiary_id
-        AND b.location_id IS NOT DISTINCT FROM c.location_id
-        AND b.category = c.category
-        AND b.activity_type IS NOT DISTINCT FROM c.activity_type
-        AND b.reporting_period = c.reporting_period
-        AND b.key < c.key
-        AND b.id <> c.id
-      ORDER BY b.key DESC
-      LIMIT ${BASELINE_MAX_PERIODS}
-    ) t
-  ) p ON TRUE
-),
-verdict AS (
-  SELECT *, CASE
-    WHEN tco2e IS NULL THEN false
-    WHEN priors < ${BASELINE_MIN_PERIODS} OR baseline IS NULL OR baseline = 0 THEN false
-    ELSE abs(tco2e - baseline) / baseline > ${ANOMALY_THRESHOLD} END AS computed
-  FROM scored
-)`;
-
 const q = (sql) => prisma.$queryRawUnsafe(`${BASE_SQL}\n${sql}`);
 const entity = (row) => row.loc ?? '-- whole company --';
 const period = (row) => `${row.period_value} ${row.reporting_year}`;
@@ -149,7 +100,7 @@ async function main() {
   console.log(`Target:  ${target}${isLocal ? ' (local)' : '  ** REMOTE **'}`);
   console.log(
     `Rule:    key = subsidiary + location + category + granularity · ` +
-      `${BASELINE_MIN_PERIODS} priors required of a ${BASELINE_MAX_PERIODS}-period window · ` +
+      `at least ${BASELINE_MIN_PERIODS} prior of a ${BASELINE_MAX_PERIODS}-period window · ` +
       `threshold ${ANOMALY_THRESHOLD * 100}%\n`,
   );
 
@@ -180,34 +131,67 @@ async function main() {
 
   const drift = await q(`
     SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e,
-           priors, baseline, anomaly_flag, computed
-    FROM verdict WHERE anomaly_flag <> computed ORDER BY sub, category, key;`);
+           priors, baseline, anomaly_flag, computed,
+           stored_priors, stored_baseline, expected_priors, expected_baseline
+    FROM verdict WHERE ${DRIFT_WHERE} ORDER BY sub, category, key;`);
 
-  console.log(`\n2. Drift — stored anomaly_flag vs the rule over today's pool`);
+  console.log(`\n2. Drift — the stored verdict (flag, count, average) vs the rule over today's pool`);
   if (drift.length === 0) {
     console.log('   none. Every stored verdict still matches the pool beneath it.');
   } else {
     for (const row of drift) {
       console.log(
         `   ${row.id}  ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)}` +
-          ` [${row.status}]\n     stored ${row.anomaly_flag} → rule says ${row.computed}` +
-          ` (${row.tco2e?.toFixed(3)} tCO₂e vs baseline ${row.baseline?.toFixed(3)} over ${row.priors} prior(s))`,
+          ` [${row.status}] ${row.tco2e?.toFixed(3)} tCO₂e\n` +
+          `     stored: flag ${row.anomaly_flag}, ${row.stored_priors ?? 'no'} prior(s), average ${row.stored_baseline?.toFixed(3) ?? 'none'}\n` +
+          `     rule:   flag ${row.computed}, ${row.expected_priors ?? 'no'} prior(s), average ${row.expected_baseline?.toFixed(3) ?? 'none'}`,
+      );
+    }
+  }
+
+  const legacy = await q(`
+    SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e,
+           priors, baseline, anomaly_flag, computed
+    FROM verdict WHERE ${LEGACY_WHERE} ORDER BY sub, category, key;`);
+  const legacyFlaggedNow = legacy.filter((row) => row.anomaly_flag !== row.computed);
+
+  console.log(
+    `
+2b. Known difference — ${legacy.length} verdict(s) scored before the short-history check (kept, not drift)`,
+  );
+  if (legacyFlaggedNow.length === 0) {
+    console.log('   none of them would be flagged by the rule today.');
+  } else {
+    console.log(`   ${legacyFlaggedNow.length} would be flagged by the rule today:`);
+    for (const row of legacyFlaggedNow) {
+      console.log(
+        `   ${row.id}  ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)}` +
+          ` [${row.status}]
+     ${row.tco2e?.toFixed(3)} tCO₂e vs baseline ${row.baseline?.toFixed(3)}` +
+          ` over ${row.priors} prior(s)`,
       );
     }
   }
 
   const weak = await q(`
-    SELECT sub, loc, category, period_value, reporting_year, status, tco2e, priors
+    SELECT sub, loc, category, period_value, reporting_year, status, tco2e, priors, baseline, legacy
     FROM verdict WHERE priors < ${BASELINE_MAX_PERIODS} ORDER BY sub, loc NULLS FIRST, category, key;`);
 
   console.log(
-    `\n3. Records scored on a baseline weaker than VAR §4.1's three periods (${weak.length} of ${total})`,
+    `\n3. Records on less than VAR §4.1's three-period window (${weak.length} of ${total})`,
   );
   for (const row of weak) {
+    // What the pool supports TODAY, and whether the stored verdict used it: a
+    // row kept from before the short-history check has the priors and was
+    // still not checked, and a zero average yields no ratio at any count.
     const gate =
       row.priors === 0
         ? 'NOT EVALUATED — no prior period'
-        : `thin — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
+        : row.legacy
+          ? `NOT EVALUATED — scored before the short-history check (${row.priors} of ${BASELINE_MAX_PERIODS} priors today)`
+          : Number(row.baseline) === 0
+            ? `NOT EVALUATED — ${row.priors} prior(s) averaging zero`
+            : `limited history — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
     console.log(
       `   ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)} ` +
         `[${row.status}] ${row.tco2e?.toFixed(3)} tCO₂e — ${gate}`,

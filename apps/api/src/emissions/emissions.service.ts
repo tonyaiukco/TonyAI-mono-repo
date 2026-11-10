@@ -241,11 +241,11 @@ export function deriveCellStatus(input: {
   // FR §2.2's yellow means exactly that there is something left to look at.
   //
   // `notEvaluatedRecordCount` is deliberately NOT a fourth cap (decision
-  // 2026-08-27). Since 2026-08-27 the anomaly rule needs three priors, so a
-  // record on a short window is not "clean" — but a short window is the normal
-  // state of any series' first months, and capping on it would paint every new
-  // site's first quarter amber until its fourth month, permanently for a
-  // subsidiary reporting quarterly in its first year. The cell reports the
+  // 2026-08-27). A record the anomaly rule did not run on is not "clean" —
+  // but having no earlier period is the normal state of any series' first
+  // period, and capping on it would paint every new site's first period amber.
+  // (Since 2026-11-11 one earlier period is enough for the rule to run, so
+  // this is the first period only, not the first three.) The cell reports the
   // count instead and the surfaces say it, which is the disclosure without the
   // false alarm. If UAT round 2 says testers read the green as "checked", this
   // is the line that changes.

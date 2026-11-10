@@ -190,12 +190,14 @@ This appears conditionally.
 #### Trigger
 Calculated result differs by more than 50 percent from the rolling average of the previous 3 comparable periods for the same reporting entity (subsidiary + location) and category, at the same granularity.
 
-**All three priors must carry a figure, or the rule does not run.** A record on a shorter window is *not evaluated* — which is not the same claim as *not anomalous* — and the screen must say so rather than render nothing: rendering nothing tells the author "fine" about a value nobody checked. The three states the entry form distinguishes are:
+**One earlier period is enough for the rule to run (since 2026-11-11, BUG-R2-07).** With one or two the record is checked on *limited history*; with none it is *not evaluated* — which is not the same claim as *not anomalous*. The screen must say which, rather than render nothing: rendering nothing tells the author "fine" about a value nobody checked, or checked against less than it looks. `validation_anomaly_rules.md` §4.1 is the normative statement of the rule.
 
 | `anomalyBaselinePriorCount` | What the form shows |
 |---|---|
-| `3` and a non-zero average | the amber banner when flagged, and the average it was compared against when not |
-| `0`–`2`, or a full window averaging zero | a neutral "Not checked for anomalies" note naming how many priors exist. Deliberately not amber: a short window is the normal state of a new series' first months |
+| `3` and a non-zero average | the amber banner when flagged, naming the average; nothing when not |
+| `1`–`2` and a non-zero average | the amber banner when flagged, naming the average and "limited history (N periods)"; a neutral "Within range on limited history" note when not |
+| `0`, or an average of zero | a neutral "Not checked for anomalies" note saying why. Deliberately not amber: no earlier period is the normal state of a new series' first period |
+| `1`–`2` and no average | the same neutral note, saying the record was scored when the check needed three periods (a verdict from before 2026-11-11, kept until the record is next saved or submitted) |
 | `null` | "no calculated figure", so there is nothing to compare — the Water case |
 
 The normative statement of the rule, including why the baseline key deviates from VAR §4.1 as originally written, is `validation_anomaly_rules.md` §4.1. This section describes only what the Data Entry screen does with it.
