@@ -272,6 +272,86 @@ class ArmTests(unittest.TestCase):
             with self.subTest(args=args[:3]), self.assertRaises(SafeFailure):
                 arm(*args)
 
+    def paged_arm(self, pages):
+        """An Arm whose GETs answer from `pages`, keyed by the FULL url (query included)."""
+        calls = []
+        def call(argv):
+            calls.append(argv)
+            return json.dumps(pages[argv[argv.index('--url') + 1]])
+        return qa.Arm(FOUNDATION, call), calls
+
+    REVISIONS = 'https://management.azure.com' + APPS + '/' + STEM + '-api/revisions'
+
+    def next_link(self, token='t2', path=None, **extra):
+        query = {'api-version': qa.API_VERSION, 'pageSize': '20', 'skipToken': token, **extra}
+        return (path or self.REVISIONS) + '?' + '&'.join(k + '=' + v for k, v in query.items())
+
+    def test_follows_the_listing_pages_azure_returns_past_twenty_revisions(self):
+        # QA deploy run 42889302849: the API app passed 20 revisions, Azure
+        # paged the listing, and every deploy and rollback was refused.
+        second = self.next_link('t2')
+        third = self.next_link('t3')
+        arm, calls = self.paged_arm({
+            self.REVISIONS + '?api-version=' + qa.API_VERSION: {'value': [{'name': 'r1'}], 'nextLink': second},
+            second: {'value': [{'name': 'r2'}], 'nextLink': third},
+            third: {'value': [{'name': 'r3'}]},
+        })
+        self.assertEqual(arm('containerapp', 'revision', 'list', '--all', *self.scope()), [{'name': 'r1'}, {'name': 'r2'}, {'name': 'r3'}])
+        self.assertEqual([c[c.index('--url') + 1] for c in calls], [self.REVISIONS + '?api-version=' + qa.API_VERSION, second, third])
+
+    def test_accepts_the_listing_path_in_another_casing(self):
+        link = self.next_link(path=self.REVISIONS.replace('/resourceGroups/', '/resourcegroups/'))
+        self.assertEqual(qa.next_page(APPS + '/' + STEM + '-api/revisions', link), link)
+
+    def test_refuses_a_next_link_that_is_not_this_listings_next_page(self):
+        path = APPS + '/' + STEM + '-api/revisions'
+        bad = {
+            'another host': self.next_link().replace('management.azure.com', 'management.azure.com.evil.example'),
+            'plain http': self.next_link().replace('https://', 'http://'),
+            'another app': self.next_link(path=self.REVISIONS.replace(STEM + '-api', STEM + '-web')),
+            'a sub-resource': self.next_link(path=self.REVISIONS + '/x/replicas'),
+            'another api-version': self.next_link().replace(qa.API_VERSION, '2023-05-01'),
+            'a filter': self.next_link(**{'$filter': 'x'}),
+            'no skip token': self.REVISIONS + '?api-version=' + qa.API_VERSION + '&pageSize=20',
+            'a blank skip token': self.next_link(''),
+            'a repeated key': self.next_link() + '&skipToken=again',
+            'a page size that is not a number': self.next_link().replace('pageSize=20', 'pageSize=x'),
+            'a fragment': self.next_link() + '#x',
+            'not a string': None,
+        }
+        for name, link in bad.items():
+            with self.subTest(name), self.assertRaises(SafeFailure):
+                qa.next_page(path, link)
+
+    def test_refuses_a_listing_that_repeats_a_page_or_never_ends(self):
+        loop = self.next_link('t2')
+        arm, _ = self.paged_arm({
+            self.REVISIONS + '?api-version=' + qa.API_VERSION: {'value': [], 'nextLink': loop},
+            loop: {'value': [], 'nextLink': loop},
+        })
+        with self.assertRaisesRegex(SafeFailure, 'repeats a page'):
+            arm('containerapp', 'revision', 'list', '--all', *self.scope())
+
+        served = []
+        class Endless(dict):
+            def __missing__(inner, url):
+                served.append(url)
+                return {'value': [], 'nextLink': self.next_link('n' + str(len(served)))}
+        pages = Endless()
+        arm, calls = self.paged_arm(pages)
+        with self.assertRaisesRegex(SafeFailure, 'longer than'):
+            arm('containerapp', 'revision', 'list', '--all', *self.scope())
+        self.assertEqual(len(calls), qa.MAX_LISTING_PAGES)
+
+    def test_refuses_a_malformed_page_after_the_first(self):
+        second = self.next_link('t2')
+        arm, _ = self.paged_arm({
+            self.REVISIONS + '?api-version=' + qa.API_VERSION: {'value': [{'name': 'r1'}], 'nextLink': second},
+            second: {'nextLink': None},
+        })
+        with self.assertRaisesRegex(SafeFailure, 'Incomplete'):
+            arm('containerapp', 'revision', 'list', '--all', *self.scope())
+
     def test_patch_sends_the_body_from_a_removed_file_to_the_qa_app_only(self):
         arm, calls = self.arm({})
         arm.patch(live_app('api'), {'tags': {}, 'properties': {'template': {}}})

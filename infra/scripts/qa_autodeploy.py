@@ -57,6 +57,11 @@ from terraform_run import validate_release  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = 'tonyaiukco/TonyAI-mono-repo'
 API_VERSION = '2025-01-01'
+# An ARM listing longer than this is refused rather than read in part. Azure
+# pages Container Apps revisions at 20, and keeps at most 100 inactive ones.
+MAX_LISTING_PAGES = 20
+# The query keys an ARM nextLink of a Container Apps listing may carry, lowercased.
+NEXT_LINK_KEYS = {'api-version', 'skiptoken', '$skiptoken', 'pagesize'}
 ENGINE_URL = ('https://binaries.prisma.sh/all_commits/' + ENGINE_COMMIT
               + '/debian-openssl-3.0.x/schema-engine.gz')
 # binaries.prisma.sh refuses urllib's default User-Agent (Cloudflare 403, error 1010).
@@ -115,6 +120,33 @@ def run_az(argv, timeout=180):
     return result.stdout.strip()
 
 
+def next_page(path, link):
+    """`link` if it is the next page of the ARM listing at `path`, else a refusal.
+
+    Never an arbitrary origin, path, filter or API version (the rule
+    qa_discovery.next_command applies): https on management.azure.com, the
+    listing's own path (ARM may change its casing), this script's pinned
+    api-version, a skip token, and at most a numeric page size.
+    """
+    if not isinstance(link, str):
+        raise SafeFailure('Unexpected Container Apps nextLink; refused.')
+    url = urlparse(link)
+    try:
+        query = parse_qs(url.query, strict_parsing=True, keep_blank_values=True)
+    except ValueError:
+        query = None
+    keys = {key.lower() for key in query} if query else set()
+    if (url.scheme != 'https' or url.netloc != 'management.azure.com'
+            or url.path.lower() != path.lower() or url.params or url.fragment
+            or query is None or len(keys) != len(query) or not keys <= NEXT_LINK_KEYS
+            or any(len(values) != 1 or not values[0] for values in query.values())
+            or query.get('api-version') != [API_VERSION]
+            or not keys & {'skiptoken', '$skiptoken'}
+            or any(key.lower() == 'pagesize' and not values[0].isdigit() for key, values in query.items())):
+        raise SafeFailure('Unexpected Container Apps nextLink; refused.')
+    return link
+
+
 class Arm:
     """drain_api's `read(...)` interface over `az rest` at one pinned API version.
 
@@ -128,8 +160,10 @@ class Arm:
                       + foundation['resource_group'] + '/providers/Microsoft.App/containerApps')
 
     def rest(self, method, path, body_file=None):
-        argv = ['az', 'rest', '--method', method, '--only-show-errors',
-                '--url', 'https://management.azure.com' + path + '?api-version=' + API_VERSION]
+        return self.request(method, 'https://management.azure.com' + path + '?api-version=' + API_VERSION, body_file)
+
+    def request(self, method, url, body_file=None):
+        argv = ['az', 'rest', '--method', method, '--only-show-errors', '--url', url]
         if body_file:
             argv += ['--headers', 'Content-Type=application/json', '--body', '@' + body_file]
         if method != 'get':
@@ -138,11 +172,29 @@ class Arm:
         return json.loads(self.call(argv + ['--output', 'json']))
 
     def listing(self, path):
-        page = self.rest('get', path)
-        rows = page.get('value') if isinstance(page, dict) else None
-        if not isinstance(rows, list) or page.get('nextLink'):
-            raise SafeFailure('Incomplete Container Apps listing; refused.')
-        return rows
+        """Every row of an ARM listing, following its pages — or a refusal.
+
+        A listing read in part is still refused: each page must be well formed,
+        each nextLink must be this listing's own next page (`next_page`), and a
+        repeated link or more than MAX_LISTING_PAGES pages stops the read. Until
+        2026-11-10 any nextLink was refused, which failed every deploy once the
+        API app passed 20 revisions (QA deploy run 42889302849).
+        """
+        rows, seen, page = [], set(), self.rest('get', path)
+        for read in range(1, MAX_LISTING_PAGES + 1):
+            if not isinstance(page, dict) or not isinstance(page.get('value'), list):
+                raise SafeFailure('Incomplete Container Apps listing; refused.')
+            rows.extend(page['value'])
+            link = page.get('nextLink')
+            if not link:
+                return rows
+            if link in seen:
+                raise SafeFailure('Container Apps listing repeats a page; refused.')
+            if read == MAX_LISTING_PAGES:
+                break
+            seen.add(link)
+            page = self.request('get', next_page(path, link))
+        raise SafeFailure('Container Apps listing longer than ' + str(MAX_LISTING_PAGES) + ' pages; refused.')
 
     def app_path(self, args):
         name = args[args.index('-n') + 1]
