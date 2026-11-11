@@ -225,6 +225,26 @@ gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
 gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo
 ```
 
+**Disabling does not stop a run that has already started, so wait for it.** A
+deploy or rollback that is running or queued keeps going after the workflow is
+disabled, and an owner's Terraform apply is outside GitHub's `qa-deploy`
+concurrency group. The rollout patches the template it read when it began: if the
+owner's release lands in between, the patch writes the older template back over
+it — the rollout then sees the difference and restores, and the settings the owner
+added are gone (reproduced for a registration release: the secret stayed, the two
+settings did not). After disabling, and **before exporting a manifest or planning**,
+require both lists to be empty:
+
+```bash
+gh run list -R tonyaiukco/TonyAI-mono-repo --workflow "QA deploy" --limit 20 --json databaseId,status,headSha --jq '[.[] | select(.status != "completed")]'
+gh run list -R tonyaiukco/TonyAI-mono-repo --workflow "QA rollback" --limit 20 --json databaseId,status,headSha --jq '[.[] | select(.status != "completed")]'
+```
+
+Each must print `[]`. If either lists a run, let it finish — never cancel a rollout
+part-way, which can leave the API drained — and run both again. Only then export
+the manifest: one exported while a deploy was still running describes a release
+that is about to change.
+
 That release takes its digests and `source_sha` from the live `source` tag or the
 latest `qa-candidate-<run>-<attempt>` artifact (public digests and migration
 hashes only), uses a fresh `release_id`, and should find no migration pending.
@@ -764,7 +784,8 @@ on 2026-11-09. Backups were not restored; RPO and RTO are targets until LP5-03 m
 
 Runbook 05's order, with these hosted specifics. Run from a clean checkout at the live source.
 
-1. `gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
+1. `gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`, then wait until no `QA deploy`
+   or `QA rollback` run is running or queued ("Owner Terraform releases", above).
 2. Write a manifest with `qa_autodeploy.py inputs` and give it a new `release_id`. Build the new
    URL from the selected version's URL, changing only the password.
 3. `release_secrets.py store`, select the returned version in the manifest, then
@@ -792,8 +813,11 @@ Runbook 03 §3.6, with these hosted specifics. Registration on QA runs over the
 **placeholder** KVKK notice, so its manifest says `allow_placeholder_consent: true`;
 QA is `staging`, the only environment where that is accepted.
 
-1. `gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
-2. Write a manifest with `qa_autodeploy.py inputs` (above). `release_secrets.py store
+1. `gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`, then wait until no
+   `QA deploy` or `QA rollback` run is running or queued ("Owner Terraform releases",
+   above: both lists print `[]`). A deploy still running would write its older
+   template back over this release and remove the registration settings.
+2. Only then write a manifest with `qa_autodeploy.py inputs` (above). `release_secrets.py store
    --inputs <that manifest> --name registration-code`; type the code at the hidden
    prompt. Note the version identifier's last segment.
 3. Foundation: copy the last applied foundation input — never the stale file in

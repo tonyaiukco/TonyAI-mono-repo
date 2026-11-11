@@ -38,7 +38,7 @@
 
 ## 7. Hosted QA rollout (with the owner)
 
-- [ ] 7.1 After the merge, with the automatic deploy disabled: the owner stores `registration-code`, applies the foundation with `registration_secret_ready = true`, and applies the application with the live release plus the `registration` block under a new `release_id`; verify by `release_secrets.py verify`, the plans read before each apply, and the `deploy_apps` readback
+- [ ] 7.1 After the merge, with the automatic deploy disabled and no `QA deploy` or `QA rollback` run running or queued: the owner stores `registration-code`, applies the foundation with `registration_secret_ready = true`, and applies the application with the live release plus the `registration` block under a new `release_id`; verify by `release_secrets.py verify`, the plans read before each apply, and the `deploy_apps` readback
 - [ ] 7.2 Read back hosted QA: `GET https://api.qa.tonyai.io/api/v1/auth/registration` answers 200 with the placeholder marked, and the automatic deploy is re-enabled; verify by the responses and the workflow's state
 - [ ] 7.3 Register one company end to end on `https://qa.tonyai.io/register` with an address the owner reads: the email arrives, the link signs in, the new `super_admin` sees an empty organisation; verify by the owner's written report and a wrong code being refused on the page
 - [ ] 7.4 Record the rollout (release id, secret version id — never the code — and the registration made) in the planning file; verify the entry

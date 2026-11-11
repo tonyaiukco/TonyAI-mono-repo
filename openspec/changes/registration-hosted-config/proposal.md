@@ -36,5 +36,5 @@ None.
 - **Tests:** a new `infra/tests/test_registration_settings.py`; additions to `test_qa_autodeploy.py`; two mutants in `check_mutations.py`.
 - **Config and docs:** `infra/config/application.example.json`, `infra/README.md`, runbooks `01-azure.md`, `03-deploy.md`, `04-verify.md`, `11-qa-hosted.md`; `docs/architecture/security.md`; the planning file.
 - **Hosted QA (owner-run):** one new Key Vault secret, one foundation apply (a role assignment), one application apply (a new API revision). No database change, no image change, no DNS or certificate change.
-- **Deploy on merge:** the change is under `infra/`, so merging it rebuilds and redeploys QA's images with the configuration unchanged; registration stays off until the owner's release.
+- **Deploy on merge:** none. Every changed file is under `infra/`, `docs/` or `openspec/`, which the deploy classification treats as not image-relevant (`qa_autodeploy.decide` on this change's file list answers "no image-relevant change since the deployed source"), so merging it neither rebuilds nor redeploys QA; registration stays off until the owner's release.
 - **Review:** secrets and deploy tooling — `security-rls` and `qa-auditor` review the diff before the PR.

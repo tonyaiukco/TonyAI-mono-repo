@@ -774,7 +774,12 @@ emitted and the plan does not change.
 
 Owner sequence, on a clean checkout of `main` with `QA deploy` disabled
 (`gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`), as for any owner
-release:
+release. **Disabling does not stop a deploy or rollback that has already started:**
+before step 1, wait until none is running or queued (runbook 11, "Owner Terraform
+releases", gives the two `gh run list` checks; both must print `[]`), and never
+cancel one part-way. A deploy that is still running patches the template it read
+earlier and would remove the registration settings this release adds. Export the
+manifest of step 3 only after that wait.
 
 1. **Choose the code and type it; do not paste it.** Five letters or digits, mixed
    case. Keep it in the owner's password manager. It is short enough to type, and
