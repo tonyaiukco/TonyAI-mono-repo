@@ -469,6 +469,132 @@ async function withOwner<T>(step: (prisma: OwnerSql) => Promise<T>): Promise<T> 
   }
 }
 
+/** The company-name sentinel of everything `registration.spec.ts` registers. */
+export const E2E_REGISTRATION_PREFIX = 'E2E Registration ';
+
+/** What a registration left in the database, read as the owner. */
+export interface RegisteredAccount {
+  profileId: string;
+  organisationId: string;
+  role: string;
+  jobTitle: string | null;
+  language: string;
+  legalName: string;
+  country: string;
+  geographyCode: string;
+  reportingCurrency: string;
+  invitationStatus: string | null;
+  consents: number;
+}
+
+/** The registered account of `email`, or null — the registration's work runs
+ *  after the API's 202, so a spec polls this. */
+export async function registeredAccount(email: string): Promise<RegisteredAccount | null> {
+  const rows = await withOwner((prisma) =>
+    prisma.$queryRawUnsafe<RegisteredAccount[]>(
+      `SELECT p.id::text AS "profileId", o.id::text AS "organisationId", p.role::text AS role, p.job_title AS "jobTitle",
+              p.language, o.legal_name AS "legalName", o.country, o.geography_code AS "geographyCode",
+              o.reporting_currency AS "reportingCurrency", i.status::text AS "invitationStatus",
+              (SELECT count(*)::int FROM consents c WHERE c.profile_id = p.id AND c.kind = 'kvkk_registration') AS consents
+       FROM profiles p
+       JOIN organisations o ON o.id = p.organisation_id
+       LEFT JOIN invitations i ON i.profile_id = p.id
+       WHERE p.email = $1`,
+      email.toLowerCase(),
+    ),
+  );
+  return rows[0] ?? null;
+}
+
+/** How many organisations carry exactly this legal name, read as the owner. */
+export async function organisationsNamed(legalName: string): Promise<number> {
+  const rows = await withOwner((prisma) =>
+    prisma.$queryRawUnsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM organisations WHERE legal_name = $1`, legalName),
+  );
+  return rows[0].n;
+}
+
+/**
+ * A working invitation link for a registered address, as a path on the web
+ * app. From the email itself where the stack runs its mail catcher (mailpit,
+ * local) — that is the link the person would click. CI runs no mail catcher
+ * and configures no SMTP, so there the link is minted through the Auth admin
+ * API for the Auth user the registration created; the email's wording is the
+ * integration suite's to prove.
+ */
+export async function registrationInvitePath(request: APIRequestContext, email: string): Promise<{ path: string; from: 'email' | 'auth-admin' }> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const mailpit = `${new URL(url).protocol}//${new URL(url).hostname}:54324`;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    let found: { messages?: { ID: string }[] };
+    try {
+      const res = await request.get(`${mailpit}/api/v1/search`, { params: { query: `to:"${email.toLowerCase()}"` }, timeout: 2_000 });
+      if (!res.ok()) break;
+      found = await res.json();
+    } catch {
+      break; // no mail catcher here
+    }
+    const id = found.messages?.[0]?.ID;
+    if (id) {
+      const message = (await (await request.get(`${mailpit}/api/v1/message/${id}`)).json()) as { Text: string };
+      const link = /https?:\/\/[^\s]+(\/auth\/confirm\?token_hash=[A-Za-z0-9_-]+&type=invite)/.exec(message.Text);
+      if (link) return { path: link[1], from: 'email' };
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const res = await request.post(`${url}/auth/v1/admin/generate_link`, {
+    headers: { apikey: service, Authorization: `Bearer ${service}` },
+    data: { type: 'invite', email: email.toLowerCase() },
+  });
+  if (!res.ok()) throw new Error(`could not mint an invitation link: ${res.status()} ${await res.text()}`);
+  const body = (await res.json()) as { hashed_token?: string; properties?: { hashed_token?: string } };
+  const token = body.hashed_token ?? body.properties?.hashed_token;
+  if (!token) throw new Error('the Auth admin API returned no token');
+  return { path: `/auth/confirm?token_hash=${token}&type=invite`, from: 'auth-admin' };
+}
+
+/**
+ * Removes every organisation `registration.spec.ts` registered, this run's or
+ * an aborted one's: its Auth users (the admin API), then — as the owner, the
+ * only login that may — its audit rows, profiles and the organisation itself.
+ * Only rows under the `E2E Registration ` sentinel.
+ */
+export async function cleanupE2ERegistrations(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const like = `${E2E_REGISTRATION_PREFIX}%`;
+  const profiles = await withOwner((prisma) =>
+    prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT p.id::text AS id FROM profiles p JOIN organisations o ON o.id = p.organisation_id WHERE o.legal_name LIKE $1`,
+      like,
+    ),
+  );
+  const errors: (string | null)[] = [];
+  for (const { id } of profiles) {
+    const res = await request.delete(`${url}/auth/v1/admin/users/${id}`, { headers: { apikey: service, Authorization: `Bearer ${service}` } });
+    // 404: the Auth user was never created (a delivery that stopped first).
+    errors.push(res.ok() || res.status() === 404 ? null : `${res.status()} deleting Auth user ${id}`);
+  }
+  try {
+    await withOwner((prisma) =>
+      prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`DELETE FROM audit_log WHERE organisation_id IN (SELECT id FROM organisations WHERE legal_name LIKE $1)`, like);
+        await tx.$executeRawUnsafe(`DELETE FROM profiles WHERE organisation_id IN (SELECT id FROM organisations WHERE legal_name LIKE $1)`, like);
+        await tx.$executeRawUnsafe(`DELETE FROM organisations WHERE legal_name LIKE $1`, like);
+      }),
+    );
+  } catch (e) {
+    errors.push(`registration owner delete failed — ${(e as Error).message}`);
+  }
+  reportCleanup(errors);
+}
+
 /**
  * Delete via PostgREST and RETURN the failure rather than throwing it, so the
  * caller can run every delete before reporting (see `reportCleanup`).

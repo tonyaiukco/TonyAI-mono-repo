@@ -7,7 +7,13 @@
     "action": "Daveti kabul et",
     "expiry": "Bağlantı yalnızca bir kez kullanılabilir ve {hours, plural, one {# saat} other {# saat}} sonra geçerliliğini yitirir. Süresi dolduysa yöneticinizden yeni bir davet göndermesini isteyin.",
     "expiryProvisioned": "Bağlantı yalnızca bir kez kullanılabilir ve {hours, plural, one {# saat} other {# saat}} sonra geçerliliğini yitirir. Süresi dolduysa TonyAI'dan yeni bir davet göndermesini isteyin.",
-    "ignore": "Bu daveti beklemiyorsanız bu e-postayı yok sayabilirsiniz."
+    "ignore": "Bu daveti beklemiyorsanız bu e-postayı yok sayabilirsiniz.",
+    "subjectRegistered": "TonyAI'da şirket hesabınızın kurulumunu tamamlayın",
+    "greetingRegistered": "Merhaba,",
+    "bodyRegistered": "Şirketinizi karbon muhasebesi ve ESG raporlama platformu TonyAI'a kaydettiğiniz için teşekkür ederiz. İlk yönetici olarak başlamak için e-posta adresinizi doğrulayın ve bir şifre belirleyin.",
+    "actionRegistered": "Doğrula ve şifre belirle",
+    "expiryRegistered": "Bağlantı yalnızca bir kez kullanılabilir ve {hours, plural, one {# saat} other {# saat}} sonra geçerliliğini yitirir. Süresi dolduysa yenisini almak için kayıt formunu aynı e-posta adresiyle yeniden gönderin.",
+    "ignoreRegistered": "TonyAI'a siz kaydolmadıysanız bu e-postayı yok sayabilirsiniz."
   },
   "passwordReset": {
     "subject": "TonyAI şifrenizi sıfırlayın",

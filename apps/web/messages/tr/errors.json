@@ -84,6 +84,8 @@
     "no_conversion": "Bu giriş için henüz kaynağı belirtilmiş bir birim dönüşümü yok.",
     "calorific_basis_mismatch": "Bir birim dönüşümü var, ancak emisyon faktöründen farklı bir ısıl değer esasına dayanıyor.",
     "invitation_not_found": "Bu hesabın yeniden gönderilecek bir daveti yok.",
+    "registration_unavailable": "Kayıt şu anda kullanılamıyor.",
+    "registration_code_invalid": "Kayıt kodu geçerli değil. Size verilen kodu kontrol edin.",
     "account_disabled": "Hesabınız devre dışı bırakıldı. Bunun bir hata olduğunu düşünüyorsanız yöneticinize başvurun.",
     "own_account_forbidden": "Kendi rolünüzü değiştiremez veya kendi hesabınızı devre dışı bırakamazsınız; başka bir süper yöneticiden isteyin.",
     "access_role_mismatch": "Bağlı şirket erişimi yalnızca Veri Girişi kullanıcılarına verilir; diğer roller tüm kuruluşu görür.",

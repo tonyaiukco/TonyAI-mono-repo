@@ -143,6 +143,9 @@ const SIUD = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
  * Nothing anywhere gets TRUNCATE, REFERENCES or TRIGGER.
  */
 export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
+  // + INSERT on listed columns only (self-service registration) — see
+  // RUNTIME_COLUMN_INSERTS. Never UPDATE or DELETE: an organisation's facts
+  // and its offboarding are the owner's.
   organisations: ['SELECT'],
   // The factor library (LP3-03): reference data the API reads and never
   // writes — the seed loads it on the owner connection, LP4-02's loader
@@ -161,6 +164,9 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // delivery and acceptance, never deleted (a withdrawn one is `revoked`).
   // + UPDATE on the state columns only — see RUNTIME_COLUMN_UPDATES.
   invitations: ['SELECT', 'INSERT'],
+  // A consent given at registration: inserted (listed columns only — see
+  // RUNTIME_COLUMN_INSERTS) and read, never updated or deleted.
+  consents: ['SELECT'],
   user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
   // + UPDATE on every column but its identity and organisation — see
   // RUNTIME_COLUMN_UPDATES.
@@ -216,7 +222,14 @@ export const RUNTIME_COLUMN_INSERTS = Object.freeze({
   // organisation, never `disabled_at` or the Auth/reset bookkeeping — a new
   // account is born enabled. Prisma fills `theme` and `auth_sync_generation`
   // (their schema defaults) and the two timestamps on every create.
-  profiles: ['id', 'email', 'full_name', 'role', 'language', 'theme', 'auth_sync_generation', 'organisation_id', 'created_at', 'updated_at'],
+  // + `job_title`, the registrant's (self-service registration).
+  profiles: ['id', 'email', 'full_name', 'job_title', 'role', 'language', 'theme', 'auth_sync_generation', 'organisation_id', 'created_at', 'updated_at'],
+  // Registration creates the organisation: its name, country, geography and
+  // currency — never `offboarded_at`, so an organisation is born active.
+  // Prisma fills `id` and the two timestamps.
+  organisations: ['id', 'legal_name', 'country', 'geography_code', 'reporting_currency', 'created_at', 'updated_at'],
+  // Never `accepted_at`: the database's clock stamps a consent.
+  consents: ['id', 'profile_id', 'kind', 'text_version', 'language'],
   // A boundary version is born open and undecided (LP3-04's write path):
   // never `decided_by`, `decided_at` or `frozen_at`, and never `created_at`
   // (the database's clock) — so not even a bug can insert a version already

@@ -190,7 +190,7 @@ Each package has a `.env.example`; `pnpm setup` writes the real files. Never com
 | File | Main keys |
 | --- | --- |
 | `apps/web/.env.local` | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_BASE_URL` |
-| `apps/api/.env` | `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_JWT_SCHEME`, `SUPABASE_SERVICE_ROLE_KEY`; email: `SMTP_HOST`, `MAIL_FROM`, `APP_URL` |
+| `apps/api/.env` | `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_JWT_SCHEME`, `SUPABASE_SERVICE_ROLE_KEY`; email: `SMTP_HOST`, `MAIL_FROM`, `APP_URL`; registration: `REGISTRATION_CODE`, `REGISTRATION_ALLOW_PLACEHOLDER_CONSENT` |
 | `packages/db/.env` | `DATABASE_URL` (runtime role), `DIRECT_URL` (owner: migrations and seed), `SUPABASE_SERVICE_ROLE_KEY` |
 
 The root `.env.example` is a cloud reference for Key Vault bindings only; local setup

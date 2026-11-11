@@ -84,6 +84,8 @@
     "no_conversion": "No sourced unit conversion covers this entry yet.",
     "calorific_basis_mismatch": "A unit conversion exists, but on a different calorific basis than the emission factor.",
     "invitation_not_found": "This account has no invitation to re-send.",
+    "registration_unavailable": "Registration is not available.",
+    "registration_code_invalid": "The registration code is not valid. Check the code you were given.",
     "account_disabled": "Your account has been disabled. Ask your administrator if you think this is a mistake.",
     "own_account_forbidden": "You cannot change your own role or disable your own account — ask another super admin.",
     "access_role_mismatch": "Only Data Entry users are granted subsidiaries; other roles see their whole organisation.",

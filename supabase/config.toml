@@ -199,9 +199,10 @@ enable_refresh_token_rotation = true
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
-# LP4-01: invitation only — an account starts from an administrator's
-# invitation or the operator's provisioning (D18); the Auth admin API still
-# creates users. Staging and production: Codex's `supabase_auth.py`.
+# LP4-01: no public sign-up in Auth — an account starts from an
+# administrator's invitation, the operator's provisioning (D18) or, where an
+# environment enables it, the API's code-gated registration (2026-11-11); all
+# three create the user through the Auth admin API. Staging and production: Codex's `supabase_auth.py`.
 enable_signup = false
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false

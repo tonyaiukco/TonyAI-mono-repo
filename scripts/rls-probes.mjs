@@ -948,6 +948,41 @@ async function main() {
       `status=${forged.status}`,
     );
 
+    // --- consents (self-service registration): the same shape ---------------
+    // Written with a registration and read by the API alone. A client that
+    // could write here could forge a consent a person never gave, or — with
+    // the service role's key — erase one.
+    const consentQuery = 'select=id';
+    const consentReads = {
+      anon: await count('consents', { query: consentQuery }),
+      entry: await count('consents', { token, query: consentQuery }),
+      admin: await count('consents', { token: adminToken, query: consentQuery }),
+      service: await count('consents', { key: SERVICE, token: SERVICE, query: consentQuery }),
+    };
+    check(
+      'consents: no client role reads it, not even the service role (refused by privilege)',
+      Object.values(consentReads).every(denied),
+      Object.entries(consentReads).map(([role, r]) => `${role}=${r.error?.slice(0, 3) ?? r.total}`).join(', '),
+    );
+    const forgedConsents = [];
+    for (const [role, headers] of [
+      ['admin', { apikey: ANON, Authorization: `Bearer ${adminToken}` }],
+      ['service', { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` }],
+    ]) {
+      const res = await fetch(`${URL_}/rest/v1/consents`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ id: '99999999-0000-0000-0000-00000000c001', profile_id: subjectOf(adminToken), kind: 'kvkk_registration', text_version: 'forged', language: 'en' }),
+      });
+      const body = res.ok ? '' : await res.text();
+      forgedConsents.push({ role, refused: !res.ok && /42501|permission denied/i.test(body), status: res.status });
+    }
+    check(
+      'consents: a client cannot write one, with a user token or the service key',
+      forgedConsents.every((f) => f.refused),
+      forgedConsents.map((f) => `${f.role}=${f.status}`).join(', '),
+    );
+
     // The lifecycle columns on `profiles` (LP4-01). Supabase's default
     // privileges give `authenticated` table-level UPDATE on `profiles`, so
     // RLS — no UPDATE policy — is all that stops a user rewriting its own row:

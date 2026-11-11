@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
+  Equals,
   IsArray,
   IsEmail,
   IsIn,
@@ -11,11 +12,14 @@ import {
   MinLength,
 } from 'class-validator';
 import {
+  REGISTRATION_CONSENT_VERSION,
+  REGISTRATION_FIELD_MAX,
   SUPPORTED_LOCALES,
   type InviteUserRequest,
   type ListUsersParams,
   type Locale,
   type PasswordResetRequest,
+  type RegistrationRequest,
   type ReplaceUserAccessRequest,
   type UpdateUserRoleRequest,
   type UserRole,
@@ -88,4 +92,58 @@ export class PasswordResetDto implements PasswordResetRequest {
   @IsEmail()
   @MaxLength(MAX_EMAIL_LENGTH)
   email!: string;
+}
+
+/** A typed value with the space around it removed; anything else is left for the validators. */
+const trimmed = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
+
+/** POST /api/v1/auth/registration — public, behind the registration code. */
+export class RegistrationDto implements RegistrationRequest {
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.firstName)
+  firstName!: string;
+
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.lastName)
+  lastName!: string;
+
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.companyName)
+  companyName!: string;
+
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.jobTitle)
+  jobTitle!: string;
+
+  // ASCII only: Supabase Auth refuses any other address, and by then the
+  // organisation would exist with an administrator no email can ever reach
+  // (QA review, F1 — `ayşe@…` typed on a Turkish keyboard).
+  @IsEmail({ allow_utf8_local_part: false })
+  @Matches(/^[\x21-\x7e]+$/, { message: 'email must use ASCII characters only' })
+  @MaxLength(REGISTRATION_FIELD_MAX.email)
+  email!: string;
+
+  // Only bounded here: a code of any wrong shape is a wrong code (403), told
+  // apart from a right one in constant time by the service.
+  @IsString()
+  @MaxLength(64)
+  registrationCode!: string;
+
+  @Equals(true, { message: 'consent must be accepted' })
+  consent!: true;
+
+  // The one notice this API serves: a consent to any other text is refused.
+  @Equals(REGISTRATION_CONSENT_VERSION, { message: 'consentVersion is not the current notice' })
+  consentVersion!: string;
+
+  @IsIn(SUPPORTED_LOCALES)
+  language!: Locale;
 }

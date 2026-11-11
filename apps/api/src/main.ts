@@ -11,6 +11,7 @@ import { configureApp } from './app-setup';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { configurePool, readRuntimeConfig } from './common/runtime-config';
 import { RuntimeLimits } from './common/runtime-limits';
+import { readRegistrationConfig } from './users/registration-config';
 
 async function bootstrap() {
   // Sentry first, before Nest builds the app — a no-op unless SENTRY_DSN is
@@ -22,6 +23,9 @@ async function bootstrap() {
   // Likewise on a placeholder-factor flag set where it must not be (K3): read
   // once, here, before any module can price a record.
   const factorPolicy = bootFactorPolicy();
+  // And on a registration code of the wrong shape, or registration enabled
+  // over a placeholder KVKK notice the environment has not allowed.
+  const registration = readRegistrationConfig();
   const runtime = readRuntimeConfig();
   configurePool(runtime);
   const logger = new JsonLogger();
@@ -38,6 +42,13 @@ async function bootstrap() {
     port,
     prefix: '/api/v1',
     sentry: Boolean(process.env.SENTRY_DSN),
+  });
+  // Stated at every boot: whether this environment creates organisations
+  // from its public form, and over which notice.
+  logger.event('info', 'registration_policy', {
+    enabled: registration !== null,
+    consentVersion: registration?.consentVersion ?? null,
+    consentIsPlaceholder: registration?.consentIsPlaceholder ?? null,
   });
   // Stated at every boot, so "placeholders are off here" is a log line an
   // operator can point at rather than an absence of evidence (LP3-03, K3).
