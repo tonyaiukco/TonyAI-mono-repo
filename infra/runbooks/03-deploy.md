@@ -776,7 +776,7 @@ Owner sequence, on a clean checkout of `main` with `QA deploy` disabled
 (`gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`), as for any owner
 release. **Disabling does not stop a deploy or rollback that has already started:**
 before step 1, wait until none is running or queued (runbook 11, "Owner Terraform
-releases", gives the two `gh run list` checks; both must print `[]`), and never
+releases", gives the check, which must print nothing), and never
 cancel one part-way. A deploy that is still running patches the template it read
 earlier and would remove the registration settings this release adds. Export the
 manifest of step 3 only after that wait.
@@ -833,8 +833,12 @@ guessing run): repeat step 1 for a new version, name it in a new manifest under 
 new `release_id`, verify, plan, apply, read back. The old code stops working when
 the new revision takes traffic; disable the old version once nothing references it.
 
-**Switch off:** release a manifest without the `registration` object. The secret
-and its grant may stay; nothing references them.
+**Switch off, or back out a registration release:** release a manifest without the
+`registration` object **under a fresh `release_id`** — never the previous manifest
+unchanged: its API revision still exists, inactive, and the deploy refuses an
+intended revision that exists but is inactive (runbook 05 says the same of any
+earlier manifest). Then verify, plan, deploy and read back as above. The secret and
+its grant may stay; nothing references them.
 
 **Close an unaccepted registration:** registrations whose invitation is never
 accepted leave their organisation in place. `pnpm onboarding offboard` (runbook 04

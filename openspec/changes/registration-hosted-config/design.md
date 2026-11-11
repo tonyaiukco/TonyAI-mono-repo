@@ -79,7 +79,7 @@ The code is typed at the tool's hidden prompt, never pasted beside a command and
 ### D8 — Operating it
 
 - **Rotate:** store a new version, release a manifest naming it under a new `release_id`, apply. The old code stops working when the new revision takes traffic.
-- **Switch off:** release a manifest without the block. The secret and the grant may stay; nothing references them.
+- **Switch off:** release a manifest without the block, under a fresh `release_id` like every release (an earlier manifest's revision exists, inactive, and is refused). The secret and the grant may stay; nothing references them.
 - **Close an unaccepted registration:** the existing `pnpm onboarding offboard`.
 - **During the owner's release** the automatic deploy is disabled, as for every owner Terraform release (runbook 11), since it patches from a template it read before the apply. Disabling does not stop a run that has started, so the owner also waits until no deploy or rollback is running or queued before exporting the manifest.
 
@@ -89,7 +89,7 @@ The code is typed at the tool's hidden prompt, never pasted beside a command and
 - [The grant exists before the secret is referenced, so a stale flag leaves an unused role assignment] → harmless; one scoped Secrets User assignment on one secret.
 - [The self-host roots drift further from the main ones] → accepted while that route is paused; noted for its resumption.
 - [The Python and TypeScript code patterns could diverge] → the D2 test pins them together.
-- [An automatic deploy or rollback that is still running when the owner releases writes its older template back and removes the registration settings; disabling the workflow does not stop a started run, and Terraform is outside the workflow's concurrency group] → the runbooks require, after disabling and before the manifest is exported, that no `QA deploy` or `QA rollback` run is running or queued, and that a rollout is never cancelled part-way. The race is the existing deploy mechanism's; this procedure now guards against it.
+- [An automatic deploy or rollback that is still running when the owner releases writes its older template back and removes the registration settings; disabling the workflow does not stop a started run, and Terraform is outside the workflow's concurrency group] → the runbooks require, after disabling and before the manifest is exported, that no `QA deploy` or `QA rollback` run is running or queued — found by walking each workflow's whole run history by file name and testing every run's own status, so that neither a disabled workflow, a long run behind newer ones, nor a stale server-side status filter hides one — and that a rollout is never cancelled part-way. The race is the existing deploy mechanism's; this procedure now guards against it.
 - [A five-character code is guessable at scale] → an accepted owner decision of 2026-11-11 with its mitigations in the application; unchanged here.
 
 ## Migration Plan
@@ -97,7 +97,7 @@ The code is typed at the tool's hidden prompt, never pasted beside a command and
 1. Merge. Nothing deploys: the change touches no image-relevant path, so the automatic deploy skips it and QA keeps its release and settings.
 2. Owner, with the automatic deploy disabled and no deploy or rollback run still running or queued: store `registration-code`; foundation apply with `registration_secret_ready = true`; export the live release, add the `registration` block and a new `release_id`; `release_secrets.py verify`; application plan, read, apply; `deploy_apps` readback.
 3. Read back `GET https://api.qa.tonyai.io/api/v1/auth/registration` (200, placeholder true), re-enable the automatic deploy, register one company end to end.
-4. Rollback: apply the previous manifest (no block). Registration is off again; nothing else moved.
+4. Rollback: copy the manifest that was live before (no `registration` block) under a fresh `release_id` — applied unchanged it is refused, because its API revision still exists and is inactive — then verify, plan, deploy and read back. Registration is off again; nothing else moved.
 
 ## Open Questions
 
