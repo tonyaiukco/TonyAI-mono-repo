@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { useEffect, type ReactNode } from "react";
+import { Info, Plus, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "use-intl";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { checkDecimal, formatNumber, parseLocaleDecimal, typedValue, type DecimalRule } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
@@ -25,6 +26,8 @@ import {
 import {
   ACTIVITY_VALUE_MAX,
   EQUIPMENT_TYPES,
+  VOLUME_CORRECTION_FACTOR_MAX,
+  VOLUME_CORRECTION_FACTOR_MIN,
   type EquipmentType,
   type LeakRateChoice,
   type ReleaseParametersDTO,
@@ -55,6 +58,7 @@ function ParameterNumberField({
   max,
   disabled,
   help,
+  info,
   onChange,
 }: {
   id: string;
@@ -64,6 +68,9 @@ function ParameterNumberField({
   max: number;
   disabled?: boolean;
   help?: string;
+  /** An explanation behind an ⓘ beside the label, opened by click or Enter
+   *  (UAT round 2, BUG-R2-06): what the field is, beyond its one help line. */
+  info?: { label: string; content: ReactNode };
   onChange: (value: number | null, refused: boolean) => void;
 }) {
   const locale = useLocale();
@@ -78,7 +85,23 @@ function ParameterNumberField({
   }, []);
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      {info ? (
+        <div className="flex items-center gap-1">
+          <Label htmlFor={id}>{label}</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" aria-label={info.label}>
+                <Info className="h-4 w-4" aria-hidden />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 text-xs">
+              {info.content}
+            </PopoverContent>
+          </Popover>
+        </div>
+      ) : (
+        <Label htmlFor={id}>{label}</Label>
+      )}
       <Input
         id={id}
         type="text"
@@ -98,6 +121,32 @@ function ParameterNumberField({
       <DecimalNote id={`${id}-note`} check={check} otherReading={input.otherReading} locale={input.locale} typing={input.typing} />
       {help && <p className="text-xs text-muted-foreground">{help}</p>}
     </div>
+  );
+}
+
+/**
+ * What the volume correction factor is (UAT round 2, BUG-R2-06), behind the
+ * field's ⓘ. The range comes from the contract's bounds; the calorific value
+ * is named, never quoted, because its number is release data the form above
+ * already shows. The reference conditions are worded per language — the
+ * contract's `STANDARD_REFERENCE_CONDITIONS` is English and in kPa, and a spec
+ * pins it so a change leads back here.
+ */
+export function VolumeCorrectionInfo() {
+  const t = useTranslations("dataEntry.inputs.volumeCorrectionInfo");
+  const locale = useLocale();
+  return (
+    <ul className="list-disc space-y-1.5 pl-4">
+      <li>{t("standard")}</li>
+      <li>{t("arithmetic")}</li>
+      <li>
+        {t("range", {
+          min: formatNumber(VOLUME_CORRECTION_FACTOR_MIN, locale),
+          max: formatNumber(VOLUME_CORRECTION_FACTOR_MAX, locale),
+        })}
+      </li>
+      <li>{t("standardUnit")}</li>
+    </ul>
   );
 }
 
@@ -190,6 +239,7 @@ export function NaturalGasInputs({
           rule="positive"
           max={GAS_INPUT_MAX}
           help={t("volumeCorrectionHelp")}
+          info={{ label: t("volumeCorrectionInfo.aria"), content: <VolumeCorrectionInfo /> }}
           onChange={(value, refused) => onChange({ volumeCorrectionFactor: value }, "volumeCorrectionFactor", refused)}
         />
       )}

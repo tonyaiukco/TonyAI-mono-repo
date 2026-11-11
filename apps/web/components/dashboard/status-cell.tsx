@@ -13,12 +13,11 @@ import {
   reviewSentence,
   shortfallReasons,
 } from '@/lib/completeness-view';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { useRef } from 'react';
+import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
+import type { MatrixCellLinks } from '@/lib/dashboard-view';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface StatusCellProps {
   /**
@@ -36,7 +35,11 @@ interface StatusCellProps {
   /** The matrix's year, for the one reason line that names it. Null on an
    *  unscoped query, where the invoice rule does not apply anyway. */
   reportingYear: number | null;
-  onClick?: () => void;
+  /** Where the popover leads (UAT round 2, BUG-R2-06): choosing a cell opens
+   *  its summary with these two links instead of navigating, because the old
+   *  hover tooltip advertised a "Click to view details" nobody could click.
+   *  Null where the grid has no single year to carry. */
+  links?: MatrixCellLinks | null;
   compact?: boolean;
   /** Identity part of the accessible name (subsidiary + category). The status
    *  and value are appended here, because the button's visible content is a
@@ -121,12 +124,15 @@ export function StatusCell({
   cell,
   responsible,
   reportingYear,
-  onClick,
+  links,
   compact = false,
   label,
 }: StatusCellProps) {
   const completenessCopy = useCompletenessCopy();
   const t = useTranslations('dashboard');
+  // The summary's first action takes the focus when it opens, so a cell opened
+  // from the keyboard reaches Data Entry with one more Enter (BUG-R2-06).
+  const firstLink = useRef<HTMLAnchorElement>(null);
   const tCommon = useTranslations('common');
   const locale = useLocale();
   const words = useRecordWords();
@@ -164,11 +170,9 @@ export function StatusCell({
   ].filter(Boolean).join(', ');
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
+    <Popover>
+        <PopoverTrigger asChild>
           <button
-            onClick={onClick}
             // The identity stays the PREFIX. Three E2E selectors match this by
             // substring (`getByRole('button', {name: 'TonyAI Energy Fuel'})`),
             // so anything appended is safe and anything prepended is not.
@@ -197,11 +201,16 @@ export function StatusCell({
               )} />
             )}
           </button>
-        </TooltipTrigger>
-        <TooltipContent
+        </PopoverTrigger>
+        <PopoverContent
           side="top"
-          className="max-w-xs border-[#D2D2D7] bg-white shadow-xl p-0 overflow-hidden rounded-xl"
+          className="w-72 max-w-xs border-[#D2D2D7] bg-white shadow-xl p-0 overflow-hidden rounded-xl"
           sideOffset={8}
+          onOpenAutoFocus={(event) => {
+            if (!firstLink.current) return;
+            event.preventDefault();
+            firstLink.current.focus();
+          }}
         >
           <div className={cn(
             'px-4 py-3 border-b border-[#E5E5EA]',
@@ -303,10 +312,27 @@ export function StatusCell({
               </p>
             )}
 
-            <p className="text-sm text-[#007AFF] font-medium pt-1">{t('cell.details')}</p>
+            {links && (
+              <nav className="pt-3 mt-1 border-t border-[#E5E5EA] flex flex-col gap-1">
+                <Link
+                  ref={firstLink}
+                  href={links.dataEntry}
+                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-sm font-medium text-[#007AFF] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007AFF]/40"
+                >
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                  {t('cell.openDataEntry')}
+                </Link>
+                <Link
+                  href={links.history}
+                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-sm font-medium text-[#007AFF] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007AFF]/40"
+                >
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                  {t('cell.viewHistory')}
+                </Link>
+              </nav>
+            )}
           </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+        </PopoverContent>
+    </Popover>
   );
 }

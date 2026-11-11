@@ -1,5 +1,6 @@
 import type {
   ReleaseParametersDTO,
+  FactorCoverageDTO,
   ReleaseParametersQuery,
   ActivityRecordDTO,
   ApproveInput,
@@ -530,6 +531,10 @@ export const api = {
     if (query.activityType) search.set("activityType", query.activityType);
     return apiFetch<ReleaseParametersDTO>(`/factors/parameters?${search.toString()}`);
   },
+
+  /** The geographies and years the library prices under this API's placeholder
+   *  policy — the Data Entry coverage legend (UAT round 2, BUG-R2-09). */
+  factorCoverage: () => apiFetch<FactorCoverageDTO>("/factors/coverage"),
 
   // --- Activity records ---
   /** One page of records (LP4-05 PR C). Never automatically drains later pages. */

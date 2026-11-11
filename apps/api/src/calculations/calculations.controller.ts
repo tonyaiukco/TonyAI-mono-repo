@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestj
 import type {
   ActivityCalculationSnapshot,
   EmissionFactorDetailDTO,
+  FactorCoverageDTO,
   ReleaseParametersDTO,
 } from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
@@ -34,5 +35,12 @@ export class CalculationsController {
   @Get('factors/parameters')
   releaseParameters(@Query() query: ReleaseParametersQueryDto): Promise<ReleaseParametersDTO> {
     return this.service.releaseParameters(query);
+  }
+
+  // Reference data too: the geographies and years the library prices under
+  // this API's placeholder policy — the Data Entry legend (BUG-R2-09).
+  @Get('factors/coverage')
+  coverage(): Promise<FactorCoverageDTO> {
+    return this.service.coverage();
   }
 }

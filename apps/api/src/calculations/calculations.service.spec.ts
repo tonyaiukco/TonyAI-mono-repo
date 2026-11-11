@@ -4,12 +4,14 @@ import { CalculationInputError, FactorLibraryConflictError, NoEmissionFactorErro
 import type { EmissionFactor, FactorRelease, UnitConversion } from '@tonyai/db';
 import {
   ACTIVITY_UNITS,
+  CATEGORIES,
   DIMENSION_BASE_UNIT,
   directCalorificBasisFor,
   factorActivityTypeFor,
   isAuthoritativeSnapshot,
   isCalculated,
   isProvenanceSnapshot,
+  resolveFactorPath,
   scope2MethodFor,
   unitDimensionOf,
   type ActivityCalculationSnapshot,
@@ -1110,6 +1112,183 @@ describe('CalculationsService.listFactors', () => {
       include: { release: { select: expect.not.objectContaining({ reviewedBy: true }) } },
       orderBy: expect.any(Array),
     });
+  });
+});
+
+describe('CalculationsService.coverage (BUG-R2-09)', () => {
+  let prisma: FactorPrismaMock;
+  const service = (allowPlaceholders: boolean) =>
+    new CalculationsService(prisma as unknown as PrismaService, { allowPlaceholders });
+  // The coverage query selects three columns, not a whole row: the mock's
+  // row-shaped typing is loosened here, and only here.
+  const row = (geographyCode: string, reportingYear: number, status: string) =>
+    ({ geographyCode, reportingYear, release: { status } }) as unknown as FactorRow;
+  type CoverageArgs = {
+    where: {
+      gas: string;
+      OR: { category: { in: string[] }; scope2Method: string }[];
+      release: { status: { in: string[] } };
+    };
+    select: Record<string, unknown>;
+  };
+  const askedWith = () => prisma.emissionFactor.findMany.mock.calls[0][0] as unknown as CoverageArgs;
+
+  beforeEach(() => {
+    prisma = createFactorPrismaMock();
+    prisma.emissionFactor.findMany.mockResolvedValue([]);
+  });
+
+  it('reads authoritative sealed releases only where placeholders are refused', async () => {
+    await service(false).coverage();
+
+    expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
+      // The CO2e row a figure is multiplied from, as pricing reads it.
+      where: {
+        gas: 'CO2e',
+        // Each category in its own Scope 2 method, as the lookup reads it:
+        // location-based electricity, `not_applicable` everywhere else.
+        OR: [
+          { category: { in: ['Electricity'] }, scope2Method: 'location' },
+          { category: { in: CATEGORIES.filter((c) => c !== 'Electricity') }, scope2Method: 'not_applicable' },
+        ],
+        release: { sealedAt: { not: null }, status: { in: ['authoritative'] } },
+      },
+      select: { geographyCode: true, reportingYear: true, release: { select: { status: true } } },
+      distinct: ['geographyCode', 'reportingYear', 'releaseId'],
+    });
+  });
+
+  it("names every category exactly once, in the method the lookup resolves it with", async () => {
+    await service(true).coverage();
+
+    const { OR } = askedWith().where;
+    const named = OR.flatMap((branch) => branch.category.in.map((category) => [category, branch.scope2Method]));
+    expect(named.map(([category]) => category).sort()).toEqual([...CATEGORIES].sort());
+    for (const [category, method] of named) expect(method, category).toBe(scope2MethodFor(category));
+    // The pilot never resolves a market-based row (D08).
+    expect(OR.map((branch) => branch.scope2Method)).not.toContain('market');
+  });
+
+  describe('against the rows a filtering library returns (review of PR #305)', () => {
+    // A mock that APPLIES the query's predicates, so the test fails if the
+    // service stops asking for the method — a canned answer would not.
+    type LibraryRow = {
+      category: string; scope2Method: string; gas: string; geographyCode: string; reportingYear: number;
+      release: { status: string };
+    };
+    const electricity = (scope2Method: string, status: string): LibraryRow => ({
+      category: 'Electricity', scope2Method, gas: 'CO2e', geographyCode: 'UK', reportingYear: 2026, release: { status },
+    });
+    const library = (rows: LibraryRow[]) =>
+      prisma.emissionFactor.findMany.mockImplementation((async (args: CoverageArgs) => {
+        const { where } = args;
+        return rows
+          .filter((r) => r.gas === where.gas && where.release.status.in.includes(r.release.status))
+          .filter((r) => where.OR.some((b) => b.category.in.includes(r.category) && b.scope2Method === r.scope2Method))
+          .map((r) => ({ geographyCode: r.geographyCode, reportingYear: r.reportingYear, release: r.release }));
+      }) as never);
+    // What the engine itself answers for the same rows: the resolver the
+    // lookup prices with, on the lookup's own candidate filter.
+    const engine = (rows: LibraryRow[], allowPlaceholders: boolean) =>
+      resolveFactorPath({
+        category: 'Electricity',
+        inputUnit: 'kWh',
+        factors: rows
+          .filter((r) => allowPlaceholders || r.release.status === 'authoritative')
+          .filter((r) => r.scope2Method === scope2MethodFor('Electricity'))
+          .map((r, i) => ({
+            ...r, activityType: 'grid_electricity', normalizedUnit: 'kWh', calorificBasis: 'not_applicable',
+            releaseId: `r${i}`, release: { ...r.release, publisher: 'P', ordinal: i + 1 },
+          })) as never,
+        conversions: [],
+        allowPlaceholders,
+      });
+
+    it('does not list a pair only a market-based factor holds — the engine cannot price it', async () => {
+      const rows = [electricity('market', 'authoritative')];
+      library(rows);
+
+      expect(engine(rows, false)).toEqual({ ok: false, code: 'no_factor' });
+      expect((await service(false).coverage()).entries).toEqual([]);
+      expect((await service(true).coverage()).entries).toEqual([]);
+    });
+
+    it('keeps the placeholder warning where an authoritative market factor sits beside a placeholder location one', async () => {
+      const rows = [electricity('market', 'authoritative'), electricity('location', 'placeholder')];
+      library(rows);
+
+      // The engine prices the placeholder, or nothing where it is refused.
+      expect(engine(rows, true)).toMatchObject({ ok: true });
+      expect(engine(rows, false)).toMatchObject({ ok: false });
+      expect((await service(true).coverage()).entries).toEqual([
+        { geographyCode: 'UK', reportingYear: 2026, statuses: ['placeholder'] },
+      ]);
+      expect((await service(false).coverage()).entries).toEqual([]);
+    });
+
+    it('still lists the location-based factor the engine prices', async () => {
+      const rows = [electricity('location', 'authoritative'), electricity('market', 'authoritative')];
+      library(rows);
+
+      expect(engine(rows, false)).toMatchObject({ ok: true });
+      expect((await service(false).coverage()).entries).toEqual([
+        { geographyCode: 'UK', reportingYear: 2026, statuses: ['authoritative'] },
+      ]);
+    });
+  });
+
+  it('reads every live status, never withdrawn, where placeholders are allowed', async () => {
+    await service(true).coverage();
+
+    expect(askedWith().where.release.status.in).toEqual(['authoritative', 'placeholder', 'fixture']);
+  });
+
+  it('selects no value, edition or release id — only the pair and the status', async () => {
+    await service(true).coverage();
+
+    const args = askedWith();
+    expect(Object.keys(args.select).sort()).toEqual(['geographyCode', 'release', 'reportingYear']);
+    expect(args.select.release).toEqual({ select: { status: true } });
+    expect(args).not.toHaveProperty('include');
+  });
+
+  it('folds one pair held by several releases into one entry, authoritative first, sorted by geography then year', async () => {
+    prisma.emissionFactor.findMany.mockResolvedValue([
+      row('UK', 2026, 'placeholder'),
+      row('TR', 2025, 'fixture'),
+      row('TR', 2025, 'authoritative'),
+      row('TR', 2024, 'authoritative'),
+      // A second authoritative release (the MGO edition) on the same pair.
+      row('TR', 2024, 'authoritative'),
+      row('EU', 2026, 'placeholder'),
+    ]);
+
+    const { entries } = await service(true).coverage();
+
+    expect(entries).toEqual([
+      { geographyCode: 'EU', reportingYear: 2026, statuses: ['placeholder'] },
+      { geographyCode: 'TR', reportingYear: 2024, statuses: ['authoritative'] },
+      { geographyCode: 'TR', reportingYear: 2025, statuses: ['authoritative', 'fixture'] },
+      { geographyCode: 'UK', reportingYear: 2026, statuses: ['placeholder'] },
+    ]);
+  });
+
+  it('answers an empty library with an empty list, not an error', async () => {
+    await expect(service(false).coverage()).resolves.toEqual({ entries: [] });
+  });
+
+  it('never puts a status the policy does not price on the wire', async () => {
+    // A withdrawal racing the read, or a placeholder under a strict policy:
+    // dropped, never cast through.
+    prisma.emissionFactor.findMany.mockResolvedValue([
+      row('TR', 2026, 'withdrawn'),
+      row('TR', 2025, 'placeholder'),
+      row('TR', 2024, 'authoritative'),
+    ]);
+
+    const { entries } = await service(false).coverage();
+
+    expect(entries).toEqual([{ geographyCode: 'TR', reportingYear: 2024, statuses: ['authoritative'] }]);
   });
 });
 

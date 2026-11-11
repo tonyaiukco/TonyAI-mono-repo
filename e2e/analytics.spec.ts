@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import {
   login,
   pickByFieldLabel,
@@ -16,6 +16,16 @@ import {
  * P1 smoke: the two read-only analytics surfaces render live data for a
  * super_admin. Cheap guards against a regression that blanks the pages.
  */
+
+/**
+ * A matrix cell opens its summary; the summary's links navigate (UAT round 2,
+ * BUG-R2-06 — the old hover tooltip's "Click to view details" could not be
+ * clicked). Selected by the cell's accessible-name prefix, as before.
+ */
+async function openCell(page: Page, cell: string, link: 'Open in Data Entry' | 'View record history') {
+  await page.getByRole('button', { name: cell }).click();
+  await page.getByRole('link', { name: link }).click();
+}
 
 test('emissions analytics renders live tabs; intensity is gated', async ({ page }) => {
   await login(page, ADMIN_EMAIL);
@@ -54,7 +64,7 @@ test('a matrix cell opens Data Entry for THAT subsidiary and category', async ({
   // A NON-default category: `Electricity` is what the page already selects on
   // its own (`useState<Category>("Electricity")`), so asserting it proves
   // nothing — with the param ignored entirely the test still passed.
-  await page.getByRole('button', { name: 'TonyAI Energy Natural Gas' }).click();
+  await openCell(page, 'TonyAI Energy Natural Gas', 'Open in Data Entry');
 
   await page.waitForURL(/\/data-entry\?/);
   const url = new URL(page.url());
@@ -68,6 +78,50 @@ test('a matrix cell opens Data Entry for THAT subsidiary and category', async ({
   await expect(
     page.locator('div.space-y-2').filter({ hasText: 'Category' }).getByRole('combobox'),
   ).toContainText('Natural Gas');
+});
+
+test('a matrix cell opens its ledger on Emissions, History tab, filtered to the pair', async ({
+  page,
+}) => {
+  // UAT round 2, BUG-R2-06: the second link — every status of the pair's
+  // records, in the grid's year.
+  await login(page, ADMIN_EMAIL);
+  await expect(page.getByRole('heading', { name: 'Data Collection Status' })).toBeVisible();
+
+  await openCell(page, 'TonyAI Energy Natural Gas', 'View record history');
+
+  await page.waitForURL(/\/emissions\?/);
+  const url = new URL(page.url());
+  expect(url.searchParams.get('category')).toBe('Natural Gas');
+  expect(url.searchParams.get('year')).toBe('2026');
+  expect(url.searchParams.get('subsidiaryId')).toBe(SUB.energy);
+  expect(url.searchParams.get('tab')).toBe('history');
+
+  await expect(page.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true');
+  // The ledger lists the pair's records only: the seed's Energy Natural Gas
+  // rows — not TonyAI Gas's Natural Gas, which a dropped subsidiary filter
+  // would let in.
+  const rows = page.locator('table tbody tr');
+  await expect(rows.first()).toContainText('Natural Gas');
+  for (const text of await rows.allInnerTexts()) {
+    expect(text).toContain('Natural Gas');
+    expect(text).toContain('TonyAI Energy');
+  }
+});
+
+test('a matrix cell opens and closes its summary from the keyboard', async ({ page }) => {
+  await login(page, ADMIN_EMAIL);
+  const cell = page.getByRole('button', { name: 'TonyAI Energy Natural Gas' });
+  await cell.focus();
+  await page.keyboard.press('Enter');
+  const dataEntry = page.getByRole('link', { name: 'Open in Data Entry' });
+  await expect(dataEntry).toBeVisible();
+  // The first action holds the focus, so one more Enter opens Data Entry.
+  await expect(dataEntry).toBeFocused();
+  await expect(page.getByRole('link', { name: 'View record history' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dataEntry).toHaveCount(0);
+  await expect(cell).toBeFocused();
 });
 
 test('a cell reopens the single record that already exists there', async ({
@@ -113,7 +167,7 @@ test('a cell reopens the single record that already exists there', async ({
   ).toBe(1);
 
   await login(page, ADMIN_EMAIL);
-  await page.getByRole('button', { name: 'TonyAI Trading Fuel' }).click();
+  await openCell(page, 'TonyAI Trading Fuel', 'Open in Data Entry');
   await page.waitForURL(/\/data-entry\?/);
 
   // Loaded into the form, not offered as a blank duplicate that would 409.
@@ -126,7 +180,7 @@ test('a cell with several records that year guesses nothing', async ({ page }) =
   // the target is ambiguous. Opening the first would silently put the user in a
   // period they did not ask for.
   await login(page, ADMIN_EMAIL);
-  await page.getByRole('button', { name: 'TonyAI Energy Electricity' }).click();
+  await openCell(page, 'TonyAI Energy Electricity', 'Open in Data Entry');
   await page.waitForURL(/\/data-entry\?/);
 
   await expect(

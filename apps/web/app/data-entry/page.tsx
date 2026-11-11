@@ -90,6 +90,7 @@ import { parseReportingYearParam } from "@/lib/reporting-context-url";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import { BoundaryCoverage } from "@/components/data-entry/boundary-coverage";
+import { FactorCoverageLegend } from "@/components/data-entry/factor-coverage-legend";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { RecentImports } from "@/components/data-entry/recent-imports";
 import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
@@ -124,6 +125,7 @@ import type {
   ActivityRecordPageFilters,
   ActivityRecordPageItemDTO,
   Category,
+  FactorCoverageDTO,
   LocationDTO,
   RecordParameters,
   ReportingPeriod,
@@ -643,6 +645,21 @@ function DataEntryPageInner() {
       setRecordsLoadingMore(false);
     }
   }
+
+  // The library's coverage, for the legend under the factor geography
+  // (BUG-R2-09). Advisory: a failure omits the legend without a toast — the
+  // calls above already report a lost session.
+  const [factorCoverage, setFactorCoverage] = useState<FactorCoverageDTO | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .factorCoverage()
+      .then((coverage) => live && setFactorCoverage(coverage))
+      .catch(() => live && setFactorCoverage(null));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     api
@@ -1664,6 +1681,7 @@ function DataEntryPageInner() {
                       })}
                     </p>
                   )}
+                  <FactorCoverageLegend coverage={factorCoverage} geography={effectiveGeography} year={reportingYear} />
                 </CardContent>
               </Card>
 

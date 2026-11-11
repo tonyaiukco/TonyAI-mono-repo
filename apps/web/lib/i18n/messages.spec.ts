@@ -116,6 +116,8 @@ describe("the catalogues", () => {
       'bulkUpload.tonnes.figure',
       'completeness.panel.slotLabel',
       'dataEntry.preview.sourceValue',
+      // A year range with no words (BUG-R2-09).
+      'dataEntry.factorCoverage.yearRange',
       'dataEntry.submissions.tonnes',
       'evidence.size.mb',
       'evidence.size.kb',
@@ -344,6 +346,32 @@ describe("the provenance banners (QA L10)", () => {
     const m = MESSAGES[locale];
     for (const warning of [m.reports.nonAuthoritative, m.emissions.nonAuthoritative, m.emissions.nonAuthoritativeTrends]) {
       expect(warning).toMatch(placeholder[locale]);
+    }
+  });
+});
+
+describe("a withdrawn record's wording (UAT round 2, BUG-R2-12)", () => {
+  it("no dashboard or Emissions message calls a withdrawn record one that counts towards nothing", () => {
+    for (const namespace of ["dashboard", "emissions"] as const) {
+      for (const [key, message] of leaves(MESSAGES.tr[namespace], namespace)) {
+        expect(message, key).not.toMatch(/hiçbir şeye sayılmaz/);
+      }
+      for (const [key, message] of leaves(MESSAGES.en[namespace], namespace)) {
+        expect(message, key).not.toMatch(/towards? nothing/);
+      }
+    }
+  });
+
+  it("says the record is not included in the calculation, in both languages", () => {
+    const { tr, en } = MESSAGES;
+    for (const message of [tr.dashboard.cell.withdrawnOne, tr.dashboard.cell.withdrawnMany]) {
+      expect(message).toContain("hesaplamaya dahil edilmedi");
+    }
+    for (const message of [tr.emissions.void.withdrawnNoFigure, tr.emissions.void.staysOnTrail]) {
+      expect(message).toMatch(/hesaplamaya dahil edilm(iyor|ez)/);
+    }
+    for (const message of [en.dashboard.cell.withdrawnOne, en.dashboard.cell.withdrawnMany, en.emissions.void.withdrawnNoFigure, en.emissions.void.staysOnTrail]) {
+      expect(message).toContain("not included in the calculation");
     }
   });
 });

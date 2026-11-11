@@ -106,12 +106,13 @@
     "ofRequired": "of {required}",
     "emissions": "Emissions",
     "entries": "Entries (all statuses)",
-    "withdrawnOne": "Withdrawn (counts towards nothing)",
-    "withdrawnMany": "Withdrawn entries (count towards nothing)",
+    "withdrawnOne": "Withdrawn entry (not included in the calculation)",
+    "withdrawnMany": "Withdrawn entries (not included in the calculation)",
     "owner": "Owner",
     "updated": "Updated",
     "uncalculated": "{count} of the committed entries here produced no tCO₂e figure. Today that means the category has no emission factor yet.",
-    "details": "Click to view details"
+    "openDataEntry": "Open in Data Entry",
+    "viewHistory": "View record history"
   },
   "drawer": {
     "perLocationOne": "Measured per location · {count} site",

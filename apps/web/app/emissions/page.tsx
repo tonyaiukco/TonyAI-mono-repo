@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { SignOutButton } from '@/components/dashboard/sign-out-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -70,7 +70,7 @@ import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, CATEGORY_SCOPE_MAP, LOCA
 import type { Category, Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
-import { emissionsError, nonAuthoritativeFigures, trendChangePercent, trendLabel } from '@/lib/emissions-view';
+import { emissionsError, initialEmissionsTab, nonAuthoritativeFigures, trendChangePercent, trendLabel } from '@/lib/emissions-view';
 import { selectsScope3Only } from '@/lib/report-coverage-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import {
@@ -202,7 +202,9 @@ function EmissionsAnalysisPageInner() {
   const scopeFilter: ScopeFilter = context?.scope ? (`scope${context.scope}` as ScopeFilter) : 'all';
   const categoryFilter: string = context?.category ?? 'all';
 
-  const [activeTab, setActiveTab] = useState('summary');
+  // The matrix cell's history link opens the ledger directly (BUG-R2-06).
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => initialEmissionsTab(searchParams));
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<ActivityRecordDTO | null>(null);
   const [contributorBasis, setContributorBasis] = useState<'subsidiary' | 'category'>('subsidiary');

@@ -129,7 +129,7 @@
     "noReason": "No reason was recorded — this predates the requirement.",
     "withdrawnBy": "Withdrawn by <actor>{name}</actor>.",
     "withdrawnByOn": "Withdrawn by <actor>{name}</actor> on {date}.",
-    "staysOnTrail": "It stays on record for the audit trail and counts towards no total.",
+    "staysOnTrail": "It stays on the record for the audit trail and is not included in the calculation.",
     "title": "Withdraw this figure",
     "explain": "An approved figure cannot be edited. If it is wrong — a double count, a misread invoice — withdrawing it takes it out of every total and reopens the period, so a corrected figure can be entered in its place.",
     "reasonLabel": "Reason (required, and it goes on the permanent record)",
@@ -150,7 +150,7 @@
     "printed": "Your reason is printed verbatim in every generated report — PDF, Excel and CSV — and cannot be edited afterwards.",
     "cannotUndo": "It cannot be undone.",
     "withdrawn": "Withdrawn — {tonnes} tCO₂e left the inventory.",
-    "withdrawnNoFigure": "Withdrawn — the entry no longer counts towards any total."
+    "withdrawnNoFigure": "Withdrawn — the entry is not included in the calculation."
   },
   "copy": {
     "action": "Copy to new draft",

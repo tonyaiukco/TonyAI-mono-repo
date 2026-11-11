@@ -1,6 +1,7 @@
 import { Prisma, type EmissionFactor, type FactorRelease, type UnitConversion } from '@tonyai/db';
 import {
   CALCULATION_GAS,
+  CATEGORIES,
   DIMENSION_BASE_UNIT,
   resolveFactorPath,
   scope2MethodFor,
@@ -26,6 +27,33 @@ import type { FactorPolicy } from './factor-policy';
 
 /** Every status a calculation may ever resolve from — never `withdrawn`. */
 export const LIVE_STATUSES: readonly FactorStatus[] = ['authoritative', 'placeholder', 'fixture'];
+
+/**
+ * The statuses this policy prices from: every live one where placeholders are
+ * allowed, authoritative only where they are refused. One definition, read by
+ * the lookup and by the coverage report (BUG-R2-09), so the legend cannot
+ * claim a year the engine would refuse.
+ */
+export function pricedStatuses(policy: FactorPolicy): readonly FactorStatus[] {
+  return policy.allowPlaceholders ? LIVE_STATUSES : ['authoritative'];
+}
+
+/**
+ * The factor rows a lookup can ever read, by category and Scope 2 method:
+ * each category's own method (`scope2MethodFor`), so a market-based
+ * electricity row — stored, never resolved (D08) — is not one of them. The
+ * lookup filters one category by the same rule; the coverage report
+ * (BUG-R2-09) filters every category with this, so the legend cannot list a
+ * pair only market-based rows hold.
+ */
+export function pricedMethodFilter(): { OR: { category: { in: string[] }; scope2Method: string }[] } {
+  const byMethod = new Map<string, string[]>();
+  for (const category of CATEGORIES) {
+    const method = scope2MethodFor(category);
+    byMethod.set(method, [...(byMethod.get(method) ?? []), category]);
+  }
+  return { OR: [...byMethod].map(([scope2Method, categories]) => ({ category: { in: categories }, scope2Method })) };
+}
 
 /**
  * A release is read once sealed (LP4-02): the loader seals it in the
@@ -163,7 +191,7 @@ export async function lookupFactorPath(
       allowPlaceholders,
     });
   };
-  const result = await run(allowPlaceholders ? LIVE_STATUSES : ['authoritative']);
+  const result = await run(pricedStatuses(policy));
   if (result.ok || allowPlaceholders) return result;
   // Diagnostic only. A library that is defective among its non-authoritative
   // rows (over the cap) must not turn this lookup's 404 into a 409.

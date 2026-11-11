@@ -20,6 +20,14 @@
   "locationSource": "{name} (lokasyon)",
   "subsidiarySource": "{name} (bağlı şirket)",
   "thisSubsidiary": "bu bağlı şirket",
+  "factorCoverage": {
+    "lead": "Emisyon faktörleri şu kapsamlar için tanımlıdır: {ranges}.",
+    "yearRange": "{from}–{to}",
+    "placeholder": "yer tutucu — resmi değil",
+    "none": "Yüklü emisyon faktörü yok; bu yüzden henüz hiçbir kayıt hesaplanamaz.",
+    "uncovered": "{year} yılında {geography} için tanımlı emisyon faktörü yok; bu yüzden buradaki kayıt hesaplanamaz.",
+    "placeholderSelected": "{year} yılında {geography} için kullanılan faktörler yer tutucudur ve resmi değildir."
+  },
   "activityData": "Faaliyet verisi",
   "activityValue": "Faaliyet değeri",
   "activityValuePlaceholder": "örn. 45000",
@@ -151,6 +159,13 @@
     "gcvBlocked": "Fatura değerini girmek için alt ısıl değeri varsayılanına döndürün.",
     "volumeCorrectionFactor": "Hacim düzeltme katsayısı",
     "volumeCorrectionHelp": "Sayaçtan m³ olarak okunan değer için gereklidir: hacmi standart metreküpe çevirir.",
+    "volumeCorrectionInfo": {
+      "aria": "Hacim düzeltme katsayısı hakkında",
+      "standard": "Sayaçtan m³ olarak okunan hacmi standart metreküpe (Sm³) çevirir: 15 °C ve 1013,25 mbar koşulundaki gaz.",
+      "arithmetic": "Sayaç değeri × katsayı = Sm³. Sm³ ardından yukarıdaki alt ısıl değerle enerjiye çevrilir.",
+      "range": "Kabul edilen aralık: {min}–{max}.",
+      "standardUnit": "Faturanız miktarı zaten Sm³ olarak gösteriyorsa birim olarak Sm³ seçin ve katsayı girmeyin."
+    },
     "referenceLoading": "Faktör sürümünün referans değerleri yükleniyor…",
     "referenceMissing": "Bu kaydı kapsayan bir faktör sürümü henüz yok; bu nedenle varsayılan gösterilmiyor.",
     "referenceFailed": "Faktör sürümünün referans değerleri yüklenemedi.",

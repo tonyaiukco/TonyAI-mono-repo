@@ -2,12 +2,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { EquipmentLines, NaturalGasInputs, type ReferenceState } from '@/components/data-entry/record-inputs';
+import { EquipmentLines, NaturalGasInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
 import { checkDecimal, parseLocaleDecimal } from '@/lib/i18n/number';
 import { MESSAGES } from '@/messages';
 
 import {
   ACTIVITY_VALUE_MAX,
+  STANDARD_REFERENCE_CONDITIONS,
   offeredActivityTypes,
   unitsForRecord,
   type ReleaseParameterDTO,
@@ -207,6 +208,35 @@ describe('the input fields as rendered', () => {
 
   it('asks for the correction factor in m³', () => {
     expect(render('en', NaturalGasInputs, gas({ unit: 'cubic_metres' }))).toContain('id="input-volume-correction"');
+  });
+
+  // UAT round 2, BUG-R2-06: the factor's explanation behind an ⓘ.
+  it.each(['en', 'tr'] as const)('%s offers the ⓘ beside the correction factor in m³, and neither in Sm³', (locale) => {
+    const aria = MESSAGES[locale].dataEntry.inputs.volumeCorrectionInfo.aria;
+    expect(render(locale, NaturalGasInputs, gas({ unit: 'cubic_metres' }))).toContain(`aria-label="${aria}"`);
+    const sm3 = render(locale, NaturalGasInputs, gas());
+    expect(sm3).not.toContain('id="input-volume-correction"');
+    expect(sm3).not.toContain(`aria-label="${aria}"`);
+  });
+
+  it.each([
+    ['en', '0.75–30', '15 °C and 1013.25 mbar'],
+    ['tr', '0,75–30', '15 °C ve 1013,25 mbar'],
+  ] as const)('%s explains the factor in four points, the range from the contract\'s bounds', (locale, range, conditions) => {
+    const html = renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale], children: createElement(VolumeCorrectionInfo),
+    }));
+    expect(html.match(/<li>/g)).toHaveLength(4);
+    expect(html).toContain(range);
+    expect(html).toContain(conditions);
+    // The calorific value is release data: the explanation names it, never quotes it.
+    expect(html).not.toMatch(/8[.,]?250/);
+  });
+
+  it('pins the contract\'s standard reference conditions the explanation words per language', () => {
+    // If this changes, reword dataEntry.inputs.volumeCorrectionInfo.standard
+    // in both catalogues to match, then update this pin.
+    expect(STANDARD_REFERENCE_CONDITIONS).toBe('15 °C, 101.325 kPa (ISO 13443)');
   });
 
   it('disables the NCV beside a billed GCV, and the GCV beside an edited NCV', () => {

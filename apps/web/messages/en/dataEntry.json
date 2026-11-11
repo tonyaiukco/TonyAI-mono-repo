@@ -20,6 +20,14 @@
   "locationSource": "{name} (location)",
   "subsidiarySource": "{name} (subsidiary)",
   "thisSubsidiary": "this subsidiary",
+  "factorCoverage": {
+    "lead": "Emission factors are defined for: {ranges}.",
+    "yearRange": "{from}–{to}",
+    "placeholder": "placeholder — not authoritative",
+    "none": "No emission factors are loaded, so no record can be calculated yet.",
+    "uncovered": "No emission factor is defined for {geography} in {year}, so a record here cannot be calculated.",
+    "placeholderSelected": "{geography} in {year} rests on placeholder factors, which are not authoritative."
+  },
   "activityData": "Activity data",
   "activityValue": "Activity value",
   "activityValuePlaceholder": "e.g. 45000",
@@ -151,6 +159,13 @@
     "gcvBlocked": "Put the net calorific value back to its default to enter a billed value instead.",
     "volumeCorrectionFactor": "Volume correction factor",
     "volumeCorrectionHelp": "Required for a metered reading in m³: it brings the volume to standard cubic metres.",
+    "volumeCorrectionInfo": {
+      "aria": "About the volume correction factor",
+      "standard": "It converts the volume read from the meter in m³ to standard cubic metres (Sm³): gas at 15 °C and 1013.25 mbar.",
+      "arithmetic": "Metered value × factor = Sm³. The Sm³ is then converted to energy at the net calorific value above.",
+      "range": "Accepted range: {min}–{max}.",
+      "standardUnit": "If your bill already states the quantity in Sm³, choose the Sm³ unit instead and enter no factor."
+    },
     "referenceLoading": "Loading the factor release's reference values…",
     "referenceMissing": "No factor release covers this record yet, so no default is shown.",
     "referenceFailed": "The factor release's reference values could not be loaded.",
