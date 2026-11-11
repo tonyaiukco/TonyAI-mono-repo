@@ -13,7 +13,7 @@ def validate_foundation(inputs):
                           config.get('prefix'), config.get('environment'))
     required = {'subscription_id','tenant_id','environment','prefix','resource_group','registry_name',
                 'vault_name','repository','release_sha','owner_object_id'}
-    optional = {'deployer_object_id','runtime_secrets_ready','smtp_secret_ready','apps_ready','monitoring','email','public_hosts',
+    optional = {'deployer_object_id','runtime_secrets_ready','smtp_secret_ready','registration_secret_ready','apps_ready','monitoring','email','public_hosts',
                 'availability_tests'}
     if not required <= set(config) or set(config) - required - optional:
         raise SafeFailure('Unknown foundation fields; secret values are prohibited.')
@@ -34,7 +34,7 @@ def validate_foundation(inputs):
                 'repository':r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+','release_sha':r'[a-f0-9]{40}'}
     if any(not isinstance(config[k],str) or not re.fullmatch(p,config[k]) for k,p in patterns.items()):
         raise SafeFailure('Invalid public foundation metadata.')
-    if any(type(config.get(k,False)) is not bool for k in ('runtime_secrets_ready','smtp_secret_ready','apps_ready','availability_tests')):
+    if any(type(config.get(k,False)) is not bool for k in ('runtime_secrets_ready','smtp_secret_ready','registration_secret_ready','apps_ready','availability_tests')):
         raise SafeFailure('Readiness switches must be booleans.')
     if config.get('apps_ready') and not deployer:
         raise SafeFailure('App grants require the verified deployment principal.')

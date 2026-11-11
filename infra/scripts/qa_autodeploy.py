@@ -432,6 +432,30 @@ def live_mail(foundation, api):
             'password_secret_version': url[len(prefix):]}
 
 
+def live_registration(foundation, api):
+    """The release `registration` block from live API settings, or None when registration is off."""
+    from registration_settings import REGISTRATION_ENV, SECRET_NAME
+    env = live_env(api)
+    secrets = {item.get('name'): item.get('keyVaultUrl', '')
+               for item in api['properties'].get('configuration', {}).get('secrets') or []}
+    present = REGISTRATION_ENV & set(env)
+    if not present and SECRET_NAME not in secrets:
+        return None
+    if present != REGISTRATION_ENV:
+        raise SafeFailure('Live registration settings are incomplete; refused.')
+    code, allowance = env['REGISTRATION_CODE'], env['REGISTRATION_ALLOW_PLACEHOLDER_CONSENT']
+    # The code only ever as a reference: a plain value here is the secret itself.
+    if code.get('secretRef') != SECRET_NAME or code.get('value') not in (None, ''):
+        raise SafeFailure('Live registration code is not a vault reference; refused.')
+    prefix = 'https://' + foundation['vault_name'] + '.vault.azure.net/secrets/' + SECRET_NAME + '/'
+    url = secrets.get(SECRET_NAME) or ''
+    if not url.startswith(prefix) or not re.fullmatch(r'[a-f0-9]{32}', url[len(prefix):]):
+        raise SafeFailure('Live registration code reference differs from the vault contract.')
+    if allowance.get('value') not in ('true', 'false'):
+        raise SafeFailure('Live registration placeholder allowance is malformed.')
+    return {'code_secret_version': url[len(prefix):], 'allow_placeholder_consent': allowance['value'] == 'true'}
+
+
 def live_runtime_limits(api):
     """Overrides of the reviewed defaults, read from live API settings."""
     from runtime_limits import DEFAULTS, validate_limits
@@ -468,6 +492,9 @@ def export_inputs(foundation, candidate, project, out, read, verifier=None, read
     mail = live_mail(foundation, apps['api'])
     if mail is not None:
         release['mail'] = mail
+    registration = live_registration(foundation, apps['api'])
+    if registration is not None:
+        release['registration'] = registration
     release['runtime_limits'] = live_runtime_limits(apps['api'])
     inputs = {'foundation': foundation, 'release': release}
     bind_at(candidate, inputs, sha, read_git)

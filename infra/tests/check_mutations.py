@@ -22,6 +22,9 @@ MUTANTS = [
     ('CI data-transfer limit reported as a rate limit', 'ci_database_image.py', "        if 'data limit exceeded' in stderr:", "        if False:"),
     ('CI running identity bypassed', 'ci_database_image.py', "    if metadata != {'id': policy['config_digest'], 'reference': REGISTRY + '/' + policy['image_tag'], 'running': True}:", '    if False:'),
     ('mail env drift check skipped', 'deploy_apps.py', "        verify_mail_environment(container.get('env', []), foundation, release, kind)", '        pass'),
+    ('registration env drift check skipped', 'deploy_apps.py', "        verify_registration_environment(container.get('env', []), foundation, release, kind)", '        pass'),
+    ('registration code shape validation skipped', 'registration_settings.py', "    if not isinstance(value, str) or not re.fullmatch(CODE_PATTERN, value):", '    if False:'),
+    ('registration placeholder allowed outside staging', 'registration_settings.py', "    if registration['allow_placeholder_consent'] and foundation.get('environment') != 'staging':", '    if False:'),
     ('mail password validation skipped', 'mail_settings.py', "    if not isinstance(value, str) or not value.strip() or '\\n' in value or '\\r' in value:", '    if False:'),
     ('completed auth reconciliation skipped', 'supabase_setup.py', '        if reconcile_only:', '        if False:'),
 
@@ -278,7 +281,10 @@ def main():
             # local-only guard test executes its copied script, never the original.
             root = INFRA.parent
             for relative in ('supabase/config.toml', 'pnpm-lock.yaml', 'scripts/rls-probes.mjs', 'scripts/compose-dev.sh', 'packages/db/scripts/runtime-role.mjs',
-                             'apps/api/src/common/runtime-config.ts', 'apps/api/Dockerfile', 'apps/web/Dockerfile', 'docker-compose.yml'):
+                             'apps/api/src/common/runtime-config.ts', 'apps/api/Dockerfile', 'apps/web/Dockerfile', 'docker-compose.yml',
+                             # The registration tests hold the vault's code shape to the API's own, and
+                             # refuse for a vault the development code these two files publish.
+                             'packages/shared-types/src/index.ts', 'apps/api/.env.example', 'scripts/bootstrap.sh'):
                 destination = target.parent / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(root / relative, destination)
@@ -332,6 +338,7 @@ def main():
             }
             pattern = overrides.get(name, pattern)
             if name.startswith('mail '): pattern = 'test_mail_settings.py'
+            if name.startswith('registration '): pattern = 'test_registration_settings.py'
             if name.startswith('runtime ') and filename != 'cloud_ops.py': pattern = 'test_runtime_[dl]*.py'
             print(f'[{number}/{len(MUTANTS)}] START: {name} | {pattern}', flush=True)
             control_started = time.monotonic()

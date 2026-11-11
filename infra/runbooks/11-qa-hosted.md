@@ -393,7 +393,9 @@ python3 infra/scripts/monitoring_readback.py --hours 26
 
 `inputs` refuses unless both apps serve one source and one revision suffix and the
 images equal the candidate. It adds the live `mail` block (SMTP settings and the
-`smtp-password` version) and `runtime_limits`, recomputes the candidate from the
+`smtp-password` version), the live `registration` block when registration is
+enabled (the `registration-code` version and the placeholder allowance) and
+`runtime_limits`, recomputes the candidate from the
 source commit's git objects, and runs the read-only release verifier before it
 writes. The file is new (never overwritten) and mode 0600. It holds Key Vault
 version identifiers, never values. Rerun it before every probe: a merge while QA
@@ -783,6 +785,37 @@ Runbook 05's order, with these hosted specifics. Run from a clean checkout at th
 9. Try the old password once through Supavisor, reading it from its vault version so that a typo
    cannot pass as a refusal. Confirm that nothing references the old version, disable it, then
    `gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
+
+### Enabling self-service registration on hosted QA
+
+Runbook 03 §3.6, with these hosted specifics. Registration on QA runs over the
+**placeholder** KVKK notice, so its manifest says `allow_placeholder_consent: true`;
+QA is `staging`, the only environment where that is accepted.
+
+1. `gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
+2. Write a manifest with `qa_autodeploy.py inputs` (above). `release_secrets.py store
+   --inputs <that manifest> --name registration-code`; type the code at the hidden
+   prompt. Note the version identifier's last segment.
+3. Foundation: copy the last applied foundation input — never the stale file in
+   `hosted-qa-preflight` — and set only `config.registration_secret_ready=true`. Plan,
+   read (one role assignment added, plus the known cosmetic `join_grant`
+   difference), apply.
+4. In the manifest set a new `release_id` and add the `registration` block.
+   `release_secrets.py verify`, then `terraform_run.py application plan`: the API gains
+   the `registration-code` reference and two settings; besides the revision suffix
+   and `release` tag, only the cosmetic `transport` casing and startup-probe order
+   that auto-deploy's PATCHes leave behind may differ.
+5. `bash infra/scripts/deploy-apps.sh --backend <file> --inputs <manifest>`, then
+   `--verify-only` once the outgoing revision has gone.
+6. `curl -s https://api.qa.tonyai.io/api/v1/auth/registration` answers 200 with
+   `"consentIsPlaceholder":true`. `gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
+7. Register one company at `https://qa.tonyai.io/register` with an address the owner
+   reads; a wrong code is refused on the page, the right one leads to the email, the
+   link, a password and a first sign-in as `super_admin` of an empty organisation.
+   Record the release id and the secret's version identifier — never the code.
+
+The Storage verification job is untouched: this release changes no image and no
+database or backend secret version.
 
 ### Incident: the wrong password stored at step 5
 

@@ -27,6 +27,10 @@
       "user": "<ACS SMTP Username>",
       "from": "<ACS sender address>",
       "password_secret_version": "<32-lowercase-hex>"
+    },
+    "registration": {
+      "code_secret_version": "<32-lowercase-hex>",
+      "allow_placeholder_consent": true
     }
   }
 }

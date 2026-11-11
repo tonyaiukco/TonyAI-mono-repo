@@ -11,6 +11,7 @@ from foundation_contract import validate_foundation
 import re
 from supabase_keys import validate_backend
 from mail_settings import validate_smtp_password
+from registration_settings import validate_registration_code
 from terraform_run import validate_release, clean_environment
 
 
@@ -22,6 +23,8 @@ def verify(inputs):
                 'supabase-service-role-key': release['backend_secret_version']}
     if 'mail' in release:
         versions['smtp-password'] = release['mail']['password_secret_version']
+    if 'registration' in release:
+        versions['registration-code'] = release['registration']['code_secret_version']
     for name, version in versions.items():
         record = vault.get(name, version)
         if not record:
@@ -31,9 +34,11 @@ def verify(inputs):
             validate_pooler(record['value'], project, 6543)
         elif name == 'smtp-password':
             validate_smtp_password(record['value'])
+        elif name == 'registration-code':
+            validate_registration_code(record['value'])
         else:
             validate_backend(record['value'], project)
-    print('PASS: selected versions are enabled; database/backend are project-bound with strict pooler TLS; mail password is nonempty.')
+    print('PASS: selected versions are enabled; database/backend are project-bound with strict pooler TLS; mail password is nonempty; a registration code has the shape the API accepts.')
 
 
 def main():
@@ -42,7 +47,7 @@ def main():
     parser.add_argument('--inputs', help='Complete release manifest for verification or rotation.')
     parser.add_argument('--foundation', help='Initial runtime storage only: foundation configuration.')
     parser.add_argument('--project-ref', help='Initial runtime storage only: hosted project reference.')
-    parser.add_argument('--name', choices=['database-url', 'direct-url', 'supabase-service-role-key', 'smtp-password'])
+    parser.add_argument('--name', choices=['database-url', 'direct-url', 'supabase-service-role-key', 'smtp-password', 'registration-code'])
     args = parser.parse_args()
     clean_environment()
     if args.foundation:
@@ -69,6 +74,8 @@ def main():
         validate_pooler(value, project, 6543 if args.name == 'database-url' else 5432)
     elif args.name == 'smtp-password':
         validate_smtp_password(value)
+    elif args.name == 'registration-code':
+        validate_registration_code(value)
     else:
         validate_backend(value, project)
     identity = Vault(foundation['vault_name']).put(args.name, value, {'project': project})

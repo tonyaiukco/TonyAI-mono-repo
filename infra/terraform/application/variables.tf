@@ -41,6 +41,12 @@ variable "release" {
       host = string, port = number, secure = bool, user = string,
       from = string, password_secret_version = string
     }))
+    # Self-service registration: the exact version of the `registration-code`
+    # secret, and whether this environment may register over the placeholder
+    # KVKK notice. Absent: no registration, and no setting reaches the API.
+    registration = optional(object({
+      code_secret_version = string, allow_placeholder_consent = bool
+    }))
     runtime_limits       = optional(map(number), {})
     storage_cleanup_hold = bool, storage_sweep_interval_seconds = number
   })
@@ -72,6 +78,15 @@ variable "release" {
     )
     error_message = "Mail needs a provider DNS host, valid port, username, sender and exact Key Vault password version."
   }
+  # The placeholder notice only where no real customer registers: a production
+  # release cannot be planned that opens registration over it.
+  validation {
+    condition = var.release.registration == null ? true : (
+      can(regex("^[a-f0-9]{32}$", var.release.registration.code_secret_version)) &&
+      (!var.release.registration.allow_placeholder_consent || var.foundation.environment == "staging")
+    )
+    error_message = "Registration needs the exact Key Vault version of its code; the placeholder notice may be allowed on staging only."
+  }
 }
 # Operational settings are plain values, never Key Vault secrets.
 locals {
@@ -92,7 +107,7 @@ locals {
   )] }
   supabase_url    = "https://${var.release.supabase_project_ref}.supabase.co"
   identity_ids    = { for kind in ["api", "web"] : kind => "${local.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${local.stem}-${kind}" }
-  secret_versions = merge({ database-url = var.release.database_secret_version, supabase-service-role-key = var.release.backend_secret_version }, var.release.mail == null ? {} : { smtp-password = var.release.mail.password_secret_version })
+  secret_versions = merge({ database-url = var.release.database_secret_version, supabase-service-role-key = var.release.backend_secret_version }, var.release.mail == null ? {} : { smtp-password = var.release.mail.password_secret_version }, var.release.registration == null ? {} : { registration-code = var.release.registration.code_secret_version })
   runtime_limits  = merge(jsondecode(file("${path.module}/../../config/runtime-limits.json")), var.release.runtime_limits)
   mail_env = var.release.mail == null ? [] : [
     { name = "SMTP_HOST", value = var.release.mail.host },
@@ -102,6 +117,12 @@ locals {
     { name = "SMTP_PASSWORD", secretRef = "smtp-password" },
     { name = "MAIL_FROM", value = var.release.mail.from },
     { name = "APP_URL", value = local.web_origin }
+  ]
+  # The code only ever as a secret reference; the allowance always explicit, so
+  # the readback compares one exact value.
+  registration_env = var.release.registration == null ? [] : [
+    { name = "REGISTRATION_CODE", secretRef = "registration-code" },
+    { name = "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT", value = tostring(var.release.registration.allow_placeholder_consent) }
   ]
   api_env = concat([
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3001" },
@@ -113,7 +134,7 @@ locals {
     { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.cors_origins },
     { name = "DATABASE_URL", secretRef = "database-url" },
     { name = "SUPABASE_SERVICE_ROLE_KEY", secretRef = "supabase-service-role-key" }
-  ], local.mail_env, [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])
+  ], local.mail_env, local.registration_env, [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])
   web_env = [
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3000" },
     { name = "HOSTNAME", value = "0.0.0.0" }, { name = "SUPABASE_URL_INTERNAL", value = local.supabase_url }

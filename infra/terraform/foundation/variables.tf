@@ -36,6 +36,8 @@ variable "config" {
     deployer_object_id    = optional(string, "")
     runtime_secrets_ready = optional(bool, false)
     smtp_secret_ready     = optional(bool, false)
+    # Self-service registration: set once the owner has stored `registration-code`.
+    registration_secret_ready = optional(bool, false)
     # LP2-04 design D4: opt-in, so an unrelated foundation apply never creates the tests.
     availability_tests = optional(bool, false)
     apps_ready         = optional(bool, false)

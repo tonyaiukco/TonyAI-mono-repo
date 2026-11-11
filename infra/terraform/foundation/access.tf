@@ -13,7 +13,7 @@ locals {
       scope = azapi_resource.registry.id, principal = azapi_resource.identity[kind].output.properties.principalId, role = local.roles.pull, kind = "ServicePrincipal"
     } },
     { owner_secrets = { scope = azapi_resource.vault.id, principal = var.config.owner_object_id, role = local.roles.secrets_officer, kind = "User" } },
-    { for name in concat(var.config.runtime_secrets_ready ? ["database-url", "supabase-service-role-key"] : [], var.config.smtp_secret_ready ? ["smtp-password"] : []) : "secret-${name}" => {
+    { for name in concat(var.config.runtime_secrets_ready ? ["database-url", "supabase-service-role-key"] : [], var.config.smtp_secret_ready ? ["smtp-password"] : [], var.config.registration_secret_ready ? ["registration-code"] : []) : "secret-${name}" => {
       scope = "${azapi_resource.vault.id}/secrets/${name}", principal = azapi_resource.identity["api"].output.properties.principalId, role = local.roles.secrets_user, kind = "ServicePrincipal"
     } },
     var.config.deployer_object_id != "" ? merge(

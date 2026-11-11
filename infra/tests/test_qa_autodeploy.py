@@ -808,6 +808,16 @@ def candidate_for(sha, digests, tree=TREE):
             **qa.fingerprint_at(sha, git_objects({sha: tree}))}
 
 
+def with_registration(app, allow='true', code=None, url=None):
+    """The live API's registration settings, as Terraform writes them for a release that names the block."""
+    container = app['properties']['template']['containers'][0]
+    container['env'] += [code or {'name': 'REGISTRATION_CODE', 'secretRef': 'registration-code'},
+                         {'name': 'REGISTRATION_ALLOW_PLACEHOLDER_CONSENT', 'value': allow}]
+    app['properties']['configuration']['secrets'].append(
+        {'name': 'registration-code', 'keyVaultUrl': url or 'https://tonyaiqt-kv.vault.azure.net/secrets/registration-code/' + '7' * 32})
+    return app
+
+
 def with_release_settings(app, mail=True, smtp_url=None):
     """The live API's mail and runtime-limit settings, as Terraform writes them."""
     from runtime_limits import DEFAULTS
@@ -968,6 +978,64 @@ class InputsExportTests(unittest.TestCase):
                 secrets = self.azure.apps['api']['properties']['configuration']['secrets']
                 next(s for s in secrets if s['name'] == 'smtp-password')['keyVaultUrl'] = url
                 self.assert_refused_without_file('SMTP password reference')
+
+    def test_api_without_registration_omits_the_block(self):
+        self.assertNotIn('registration', self.export()['release'])
+
+    def test_live_registration_is_carried_as_a_version_and_the_allowance(self):
+        for allow in ('true', 'false'):
+            with self.subTest(allow=allow):
+                self.setUp()
+                with_registration(self.azure.apps['api'], allow=allow)
+                written = self.export()
+                self.assertEqual(written['release']['registration'],
+                                 {'code_secret_version': '7' * 32, 'allow_placeholder_consent': allow == 'true'})
+                qa.validate_release(written)
+                # What the verifier holds the live API to is what the export wrote.
+                from registration_settings import verify_registration_environment
+                env = self.azure.apps['api']['properties']['template']['containers'][0]['env']
+                verify_registration_environment(env, FOUNDATION, written['release'], 'api')
+                text = Path(self.out).read_text()
+                for forbidden in ('vault.azure.net', 'keyVaultUrl', 'secretRef'):
+                    self.assertNotIn(forbidden, text)
+
+    def test_incomplete_inline_malformed_or_foreign_registration_refuses(self):
+        cases = {
+            'only the allowance': lambda api: api['properties']['template']['containers'][0]['env'].append(
+                {'name': 'REGISTRATION_ALLOW_PLACEHOLDER_CONSENT', 'value': 'true'}),
+            'only the code': lambda api: api['properties']['template']['containers'][0]['env'].append(
+                {'name': 'REGISTRATION_CODE', 'secretRef': 'registration-code'}),
+            'a secret no setting uses': lambda api: api['properties']['configuration']['secrets'].append(
+                {'name': 'registration-code', 'keyVaultUrl': 'https://tonyaiqt-kv.vault.azure.net/secrets/registration-code/' + '7' * 32}),
+            'the code as a plain value': lambda api: with_registration(api, code={'name': 'REGISTRATION_CODE', 'value': 'aB3x9'}),
+            'the code as both': lambda api: with_registration(api, code={'name': 'REGISTRATION_CODE', 'secretRef': 'registration-code', 'value': 'aB3x9'}),
+            'another secret': lambda api: with_registration(api, code={'name': 'REGISTRATION_CODE', 'secretRef': 'smtp-password'}),
+            'latest': lambda api: with_registration(api, url='https://tonyaiqt-kv.vault.azure.net/secrets/registration-code/latest'),
+            'a short version': lambda api: with_registration(api, url='https://tonyaiqt-kv.vault.azure.net/secrets/registration-code/' + '7' * 31),
+            'an upper-case version': lambda api: with_registration(api, url='https://tonyaiqt-kv.vault.azure.net/secrets/registration-code/' + 'A' * 32),
+            'no version': lambda api: with_registration(api, url='https://tonyaiqt-kv.vault.azure.net/secrets/registration-code/'),
+            'a foreign vault': lambda api: with_registration(api, url='https://tonyaiqt-xx.vault.azure.net/secrets/registration-code/' + '7' * 32),
+            'another secret name': lambda api: with_registration(api, url='https://tonyaiqt-kv.vault.azure.net/secrets/smtp-password/' + '7' * 32),
+            'a malformed allowance': lambda api: with_registration(api, allow='yes'),
+        }
+        # Each case is refused by its own guard, named here, not merely by "some refusal".
+        incomplete, reference, contract, allowance = ('settings are incomplete', 'not a vault reference',
+                                                      'differs from the vault contract', 'allowance is malformed')
+        EXPECTED = {'only the allowance': incomplete, 'only the code': incomplete, 'a secret no setting uses': incomplete,
+                    'the code as a plain value': reference, 'the code as both': reference, 'another secret': reference,
+                    'latest': contract, 'a short version': contract, 'an upper-case version': contract, 'no version': contract,
+                    'a foreign vault': contract, 'another secret name': contract, 'a malformed allowance': allowance}
+        self.assertEqual(set(EXPECTED), set(cases))
+        for name, damage in cases.items():
+            with self.subTest(case=name):
+                self.setUp()
+                damage(self.azure.apps['api'])
+                with self.assertRaises(SafeFailure) as caught:
+                    self.export()
+                self.assertFalse(Path(self.out).exists())
+                self.assertEqual(self.verified, [])
+                self.assertIn(EXPECTED[name], str(caught.exception))
+                self.assertNotIn('aB3x9', str(caught.exception))
 
     def test_incomplete_mail_or_missing_runtime_limit_refuses(self):
         env = self.azure.apps['api']['properties']['template']['containers'][0]['env']

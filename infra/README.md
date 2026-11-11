@@ -116,6 +116,14 @@ and Communication Services use `location = global`, `dataLocation = Europe`.
 `email_contract` outputs the public SMTP username, sender and STARTTLS settings
 (`smtp.azurecomm.net:587`); it never outputs credentials. The owner creates the
 Entra client secret separately and stores it directly as Key Vault `smtp-password`.
+Self-service registration is switched on per environment by an optional
+`release.registration` block: the exact version of the Key Vault secret
+`registration-code` (the API's `REGISTRATION_CODE`, by reference only) and
+`allow_placeholder_consent`, accepted as `true` on staging only. The owner stores
+the code with `release_secrets.py store --name registration-code`, which accepts
+only the shape the API accepts; `config.registration_secret_ready` grants the API
+identity Secrets User on that one secret. Without the block a release plans no
+change and registration stays off (runbook 03 §3.6).
 The SMTP role has only the [three documented authentication actions](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication)
 and is assignable and assigned only on the hosted Communication resource, never the
 subscription or group. Azure supports [resource-instance assignable scopes](https://learn.microsoft.com/azure/role-based-access-control/role-definitions#assignablescopes);

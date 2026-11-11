@@ -232,8 +232,34 @@ run "smtp_grant_only_after_owner_provisioning" {
     }
   }
   assert {
-    condition     = length(azapi_resource.grant) == 12 && azapi_resource.grant["secret-smtp-password"].parent_id == "${azapi_resource.vault.id}/secrets/smtp-password" && azapi_resource.grant["secret-smtp-password"].body.properties.principalId == "00000000-0000-0000-0000-000000000004" && endswith(azapi_resource.grant["secret-smtp-password"].body.properties.roleDefinitionId, "/4633458b-17de-408a-b874-0445c86b69e6")
+    condition     = length(azapi_resource.grant) == 12 && !contains(keys(azapi_resource.grant), "secret-registration-code") && azapi_resource.grant["secret-smtp-password"].parent_id == "${azapi_resource.vault.id}/secrets/smtp-password" && azapi_resource.grant["secret-smtp-password"].body.properties.principalId == "00000000-0000-0000-0000-000000000004" && endswith(azapi_resource.grant["secret-smtp-password"].body.properties.roleDefinitionId, "/4633458b-17de-408a-b874-0445c86b69e6")
     error_message = "SMTP permission must be exactly one named secret for API Secrets User only."
+  }
+}
+run "registration_grant_only_after_owner_provisioning" {
+  command = plan
+  variables {
+    config = {
+      subscription_id           = "00000000-0000-0000-0000-000000000001"
+      tenant_id                 = "00000000-0000-0000-0000-000000000002"
+      environment               = "staging"
+      resource_group            = "tonyai-staging"
+      prefix                    = "tonyai"
+      registry_name             = "tonyaistaging"
+      vault_name                = "tonyai-staging-kv"
+      repository                = "owner/repo"
+      release_sha               = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      owner_object_id           = "00000000-0000-0000-0000-000000000003"
+      deployer_object_id        = "00000000-0000-0000-0000-000000000005"
+      runtime_secrets_ready     = true
+      smtp_secret_ready         = true
+      registration_secret_ready = true
+      apps_ready                = true
+    }
+  }
+  assert {
+    condition     = length(azapi_resource.grant) == 13 && azapi_resource.grant["secret-registration-code"].parent_id == "${azapi_resource.vault.id}/secrets/registration-code" && azapi_resource.grant["secret-registration-code"].body.properties.principalId == "00000000-0000-0000-0000-000000000004" && endswith(azapi_resource.grant["secret-registration-code"].body.properties.roleDefinitionId, "/4633458b-17de-408a-b874-0445c86b69e6")
+    error_message = "Registration code permission must be exactly one named secret for API Secrets User only."
   }
 }
 run "sweden_subscription_cannot_create_legacy_foundation" {

@@ -334,6 +334,172 @@ run "mail_api_only_exact_reference" {
   }
 }
 
+run "registration_absent_is_unconfigured" {
+  command = plan
+  assert {
+    condition     = alltrue([for e in local.api_env : !contains(["REGISTRATION_CODE", "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT"], e.name)]) && !contains(keys(local.secret_versions), "registration-code") && length(azapi_resource.app["api"].body.properties.configuration.secrets) == 2
+    error_message = "A release that names no registration settings must give the API none."
+  }
+}
+run "registration_api_only_exact_reference" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      registration                   = { code_secret_version = "dddddddddddddddddddddddddddddddd", allow_placeholder_consent = true }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.secretRef if e.name == "REGISTRATION_CODE"] == ["registration-code"] && alltrue([for e in local.registration_env : !can(e.value) if e.name == "REGISTRATION_CODE"])
+    error_message = "The registration code must only be a secret reference."
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT"] == ["true"]
+    error_message = "The placeholder allowance must reach the API exactly as released."
+  }
+  assert {
+    condition     = [for s in azapi_resource.app["api"].body.properties.configuration.secrets : s.keyVaultUrl if s.name == "registration-code"] == ["https://tonyai-staging-kv.vault.azure.net/secrets/registration-code/dddddddddddddddddddddddddddddddd"] && alltrue([for s in azapi_resource.app["api"].body.properties.configuration.secrets : s.identity == local.identity_ids["api"] && !can(s.value)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["REGISTRATION_CODE", "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT"], e.name)]) && length(azapi_resource.app["web"].body.properties.configuration.secrets) == 0
+    error_message = "The registration code stays scoped to the API identity and exact vault version, never the web."
+  }
+}
+
+run "registration_allowance_off_is_explicit" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      registration                   = { code_secret_version = "dddddddddddddddddddddddddddddddd", allow_placeholder_consent = false }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT"] == ["false"]
+    error_message = "An allowance that is off must be stated, not omitted."
+  }
+}
+
+run "registration_production_without_placeholder_accepted" {
+  command = plan
+  variables {
+    foundation = {
+      subscription_id = "00000000-0000-0000-0000-000000000001"
+      tenant_id       = "00000000-0000-0000-0000-000000000002"
+      environment     = "production"
+      resource_group  = "tonyai-production"
+      prefix          = "tonyai"
+      registry_name   = "tonyaiproduction"
+      vault_name      = "tonyai-production-kv"
+      default_domain  = "example.swedencentral.azurecontainerapps.io"
+    }
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      registration                   = { code_secret_version = "dddddddddddddddddddddddddddddddd", allow_placeholder_consent = false }
+    }
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.secretRef if e.name == "REGISTRATION_CODE"] == ["registration-code"] && alltrue([for e in local.registration_env : !can(e.value) if e.name == "REGISTRATION_CODE"])
+    error_message = "The registration code must only be a secret reference."
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.value if e.name == "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT"] == ["false"]
+    error_message = "The placeholder allowance must reach the API exactly as released."
+  }
+  assert {
+    condition     = [for s in azapi_resource.app["api"].body.properties.configuration.secrets : s.keyVaultUrl if s.name == "registration-code"] == ["https://tonyai-production-kv.vault.azure.net/secrets/registration-code/dddddddddddddddddddddddddddddddd"] && alltrue([for s in azapi_resource.app["api"].body.properties.configuration.secrets : s.identity == local.identity_ids["api"] && !can(s.value)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["REGISTRATION_CODE", "REGISTRATION_ALLOW_PLACEHOLDER_CONSENT"], e.name)]) && length(azapi_resource.app["web"].body.properties.configuration.secrets) == 0
+    error_message = "The registration code stays scoped to the API identity and exact vault version, never the web."
+  }
+}
+
+run "registration_placeholder_refused_outside_staging" {
+  command = plan
+  variables {
+    foundation = {
+      subscription_id = "00000000-0000-0000-0000-000000000001"
+      tenant_id       = "00000000-0000-0000-0000-000000000002"
+      environment     = "production"
+      resource_group  = "tonyai-production"
+      prefix          = "tonyai"
+      registry_name   = "tonyaiproduction"
+      vault_name      = "tonyai-production-kv"
+      default_domain  = "example.swedencentral.azurecontainerapps.io"
+    }
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      registration                   = { code_secret_version = "dddddddddddddddddddddddddddddddd", allow_placeholder_consent = true }
+    }
+  }
+  expect_failures = [var.release]
+}
+
+run "registration_version_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      registration                   = { code_secret_version = "latest", allow_placeholder_consent = true }
+    }
+  }
+  expect_failures = [var.release]
+}
+
+run "registration_code_value_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      registration                   = { code_secret_version = "aB3x9", allow_placeholder_consent = true }
+    }
+  }
+  expect_failures = [var.release]
+}
+
 run "mail_host_refused" {
   command = plan
   variables {
