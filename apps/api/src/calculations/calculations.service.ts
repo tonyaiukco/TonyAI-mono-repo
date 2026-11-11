@@ -46,6 +46,7 @@ import { RELEASE_SNAPSHOT_SELECT, releaseSnapshot } from './release-snapshot';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   lookupFactorPath,
+  pricedMethodFilter,
   pricedStatuses,
   readReleaseParameters,
   SEALED,
@@ -165,13 +166,16 @@ export class CalculationsService {
    * The geographies and reporting years the library can price (UAT round 2,
    * BUG-R2-09), for the Data Entry legend. Read as pricing reads: the policy's
    * statuses (`pricedStatuses`), sealed releases, the CO2e row a figure is
-   * multiplied from. Not a selection: it counts rows and returns no value,
+   * multiplied from, in the category's own Scope 2 method
+   * (`pricedMethodFilter`). Not a selection: it counts rows and returns no value,
    * edition or id.
    */
   async coverage(): Promise<FactorCoverageDTO> {
     const statuses = pricedStatuses(this.policy);
     const rows = await this.prisma.emissionFactor.findMany({
-      where: { gas: CALCULATION_GAS, release: { ...SEALED, status: { in: [...statuses] } } },
+      // The method filter runs before `distinct`, so a release's market row
+      // can neither stand in for, nor hide, its location row.
+      where: { gas: CALCULATION_GAS, ...pricedMethodFilter(), release: { ...SEALED, status: { in: [...statuses] } } },
       select: { geographyCode: true, reportingYear: true, release: { select: { status: true } } },
       distinct: ['geographyCode', 'reportingYear', 'releaseId'],
     });

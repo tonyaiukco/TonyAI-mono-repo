@@ -4,12 +4,14 @@ import { CalculationInputError, FactorLibraryConflictError, NoEmissionFactorErro
 import type { EmissionFactor, FactorRelease, UnitConversion } from '@tonyai/db';
 import {
   ACTIVITY_UNITS,
+  CATEGORIES,
   DIMENSION_BASE_UNIT,
   directCalorificBasisFor,
   factorActivityTypeFor,
   isAuthoritativeSnapshot,
   isCalculated,
   isProvenanceSnapshot,
+  resolveFactorPath,
   scope2MethodFor,
   unitDimensionOf,
   type ActivityCalculationSnapshot,
@@ -1122,7 +1124,11 @@ describe('CalculationsService.coverage (BUG-R2-09)', () => {
   const row = (geographyCode: string, reportingYear: number, status: string) =>
     ({ geographyCode, reportingYear, release: { status } }) as unknown as FactorRow;
   type CoverageArgs = {
-    where: { release: { status: { in: string[] } } };
+    where: {
+      gas: string;
+      OR: { category: { in: string[] }; scope2Method: string }[];
+      release: { status: { in: string[] } };
+    };
     select: Record<string, unknown>;
   };
   const askedWith = () => prisma.emissionFactor.findMany.mock.calls[0][0] as unknown as CoverageArgs;
@@ -1137,9 +1143,97 @@ describe('CalculationsService.coverage (BUG-R2-09)', () => {
 
     expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
       // The CO2e row a figure is multiplied from, as pricing reads it.
-      where: { gas: 'CO2e', release: { sealedAt: { not: null }, status: { in: ['authoritative'] } } },
+      where: {
+        gas: 'CO2e',
+        // Each category in its own Scope 2 method, as the lookup reads it:
+        // location-based electricity, `not_applicable` everywhere else.
+        OR: [
+          { category: { in: ['Electricity'] }, scope2Method: 'location' },
+          { category: { in: CATEGORIES.filter((c) => c !== 'Electricity') }, scope2Method: 'not_applicable' },
+        ],
+        release: { sealedAt: { not: null }, status: { in: ['authoritative'] } },
+      },
       select: { geographyCode: true, reportingYear: true, release: { select: { status: true } } },
       distinct: ['geographyCode', 'reportingYear', 'releaseId'],
+    });
+  });
+
+  it("names every category exactly once, in the method the lookup resolves it with", async () => {
+    await service(true).coverage();
+
+    const { OR } = askedWith().where;
+    const named = OR.flatMap((branch) => branch.category.in.map((category) => [category, branch.scope2Method]));
+    expect(named.map(([category]) => category).sort()).toEqual([...CATEGORIES].sort());
+    for (const [category, method] of named) expect(method, category).toBe(scope2MethodFor(category));
+    // The pilot never resolves a market-based row (D08).
+    expect(OR.map((branch) => branch.scope2Method)).not.toContain('market');
+  });
+
+  describe('against the rows a filtering library returns (review of PR #305)', () => {
+    // A mock that APPLIES the query's predicates, so the test fails if the
+    // service stops asking for the method — a canned answer would not.
+    type LibraryRow = {
+      category: string; scope2Method: string; gas: string; geographyCode: string; reportingYear: number;
+      release: { status: string };
+    };
+    const electricity = (scope2Method: string, status: string): LibraryRow => ({
+      category: 'Electricity', scope2Method, gas: 'CO2e', geographyCode: 'UK', reportingYear: 2026, release: { status },
+    });
+    const library = (rows: LibraryRow[]) =>
+      prisma.emissionFactor.findMany.mockImplementation((async (args: CoverageArgs) => {
+        const { where } = args;
+        return rows
+          .filter((r) => r.gas === where.gas && where.release.status.in.includes(r.release.status))
+          .filter((r) => where.OR.some((b) => b.category.in.includes(r.category) && b.scope2Method === r.scope2Method))
+          .map((r) => ({ geographyCode: r.geographyCode, reportingYear: r.reportingYear, release: r.release }));
+      }) as never);
+    // What the engine itself answers for the same rows: the resolver the
+    // lookup prices with, on the lookup's own candidate filter.
+    const engine = (rows: LibraryRow[], allowPlaceholders: boolean) =>
+      resolveFactorPath({
+        category: 'Electricity',
+        inputUnit: 'kWh',
+        factors: rows
+          .filter((r) => allowPlaceholders || r.release.status === 'authoritative')
+          .filter((r) => r.scope2Method === scope2MethodFor('Electricity'))
+          .map((r, i) => ({
+            ...r, activityType: 'grid_electricity', normalizedUnit: 'kWh', calorificBasis: 'not_applicable',
+            releaseId: `r${i}`, release: { ...r.release, publisher: 'P', ordinal: i + 1 },
+          })) as never,
+        conversions: [],
+        allowPlaceholders,
+      });
+
+    it('does not list a pair only a market-based factor holds — the engine cannot price it', async () => {
+      const rows = [electricity('market', 'authoritative')];
+      library(rows);
+
+      expect(engine(rows, false)).toEqual({ ok: false, code: 'no_factor' });
+      expect((await service(false).coverage()).entries).toEqual([]);
+      expect((await service(true).coverage()).entries).toEqual([]);
+    });
+
+    it('keeps the placeholder warning where an authoritative market factor sits beside a placeholder location one', async () => {
+      const rows = [electricity('market', 'authoritative'), electricity('location', 'placeholder')];
+      library(rows);
+
+      // The engine prices the placeholder, or nothing where it is refused.
+      expect(engine(rows, true)).toMatchObject({ ok: true });
+      expect(engine(rows, false)).toMatchObject({ ok: false });
+      expect((await service(true).coverage()).entries).toEqual([
+        { geographyCode: 'UK', reportingYear: 2026, statuses: ['placeholder'] },
+      ]);
+      expect((await service(false).coverage()).entries).toEqual([]);
+    });
+
+    it('still lists the location-based factor the engine prices', async () => {
+      const rows = [electricity('location', 'authoritative'), electricity('market', 'authoritative')];
+      library(rows);
+
+      expect(engine(rows, false)).toMatchObject({ ok: true });
+      expect((await service(false).coverage()).entries).toEqual([
+        { geographyCode: 'UK', reportingYear: 2026, statuses: ['authoritative'] },
+      ]);
     });
   });
 

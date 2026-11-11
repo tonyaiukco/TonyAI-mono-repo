@@ -11,9 +11,10 @@
   - Entries are sorted by geography, then year.
   - An empty library gives `{ entries: [] }`.
   - The query selects no factor value, edition or release id.
+  - The query admits each category only in its own Scope 2 method; against a mock that applies the query's predicates, a market-only pair is not listed and an authoritative market row beside a placeholder location one leaves the pair placeholder, each checked against `resolveFactorPath` (review of PR #305).
   
   Verify with `pnpm --filter @tonyai/api test`.
-- [x] 1.4 Add an integration case against the real local library: under each policy the report equals an oracle computed straight from SQL (so placeholder coverage is asserted wherever the database holds it); withdrawing every release behind one pair, inside a transaction that rolls back, removes that pair and keeps every pair another release still covers; withdrawing all releases empties the report. Verify with `pnpm --filter @tonyai/api test:int` (CI rate-limit environment set; wait until no other vitest run is active). If withdrawal cannot be exercised without a write to append-only tables, cover it in 1.3 and say so in the PR.
+- [x] 1.4 Add an integration case against the real local library: under each policy the report equals an oracle computed straight from SQL (so placeholder coverage is asserted wherever the database holds it); withdrawing every release behind one pair, inside a transaction that rolls back, removes that pair and keeps every pair another release still covers; withdrawing all releases empties the report; a fixture release loaded inside a rolled-back transaction shows a market-only pair absent and a market + location pair listed. The SQL oracle applies the same Scope 2 method rule (review of PR #305). Verify with `pnpm --filter @tonyai/api test:int` (CI rate-limit environment set; wait until no other vitest run is active). If withdrawal cannot be exercised without a write to append-only tables, cover it in 1.3 and say so in the PR.
 - [x] 1.5 Document `GET /factors/coverage` in `docs/api/endpoints.md`, next to `/factors/parameters`: the response shape, the policy rule, that withdrawn releases are excluded, and that it is reference data for any role. Verify by reading the entry against the `emission-factor-library` delta spec.
 
 ## 2. Dashboard: the cell popover and the History link
