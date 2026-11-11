@@ -1,5 +1,4 @@
 import { test, expect, request as playwrightRequest } from '@playwright/test';
-import trBulk from '../apps/web/messages/tr/bulkUpload.json';
 import trCategories from '../apps/web/messages/tr/categories.json';
 import trCompleteness from '../apps/web/messages/tr/completeness.json';
 import trEntry from '../apps/web/messages/tr/dataEntry.json';
@@ -52,8 +51,9 @@ test('Data Entry speaks Turkish, and 1.234,5 typed in Turkish is saved as 1234.5
   await login(page, ENTRY_EMAIL);
   await page.goto('/data-entry');
 
-  await expect(page.getByText(trEntry.submissions.title, { exact: true })).toBeVisible();
-  await expect(page.getByText(trBulk.title, { exact: true })).toBeVisible();
+  await expect(page.getByText(trEntry.records.title, { exact: true })).toBeVisible();
+  // Collapsed (BUG-R2-05): its toggle names it.
+  await expect(page.getByText(trEntry.bulkSection.title, { exact: true })).toBeVisible();
   await expect(page.getByText(trEntry.context.title, { exact: true })).toBeVisible();
   await expect(page.getByTestId('sign-out')).toHaveText('Çıkış yap');
 

@@ -246,6 +246,9 @@ test('a voided evidence-required record is copied into a new draft, which needs 
   // Submit saves the draft, and the evidence gate holds it with the vault open.
   await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
   const vaultInput = page.locator('[data-testid="evidence-vault-input"]');
+  // The vault holds files for a record not saved yet (BUG-R2-05); this one
+  // uploads straight to the saved draft once the save has opened it.
+  await expect(page.getByTestId('evidence-vault')).toHaveAttribute('data-mode', 'record');
   await expect(vaultInput).toBeAttached();
   await expect(page.getByText('Submitted for review', { exact: true })).toHaveCount(0);
   await vaultInput.setInputFiles(EVIDENCE_FIXTURE);

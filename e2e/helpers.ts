@@ -120,6 +120,16 @@ export function selectSubsidiary(page: Page, optionName: string): Promise<void> 
   return pickByFieldLabel(page, 'Subsidiary', optionName);
 }
 
+/**
+ * Expand Data Entry's Bulk upload section, which starts collapsed since
+ * BUG-R2-05 (the import panel and Recent imports render only inside it).
+ */
+export async function openBulkUpload(page: Page): Promise<void> {
+  const toggle = page.getByTestId('bulk-upload-section').getByRole('button', { name: /^Bulk upload/ });
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+}
+
 // --- Environment (populated by playwright.config.ts before anything runs) ----
 
 /** Local Supabase URL + anon key, loaded from apps/web/.env.local by the config. */

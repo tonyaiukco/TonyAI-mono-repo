@@ -101,9 +101,10 @@ test('the review queue counts the whole queue, not the rows on screen', async ({
   expect(await browser.locator('table tbody tr').count()).toBeLessThanOrEqual(Math.min(50, meta.total));
 });
 
-test('Previous submissions says which records a selection covers', async ({ page: browser, request }) => {
+test('the records table says which records a selection covers', async ({ page: browser, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const meta = await (await request.get(`${API_BASE}/activity-records/metadata?subsidiaryId=${SUB.energy}`, { headers: bearer(token) })).json();
+  // The table's year filter starts at the form's year, 2026 by default (BUG-R2-05).
+  const meta = await (await request.get(`${API_BASE}/activity-records/metadata?subsidiaryId=${SUB.energy}&year=2026`, { headers: bearer(token) })).json();
   test.skip(meta.total === 0, 'needs a record for TonyAI Energy');
   await login(browser, ADMIN_EMAIL);
   await browser.goto(`/data-entry?subsidiaryId=${SUB.energy}`);

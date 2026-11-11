@@ -159,7 +159,7 @@ test('sends the drafts that were ticked, and leaves the rest a draft', async ({
     // IN FLIGHT: it would pass for a component that never finished, and it
     // proves nothing about the new status reaching the screen.
     await expect(
-      list.locator('button').filter({ hasText: `Q3 ${E2E_YEAR}` }).filter({
+      list.getByRole('row').filter({ hasText: `Q3 ${E2E_YEAR}` }).filter({
         hasText: E2E_BULK_CATEGORY,
       }),
     ).toContainText('Submitted');
@@ -206,7 +206,7 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
     // assertion.
     const row = (periodValue: string, category: string) =>
       list
-        .locator('button')
+        .getByRole('row')
         .filter({ hasText: `${periodValue} ${E2E_YEAR}` })
         .filter({ hasText: category });
 
@@ -255,7 +255,8 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
       name: new RegExp(`Select Q1 ${E2E_YEAR} ${E2E_BULK_CATEGORY}`),
     })).toHaveCount(0);
     await expect(list.getByRole('button', { name: new RegExp(`^Edit Q1 ${E2E_YEAR} ${E2E_BULK_CATEGORY}`) })).toHaveCount(0);
-    await row('Q1', E2E_BULK_CATEGORY).click();
+    // The row's open control (BUG-R2-05: rows are table rows).
+    await row('Q1', E2E_BULK_CATEGORY).getByRole('button', { name: new RegExp(`^Q1 ${E2E_YEAR} `) }).click();
     await expect(page.getByText(/only its author can change it/)).toBeVisible();
     await expect(page.getByText(`Editing draft ${mine.slice(0, 8)}` , { exact: false })).toHaveCount(0);
 
@@ -302,7 +303,7 @@ test('a rejected record is not offered, and the row says to open it alone', asyn
 
     const list = listOf(page);
     const row = list
-      .locator('button')
+      .getByRole('row')
       .filter({ hasText: `Q1 ${E2E_YEAR}` })
       .filter({ hasText: E2E_BULK_CATEGORY });
     await expect(row).toContainText('Rejected');

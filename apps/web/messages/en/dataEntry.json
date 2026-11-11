@@ -467,5 +467,40 @@
   "copy": {
     "loaded": "A new draft is filled in from the voided record. Check the values, save it and attach its evidence.",
     "notVoided": "Only a voided record can be copied to a new draft."
+  },
+  "heldEvidence": {
+    "uploadFailed": "The record is saved as a draft, but these files did not upload: {files}. Retry them under Evidence.",
+    "notUploaded": "The draft is saved, but you moved on before these files were uploaded: {files}. Open the draft to attach them.",
+    "resolveFailed": "Retry or remove the files that did not upload before you submit."
+  },
+  "bulkSection": {
+    "title": "Bulk upload",
+    "hint": "Import many records from a file, and see recent imports"
+  },
+  "records": {
+    "title": "Entered records",
+    "noMatch": "No record matches these filters.",
+    "evidenceMissing": "Missing",
+    "evidenceOne": "{value} file",
+    "evidenceMany": "{value} files",
+    "columns": {
+      "select": "Select",
+      "period": "Period",
+      "category": "Category",
+      "entity": "Location",
+      "value": "Value",
+      "emissions": "tCO₂e",
+      "evidence": "Evidence",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "filters": {
+      "year": "Reporting year",
+      "allYears": "All years",
+      "status": "Status",
+      "allStatuses": "All statuses",
+      "category": "Category",
+      "allCategories": "All categories"
+    }
   }
 }

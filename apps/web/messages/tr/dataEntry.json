@@ -467,5 +467,40 @@
   "copy": {
     "loaded": "Geçersiz kılınan kayıttan yeni bir taslak dolduruldu. Değerleri kontrol edin, kaydedin ve kanıtını ekleyin.",
     "notVoided": "Yalnızca geçersiz kılınmış bir kayıt yeni taslağa kopyalanabilir."
+  },
+  "heldEvidence": {
+    "uploadFailed": "Kayıt taslak olarak kaydedildi, ancak şu dosyalar yüklenemedi: {files}. Kanıt bölümünden tekrar deneyin.",
+    "notUploaded": "Taslak kaydedildi, ancak şu dosyalar yüklenmeden başka bir kayda geçtiniz: {files}. Eklemek için taslağı açın.",
+    "resolveFailed": "Göndermeden önce yüklenemeyen dosyaları tekrar deneyin veya kaldırın."
+  },
+  "bulkSection": {
+    "title": "Toplu yükleme",
+    "hint": "Bir dosyadan çok sayıda kayıt içe aktarın ve son içe aktarımları görün"
+  },
+  "records": {
+    "title": "Girilen kayıtlar",
+    "noMatch": "Bu filtrelere uyan kayıt yok.",
+    "evidenceMissing": "Eksik",
+    "evidenceOne": "{value} dosya",
+    "evidenceMany": "{value} dosya",
+    "columns": {
+      "select": "Seç",
+      "period": "Dönem",
+      "category": "Kategori",
+      "entity": "Lokasyon",
+      "value": "Değer",
+      "emissions": "tCO₂e",
+      "evidence": "Kanıt",
+      "status": "Durum",
+      "actions": "İşlemler"
+    },
+    "filters": {
+      "year": "Raporlama yılı",
+      "allYears": "Tüm yıllar",
+      "status": "Durum",
+      "allStatuses": "Tüm durumlar",
+      "category": "Kategori",
+      "allCategories": "Tüm kategoriler"
+    }
   }
 }

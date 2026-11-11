@@ -16,6 +16,7 @@ import {
   serviceReadRecords,
   waitOutImportThrottle,
   SUB,
+  openBulkUpload,
 } from './helpers';
 
 /**
@@ -77,6 +78,7 @@ test('the template downloads, and names only the entities this user can reach', 
   // why this reads the workbook.
   await login(page, ENTRY_EMAIL);
   await page.goto('/data-entry');
+  await openBulkUpload(page);
 
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download template' }).click();
@@ -145,6 +147,7 @@ test('the confirm dialog is the only path to a write, and a double-click writes 
   // clicked, through Radix's 200ms exit animation — issues exactly one apply.
   await login(page, ENTRY_EMAIL);
   await page.goto('/data-entry');
+  await openBulkUpload(page);
 
   let posts = 0;
   page.on('request', (r) => {
@@ -215,6 +218,7 @@ test('a second pick during a dry run is refused, and the verdict names the file 
   // shipped code prevents it.
   await login(page, ENTRY_EMAIL);
   await page.goto('/data-entry');
+  await openBulkUpload(page);
 
   let posts = 0;
   page.on('request', (r) => {
@@ -259,6 +263,7 @@ test('an all-evidence import explains itself instead of offering a dead button',
   // As admin@ — the second half of this file's throttle budget.
   await login(page, ADMIN_EMAIL);
   await page.goto('/data-entry');
+  await openBulkUpload(page);
 
   const electricity = buildBulkCsv([
     {
@@ -311,6 +316,7 @@ test('a non-evidence import offers the submit button, and it moves the records',
   // that exercises the submit button and its own confirm dialog in a browser.
   await login(page, ADMIN_EMAIL);
   await page.goto('/data-entry');
+  await openBulkUpload(page);
 
   try {
     await page.locator('[data-testid="bulk-upload-input"]').setInputFiles({

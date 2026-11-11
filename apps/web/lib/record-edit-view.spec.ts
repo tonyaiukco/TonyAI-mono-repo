@@ -195,6 +195,18 @@ describe('createFormSessions — a late answer never overwrites a newer form (ow
     expect(sessions.isCurrent(openedB)).toBe(true);
   });
 
+  it('reads the running session without beginning one (a save in flight, BUG-R2-05)', () => {
+    const sessions = createFormSessions();
+    const opened = sessions.begin();
+    const atSave = sessions.current();
+    expect(atSave).toBe(opened);
+    expect(sessions.isCurrent(atSave)).toBe(true);
+    // Reading it again is not a new session.
+    expect(sessions.current()).toBe(opened);
+    sessions.begin();
+    expect(sessions.isCurrent(atSave)).toBe(false);
+  });
+
   it('is per form: two forms do not share sessions', () => {
     const a = createFormSessions();
     const b = createFormSessions();

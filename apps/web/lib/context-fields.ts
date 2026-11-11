@@ -176,3 +176,15 @@ export function storedContextNumber(value: unknown): number | null {
   const n = Number(value.trim());
   return Number.isFinite(n) ? n : null;
 }
+
+/**
+ * Whether a record holds any context value: Data Entry opens its collapsed
+ * Additional context section for one that does (BUG-R2-05), so a value the
+ * record carries is never hidden behind a closed toggle.
+ */
+export function hasContextValue(values: Record<string, unknown> | null | undefined): boolean {
+  if (!values) return false;
+  return Object.values(values).some(
+    (v) => v !== null && v !== undefined && !(typeof v === "string" && v.trim() === ""),
+  );
+}
