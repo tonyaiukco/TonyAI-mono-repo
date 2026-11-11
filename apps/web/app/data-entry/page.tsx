@@ -4,13 +4,12 @@ import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } f
 import { conversionNote } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -127,6 +126,7 @@ import {
   isNarrowed,
   pickRecordsFilter,
   recordsQuery,
+  recordsYearOptions,
   resolveRecordsFilter,
   type RecordsFilter,
 } from "@/lib/records-table-view";
@@ -245,6 +245,8 @@ function DataEntryPageInner() {
   // The two secondary sections start collapsed (BUG-R2-05).
   const [contextOpen, setContextOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const contextPanelId = useId();
+  const bulkPanelId = useId();
   // The number fields whose text is refused; the save is refused while any is,
   // so editing a stored value into a typo never drops it. Reset with the epoch.
   const [refusedContext, setRefusedContext] = useState<ReadonlySet<string>>(() => new Set());
@@ -1968,27 +1970,40 @@ function DataEntryPageInner() {
                 // Only for the record the list is about: a Retry answering after
                 // the user moved to another record must not relabel that
                 // record's failed files as this one's (security review P3).
-                onFailedFilesChange={(recordId, files) =>
-                  setFailedUploads((prev) =>
-                    prev && prev.recordId === recordId ? (files.length > 0 ? { recordId, files } : null) : prev,
-                  )
+                // Removes ONE file from the list as it is now, never a list the
+                // vault computed earlier: a Retry that lands after another file
+                // was removed must not bring that one back (owner review P2).
+                onFailedFileDone={(recordId, file) =>
+                  setFailedUploads((prev) => {
+                    if (!prev || prev.recordId !== recordId) return prev;
+                    const files = prev.files.filter((f) => f !== file);
+                    return files.length > 0 ? { recordId, files } : null;
+                  })
                 }
                 busy={isBusy}
               />
 
               {/* Optional context — demo extras stored into `input` */}
               {/* Collapsed until wanted (BUG-R2-05); opened for a record that
-                  holds a value, and by a save it blocks. */}
-              <Collapsible open={contextOpen} onOpenChange={setContextOpen} asChild>
+                  holds a value, and by a save it blocks. Hidden, never
+                  unmounted: a number field keeps its typed text and its refusal
+                  note, so a refused value cannot vanish behind a closed toggle
+                  while it still blocks the save (owner review P2). */}
               <Card data-testid="context-section">
                 <CardHeader className="flex flex-row items-center justify-between gap-3">
-                  <CollapsibleTrigger className="flex flex-1 items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <button
+                    type="button"
+                    aria-expanded={contextOpen}
+                    aria-controls={contextPanelId}
+                    onClick={() => setContextOpen((open) => !open)}
+                    className="flex flex-1 items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
                     <ChevronDown
                       className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !contextOpen && "-rotate-90")}
                       aria-hidden
                     />
                     <CardTitle className="text-base">{t("context.title")}</CardTitle>
-                  </CollapsibleTrigger>
+                  </button>
                   <Badge
                     variant="outline"
                     className="border-amber-500/30 bg-amber-500/10 text-amber-600"
@@ -1996,7 +2011,7 @@ function DataEntryPageInner() {
                     {t("context.badge")}
                   </Badge>
                 </CardHeader>
-                <CollapsibleContent>
+                <div id={contextPanelId} hidden={!contextOpen}>
                 <CardContent className="space-y-4">
                   {CONTEXT_FIELDS[contextSet].map((f) => {
                     const key = `context.${contextSet}.${f.id}`;
@@ -2067,9 +2082,8 @@ function DataEntryPageInner() {
                     );
                   })}
                 </CardContent>
-                </CollapsibleContent>
+                </div>
               </Card>
-              </Collapsible>
 
               {/* Anomaly warning + mandatory variance comment (VAR §4.3). Shown
                   once a save flags the value as deviating >±50% from history. */}
@@ -2246,16 +2260,23 @@ function DataEntryPageInner() {
                   the form since BUG-R2-05 (QA's order: scope, activity, evidence,
                   then everything else), collapsed until wanted, and NOT inside
                   the `editingId` gate: an importer has no open record. */}
-              <Collapsible open={bulkOpen} onOpenChange={setBulkOpen} data-testid="bulk-upload-section" className="space-y-6">
-                <CollapsibleTrigger className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-card px-6 py-4 text-left shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {/* Hidden, never unmounted, for the same reason as Additional
+                  context: a chosen file and its dry-run report survive a close. */}
+              <div data-testid="bulk-upload-section" className="space-y-6">
+                <button
+                  type="button"
+                  aria-expanded={bulkOpen}
+                  aria-controls={bulkPanelId}
+                  onClick={() => setBulkOpen((open) => !open)}
+                  className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-card px-6 py-4 text-left shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <ChevronDown
                     className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !bulkOpen && "-rotate-90")}
                     aria-hidden
                   />
                   <span className="text-base font-semibold text-foreground">{t("bulkSection.title")}</span>
                   <span className="text-sm text-muted-foreground">{t("bulkSection.hint")}</span>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-6">
+                </button>
+                <div id={bulkPanelId} hidden={!bulkOpen} className="space-y-6">
               <BulkUploadPanel
                 canManage={mayAuthorRecords(user)}
                 onImported={() => {
@@ -2282,8 +2303,8 @@ function DataEntryPageInner() {
                   if (subsidiaryId) void refreshRecords(subsidiaryId);
                 }}
               />
-                </CollapsibleContent>
-              </Collapsible>
+                </div>
+              </div>
             </div>
 
             {/* Right: what the entry will calculate to, and what the year still
@@ -2352,7 +2373,7 @@ function DataEntryPageInner() {
             }}
             filter={recordsFilter}
             onFilterChange={changeRecordsFilter}
-            yearOptions={selectableReportingYears(reportingYear)}
+            yearOptions={recordsYearOptions(selectableReportingYears(reportingYear), recordsFilter)}
             narrowed={isNarrowed(recordsFilter)}
           />
         </div>

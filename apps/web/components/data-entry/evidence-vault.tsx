@@ -62,8 +62,9 @@ interface EvidenceVaultProps {
   onHeldFilesChange?: (files: File[]) => void;
   /** A record: files its creating save could not upload, offered with Retry. */
   failedFiles?: readonly File[];
-  /** Names the record the list belongs to, so a late answer for another record is ignored. */
-  onFailedFilesChange?: (recordId: string, files: File[]) => void;
+  /** One failed file is done with (uploaded on Retry, or removed). Names the
+   *  record, so a late answer for another record is ignored. */
+  onFailedFileDone?: (recordId: string, file: File) => void;
   /** A save is running: held files must not change under it. */
   busy?: boolean;
 }
@@ -295,7 +296,7 @@ function RecordVault({
   canManage,
   onCountChange,
   failedFiles = [],
-  onFailedFilesChange,
+  onFailedFileDone,
 }: EvidenceVaultProps & { recordId: string }) {
   const t = useTranslations("evidence");
   const locale = useLocale();
@@ -390,7 +391,7 @@ function RecordVault({
     setRetrying(file);
     try {
       await api.uploadEvidence(recordId, file);
-      onFailedFilesChange?.(recordId, failedFiles.filter((f) => f !== file));
+      onFailedFileDone?.(recordId, file);
       toast.success(t("uploaded"));
       await refresh();
     } catch (e) {
@@ -459,7 +460,7 @@ function RecordVault({
                     size="icon"
                     className="h-8 w-8"
                     disabled={retrying === f}
-                    onClick={() => onFailedFilesChange?.(recordId, failedFiles.filter((x) => x !== f))}
+                    onClick={() => onFailedFileDone?.(recordId, f)}
                     aria-label={t("failed.removeAria", { fileName: f.name })}
                     title={t("remove")}
                   >

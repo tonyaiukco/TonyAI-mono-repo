@@ -77,6 +77,17 @@ export function recordsQuery(filter: RecordsFilter): Omit<ActivityRecordPageFilt
   };
 }
 
+/**
+ * The years the year filter offers: the form's range, plus a pinned year
+ * outside it (a deep link may open, say, 2010). Without it the filter in force
+ * would match no option and show blank while it still narrows the table.
+ */
+export function recordsYearOptions(base: readonly number[], filter: RecordsFilter): number[] {
+  const years = [...base];
+  if (filter.year !== "all" && !years.includes(filter.year)) years.push(filter.year);
+  return years.sort((a, b) => b - a);
+}
+
 /** True when a filter narrows the list, so an empty table means "nothing matches". */
 export function isNarrowed(filter: RecordsFilter): boolean {
   return filter.year !== "all" || filter.status !== "all" || filter.category !== "all";

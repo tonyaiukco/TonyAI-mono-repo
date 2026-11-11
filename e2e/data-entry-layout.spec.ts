@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test, expect, type Page, type Route } from '@playwright/test';
 import {
   API_BASE,
@@ -98,7 +99,7 @@ test('the sections read in QA order, and the secondary ones start collapsed', as
   const bulkToggle = page.getByTestId('bulk-upload-section').getByRole('button', { name: /^Bulk upload/ });
   await expect(contextToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(bulkToggle).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.getByText('Recent imports', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Recent imports', { exact: true })).toBeHidden();
   await bulkToggle.focus();
   await page.keyboard.press('Enter');
   await expect(bulkToggle).toHaveAttribute('aria-expanded', 'true');
@@ -106,6 +107,25 @@ test('the sections read in QA order, and the secondary ones start collapsed', as
   await contextToggle.focus();
   await page.keyboard.press('Space');
   await expect(contextToggle).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('a refused context number survives closing and reopening its section, note included', async ({ page }) => {
+  await openDataEntry(page);
+  await pickByFieldLabel(page, 'Category', 'Water');
+  const section = page.getByTestId('context-section');
+  const toggle = section.getByRole('button', { name: 'Additional context' });
+  await toggle.click();
+  const field = section.getByPlaceholder('Enter cubic meters').first();
+  const note = section.locator('#context-municipal_water_m3-note');
+  await field.fill('12abc');
+  await field.blur();
+  await expect(note).toContainText('Enter a number');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  // Still the text that blocks the save, still saying why.
+  await expect(field).toHaveValue('12abc');
+  await expect(note).toContainText('Enter a number');
 });
 
 test('a file chosen before the first save lets an evidence-required record submit in one click', async ({
@@ -155,7 +175,10 @@ test('a file chosen and then left behind by a subsidiary switch reaches no recor
 test('a failed upload leaves a saved draft with Retry, and nothing is submitted', async ({ page, request }) => {
   await openDataEntry(page);
   await fillWater(page, 'Q3');
-  await page.getByTestId('evidence-vault-input').setInputFiles(EVIDENCE_FIXTURE);
+  await page.getByTestId('evidence-vault-input').setInputFiles([
+    { name: 'sample-invoice.pdf', mimeType: 'application/pdf', buffer: readFileSync(EVIDENCE_FIXTURE) },
+    { name: 'second.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n%%EOF\n') },
+  ]);
 
   // Storage is down for the first attempt only.
   const failUpload = async (route: Route) =>
@@ -165,17 +188,31 @@ test('a failed upload leaves a saved draft with Retry, and nothing is submitted'
   await page.route('**/api/v1/activity-records/*/evidence', failUpload);
 
   await page.getByRole('button', { name: 'Submit for review' }).click();
-  await expect(page.getByText(/these files did not upload: sample-invoice\.pdf/)).toBeVisible();
+  await expect(page.getByText(/these files did not upload: sample-invoice\.pdf, second\.pdf/)).toBeVisible();
   const failed = page.getByTestId('evidence-failed-uploads');
   await expect(failed).toContainText('sample-invoice.pdf');
+  await expect(failed).toContainText('second.pdf');
 
   const [draft] = await laneRecords(request, 'Q3');
   expect(draft?.status).toBe('draft');
   expect(await evidenceCountOf(request, String(draft.id))).toBe(0);
 
   await page.unroute('**/api/v1/activity-records/*/evidence', failUpload);
+  // The Retry answers slowly; meanwhile the user removes the other failed
+  // file. When the Retry lands, the removed file must not come back.
+  let release!: () => void;
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  const slowUpload = async (route: Route) => {
+    if (route.request().method() === 'POST') await slow;
+    return route.fallback();
+  };
+  await page.route('**/api/v1/activity-records/*/evidence', slowUpload);
   await failed.getByRole('button', { name: 'Retry uploading sample-invoice.pdf' }).click();
+  await failed.getByRole('button', { name: 'Remove second.pdf from the list' }).click();
+  await expect(failed).not.toContainText('second.pdf');
+  release();
   await expect(page.getByTestId('evidence-failed-uploads')).toHaveCount(0);
+  await page.unroute('**/api/v1/activity-records/*/evidence', slowUpload);
   await expect(vault(page)).toContainText('sample-invoice.pdf');
   expect(await evidenceCountOf(request, String(draft.id))).toBe(1);
 

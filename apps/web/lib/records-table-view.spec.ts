@@ -6,6 +6,7 @@ import {
   isNarrowed,
   pickRecordsFilter,
   recordsQuery,
+  recordsYearOptions,
   resolveRecordsFilter,
 } from './records-table-view';
 
@@ -101,5 +102,22 @@ describe('evidenceCell', () => {
         expect(missing, `${category} with ${evidenceCount}`).toBe(needsEvidenceBeforeSubmit({ category, evidenceCount }));
       }
     }
+  });
+});
+
+describe('recordsYearOptions', () => {
+  it('adds a pinned year outside the form range, newest first', () => {
+    const state = pickRecordsFilter(blankRecordsFilter('sub-a'), 'sub-a', { year: 2010 });
+    const filter = resolveRecordsFilter(state, 'sub-a', 2026);
+    expect(recordsYearOptions([2026, 2025, 2024], filter)).toEqual([2026, 2025, 2024, 2010]);
+  });
+  it('adds nothing for a year already offered or for All years', () => {
+    expect(recordsYearOptions([2026, 2025], { year: 2025, status: 'all', category: 'all' })).toEqual([2026, 2025]);
+    expect(recordsYearOptions([2026, 2025], { year: 'all', status: 'all', category: 'all' })).toEqual([2026, 2025]);
+  });
+  it('does not change the list it was given', () => {
+    const base = [2026] as const;
+    recordsYearOptions(base, { year: 2010, status: 'all', category: 'all' });
+    expect(base).toEqual([2026]);
   });
 });
