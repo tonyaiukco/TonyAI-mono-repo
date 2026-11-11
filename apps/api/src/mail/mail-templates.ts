@@ -4,8 +4,9 @@ import en from './i18n/en.json';
 import tr from './i18n/tr.json';
 
 /**
- * The two emails the pilot sends (decision 2026-09-27): an invitation and a
- * password reset — TR/EN, rendered on the server from this module's own
+ * The two emails the pilot sends (decision 2026-09-27): an invitation (in
+ * three wordings: invited by an administrator, provisioned by the operator,
+ * self-registered) and a password reset — TR/EN, rendered on the server from this module's own
  * catalogue (D16, docs/architecture/localisation.md). The recipient's
  * language picks the catalogue: the inviter's choice for an invitation, the
  * account's `profiles.language` for a reset.
@@ -32,15 +33,22 @@ export type InvitationMail = {
   language: Locale;
   name: string;
   organisation: string;
-  /** The inviting administrator's name; null when the operator provisioned. */
+  /** The inviting administrator's name; null for an organisation's first
+   *  administrator, whom nobody in it invited. */
   inviter: string | null;
+  /** With no inviter: the recipient registered the organisation themselves
+   *  (self-service registration), rather than the operator provisioning it. */
+  selfRegistered?: boolean;
   link: string;
 };
 
 export type PasswordResetMail = {
   kind: 'password_reset';
   language: Locale;
-  name: string;
+  /** Null for an account whose name nobody has vouched for — a self-registered
+   *  one not yet accepted: the public form's typed text stays out of this
+   *  email too, and the greeting names nobody. */
+  name: string | null;
   link: string;
 };
 
@@ -69,7 +77,8 @@ function format(language: Locale, message: string, values: Record<string, string
 export function renderMail(content: MailContent): RenderedMail {
   const catalogue = MAIL_CATALOGUES[content.language];
   const section = content.kind === 'invitation' ? catalogue.invitation : catalogue.passwordReset;
-  const plain: Record<string, string | number> = { name: content.name, hours: AUTH_LINK_TTL_HOURS };
+  const plain: Record<string, string | number> = { hours: AUTH_LINK_TTL_HOURS };
+  if (content.name !== null) plain.name = content.name;
   if (content.kind === 'invitation') {
     plain.organisation = content.organisation;
     if (content.inviter) plain.inviter = content.inviter;
@@ -77,23 +86,45 @@ export function renderMail(content: MailContent): RenderedMail {
   const escaped = Object.fromEntries(
     Object.entries(plain).map(([key, value]) => [key, typeof value === 'string' ? escapeHtml(value) : value]),
   );
-  // The operator's invitation goes to an organisation's first administrator:
-  // there is no administrator yet to ask for a new link.
-  const provisioned = content.kind === 'invitation' && !content.inviter;
-  const bodyMessage = provisioned ? catalogue.invitation.bodyProvisioned : section.body;
-  const expiryMessage = provisioned ? catalogue.invitation.expiryProvisioned : section.expiry;
+  // An organisation's first administrator has no administrator to ask for a
+  // new link: one the operator provisioned asks TonyAI, one who registered
+  // submits the form again — and was not invited by anyone, so the whole
+  // wording is their own. That wording names nobody and no company: the
+  // public form's typed text never rides in an email from this domain to an
+  // address its typist may not own (security review, F3).
+  const first = content.kind === 'invitation' && !content.inviter;
+  const registered = first && content.kind === 'invitation' && content.selfRegistered === true;
+  const provisioned = first && !registered;
+  const invitation = catalogue.invitation;
+  const wording = registered
+    ? {
+        subject: invitation.subjectRegistered,
+        greeting: invitation.greetingRegistered,
+        body: invitation.bodyRegistered,
+        action: invitation.actionRegistered,
+        expiry: invitation.expiryRegistered,
+        ignore: invitation.ignoreRegistered,
+      }
+    : {
+        subject: section.subject,
+        greeting: content.kind === 'password_reset' && content.name === null ? catalogue.passwordReset.greetingNeutral : section.greeting,
+        body: provisioned ? invitation.bodyProvisioned : section.body,
+        action: section.action,
+        expiry: provisioned ? invitation.expiryProvisioned : section.expiry,
+        ignore: section.ignore,
+      };
   const parts = (values: Record<string, string | number>) => ({
-    greeting: format(content.language, section.greeting, values),
-    body: format(content.language, bodyMessage, values),
-    action: format(content.language, section.action, values),
-    expiry: format(content.language, expiryMessage, values),
-    ignore: format(content.language, section.ignore, values),
+    greeting: format(content.language, wording.greeting, values),
+    body: format(content.language, wording.body, values),
+    action: format(content.language, wording.action, values),
+    expiry: format(content.language, wording.expiry, values),
+    ignore: format(content.language, wording.ignore, values),
   });
   const t = parts(plain);
   const h = parts(escaped);
   const link = content.link;
 
-  const subject = oneLine(format(content.language, section.subject, plain));
+  const subject = oneLine(format(content.language, wording.subject, plain));
   const text = [t.greeting, '', t.body, '', `${t.action}: ${link}`, '', t.expiry, '', t.ignore, '', '—', catalogue.footer].join('\n');
   const html = `<!doctype html>
 <html lang="${content.language}">

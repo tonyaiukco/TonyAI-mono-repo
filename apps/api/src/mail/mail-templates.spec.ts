@@ -65,6 +65,51 @@ describe('renderMail', () => {
     expect(mail.text).not.toContain('ask your administrator');
   });
 
+  it.each([
+    ['en', 'Finish setting up your company on TonyAI', 'Thank you for registering your company', 'submit the registration form again', 'If you did not register'],
+    ['tr', "TonyAI'da şirket hesabınızın kurulumunu tamamlayın", 'kaydettiğiniz için teşekkür ederiz', 'kayıt formunu aynı e-posta adresiyle yeniden gönderin', 'siz kaydolmadıysanız'],
+  ] as const)('words a self-registered first administrator’s email as their own, in %s — nobody invited them', (language, subject, body, expiry, ignore) => {
+    const mail = renderMail({ kind: 'invitation', language, name: 'Ann', organisation: 'Acme', inviter: null, selfRegistered: true, link: LINK });
+    expect(mail.subject).toBe(subject);
+    for (const part of [body, expiry, ignore, LINK]) expect(mail.text).toContain(part);
+    for (const other of ['ask TonyAI', "TonyAI'dan yeni bir davet", 'ask your administrator', 'yöneticinizden', 'invited', 'davet']) {
+      expect(mail.text, other).not.toContain(other);
+    }
+    expect(mail.html).toContain(`lang="${language}"`);
+  });
+
+  it.each(['en', 'tr'] as const)('puts nothing the registrant typed into a self-registered email (%s) — it goes to an address they may not own', (language) => {
+    const mail = renderMail({
+      kind: 'invitation',
+      language,
+      name: 'Visit https://evil.example now',
+      organisation: 'URGENT: pay at https://evil.example\r\nBcc: victim@example.com',
+      inviter: null,
+      selfRegistered: true,
+      link: LINK,
+    });
+    for (const part of [mail.subject, mail.text, mail.html]) {
+      expect(part).not.toContain('evil.example');
+      expect(part).not.toContain('URGENT');
+      expect(part).not.toContain('Visit');
+    }
+    expect(mail.subject).not.toMatch(/[\r\n]/);
+  });
+
+  it('keeps the inviter’s wording when there is one, whatever the registered flag says', () => {
+    const mail = renderMail({ kind: 'invitation', language: 'en', name: 'Ann', organisation: 'Acme', inviter: 'Bob', selfRegistered: true, link: LINK });
+    expect(mail.text).toContain('Bob has invited you');
+    expect(mail.text).toContain('ask your administrator');
+  });
+
+  it.each([['en', 'Hello,'], ['tr', 'Merhaba,']] as const)('greets nobody in a reset for an account whose name is unvouched (%s)', (language, greeting) => {
+    const mail = renderMail({ kind: 'password_reset', language, name: null, link: LINK });
+    expect(mail.text.split('\n')[0]).toBe(greeting);
+    expect(mail.html).toContain(`>${greeting}<`);
+    expect(mail.text).not.toContain('{name}');
+    expect(mail.html).not.toContain('{name}');
+  });
+
   it('renders a reset in English, one hour stated', () => {
     const mail = renderMail({ kind: 'password_reset', language: 'en', name: 'Ann', link: LINK });
     expect(mail.subject).toBe('Reset your TonyAI password');

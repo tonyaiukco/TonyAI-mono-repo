@@ -1,7 +1,9 @@
 /**
  * `pnpm onboarding <command>` — the operator's boundary for tenants (D18, K3,
- * K6; LP4-01 PR B). There is no HTTP surface for any of this: a tenant's own
- * `super_admin` invites everyone else from the users screen.
+ * K6; LP4-01 PR B). No HTTP surface offboards or reconciles; one creates an
+ * organisation — the code-gated self-service registration, where an
+ * environment enables it (`users/registration.service.ts`, 2026-11-11). A
+ * tenant's own `super_admin` invites everyone else from the users screen.
  *
  * Usage (from the repository root; arguments after the script name):
  *

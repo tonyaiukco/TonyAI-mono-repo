@@ -70,7 +70,13 @@ const RUNTIME_ROLE = 'tonyai_runtime'; // = packages/db/scripts/runtime-role.mjs
 // The suite runs on a local stack holding the seed's placeholder factor
 // library, so its API calculates from placeholders (LP3-03, K3) — the API
 // itself refuses the flag unless its database is loopback.
-const PLACEHOLDER_POLICY = { ALLOW_PLACEHOLDER_FACTORS: 'true' };
+// Registration is open behind the local test code, over the placeholder KVKK
+// notice (`e2e/registration.spec.ts`); a deployed environment sets its own.
+const PLACEHOLDER_POLICY = {
+  ALLOW_PLACEHOLDER_FACTORS: 'true',
+  REGISTRATION_CODE: 'local',
+  REGISTRATION_ALLOW_PLACEHOLDER_CONSENT: 'true',
+};
 function runtimeApi(): { command: string; env?: Record<string, string> } {
   const owner = process.env.DIRECT_URL || process.env.DATABASE_URL;
   if (!owner || decodeURIComponent(new URL(owner).username) === RUNTIME_ROLE) {

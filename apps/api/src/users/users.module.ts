@@ -8,6 +8,8 @@ import { InvitationDeliveryService } from './invitation-delivery.service';
 import { InvitationsController } from './invitations.controller';
 import { PasswordResetController } from './password-reset.controller';
 import { PasswordResetService } from './password-reset.service';
+import { RegistrationController, RegistrationEnabledGuard } from './registration.controller';
+import { RegistrationService } from './registration.service';
 import { UserLifecycleService } from './user-lifecycle.service';
 import { UsersController } from './users.controller';
 import { UsersQueryService } from './users-query.service';
@@ -15,17 +17,20 @@ import { RuntimeLimitsModule } from '../common/runtime-limits.module';
 
 /**
  * Onboarding and the user lifecycle (LP4-01): invitations, acceptance,
- * password resets, role and access changes, disabling — over
+ * password resets, self-service registration, role and access changes,
+ * disabling — over
  * `AccessAdminService` (AuthModule) for every database change.
  */
 @Module({
   imports: [AuthModule, AuditModule, MailModule, RuntimeLimitsModule],
-  controllers: [UsersController, InvitationsController, PasswordResetController],
+  controllers: [UsersController, InvitationsController, PasswordResetController, RegistrationController],
   providers: [
     AuthAdminService,
     AuthSyncService,
     InvitationDeliveryService,
     PasswordResetService,
+    RegistrationEnabledGuard,
+    RegistrationService,
     UserLifecycleService,
     UsersQueryService,
   ],

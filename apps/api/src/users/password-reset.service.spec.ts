@@ -72,7 +72,7 @@ describe('PasswordResetService — capacity is not an oracle', () => {
     const claimed = new Set<string>();
     const prisma = {
       profile: { findFirst: async ({ where }: { where: { email: string } }) => (known.has(where.email)
-        ? { id: where.email, email: where.email, fullName: 'Fixture', language: 'en', organisationId: 'org' } : null) },
+        ? { id: where.email, email: where.email, fullName: 'Fixture', language: 'en', organisationId: 'org', invitation: null, consents: [] } : null) },
       $transaction: async (run: (tx: unknown) => unknown) => run({
         $executeRaw: async (_s: unknown, id: string) => (claimed.has(id) ? 0 : (claimed.add(id), 1)),
       }),
@@ -182,5 +182,58 @@ describe('PasswordResetService — capacity is not an oracle', () => {
     expect(run.mock.calls.map(([e]) => e)).not.toContain('dropped@x.test');
     await limits.settle();
     limits.onApplicationShutdown();
+  });
+});
+
+/**
+ * Review of 8c9bcf0, finding 1: a self-registered account's name was typed
+ * into a public form by whoever held the registration code, and the reset is
+ * public too — so until the address's owner has accepted the invitation, the
+ * reset email greets nobody.
+ */
+describe('PasswordResetService.run — whose name the email carries', () => {
+  const TYPED = 'Visit https://evil.example now';
+
+  async function nameSentFor(profile: { invitation: { status: string } | null; consents: { id: string }[] }) {
+    const contents: { name: string | null }[] = [];
+    const selects: unknown[] = [];
+    const prisma = {
+      profile: {
+        findFirst: async (args: { select: unknown }) => {
+          selects.push(args.select);
+          return { id: 'p', email: 'a@b.test', fullName: TYPED, language: 'en', organisationId: 'org', ...profile };
+        },
+      },
+      $transaction: async (run: (tx: unknown) => unknown) => run({ $executeRaw: async () => 1 }),
+    };
+    const mail = {
+      config: {},
+      confirmLink: () => 'https://example.test/auth/confirm',
+      send: async (_to: string, content: { name: string | null }) => { contents.push(content); return { ok: true }; },
+    };
+    const service = new PasswordResetService(
+      prisma as never, { recoveryToken: async () => 'token' } as never, mail as never,
+      { recordSystem: async () => undefined } as never, {} as never,
+    );
+    expect(await service.run('a@b.test')).toBe('sent');
+    // The lookup asks for exactly what the decision reads: the invitation's state and a registration consent.
+    expect(selects[0]).toMatchObject({
+      invitation: { select: { status: true } },
+      consents: { where: { kind: 'kvkk_registration' }, take: 1 },
+    });
+    return contents[0].name;
+  }
+
+  it.each(['pending', 'sent', 'revoked'])('greets nobody for a self-registered account whose invitation is %s', async (status) => {
+    expect(await nameSentFor({ invitation: { status }, consents: [{ id: 'c' }] })).toBeNull();
+  });
+
+  it('uses the name once the address\'s owner has accepted the invitation', async () => {
+    expect(await nameSentFor({ invitation: { status: 'accepted' }, consents: [{ id: 'c' }] })).toBe(TYPED);
+  });
+
+  it('uses the name an administrator or the operator gave — invited, provisioned or seeded accounts are not the public form\'s', async () => {
+    expect(await nameSentFor({ invitation: { status: 'sent' }, consents: [] })).toBe(TYPED);
+    expect(await nameSentFor({ invitation: null, consents: [] })).toBe(TYPED);
   });
 });

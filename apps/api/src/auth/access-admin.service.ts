@@ -6,7 +6,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { InvitationStatus, Prisma, UserRole as DbUserRole } from '@tonyai/db';
-import { isLocale, type Locale, type UserRole } from '@tonyai/shared-types';
+import { isLocale, type ConsentKind, type Locale, type UserRole } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -27,6 +27,28 @@ export interface InviteMember {
   language: Locale;
   subsidiaryIds: string[];
 }
+
+/** What a self-service registration creates — validated by the DTO, re-checked here. */
+export interface RegisterOrganisation {
+  email: string;
+  fullName: string;
+  jobTitle: string;
+  companyName: string;
+  language: Locale;
+  consentVersion: string;
+}
+
+/** The consent a registration records. */
+export const REGISTRATION_CONSENT_KIND: ConsentKind = 'kvkk_registration';
+/** What a registered organisation is born with (owner decision 2026-11-11):
+ *  the pilot runs on Türkiye's factors. Other values are the operator's. */
+export const REGISTRATION_ORGANISATION_DEFAULTS = Object.freeze({
+  country: 'TR',
+  geographyCode: 'TR',
+  reportingCurrency: 'TRY',
+});
+/** What the audit rows of a registration name as their origin. */
+const REGISTRATION_SOURCE = 'auth:registration';
 
 /** The outcome of a disable or enable: whether anything changed. */
 export interface EnabledChange {
@@ -64,8 +86,12 @@ export interface EnabledChange {
  *    refused under the lock — so an organisation always keeps an active
  *    `super_admin`: the actor, who is one and is never the target.
  *
- * Organisations and first administrators are provisioned by the operator, not
- * through this service (D18; `pnpm onboarding provision`).
+ * Organisations and first administrators come from two places (owner decision
+ * 2026-11-11, replacing D18's "the operator only"): the operator
+ * (`pnpm onboarding provision`, on the owner's connection, not through this
+ * service) and self-service registration — `registerOrganisation` and
+ * `reopenRegistration` below, the two methods here with no actor, called only
+ * by the registration service after it has checked the registration code.
  */
 @Injectable()
 export class AccessAdminService {
@@ -289,6 +315,131 @@ export class AccessAdminService {
       throw err;
     }
     return { profileId };
+  }
+
+  /**
+   * Self-service registration: creates an organisation, its first
+   * `super_admin`, that account's invitation and the consent it gave — in one
+   * audited transaction, all or nothing. There is no actor: the caller is the
+   * public registration endpoint, which has already checked the registration
+   * code. Delivery follows outside, as for an invitation. The audit rows name
+   * the defaults, role, language and notice version — never the address, the
+   * name, the job title or the company (D20). An address that already has a
+   * profile anywhere is refused (D17), the unique index catching a race.
+   */
+  async registerOrganisation(input: RegisterOrganisation): Promise<{ organisationId: string; profileId: string }> {
+    if (!isLocale(input.language)) throw new BadRequestException('Unsupported language');
+    const email = normaliseEmail(input.email);
+    const profileId = randomUUID();
+    try {
+      const organisationId = await this.prisma.$transaction(async (tx) => {
+        const taken = await tx.profile.findUnique({ where: { email }, select: { id: true } });
+        if (taken) throw new EmailUnavailableError();
+        const organisation = await tx.organisation.create({
+          data: { legalName: input.companyName.trim(), ...REGISTRATION_ORGANISATION_DEFAULTS },
+          select: { id: true },
+        });
+        await this.audit.recordSystem(
+          {
+            organisationId: organisation.id,
+            action: 'create',
+            entity: 'organisation',
+            entityId: organisation.id,
+            diff: { source: REGISTRATION_SOURCE, ...REGISTRATION_ORGANISATION_DEFAULTS },
+          },
+          tx,
+        );
+        await tx.profile.create({
+          data: {
+            id: profileId,
+            email,
+            fullName: input.fullName.trim(),
+            jobTitle: input.jobTitle.trim(),
+            role: DbUserRole.super_admin,
+            language: input.language,
+            organisationId: organisation.id,
+          },
+        });
+        await tx.invitation.create({ data: { profileId, language: input.language, invitedBy: null } });
+        await this.audit.recordSystem(
+          {
+            organisationId: organisation.id,
+            action: 'invite',
+            entity: 'invitation',
+            entityId: profileId,
+            diff: { source: REGISTRATION_SOURCE, role: DbUserRole.super_admin, language: input.language, subsidiaryIds: [] },
+          },
+          tx,
+        );
+        await tx.consent.create({
+          data: { profileId, kind: REGISTRATION_CONSENT_KIND, textVersion: input.consentVersion, language: input.language },
+        });
+        await this.audit.recordSystem(
+          {
+            organisationId: organisation.id,
+            action: 'create',
+            entity: 'consent',
+            entityId: profileId,
+            diff: { source: REGISTRATION_SOURCE, kind: REGISTRATION_CONSENT_KIND, textVersion: input.consentVersion, language: input.language },
+          },
+          tx,
+        );
+        return organisation.id;
+      });
+      return { organisationId, profileId };
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw new EmailUnavailableError();
+      throw err;
+    }
+  }
+
+  /**
+   * Self-service registration, submitted again for an address whose invitation
+   * is not accepted: re-opens that invitation for a fresh link — only a
+   * registered account's (it holds a registration consent), enabled, in an
+   * active organisation, only outside the cooldown since its last attempt, and
+   * only while it has had fewer than `maxAttempts` deliveries — the address
+   * may not be the submitter's, so the emails it can be sent are bounded.
+   * One statement claims the cooldown, so two submissions at once re-send
+   * once. False when nothing was re-opened; no actor, as above.
+   */
+  async reopenRegistration(rawProfileId: string, cooldownSeconds: number, maxAttempts: number): Promise<boolean> {
+    const profileId = canonicalId(rawProfileId);
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.$queryRaw<{ organisation_id: string; before: string }[]>`
+        WITH target AS (
+          SELECT i.profile_id, i.status::text AS before, p.organisation_id
+          FROM invitations i
+          JOIN profiles p ON p.id = i.profile_id
+          JOIN organisations o ON o.id = p.organisation_id
+          WHERE i.profile_id = ${profileId}::uuid
+            AND i.status IN ('pending', 'sent')
+            AND i.invited_by IS NULL
+            AND p.disabled_at IS NULL
+            AND o.offboarded_at IS NULL
+            AND EXISTS (SELECT 1 FROM consents c WHERE c.profile_id = p.id AND c.kind = ${REGISTRATION_CONSENT_KIND})
+            AND COALESCE(GREATEST(i.sent_at, i.last_attempt_at), i.created_at) <= now() - make_interval(secs => ${cooldownSeconds})
+            AND i.attempts < ${maxAttempts}
+          FOR UPDATE OF i
+        )
+        UPDATE invitations i
+        SET status = 'pending', last_attempt_at = now(), updated_at = now()
+        FROM target
+        WHERE i.profile_id = target.profile_id
+        RETURNING target.organisation_id::text AS organisation_id, target.before`;
+      if (claimed.length !== 1) return false;
+      await this.audit.recordSystem(
+        {
+          organisationId: claimed[0].organisation_id,
+          action: 'invite',
+          entity: 'invitation',
+          entityId: profileId,
+          diff: { source: REGISTRATION_SOURCE, resend: true, before: { status: claimed[0].before } },
+        },
+        tx,
+      );
+      return true;
+    });
   }
 
   /**

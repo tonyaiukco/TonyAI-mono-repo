@@ -77,6 +77,8 @@ import type {
   InviteUserRequest,
   ListUsersParams,
   PasswordResetRequest,
+  RegistrationRequest,
+  RegistrationStatus,
   ReplaceUserAccessRequest,
   UpdateUserRoleRequest,
   UserSummaryDTO,
@@ -463,6 +465,31 @@ export const api = {
    */
   requestPasswordReset: async (body: PasswordResetRequest): Promise<void> => {
     const res = await fetch(`${BASE_URL}/auth/password-reset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await apiError(res);
+  },
+  /**
+   * Whether this environment registers companies — public, so no session
+   * header. Null when it does not (404 `registration_unavailable`): the page
+   * then shows no form. Any other failure is thrown.
+   */
+  getRegistrationStatus: async (): Promise<RegistrationStatus | null> => {
+    const res = await fetch(`${BASE_URL}/auth/registration`, { headers: { Accept: "application/json" } });
+    if (res.ok) return (await res.json()) as RegistrationStatus;
+    const error = await apiError(res);
+    if (error.status === 404 && error.code === "registration_unavailable") return null;
+    throw error;
+  },
+  /**
+   * Registers a company and its first administrator — public. 202 with no
+   * body for every address once the code is right; 403
+   * `registration_code_invalid` on a wrong code, 429 past the quota.
+   */
+  register: async (body: RegistrationRequest): Promise<void> => {
+    const res = await fetch(`${BASE_URL}/auth/registration`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InvitationStatus, type PrismaClient } from '@tonyai/db';
 import { isLocale, DEFAULT_LOCALE } from '@tonyai/shared-types';
+import { REGISTRATION_CONSENT_KIND } from '../auth/access-admin.service';
 import { MailService } from '../mail/mail.service';
 import { AuthAdminError, AuthAdminService } from './auth-admin.service';
 import { AuthSyncService } from './auth-sync.service';
@@ -105,12 +106,17 @@ export class InvitationDeliveryService {
     const inviter = invitation.invitedBy
       ? (await db.profile.findUnique({ where: { id: invitation.invitedBy }, select: { fullName: true } }))?.fullName ?? null
       : null;
+    // A first administrator who registered the organisation holds the consent
+    // registration records; one the operator provisioned holds none.
+    const selfRegistered = !invitation.invitedBy
+      && (await db.consent.count({ where: { profileId, kind: REGISTRATION_CONSENT_KIND } })) > 0;
     const sent = await this.mail.send(email, {
       kind: 'invitation',
       language: isLocale(invitation.language) ? invitation.language : DEFAULT_LOCALE,
       name: fullName,
       organisation: organisation.tradingName || organisation.legalName,
       inviter,
+      selfRegistered,
       link,
     });
     if (!sent.ok) return this.fail(db, profileId, 'email', sent.code);

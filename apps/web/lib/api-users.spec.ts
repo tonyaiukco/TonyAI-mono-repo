@@ -82,6 +82,52 @@ describe('LP4-01 user management calls', () => {
   });
 });
 
+describe('self-service registration calls — public, no session header', () => {
+  const REQUEST = {
+    firstName: 'Ada',
+    lastName: 'Yilmaz',
+    companyName: 'Example Holding',
+    jobTitle: 'Sustainability Manager',
+    email: 'ada@example.test',
+    registrationCode: 'aB3x9',
+    consent: true as const,
+    consentVersion: 'placeholder-1',
+    language: 'tr' as const,
+  };
+
+  it('reads the status while registration is enabled', async () => {
+    respond({ consentVersion: 'placeholder-1', consentIsPlaceholder: true });
+    await expect(api.getRegistrationStatus()).resolves.toEqual({ consentVersion: 'placeholder-1', consentIsPlaceholder: true });
+    expect(call().url.pathname).toBe('/api/v1/auth/registration');
+    expect(call().init.headers).toEqual({ Accept: 'application/json' });
+  });
+
+  it('reads a switched-off registration as null, and throws any other failure', async () => {
+    respond({ statusCode: 404, code: 'registration_unavailable', message: 'Registration is not available' }, 404);
+    await expect(api.getRegistrationStatus()).resolves.toBeNull();
+    // A 404 of another kind (a proxy, an older API) is not "switched off".
+    respond({ statusCode: 404, code: 'not_found', message: 'Cannot GET' }, 404);
+    await expect(api.getRegistrationStatus()).rejects.toMatchObject({ status: 404 });
+    respond({ statusCode: 429, code: 'rate_limited', message: 'slow down' }, 429);
+    await expect(api.getRegistrationStatus()).rejects.toMatchObject({ status: 429, code: 'rate_limited' });
+  });
+
+  it('submits a registration without a session header and reads no body from the 202', async () => {
+    respond(undefined, 202);
+    await expect(api.register(REQUEST)).resolves.toBeUndefined();
+    expect(`${call().init.method} ${call().url.pathname}`).toBe('POST /api/v1/auth/registration');
+    expect(call().init.headers).toEqual({ 'Content-Type': 'application/json' });
+    expect(JSON.parse(call().init.body as string)).toEqual(REQUEST);
+  });
+
+  it('surfaces a wrong code and the quota by their codes', async () => {
+    respond({ statusCode: 403, code: 'registration_code_invalid', message: 'The registration code is not valid.' }, 403);
+    await expect(api.register(REQUEST)).rejects.toMatchObject({ status: 403, code: 'registration_code_invalid' });
+    respond({ statusCode: 429, code: 'rate_limited', message: 'slow down' }, 429);
+    await expect(api.register(REQUEST)).rejects.toMatchObject({ status: 429, code: 'rate_limited' });
+  });
+});
+
 // Order matters below: the session ends once per page load.
 describe('a disabled account (D19) — the one place the session ends', () => {
   beforeEach(() => vi.stubGlobal('window', { location: { assign } }));

@@ -7,11 +7,18 @@
     "action": "Accept the invitation",
     "expiry": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. If it has expired, ask your administrator to send a new invitation.",
     "expiryProvisioned": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. If it has expired, ask TonyAI to send a new invitation.",
-    "ignore": "If you weren't expecting this invitation, you can ignore this email."
+    "ignore": "If you weren't expecting this invitation, you can ignore this email.",
+    "subjectRegistered": "Finish setting up your company on TonyAI",
+    "greetingRegistered": "Hello,",
+    "bodyRegistered": "Thank you for registering your company on TonyAI, the carbon accounting and ESG reporting platform. Confirm your email address and choose a password to start as its first administrator.",
+    "actionRegistered": "Confirm and choose a password",
+    "expiryRegistered": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. If it has expired, submit the registration form again with the same email address to receive a new one.",
+    "ignoreRegistered": "If you did not register on TonyAI, you can ignore this email."
   },
   "passwordReset": {
     "subject": "Reset your TonyAI password",
     "greeting": "Hello {name},",
+    "greetingNeutral": "Hello,",
     "body": "We received a request to reset the password of your TonyAI account.",
     "action": "Choose a new password",
     "expiry": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. You can request a new one from the sign-in page.",

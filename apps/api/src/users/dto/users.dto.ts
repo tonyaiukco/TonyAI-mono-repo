@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
+  Equals,
   IsArray,
   IsEmail,
   IsIn,
@@ -11,11 +12,14 @@ import {
   MinLength,
 } from 'class-validator';
 import {
+  REGISTRATION_CONSENT_VERSION,
+  REGISTRATION_FIELD_MAX,
   SUPPORTED_LOCALES,
   type InviteUserRequest,
   type ListUsersParams,
   type Locale,
   type PasswordResetRequest,
+  type RegistrationRequest,
   type ReplaceUserAccessRequest,
   type UpdateUserRoleRequest,
   type UserRole,
@@ -88,4 +92,71 @@ export class PasswordResetDto implements PasswordResetRequest {
   @IsEmail()
   @MaxLength(MAX_EMAIL_LENGTH)
   email!: string;
+}
+
+/**
+ * The address shape Supabase Auth (GoTrue) accepts — the HTML5 one: an
+ * unquoted ASCII local part and dot-separated ASCII labels. Measured against
+ * the local stack's Auth on 2026-11-12 with eighteen edge forms (quoted,
+ * commented, address-literal, spaced, doubled and leading dots, every allowed
+ * symbol): Auth's answer matched this expression on each.
+ */
+export const AUTH_EMAIL_SHAPE =
+  /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+/** A typed value with the space around it removed; anything else is left for the validators. */
+const trimmed = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
+
+/** POST /api/v1/auth/registration — public, behind the registration code. */
+export class RegistrationDto implements RegistrationRequest {
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.firstName)
+  firstName!: string;
+
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.lastName)
+  lastName!: string;
+
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.companyName)
+  companyName!: string;
+
+  @Transform(trimmed)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(REGISTRATION_FIELD_MAX.jobTitle)
+  jobTitle!: string;
+
+  // Only an address Supabase Auth accepts: it refuses any other after the
+  // organisation would already exist, leaving an administrator no email can
+  // ever reach (`ayşe@…` typed on a Turkish keyboard; a quoted local part).
+  // `AUTH_EMAIL_SHAPE` is what Auth was measured to accept; `@IsEmail` adds
+  // the length and top-level-domain rules, so the two together never admit
+  // an address Auth refuses.
+  @IsEmail({ allow_utf8_local_part: false })
+  @Matches(AUTH_EMAIL_SHAPE, { message: 'email must be a plain address: letters, digits and . ! # $ % & \' * + / = ? ^ _ ` { | } ~ - before the @' })
+  @MaxLength(REGISTRATION_FIELD_MAX.email)
+  email!: string;
+
+  // Only bounded here: a code of any wrong shape is a wrong code (403), told
+  // apart from a right one in constant time by the service.
+  @IsString()
+  @MaxLength(64)
+  registrationCode!: string;
+
+  @Equals(true, { message: 'consent must be accepted' })
+  consent!: true;
+
+  // The one notice this API serves: a consent to any other text is refused.
+  @Equals(REGISTRATION_CONSENT_VERSION, { message: 'consentVersion is not the current notice' })
+  consentVersion!: string;
+
+  @IsIn(SUPPORTED_LOCALES)
+  language!: Locale;
 }

@@ -178,7 +178,7 @@ in `infra/config/runtime-limits.json`. Configuration changes require a restart.
 | `REPORT_EVIDENCE_LINK_LIMIT`, `REPORT_MAX_BYTES` | 10,000 / 20,971,520 | Export evidence links and source/output bytes |
 | `DB_CONNECTION_LIMIT`, `DB_POOL_TIMEOUT_SECONDS` | 5 / 5 | Prisma connection pool and acquisition wait |
 | `ACTIVITY_RECORD_METADATA_MAX_ROWS` | 100,000 | Rows `GET /activity-records/metadata` counts before 422 `query_too_broad` (LP4-05 PR C) |
-| `AUTH_EMAIL_PER_IP_PER_MINUTE` | 5 | Password-reset requests per client address, at most 10,000 (LP4-01 S6; registered here since LP4-05 PR C, so an empty value now fails startup like the others) |
+| `AUTH_EMAIL_PER_IP_PER_MINUTE` | 5 | Password-reset requests and self-service registrations per client address (one quota for both; a wrong registration code spends it), at most 10,000 (LP4-01 S6; registered here since LP4-05 PR C, so an empty value now fails startup like the others) |
 
 Slow body reception uses the per-IP cap and, for multipart, the global and
 verified-user upload slots. HTTP work, mutation, import and export slots are

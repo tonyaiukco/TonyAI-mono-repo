@@ -76,6 +76,9 @@ model Profile {
   /// up by exact equality; the unique index is then case-insensitive in effect.
   email                String                 @unique
   fullName             String                 @map("full_name")
+  /// The person's job title, as they typed it at registration; null for an
+  /// account that was invited or provisioned (nothing else asks for it yet).
+  jobTitle             String?                @map("job_title")
   role                 UserRole               @default(data_entry)
   /// A `SUPPORTED_LOCALES` entry (CHECK `profiles_language_supported`, LP3-01);
   /// the user sets their own through PATCH /me/preferences.
@@ -85,6 +88,7 @@ model Profile {
   organisation         Organisation?          @relation(fields: [organisationId], references: [id])
   subsidiaryAccess     UserSubsidiaryAccess[]
   invitation           Invitation?
+  consents             Consent[]
   /// Set while the account is disabled (D19, LP4-01): the API's guard refuses
   /// it on the next request (401 `account_disabled`) and Supabase Auth bans it.
   disabledAt           DateTime?              @map("disabled_at") @db.Timestamptz(6)
@@ -170,6 +174,28 @@ model Invitation {
   updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("invitations")
+}
+
+/// A consent a person gave (self-service registration: the KVKK notice) — one
+/// row per consent, never updated or deleted at runtime: a later notice
+/// version or a second kind is another row, so the history stays. Read and
+/// written by the API alone, like `invitations`; no client role reaches it.
+model Consent {
+  id          String   @id @default(uuid()) @db.Uuid
+  profileId   String   @map("profile_id") @db.Uuid
+  profile     Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  /// A `CONSENT_KINDS` entry (CHECK `consents_kind_known`).
+  kind        String
+  /// The version of the notice the person was shown
+  /// (`REGISTRATION_CONSENT_VERSION` at the time).
+  textVersion String   @map("text_version")
+  /// The language the notice was shown in.
+  language    String
+  // Database time, stamped by the default: the runtime role may not write it.
+  acceptedAt  DateTime @default(dbgenerated("transaction_timestamp()")) @map("accepted_at") @db.Timestamptz(6)
+
+  @@index([profileId])
+  @@map("consents")
 }
 
 enum InvitationStatus {

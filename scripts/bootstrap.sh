@@ -122,6 +122,12 @@ SMTP_HOST=127.0.0.1
 SMTP_PORT=54325
 MAIL_FROM="TonyAI <no-reply@tonyai.local>"
 APP_URL=http://localhost:3000
+# Self-service registration, local development only: /register is open behind
+# this code, over the placeholder KVKK notice. A deployed environment sets its
+# own code as a secret, and the placeholder allowance only where no real
+# customer registers (QA).
+REGISTRATION_CODE=local
+REGISTRATION_ALLOW_PLACEHOLDER_CONSENT=true
 EOF
 info "wrote apps/api/.env"
 

@@ -57,6 +57,14 @@ export class EmailUnavailableError extends ConflictException {
   }
 }
 
+/** Self-service registration: the code is not the environment's. Worded on
+ *  purpose — the code says nothing about any address. */
+export class RegistrationCodeInvalidError extends ForbiddenException {
+  constructor() {
+    super(errorBody('registration_code_invalid', 'The registration code is not valid.'));
+  }
+}
+
 export class InvitationClosedError extends ConflictException {
   constructor() {
     super(errorBody('invitation_closed', 'This invitation was already accepted.'));

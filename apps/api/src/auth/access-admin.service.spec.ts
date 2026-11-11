@@ -147,3 +147,122 @@ describe('tenantAdminLockKey', () => {
     expect(Number.isInteger(tenantAdminLockKey(ORG))).toBe(true);
   });
 });
+
+/**
+ * Self-service registration's write, DB-free: what is written, in one
+ * transaction, and what the audit rows hold. The grants, the cooldown claim
+ * and the unique index are proven on PostgreSQL in
+ * test/int/registration.int.spec.ts.
+ */
+describe('AccessAdminService.registerOrganisation — self-service registration', () => {
+  const INPUT = {
+    email: '  Ada@Example.test ',
+    fullName: ' Ada Yilmaz ',
+    jobTitle: ' Sustainability Manager ',
+    companyName: ' Example Holding ',
+    language: 'tr' as const,
+    consentVersion: 'placeholder-1',
+  };
+
+  function registrationSetup(options: { taken?: boolean; failAt?: 'organisation' | 'profile' | 'invitation' | 'consent' | 'audit' } = {}) {
+    const writes: { model: string; data: Record<string, unknown> }[] = [];
+    const audits: Record<string, unknown>[] = [];
+    let committed = false;
+    const create = (model: string, result: object = {}) => vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      if (options.failAt === model) throw new Error(`${model} failed`);
+      writes.push({ model, data });
+      return result;
+    });
+    const tx = {
+      profile: { findUnique: vi.fn(async () => (options.taken ? { id: 'someone' } : null)), create: create('profile') },
+      organisation: { create: create('organisation', { id: ORG }) },
+      invitation: { create: create('invitation') },
+      consent: { create: create('consent') },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (run: (t: typeof tx) => Promise<unknown>) => {
+        const result = await run(tx);
+        committed = true;
+        return result;
+      }),
+    };
+    const audit = {
+      record: vi.fn(),
+      recordSystem: vi.fn(async (entry: Record<string, unknown>, writer: unknown) => {
+        if (options.failAt === 'audit') throw new Error('audit failed');
+        expect(writer).toBe(tx); // in the same transaction as the rows
+        audits.push(entry);
+      }),
+    };
+    const service = new AccessAdminService(prisma as unknown as PrismaService, audit as unknown as AuditService);
+    return { service, tx, prisma, audit, writes, audits, committed: () => committed };
+  }
+
+  it('writes the organisation, its first super_admin, the invitation and the consent in one transaction', async () => {
+    const { service, tx, prisma, writes } = registrationSetup();
+    const result = await service.registerOrganisation(INPUT);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.profile.findUnique).toHaveBeenCalledWith({ where: { email: 'ada@example.test' }, select: { id: true } });
+    const byModel = Object.fromEntries(writes.map((w) => [w.model, w.data]));
+    expect(byModel.organisation).toEqual({ legalName: 'Example Holding', country: 'TR', geographyCode: 'TR', reportingCurrency: 'TRY' });
+    expect(byModel.profile).toEqual({
+      id: result.profileId,
+      email: 'ada@example.test',
+      fullName: 'Ada Yilmaz',
+      jobTitle: 'Sustainability Manager',
+      role: UserRole.super_admin,
+      language: 'tr',
+      organisationId: ORG,
+    });
+    expect(byModel.invitation).toEqual({ profileId: result.profileId, language: 'tr', invitedBy: null });
+    expect(byModel.consent).toEqual({ profileId: result.profileId, kind: 'kvkk_registration', textVersion: 'placeholder-1', language: 'tr' });
+    expect(result.organisationId).toBe(ORG);
+    expect(writes.map((w) => w.model)).toEqual(['organisation', 'profile', 'invitation', 'consent']);
+  });
+
+  it('audits the organisation, the invitation and the consent with no actor — and no name, address, job title or company in any row', async () => {
+    const { service, audit, audits } = registrationSetup();
+    const { profileId } = await service.registerOrganisation(INPUT);
+    expect(audit.record).not.toHaveBeenCalled(); // there is no actor to record as
+    expect(audits.map((a) => [a.action, a.entity, a.entityId])).toEqual([
+      ['create', 'organisation', ORG],
+      ['invite', 'invitation', profileId],
+      ['create', 'consent', profileId],
+    ]);
+    for (const row of audits) {
+      expect(row.organisationId).toBe(ORG);
+      expect((row.diff as { source: string }).source).toBe('auth:registration');
+    }
+    expect(audits[2].diff).toMatchObject({ kind: 'kvkk_registration', textVersion: 'placeholder-1' });
+    const trail = JSON.stringify(audits).toLowerCase();
+    for (const personal of ['ada', 'yilmaz', 'example.test', 'sustainability', 'example holding']) {
+      expect(trail, personal).not.toContain(personal);
+    }
+  });
+
+  it('refuses an address that already has a profile, writing nothing (D17)', async () => {
+    const { service, writes, audits } = registrationSetup({ taken: true });
+    await expect(service.registerOrganisation(INPUT)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+    expect(writes).toEqual([]);
+    expect(audits).toEqual([]);
+  });
+
+  it('reads a unique-index race as the same refusal', async () => {
+    const { service, tx } = registrationSetup();
+    const { Prisma } = await import('@tonyai/db');
+    tx.profile.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' }));
+    await expect(service.registerOrganisation(INPUT)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+  });
+
+  it.each(['organisation', 'profile', 'invitation', 'consent', 'audit'] as const)('a failure at the %s step leaves the transaction uncommitted', async (failAt) => {
+    const { service, committed } = registrationSetup({ failAt });
+    await expect(service.registerOrganisation(INPUT)).rejects.toThrow(`${failAt} failed`);
+    expect(committed()).toBe(false);
+  });
+
+  it('refuses a language the product does not speak before the database is touched', async () => {
+    const { service, prisma } = registrationSetup();
+    await expect(service.registerOrganisation({ ...INPUT, language: 'de' as 'en' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});

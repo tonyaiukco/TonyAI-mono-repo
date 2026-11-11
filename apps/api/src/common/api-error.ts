@@ -66,6 +66,7 @@ const NOT_FOUND_MESSAGES = {
   user_not_found: 'User not found',
   access_grant_not_found: 'Grant not found',
   invitation_not_found: 'Invitation not found',
+  registration_unavailable: 'Registration is not available',
   boundary_not_found: 'Inventory boundary not found',
   report_dataset_not_found: 'Report dataset not found',
   report_issuance_not_found: 'Report issuance not found',

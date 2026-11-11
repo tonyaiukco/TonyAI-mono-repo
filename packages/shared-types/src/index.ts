@@ -1473,6 +1473,75 @@ export interface PasswordResetRequest {
   email: string;
 }
 
+/** The consents the product records (the `consents` table's `kind`). */
+// `kvkk_registration` also marks an account as self-registered: with no
+// inviter, it is what words the invitation email and what lets registration
+// re-send it. Never record this kind for an account that did not register.
+export const CONSENT_KINDS = ['kvkk_registration'] as const;
+export type ConsentKind = (typeof CONSENT_KINDS)[number];
+
+/**
+ * The version of the KVKK notice the registration page shows; the text itself
+ * is in the web catalogues (`auth.register.notice`). Every consent row stores
+ * the version it was given against, so a change of text is a new version here
+ * in the same change — never an edit under an old one.
+ *
+ * PLACEHOLDER: the reviewed notice has not been written yet. While the version
+ * starts with `placeholder-`, the page labels the text as a placeholder and the
+ * API refuses to enable registration unless the environment explicitly allows
+ * a placeholder notice (`REGISTRATION_ALLOW_PLACEHOLDER_CONSENT`).
+ */
+export const REGISTRATION_CONSENT_VERSION = 'placeholder-1';
+
+/** Whether a notice version is a placeholder, not a reviewed text. */
+export function isPlaceholderConsentVersion(version: string): boolean {
+  return version.startsWith('placeholder-');
+}
+
+/** The registration code's shape: exactly five letters or digits, compared
+ *  case-sensitively (owner decision 2026-11-11). */
+export const REGISTRATION_CODE_PATTERN = /^[A-Za-z0-9]{5}$/;
+
+/** The longest value each typed registration field may hold. */
+export const REGISTRATION_FIELD_MAX = Object.freeze({
+  firstName: 100,
+  lastName: 100,
+  companyName: 200,
+  jobTitle: 100,
+  email: 254,
+});
+
+/** GET /api/v1/auth/registration — public. 200 while registration is enabled
+ *  in the environment, 404 `registration_unavailable` otherwise. */
+export interface RegistrationStatus {
+  consentVersion: string;
+  consentIsPlaceholder: boolean;
+}
+
+/**
+ * POST /api/v1/auth/registration — public. Creates an organisation and its
+ * first `super_admin`, and emails the invitation. 202 with no body for every
+ * address once the code is right — new, invited or active — so the answer
+ * never says whether an address has an account; 403
+ * `registration_code_invalid` for a wrong code.
+ */
+export interface RegistrationRequest {
+  firstName: string;
+  lastName: string;
+  /** The organisation's legal name. */
+  companyName: string;
+  /** The person's job title, not the company's trade name. */
+  jobTitle: string;
+  email: string;
+  registrationCode: string;
+  /** The KVKK notice was accepted — nothing else is a registration. */
+  consent: true;
+  /** The notice version the form showed (`RegistrationStatus.consentVersion`). */
+  consentVersion: string;
+  /** The form's language: the invitation email's and the account's first. */
+  language: Locale;
+}
+
 // ---------------------------------------------------------------------------
 // API contract types (backend <-> frontend) — Milestone 1 vertical slice
 // ---------------------------------------------------------------------------
@@ -2605,6 +2674,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** LP4-01: the profile has no invitation (a seeded account, from before
    *  LP4-01) — same shape as any other 404. */
   invitation_not_found: 404,
+  /** Self-service registration is not enabled in this environment (no
+   *  registration code is configured) — the endpoints answer as missing. */
+  registration_unavailable: 404,
   /** LP3-04: an inventory boundary version (of another organisation, or none). */
   boundary_not_found: 404,
   /** LP3-04 PR C: a report dataset — of another organisation, referencing a
@@ -2629,6 +2701,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** LP3-04 PR D (W4): the dataset qualifies as final, and only a
    *  super_admin issues a final report; a consultant issues partials. */
   report_final_forbidden: 403,
+  /** The registration code does not match the environment's. It says nothing
+   *  about any address, so it is the one refusal registration words. */
+  registration_code_invalid: 403,
   /** Subsidiary grants belong to data_entry users only (LP1-03): other roles
    *  read their whole organisation, and a stored grant would widen access on
    *  a later role change. */
@@ -5528,6 +5603,9 @@ export const AUDIT_ENTITIES = [
   // operator CLI; an account's invitation (`invite`, `accept`).
   'organisation',
   'invitation',
+  // Self-service registration: the KVKK consent given with it; `entityId` is
+  // the profile, the diff names the consent kind and the notice version.
+  'consent',
   // LP3-04: an inventory boundary version; `entityId` is the version. A copy
   // is a `create` whose diff names `copyOf`; a subsidiary's declaration
   // replaced or removed is an `update` whose diff holds it before and after.

@@ -754,7 +754,17 @@ describe('the runtime role is refused', () => {
     ['dropping a policy', 'DROP POLICY subsidiaries_select_scoped ON subsidiaries'],
     ['turning RLS off', 'ALTER TABLE subsidiaries DISABLE ROW LEVEL SECURITY'],
     ['forcing RLS on', 'ALTER TABLE subsidiaries FORCE ROW LEVEL SECURITY'],
-    ['creating an organisation', `INSERT INTO organisations (id, legal_name, country, geography_code, updated_at) VALUES (gen_random_uuid(), 'x', 'GB', 'UK', now())`],
+    // Self-service registration creates an organisation (a column-level
+    // INSERT), but never one born offboarded, and never changes or removes one.
+    ['creating an organisation born offboarded', `INSERT INTO organisations (id, legal_name, country, geography_code, updated_at, offboarded_at) VALUES (gen_random_uuid(), 'x', 'GB', 'UK', now(), now())`],
+    ['renaming an organisation', `UPDATE organisations SET legal_name = 'x' WHERE false`],
+    ['changing an organisation currency', `UPDATE organisations SET reporting_currency = 'EUR' WHERE false`],
+    ['deleting an organisation', 'DELETE FROM organisations WHERE false'],
+    // A consent is inserted and read: never rewritten, removed or backdated.
+    ['rewriting a consent', `UPDATE consents SET text_version = 'x' WHERE false`],
+    ['deleting a consent', 'DELETE FROM consents WHERE false'],
+    ['backdating a consent', `INSERT INTO consents (id, profile_id, kind, text_version, language, accepted_at) SELECT gen_random_uuid(), id, 'kvkk_registration', 'x', 'en', now() - interval '1 year' FROM profiles LIMIT 1`],
+    ['rewriting a job title', `UPDATE profiles SET job_title = 'x' WHERE id = gen_random_uuid()`],
     // LP4-01: an invitation creates its profile, but never one born disabled
     // or carrying the Auth or reset bookkeeping.
     ['creating a profile born disabled', `INSERT INTO profiles (id, email, full_name, updated_at, disabled_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
