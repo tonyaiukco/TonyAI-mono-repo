@@ -40,9 +40,8 @@
 
 ## Workflow follow-up
 
-- Open the pull request; the owner merges. Merged, registration stays off everywhere: no environment sets `REGISTRATION_CODE`.
-- **A separate change and pull request (owner decision 2026-11-11) carries the code to hosted QA** — the application Terraform root's optional registration input (the `registration-code` Key Vault secret by exact version, and the placeholder allowance, staging only), the foundation's grant for that secret, the deploy scripts that refuse a secret they do not know (`terraform_run.validate_release`, `deploy_apps.verify`, `release_secrets.py`, `foundation_contract.py`, `qa_autodeploy.py`'s input export) with their tests, and the runbook steps (store, rotate, switch off, close an unaccepted registration with `offboard`).
-- After that change is applied by the owner, register one holding end to end on `qa.tonyai.io/register`; record the deploy in the planning file.
-- Archive the change once the QA check passes.
+- Merged as PR #309 (`7091f1f`, 2026-11-11) and deployed to hosted QA as `ci43-1`, where registration is off: no environment sets `REGISTRATION_CODE` (`GET /auth/registration` answers 404 `registration_unavailable`).
+- Archived on 2026-11-12, before the end-to-end check on QA (owner decision 2026-11-12): that check cannot run until the code reaches hosted QA, and the infrastructure change needs this capability's spec in place to add to.
+- **A separate change and pull request (owner decision 2026-11-11) carries the code to hosted QA** — the application Terraform root's optional registration input (the `registration-code` Key Vault secret by exact version, and the placeholder allowance, staging only), the foundation's grant for that secret, the deploy scripts that refuse a secret they do not know (`terraform_run.validate_release`, `deploy_apps.verify`, `release_secrets.py`, `foundation_contract.py`, `qa_autodeploy.py`'s input export) with their tests, and the runbook steps (store, rotate, switch off, close an unaccepted registration with `offboard`). The end-to-end registration on `qa.tonyai.io/register` is that change's task.
 - Plan the `register.<env>` hostname as its own change.
 - The pilot enables registration only after the reviewed KVKK notice ships under a new version.
