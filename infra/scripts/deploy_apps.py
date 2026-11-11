@@ -10,6 +10,7 @@ from terraform_run import invoke, validate_release
 from runtime_limits import expected_env, validate_limits
 from drain_api import drain, settle, revisions
 from mail_settings import verify_mail_environment
+from registration_settings import verify_registration_environment
 from public_hosts import web_origins
 
 
@@ -43,6 +44,7 @@ def verify(inputs, read=az):
             raise SafeFailure('Unexpected application process topology.')
         container = properties['template']['containers'][0]
         verify_mail_environment(container.get('env', []), foundation, release, kind)
+        verify_registration_environment(container.get('env', []), foundation, release, kind)
         expected_image = foundation['registry_name'] + '.azurecr.io/tonyai/' + kind + '@' + release[kind + '_digest']
         if container.get('image') != expected_image:
             raise SafeFailure('Deployed image differs from selected release.')
@@ -96,6 +98,8 @@ def verify(inputs, read=az):
         }
         if kind == 'api' and 'mail' in release:
             expected['smtp-password'] = release['mail']['password_secret_version']
+        if kind == 'api' and 'registration' in release:
+            expected['registration-code'] = release['registration']['code_secret_version']
         if set(actual) != set(expected):
             raise SafeFailure('Unexpected runtime secret set.')
         for name, version in expected.items():

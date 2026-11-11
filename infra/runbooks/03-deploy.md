@@ -745,3 +745,106 @@ release, deploy/read back and smoke it; retain the previous enabled version only
 for the approved rollback window. For image rollback preserve compatible mail
 parameters, secret versions and Auth policy. Removing `mail` disables delivery;
 it is never evidence of successful onboarding or a reason to enable GoTrue email.
+
+## 3.6 Self-service registration code (OpenSpec `registration-hosted-config`)
+
+Self-service registration (`/register`, `POST /auth/registration`) is **off unless
+the release names it**. The API's switch is its `REGISTRATION_CODE` setting: exactly
+five letters or digits, case-sensitive, shared by hand with the companies invited to
+register. Without it both routes answer 404 `registration_unavailable`.
+
+The optional `release.registration` object in `infra/config/application.example.json`
+is all-or-none and holds no secret:
+
+- `code_secret_version` — the exact version of the Key Vault secret
+  `registration-code`. Never the code itself: a manifest is shown to release
+  reviewers, and a five-character value where 32 hex are required is refused.
+- `allow_placeholder_consent` — whether this environment may register over the
+  **placeholder** KVKK notice. `true` is accepted on `staging` only; a production
+  manifest that says `true` is refused by `terraform_run.py` and again by the
+  application root's variable validation. The check reads the foundation's
+  `environment` label: it protects an environment that is labelled `production`,
+  and nothing protects one built for customers under the label `staging`. With a code set and the allowance off,
+  the API refuses to start while the shipped notice is still a placeholder — so a
+  production release names this block only once the reviewed notice has shipped,
+  and then with `false`.
+
+Remove the whole object to keep registration off; no registration setting is then
+emitted and the plan does not change.
+
+Owner sequence, on a clean checkout of `main` with `QA deploy` disabled
+(`gh workflow disable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`), as for any owner
+release. **Disabling does not stop a deploy or rollback that has already started:**
+before step 1, wait until none is running or queued (runbook 11, "Owner Terraform
+releases", gives the check, which must print nothing), and never
+cancel one part-way. A deploy that is still running patches the template it read
+earlier and would remove the registration settings this release adds. Export the
+manifest of step 3 only after that wait.
+
+1. **Choose the code and type it; do not paste it.** Five letters or digits, mixed
+   case. Keep it in the owner's password manager. It is short enough to type, and
+   typing is the rule since the 2026-11-08 incident, where a copied command replaced
+   a copied password on the clipboard (runbook 11). Store it at the hidden prompt,
+   using an existing valid release manifest (one without the block is fine):
+
+   ```bash
+   python3 infra/scripts/release_secrets.py store --inputs <manifest> --name registration-code
+   ```
+
+   A code of any other shape is refused and nothing is stored, and so is `local`,
+   the development default this repository publishes. The prompt asks once: a
+   mistyped code of the right shape is stored as typed and shows only when the
+   registration at the end is refused, so type it with care. Hidden input is
+   memory-only; the tool prints only the stored version's identifier. Keep the
+   identifier's final segment (32 hex).
+2. **Grant.** Copy the last applied foundation input, set
+   `config.registration_secret_ready=true` and change nothing else; plan, read the
+   plan (exactly one role assignment added: the API identity, Key Vault Secrets
+   User, on `…/secrets/registration-code`), apply (runbook 01). As for
+   `smtp-password` (§3.5), two others can read it in practice: the Storage
+   verification job **shares the API identity**, and the deployer's Managed
+   Identity Operator permission permits indirect use of that identity. These are
+   existing trust boundaries, not isolation this grant adds.
+3. **Release.** Write the live manifest (`qa_autodeploy.py inputs`, runbook 11),
+   give it a new `release_id`, and add:
+
+   ```json
+   "registration": { "code_secret_version": "<the 32-hex segment>", "allow_placeholder_consent": true }
+   ```
+
+   Then `release_secrets.py verify --inputs <new-manifest>` — it checks the named
+   version exists, is enabled and holds a code of the right shape, without printing
+   it — and `terraform_run.py application plan`. Read the plan: the API gains one
+   secret reference and two settings, the revision suffix and `release` tag change,
+   the images do not. Apply with
+   `bash infra/scripts/deploy-apps.sh --backend <backend file> --inputs <new-manifest>`.
+4. **Read back.** `bash infra/scripts/deploy-apps.sh --backend <backend file> --inputs <new-manifest> --verify-only` requires the `registration-code`
+   reference at the exact version on the API identity, `REGISTRATION_CODE` as a
+   reference and never a value, `REGISTRATION_ALLOW_PLACEHOLDER_CONSENT` exactly as
+   released, and no registration setting on the web app. Then
+   `GET <api origin>/api/v1/auth/registration` answers 200 with `consentVersion` and
+   `consentIsPlaceholder`. Re-enable `QA deploy`.
+
+Do the grant before the release: an API revision that references a secret its
+identity cannot read does not become ready.
+
+**Rotate** (the code has spread, or wrong-code refusals in the API log show a
+guessing run): repeat step 1 for a new version, name it in a new manifest under a
+new `release_id`, verify, plan, apply, read back. The old code stops working when
+the new revision takes traffic; disable the old version once nothing references it.
+
+**Switch off, or back out a registration release:** release a manifest without the
+`registration` object **under a fresh `release_id`** — never the previous manifest
+unchanged: its API revision still exists, inactive, and the deploy refuses an
+intended revision that exists but is inactive (runbook 05 says the same of any
+earlier manifest). Then verify, plan, deploy and read back as above. The secret and
+its grant may stay; nothing references them.
+
+**Close an unaccepted registration:** registrations whose invitation is never
+accepted leave their organisation in place. `pnpm onboarding offboard` (runbook 04
+§4.6) closes one; it does not free the address (docs/architecture/security.md,
+"Known limits").
+
+Automatic deploys keep these settings: `deploy-qa.yml` changes image digests only,
+from the live template. `qa_autodeploy.py inputs` reads the block back from the live
+API, so a manifest exported after this release already names it.

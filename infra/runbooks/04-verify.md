@@ -25,9 +25,9 @@ az role assignment list --scope "$(foundation_output vaultId)" --all --query '[]
 ```
 
 **Expected:** Sweden Central; ACR Basic/admin false; Key Vault RBAC/purge
-protection true; API's two database/backend **references**, plus `smtp-password` when configured, with API identity; no web secrets.
+protection true; API's two database/backend **references**, plus `smtp-password` and `registration-code` when configured, with API identity; no web secrets.
 Inspect the secret-level role assignments in the portal as well: API has Secrets
-User on the two runtime secrets and, when enabled, `smtp-password` only; `direct-url` has no API/web/deployer grant.
+User on the two runtime secrets and, when enabled, `smtp-password` and `registration-code` only; `direct-url` has no API/web/deployer grant.
 Confirm the selected `database-url` uses `tonyai_runtime.<project-ref>` and the
 owner `direct-url` is absent from every API/job environment and secret reference.
 Confirm the loader credential is also absent from the API environment and every

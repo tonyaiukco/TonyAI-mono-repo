@@ -53,7 +53,10 @@ deployer ID. Select globally unique names. Record the reviewed infrastructure
 SHA in `release_sha`. The region is fixed by code to `swedencentral`
 (`terraform/foundation/variables.tf`). Complete section 1.4 identity preparation
 before planning: SMTP Entra IDs are foundation inputs. Keep
-`smtp_secret_ready=false` until the vault secret exists.
+`smtp_secret_ready=false` until the vault secret exists, and
+`registration_secret_ready=false` (the default) until `registration-code` has been
+stored (runbook 03 §3.6): each flag grants the API identity Secrets User on that one
+named secret.
 
 ```bash
 python3 infra/scripts/terraform_run.py foundation plan --backend .infra-local/staging/backend.json --inputs .infra-local/staging/foundation.json
