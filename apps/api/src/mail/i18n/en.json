@@ -18,6 +18,7 @@
   "passwordReset": {
     "subject": "Reset your TonyAI password",
     "greeting": "Hello {name},",
+    "greetingNeutral": "Hello,",
     "body": "We received a request to reset the password of your TonyAI account.",
     "action": "Choose a new password",
     "expiry": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. You can request a new one from the sign-in page.",

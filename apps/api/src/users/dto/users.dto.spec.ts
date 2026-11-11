@@ -65,6 +65,13 @@ describe('the registration DTO (self-service registration)', () => {
     ).toEqual([]);
   });
 
+  it.each(["o'brien@example.test", 'ada+qa@example.test', 'ada.yilmaz@sub.example.test', 'ADA@EXAMPLE.TEST', 'a_b-c@example-co.test'])(
+    'accepts the plain address %s',
+    async (email) => {
+      expect(await errorsOf(RegistrationDto, { ...REGISTRATION, email })).toEqual([]);
+    },
+  );
+
   it('trims the typed values', () => {
     const dto = plainToInstance(RegistrationDto, { ...REGISTRATION, firstName: '  Ada ', companyName: ' Example Holding  ' });
     expect(dto.firstName).toBe('Ada');
@@ -82,6 +89,10 @@ describe('the registration DTO (self-service registration)', () => {
     ['an address with a Turkish letter before the @', { ...REGISTRATION, email: 'ay\u015fe@example.test' }, 'email'],
     ['an address with a dotted capital I', { ...REGISTRATION, email: '\u0130lker@example.test' }, 'email'],
     ['an address at a non-ASCII domain', { ...REGISTRATION, email: 'ada@\u00f6rnek.test' }, 'email'],
+    ['a quoted address (valid by the RFC, refused by Auth)', { ...REGISTRATION, email: '"qaquoted"@example.test' }, 'email'],
+    ['an address with a comment', { ...REGISTRATION, email: 'ada(work)@example.test' }, 'email'],
+    ['an address at an address literal', { ...REGISTRATION, email: 'ada@[127.0.0.1]' }, 'email'],
+    ['an address with a space inside', { ...REGISTRATION, email: 'ada yilmaz@example.test' }, 'email'],
     ['an address with spaces around it', { ...REGISTRATION, email: ' ada@example.test ' }, 'email'],
     ['an address past its bound', { ...REGISTRATION, email: `${'a'.repeat(250)}@b.test` }, 'email'],
     ['a first name past its bound', { ...REGISTRATION, firstName: 'x'.repeat(101) }, 'firstName'],

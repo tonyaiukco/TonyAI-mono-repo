@@ -102,6 +102,14 @@ describe('renderMail', () => {
     expect(mail.text).toContain('ask your administrator');
   });
 
+  it.each([['en', 'Hello,'], ['tr', 'Merhaba,']] as const)('greets nobody in a reset for an account whose name is unvouched (%s)', (language, greeting) => {
+    const mail = renderMail({ kind: 'password_reset', language, name: null, link: LINK });
+    expect(mail.text.split('\n')[0]).toBe(greeting);
+    expect(mail.html).toContain(`>${greeting}<`);
+    expect(mail.text).not.toContain('{name}');
+    expect(mail.html).not.toContain('{name}');
+  });
+
   it('renders a reset in English, one hour stated', () => {
     const mail = renderMail({ kind: 'password_reset', language: 'en', name: 'Ann', link: LINK });
     expect(mail.subject).toBe('Reset your TonyAI password');

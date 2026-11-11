@@ -45,7 +45,10 @@ export type InvitationMail = {
 export type PasswordResetMail = {
   kind: 'password_reset';
   language: Locale;
-  name: string;
+  /** Null for an account whose name nobody has vouched for — a self-registered
+   *  one not yet accepted: the public form's typed text stays out of this
+   *  email too, and the greeting names nobody. */
+  name: string | null;
   link: string;
 };
 
@@ -74,7 +77,8 @@ function format(language: Locale, message: string, values: Record<string, string
 export function renderMail(content: MailContent): RenderedMail {
   const catalogue = MAIL_CATALOGUES[content.language];
   const section = content.kind === 'invitation' ? catalogue.invitation : catalogue.passwordReset;
-  const plain: Record<string, string | number> = { name: content.name, hours: AUTH_LINK_TTL_HOURS };
+  const plain: Record<string, string | number> = { hours: AUTH_LINK_TTL_HOURS };
+  if (content.name !== null) plain.name = content.name;
   if (content.kind === 'invitation') {
     plain.organisation = content.organisation;
     if (content.inviter) plain.inviter = content.inviter;
@@ -103,7 +107,7 @@ export function renderMail(content: MailContent): RenderedMail {
       }
     : {
         subject: section.subject,
-        greeting: section.greeting,
+        greeting: content.kind === 'password_reset' && content.name === null ? catalogue.passwordReset.greetingNeutral : section.greeting,
         body: provisioned ? invitation.bodyProvisioned : section.body,
         action: section.action,
         expiry: provisioned ? invitation.expiryProvisioned : section.expiry,

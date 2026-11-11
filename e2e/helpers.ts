@@ -516,34 +516,49 @@ export async function organisationsNamed(legalName: string): Promise<number> {
 
 /**
  * A working invitation link for a registered address, as a path on the web
- * app. From the email itself where the stack runs its mail catcher (mailpit,
- * local) — that is the link the person would click. CI runs no mail catcher
- * and configures no SMTP, so there the link is minted through the Auth admin
- * API for the Auth user the registration created; the email's wording is the
- * integration suite's to prove.
+ * app. Where the stack runs its mail catcher (mailpit, local) the link comes
+ * from the email itself — the one the person would click — and a catcher
+ * that answers but holds no such email, or one without a link, FAILS: a
+ * broken delivery must not pass on a link minted behind its back. Only where
+ * no catcher answers at all (CI runs none and configures no SMTP) is the link
+ * minted through the Auth admin API for the Auth user the registration
+ * created; the email's wording is then the integration suite's to prove.
  */
 export async function registrationInvitePath(request: APIRequestContext, email: string): Promise<{ path: string; from: 'email' | 'auth-admin' }> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
   const mailpit = `${new URL(url).protocol}//${new URL(url).hostname}:54324`;
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 15_000;
+  let catcher = false;
+  let seen = 'no email arrived';
   while (Date.now() < deadline) {
-    let found: { messages?: { ID: string }[] };
+    let res;
     try {
-      const res = await request.get(`${mailpit}/api/v1/search`, { params: { query: `to:"${email.toLowerCase()}"` }, timeout: 2_000 });
-      if (!res.ok()) break;
-      found = await res.json();
+      res = await request.get(`${mailpit}/api/v1/search`, { params: { query: `to:"${email.toLowerCase()}"` }, timeout: 2_000 });
     } catch {
-      break; // no mail catcher here
+      // Nothing listens there. Once a catcher has answered, a lost connection
+      // is a failure to read it, not its absence.
+      if (!catcher) break;
+      seen = 'the mail catcher stopped answering';
+      await new Promise((r) => setTimeout(r, 250));
+      continue;
     }
-    const id = found.messages?.[0]?.ID;
-    if (id) {
-      const message = (await (await request.get(`${mailpit}/api/v1/message/${id}`)).json()) as { Text: string };
-      const link = /https?:\/\/[^\s]+(\/auth\/confirm\?token_hash=[A-Za-z0-9_-]+&type=invite)/.exec(message.Text);
-      if (link) return { path: link[1], from: 'email' };
+    catcher = true;
+    if (!res.ok()) {
+      seen = `the mail catcher answered ${res.status()}`;
+    } else {
+      const found = (await res.json()) as { messages?: { ID: string }[] };
+      const id = found.messages?.[0]?.ID;
+      if (id) {
+        const message = (await (await request.get(`${mailpit}/api/v1/message/${id}`)).json()) as { Text?: string };
+        const link = /https?:\/\/[^\s]+(\/auth\/confirm\?token_hash=[A-Za-z0-9_-]+&type=invite)/.exec(message.Text ?? '');
+        if (link) return { path: link[1], from: 'email' };
+        seen = 'the email carries no invitation link';
+      }
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  if (catcher) throw new Error(`the invitation email was not delivered to the mail catcher: ${seen}`);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const res = await request.post(`${url}/auth/v1/admin/generate_link`, {

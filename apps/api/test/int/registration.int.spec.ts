@@ -12,6 +12,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import { AuthAdminService } from '../../src/users/auth-admin.service';
 import { AuthSyncService } from '../../src/users/auth-sync.service';
 import { InvitationDeliveryService } from '../../src/users/invitation-delivery.service';
+import { PasswordResetService } from '../../src/users/password-reset.service';
 import { readRegistrationConfig } from '../../src/users/registration-config';
 import {
   REGISTRATION_COOLDOWN_SECONDS,
@@ -206,6 +207,35 @@ describe('a new address — the organisation, its first administrator, the invit
       organisationId: profile.organisationId, accessibleSubsidiaryIds: [],
     });
     expect((await profileOf(request.email))!.invitation!.status).toBe(InvitationStatus.accepted);
+  });
+
+  it('a reset requested before the invitation is accepted carries nothing the registrant typed; after it, the name', async () => {
+    const invited = inbox();
+    const request = job({ firstName: 'Visit https://evil.example', lastName: 'now', language: 'en' });
+    const { registrations, lifecycle } = wire(invited.transport);
+    expect(await registrations.run(request)).toBe('sent');
+    const profile = (await profileOf(request.email))!;
+    expect(profile.fullName).toBe('Visit https://evil.example now');
+
+    const resetWith = (transport: MailTransport) =>
+      new PasswordResetService(runtime, new AuthAdminService(), new MailService(transport, MAIL), new AuditService(runtime), {} as never);
+    const before = inbox();
+    expect(await resetWith(before.transport).run(request.email)).toBe('sent');
+    expect(before.sent).toHaveLength(1);
+    expect(before.sent[0].text.split('\n')[0]).toBe('Hello,');
+    for (const part of [before.sent[0].subject, before.sent[0].text, before.sent[0].html]) {
+      expect(part).not.toContain('evil.example');
+      expect(part).not.toContain(request.companyName);
+    }
+
+    // The address's owner follows that link and accepts: the account is theirs, and so is its name.
+    const token = /token_hash=([A-Za-z0-9_-]+)&type=recovery/.exec(before.sent[0].text)![1];
+    expect((await browser().auth.verifyOtp({ type: 'recovery', token_hash: token })).error).toBeNull();
+    await lifecycle.accept({ id: profile.id, email: profile.email, fullName: profile.fullName, role: profile.role, organisationId: profile.organisationId, accessibleSubsidiaryIds: [] });
+    await owner.profile.update({ where: { id: profile.id }, data: { recoverySentAt: null } }); // past the reset's own cooldown
+    const after = inbox();
+    expect(await resetWith(after.transport).run(request.email)).toBe('sent');
+    expect(after.sent[0].text.split('\n')[0]).toBe('Hello Visit https://evil.example now,');
   });
 
   it('two companies with the same name are two organisations', async () => {
@@ -456,6 +486,10 @@ describe('through the HTTP API — the public routes, the switch and the answers
       expect(await call('POST', refused)).toMatchObject({ status: 400, body: { code: 'validation_failed' } });
       expect(await call('POST', form({ consentVersion: 'v0' }))).toMatchObject({ status: 400, body: { code: 'validation_failed' } });
       expect(await call('POST', form({ email: 'nope' }))).toMatchObject({ status: 400 });
+      // Valid by the RFC, refused by Supabase Auth: stopped here, before an organisation exists.
+      const quoted = form({ email: `"int-reg-quoted-${tag}"@tonyai.test` });
+      expect(await call('POST', quoted)).toMatchObject({ status: 400, body: { code: 'validation_failed' } });
+      expect(await organisationsNamed(quoted.companyName)).toBe(0);
       expect(await profileOf(refused.email)).toBeNull();
     });
 

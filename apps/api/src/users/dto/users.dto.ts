@@ -94,6 +94,16 @@ export class PasswordResetDto implements PasswordResetRequest {
   email!: string;
 }
 
+/**
+ * The address shape Supabase Auth (GoTrue) accepts — the HTML5 one: an
+ * unquoted ASCII local part and dot-separated ASCII labels. Measured against
+ * the local stack's Auth on 2026-11-12 with eighteen edge forms (quoted,
+ * commented, address-literal, spaced, doubled and leading dots, every allowed
+ * symbol): Auth's answer matched this expression on each.
+ */
+export const AUTH_EMAIL_SHAPE =
+  /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
 /** A typed value with the space around it removed; anything else is left for the validators. */
 const trimmed = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
@@ -123,11 +133,14 @@ export class RegistrationDto implements RegistrationRequest {
   @MaxLength(REGISTRATION_FIELD_MAX.jobTitle)
   jobTitle!: string;
 
-  // ASCII only: Supabase Auth refuses any other address, and by then the
-  // organisation would exist with an administrator no email can ever reach
-  // (QA review, F1 — `ayşe@…` typed on a Turkish keyboard).
+  // Only an address Supabase Auth accepts: it refuses any other after the
+  // organisation would already exist, leaving an administrator no email can
+  // ever reach (`ayşe@…` typed on a Turkish keyboard; a quoted local part).
+  // `AUTH_EMAIL_SHAPE` is what Auth was measured to accept; `@IsEmail` adds
+  // the length and top-level-domain rules, so the two together never admit
+  // an address Auth refuses.
   @IsEmail({ allow_utf8_local_part: false })
-  @Matches(/^[\x21-\x7e]+$/, { message: 'email must use ASCII characters only' })
+  @Matches(AUTH_EMAIL_SHAPE, { message: 'email must be a plain address: letters, digits and . ! # $ % & \' * + / = ? ^ _ ` { | } ~ - before the @' })
   @MaxLength(REGISTRATION_FIELD_MAX.email)
   email!: string;
 

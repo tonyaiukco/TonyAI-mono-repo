@@ -18,6 +18,7 @@
   "passwordReset": {
     "subject": "TonyAI şifrenizi sıfırlayın",
     "greeting": "Merhaba {name},",
+    "greetingNeutral": "Merhaba,",
     "body": "TonyAI hesabınızın şifresini sıfırlamak için bir istek aldık.",
     "action": "Yeni şifre belirle",
     "expiry": "Bağlantı yalnızca bir kez kullanılabilir ve {hours, plural, one {# saat} other {# saat}} sonra geçerliliğini yitirir. Giriş sayfasından yenisini isteyebilirsiniz.",

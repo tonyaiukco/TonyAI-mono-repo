@@ -33,7 +33,7 @@ The system SHALL refuse a registration whose code does not match the environment
 - **THEN** the system answers 429 until the quota window passes
 
 ### Requirement: Registration input is validated
-The system SHALL require a first name, a last name, a company name, a job title, a syntactically valid ASCII email address and an accepted consent, and SHALL refuse a submission that lacks any of them without creating anything. It SHALL accept an address from any email domain.
+The system SHALL require a first name, a last name, a company name, a job title, an email address the authentication service accepts (an unquoted ASCII local part and ASCII domain labels) and an accepted consent, and SHALL refuse a submission that lacks any of them without creating anything. It SHALL accept an address from any email domain.
 
 #### Scenario: Consent not accepted
 - **WHEN** a client submits a registration with a valid code and the consent not accepted
@@ -41,6 +41,10 @@ The system SHALL require a first name, a last name, a company name, a job title,
 
 #### Scenario: Address with a non-ASCII character
 - **WHEN** a client submits a registration whose email address contains a non-ASCII character
+- **THEN** the system answers with a validation error and creates nothing
+
+#### Scenario: Quoted address
+- **WHEN** a client submits a registration whose email address has a quoted local part
 - **THEN** the system answers with a validation error and creates nothing
 
 #### Scenario: Free email provider
@@ -72,6 +76,10 @@ After a registration is stored, the system SHALL send the address an invitation 
 #### Scenario: Typed text stays out of the email
 - **WHEN** a registration's name or company name contains a web address
 - **THEN** neither the subject nor the body of the invitation email contains it
+
+#### Scenario: Password reset before the invitation is accepted
+- **WHEN** a password reset is requested for a registered address whose invitation is not accepted
+- **THEN** the reset email greets nobody and contains nothing the registrant typed
 
 #### Scenario: Accepting the invitation
 - **WHEN** the new administrator follows the link and chooses a password

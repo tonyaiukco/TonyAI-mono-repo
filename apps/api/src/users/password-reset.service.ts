@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DEFAULT_LOCALE, isLocale } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
-import { normaliseEmail } from '../auth/access-admin.service';
+import { InvitationStatus } from '@tonyai/db';
+import { normaliseEmail, REGISTRATION_CONSENT_KIND } from '../auth/access-admin.service';
 import { RuntimeLimits } from '../common/runtime-limits';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,8 +21,9 @@ export const RESET_QUEUE_MAX = 1_000;
  * neither its body nor its timing says whether an account exists. Then, for
  * an enabled account of an active organisation outside its cooldown: one
  * audited claim of the cooldown, a fresh recovery link, and the email in the
- * account's own language. Unknown, disabled or cooling-down addresses get
- * nothing.
+ * account's own language — greeting the account by name, except a
+ * self-registered account not yet accepted, whose name is whatever the public
+ * form was given. Unknown, disabled or cooling-down addresses get nothing.
  *
  * Capacity never shows in the answer (Codex review, finding 4): requests wait
  * in a bounded queue for a fixed set of workers, and one past the queue's
@@ -102,9 +104,23 @@ export class PasswordResetService {
         organisationId: { not: null },
         organisation: { offboardedAt: null },
       },
-      select: { id: true, email: true, fullName: true, language: true, organisationId: true },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        language: true,
+        organisationId: true,
+        invitation: { select: { status: true } },
+        consents: { where: { kind: REGISTRATION_CONSENT_KIND }, select: { id: true }, take: 1 },
+      },
     });
     if (!profile) return 'skipped';
+    // A self-registered account nobody has accepted yet: its name came from
+    // the public form, typed by whoever held the registration code — not
+    // necessarily the address's owner. It stays out of this email, as it does
+    // out of the invitation (review of 8c9bcf0, finding 1): a registration
+    // followed by a reset request must not carry typed text to the address.
+    const nameUnvouched = profile.consents.length > 0 && profile.invitation?.status !== InvitationStatus.accepted;
 
     // One statement claims the cooldown, so two requests at once send one email.
     const claimed = await this.prisma.$transaction(async (tx) => {
@@ -143,7 +159,7 @@ export class PasswordResetService {
     const sent = await this.mail.send(profile.email, {
       kind: 'password_reset',
       language: isLocale(profile.language) ? profile.language : DEFAULT_LOCALE,
-      name: profile.fullName,
+      name: nameUnvouched ? null : profile.fullName,
       link,
     });
     return sent.ok ? 'sent' : 'failed';
