@@ -10,6 +10,19 @@ import type { RecordWords } from "@/lib/vocabulary";
  * testable without React.
  */
 
+/**
+ * The page-local URL key that opens one of Emissions' tabs (UAT round 2,
+ * BUG-R2-06): the matrix cell's "View record history" link. Not a reporting
+ * context key — it is this page's view, read once on load and never written
+ * back. Only `history` is honoured; anything else opens the summary.
+ */
+export const EMISSIONS_TAB_PARAM = "tab";
+export const EMISSIONS_HISTORY_TAB = "history";
+
+export function initialEmissionsTab(params: { get(name: string): string | null }): string {
+  return params.get(EMISSIONS_TAB_PARAM) === EMISSIONS_HISTORY_TAB ? EMISSIONS_HISTORY_TAB : "summary";
+}
+
 /** The `emissions` keys an error is worded with. */
 export type EmissionsErrorKey = "errors.sessionExpired" | "errors.forbidden" | "errors.unavailable";
 

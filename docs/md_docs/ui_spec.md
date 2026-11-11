@@ -103,7 +103,7 @@ The interface must convey trust, precision, and control. It is designed for data
 ## 6. Interaction Patterns
 
 ### Hover
-- Interactive cells in the tracking matrix must show a tooltip such as `Click to view details`
+- A tracking-matrix cell opens a popover on click or Enter (not a hover tooltip): the cell's summary and two links, "Open in Data Entry" and "View record history" (Emissions, History tab, filtered to the pair). Text styled as a link must be one (UAT round 2, BUG-R2-06)
 - Clickable cards and rows should have clear hover feedback
 
 ### Loading

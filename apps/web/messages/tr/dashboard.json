@@ -106,12 +106,13 @@
     "ofRequired": "/ {required}",
     "emissions": "Emisyonlar",
     "entries": "Girişler (tüm durumlar)",
-    "withdrawnOne": "Geri çekildi (hiçbir şeye sayılmaz)",
-    "withdrawnMany": "Geri çekilen girişler (hiçbir şeye sayılmaz)",
+    "withdrawnOne": "Geri çekilen kayıt (hesaplamaya dahil edilmedi)",
+    "withdrawnMany": "Geri çekilen kayıtlar (hesaplamaya dahil edilmedi)",
     "owner": "Sorumlu",
     "updated": "Güncellendi",
     "uncalculated": "Buradaki sayılan girişlerin {count} tanesi tCO₂e değeri üretmedi. Bu bugün, kategorinin henüz bir emisyon faktörü olmadığı anlamına gelir.",
-    "details": "Ayrıntılar için tıklayın"
+    "openDataEntry": "Veri Girişi'nde aç",
+    "viewHistory": "Kayıt geçmişini gör"
   },
   "drawer": {
     "perLocationOne": "Konum bazında ölçülüyor · {count} tesis",

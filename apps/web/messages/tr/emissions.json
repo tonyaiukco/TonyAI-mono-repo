@@ -129,7 +129,7 @@
     "noReason": "Gerekçe kaydedilmedi — bu kayıt, gerekçe zorunluluğundan önceye ait.",
     "withdrawnBy": "<actor>{name}</actor> tarafından geri çekildi.",
     "withdrawnByOn": "<actor>{name}</actor> tarafından {date} tarihinde geri çekildi.",
-    "staysOnTrail": "Denetim izi için kayıtta kalır ve hiçbir toplama sayılmaz.",
+    "staysOnTrail": "Denetim izi için kayıtta kalır; hesaplamaya dahil edilmez.",
     "title": "Bu rakamı geri çek",
     "explain": "Onaylanmış bir rakam düzenlenemez. Yanlışsa — çift sayım, yanlış okunmuş bir fatura — geri çekmek onu tüm toplamlardan çıkarır ve dönemi yeniden açar; böylece yerine düzeltilmiş bir rakam girilebilir.",
     "reasonLabel": "Gerekçe (zorunlu; kalıcı kayda geçer)",
@@ -150,7 +150,7 @@
     "printed": "Gerekçeniz oluşturulan her rapora — PDF, Excel ve CSV — olduğu gibi basılır ve sonradan düzenlenemez.",
     "cannotUndo": "Geri alınamaz.",
     "withdrawn": "Geri çekildi — {tonnes} tCO₂e envanterden çıktı.",
-    "withdrawnNoFigure": "Geri çekildi — giriş artık hiçbir toplama sayılmıyor."
+    "withdrawnNoFigure": "Geri çekildi — kayıt hesaplamaya dahil edilmiyor."
   },
   "copy": {
     "action": "Yeni taslağa kopyala",

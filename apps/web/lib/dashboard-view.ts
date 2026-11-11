@@ -17,6 +17,7 @@ import type {
 } from "@/lib/types";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
 import { formatNumber } from "@/lib/i18n/number";
+import { EMISSIONS_HISTORY_TAB, EMISSIONS_TAB_PARAM } from "@/lib/emissions-view";
 
 /**
  * A subsidiary's Scope 1 + 2 total, as the headline and every report count it
@@ -148,4 +149,26 @@ export function matrixToAlerts(matrix: TrackingMatrixDTO, message: (category: st
     }
   }
   return alerts;
+}
+
+/** Where a matrix cell's popover leads (UAT round 2, BUG-R2-06). */
+export interface MatrixCellLinks {
+  /** Data Entry on that pair: it reopens the one record if exactly one exists. */
+  dataEntry: string;
+  /** Emissions' History tab, filtered to the pair, records of every status. */
+  history: string;
+}
+
+/**
+ * A cell is a (subsidiary, category) pair in the grid's year, so both links
+ * carry all three — the round-1 DASH-2 deep link and the ledger under the same
+ * reporting-context keys. One builder, so the two cannot drift apart.
+ */
+export function matrixCellLinks(subsidiaryId: string, category: string, year: number): MatrixCellLinks {
+  const pair = { subsidiaryId, category, year: String(year) };
+  const history = new URLSearchParams({ ...pair, [EMISSIONS_TAB_PARAM]: EMISSIONS_HISTORY_TAB });
+  return {
+    dataEntry: `/data-entry?${new URLSearchParams(pair).toString()}`,
+    history: `/emissions?${history.toString()}`,
+  };
 }

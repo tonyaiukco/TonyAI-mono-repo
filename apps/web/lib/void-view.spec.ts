@@ -313,7 +313,7 @@ describe('voidSuccessMessage', () => {
       record({ category: 'Water', calculation: uncalculated }),
     );
     expect(message).not.toContain('NaN');
-    expect(message).toContain('no longer counts');
+    expect(message).toContain('not included in the calculation');
   });
 });
 

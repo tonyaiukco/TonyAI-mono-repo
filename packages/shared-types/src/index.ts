@@ -3457,6 +3457,31 @@ export interface ReleaseParametersQuery {
   year: number;
 }
 
+/** A status a calculation may resolve from — `withdrawn` never counts as coverage. */
+export type LiveFactorStatus = Exclude<FactorStatus, 'withdrawn'>;
+
+/**
+ * One geography and reporting year the library can price (UAT round 2,
+ * BUG-R2-09): at least one factor in a sealed release of each listed status,
+ * authoritative first. Coarse by design — a category missing inside a covered
+ * year still answers `no_factor` on its own preview.
+ */
+export interface FactorCoverageEntry {
+  geographyCode: string;
+  reportingYear: number;
+  statuses: LiveFactorStatus[];
+}
+
+/**
+ * `GET /api/v1/factors/coverage`: what the library covers under the pricing
+ * policy — authoritative releases only where placeholders are refused, so the
+ * Data Entry legend never claims a year the engine would refuse. Sorted by
+ * geography, then year. No factor value, edition or release id leaves here.
+ */
+export interface FactorCoverageDTO {
+  entries: FactorCoverageEntry[];
+}
+
 /** Statuses a release can be loaded with — `withdrawn` is reached, not loaded. */
 const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'fixture'];
 

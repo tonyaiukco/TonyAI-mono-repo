@@ -68,15 +68,15 @@ test('a cell stays amber until a human accepts the data, and says why', async ({
   // has no shortfall counters, so without this sentence the cell would be amber
   // with nothing anywhere accounting for it — the failure WP17's own review
   // caught on the invoice branch.
-  await submitted.hover();
-  // `.first()` because Radix renders the tooltip body twice — the visible
-  // popper and an off-screen mirror it points `aria-describedby` at — so an
-  // unscoped text locator is a strict-mode violation rather than a real
-  // ambiguity. Asserting through the tooltip role keeps the claim ("this
-  // sentence is IN the tooltip") rather than just "it exists on the page".
-  await expect(page.getByRole('tooltip').first()).toContainText(
+  // The cell's summary opens on click (UAT round 2, BUG-R2-06: a popover with
+  // links, not a hover tooltip). Asserting inside the dialog keeps the claim
+  // ("this sentence is IN the cell's summary") rather than just "it exists on
+  // the page".
+  await submitted.click();
+  await expect(page.getByRole('dialog')).toContainText(
     '1 entry is keyed in but nobody has reviewed it yet',
   );
+  await page.keyboard.press('Escape');
 
   // Accepting it is what finishes the category — by the other super_admin,
   // since nobody approves a record they created (D01).

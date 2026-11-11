@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { axisThousands, buildKpiData, compactTonnes, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { axisThousands, buildKpiData, compactTonnes, matrixCellLinks, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { initialEmissionsTab } from './emissions-view';
 import { copyFor } from '@/lib/i18n/testing';
 import type {
   EmissionsSummary,
@@ -225,5 +226,31 @@ describe('compactTonnes', () => {
     expect(compactTonnes(12_345, tr)).toBe('12,3 bin');
     expect(compactTonnes(1_250_000, tr)).toBe('1,3 mn');
     expect(axisThousands(12_000, tr)).toBe('12 bin');
+  });
+});
+
+describe('matrixCellLinks (BUG-R2-06)', () => {
+  const id = '3f2b6c1e-0d4a-4e8b-9c7d-1a2b3c4d5e6f';
+  const links = matrixCellLinks(id, 'Natural Gas', 2026);
+  const query = (href: string) => new URL(href, 'http://x').searchParams;
+
+  it('opens Data Entry on the pair in the grid\'s year', () => {
+    expect(links.dataEntry.startsWith('/data-entry?')).toBe(true);
+    const q = query(links.dataEntry);
+    expect([q.get('subsidiaryId'), q.get('category'), q.get('year')]).toEqual([id, 'Natural Gas', '2026']);
+    expect(q.has('tab')).toBe(false);
+  });
+
+  it('opens Emissions on its History tab, filtered by the same reporting-context keys', () => {
+    expect(links.history.startsWith('/emissions?')).toBe(true);
+    const q = query(links.history);
+    expect([q.get('subsidiaryId'), q.get('category'), q.get('year'), q.get('tab')]).toEqual([id, 'Natural Gas', '2026', 'history']);
+    expect(initialEmissionsTab(q)).toBe('history');
+  });
+
+  it('Emissions honours only tab=history', () => {
+    expect(initialEmissionsTab(new URLSearchParams(''))).toBe('summary');
+    expect(initialEmissionsTab(new URLSearchParams('tab=trends'))).toBe('summary');
+    expect(initialEmissionsTab(new URLSearchParams('tab=HISTORY'))).toBe('summary');
   });
 });

@@ -10,6 +10,7 @@ import {
   CALCULATION_GAS,
   CATEGORY_SCOPE_MAP,
   CATEGORY_UNITS,
+  FACTOR_STATUS_RANK,
   factorActivityTypeFor,
   isInvoiceTracked,
   isRecordActivityTypeAllowed,
@@ -27,7 +28,10 @@ import type {
   CoverageKey,
   EmissionFactorDetailDTO,
   EmissionFactorDTO,
+  FactorCoverageDTO,
+  FactorCoverageEntry,
   FactorGasCoverage,
+  LiveFactorStatus,
   NaturalGasRecordParameters,
   RefrigerantRecordParameters,
   ReleaseParametersDTO,
@@ -42,6 +46,7 @@ import { RELEASE_SNAPSHOT_SELECT, releaseSnapshot } from './release-snapshot';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   lookupFactorPath,
+  pricedStatuses,
   readReleaseParameters,
   SEALED,
   type FactorLookupKey,
@@ -154,6 +159,38 @@ export class CalculationsService {
       dataYear: f.dataYear,
       release: releaseSnapshot(f.release),
     }));
+  }
+
+  /**
+   * The geographies and reporting years the library can price (UAT round 2,
+   * BUG-R2-09), for the Data Entry legend. Read as pricing reads: the policy's
+   * statuses (`pricedStatuses`), sealed releases, the CO2e row a figure is
+   * multiplied from. Not a selection: it counts rows and returns no value,
+   * edition or id.
+   */
+  async coverage(): Promise<FactorCoverageDTO> {
+    const statuses = pricedStatuses(this.policy);
+    const rows = await this.prisma.emissionFactor.findMany({
+      where: { gas: CALCULATION_GAS, release: { ...SEALED, status: { in: [...statuses] } } },
+      select: { geographyCode: true, reportingYear: true, release: { select: { status: true } } },
+      distinct: ['geographyCode', 'reportingYear', 'releaseId'],
+    });
+    const byPair = new Map<string, FactorCoverageEntry>();
+    for (const row of rows) {
+      // Prisma reads the releases in a second query: a release withdrawn
+      // between the two comes back `withdrawn`. Only a status this policy
+      // prices reaches the wire — skipped, never cast through.
+      if (!statuses.includes(row.release.status as LiveFactorStatus)) continue;
+      const status = row.release.status as LiveFactorStatus;
+      const key = `${row.geographyCode}:${row.reportingYear}`;
+      const entry = byPair.get(key) ?? { geographyCode: row.geographyCode, reportingYear: row.reportingYear, statuses: [] };
+      if (!entry.statuses.includes(status)) entry.statuses.push(status);
+      byPair.set(key, entry);
+    }
+    const entries = [...byPair.values()];
+    for (const entry of entries) entry.statuses.sort((a, b) => FACTOR_STATUS_RANK[b] - FACTOR_STATUS_RANK[a]);
+    entries.sort((a, b) => a.geographyCode.localeCompare(b.geographyCode, 'en') || a.reportingYear - b.reportingYear);
+    return { entries };
   }
 
   /**

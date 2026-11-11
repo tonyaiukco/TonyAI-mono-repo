@@ -26,8 +26,10 @@ const ALLOWED: Record<string, number | 'any'> = {
   // The lookup itself: the candidate factors and conversions, and a resolved
   // release's parameters, by its id (D11).
   'apps/api/src/calculations/factor-lookup.ts': 3,
-  // `listFactors` — the catalogue `GET /factors` lists, no selection.
-  'apps/api/src/calculations/calculations.service.ts': 1,
+  // `listFactors` — the catalogue `GET /factors` lists — and `coverage`, the
+  // geography × year pairs `GET /factors/coverage` counts (BUG-R2-09): no
+  // selection, nothing priced, no value returned.
+  'apps/api/src/calculations/calculations.service.ts': 2,
   // A comment naming the table.
   'apps/api/src/calculations/normalization.ts': 1,
   // The loader re-reads a release it just stored, by its id, and compares a new

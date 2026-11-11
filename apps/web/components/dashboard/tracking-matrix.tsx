@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { CATEGORIES, type TrackingMatrixRow } from '@/lib/types';
 import { StatusCell } from './status-cell';
+import type { MatrixCellLinks } from '@/lib/dashboard-view';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { ChevronRight } from 'lucide-react';
@@ -25,9 +26,10 @@ interface TrackingMatrixProps {
    *  printing a confident status over mixed years. */
   reportingYear: number | null;
   onSubsidiaryClick: (row: TrackingMatrixRow) => void;
-  /** A cell is a (subsidiary, category) pair; the row name and the chevron stay
-   *  on `onSubsidiaryClick`. */
-  onCategoryClick: (row: TrackingMatrixRow, category: string) => void;
+  /** A cell is a (subsidiary, category) pair; choosing it opens its summary
+   *  with these links (BUG-R2-06). The row name and the chevron stay on
+   *  `onSubsidiaryClick`. */
+  cellLinks: (row: TrackingMatrixRow, category: string) => MatrixCellLinks | null;
 }
 
 function getCompletionColor(rate: number): string {
@@ -36,7 +38,7 @@ function getCompletionColor(rate: number): string {
   return 'text-[#B91C1C]';
 }
 
-export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCategoryClick }: TrackingMatrixProps) {
+export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, cellLinks }: TrackingMatrixProps) {
   const t = useTranslations('dashboard');
   const locale = useLocale();
   const words = useRecordWords();
@@ -142,7 +144,7 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
                         responsible={row.designatedPerson ?? '—'}
                         reportingYear={reportingYear}
                         label={`${row.subsidiaryName} ${words.category(cell.category)}`}
-                        onClick={() => onCategoryClick(row, cell.category)}
+                        links={cellLinks(row, cell.category)}
                         compact
                       />
                     ))}

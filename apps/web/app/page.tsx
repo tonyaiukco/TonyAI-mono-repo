@@ -42,6 +42,7 @@ import { nonAuthoritativeFigures } from '@/lib/emissions-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import {
   buildKpiData,
+  matrixCellLinks,
   matrixToAlerts,
   matrixToSubsidiaries,
 } from '@/lib/dashboard-view';
@@ -297,18 +298,14 @@ function CarbonDashboardInner() {
     setDetailOpen(true);
   };
 
-  // A cell is a (subsidiary, category) pair, so clicking one goes where that
-  // pair is acted on rather than opening the same subsidiary drawer as the row
-  // name. Round-1 UAT (DASH-2): the cells advertise "click to view details" and
-  // did nothing distinguishable.
-  const handleMatrixCategoryClick = (row: TrackingMatrixRow, category: string) => {
-    const params = new URLSearchParams({
-      subsidiaryId: row.subsidiaryId,
-      category,
-      // The year the grid shows, which is the selected one.
-      year: String(matrix?.reportingYear ?? context?.year),
-    });
-    router.push(`/data-entry?${params.toString()}`);
+  // A cell is a (subsidiary, category) pair, so it leads where that pair is
+  // acted on rather than to the same subsidiary drawer as the row name
+  // (round-1 UAT DASH-2): its popover offers Data Entry and the pair's ledger
+  // (UAT round 2, BUG-R2-06). The year is the one the grid shows; with none,
+  // there is no single pair to open and the popover offers no link.
+  const matrixCellLinksFor = (row: TrackingMatrixRow, category: string) => {
+    const year = matrix?.reportingYear ?? context?.year;
+    return year == null ? null : matrixCellLinks(row.subsidiaryId, category, year);
   };
 
   /**
@@ -560,7 +557,7 @@ function CarbonDashboardInner() {
                   rows={matrix?.rows ?? []}
                   reportingYear={matrix?.reportingYear ?? null}
                   onSubsidiaryClick={handleMatrixSubsidiaryClick}
-                  onCategoryClick={handleMatrixCategoryClick}
+                  cellLinks={matrixCellLinksFor}
                 />
 
                 <div className="grid gap-6 lg:grid-cols-3">
