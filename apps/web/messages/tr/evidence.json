@@ -39,5 +39,20 @@
   "removeFromThis": "Bu kayıttan kaldır",
   "detached": "Kanıt kaldırıldı",
   "detachedStillOne": "Bu kayıttan kaldırıldı — {fileName} hâlâ {count} başka kaydı destekliyor.",
-  "detachedStillMany": "Bu kayıttan kaldırıldı — {fileName} hâlâ {count} başka kaydı destekliyor."
+  "detachedStillMany": "Bu kayıttan kaldırıldı — {fileName} hâlâ {count} başka kaydı destekliyor.",
+  "tooLarge": "{fileName}: 10 MB sınırını aşıyor",
+  "held": {
+    "hint": "Dosyayı şimdi seçin: taslağı kaydettiğinizde veya gönderdiğinizde yüklenir.",
+    "waiting": "kaydedince yüklenecek",
+    "listLabel": "Kaydı bekleyen dosyalar",
+    "removeAria": "{fileName} dosyasını kaldır",
+    "wait": "Kaydediliyor… kayıt tamamlanınca dosyayı yeniden seçin."
+  },
+  "failed": {
+    "title": "Yüklenemedi. Kayıt taslak olarak kaydedildi.",
+    "note": "yüklenmedi",
+    "retry": "Tekrar dene",
+    "retryAria": "{fileName} dosyasını yeniden yükle",
+    "removeAria": "{fileName} dosyasını listeden kaldır"
+  }
 }

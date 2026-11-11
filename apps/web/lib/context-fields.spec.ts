@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CONTEXT_FIELDS, contextFieldSet, storedContextNumber } from './context-fields';
+import { CONTEXT_FIELDS, contextFieldSet, hasContextValue, storedContextNumber } from './context-fields';
 import { checkDecimal, parseLocaleDecimal, retypeForLocale, typedText, typedValue } from '@/lib/i18n/number';
 
 describe('contextFieldSet', () => {
@@ -56,5 +56,19 @@ describe('a context number across a language switch (M4)', () => {
 
   it('refuses a negative quantity rather than saving it', () => {
     expect(checkDecimal(parseLocaleDecimal('-3', 'en'), 'non_negative').ok).toBe(false);
+  });
+});
+
+describe('hasContextValue (BUG-R2-05: a record with context opens the section)', () => {
+  it('is false for no input, an empty object and blank values', () => {
+    expect(hasContextValue(null)).toBe(false);
+    expect(hasContextValue(undefined)).toBe(false);
+    expect(hasContextValue({})).toBe(false);
+    expect(hasContextValue({ supplier: '', note: '   ', meter: null })).toBe(false);
+  });
+  it('is true for any held value, zero included', () => {
+    expect(hasContextValue({ supplier: 'Enerya' })).toBe(true);
+    expect(hasContextValue({ distanceKm: 0 })).toBe(true);
+    expect(hasContextValue({ note: '', distanceKm: 12 })).toBe(true);
   });
 });

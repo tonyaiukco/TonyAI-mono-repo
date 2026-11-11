@@ -11,7 +11,7 @@ below as one deliberate breaking change. The array clients (`listActivityRecords
 `listDenominators`) are deleted, and every screen reads pages: the review queue
 (server-ordered `review_queue`, its count from metadata), Emissions History
 (the bar's filters, the tab's category and the search applied by the server),
-Data Entry's Previous submissions (page-local selections, labelled "loaded" in
+Data Entry's Entered records table, formerly Previous submissions (page-local selections, labelled "loaded" in
 both locales; a deep link resolved by narrow server filters; each row's
 `periodLocked` instead of a page of locks), the evidence vault and review sheet,
 targets (progress only for each page's ids), denominators and the period-lock
@@ -66,7 +66,7 @@ them were inserted/deleted. Lifecycle changes, permissions and concurrent
 inserts/deletes remain visible: metadata and a later page can differ. Refresh,
 filter changes, local mutations and a stale cursor's `validation_failed` after
 deployment reset the cursor chain. A short nonempty page may carry a continuation;
-only `nextCursor: null` ends traversal. Previous submissions
+only `nextCursor: null` ends traversal. Entered records
 and bulk/evidence selections must be page-local and labelled in both locales;
 deep links use narrow server filters, not a search of the first page.
 No compatibility shim may pretend the first page is the complete history.

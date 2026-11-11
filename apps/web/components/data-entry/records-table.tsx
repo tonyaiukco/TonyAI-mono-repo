@@ -30,6 +30,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { evidenceCell, type RecordsFilter } from "@/lib/records-table-view";
 import { cn } from "@/lib/utils";
 import { recordActions, type RecordActions } from "@/lib/record-edit-view";
 import { api } from "@/lib/api";
@@ -61,8 +64,11 @@ import {
 import {
   EVIDENCE_ALLOWED_MIME_TYPES,
   EVIDENCE_MAX_SIZE_BYTES,
+  ACTIVITY_RECORD_STATUSES,
+  CATEGORIES,
   isSubmittable,
   recordActivityTypesFor,
+  unitSymbol,
 } from "@/lib/types";
 import type {
   ActivityRecordDTO,
@@ -78,7 +84,8 @@ import type { RecordWords } from "@/lib/vocabulary";
 import type { Messages } from "@/messages";
 
 /**
- * The record list beside the Data Entry form.
+ * The records table under the Data Entry form (BUG-R2-05; before it, the
+ * "Previous submissions" list beside the form).
  *
  * Lifted out of `page.tsx`, rendering byte-identically — the one substitution
  * was the tCO₂e cell, which built the "Not calculated" label itself instead of
@@ -133,7 +140,7 @@ const statusBadge: Record<
 };
 
 
-export interface PreviousSubmissionsProps {
+export interface RecordsTableProps {
   /** The pages loaded so far (LP4-05 PR C), newest first. Each row carries
    *  whether its own period is locked, read with it. */
   records: ActivityRecordPageItemDTO[];
@@ -144,7 +151,7 @@ export interface PreviousSubmissionsProps {
   hasMore: boolean;
   loadingMore: boolean;
   onLoadMore: () => void;
-  /** Open a record in the form beside this list. */
+  /** Open a record in the form above this table. */
   onOpen: (record: ActivityRecordPageItemDTO) => void;
   /** Open the record in Edit mode — only offered where `recordActions` allows it (BUG-R2-03). */
   onEdit: (record: ActivityRecordPageItemDTO) => void;
@@ -159,6 +166,13 @@ export interface PreviousSubmissionsProps {
   /** Refetch after one file was attached to several records: their evidence
    *  counts, and the open record's vault, have changed. */
   onEvidenceAttached: () => void;
+  /** The filters in force (year, status, category), applied by the API. */
+  filter: RecordsFilter;
+  onFilterChange: (change: Partial<RecordsFilter>) => void;
+  /** The years the year filter offers, newest first. */
+  yearOptions: readonly number[];
+  /** A filter narrows the list: an empty table means nothing matches. */
+  narrowed: boolean;
 }
 
 
@@ -202,7 +216,7 @@ function RowActions({
   const t = useTranslations("dataEntry");
   if (!actions.edit && !actions.recall && !actions.copy) return null;
   return (
-    <div className="flex shrink-0 flex-col gap-1 pt-1">
+    <div className="flex shrink-0 flex-wrap justify-end gap-1">
       {actions.edit && (
         <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={onEdit} aria-label={t("rowActions.editRecord", { record })}>
           <Pencil className="h-3.5 w-3.5" />
@@ -225,7 +239,7 @@ function RowActions({
   );
 }
 
-export function PreviousSubmissions({
+export function RecordsTable({
   records,
   loading,
   total,
@@ -239,7 +253,11 @@ export function PreviousSubmissions({
   user,
   onSubmitted,
   onEvidenceAttached,
-}: PreviousSubmissionsProps) {
+  filter,
+  onFilterChange,
+  yearOptions,
+  narrowed,
+}: RecordsTableProps) {
   const tErrors = useTranslations("errors");
   const t = useTranslations("dataEntry");
   const tStatus = useTranslations("recordStatus");
@@ -392,17 +410,67 @@ export function PreviousSubmissions({
 
   return (
     <Card data-testid="previous-submissions">
-      <CardHeader>
+      <CardHeader className="space-y-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Clock className="h-4 w-4 text-muted-foreground" />
-          {t("submissions.title")}
+          {t("records.title")}
         </CardTitle>
+        {/* Filters (BUG-R2-05): sent to the API, so Load more honours them. */}
+        <div className="flex flex-wrap items-center gap-2" data-testid="records-filters">
+          <Select
+            value={String(filter.year)}
+            onValueChange={(v) => onFilterChange({ year: v === "all" ? "all" : Number(v) })}
+          >
+            <SelectTrigger className="h-8 w-[130px]" aria-label={t("records.filters.year")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("records.filters.allYears")}</SelectItem>
+              {yearOptions.map((y) => (
+                <SelectItem key={y} value={String(y)}>
+                  {y}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={filter.status}
+            onValueChange={(v) => onFilterChange({ status: v as RecordsFilter["status"] })}
+          >
+            <SelectTrigger className="h-8 w-[160px]" aria-label={t("records.filters.status")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("records.filters.allStatuses")}</SelectItem>
+              {ACTIVITY_RECORD_STATUSES.map((status) => (
+                <SelectItem key={status} value={status}>
+                  {tStatus(`label.${status}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={filter.category}
+            onValueChange={(v) => onFilterChange({ category: v as RecordsFilter["category"] })}
+          >
+            <SelectTrigger className="h-8 w-[200px]" aria-label={t("records.filters.category")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("records.filters.allCategories")}</SelectItem>
+              {CATEGORIES.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {words.category(c)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         {!attachMode && attach.attachableIds.length > 0 && (
           <Button
             size="sm"
             variant="outline"
-            // Wraps rather than overflowing: this column is narrow beside the
-            // form, and a one-line label pushed the page into sideways scroll.
             className="h-auto min-h-7 w-fit max-w-full gap-1.5 whitespace-normal py-1 text-left text-xs"
             data-testid="evidence-attach-start"
             onClick={startAttach}
@@ -427,8 +495,12 @@ export function PreviousSubmissions({
             {t("selectAllLoaded", { count: selectableIds.length })}
           </label>
         )}
+        </div>
       </CardHeader>
-      <CardContent className="space-y-2">
+      {/* Not `space-y-2`: `pickByFieldLabel` finds a form field as a
+          `div.space-y-2` holding its label, and the table's headers ("Value",
+          "Category") would answer for the form's. */}
+      <CardContent className="space-y-3">
         {attachMode && (
           <div
             // Stacked, not side by side: the column is narrow beside the form
@@ -547,13 +619,35 @@ export function PreviousSubmissions({
 
         {loading ? (
           <div className="space-y-2">
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
           </div>
         ) : records.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">{t("submissions.empty")}</p>
+          <p className="py-6 text-center text-sm text-muted-foreground" data-testid="records-table-empty">
+            {narrowed ? t("records.noMatch") : t("submissions.empty")}
+          </p>
         ) : (
-          <div className="space-y-2">
+          <Table data-testid="records-table">
+            <TableHeader>
+              <TableRow>
+                {(showSelection || attachMode) && (
+                  <TableHead className="w-8">
+                    <span className="sr-only">{t("records.columns.select")}</span>
+                  </TableHead>
+                )}
+                <TableHead>{t("records.columns.period")}</TableHead>
+                <TableHead>{t("records.columns.category")}</TableHead>
+                <TableHead>{t("records.columns.entity")}</TableHead>
+                <TableHead className="text-right">{t("records.columns.value")}</TableHead>
+                <TableHead className="text-right">{t("records.columns.emissions")}</TableHead>
+                <TableHead>{t("records.columns.evidence")}</TableHead>
+                <TableHead>{t("records.columns.status")}</TableHead>
+                <TableHead>
+                  <span className="sr-only">{t("records.columns.actions")}</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
             {records.map((r) => {
               const badge = statusBadge[r.status];
               const Icon = badge.icon;
@@ -563,128 +657,116 @@ export function PreviousSubmissions({
               const checked = attachMode ? liveAttach.includes(r.id) : live.includes(r.id);
               const onToggle = attachMode ? toggleAttachRow : toggle;
               const reason = attachMode ? attach.reasonById[r.id] : reasonById[r.id];
+              const category = categoryWithActivity(r, words, t);
+              // `locationName` is optional on the contract, so a bare `??`
+              // would label a site row as the whole company if the include
+              // were ever dropped — a false claim on the one screen built to
+              // tell the two apart. The label is the shared one: the import
+              // template and every report say "Whole company".
+              const entity = r.locationId ? (r.locationName ?? t("submissions.aSite")) : t("wholeCompany");
+              // Uniqueness includes `location_id`, so a whole-company record
+              // and a site record for the same period and category are two
+              // rows; this name tells them apart for the open button and the
+              // checkbox alike.
+              const named = `${words.period(r.periodValue)} ${r.reportingYear} ${category}, ${entity}`;
+              const evidence = evidenceCell(r);
+              const voided = r.status === "voided";
               return (
-                <div key={r.id} className="flex items-start gap-2">
-                  {/* A SIBLING of the row button, never a child. Radix renders
-                      `<button role="checkbox">`, and a button inside a button
-                      is invalid markup that would also fold this control's
-                      label into the row's accessible name — which two shipped
-                      specs locate the row by. */}
-                  {showSelection || attachMode ? (
-                    selectable ? (
-                      <Checkbox
-                        className="mt-3.5 shrink-0"
-                        checked={checked}
-                        onCheckedChange={() => onToggle(r.id)}
-                        // The reporting ENTITY too, for the reason spelled out
-                        // forty lines below: uniqueness includes `location_id`,
-                        // so a whole-subsidiary row and a site row for the same
-                        // period and category are two different records. Without
-                        // it their checkboxes carry byte-identical accessible
-                        // names — indistinguishable to a screen reader, and a
-                        // strict-mode collision for anything locating them.
-                        aria-label={t(attachMode ? "submissions.checkboxAttach" : "submissions.checkboxSelect", {
-                          record: `${words.period(r.periodValue)} ${r.reportingYear} ${categoryWithActivity(r, words, t)}, ${
-                            r.locationId ? (r.locationName ?? t("submissions.aSite")) : t("wholeCompany")
-                          }`,
-                        })}
-                      />
-                    ) : (
-                      // Keeps the rows aligned. A DISABLED checkbox was the
-                      // other option and is worse: it is unfocusable, so the
-                      // reason below never reaches anyone who cannot see it.
-                      <span className="mt-3.5 h-4 w-4 shrink-0" aria-hidden />
-                    )
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => onOpen(r)}
-                    // Deliberately NOT aria-disabled: a non-editable row
-                    // still answers "why can't I edit this?" when
-                    // activated, and marking it disabled is what stops
-                    // assistive tech (and Playwright) from ever reaching
-                    // that answer. The hover affordance below carries the
-                    // distinction instead.
-                    className={`flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors ${
-                      // The lifecycle rule from the contract, not a
-                      // third hand-written copy of it.
-                      isSubmittable(r.status)
-                        ? "hover:border-primary/40 hover:bg-secondary"
-                        : "cursor-default"
-                    }`}
-                  >
-                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium text-foreground">
-                          {words.period(r.periodValue)} {r.reportingYear}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={`px-1.5 py-0 text-[10px] ${badge.className}`}
-                        >
-                          {tStatus(`label.${r.status}`)}
-                        </Badge>
-                      </div>
-                      {/* The reporting entity, which this list did not
-                          show. Uniqueness includes `location_id`, so a
-                          whole-company record and a site record for the
-                          same month and category are two different rows
-                          — and here they were two identical-looking
-                          lines. A user asked to resolve a
-                          double-counted month could not tell which one
-                          they were opening. Built as one string: the
-                          same JSX whitespace trap as above. */}
-                      {/* A withdrawn figure is struck through here too:
-                          the badge already says "Voided", but the
-                          tonnes beside it read like any other row. */}
-                      <div
-                        className={cn(
-                          "text-xs text-muted-foreground",
-                          r.status === "voided" && "line-through",
-                        )}
-                      >
-                        {[
-                          categoryWithActivity(r, words, t),
-                          // `locationName` is optional on the contract,
-                          // so a bare `??` would label a site row as the
-                          // whole company if the include were ever
-                          // dropped — a false claim on the one screen
-                          // built to tell the two apart. The label is the
-                          // shared one: this list said "Whole subsidiary"
-                          // while the import template and every report say
-                          // "Whole company" about the same records.
-                          r.locationId
-                            ? (r.locationName ?? t("submissions.aSite"))
-                            : t("wholeCompany"),
-                          formatTCo2e(
-                            r.calculation,
-                            (v) => t("submissions.tonnes", { value: formatNumber(v, locale, { maximumFractionDigits: 3 }) }),
-                            tCommon("notCalculated"),
-                          ),
-                        ].join(" · ")}
-                      </div>
-                      {/* Only for the rows that LOOK selectable — the list
-                          already shows a status badge, so "Already approved."
-                          beside an Approved badge is noise on every line. */}
-                      {reason && (
-                        <div className="mt-0.5 text-xs text-status-incomplete-text">
-                          {reason}
-                        </div>
+                <TableRow key={r.id} data-testid="records-table-row" className="align-top">
+                  {(showSelection || attachMode) && (
+                    <TableCell className="pt-3">
+                      {selectable ? (
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => onToggle(r.id)}
+                          aria-label={t(attachMode ? "submissions.checkboxAttach" : "submissions.checkboxSelect", {
+                            record: named,
+                          })}
+                        />
+                      ) : (
+                        // Keeps the rows aligned. A DISABLED checkbox was the
+                        // other option and is worse: it is unfocusable, so the
+                        // reason below never reaches anyone who cannot see it.
+                        <span className="block h-4 w-4" aria-hidden />
                       )}
-                    </div>
-                  </button>
-                  <RowActions
-                    actions={recordActions(user, r)}
-                    record={`${words.period(r.periodValue)} ${r.reportingYear} ${categoryWithActivity(r, words, t)}`}
-                    onEdit={() => onEdit(r)}
-                    onRecall={() => onRecall(r)}
-                    onCopy={() => onCopy(r)}
-                  />
-                </div>
+                    </TableCell>
+                  )}
+                  <TableCell className="whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => onOpen(r)}
+                      // Named by the record, starting with its period: a
+                      // screen reader hears which record opens, and the name
+                      // stays what specs and voice users already match.
+                      aria-label={named}
+                      // Deliberately NOT aria-disabled: a non-editable row
+                      // still answers "why can't I edit this?" when activated,
+                      // and marking it disabled is what stops assistive tech
+                      // (and Playwright) from ever reaching that answer.
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-md text-left text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        // The lifecycle rule from the contract, not a third
+                        // hand-written copy of it.
+                        isSubmittable(r.status) ? "underline-offset-4 hover:text-primary hover:underline" : "cursor-default",
+                      )}
+                    >
+                      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      {words.period(r.periodValue)} {r.reportingYear}
+                    </button>
+                  </TableCell>
+                  <TableCell className="min-w-40 whitespace-normal">
+                    {category}
+                    {/* Only for the rows that LOOK selectable — the status
+                        column already says "Approved", so "Already approved."
+                        beside it is noise on every line. */}
+                    {reason && <div className="mt-0.5 text-xs text-status-incomplete-text">{reason}</div>}
+                  </TableCell>
+                  <TableCell className="min-w-32 whitespace-normal text-muted-foreground">{entity}</TableCell>
+                  <TableCell className={cn("text-right tabular-nums", voided && "line-through text-muted-foreground")}>
+                    {formatNumber(r.activityValue, locale, { maximumFractionDigits: 3 })} {unitSymbol(r.activityUnit)}
+                  </TableCell>
+                  {/* A withdrawn figure is struck through: the status says
+                      "Voided", but the tonnes beside it would otherwise read
+                      like any other row's. */}
+                  <TableCell className={cn("text-right tabular-nums", voided && "line-through text-muted-foreground")}>
+                    {formatTCo2e(
+                      r.calculation,
+                      (v) => t("submissions.tonnes", { value: formatNumber(v, locale, { maximumFractionDigits: 3 }) }),
+                      tCommon("notCalculated"),
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {evidence.kind === "missing" ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-status-incomplete-text">
+                        <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+                        {t("records.evidenceMissing")}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <Paperclip className="h-3.5 w-3.5" aria-hidden />
+                        {t(evidence.count === 1 ? "records.evidenceOne" : "records.evidenceMany", { value: formatNumber(evidence.count, locale) })}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={`px-1.5 py-0 text-[10px] ${badge.className}`}>
+                      {tStatus(`label.${r.status}`)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="py-1">
+                    <RowActions
+                      actions={recordActions(user, r)}
+                      record={`${words.period(r.periodValue)} ${r.reportingYear} ${category}`}
+                      onEdit={() => onEdit(r)}
+                      onRecall={() => onRecall(r)}
+                      onCopy={() => onCopy(r)}
+                    />
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </div>
+            </TableBody>
+          </Table>
         )}
         {!loading && records.length > 0 && (
           <div className="flex flex-col items-center gap-2 pt-1">

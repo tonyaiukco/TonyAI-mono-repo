@@ -16,18 +16,21 @@ It is designed as a split view workspace that supports:
 
 ## 2. Page Architecture
 
-This page uses a split layout:
+The page reads in a fixed order (UAT round 2, BUG-R2-05):
 
-- **Top:** Live Session Totals
-- **Left:** Category Navigation
-- **Center:** Active Input Form
-- **Right:** Calculation Preview and Anomaly Alerts
-- **Bottom:** Sticky Action Bar
+- **Form column**, top to bottom:
+  1. `Reporting scope` (subsidiary, location, category, year, period);
+  2. `Activity data` (value, unit, the category's own inputs);
+  3. `Evidence` (§6), shown for every record, saved or not;
+  4. `Additional context`, collapsed until opened; it opens by itself for a record that holds a context value, and when a save is refused for one of its fields;
+  5. the anomaly note, the Edit-mode band and the action bar (§8);
+  6. `Bulk upload` (§9), collapsed until opened, with `Recent imports` inside it.
+- **Side column**: the calculation preview, `Data collection status` and the inventory boundary. On wide screens it stays in view while the form scrolls.
+- **Bottom, full width**: `Entered records` (§9.2), every record of the selected subsidiary as one table.
 
 ### Responsive Behaviour
-- Desktop: three panel workspace
-- Tablet: left navigation collapses, right panel stacks below form if needed
-- Mobile: navigation becomes accordion drawer, right panel moves below form
+- Desktop: form and side column side by side, the records table below both
+- Tablet and mobile: one column (form, side column, records table); only the records table scrolls sideways
 
 ---
 
@@ -144,6 +147,15 @@ Show when relevant:
 ### Upload Area
 Drag and drop uploader with click to browse fallback
 
+### Before the Record Is Saved (BUG-R2-05)
+The evidence API needs a record id, so on a new record (or a copy) the vault **holds** the chosen files in the browser:
+- each file is checked for type and size as it is chosen; a refused one is named in a toast (`notes.txt: unsupported type …`, `scan.png: larger than 10 MB`) and not listed
+- held files are listed as `uploaded when you save`, each with a remove button
+- the first `Save draft` or `Submit for review` creates the record, uploads the held files to it one at a time, reads the record again, and only then runs the evidence and anomaly checks and the submit. An evidence-required record with a file chosen is therefore submitted in one click
+- held files belong to the form they were chosen in: `Start new record`, a subsidiary switch, `Cancel`, `Copy to new draft` or opening another record drops them, and a save still in flight when that happens uploads nothing
+- a file that fails to upload leaves the record a saved draft and the form open on it. The vault lists the file under `Not uploaded. The record is saved as a draft.` with `Retry` and remove, and nothing is submitted
+- a review-only user sees no picker
+
 ### Supported Files
 - PDF
 - JPG
@@ -160,11 +172,11 @@ Drag and drop uploader with click to browse fallback
 ### Validation Rule
 Every Scope 1 and Scope 2 category requires evidence: Electricity, Natural Gas, Fuel, Mobile Combustion, Refrigerants and Fugitive Gas (the last three since K3, 2026-11-10, QA finding BUG-R2-02). Water does too, because its invoice is the only check its reading gets. The other Scope 3 categories do not. For an evidence-required record:
 - completion status cannot become complete unless at least one evidence file is attached;
-- **Submit** saves the record first. With no file, the form keeps the saved draft open with this vault on screen and asks for a file (`Saved. Attach at least one evidence file below, then submit again.`) instead of sending the submit. The API refuses such a submit anyway (`evidence_required`);
+- **Submit** saves the record first, then uploads any file held for it. With still no file, the form keeps the saved draft open with this vault on screen and asks for a file (`Saved. Attach at least one evidence file below, then submit again.`) instead of sending the submit. The API refuses such a submit anyway (`evidence_required`);
 - **Approve** refuses a record that reached review without a file, which records of the three K3 categories could do before 2026-11-10 (`approval_evidence_missing`). Files are locked after submit, so the reviewer rejects the record and its author attaches one and submits again.
 
 ### One File for Several Records
-One document can evidence several records of the same subsidiary (WP8 decision 3a) — e.g. a quarterly invoice behind three monthly records, or the invoice behind the drafts of an import. It is attached from **Previous submissions** (§9.2), not from the vault, and the vault of each record then lists it. Attaching and removing follow the record's own rules: its author or a `super_admin`, while it is a `draft` or `rejected`, and while its period is open.
+One document can evidence several records of the same subsidiary (WP8 decision 3a) — e.g. a quarterly invoice behind three monthly records, or the invoice behind the drafts of an import. It is attached from **Entered records** (§9.2), not from the vault, and the vault of each record then lists it. Attaching and removing follow the record's own rules: its author or a `super_admin`, while it is a `draft` or `rejected`, and while its period is open.
 
 ---
 
@@ -237,8 +249,8 @@ Bulk upload is not an action-bar action — it has its own panel on the page (§
 
 ### Edit, Recall and Copy to new draft (BUG-R2-03)
 A record is held in the form in one of two ways:
-- **Opened** — a Previous submissions row, a dashboard link, or the record just saved. A changed location re-files it in place, with the move notice. A changed category, year or period starts a **new** record (`Now entering a new record.`), and the opened record is left as it was. This guards against the implicit overwrite that once turned a Fuel Q3 draft into Q4.
-- **Edit mode** — entered only by the `Edit` action: on a Previous submissions row, or beside `Editing draft …` for the open record. It is offered only to the record's **author**, `super_admin` included (a `super_admin` cannot edit a colleague's record; they reject it with a note), on a `draft` or `rejected` record in an open period. In Edit mode, the following change the **same** record on save:
+- **Opened** — a Entered records row, a dashboard link, or the record just saved. A changed location re-files it in place, with the move notice. A changed category, year or period starts a **new** record (`Now entering a new record.`), and the opened record is left as it was. This guards against the implicit overwrite that once turned a Fuel Q3 draft into Q4.
+- **Edit mode** — entered only by the `Edit` action: on a Entered records row, or beside `Editing draft …` for the open record. It is offered only to the record's **author**, `super_admin` included (a `super_admin` cannot edit a colleague's record; they reject it with a note), on a `draft` or `rejected` record in an open period. In Edit mode, the following change the **same** record on save:
   - activity value
   - category
   - activity type
@@ -255,7 +267,7 @@ What happens to the record's evidence files in Edit mode:
 
 `Recall` shows on the author's own `submitted` rows. After a confirmation (`Recall this submission?`), the record leaves the review queue and is a draft again, ready to edit and resubmit. Once a reviewer has taken it into review it cannot be recalled (`record_not_recallable`); the reviewer returns it by rejecting it.
 
-`Copy to new draft` shows on a `voided` record, to its author and to a `super_admin`. It is on the Previous submissions row and in the Emissions record drawer, which opens `/data-entry?copyFrom=<id>`. It is D04's re-entry:
+`Copy to new draft` shows on a `voided` record, to its author and to a `super_admin`. It is on the Entered records row and in the Emissions record drawer, which opens `/data-entry?copyFrom=<id>`. It is D04's re-entry:
 - The form opens as a **new** record filled with the voided record's values. No file and no variance comment are copied.
 - The subsidiary stays selectable. Switching it keeps the values and clears only the location.
 - Saving creates a draft whose author is the user who copied it, and it follows the normal review path.
@@ -264,14 +276,14 @@ What happens to the record's evidence files in Edit mode:
 
 ## 9. Bulk Upload and Bulk Submit
 
-This page can import many records at once and send many drafts for review at once. The importer is a `Bulk upload` panel on the page itself, not a modal workflow — the only dialogs are the confirmations before importing and before submitting. Bulk submit is offered in two places: by the panel, for the rows it has just imported, and by a checkbox list on `Previous submissions`, for drafts already on the list.
+This page can import many records at once and send many drafts for review at once. The importer is a `Bulk upload` panel on the page itself, not a modal workflow — the only dialogs are the confirmations before importing and before submitting. Bulk submit is offered in two places: by the panel, for the rows it has just imported, and by a checkbox list on `Entered records`, for drafts already on the list.
 
 The server-side rules behind this section, and the reasons for them, are in [`docs/api/endpoints.md`](../api/endpoints.md) (the WP8 bulk upload and bulk submit paragraphs).
 
 ### 9.1 Bulk Upload Panel
 
 #### Placement and Access
-- sits between the `Reporting scope` card and the `Activity data` card, outside the "editing a record" (`editingId`) gate: it is the alternative to entering records one at a time, and an importer has no open record
+- sits below the form's action bar, in the collapsed `Bulk upload` section with `Recent imports`, outside the "editing a record" (`editingId`) gate: it is the alternative to entering records one at a time, and an importer has no open record (it sat between `Reporting scope` and `Activity data` until BUG-R2-05)
 - rendered only for `data_entry` and `super_admin`; for any other role the panel is absent rather than disabled
 
 #### Template
@@ -303,7 +315,7 @@ The server-side rules behind this section, and the reasons for them, are in [`do
 - rows are created one at a time through the ordinary create path, never a bulk upsert, so each gets its own immutable factor snapshot, the same lifecycle gates as a typed record and its own `create` audit row, beside one `bulk_import` row for the batch. A file refused before any row is read is recorded only when the refusal is about the caller — a role that may not author, or a row naming an entity outside the caller's tenant — not when the file itself is malformed
 - imported rows land as `draft`: they count towards no total and appear in no review queue, so the `Data collection status` panel on the same screen does not move until they are submitted. The verdict repeats this, and the toast reads `N records imported as drafts. Send them for review below to count them towards your inventory.`
 - no transaction spans the import, so a failure part-way through (e.g. a period lock landing mid-import) can leave part of the file written. The report is **not** cleared afterwards — the error list is the user's work list — and after a partial import the verdict advises uploading only the rows that failed, because re-sending the whole file would report the imported rows as duplicates
-- after every attempted import, successful or not, `Previous submissions` and the `Data collection status` panel refresh for the selected subsidiary
+- after every attempted import, successful or not, `Entered records` and the `Data collection status` panel refresh for the selected subsidiary
 - `Upload another file` resets the panel
 - every applied import is kept as an **import batch**: its file, its outcome and the drafts it created. The panel's `Recent imports` card lists the last ten imports the user can see, newest first, and survives a page refresh — the panel's own report does not
 - a whole file is refused when a row names a reporting entity the user cannot reach — a subsidiary, or a location belonging to one — with `Row(s) N name a reporting entity that does not exist or is not yours.`
@@ -320,25 +332,31 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 
 #### From the Bulk Upload Panel
 - after a real import (not a dry run), `Send N records for review` sends the rows just imported
-- rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button, and points to Previous submissions, where one file can be attached to several of the drafts
-- after a submission, `Previous submissions` and the `Data collection status` panel refresh, even when the request fails
+- rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button, and points to Entered records, where one file can be attached to several of the drafts
+- after a submission, `Entered records` and the `Data collection status` panel refresh, even when the request fails
 - **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure. With the TR releases loaded the same holds for Mobile Combustion, Refrigerants and Fugitive Gas (K3): only the other Scope 3 categories go straight from an import to review
 
 #### From Recent Imports
 - each applied import shows its file name, date and time, who imported it, and its outcome (`2 imported · 1 refused`); a batch whose outcome was never recorded (the import was interrupted) says so rather than showing zero
 - `Download file` opens the original file the rows came from, through a short-lived link
-- `Send N drafts for review` sends the drafts of that import the user entered that are not waiting for an evidence file; drafts that are waiting are counted in a note under the batch — `2 drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.` — and the button is absent when none can go
+- `Send N drafts for review` sends the drafts of that import the user entered that are not waiting for an evidence file; drafts that are waiting are counted in a note under the batch — `2 drafts need an evidence file first — under Entered records, attach each invoice to the drafts it evidences; one file can cover several.` — and the button is absent when none can go
 - the same confirmation as the other entry points; the toast gives the verdict and, when records were not moved, the reasons (`Needs an evidence file · 2`)
 - a `data_entry` user sees only the imports they made, and only while they can still reach every subsidiary the file names (the original file holds every row); `consultant`, `executive_viewer` and `super_admin` see every import in their organisation
 
-#### From Previous Submissions
+#### The Entered Records Table (BUG-R2-05)
+- one row per record of the selected subsidiary: period and year (the open control, named `Q1 2026 Electricity, Whole company`), category with activity type, location or `Whole company`, value and unit, tCO₂e or `Not calculated`, evidence (`N files`, or `Missing` where the category requires a file and a live record has none), status, and the row's `Edit`, `Recall` and `Copy to new draft`
+- a voided row's value and tCO₂e are struck through. The table shows **no total**: a sum over drafts, submitted and approved records would read as a figure it is not; totals live on Emissions
+- filters for `Reporting year`, `Status` and `Category`, applied by the API so every page, Load more included, honours them. The year starts at the form's reporting year and follows it until the user picks a year (or `All years`); a subsidiary switch resets them. With a filter on and nothing found, the table says `No record matches these filters.`
+- `Showing N of M` counts the filtered set
+
+#### From Entered Records
 - a row gets a checkbox only when every gate the client can check passes. The list applies the server's gates in the server's order — role, status, authorship, period lock — plus the evidence rule: an evidence-required category with no file attached, so a draft whose invoice is attached qualifies. The anomaly verdict is left to the server, so a ticked draft can still come back refused, e.g. for a missing variance reason
 - a `draft` or `rejected` row that cannot be ticked shows a one-line reason instead, e.g. `Sent back by a reviewer — open it on its own, so the note gets read.`, `Entered by someone else.` or `Needs an evidence file.`; rows in other statuses rely on their status badge
 - no checkboxes appear until the current user has loaded
 - `Select all N` and individual checkboxes offer only the current user's own eligible drafts, up to 1,000 selected records. Submit is author-only (decision D02), including for `super_admin`; someone else's draft cannot be ticked or submitted.
 - a selection shows a bar with `N selected`, `Clear` and `Send N records for review`; a tick beyond 1,000 is refused with a notice
 
-#### Attaching One File to Several Records (Previous Submissions)
+#### Attaching One File to Several Records (Entered Records)
 - `Attach one file to several records` switches the list into its own selection. It is separate from the submit selection because the records it is for — drafts waiting for their invoice — are exactly the ones the submit selection leaves out
 - a row gets a checkbox when it can take a file: `draft` or `rejected`, entered by the current user (any, for a `super_admin`), period open. A draft or rejected row that cannot shows the reason (`Entered by someone else.`, `Q1 2026 is locked.`); there is no `Select all` — the user ticks the records this one document evidences
 - the bar reads `Tick the records this one document evidences.` until something is ticked, then `N selected`, `Cancel` and `Attach one file to N records`, which opens the file chooser (PDF, JPG, PNG, XLSX, CSV, ≤10 MB, checked before upload)

@@ -4,7 +4,7 @@ import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } f
 import { conversionNote } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import {
   AlertCircle,
+  ChevronDown,
   Calculator,
   Info,
   Leaf,
@@ -93,7 +94,7 @@ import { BoundaryCoverage } from "@/components/data-entry/boundary-coverage";
 import { FactorCoverageLegend } from "@/components/data-entry/factor-coverage-legend";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { RecentImports } from "@/components/data-entry/recent-imports";
-import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
+import { RecordsTable } from "@/components/data-entry/records-table";
 import {
   ACTIVITY_UNITS,
   ACTIVITY_VALUE_MAX,
@@ -119,6 +120,16 @@ import {
   usesTrCalculationRules,
 } from "@/lib/types";
 import { appendById } from "@/lib/cursor-pages";
+import { uploadHeldFiles } from "@/lib/held-evidence";
+import {
+  blankRecordsFilter,
+  isNarrowed,
+  pickRecordsFilter,
+  recordsQuery,
+  recordsYearOptions,
+  resolveRecordsFilter,
+  type RecordsFilter,
+} from "@/lib/records-table-view";
 import type {
   ActivityCalculationSnapshot,
   ActivityRecordDTO,
@@ -131,7 +142,7 @@ import type {
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
-import { CONTEXT_FIELDS, contextFieldSet } from "@/lib/context-fields";
+import { CONTEXT_FIELDS, contextFieldSet, hasContextValue } from "@/lib/context-fields";
 import type { Messages } from "@/messages";
 import { geographyName } from "@/lib/vocabulary";
 import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
@@ -231,6 +242,11 @@ function DataEntryPageInner() {
   // opened, a new record, a category change), so each number field remounts
   // and reads its stored value afresh.
   const [contextEpoch, setContextEpoch] = useState(0);
+  // The two secondary sections start collapsed (BUG-R2-05).
+  const [contextOpen, setContextOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const contextPanelId = useId();
+  const bulkPanelId = useId();
   // The number fields whose text is refused; the save is refused while any is,
   // so editing a stored value into a typo never drops it. Reset with the epoch.
   const [refusedContext, setRefusedContext] = useState<ReadonlySet<string>>(() => new Set());
@@ -287,6 +303,9 @@ function DataEntryPageInner() {
   // cannot answer that: an empty list means both "not fetched yet" and "fetched,
   // none exist", and the deep-link effect below has to tell those apart.
   const [recordsFetchedFor, setRecordsFetchedFor] = useState<string | null>(null);
+  // The records table's filters (BUG-R2-05), kept per subsidiary; the year
+  // follows the form's reporting year until the user picks one.
+  const [recordsFilterState, setRecordsFilterState] = useState(() => blankRecordsFilter(""));
   /** Bumped whenever records are refetched, so `CoveragePanel` re-reads the
    *  completeness endpoint after a save, a submit or a subsidiary switch. */
   const [coverageKey, setCoverageKey] = useState(0);
@@ -352,6 +371,20 @@ function DataEntryPageInner() {
   // Which action the form currently belongs to (owner review P2): a Cancel or
   // Copy answer that arrives after the user opened something else is dropped.
   const formSessions = useRef(createFormSessions()).current;
+  // Files chosen on a record not saved yet (BUG-R2-05). The evidence API needs
+  // a record id, so they wait in the browser for the save that creates the
+  // record, and are uploaded to that record only. They belong to the form
+  // session they were chosen in: every new session drops them.
+  const [heldFiles, setHeldFiles] = useState<File[]>([]);
+  // Files that did not upload after that save, and the record they were for.
+  // The vault lists them with Retry only while that record is the one open.
+  const [failedUploads, setFailedUploads] = useState<{ recordId: string; files: File[] } | null>(null);
+  /** Begin a form session: the form has a new subject, so held files go. */
+  function beginFormSession(): number {
+    setHeldFiles([]);
+    setFailedUploads(null);
+    return formSessions.begin();
+  }
   const [saving, setSaving] = useState<null | "draft" | "submit">(null);
 
   const selectedSubsidiary = useMemo(
@@ -572,6 +605,22 @@ function DataEntryPageInner() {
     [editingId],
   );
 
+  // The filters in force, and the API query they make. The record reads are
+  // stable callbacks, so they read the query from a ref kept current by an
+  // effect declared before the one that refetches on a change.
+  const recordsFilter = resolveRecordsFilter(recordsFilterState, subsidiaryId, reportingYear);
+  const recordsQueryKey = JSON.stringify(recordsQuery(recordsFilter));
+  const recordsQueryRef = useRef<Omit<ActivityRecordPageFilters, "subsidiaryId">>({});
+  useEffect(() => {
+    recordsQueryRef.current = JSON.parse(recordsQueryKey) as Omit<ActivityRecordPageFilters, "subsidiaryId">;
+  }, [recordsQueryKey]);
+  // Another subsidiary starts with no filters, A -> B -> A included (QA P2).
+  useEffect(() => {
+    setRecordsFilterState((state) => (state.subsidiaryId === subsidiaryId ? state : blankRecordsFilter(subsidiaryId)));
+  }, [subsidiaryId]);
+  const changeRecordsFilter = (change: Partial<RecordsFilter>) =>
+    setRecordsFilterState((state) => pickRecordsFilter(state, subsidiaryId, change));
+
   /**
    * The subsidiary's first page and its record count — after every write, which
    * starts the cursor chain over (LP4-05's contract). A locked period refuses
@@ -594,7 +643,7 @@ function DataEntryPageInner() {
     }
     setRecordsLoading(true);
     try {
-      const filters: ActivityRecordPageFilters = { subsidiaryId: subId };
+      const filters: ActivityRecordPageFilters = { subsidiaryId: subId, ...recordsQueryRef.current };
       const [page, meta] = await Promise.all([
         api.listActivityRecordPage(filters),
         // Any refusal of the count (422 query_too_broad, a quota, an outage) shows
@@ -632,7 +681,11 @@ function DataEntryPageInner() {
     const mine = recordsSeq.current;
     setRecordsLoadingMore(true);
     try {
-      const page = await api.listActivityRecordPage({ subsidiaryId, cursor: recordsCursor });
+      const page = await api.listActivityRecordPage({
+        subsidiaryId,
+        ...recordsQueryRef.current,
+        cursor: recordsCursor,
+      });
       if (mine !== recordsSeq.current) return;
       setRecords((rows) => appendById(rows, page.items));
       setRecordsCursor(page.nextCursor);
@@ -782,10 +835,12 @@ function DataEntryPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A new subsidiary or new filters start the list over. Both change in one
+  // render on a switch (the filters are per subsidiary), so this runs once.
   useEffect(() => {
     shownSubsidiary.current = subsidiaryId;
     void refreshRecords(subsidiaryId);
-  }, [subsidiaryId, refreshRecords]);
+  }, [subsidiaryId, refreshRecords, recordsQueryKey]);
 
   /**
    * Resolve a deep link against what the subsidiary already has.
@@ -992,7 +1047,6 @@ function DataEntryPageInner() {
    * refuse to save is worse than saying why.
    */
   function loadRecord(rec: ActivityRecordPageItemDTO, mode: "open" | "edit" = "open") {
-    formSessions.begin();
     if (rec.status !== "draft" && rec.status !== "rejected") {
       toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;
@@ -1018,6 +1072,9 @@ function DataEntryPageInner() {
       );
       return;
     }
+    // Only once the record will open: a row that only says why it cannot
+    // leaves the form — its held files, a save in flight — as it was (QA P2).
+    beginFormSession();
     fillForm(rec);
     setEditMode(mode === "edit");
     // `fillForm` cleared the band's files; Edit on the record already open in
@@ -1042,6 +1099,7 @@ function DataEntryPageInner() {
     setActivityUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
+    if (hasContextValue(rec.input)) setContextOpen(true);
     resetInputs(rec.parameters);
     setVerdict(verdictOf(rec));
     setVarianceReason(rec.varianceReason ?? "");
@@ -1106,7 +1164,8 @@ function DataEntryPageInner() {
   }
 
   function resetForm() {
-    formSessions.begin();
+    beginFormSession();
+    setContextOpen(false);
     clearEditChoices();
     setCopying(false);
     activity.setValue(null);
@@ -1154,6 +1213,8 @@ function DataEntryPageInner() {
       return null;
     }
     if (refusedContext.size > 0) {
+      // The field at fault must be on screen to be fixed.
+      setContextOpen(true);
       toast.error(t("context.refused"));
       return null;
     }
@@ -1210,15 +1271,74 @@ function DataEntryPageInner() {
     toast.error(title, description ? { description } : undefined);
   }
 
+  function toastFilesNotUploaded(files: readonly File[]) {
+    toast.info(t("heldEvidence.notUploaded", { files: files.map((f) => f.name).join(", ") }));
+  }
+
+  /**
+   * After the save that created `rec`, upload the files held for it (BUG-R2-05,
+   * design D2) and return the record as the server now holds it, so the
+   * evidence pre-check below reads the server's file count. Files go only to
+   * this record, and none once the form has moved on (`session`). A failure
+   * leaves the record a saved draft and its files listed with Retry.
+   */
+  async function attachHeldFiles(
+    rec: ActivityRecordDTO,
+    files: readonly File[],
+    session: number,
+  ): Promise<{ rec: ActivityRecordDTO; failed: File[] }> {
+    if (files.length === 0) return { rec, failed: [] };
+    const out = await uploadHeldFiles(
+      rec.id,
+      files,
+      (id, file) => api.uploadEvidence(id, file),
+      () => formSessions.isCurrent(session),
+    );
+    if (!formSessions.isCurrent(session)) {
+      // The form moved on mid-upload: say which files the saved draft lacks,
+      // rather than dropping them unseen (security review P3).
+      const missed = [...out.failed.map((f) => f.file), ...out.abandoned];
+      if (missed.length > 0) toastFilesNotUploaded(missed);
+      return { rec, failed: [] };
+    }
+    setHeldFiles([]);
+    const failed = out.failed.map((f) => f.file);
+    setFailedUploads(failed.length > 0 ? { recordId: rec.id, files: failed } : null);
+    if (failed.length > 0) {
+      toast.error(t("heldEvidence.uploadFailed", { files: failed.map((f) => f.name).join(", ") }));
+    }
+    if (out.uploaded.length === 0) return { rec, failed };
+    // The vault re-reads the record's files when it next mounts.
+    setEvidenceVersion((v) => v + 1);
+    try {
+      return { rec: await api.getActivityRecord(rec.id), failed };
+    } catch {
+      // Only the client's mirror of the gate reads this; the API decides.
+      return { rec: { ...rec, evidenceCount: rec.evidenceCount + out.uploaded.length }, failed };
+    }
+  }
+
   async function handleSaveDraft() {
     setSaving("draft");
     // Read once, for use after the awaits. `movingTo` is a per-render const so
     // it could not change mid-handler either way; naming it here is what keeps
     // the success and failure branches describing the SAME attempt.
     const wasMoving = movingTo !== null;
+    // Held files exist only on a record not saved yet; this save creates it.
+    const session = formSessions.current();
+    const held = editingId ? [] : heldFiles;
     try {
-      const rec = await persist();
-      if (!rec) return;
+      const saved = await persist();
+      if (!saved) return;
+      // The user started another record while this one saved: it is a draft,
+      // and the new form is left alone (no file is uploaded to anything).
+      if (!formSessions.isCurrent(session)) {
+        toast.success(t("draftSaved"));
+        if (held.length > 0) toastFilesNotUploaded(held);
+        return;
+      }
+      const { rec } = await attachHeldFiles(saved, held, session);
+      if (!formSessions.isCurrent(session)) return;
       // A saved copy is an ordinary draft from here on (QA review P1): a later
       // subsidiary switch must reset the form, not carry this record along.
       setCopying(false);
@@ -1256,11 +1376,29 @@ function DataEntryPageInner() {
   async function handleSubmit() {
     // Check before persist: an admin may save another author's edits but not submit them.
     if (!canSubmit) return;
+    // A file that did not upload is still listed: the user decides (Retry or
+    // remove) before the record goes, so it never leaves without it unseen.
+    if (failedUploads && failedUploads.recordId === editingId && failedUploads.files.length > 0) {
+      toast.error(t("heldEvidence.resolveFailed"));
+      return;
+    }
     setSaving("submit");
     const wasMoving = movingTo !== null;
+    const session = formSessions.current();
+    const held = editingId ? [] : heldFiles;
     try {
-      const rec = await persist();
-      if (!rec) return;
+      const saved = await persist();
+      if (!saved) return;
+      // As in Save draft: a form that moved on keeps its new subject, and the
+      // record just saved stays a draft — it is not submitted behind the user.
+      if (!formSessions.isCurrent(session)) {
+        toast.success(t("draftSaved"));
+        if (held.length > 0) toastFilesNotUploaded(held);
+        return;
+      }
+      // Upload what was chosen before the save, then decide (design D2).
+      const { rec, failed } = await attachHeldFiles(saved, held, session);
+      if (!formSessions.isCurrent(session)) return;
       setCopying(false);
       afterEditSaved();
       // Keep the saved record "current" so that if submit is blocked (evidence
@@ -1269,6 +1407,12 @@ function DataEntryPageInner() {
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       setVerdict(verdictOf(rec));
+      // A file that did not upload: the record stays a draft, the vault lists
+      // the file with Retry, and nothing is submitted (BUG-R2-05).
+      if (failed.length > 0) {
+        await refreshRecords(subsidiaryId);
+        return;
+      }
       // Mirror the server evidence gate (K3, BUG-R2-02): an evidence-required
       // record with no file stays open as the record just saved, with the vault
       // — which needs its id — on screen to take the file, and no submit is
@@ -1316,7 +1460,7 @@ function DataEntryPageInner() {
   /** Cancel Edit mode: the form goes back to the record as stored. */
   async function cancelEdit() {
     if (!editingId) return;
-    const session = formSessions.begin();
+    const session = beginFormSession();
     try {
       const rec = await api.getActivityRecord(editingId);
       // The user opened or started something else meanwhile: leave it alone.
@@ -1358,7 +1502,7 @@ function DataEntryPageInner() {
       toast.info(t("copy.notVoided"));
       return false;
     }
-    const session = formSessions.begin();
+    const session = beginFormSession();
     try {
       const rec = await api.getActivityRecord(id);
       // A later action owns the form now; this copy would overwrite it.
@@ -1381,6 +1525,7 @@ function DataEntryPageInner() {
       setActivityUnit(values.activityUnit);
       setContext((values.input as ContextValues | null) ?? {});
       setContextEpoch((n) => n + 1);
+      if (hasContextValue(values.input)) setContextOpen(true);
       resetInputs(values.parameters);
       toast.info(t("copy.loaded"));
       return true;
@@ -1452,7 +1597,7 @@ function DataEntryPageInner() {
                           // Every switch gives the form a new subject, so an
                           // answer still on its way (a second Copy, a Cancel)
                           // is dropped rather than refilling it (review P2).
-                          formSessions.begin();
+                          beginFormSession();
                           setSubsidiaryId(v);
                           setLocationId("");
                           // A copy of a voided record may be filed under another
@@ -1685,37 +1830,6 @@ function DataEntryPageInner() {
                 </CardContent>
               </Card>
 
-              {/* Many records at once — the alternative to the form below.
-                  Above the record fields and NOT inside the `editingId` gate:
-                  an importer has no open record, and this is the only thing on
-                  the page a user reaches before having one. */}
-              <BulkUploadPanel
-                canManage={mayAuthorRecords(user)}
-                onImported={() => {
-                  // Both the previous-submissions list and CoveragePanel are
-                  // looking at pre-import numbers at the exact moment the user
-                  // checks them for confirmation. `refreshRecords` bumps
-                  // `coverageKey` itself, so one call is the whole refresh.
-                  //
-                  // Scoped to the SELECTED subsidiary, while an import can
-                  // span every entity the caller can reach — so importing for
-                  // one entity while looking at another correctly changes
-                  // nothing on screen. The panel's own verdict is what reports
-                  // the outcome; widening this would mean refetching every
-                  // accessible subsidiary on every import.
-                  if (subsidiaryId) void refreshRecords(subsidiaryId);
-                  setImportsKey((k) => k + 1);
-                }}
-              />
-
-              <RecentImports
-                canSubmit={mayAuthorRecords(user)}
-                refreshKey={importsKey}
-                onSubmitted={() => {
-                  if (subsidiaryId) void refreshRecords(subsidiaryId);
-                }}
-              />
-
               {/* Activity value — the calc driver */}
               <Card>
                 <CardHeader>
@@ -1836,10 +1950,60 @@ function DataEntryPageInner() {
                 </CardContent>
               </Card>
 
+              {/* Evidence document (BUG-R2-05): always shown. A saved record's
+                  vault uploads to it; on a record not saved yet the files are
+                  held and the save that creates the record uploads them. For
+                  evidence-required categories a file must be attached before
+                  the record can be submitted (FR §4.1, K3). */}
+              <EvidenceVault
+                key={editingId ? `${editingId}:${evidenceVersion}` : "held"}
+                recordId={editingId}
+                category={category}
+                onCountChange={handleEvidenceCountChange}
+                // A consultant is review-only (decision 2026-07-30) and the
+                // evidence API 403s them, so offering upload/delete controls
+                // here only produced a button that always failed.
+                canManage={mayAuthorRecords(user)}
+                heldFiles={heldFiles}
+                onHeldFilesChange={setHeldFiles}
+                failedFiles={failedUploads && failedUploads.recordId === editingId ? failedUploads.files : []}
+                // Only for the record the list is about: a Retry answering after
+                // the user moved to another record must not relabel that
+                // record's failed files as this one's (security review P3).
+                // Removes ONE file from the list as it is now, never a list the
+                // vault computed earlier: a Retry that lands after another file
+                // was removed must not bring that one back (owner review P2).
+                onFailedFileDone={(recordId, file) =>
+                  setFailedUploads((prev) => {
+                    if (!prev || prev.recordId !== recordId) return prev;
+                    const files = prev.files.filter((f) => f !== file);
+                    return files.length > 0 ? { recordId, files } : null;
+                  })
+                }
+                busy={isBusy}
+              />
+
               {/* Optional context — demo extras stored into `input` */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-base">{t("context.title")}</CardTitle>
+              {/* Collapsed until wanted (BUG-R2-05); opened for a record that
+                  holds a value, and by a save it blocks. Hidden, never
+                  unmounted: a number field keeps its typed text and its refusal
+                  note, so a refused value cannot vanish behind a closed toggle
+                  while it still blocks the save (owner review P2). */}
+              <Card data-testid="context-section">
+                <CardHeader className="flex flex-row items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    aria-expanded={contextOpen}
+                    aria-controls={contextPanelId}
+                    onClick={() => setContextOpen((open) => !open)}
+                    className="flex flex-1 items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <ChevronDown
+                      className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !contextOpen && "-rotate-90")}
+                      aria-hidden
+                    />
+                    <CardTitle className="text-base">{t("context.title")}</CardTitle>
+                  </button>
                   <Badge
                     variant="outline"
                     className="border-amber-500/30 bg-amber-500/10 text-amber-600"
@@ -1847,6 +2011,7 @@ function DataEntryPageInner() {
                     {t("context.badge")}
                   </Badge>
                 </CardHeader>
+                <div id={contextPanelId} hidden={!contextOpen}>
                 <CardContent className="space-y-4">
                   {CONTEXT_FIELDS[contextSet].map((f) => {
                     const key = `context.${contextSet}.${f.id}`;
@@ -1917,23 +2082,8 @@ function DataEntryPageInner() {
                     );
                   })}
                 </CardContent>
+                </div>
               </Card>
-
-              {/* Evidence vault — appears once the record is saved (needs an id).
-                  For evidence-required categories, a file must be attached here
-                  before the record can be submitted (FR §4.1). */}
-              {editingId && (
-                <EvidenceVault
-                  key={`${editingId}:${evidenceVersion}`}
-                  recordId={editingId}
-                  category={category}
-                  onCountChange={handleEvidenceCountChange}
-                  // A consultant is review-only (decision 2026-07-30) and the
-                  // evidence API 403s them, so offering upload/delete controls
-                  // here only produced a button that always failed.
-                  canManage={mayAuthorRecords(user)}
-                />
-              )}
 
               {/* Anomaly warning + mandatory variance comment (VAR §4.3). Shown
                   once a save flags the value as deviating >±50% from history. */}
@@ -2105,10 +2255,62 @@ function DataEntryPageInner() {
                   {saving === "submit" ? t("submitting") : t("submit")}
                 </Button>}
               </div>
+
+              {/* Many records at once — the alternative to the form above. Below
+                  the form since BUG-R2-05 (QA's order: scope, activity, evidence,
+                  then everything else), collapsed until wanted, and NOT inside
+                  the `editingId` gate: an importer has no open record. */}
+              {/* Hidden, never unmounted, for the same reason as Additional
+                  context: a chosen file and its dry-run report survive a close. */}
+              <div data-testid="bulk-upload-section" className="space-y-6">
+                <button
+                  type="button"
+                  aria-expanded={bulkOpen}
+                  aria-controls={bulkPanelId}
+                  onClick={() => setBulkOpen((open) => !open)}
+                  className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-card px-6 py-4 text-left shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <ChevronDown
+                    className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !bulkOpen && "-rotate-90")}
+                    aria-hidden
+                  />
+                  <span className="text-base font-semibold text-foreground">{t("bulkSection.title")}</span>
+                  <span className="text-sm text-muted-foreground">{t("bulkSection.hint")}</span>
+                </button>
+                <div id={bulkPanelId} hidden={!bulkOpen} className="space-y-6">
+              <BulkUploadPanel
+                canManage={mayAuthorRecords(user)}
+                onImported={() => {
+                  // Both the previous-submissions list and CoveragePanel are
+                  // looking at pre-import numbers at the exact moment the user
+                  // checks them for confirmation. `refreshRecords` bumps
+                  // `coverageKey` itself, so one call is the whole refresh.
+                  //
+                  // Scoped to the SELECTED subsidiary, while an import can
+                  // span every entity the caller can reach — so importing for
+                  // one entity while looking at another correctly changes
+                  // nothing on screen. The panel's own verdict is what reports
+                  // the outcome; widening this would mean refetching every
+                  // accessible subsidiary on every import.
+                  if (subsidiaryId) void refreshRecords(subsidiaryId);
+                  setImportsKey((k) => k + 1);
+                }}
+              />
+
+              <RecentImports
+                canSubmit={mayAuthorRecords(user)}
+                refreshKey={importsKey}
+                onSubmitted={() => {
+                  if (subsidiaryId) void refreshRecords(subsidiaryId);
+                }}
+              />
+                </div>
+              </div>
             </div>
 
-            {/* Right: preview + previous submissions */}
-            <div className="space-y-6">
+            {/* Right: what the entry will calculate to, and what the year still
+                lacks. Kept in view beside a long form on wide screens
+                (BUG-R2-05); below it on narrow ones. */}
+            <div className="space-y-6 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
               <PreviewCard
                 previewing={previewing}
                 preview={preview}
@@ -2141,32 +2343,39 @@ function DataEntryPageInner() {
 
               {/* What the boundary still expects, beside what is keyed in (LP4-03 K9). */}
               <BoundaryCoverage subsidiaryId={subsidiaryId} reportingYear={reportingYear} refreshKey={coverageKey} />
-
-              <PreviousSubmissions
-                // Remounted per subsidiary, so a selection cannot survive a
-                // switch. Without it, A -> B -> A resurrects ticks the user
-                // made minutes ago, and a failed refetch leaves A's rows —
-                // still tickable — under B's header.
-                key={subsidiaryId}
-                records={records}
-                loading={recordsLoading}
-                total={recordsTotal}
-                hasMore={recordsCursor !== null}
-                loadingMore={recordsLoadingMore}
-                onLoadMore={() => void loadMoreRecords()}
-                onOpen={(r) => loadRecord(r)}
-                onEdit={(r) => loadRecord(r, "edit")}
-                onRecall={(r) => setRecallTarget(r)}
-                onCopy={(r) => void startCopy(r.id)}
-                user={user}
-                onSubmitted={() => void refreshRecords(subsidiaryId)}
-                onEvidenceAttached={() => {
-                  void refreshRecords(subsidiaryId);
-                  setEvidenceVersion((v) => v + 1);
-                }}
-              />
             </div>
           </div>
+
+          {/* Everything entered for this subsidiary, as one table under the
+              form (BUG-R2-05): full width, so each row can show its value,
+              unit, files and status, not just a label. */}
+          <RecordsTable
+            // Remounted per subsidiary, so a selection cannot survive a
+            // switch. Without it, A -> B -> A resurrects ticks the user
+            // made minutes ago, and a failed refetch leaves A's rows —
+            // still tickable — under B's header.
+            key={subsidiaryId}
+            records={records}
+            loading={recordsLoading}
+            total={recordsTotal}
+            hasMore={recordsCursor !== null}
+            loadingMore={recordsLoadingMore}
+            onLoadMore={() => void loadMoreRecords()}
+            onOpen={(r) => loadRecord(r)}
+            onEdit={(r) => loadRecord(r, "edit")}
+            onRecall={(r) => setRecallTarget(r)}
+            onCopy={(r) => void startCopy(r.id)}
+            user={user}
+            onSubmitted={() => void refreshRecords(subsidiaryId)}
+            onEvidenceAttached={() => {
+              void refreshRecords(subsidiaryId);
+              setEvidenceVersion((v) => v + 1);
+            }}
+            filter={recordsFilter}
+            onFilterChange={changeRecordsFilter}
+            yearOptions={recordsYearOptions(selectableReportingYears(reportingYear), recordsFilter)}
+            narrowed={isNarrowed(recordsFilter)}
+          />
         </div>
       </main>
 

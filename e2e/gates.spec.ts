@@ -45,7 +45,8 @@ test('gate: evidence-required category blocks submit until a file is attached', 
   // bulk-submit-refusals.spec.ts and the integration suite.
   await page.getByRole('button', { name: 'Submit for review' }).click();
   await expect(page.getByText(dataEntryEn.evidenceBeforeSubmit)).toBeVisible();
-  await expect(page.locator('[data-testid="evidence-vault-input"]')).toBeAttached();
+  // The vault is on screen before any save (BUG-R2-05); after it, it is the saved record's.
+  await expect(page.getByTestId('evidence-vault')).toHaveAttribute('data-mode', 'record');
 });
 
 test("gate: Data Entry's live preview never takes the user's submit admission (API)", async ({ request }) => {

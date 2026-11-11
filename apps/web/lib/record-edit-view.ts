@@ -175,6 +175,12 @@ export interface FormSessions {
   begin(): number;
   /** True while no later session has begun. */
   isCurrent(token: number): boolean;
+  /**
+   * The session now running, without beginning one: for a save, which must not
+   * drop what the form holds, yet must know whether the form moved on while it
+   * was in flight (held evidence, BUG-R2-05).
+   */
+  current(): number;
 }
 
 export function createFormSessions(): FormSessions {
@@ -182,6 +188,7 @@ export function createFormSessions(): FormSessions {
   return {
     begin: () => (current += 1),
     isCurrent: (token) => token === current,
+    current: () => current,
   };
 }
 

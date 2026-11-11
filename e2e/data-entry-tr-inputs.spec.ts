@@ -309,6 +309,8 @@ test('evidence: a new mobile record submitted without a file stays open on its d
     await expect(page.getByRole('button', { name: new RegExp(`^Q1 ${E2E_TR_INPUTS_YEAR}`) })).toBeVisible();
     await expect(page.getByText(enEvidence.requiredNote)).toBeVisible();
     await expect(vault).toBeAttached();
+    // Attached before any save too (BUG-R2-05): it is the saved draft's vault now.
+    await expect(page.getByTestId('evidence-vault')).toHaveAttribute('data-mode', 'record');
     const draft = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
     expect((await draft.json()).status).toBe('draft');
 

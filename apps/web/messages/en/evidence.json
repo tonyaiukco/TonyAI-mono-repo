@@ -39,5 +39,20 @@
   "removeFromThis": "Remove from this record",
   "detached": "Evidence removed",
   "detachedStillOne": "Removed from this record — {fileName} still backs {count} other record.",
-  "detachedStillMany": "Removed from this record — {fileName} still backs {count} other records."
+  "detachedStillMany": "Removed from this record — {fileName} still backs {count} other records.",
+  "tooLarge": "{fileName}: larger than 10 MB",
+  "held": {
+    "hint": "Choose the file now: it is uploaded when you save the draft or submit.",
+    "waiting": "uploaded when you save",
+    "listLabel": "Files waiting for the save",
+    "removeAria": "Remove {fileName}",
+    "wait": "Saving… choose the file again once the record is saved."
+  },
+  "failed": {
+    "title": "Not uploaded. The record is saved as a draft.",
+    "note": "not uploaded",
+    "retry": "Retry",
+    "retryAria": "Retry uploading {fileName}",
+    "removeAria": "Remove {fileName} from the list"
+  }
 }

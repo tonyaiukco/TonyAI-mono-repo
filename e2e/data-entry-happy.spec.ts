@@ -81,6 +81,11 @@ test('data entry: draft → live preview → evidence → submit → approve →
   // be in the same row as our record.
   await page.reload();
   await selectSubsidiary(page, 'TonyAI Energy (TR)');
-  const row = page.getByRole('button', { name: /^Q1 2026/ });
+  // A table row since BUG-R2-05: its open control names the record, and the
+  // status is a cell of the same row.
+  const row = page
+    .getByTestId('records-table')
+    .getByRole('row')
+    .filter({ has: page.getByRole('button', { name: /^Q1 2026 Electricity, Whole company$/ }) });
   await expect(row).toContainText('Approved');
 });

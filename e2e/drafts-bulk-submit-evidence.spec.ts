@@ -107,7 +107,7 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
     // Period AND category: other specs leave Energy rows of their own in Q3 and Q4.
     const rowFor = (periodValue: string) =>
       list
-        .locator('button')
+        .getByRole('row')
         .filter({ hasText: `${periodValue} ${E2E_YEAR}` })
         .filter({ hasText: CATEGORY });
     // The entity comes from the constant the list renders. This name used to say
@@ -150,7 +150,8 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
     };
     page.on('request', onRequest);
 
-    await row.click();
+    // The row's open control, its period cell (BUG-R2-05: rows are table rows).
+    await row.getByRole('button', { name: new RegExp(`^${ATTACHED} ${E2E_YEAR} `) }).click();
     await expect(page.getByText(/Editing draft/)).toBeVisible();
     // The notice appears in the same render that applies the vault's first load:
     // `setFiles`, `onCountChange` and `setLoading(false)` run back to back and

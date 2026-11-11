@@ -116,6 +116,8 @@ describe("the catalogues", () => {
       'bulkUpload.tonnes.figure',
       'completeness.panel.slotLabel',
       'dataEntry.preview.sourceValue',
+      // A unit with no words (BUG-R2-05's records table).
+      'dataEntry.records.columns.emissions',
       // A year range with no words (BUG-R2-09).
       'dataEntry.factorCoverage.yearRange',
       'dataEntry.submissions.tonnes',
