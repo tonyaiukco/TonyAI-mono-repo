@@ -53,11 +53,11 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 
 | Email | Password | Role | Sees |
 | --- | --- | --- | --- |
-| `admin@tonyai.local` | `TonyAI!2026` | `super_admin` | all 5 subsidiaries |
-| `approver@tonyai.local` | `TonyAI!2026` | `super_admin` | all 5 subsidiaries — the second approver: nobody approves a record they created (D01) |
-| `entry@tonyai.local` | `TonyAI!2026` | `data_entry` | 2 subsidiaries (tenant‑isolation demo) |
-| `review@tonyai.local` | `TonyAI!2026` | `consultant` | organisation‑wide read; review, reject and approve (cannot enter, edit, submit, void or unlock) |
-| `viewer@tonyai.local` | `TonyAI!2026` | `executive_viewer` | organisation‑wide read only — dashboards, Emissions and reports; no writes (LP4-04 slice 2 PR C, the UAT catalogue's fourth role) |
+| `admin@tonyai.local` | `TonyAI-CI!2026` | `super_admin` | all 5 subsidiaries |
+| `approver@tonyai.local` | `TonyAI-CI!2026` | `super_admin` | all 5 subsidiaries — the second approver: nobody approves a record they created (D01) |
+| `entry@tonyai.local` | `TonyAI-CI!2026` | `data_entry` | 2 subsidiaries (tenant‑isolation demo) |
+| `review@tonyai.local` | `TonyAI-CI!2026` | `consultant` | organisation‑wide read; review, reject and approve (cannot enter, edit, submit, void or unlock) |
+| `viewer@tonyai.local` | `TonyAI-CI!2026` | `executive_viewer` | organisation‑wide read only — dashboards, Emissions and reports; no writes (LP4-04 slice 2 PR C, the UAT catalogue's fourth role) |
 
 The seed passwords predate the 12-character minimum (LP4-01) and still sign in — the minimum applies when a password is set. Invitation and password-reset emails sent locally land in the stack's mail catcher, **mailpit, at http://127.0.0.1:54324** (`pnpm setup` points the API at its SMTP port).
 

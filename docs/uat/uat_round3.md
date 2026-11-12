@@ -51,7 +51,7 @@
 | Mail catcher | **mailpit: http://127.0.0.1:54324**. Every invitation and reset email sent locally lands here. Nothing leaves your machine. |
 | Data handling | Synthetic data only: never real people's addresses or real company data. When your participation ends, wipe the local database or delete the clone. |
 
-### 2.1 Tenant A: seed users (password `TonyAI!2026`)
+### 2.1 Tenant A: seed users (password `TonyAI-CI!2026`)
 
 | User | Role (EN · TR label) | Sees in Tenant A |
 | --- | --- | --- |

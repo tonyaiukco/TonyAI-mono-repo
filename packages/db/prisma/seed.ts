@@ -39,7 +39,7 @@ import { assertLocalSeedTarget, seedActivityType } from './seed-guards';
 const SEED_RECORD_STATUS = ActivityRecordStatus.approved;
 // Disposable CI uses a shared fixture password that meets the current Auth
 // policy. Keep the existing local-stack default until its owner upgrades it.
-const SEED_PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
+const SEED_PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI-CI!2026';
 
 /** The verdict the API would store for a record written after `written` (its
  *  series so far, oldest first) — the contract's own rule, not a copy of it, so
