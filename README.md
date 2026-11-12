@@ -147,7 +147,7 @@ Manual step-by-step setup and containers:
 
 #### Seed users
 
-All seed users share the password `TonyAI!2026`.
+All seed users share the password `TonyAI-CI!2026`, the seed's `TONYAI_TEST_PASSWORD` (Auth requires at least 12 characters).
 
 | Email | Role | Sees |
 | --- | --- | --- |
