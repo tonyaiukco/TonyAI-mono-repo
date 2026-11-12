@@ -161,3 +161,19 @@ Use for:
 
 ## 10. UI Tone
 The platform should feel credible, calm, structured, and professional. It should look like enterprise reporting software rather than a consumer dashboard.
+## 11. Terminology
+Every screen, report, issuance and the bulk template names the three tiers of a tenant's data the same way. The requirement is the [organisation-hierarchy spec](../../openspec/specs/organisation-hierarchy/spec.md). Until the `uat2-team-decisions-copy` change is archived, that spec is the delta at `openspec/changes/uat2-team-decisions-copy/specs/organisation-hierarchy/spec.md`. Only the copy follows this table: message keys, API fields, error codes and identifiers (`wholeCompany`, `locations.*`, `location_not_found`, `locationId`) keep their names.
+
+| Tier | TR heading, column or label | TR running text | EN |
+|---|---|---|---|
+| Tenant organisation | "Ana Şirket" | "ana şirket" | "Parent company" |
+| Subsidiary | "Bağlı Şirket" | "bağlı şirket" | "Subsidiary" |
+| Location row | "İşletme / Tesis" (plural "İşletmeler / Tesisler") | "tesis", with its own suffixes ("tesisi", "tesiste", "tesisten") | "Facility" (plural "Facilities") |
+| Subsidiary as a whole, no facility | "Bağlı şirketin tamamı" | "bağlı şirketin tamamı" | "Whole subsidiary" |
+| Subsidiary's free-text place field | "Adres / Konum" | — | "Address" |
+
+Terms that keep their meaning:
+- The GHG Protocol's location-based Scope 2 stays "konum bazlı" ("Kapsam 2 (konum bazlı)"), EN "location-based". It is a method, not a facility.
+- The GHG reporting company in the marine gas oil note is "şirketiniz", EN "your company". It is the reporting company, not the parent company tier.
+- Never use "Kuruluş", "Lokasyon", "Saha" or "Konum" (for a facility), nor "Organisation", "Location", "Site" or "Whole company" (EN), for a tier.
+- Rewrite Turkish by hand, never by search and replace: the suffixes change with the word ("lokasyondan" becomes "tesisten").

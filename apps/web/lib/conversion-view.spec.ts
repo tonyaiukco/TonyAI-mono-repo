@@ -45,6 +45,17 @@ describe('conversionNote', () => {
     expect(note).toContain(MESSAGES.en.dataEntry.conversionNote.unknownConditions);
   });
 
+  it.each(['en', 'tr'] as const)('%s adds the conversion release seal date when the list knows it, and nothing otherwise (S2)', (locale) => {
+    const t = createTranslator({ locale, messages: MESSAGES[locale].dataEntry });
+    const label = locale === 'en' ? 'Package sealed on' : 'Paketin mühürlenme tarihi';
+    const known = new Map([[release.id, '2026-11-05T09:30:00.000Z']]);
+    const withDate = conversionNote(snapshot, false, locale, t, known)!;
+    expect(withDate).toContain(label);
+    expect(withDate).toContain('2026');
+    expect(conversionNote(snapshot, false, locale, t, new Map([['another-release', '2026-11-05T09:30:00.000Z']]))).not.toContain(label);
+    expect(conversionNote(snapshot, false, locale, t, null)).not.toContain(label);
+  });
+
   it('does not invent a sourced step for pending, absent, legacy, uncalculated or definitional-only previews', () => {
     const t = createTranslator({ locale: 'en', messages: MESSAGES.en.dataEntry });
     const { snapshotSchema: _schema, conversion: _conversion, ...legacy } = snapshot;

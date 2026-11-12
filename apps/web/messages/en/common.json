@@ -26,8 +26,8 @@
   "loading": "Loading…",
   "tco2e": "tCO₂e",
   "entity": {
-    "wholeCompany": "Whole company",
-    "unnamedSite": "Site (name unavailable)"
+    "wholeCompany": "Whole subsidiary",
+    "unnamedSite": "Facility (name unavailable)"
   },
   "actor": {
     "deleted": "deleted user",

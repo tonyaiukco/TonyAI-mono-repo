@@ -179,7 +179,7 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
   });
   await nameField.getByRole('textbox').fill('E2E Panel Site');
   await pickByFieldLabel(page, 'Geography *', 'United Kingdom (UK)');
-  await page.getByRole('button', { name: 'Add location' }).click();
+  await page.getByRole('button', { name: 'Add facility' }).click();
   await expect(page.getByText('E2E Panel Site')).toBeVisible();
 
   await expect(
@@ -189,7 +189,7 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
 
   // A record-free location does not block: the panel says the subsidiary can
   // still go, and names what would go with it.
-  await expect(page.getByText(/1 location would go with it/)).toBeVisible();
+  await expect(page.getByText(/1 facility would go with it/)).toBeVisible();
   await expect(page.getByText('This subsidiary cannot be deleted')).toHaveCount(0);
 
   // Add a draft record, and now something DOES block — in the API's own words,
@@ -237,8 +237,8 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
     await expect(inputs.nth(i), `input ${i} must be read-only`).toBeDisabled();
   }
   await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Add location' })).toHaveCount(0);
-  await expect(page.getByText('Only a super_admin can add or modify locations.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add facility' })).toHaveCount(0);
+  await expect(page.getByText('Only a super_admin can add or modify facilities.')).toBeVisible();
 
   // The period-locks drawer is mounted by this page too, and its gating was
   // only ever checked on the register. Flipping its canManage to true here
@@ -261,7 +261,7 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
   expect(expected.terminalRecords).toBeGreaterThan(0);
 
   const locationsRow = page.locator('div', {
-    has: page.getByText('Locations', { exact: true }),
+    has: page.getByText('Facilities', { exact: true }),
   }).last();
   await expect(locationsRow).toContainText(String(expected.locations));
   const committedRow = page.locator('div', {

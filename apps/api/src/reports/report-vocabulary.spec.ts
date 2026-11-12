@@ -85,7 +85,7 @@ describe('the Turkish catalogue covers every word a live PDF or workbook prints'
     expect(EN_VOCABULARY.category('Natural Gas')).toBe('Natural Gas');
     expect(EN_VOCABULARY.period('January')).toBe('January');
     expect(EN_VOCABULARY.recordStatus('under_review')).toBe('under_review');
-    expect(EN_VOCABULARY.entity({ locationId: null })).toBe('Whole company');
+    expect(EN_VOCABULARY.entity({ locationId: null })).toBe('Whole subsidiary');
     expect(EN_VOCABULARY.number.format(1234.56)).toBe('1,234.6');
     expect(tr.number.format(1234.56)).toBe('1.234,6');
   });

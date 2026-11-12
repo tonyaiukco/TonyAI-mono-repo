@@ -108,7 +108,7 @@ test('a drawer belongs to its selection: Back closes it instead of mixing two ye
   await login(page, CONSULTANT_EMAIL);
   await pick(page, 'context-year', '2025');
   await pick(page, 'context-year', String(E2E_YEAR));
-  await page.getByRole('button', { name: /TonyAI Energy.*per location/s }).click();
+  await page.getByRole('button', { name: /TonyAI Energy.*per facility/s }).click();
   const drawer = page.getByRole('dialog');
   await expect(drawer).toBeVisible();
   await page.goBack();

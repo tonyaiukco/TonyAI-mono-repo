@@ -1,0 +1,210 @@
+import { test, expect, type APIRequestContext } from '@playwright/test';
+import anomalyEn from '../apps/web/messages/en/anomaly.json';
+import dataEntryEn from '../apps/web/messages/en/dataEntry.json';
+import evidenceEn from '../apps/web/messages/en/evidence.json';
+import reviewEn from '../apps/web/messages/en/review.json';
+import enCategories from '../apps/web/messages/en/categories.json';
+import enPeriods from '../apps/web/messages/en/periods.json';
+import enUnits from '../apps/web/messages/en/units.json';
+import {
+  API_BASE,
+  CONSULTANT_EMAIL,
+  E2E_TR_INPUTS,
+  E2E_TR_INPUTS_YEAR,
+  ENTRY_EMAIL,
+  EVIDENCE_FIXTURE,
+  SUB,
+  bearer,
+  cleanupTrInputsFixture,
+  deleteRecordsAsService,
+  getAccessToken,
+  login,
+  pickByFieldLabel,
+  seedTrInputsFixture,
+  switchUser,
+} from './helpers';
+
+/**
+ * UAT round 2 team decisions (OpenSpec `uat2-team-decisions-copy`):
+ * - S2: the sealed release list, and "Package sealed on" beside the release a
+ *   figure names (Data Entry preview, conversion note, review sheet);
+ * - K4-3a option A: a first-period record is named as one, needs no variance
+ *   reason, and is marked in the review queue apart from a flag;
+ * - K5 option A: a refrigerant record lists the evidence it accepts, and a
+ *   shortcut attaches one document to the year's other gas records.
+ *
+ * Lanes, in `E2E_TR_INPUTS_YEAR` (2023), priced from the TR inputs fixture
+ * release, which `data-entry-tr-inputs.spec.ts` also seeds and removes:
+ * - `SUB.logistics`, Natural Gas, quarterly Q1, the whole subsidiary. Only Q3
+ *   drafts are written there by the other file, and a draft is no history.
+ * - `SUB.energy`, Refrigerants, annual, at its two seeded facilities. No other
+ *   spec writes 2023 there.
+ * Every record is deleted in `finally`, found by its lane, not by an id
+ * collected on the way.
+ */
+test.describe.configure({ mode: 'serial' });
+
+test.beforeAll(async () => seedTrInputsFixture());
+test.afterAll(async () => cleanupTrInputsFixture());
+
+const YEAR = E2E_TR_INPUTS_YEAR;
+const ISTANBUL_HQ = '33333333-3333-3333-3333-333333330001';
+const ANKARA_PLANT = '33333333-3333-3333-3333-333333330002';
+
+async function laneRecordIds(
+  request: APIRequestContext,
+  token: string,
+  q: { subsidiaryId: string; category: string },
+): Promise<string[]> {
+  const search = new URLSearchParams({ subsidiaryId: q.subsidiaryId, category: q.category, year: String(YEAR), limit: '100' });
+  const res = await request.get(`${API_BASE}/activity-records?${search}`, { headers: bearer(token) });
+  if (!res.ok()) throw new Error(`list failed: ${res.status()} ${await res.text()}`);
+  return ((await res.json()) as { items: { id: string }[] }).items.map((r) => r.id);
+}
+
+test('the sealed release list answers a signed-in user only, with database seal dates', async ({ request }) => {
+  const anonymous = await request.get(`${API_BASE}/factors/releases`);
+  expect(anonymous.status()).toBe(401);
+
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const res = await request.get(`${API_BASE}/factors/releases`, { headers: bearer(token) });
+  expect(res.status()).toBe(200);
+  const releases = (await res.json()) as Array<Record<string, unknown>>;
+  expect(releases.length).toBeGreaterThan(0);
+  for (const release of releases) {
+    expect(typeof release.sealedAt).toBe('string');
+    expect(Number.isNaN(Date.parse(release.sealedAt as string))).toBe(false);
+    for (const hidden of ['reviewedBy', 'withdrawnBy', 'notes']) expect(release).not.toHaveProperty(hidden);
+  }
+});
+
+test('a first-period record is named, needs no variance reason, and shows its package seal date', async ({ page, request }) => {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const lane = { subsidiaryId: SUB.logistics, category: 'Natural Gas' };
+  try {
+    await login(page, ENTRY_EMAIL);
+    await page.goto('/data-entry');
+    await pickByFieldLabel(page, dataEntryEn.subsidiary, 'TonyAI Logistics (TR)');
+    await pickByFieldLabel(page, dataEntryEn.category, enCategories['Natural Gas']);
+    await pickByFieldLabel(page, dataEntryEn.reportingYear, String(YEAR));
+    await pickByFieldLabel(page, dataEntryEn.period, enPeriods.granularity.quarterly);
+    await pickByFieldLabel(page, dataEntryEn.periodValue, enPeriods.values.Q1);
+    await page.getByRole('combobox', { name: dataEntryEn.unit, exact: true }).click();
+    await page.getByRole('option', { name: enUnits.label.standard_cubic_metres, exact: true }).click();
+    await expect(page.locator('#input-ncv')).toHaveValue(String(E2E_TR_INPUTS.referenceNcv));
+    await page.getByPlaceholder(dataEntryEn.activityValuePlaceholder).fill('100');
+
+    // S2: the preview names the package seal date, beside its source and in the conversion note.
+    await expect(page.getByText(dataEntryEn.preview.sealedOn, { exact: true })).toBeVisible();
+    await expect(page.getByTestId('conversion-note')).toContainText('Package sealed on');
+
+    await page.getByRole('button', { name: dataEntryEn.saveDraft }).click();
+    await expect(page.getByText(dataEntryEn.draftSaved)).toBeVisible();
+
+    // K4-3a: named a first-period record, told what to check, no variance field.
+    await expect(page.getByText(anomalyEn.firstPeriod.headline, { exact: false })).toBeVisible();
+    await expect(page.getByText(anomalyEn.firstPeriod.detail, { exact: false })).toBeVisible();
+    await expect(page.getByLabel('Reason for variance *')).toHaveCount(0);
+
+    await page.locator('[data-testid="evidence-vault-input"]').setInputFiles(EVIDENCE_FIXTURE);
+    await expect(page.getByText(evidenceEn.uploaded)).toBeVisible();
+    await page.getByRole('button', { name: 'Submit for review' }).click();
+    await expect(page.getByText('Submitted for review')).toBeVisible();
+
+    // The reviewer's queue marks it apart from a flag; the sheet names it and its seal date.
+    await switchUser(page, CONSULTANT_EMAIL);
+    await page.goto('/review');
+    const row = page.locator('table tbody tr', { hasText: 'TonyAI Logistics' }).filter({ hasText: `Q1 ${YEAR}` });
+    await expect(row.getByTestId('first-period-marker')).toBeVisible();
+    await expect(row.getByTestId('first-period-marker')).toHaveAttribute('aria-label', anomalyEn.firstPeriod.headline);
+    await row.click();
+    await expect(page.getByText(anomalyEn.firstPeriod.headline, { exact: true })).toBeVisible();
+    await expect(page.getByText(anomalyEn.flagged.headline)).toHaveCount(0);
+    await expect(page.getByText(reviewEn.sheet.sealedOn, { exact: true })).toBeVisible();
+    await expect(page.getByTestId('release-sealed-on')).toHaveText(/\d{4}/);
+  } finally {
+    await deleteRecordsAsService(request, await laneRecordIds(request, token, lane).catch(() => []));
+  }
+});
+
+test('a refrigerant record lists the evidence it accepts, and attaches one document to the year’s gas records', async ({
+  page,
+  request,
+}) => {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const lane = { subsidiaryId: SUB.energy, category: 'Refrigerants' };
+  const draft = async (locationId: string) => {
+    const res = await request.post(`${API_BASE}/activity-records`, {
+      headers: bearer(token),
+      data: {
+        subsidiaryId: SUB.energy,
+        locationId,
+        reportingYear: YEAR,
+        reportingPeriod: 'annual',
+        periodValue: 'Annual',
+        category: 'Refrigerants',
+        activityType: E2E_TR_INPUTS.refrigerant,
+        activityValue: 10,
+        activityUnit: 'kg',
+        parameters: { equipment: [{ equipmentType: 'split_air_conditioner', capacityKg: 10, refillKg: 0, leakRateChoice: 'default' }] },
+        varianceReason: null,
+        input: null,
+      },
+    });
+    if (!res.ok()) throw new Error(`create failed: ${res.status()} ${await res.text()}`);
+    return ((await res.json()) as { id: string }).id;
+  };
+  const open = async (locationId: string) => {
+    const query = new URLSearchParams({
+      subsidiaryId: SUB.energy,
+      category: 'Refrigerants',
+      year: String(YEAR),
+      locationId,
+      period: 'annual',
+      periodValue: 'Annual',
+    });
+    await page.goto(`/data-entry?${query}`);
+    await expect(page.getByTestId('evidence-vault')).toHaveAttribute('data-mode', 'record');
+  };
+  try {
+    await draft(ISTANBUL_HQ);
+    await login(page, ENTRY_EMAIL);
+
+    // One gas record that year: the documents are listed, and there is nothing to share with.
+    await open(ISTANBUL_HQ);
+    const note = page.getByTestId('evidence-required-note');
+    for (const item of Object.values(evidenceEn.refrigerantNote)) await expect(note).toContainText(item);
+    await expect(note).not.toContainText(evidenceEn.requiredNote);
+    await expect(page.getByTestId('evidence-share-with-year')).toHaveCount(0);
+
+    // A second gas record: the shortcut ticks both and one file backs both —
+    // even from a table narrowed to an empty category, where the rows on
+    // screen are not the ones the shortcut asks for until the refetch lands
+    // (qa-auditor P2-1).
+    await draft(ANKARA_PLANT);
+    await open(ISTANBUL_HQ);
+    await page
+      .getByTestId('records-filters')
+      .getByRole('combobox', { name: dataEntryEn.records.filters.category })
+      .click();
+    await page.getByRole('option', { name: enCategories.Electricity, exact: true }).click();
+    await expect(page.getByTestId('records-table-empty')).toBeVisible();
+    await page.getByTestId('evidence-share-with-year').click();
+    const bar = page.getByTestId('evidence-attach-bar');
+    await expect(bar).toBeVisible();
+    await expect(page.getByTestId('evidence-attach-choose')).toBeEnabled();
+    await expect(page.getByTestId('evidence-attach-choose')).toContainText('2');
+    await page.getByTestId('evidence-attach-input').setInputFiles(EVIDENCE_FIXTURE);
+    await page.getByTestId('evidence-attach-confirm').click();
+    await expect(page.getByText(/now backs 2 records/)).toBeVisible();
+
+    const ids = await laneRecordIds(request, token, lane);
+    expect(ids).toHaveLength(2);
+    for (const id of ids) {
+      const res = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+      expect(((await res.json()) as { evidenceCount: number }).evidenceCount).toBe(1);
+    }
+  } finally {
+    await deleteRecordsAsService(request, await laneRecordIds(request, token, lane).catch(() => []));
+  }
+});

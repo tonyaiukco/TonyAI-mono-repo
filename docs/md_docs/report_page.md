@@ -179,7 +179,7 @@ note above the table, because the fact is per-row: with two withdrawals by two
 people, a section-level note binds neither id to its row.
 
 Every ledger row also names its **reporting entity** — the location, or
-`Whole company` — in all three formats.
+`Whole subsidiary` — in all three formats.
 
 **Column order changed once, at WP20.** `reporting_entity` was inserted as the
 second column of the CSV and of the Excel `Raw Activity Data` sheet, and

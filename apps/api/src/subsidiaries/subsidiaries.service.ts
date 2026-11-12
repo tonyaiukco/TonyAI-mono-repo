@@ -498,7 +498,7 @@ export class SubsidiariesService {
     if (c.locationsHoldingForeignRecords > 0) {
       add(
         'locationsHoldingForeignRecords',
-        `${c.locationsHoldingForeignRecords} location(s) holding a record that belongs to another subsidiary`,
+        `${c.locationsHoldingForeignRecords} facility(ies) holding a record that belongs to another subsidiary`,
       );
     }
     if (c.periodLocks > 0) add('periodLocks', `${c.periodLocks} closed reporting period(s)`);
@@ -517,7 +517,7 @@ export class SubsidiariesService {
         'destroy them without an audit entry for each. Remove them first ' +
         '(reopen any closed period rather than deleting its lock' +
         (c.locationsHoldingForeignRecords > 0
-          ? '; a location holding another subsidiary\'s record cannot be swept up, because that figure was calculated with its geography — the record has to move or go first'
+          ? '; a facility holding another subsidiary\'s record cannot be swept up, because that figure was calculated with its geography — the record has to move or go first'
           : '') +
         (c.reviewRecords > 0
           ? '; a record awaiting review must be sent back by a reviewer before it can be removed'

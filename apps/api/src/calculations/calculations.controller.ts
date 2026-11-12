@@ -4,6 +4,7 @@ import type {
   EmissionFactorDetailDTO,
   FactorCoverageDTO,
   ReleaseParametersDTO,
+  SealedFactorReleaseDTO,
 } from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
 import { CalculationInputDto } from './dto/calculation-input.dto';
@@ -42,5 +43,12 @@ export class CalculationsController {
   @Get('factors/coverage')
   coverage(): Promise<FactorCoverageDTO> {
     return this.service.coverage();
+  }
+
+  // Reference data: each sealed release with its database-set seal date, which
+  // the screens show beside the release a figure names (UAT round 2, S2).
+  @Get('factors/releases')
+  listSealedReleases(): Promise<SealedFactorReleaseDTO[]> {
+    return this.service.listSealedReleases();
   }
 }

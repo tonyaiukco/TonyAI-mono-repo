@@ -41,7 +41,7 @@
     "scopeDistribution": "Kapsam {scope} Kategori Dağılımı",
     "share": "%{value} pay",
     "contributors": "En Büyük 5 Katkı",
-    "byCompany": "Şirkete göre",
+    "byCompany": "Bağlı şirkete göre",
     "byCategory": "Kategoriye göre"
   },
   "breakdown": {
@@ -113,6 +113,7 @@
     "normalised": "Normalleştirilmiş",
     "source": "Kaynak",
     "version": "Faktör Sürümü",
+    "sealedOn": "Paketin mühürlenme tarihi",
     "recordedAs": "Kaydedilen değer",
     "notConverted": "{value} {unit} (dönüştürülmedi)",
     "auditTrail": "Denetim İzi",

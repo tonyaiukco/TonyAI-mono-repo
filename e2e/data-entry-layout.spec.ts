@@ -259,7 +259,7 @@ test('a save still in flight when another record is opened uploads its file nowh
     return route.fallback();
   });
   await page.getByRole('button', { name: 'Save draft', exact: true }).click();
-  await records(page).getByRole('button', { name: `Q1 ${E2E_YEAR - 1} Water, Whole company` }).click();
+  await records(page).getByRole('button', { name: `Q1 ${E2E_YEAR - 1} Water, Whole subsidiary` }).click();
   await expect(page.getByText(/Editing draft/)).toBeVisible();
   release();
 
@@ -300,8 +300,8 @@ test('the table filters by year (following the form until picked) and by status,
   await openDataEntry(page);
   await pickByFieldLabel(page, 'Category', 'Water');
   await pickByFieldLabel(page, 'Reporting year', String(E2E_YEAR));
-  const thisYear = records(page).getByRole('button', { name: `Q4 ${E2E_YEAR} Water, Whole company` });
-  const lastYear = records(page).getByRole('button', { name: `Q4 ${E2E_YEAR - 1} Water, Whole company` });
+  const thisYear = records(page).getByRole('button', { name: `Q4 ${E2E_YEAR} Water, Whole subsidiary` });
+  const lastYear = records(page).getByRole('button', { name: `Q4 ${E2E_YEAR - 1} Water, Whole subsidiary` });
   await expect(thisYear).toBeVisible();
   await expect(lastYear).toHaveCount(0);
 
@@ -354,7 +354,7 @@ test('the table filters by year (following the form until picked) and by status,
   await page.getByTestId('previous-submissions-load-more').click();
   await expect.poll(() => sawNextPage).toContain('status=draft');
   // Q3 is submitted in this lane, so under Draft only the appended row carries its name.
-  await expect(records(page).getByRole('button', { name: `Q3 ${E2E_YEAR} Water, Whole company` })).toBeVisible();
+  await expect(records(page).getByRole('button', { name: `Q3 ${E2E_YEAR} Water, Whole subsidiary` })).toBeVisible();
   await page.unroute(isList);
 
   // Nothing matches: the table says so, not that there are no records. Water

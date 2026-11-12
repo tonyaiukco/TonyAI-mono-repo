@@ -43,10 +43,11 @@ test('data entry: draft → live preview → evidence → submit → approve →
   // condition — an unseeded quarterly tuple — and until WP21 the screen showed
   // NOTHING for it, which reads as "checked, fine" about a value the rule never
   // ran on. Neutral, not the amber anomaly banner: no earlier period is the
-  // normal state of a new series, and the two must not look alike.
-  await expect(page.getByText('Not checked for anomalies')).toBeVisible();
+  // normal state of a new series, and the two must not look alike. Since UAT
+  // round 2 (K4-3a) it is named a first-period record, with what to check.
+  await expect(page.getByText('First-period record')).toBeVisible();
   await expect(
-    page.getByText(/no earlier committed period exists for this reporting entity/i),
+    page.getByText(/no earlier period to compare with — please check the evidence document and the unit/i),
   ).toBeVisible();
   await expect(page.getByLabel('Reason for variance *')).toHaveCount(0);
 
@@ -86,6 +87,6 @@ test('data entry: draft → live preview → evidence → submit → approve →
   const row = page
     .getByTestId('records-table')
     .getByRole('row')
-    .filter({ has: page.getByRole('button', { name: /^Q1 2026 Electricity, Whole company$/ }) });
+    .filter({ has: page.getByRole('button', { name: /^Q1 2026 Electricity, Whole subsidiary$/ }) });
   await expect(row).toContainText('Approved');
 });

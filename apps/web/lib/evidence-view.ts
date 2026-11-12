@@ -127,6 +127,39 @@ export function attachableRecords(
   return { attachableIds, reasonById };
 }
 
+/**
+ * The refrigerant shortcut (UAT round 2, K5 option A): one document attached to
+ * the year's other gas records through the records table's existing
+ * one-file-to-several-records step. Offered when the subsidiary and year hold
+ * at least two refrigerant records the user may attach files to. Ticks in
+ * advance those that hold no file yet; the user may tick or untick the rest.
+ * `rows` are one subsidiary's records, as the table lists them.
+ */
+export interface RefrigerantShortcut {
+  offered: boolean;
+  preselect: string[];
+}
+
+export function refrigerantShortcut(
+  rows: readonly SubmittableRow[],
+  attachableIds: readonly string[],
+  reportingYear: number,
+): RefrigerantShortcut {
+  const gases = rows.filter(
+    (r) => r.category === 'Refrigerants' && r.reportingYear === reportingYear && attachableIds.includes(r.id),
+  );
+  if (gases.length < 2) return { offered: false, preselect: [] };
+  return {
+    offered: true,
+    preselect: gases.filter((r) => r.evidenceCount === 0).map((r) => r.id).slice(0, EVIDENCE_MAX_LINKED_RECORDS),
+  };
+}
+
+/** The ids a shortcut asked for that the table may actually tick, within one upload's cap. */
+export function applyAttachPreselect(preselect: readonly string[], attachableIds: readonly string[]): string[] {
+  return preselect.filter((id) => attachableIds.includes(id)).slice(0, EVIDENCE_MAX_LINKED_RECORDS);
+}
+
 /** Tick or untick one id, refusing to grow past what one upload may carry. */
 export function toggleAttach(
   selected: string[],

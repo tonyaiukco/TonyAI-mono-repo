@@ -450,7 +450,7 @@ export default function SubsidiariesPage() {
 
           {/* Operational locations, collected as a draft and written with the
               subsidiary in one transaction (round-1 SUB-3). The geography
-              select is labelled "Site geography" so it cannot be confused with
+              select is labelled "Facility geography" so it cannot be confused with
               the subsidiary's own "Geography" — they sit in one dialog, and a
               label-scoped selector matching both would be ambiguous. */}
           <div className="space-y-3 rounded-lg border border-border p-3">

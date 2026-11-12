@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   FileText,
+  Info,
   Paperclip,
   ShieldAlert,
 } from "lucide-react";
@@ -42,7 +43,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
-import { anomalyStatement } from "@/lib/anomaly-view";
+import { anomalyStatement, isFirstPeriodRecord } from "@/lib/anomaly-view";
+import { factorReleaseId, formatSealDate, sealDateFor } from "@/lib/release-seal-view";
+import { useReleaseSealDates } from "@/lib/use-release-seal-dates";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
@@ -98,6 +101,8 @@ export default function ReviewPage() {
   const actorWords = useActorWords();
   const recordWords = useRecordWords();
   const locale = useLocale();
+  // The package seal date beside the release behind a figure (UAT round 2, S2).
+  const sealDates = useReleaseSealDates();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
@@ -517,6 +522,19 @@ export default function ReviewPage() {
                                 {row.anomalyFlag && (
                                   <AlertTriangle className="h-4 w-4 text-amber-500" />
                                 )}
+                                {/* A first-period record (UAT round 2, K4-3a): nothing to
+                                    compare with, so the reviewer checks the evidence and
+                                    the unit. Neutral, never the flag's amber. */}
+                                {isFirstPeriodRecord(row) && (
+                                  <span
+                                    role="img"
+                                    aria-label={tAnomaly("firstPeriod.headline")}
+                                    title={tAnomaly("firstPeriod.headline")}
+                                    data-testid="first-period-marker"
+                                  >
+                                    <Info className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                                  </span>
+                                )}
                               </span>
                             </TableCell>
                             <TableCell className="text-right text-sm font-mono">
@@ -658,6 +676,17 @@ export default function ReviewPage() {
                     ? t("sheet.factorSource", { source: selected.calculation.source, version: selected.calculation.version })
                     : tCommon("noFactor")}
                 </span>
+                {(() => {
+                  const sealedAt = sealDateFor(sealDates, factorReleaseId(selected.calculation));
+                  return sealedAt ? (
+                    <>
+                      <span className="text-muted-foreground">{t("sheet.sealedOn")}</span>
+                      <span className="col-span-2 text-xs" data-testid="release-sealed-on">
+                        {formatSealDate(sealedAt, locale)}
+                      </span>
+                    </>
+                  ) : null;
+                })()}
                 {/* Both, because they answer different questions: when the
                     work was started, and when it reached this queue. They are
                     the same date only for a record submitted the day it was

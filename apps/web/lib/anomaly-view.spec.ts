@@ -3,7 +3,7 @@ import { ANOMALY_BASELINE_PERIODS } from '@/lib/types';
 import { createTranslator } from 'use-intl/core';
 import { MESSAGES } from '@/messages';
 import type { Locale } from '@/lib/types';
-import { anomalyStatement as statementIn, notEvaluatedNote as noteIn } from './anomaly-view';
+import { anomalyStatement as statementIn, isFirstPeriodRecord, notEvaluatedNote as noteIn } from './anomaly-view';
 
 const tFor = (locale: Locale) => createTranslator({ locale, messages: MESSAGES[locale], namespace: 'anomaly' });
 const anomalyStatement = (record: Parameters<typeof statementIn>[0], locale: Locale = 'en') =>
@@ -96,9 +96,30 @@ describe('anomalyStatement', () => {
     // The whole package exists for this line: without it an unchecked record
     // renders exactly like one that was checked and found clean.
     expect(s.tone).toBe('not_evaluated');
-    expect(s.headline).toBe('Not checked for anomalies');
+    // UAT round 2, K4-3a option A: named a first-period record, and told what
+    // can still be checked.
+    expect(s.headline).toBe('First-period record');
+    expect(s.detail).toMatch(/no earlier period to compare/i);
+    expect(s.detail).toMatch(/evidence document and the unit/i);
+    expect(s.qualified).toBe(true);
     // One earlier period is enough now, so a number here would be wrong.
     expect(s.detail).not.toMatch(/\d/);
+  });
+
+  it('names a first-period record in Turkish, with no count of periods', () => {
+    const s = anomalyStatement(record({ anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }), 'tr');
+    expect(s.tone).toBe('not_evaluated');
+    expect(s.headline).toBe('İlk dönem kaydı');
+    expect(s.detail).toBe('Geçmiş karşılaştırma verisi yok — lütfen kanıt dokümanını ve birimi kontrol edin.');
+    expect(s.detail).not.toMatch(/\d/);
+  });
+
+  it('marks only an unflagged record with a figure and no earlier period as first-period', () => {
+    expect(isFirstPeriodRecord(record({ anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }))).toBe(true);
+    expect(isFirstPeriodRecord(record({ anomalyBaselinePriorCount: null, anomalyBaselineTCo2e: null }))).toBe(false);
+    expect(isFirstPeriodRecord(record({ anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 3 }))).toBe(false);
+    expect(isFirstPeriodRecord(record())).toBe(false);
+    expect(isFirstPeriodRecord(record({ anomalyFlag: true, anomalyBaselinePriorCount: 0 }))).toBe(false);
   });
 
   it.each([1, 2])(
@@ -136,7 +157,7 @@ describe('anomalyStatement', () => {
     // Same tone, different remedy: one needs a factor, the other needs time.
     expect(noFigure.detail).not.toBe(noHistory.detail);
     expect(noFigure.detail).toMatch(/no calculated figure/i);
-    expect(noHistory.detail).toMatch(/no earlier committed period/i);
+    expect(noHistory.detail).toMatch(/no earlier period to compare/i);
   });
 
   it('treats a full window that averages zero as not evaluated, not as clean', () => {

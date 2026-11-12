@@ -98,7 +98,7 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   // entity in prose. A substring match resolved to two elements and failed in
   // strict mode — the same duplicate-label hazard `pickByFieldLabel` carries.
   await expect(drawer.getByText('Reporting Entity', { exact: true })).toBeVisible();
-  await expect(drawer.getByText('Whole company', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('Whole subsidiary', { exact: true })).toBeVisible();
 
   // The live region has to EXIST before the first keystroke. A node inserted at
   // the same instant as its message is not announced, and a prior session
@@ -130,7 +130,7 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   // And it names WHICH record. "this entity" with no antecedent is what let the
   // first live use of the void endpoint withdraw the wrong half of a pair.
   await expect(confirm).toContainText('TonyAI Mfg');
-  await expect(confirm).toContainText('Whole company');
+  await expect(confirm).toContainText('Whole subsidiary');
   await expect(confirm).toContainText('Fuel');
   await confirm.getByRole('button', { name: 'Withdraw', exact: true }).click();
 

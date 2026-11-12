@@ -320,8 +320,8 @@ test('only a super_admin may write locations', async ({ page, request }) => {
   // …and the drawer offers no write controls to that role.
   await login(page, ENTRY_EMAIL);
   await page.goto('/subsidiaries');
-  await page.getByRole('button', { name: 'Manage locations' }).first().click();
-  await expect(page.getByRole('button', { name: /^Add location$/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Manage facilities' }).first().click();
+  await expect(page.getByRole('button', { name: /^Add facility$/ })).toHaveCount(0);
 
   // No switchUser: the drawer overlay covers Sign out, and cleanup goes through
   // the API context, which carries its own admin token.
@@ -339,11 +339,11 @@ test('changing a location geography is confirmed, not silent', async ({ page, re
     await login(page, ADMIN_EMAIL);
     await page.goto('/subsidiaries');
     await page.locator('tr', { hasText: 'E2E Test Co Geo Warn' })
-      .getByRole('button', { name: 'Manage locations' }).click();
+      .getByRole('button', { name: 'Manage facilities' }).click();
     await page.getByRole('button', { name: 'Edit' }).first().click();
 
     await pickByFieldLabel(page, 'Geography *', 'United Kingdom (UK)');
-    await page.getByRole('button', { name: /Save location|Update location|Save/ }).first().click();
+    await page.getByRole('button', { name: /Save facility|Update facility|Save/ }).first().click();
 
     const alert = page.locator('[role="alertdialog"][data-state="open"]');
     await expect(alert.getByText(/Change geography from TR to UK\?/)).toBeVisible();

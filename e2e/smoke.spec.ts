@@ -97,8 +97,8 @@ test.describe('Milestone-1 slice', () => {
     // Round-1 SUB-3: the form asks for at least one operational location, and
     // refuses without one.
     await dialog.getByRole('button', { name: 'Create' }).click();
-    await expect(page.getByText('Add at least one operational location')).toBeVisible();
-    await dialog.getByLabel('Location name').fill('E2E Smoke Site');
+    await expect(page.getByText('Add at least one operational facility')).toBeVisible();
+    await dialog.getByLabel('Facility name').fill('E2E Smoke Site');
     await dialog.getByRole('button', { name: 'Add', exact: true }).click();
     await dialog.getByRole('button', { name: 'Create' }).click();
 

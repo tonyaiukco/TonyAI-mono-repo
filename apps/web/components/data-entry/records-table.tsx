@@ -54,6 +54,7 @@ import {
   toggleSelected,
 } from "@/lib/bulk-submit-view";
 import {
+  applyAttachPreselect,
   attachableRecords,
   attachButtonLabel,
   attachConfirmation,
@@ -173,6 +174,21 @@ export interface RecordsTableProps {
   yearOptions: readonly number[];
   /** A filter narrows the list: an empty table means nothing matches. */
   narrowed: boolean;
+  /**
+   * Open the attach step from outside (UAT round 2, K5: the refrigerant
+   * shortcut), once per `nonce`, with `preselect` ticked where the table
+   * allows it. Applied when the list shows that year's refrigerant records.
+   */
+  attachRequest?: AttachRequest | null;
+  /** The query the rows on screen answer, as `recordsQuery` serialises it. */
+  fetchedQueryKey?: string | null;
+}
+
+export interface AttachRequest {
+  nonce: number;
+  /** The list the request is for (`recordsQuery`, serialised): applied only once the rows answer it. */
+  queryKey: string;
+  preselect: readonly string[];
 }
 
 
@@ -257,6 +273,8 @@ export function RecordsTable({
   onFilterChange,
   yearOptions,
   narrowed,
+  attachRequest = null,
+  fetchedQueryKey = null,
 }: RecordsTableProps) {
   const tErrors = useTranslations("errors");
   const t = useTranslations("dataEntry");
@@ -322,6 +340,24 @@ export function RecordsTable({
     setAttachSelected([]);
     setAttachMode(true);
   }
+
+  // The refrigerant shortcut's request: applied once the rows on screen answer
+  // the query it asked for (that year's refrigerant records). Checked by the
+  // query the rows were fetched for, not by the filter or the loading flag:
+  // the filter changes in the same commit as the request, before the refetch
+  // has even started, while the old rows are still showing.
+  const appliedRequest = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!attachRequest || appliedRequest.current === attachRequest.nonce || loading) return;
+    if (fetchedQueryKey !== attachRequest.queryKey) return;
+    appliedRequest.current = attachRequest.nonce;
+    setSelected([]);
+    setReport(null);
+    setAttachSelected(applyAttachPreselect(attachRequest.preselect, attach.attachableIds));
+    setAttachMode(true);
+    containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [attachRequest, loading, fetchedQueryKey, attach.attachableIds]);
 
   function stopAttach() {
     setAttachMode(false);
@@ -409,7 +445,7 @@ export function RecordsTable({
   }
 
   return (
-    <Card data-testid="previous-submissions">
+    <Card ref={containerRef} data-testid="previous-submissions">
       <CardHeader className="space-y-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Clock className="h-4 w-4 text-muted-foreground" />
@@ -662,7 +698,7 @@ export function RecordsTable({
               // would label a site row as the whole company if the include
               // were ever dropped — a false claim on the one screen built to
               // tell the two apart. The label is the shared one: the import
-              // template and every report say "Whole company".
+              // template and every report say "Whole subsidiary".
               const entity = r.locationId ? (r.locationName ?? t("submissions.aSite")) : t("wholeCompany");
               // Uniqueness includes `location_id`, so a whole-company record
               // and a site record for the same period and category are two

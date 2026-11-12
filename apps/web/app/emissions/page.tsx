@@ -61,7 +61,9 @@ import {
 } from 'recharts';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
-import { anomalyStatement } from '@/lib/anomaly-view';
+import { anomalyStatement, isFirstPeriodRecord } from '@/lib/anomaly-view';
+import { factorReleaseId, formatSealDate, sealDateFor } from '@/lib/release-seal-view';
+import { useReleaseSealDates } from '@/lib/use-release-seal-dates';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
@@ -169,6 +171,8 @@ function EmissionsAnalysisPageInner() {
   const t = useTranslations('emissions');
   const tCommon = useTranslations('common');
   const locale = useLocale();
+  // The package seal date beside the release behind a figure (UAT round 2, S2).
+  const sealDates = useReleaseSealDates();
   const words = useRecordWords();
   const entityWords = useEntityWords();
   const actorWords = useActorWords();
@@ -1373,6 +1377,10 @@ function EmissionsAnalysisPageInner() {
                     verdict: a drawer that shows a badge or nothing lets "never
                     checked" render exactly like "checked and clean". */}
                 <p className="text-xs text-muted-foreground">
+                  {/* A first-period record is named, not only explained (UAT round 2, K4-3a). */}
+                  {isFirstPeriodRecord(selectedRecord) && (
+                    <span className="font-medium">{anomalyStatement(selectedRecord, tAnomaly, locale).headline}. </span>
+                  )}
                   {anomalyStatement(selectedRecord, tAnomaly, locale).detail}
                 </p>
 
@@ -1428,6 +1436,12 @@ function EmissionsAnalysisPageInner() {
                       <Row label={t('drawer.normalised')} value={`${formatReadAmount(selectedRecord.calculation.normalizedValue, locale)} ${unitSymbol(selectedRecord.calculation.normalizedUnit)}`} />
                       <Row label={t('drawer.source')} value={selectedRecord.calculation.source} />
                       <Row label={t('drawer.version')} value={selectedRecord.calculation.version} />
+                      {(() => {
+                        const sealedAt = sealDateFor(sealDates, factorReleaseId(selectedRecord.calculation));
+                        return sealedAt ? (
+                          <Row label={t('drawer.sealedOn')} value={formatSealDate(sealedAt, locale)} />
+                        ) : null;
+                      })()}
                     </div>
                   ) : (
                     // The reason is read from the stored snapshot, not composed

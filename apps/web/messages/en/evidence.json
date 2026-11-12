@@ -3,6 +3,17 @@
   "required": "Required",
   "filesCount": "{count} file(s)",
   "requiredNote": "This category requires at least one supporting file (an invoice, a meter reading, a fuel receipt or fuel-card statement, a service or leak report, …) before it can be submitted.",
+  "refrigerantNote": {
+    "intro": "A refrigerant record needs at least one supporting file before it can be submitted. Accepted documents:",
+    "inventory": "Equipment inventory list (a signed or stamped internal register)",
+    "serviceForm": "Authorised service maintenance or periodic inspection form",
+    "nameplate": "Equipment nameplate photo or technical specification page",
+    "invoice": "Annual refill or maintenance invoice, if there is one"
+  },
+  "shareShortcut": {
+    "button": "Attach this document to the year's other gas records",
+    "hint": "If the same document also evidences this year's other gas records, attach it to all of them at once in the records table."
+  },
   "uploading": "Uploading…",
   "chooseFiles": "Choose files",
   "accepted": "PDF, JPG, PNG, XLSX, CSV · max 10 MB",

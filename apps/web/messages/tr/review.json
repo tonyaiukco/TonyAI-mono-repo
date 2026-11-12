@@ -34,6 +34,7 @@
     "emissions": "Emisyonlar",
     "factor": "Faktör",
     "factorSource": "{source} v{version}",
+    "sealedOn": "Paketin mühürlenme tarihi",
     "created": "Oluşturulma",
     "submitted": "Gönderilme",
     "notRecorded": "kaydedilmemiş",

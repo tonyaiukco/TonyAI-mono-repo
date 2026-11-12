@@ -3,6 +3,17 @@
   "required": "Zorunlu",
   "filesCount": "{count} dosya",
   "requiredNote": "Bu kategori, gönderilmeden önce en az bir destekleyici dosya (fatura, sayaç okuması, yakıt fişi veya taşıt kartı dökümü, servis ya da kaçak raporu, …) gerektirir.",
+  "refrigerantNote": {
+    "intro": "Soğutucu gaz kaydı, gönderilmeden önce en az bir destekleyici dosya gerektirir. Kabul edilen belgeler:",
+    "inventory": "Cihaz / ekipman envanter listesi (imzalı veya kaşeli iç envanter tablosu)",
+    "serviceForm": "Yetkili servis bakım veya periyodik kontrol formu",
+    "nameplate": "Cihaz etiketi (nameplate) fotoğrafı veya teknik şartname sayfası",
+    "invoice": "Yıllık dolum / bakım faturası (varsa)"
+  },
+  "shareShortcut": {
+    "button": "Bu belgeyi yılın diğer gaz kayıtlarına da ekle",
+    "hint": "Aynı belge bu yılın diğer gaz kayıtlarını da kanıtlıyorsa, kayıtlar tablosunda tek seferde hepsine ekleyin."
+  },
   "uploading": "Yükleniyor…",
   "chooseFiles": "Dosya seç",
   "accepted": "PDF, JPG, PNG, XLSX, CSV · en fazla 10 MB",

@@ -42,7 +42,7 @@
     "columns": {
       "legalName": "Ticari unvan",
       "tradingName": "Marka adı",
-      "location": "Konum",
+      "location": "Adres / Konum",
       "geography": "Coğrafya",
       "sector": "Sektör",
       "status": "Durum"
@@ -60,10 +60,10 @@
     "scope3": "Kapsam 3 Emisyonları",
     "trendPending": "Yıldan yıla eğilim için önceki yılın verileri gerekir",
     "collection": "Veri Toplama Durumu",
-    "companies": "Şirketler",
-    "locations": "Konumlar",
-    "byLocationOne": "1 şirket konum bazında ölçülüyor: elektrik, doğal gaz ve su için her tesis ve her ay bir fatura gerekir; bu kategoriler ancak her ay girildiğinde tamamlanmış sayılır.",
-    "byLocationMany": "{count} şirket konum bazında ölçülüyor: elektrik, doğal gaz ve su için her tesis ve her ay bir fatura gerekir; bu kategoriler ancak her ay girildiğinde tamamlanmış sayılır."
+    "companies": "Bağlı Şirketler",
+    "locations": "İşletmeler / Tesisler",
+    "byLocationOne": "1 bağlı şirket tesis bazında ölçülüyor: elektrik, doğal gaz ve su için her tesis ve her ay bir fatura gerekir; bu kategoriler ancak her ay girildiğinde tamamlanmış sayılır.",
+    "byLocationMany": "{count} bağlı şirket tesis bazında ölçülüyor: elektrik, doğal gaz ve su için her tesis ve her ay bir fatura gerekir; bu kategoriler ancak her ay girildiğinde tamamlanmış sayılır."
   },
   "charts": {
     "bySubsidiary": "Bağlı şirkete göre (tCO₂e)",
@@ -82,8 +82,8 @@
     "hint": "Bir kategoriye veri girmek ya da onu incelemek için hücreye tıklayın. Değerler hesaplanan emisyonları tCO₂e olarak gösterir.",
     "allYears": "Tüm raporlama yılları birlikte gösteriliyor — bir hücre yılları karıştırır, bu yüzden durumu hiçbir yılı tanımlamaz.",
     "subsidiary": "Bağlı şirket",
-    "perLocationOne": "konum bazında · {count} tesis",
-    "perLocationMany": "konum bazında · {count} tesis",
+    "perLocationOne": "tesis bazında · {count} tesis",
+    "perLocationMany": "tesis bazında · {count} tesis",
     "short": {
       "Electricity": "Elek",
       "Natural Gas": "Gaz",
@@ -115,9 +115,9 @@
     "viewHistory": "Kayıt geçmişini gör"
   },
   "drawer": {
-    "perLocationOne": "Konum bazında ölçülüyor · {count} tesis",
-    "perLocationMany": "Konum bazında ölçülüyor · {count} tesis",
-    "wholeCompany": "Şirket bütünü olarak ölçülüyor",
+    "perLocationOne": "Tesis bazında ölçülüyor · {count} tesis",
+    "perLocationMany": "Tesis bazında ölçülüyor · {count} tesis",
+    "wholeCompany": "Bağlı şirketin tamamı olarak ölçülüyor",
     "overall": "Genel Tamamlanma",
     "calculated": "Hesaplanan",
     "ofCategories": "/ {count} kategori",
@@ -132,13 +132,13 @@
   },
   "grid": {
     "loadFailed": "Fatura dökümü yüklenemedi.",
-    "wholeCompany": "{name} şirket bütünü olarak ölçülüyor; bu yüzden konum bazında fatura dökümü yok.",
+    "wholeCompany": "{name} bağlı şirketin tamamı olarak ölçülüyor; bu yüzden tesis bazında fatura dökümü yok.",
     "accepted": "fatura eklendi ve onaylandı",
     "open": "eksik",
     "awaiting": "inceleme bekliyor",
-    "company": "şirket genelinde zaten kayıtlı",
+    "company": "bağlı şirketin tamamı için zaten kayıtlı",
     "oneInvoice": "Her tesis için her ay bir fatura.",
     "clickMissing": "Girmek için eksik bir aya tıklayın.",
-    "companyMarked": "◆ ile işaretli aylar şirket bütünü için zaten kayıtlı — bunları tesis bazında yeniden girmek o ayı iki kez sayar."
+    "companyMarked": "◆ ile işaretli aylar bağlı şirketin tamamı için zaten kayıtlı — bunları tesis bazında yeniden girmek o ayı iki kez sayar."
   }
 }

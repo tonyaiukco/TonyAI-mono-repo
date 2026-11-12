@@ -42,7 +42,7 @@
     "columns": {
       "legalName": "Legal name",
       "tradingName": "Trading name",
-      "location": "Location",
+      "location": "Address",
       "geography": "Geography",
       "sector": "Sector",
       "status": "Status"
@@ -60,10 +60,10 @@
     "scope3": "Scope 3 Emissions",
     "trendPending": "Year-over-year trend needs prior-year data",
     "collection": "Data Collection Status",
-    "companies": "Companies",
-    "locations": "Locations",
-    "byLocationOne": "1 company is measured per location: their electricity, gas and water need one invoice per site per month, so those categories count as complete only when every month is in.",
-    "byLocationMany": "{count} companies are measured per location: their electricity, gas and water need one invoice per site per month, so those categories count as complete only when every month is in."
+    "companies": "Subsidiaries",
+    "locations": "Facilities",
+    "byLocationOne": "1 subsidiary is measured per facility: its electricity, gas and water need one invoice per facility per month, so those categories count as complete only when every month is in.",
+    "byLocationMany": "{count} subsidiaries are measured per facility: their electricity, gas and water need one invoice per facility per month, so those categories count as complete only when every month is in."
   },
   "charts": {
     "bySubsidiary": "By Subsidiary (tCO₂e)",
@@ -82,8 +82,8 @@
     "hint": "Click a cell to enter or review that category. Values show calculated emissions in tCO₂e.",
     "allYears": "Showing every reporting year at once — a cell mixes years, so its status describes none of them.",
     "subsidiary": "Subsidiary",
-    "perLocationOne": "per location · {count} site",
-    "perLocationMany": "per location · {count} sites",
+    "perLocationOne": "per facility · {count} facility",
+    "perLocationMany": "per facility · {count} facilities",
     "short": {
       "Electricity": "Elec",
       "Natural Gas": "Gas",
@@ -115,9 +115,9 @@
     "viewHistory": "View record history"
   },
   "drawer": {
-    "perLocationOne": "Measured per location · {count} site",
-    "perLocationMany": "Measured per location · {count} sites",
-    "wholeCompany": "Measured as a whole company",
+    "perLocationOne": "Measured per facility · {count} facility",
+    "perLocationMany": "Measured per facility · {count} facilities",
+    "wholeCompany": "Measured as a whole subsidiary",
     "overall": "Overall Completion",
     "calculated": "Calculated",
     "ofCategories": "/ {count} categories",
@@ -128,17 +128,17 @@
       "incomplete": "Incomplete",
       "missing": "Missing"
     },
-    "invoiceGrid": "Invoices by site and month"
+    "invoiceGrid": "Invoices by facility and month"
   },
   "grid": {
     "loadFailed": "Could not load the invoice breakdown.",
-    "wholeCompany": "{name} is measured as a whole company, so there is no per-location invoice breakdown.",
+    "wholeCompany": "{name} is measured as a whole subsidiary, so there is no per-facility invoice breakdown.",
     "accepted": "invoice attached and approved",
     "open": "missing",
     "awaiting": "waiting for review",
-    "company": "already recorded company-wide",
-    "oneInvoice": "One invoice per site per month.",
+    "company": "already recorded for the whole subsidiary",
+    "oneInvoice": "One invoice per facility per month.",
     "clickMissing": "Click a missing month to enter it.",
-    "companyMarked": "Months marked ◆ are already recorded for the whole company — entering them again per site would count that month twice."
+    "companyMarked": "Months marked ◆ are already recorded for the whole subsidiary — entering them again per facility would count that month twice."
   }
 }
