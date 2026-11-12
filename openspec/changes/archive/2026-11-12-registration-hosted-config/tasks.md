@@ -38,13 +38,15 @@
 
 ## 7. Hosted QA rollout (with the owner)
 
-- [ ] 7.1 After the merge, with the automatic deploy disabled and no `QA deploy` or `QA rollback` run running or queued: the owner stores `registration-code`, applies the foundation with `registration_secret_ready = true`, and applies the application with the live release plus the `registration` block under a new `release_id`; verify by `release_secrets.py verify`, the plans read before each apply, and the `deploy_apps` readback
-- [ ] 7.2 Read back hosted QA: `GET https://api.qa.tonyai.io/api/v1/auth/registration` answers 200 with the placeholder marked, and the automatic deploy is re-enabled; verify by the responses and the workflow's state
-- [ ] 7.3 Register one company end to end on `https://qa.tonyai.io/register` with an address the owner reads: the email arrives, the link signs in, the new `super_admin` sees an empty organisation; verify by the owner's written report and a wrong code being refused on the page
-- [ ] 7.4 Record the rollout (release id, secret version id — never the code — and the registration made) in the planning file; verify the entry
+- [x] 7.1 After the merge, with the automatic deploy disabled and no `QA deploy` or `QA rollback` run running or queued: the owner stores `registration-code`, applies the foundation with `registration_secret_ready = true`, and applies the application with the live release plus the `registration` block under a new `release_id`; verify by `release_secrets.py verify`, the plans read before each apply, and the `deploy_apps` readback
+- [x] 7.2 Read back hosted QA: `GET https://api.qa.tonyai.io/api/v1/auth/registration` answers 200 with the placeholder marked, and the automatic deploy is re-enabled; verify by the responses and the workflow's state
+- [x] 7.3 Register one company end to end on `https://qa.tonyai.io/register` with an address the owner reads: the email arrives, the link signs in, the new `super_admin` sees an empty organisation; verify by the owner's written report and a wrong code being refused on the page
+- [x] 7.4 Record the rollout (release id, secret version id — never the code — and the registration made) in the planning file; verify the entry
 
 ## Workflow follow-up
 
-- Archive the change after the rollout is recorded.
+- Merged as PR #311 (`c06513c`, 2026-11-11); the merge deployed nothing (`SKIP: no image-relevant change`).
+- Rolled out to hosted QA on 2026-11-12 as release `reg1-1` on `ci43-1`'s images (source `7091f1f`): the `registration-code` secret at version `f8829a19dae540f09d5d3d9acd1ad2fe`, the foundation grant (1 added), the application release (0 added, 2 changed), readback PASS, `GET /auth/registration` 200. The owner registered one company end to end and reported every step as expected.
+- Archived on 2026-11-12, after the rollout was recorded.
 - When the self-host route resumes, carry the `registration` block to `application/qa`, `foundation/qa` and their contract scripts.
 - The pilot's manifest names the block with the allowance off, and only after the reviewed KVKK notice ships.
