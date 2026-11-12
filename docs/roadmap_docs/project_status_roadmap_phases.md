@@ -1561,6 +1561,11 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 
 ### Open questions
 
+**User access clarity follow-ups (2026-11-12, `uat2-user-access-clarity`'s `qa-auditor` seat; filed per the pre-pilot rule):**
+
+- **A failed subsidiary read on `/users` misleads:** if `GET /subsidiaries` fails after the users list loads, a Data Entry row shows only "+N more" and the access picker says the parent company has no subsidiaries. An error toast is shown and saving re-sends the grants unchanged, so nothing is lost; a "could not load subsidiaries" state would be clearer.
+- **The full grant list is only a hover title:** past three names, the rest of a Data Entry user's subsidiaries are in the access cell's `title`, which keyboard and touch users cannot reach (the edit access dialog does show every ticked subsidiary). A popover or an expandable cell would serve them.
+
 **Self-service registration follow-ups (2026-11-11; the three review seats; filed per the pre-pilot rule unless marked):**
 
 - **Address squatting (owner decision wanted before the pilot opens registration):** a code holder who registers someone else's address gains no access, but the address then has a profile — its real organisation cannot invite it (D17), its owner's later registration re-sends the squatter's invitation, and `offboard` does not free it. Options: expire and purge unaccepted registrations after N days (a scheduled job and an owner-connection delete path), or an operator `purge` command.

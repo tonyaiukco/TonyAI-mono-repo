@@ -36,11 +36,12 @@
   "authSyncPending": "Giriş engeli henüz uygulanmadı",
   "wholeOrganisation": "Ana şirketin tamamı",
   "noAccess": "Erişim verilmedi",
-  "accessCount": "Bağlı şirket: {count}",
+  "accessMore": "+{count} daha",
   "actions": {
     "menu": "{name} için işlemler",
     "changeRole": "Rolü değiştir",
-    "editAccess": "Bağlı şirket erişimini düzenle",
+    "editAccess": "Erişimi düzenle",
+    "editAccessFor": "{name} için erişimi düzenle",
     "disable": "Hesabı devre dışı bırak",
     "enable": "Hesabı etkinleştir",
     "resend": "Daveti yeniden gönder"
@@ -52,12 +53,23 @@
     "name": "Ad soyad",
     "role": "Rol",
     "language": "E-posta dili",
-    "subsidiaries": "Bağlı şirketler",
     "subsidiariesHelp": "Veri Girişi kullanıcıları yalnızca burada işaretlenen bağlı şirketlerde çalışır.",
     "noSubsidiaries": "Ana şirketinizin henüz bağlı şirketi yok.",
     "cancel": "Vazgeç",
     "submit": "Daveti gönder",
     "submitting": "Gönderiliyor…"
+  },
+  "picker": {
+    "heading": "Bu kullanıcının çalıştığı bağlı şirketler",
+    "selectedCount": "{count} / {total} seçili",
+    "selectAll": "Tümünü seç",
+    "clear": "Temizle",
+    "emptyWarning": "En az bir bağlı şirket işaretlenene kadar bu kullanıcı veri giremez."
+  },
+  "roleAccessNote": {
+    "super_admin": "Süper yönetici ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez.",
+    "consultant": "Danışman ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez.",
+    "executive_viewer": "Yönetici izleyici ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez."
   },
   "invited": "Davet {email} adresine gönderildi",
   "invitedNotDelivered": "{email} eklendi, ancak davet e-postası gönderilemedi. Listeden yeniden gönderin.",

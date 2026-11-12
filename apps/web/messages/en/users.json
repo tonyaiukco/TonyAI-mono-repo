@@ -36,11 +36,12 @@
   "authSyncPending": "Sign-in block not applied yet",
   "wholeOrganisation": "Whole parent company",
   "noAccess": "None granted",
-  "accessCount": "Subsidiaries: {count}",
+  "accessMore": "+{count} more",
   "actions": {
     "menu": "Actions for {name}",
     "changeRole": "Change role",
-    "editAccess": "Edit subsidiary access",
+    "editAccess": "Edit access",
+    "editAccessFor": "Edit access for {name}",
     "disable": "Disable account",
     "enable": "Enable account",
     "resend": "Re-send invitation"
@@ -52,12 +53,23 @@
     "name": "Full name",
     "role": "Role",
     "language": "Email language",
-    "subsidiaries": "Subsidiaries",
     "subsidiariesHelp": "Data Entry users work only in the subsidiaries ticked here.",
     "noSubsidiaries": "Your parent company has no subsidiaries yet.",
     "cancel": "Cancel",
     "submit": "Send invitation",
     "submitting": "Sending…"
+  },
+  "picker": {
+    "heading": "Subsidiaries this user works in",
+    "selectedCount": "{count} of {total} selected",
+    "selectAll": "Select all",
+    "clear": "Clear",
+    "emptyWarning": "This user cannot enter data until at least one subsidiary is ticked."
+  },
+  "roleAccessNote": {
+    "super_admin": "A super admin sees every subsidiary of the parent company. No subsidiary needs to be chosen.",
+    "consultant": "A consultant sees every subsidiary of the parent company. No subsidiary needs to be chosen.",
+    "executive_viewer": "An executive viewer sees every subsidiary of the parent company. No subsidiary needs to be chosen."
   },
   "invited": "Invitation sent to {email}",
   "invitedNotDelivered": "{email} was added, but the invitation email did not go out. Re-send it from the list.",

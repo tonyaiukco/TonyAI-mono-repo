@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
-import { AlertTriangle, MoreHorizontal, ShieldAlert, UserPlus } from "lucide-react";
+import { AlertTriangle, Info, MoreHorizontal, ShieldAlert, UserPlus } from "lucide-react";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, ApiError } from "@/lib/api";
 import { isStaleCursor } from "@/lib/cursor-pages";
 import { useErrorToast } from "@/lib/i18n/hooks";
+import { formatNumber } from "@/lib/i18n/number";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
@@ -55,7 +56,16 @@ import {
   type UserSummaryDTO,
   USER_ROLES,
 } from "@/lib/types";
-import { accessSummary, appendPage, canResend, invitationNote, replaceUser } from "@/lib/users-view";
+import {
+  accessSummary,
+  appendPage,
+  canResend,
+  invitationNote,
+  replaceUser,
+  selectAllSubsidiaries,
+  selectionState,
+  toggleSubsidiary,
+} from "@/lib/users-view";
 import { cn } from "@/lib/utils";
 
 const ROLES: readonly UserRole[] = USER_ROLES;
@@ -239,7 +249,7 @@ export default function UsersPage() {
                     ) : (
                       users.map((member) => {
                         const note = invitationNote(member);
-                        const access = accessSummary(member);
+                        const access = accessSummary(member, subsidiaryNames, LOCALE_FORMAT_TAGS[locale]);
                         const self = member.id === user?.id;
                         return (
                           <TableRow key={member.id} className={cn(member.status === "disabled" && "opacity-70")}>
@@ -274,11 +284,43 @@ export default function UsersPage() {
                                 </div>
                               )}
                             </TableCell>
-                            <TableCell
-                              className="text-sm text-muted-foreground"
-                              title={member.subsidiaryIds.map((id) => subsidiaryNames.get(id) ?? id).join(", ") || undefined}
-                            >
-                              {access.key === "accessCount" ? t("accessCount", access.values) : t(access.key)}
+                            <TableCell className="text-sm">
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                {access.key === "named" ? (
+                                  <span
+                                    className="flex min-w-0 max-w-xs items-baseline gap-1"
+                                    title={access.all.join(", ") || undefined}
+                                  >
+                                    <span className="truncate text-foreground" data-testid="user-access-names">
+                                      {access.names.join(", ")}
+                                    </span>
+                                    {access.overflow > 0 && (
+                                      <span className="shrink-0 text-muted-foreground">
+                                        {t("accessMore", { count: formatNumber(access.overflow, locale) })}
+                                      </span>
+                                    )}
+                                  </span>
+                                ) : access.key === "noAccess" ? (
+                                  <span className="flex items-center gap-1 text-amber-700" data-testid="user-access-none">
+                                    <AlertTriangle className="h-3.5 w-3.5" />
+                                    {t("noAccess")}
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground">{t("wholeOrganisation")}</span>
+                                )}
+                                {member.role === "data_entry" && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7"
+                                    disabled={busyId === member.id}
+                                    aria-label={t("actions.editAccessFor", { name: member.fullName })}
+                                    onClick={() => setAccessTarget(member)}
+                                  >
+                                    {t("actions.editAccess")}
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell className="text-right">
                               {!self && (
@@ -297,11 +339,6 @@ export default function UsersPage() {
                                     <DropdownMenuItem onSelect={() => setRoleTarget(member)}>
                                       {t("actions.changeRole")}
                                     </DropdownMenuItem>
-                                    {member.role === "data_entry" && (
-                                      <DropdownMenuItem onSelect={() => setAccessTarget(member)}>
-                                        {t("actions.editAccess")}
-                                      </DropdownMenuItem>
-                                    )}
                                     {canResend(member) && (
                                       <DropdownMenuItem
                                         onSelect={() =>
@@ -363,9 +400,11 @@ export default function UsersPage() {
         target={roleTarget}
         onClose={() => setRoleTarget(null)}
         onSave={(target, role) =>
-          act(target, () => api.setUserRole(target.id, { role }), () => {
+          act(target, () => api.setUserRole(target.id, { role }), (updated) => {
             setRoleTarget(null);
             toast.success(t("roleChanged"));
+            // A user who becomes Data Entry has no grant yet: go straight to choosing them.
+            if (target.role !== "data_entry" && updated.role === "data_entry") setAccessTarget(updated);
           })
         }
       />
@@ -405,31 +444,82 @@ export default function UsersPage() {
   );
 }
 
+/**
+ * The one subsidiary picker (invite and access dialogs): how many are ticked,
+ * select all and clear, and a warning — never a refusal — when none is.
+ */
 function SubsidiaryChecklist({
   subsidiaries,
   selected,
   onChange,
+  help,
 }: {
   subsidiaries: SubsidiaryDTO[];
   selected: string[];
   onChange: (ids: string[]) => void;
+  help?: string;
 }) {
   const t = useTranslations("users");
-  if (subsidiaries.length === 0) return <p className="text-sm text-muted-foreground">{t("inviteDialog.noSubsidiaries")}</p>;
+  const locale = useLocale() as Locale;
+  const state = selectionState(selected, subsidiaries);
   return (
-    <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
-      {subsidiaries.map((s) => (
-        <label key={s.id} className="flex items-center gap-2 text-sm">
-          <Checkbox
-            checked={selected.includes(s.id)}
-            onCheckedChange={(checked) =>
-              onChange(checked ? [...selected, s.id] : selected.filter((id) => id !== s.id))
-            }
-          />
-          {s.legalName}
-        </label>
-      ))}
-    </div>
+    <fieldset className="space-y-2" data-testid="subsidiary-picker">
+      <legend className="text-sm font-medium leading-none">{t("picker.heading")}</legend>
+      {help && <p className="text-xs text-muted-foreground">{help}</p>}
+      {subsidiaries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("inviteDialog.noSubsidiaries")}</p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-muted-foreground" aria-live="polite" data-testid="subsidiary-picker-count">
+              {t("picker.selectedCount", {
+                count: formatNumber(state.count, locale),
+                total: formatNumber(state.total, locale),
+              })}
+            </span>
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                disabled={state.allSelected}
+                onClick={() => onChange(selectAllSubsidiaries(selected, subsidiaries))}
+              >
+                {t("picker.selectAll")}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2"
+                disabled={selected.length === 0}
+                onClick={() => onChange([])}
+              >
+                {t("picker.clear")}
+              </Button>
+            </div>
+          </div>
+          <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
+            {subsidiaries.map((s) => (
+              <label key={s.id} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={selected.includes(s.id)}
+                  onCheckedChange={(checked) => onChange(toggleSubsidiary(selected, s.id, checked === true))}
+                />
+                {s.legalName}
+              </label>
+            ))}
+          </div>
+          {state.noneSelected && (
+            <p className="flex items-start gap-1.5 text-xs text-amber-700" role="status" data-testid="subsidiary-picker-empty">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {t("picker.emptyWarning")}
+            </p>
+          )}
+        </>
+      )}
+    </fieldset>
   );
 }
 
@@ -532,12 +622,18 @@ function InviteDialog({
               </Select>
             </div>
           </div>
-          {role === "data_entry" && (
-            <div className="space-y-2">
-              <Label>{t("inviteDialog.subsidiaries")}</Label>
-              <p className="text-xs text-muted-foreground">{t("inviteDialog.subsidiariesHelp")}</p>
-              <SubsidiaryChecklist subsidiaries={subsidiaries} selected={subsidiaryIds} onChange={setSubsidiaryIds} />
-            </div>
+          {role === "data_entry" ? (
+            <SubsidiaryChecklist
+              subsidiaries={subsidiaries}
+              selected={subsidiaryIds}
+              onChange={setSubsidiaryIds}
+              help={t("inviteDialog.subsidiariesHelp")}
+            />
+          ) : (
+            <p className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm" data-testid="invite-role-access-note">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              {t(`roleAccessNote.${role as Exclude<UserRole, "data_entry">}`)}
+            </p>
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
