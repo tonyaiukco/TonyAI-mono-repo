@@ -70,6 +70,11 @@
   Verify that findings are fixed, or filed under Open questions per the pre-pilot rule.
 - [x] 5.3 Run `openspec validate uat2-user-access-clarity --strict` and verify that it passes.
 
+## 6. Owner review fixes (2026-11-12)
+
+- [x] 6.1 (P2) The picker shows the "0 of 0 selected" count and the empty-selection warning even when the parent company has no subsidiary. Before, both sat inside the list branch, so an invitation sent before any subsidiary exists got no warning. Select all is disabled when nothing is listed. Verify with the e2e `with no subsidiary at all the picker still counts and warns`, in EN and TR. It answers `GET /subsidiaries` empty in the browser, then checks the invite dialog and, after a role change to Data Entry, the access editor.
+- [x] 6.2 (P3) Repair the seed users' roles and the Data Entry user's grants in `e2e/global-setup.ts`, through the shared `resetSeedAccess` helper in `e2e/helpers.ts`, which `users-access.spec.ts` also uses around each test. A run killed mid-test then cannot hand the next run's consultant specs a wrong role. Verify by simulating a killed run: one Playwright run sets the consultant to Data Entry and the entry user's grants to Gas only, and the next run's globalSetup puts back `consultant` and Energy plus Logistics.
+
 ## Workflow follow-up
 
 - Commit and open the PR when the owner asks; the owner merges.

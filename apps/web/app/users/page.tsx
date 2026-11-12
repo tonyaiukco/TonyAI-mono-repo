@@ -466,58 +466,59 @@ function SubsidiaryChecklist({
     <fieldset className="space-y-2" data-testid="subsidiary-picker">
       <legend className="text-sm font-medium leading-none">{t("picker.heading")}</legend>
       {help && <p className="text-xs text-muted-foreground">{help}</p>}
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-muted-foreground" aria-live="polite" data-testid="subsidiary-picker-count">
+          {t("picker.selectedCount", {
+            count: formatNumber(state.count, locale),
+            total: formatNumber(state.total, locale),
+          })}
+        </span>
+        <div className="flex gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            disabled={state.total === 0 || state.allSelected}
+            onClick={() => onChange(selectAllSubsidiaries(selected, subsidiaries))}
+          >
+            {t("picker.selectAll")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            disabled={selected.length === 0}
+            onClick={() => onChange([])}
+          >
+            {t("picker.clear")}
+          </Button>
+        </div>
+      </div>
       {subsidiaries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("inviteDialog.noSubsidiaries")}</p>
+        <p className="rounded-md border p-3 text-sm text-muted-foreground" data-testid="subsidiary-picker-none">
+          {t("inviteDialog.noSubsidiaries")}
+        </p>
       ) : (
-        <>
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="text-muted-foreground" aria-live="polite" data-testid="subsidiary-picker-count">
-              {t("picker.selectedCount", {
-                count: formatNumber(state.count, locale),
-                total: formatNumber(state.total, locale),
-              })}
-            </span>
-            <div className="flex gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2"
-                disabled={state.allSelected}
-                onClick={() => onChange(selectAllSubsidiaries(selected, subsidiaries))}
-              >
-                {t("picker.selectAll")}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2"
-                disabled={selected.length === 0}
-                onClick={() => onChange([])}
-              >
-                {t("picker.clear")}
-              </Button>
-            </div>
-          </div>
-          <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
-            {subsidiaries.map((s) => (
-              <label key={s.id} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={selected.includes(s.id)}
-                  onCheckedChange={(checked) => onChange(toggleSubsidiary(selected, s.id, checked === true))}
-                />
-                {s.legalName}
-              </label>
-            ))}
-          </div>
-          {state.noneSelected && (
-            <p className="flex items-start gap-1.5 text-xs text-amber-700" role="status" data-testid="subsidiary-picker-empty">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {t("picker.emptyWarning")}
-            </p>
-          )}
-        </>
+        <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
+          {subsidiaries.map((s) => (
+            <label key={s.id} className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={selected.includes(s.id)}
+                onCheckedChange={(checked) => onChange(toggleSubsidiary(selected, s.id, checked === true))}
+              />
+              {s.legalName}
+            </label>
+          ))}
+        </div>
+      )}
+      {/* Shown with no subsidiary at all too: an invitation sent before any exists still leaves the user unable to enter data. */}
+      {state.noneSelected && (
+        <p className="flex items-start gap-1.5 text-xs text-amber-700" role="status" data-testid="subsidiary-picker-empty">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {t("picker.emptyWarning")}
+        </p>
       )}
     </fieldset>
   );

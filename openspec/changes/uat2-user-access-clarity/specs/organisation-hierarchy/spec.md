@@ -68,6 +68,10 @@ When no subsidiary is selected for a Data Entry user, the picker SHALL warn that
 - **WHEN** a Super Admin invites a Data Entry user with no subsidiary ticked
 - **THEN** the picker shows the warning, the invitation is sent, and the users list marks the user as having no access
 
+#### Scenario: No subsidiary exists yet
+- **WHEN** a Super Admin invites a Data Entry user, or makes a user Data Entry, in a parent company with no subsidiary
+- **THEN** the picker says there are no subsidiaries yet, reads "0 / 0 seçili" (EN "0 of 0 selected"), shows the warning, and still allows inviting or saving
+
 ### Requirement: The invitation states each role's access
 The invite dialog SHALL state, for a role other than Data Entry, that the role sees every subsidiary of the parent company and needs no subsidiary choice. For Data Entry it SHALL show the subsidiary picker.
 

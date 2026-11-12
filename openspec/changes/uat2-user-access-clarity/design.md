@@ -57,6 +57,8 @@ The motivation is in proposal.md, under "Why". This section records the state of
    - "Select all" and "Clear" text buttons, each disabled when it would change nothing;
    - the empty warning.
 
+   The count and the warning do not depend on the list. With no subsidiary at all, the picker still reads "0 of 0 selected" and still warns, next to the "no subsidiaries yet" line. An invitation sent before any subsidiary exists is exactly the case decision 4 keeps open.
+
    The picker draws its own heading, so the invite dialog's `inviteDialog.subsidiaries` label key is removed; the dialog passes `subsidiariesHelp` as the picker's help line. The selection helpers go into `lib/users-view.ts` (`toggleSubsidiary`, `selectAll`, `selectionCount`) as pure functions with specs. The invite dialog and the access dialog both use the same component.
 6. **The invite dialog shows a role note.** For any role other than data_entry it shows a `roleAccessNote.<role>` line in place of the picker, saying that the role sees the whole parent company. The picker's selection state persists while the role toggles; only the submitted body drops it, which is today's behaviour.
 7. **The role dialog hands off to access.**

@@ -7,12 +7,14 @@ import {
   API_BASE,
   CONSULTANT_EMAIL,
   ENTRY_EMAIL,
+  SEED_ENTRY_GRANTS,
   SUB,
   bearer,
   getAccessToken,
   listAllPages,
   login,
   pickByFieldLabel,
+  resetSeedAccess,
 } from './helpers';
 
 /**
@@ -25,13 +27,12 @@ import {
  *
  * No account is created: the seed's Data Entry and Consultant users are changed
  * and put back to their SEED values before and after every test (grants, role
- * and the admin's language, through the API) — not to values a test captured,
- * so a run killed mid-test is repaired by the next one. The invite dialog is
+ * and the admin's language, through the API) — not to values a test captured —
+ * and globalSetup does the same, so a run killed mid-test is repaired before
+ * the next run's other specs. The invite dialog is
  * cancelled. Copy is read from the catalogues.
  */
 
-/** `entry@tonyai.local`'s grants in the seed (`SUB` in helpers.ts). */
-const SEED_ENTRY_GRANTS = [SUB.energy, SUB.logistics];
 
 type Copy = typeof enUsers;
 
@@ -69,25 +70,15 @@ async function subsidiaries(): Promise<SubsidiaryDTO[]> {
   });
 }
 
-/** The seed's state for everything this file changes: the consultant's role, the entry user's grants, the admin's language. */
+/** The seed's state for everything this file changes: roles, the entry user's grants, the admin's language. */
 async function restoreSeed() {
   await setAdminLanguage('en');
-  await withApi(async (api, token) => {
-    const users = await listAllPages<UserSummaryDTO>(api, token, '/users');
-    const consultant = users.find((u) => u.email === CONSULTANT_EMAIL);
-    if (consultant && consultant.role !== 'consultant') {
-      const res = await api.patch(`${API_BASE}/users/${consultant.id}/role`, { headers: bearer(token), data: { role: 'consultant' } });
-      if (res.status() !== 200) throw new Error(`restore role: ${res.status()} ${await res.text()}`);
-    }
-    const entry = users.find((u) => u.email === ENTRY_EMAIL);
-    if (entry && [...entry.subsidiaryIds].sort().join() !== [...SEED_ENTRY_GRANTS].sort().join()) {
-      const res = await api.put(`${API_BASE}/users/${entry.id}/access`, {
-        headers: bearer(token),
-        data: { subsidiaryIds: SEED_ENTRY_GRANTS },
-      });
-      if (res.status() !== 200) throw new Error(`restore grants: ${res.status()} ${await res.text()}`);
-    }
-  });
+  const api = await playwrightRequest.newContext();
+  try {
+    await resetSeedAccess(api);
+  } finally {
+    await api.dispose();
+  }
 }
 
 function fill(template: string, values: Record<string, string | number>): string {
@@ -251,3 +242,49 @@ test('the access copy speaks Turkish', async ({ page }) => {
   await page.getByRole('dialog').getByRole('button', { name: trUsers.inviteDialog.cancel }).click();
   expect((await seedUser(ENTRY_EMAIL)).subsidiaryIds.sort()).toEqual([...entry.subsidiaryIds].sort());
 });
+
+for (const [language, copy] of [['en', enUsers], ['tr', trUsers]] as const) {
+  test(`with no subsidiary at all the picker still counts and warns (${language})`, async ({ page }) => {
+    // A parent company with no subsidiary yet (a fresh registration): the
+    // browser's read of the list answers empty; everything else is real.
+    await page.route(/\/api\/v1\/subsidiaries$/, async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({ response: await route.fetch(), json: [] });
+    });
+    if (language === 'tr') await setAdminLanguage('tr');
+    await login(page, ADMIN_EMAIL);
+    await openUsers(page, copy);
+
+    await page.getByRole('button', { name: copy.invite }).click();
+    const dialog = page.getByRole('dialog', { name: copy.inviteDialog.title });
+    await expect(dialog.getByTestId('subsidiary-picker-none')).toHaveText(copy.inviteDialog.noSubsidiaries);
+    await expect(dialog.getByTestId('subsidiary-picker-count')).toHaveText(
+      fill(copy.picker.selectedCount, { count: 0, total: 0 }),
+    );
+    await expect(dialog.getByTestId('subsidiary-picker-empty')).toHaveText(copy.picker.emptyWarning);
+    await expect(dialog.getByRole('button', { name: copy.picker.selectAll })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: copy.picker.clear })).toBeDisabled();
+    // Warned, never refused.
+    await dialog.getByLabel(copy.inviteDialog.email, { exact: true }).fill('not-sent@tonyai.local');
+    await dialog.getByLabel(copy.inviteDialog.name, { exact: true }).fill('Not Sent');
+    await expect(dialog.getByRole('button', { name: copy.inviteDialog.submit })).toBeEnabled();
+    await dialog.getByRole('button', { name: copy.inviteDialog.cancel }).click();
+
+    // The same picker in the access editor after a role change to Data Entry.
+    const consultant = await seedUser(CONSULTANT_EMAIL);
+    await rowOf(page, CONSULTANT_EMAIL).getByRole('button', { name: fill(copy.actions.menu, { name: consultant.fullName }) }).click();
+    await page.getByRole('menuitem', { name: copy.actions.changeRole }).click();
+    const roleDialog = page.getByRole('dialog', { name: fill(copy.roleDialog.title, { name: consultant.fullName }) });
+    await roleDialog.getByRole('combobox', { name: copy.columns.role }).click();
+    await page.getByRole('option', { name: copy.roles.data_entry, exact: true }).click();
+    await roleDialog.getByRole('button', { name: copy.roleDialog.submit }).click();
+    const accessDialog = page.getByRole('dialog', { name: fill(copy.accessDialog.title, { name: consultant.fullName }) });
+    await expect(accessDialog.getByTestId('subsidiary-picker-none')).toHaveText(copy.inviteDialog.noSubsidiaries);
+    await expect(accessDialog.getByTestId('subsidiary-picker-count')).toHaveText(
+      fill(copy.picker.selectedCount, { count: 0, total: 0 }),
+    );
+    await expect(accessDialog.getByTestId('subsidiary-picker-empty')).toHaveText(copy.picker.emptyWarning);
+    await expect(accessDialog.getByRole('button', { name: copy.accessDialog.submit })).toBeEnabled();
+    await accessDialog.getByRole('button', { name: copy.accessDialog.cancel }).click();
+  });
+}

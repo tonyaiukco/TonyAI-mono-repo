@@ -5,6 +5,7 @@ import {
   cleanupE2ESubsidiaries,
   cleanupE2EFactors,
   cleanupE2ETargets,
+  resetSeedAccess,
   resetSeedLanguages,
   seedE2EFactor,
 } from './helpers';
@@ -26,6 +27,9 @@ export default async function globalSetup(): Promise<void> {
     // the language in `afterAll`, which a SIGINT skips); every spec but those
     // expects English.
     await resetSeedLanguages(ctx);
+    // Likewise a seed user's role or the Data Entry user's grants
+    // (`users-access.spec.ts` changes both and restores them in its hooks).
+    await resetSeedAccess(ctx);
     // Seeded LAST, after the sweep that would otherwise remove it. Without a
     // factor for a non-evidence category there is nothing a bulk submit can
     // submit: every category the seed covers requires an evidence file, and an
