@@ -538,15 +538,33 @@ export function isUserRole(role: string): role is UserRole {
  * attach or remove their evidence? One rule, used by the API's record and
  * evidence services and by every screen that offers those controls.
  *
- * A consultant is NOT a writer (decision 2026-07-30): the seat is advisory —
- * review, anomaly flagging, guidance — and is typically held by someone outside
- * the holding company. A function rather than an exported set, so the rule
- * cannot be widened at runtime by a caller.
+ * A consultant is NOT a writer (decision 2026-07-30): the seat is typically held
+ * by someone outside the holding company, who reviews, rejects and — since
+ * Decisions 2026-11-12 (K2) — approves, but never prepares the figures. A
+ * function rather than an exported set, so the rule cannot be widened at
+ * runtime by a caller.
  */
 export function mayAuthorRecords(
   user: { role: string } | null | undefined,
 ): boolean {
   return !!user && (user.role === 'data_entry' || user.role === 'super_admin');
+}
+
+/**
+ * May this user approve activity records? `consultant` or `super_admin`
+ * (Decisions 2026-11-12, K2: a one-person customer's approver is its external
+ * consultant). One rule, read by the API's approve check and by the review
+ * screen.
+ *
+ * - Role only. Segregation of duties (D01: nobody approves a record they
+ *   created) is a separate record-level check on `createdBy`, in both places.
+ * - Approving is not voiding or unlocking: those stay `super_admin` only.
+ * - It grants no authoring: see `mayAuthorRecords`.
+ */
+export function mayApproveRecords(
+  user: { role: string } | null | undefined,
+): boolean {
+  return !!user && (user.role === 'consultant' || user.role === 'super_admin');
 }
 
 export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' | 'revision_requested';
@@ -1577,7 +1595,7 @@ export interface SubsidiaryDTO {
    *
    * Named now because the distinction is cheap to state and expensive to
    * recover: TonyAI already encodes it in the workflow (`data_entry` prepares,
-   * `super_admin` approves), but this record carries no role, so once UAT
+   * `super_admin` or `consultant` approves), but this record carries no role, so once UAT
    * testers start filling it — some meaning "who to chase for data", others
    * meaning "who signs it off" — no migration could tell the two apart. A
    * future `responsibleParty*` field is then an addition, not a reinterpretation.

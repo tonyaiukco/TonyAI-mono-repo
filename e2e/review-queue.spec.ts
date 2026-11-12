@@ -10,6 +10,7 @@ import {
   APPROVER_EMAIL,
   CONSULTANT_EMAIL,
   ENTRY_EMAIL,
+  VIEWER_EMAIL,
   API_BASE,
   SUB,
   seenSubmittedAt,
@@ -18,12 +19,13 @@ import {
 /**
  * WP7 PR 3 — the reviewer UI at `/review`.
  *
- * The rule this file exists to defend is the one that was previously asserted
- * only against mocks: a consultant may take a record into review and send it
- * back, but may NOT approve it. Until the seed grew a consultant user there was
- * no way to exercise that branch against the real guard, so "review-only" rested
- * entirely on unit tests that could not have caught a guard wired to the wrong
- * role set.
+ * The rule this file exists to defend is who decides, against the real guard
+ * rather than mocks: a consultant or a super_admin takes a record into review,
+ * sends it back or approves it (a consultant approves since K2, Decisions
+ * 2026-11-12), and nobody approves a record they created (D01). Until the seed
+ * grew a consultant user there was no way to exercise the consultant's branch
+ * against the real guard, and unit tests could not have caught a guard wired
+ * to the wrong role set.
  *
  * Two collision rules, both learned by breaking them: every test writes a tuple
  * (subsidiary+category+period) no other spec touches — sharing one is a 409 on
@@ -221,7 +223,7 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
   expect(back.reviewNote).toBe('Invoice total does not match the meter reading');
 });
 
-test('a consultant may send a record back but is not offered Approve', async ({
+test('a consultant takes another user\'s record into review and approves it (K2)', async ({
   page,
   request,
 }) => {
@@ -256,10 +258,12 @@ test('a consultant may send a record back but is not offered Approve', async ({
 
   await row.click();
 
-  // The control a consultant may not use is absent, and the page says why
-  // rather than leaving its absence to be read as a bug.
-  await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
-  await expect(page.getByText(/Approval is reserved for a super_admin/)).toBeVisible();
+  // Since K2 a consultant approves a record someone else created, so Approve is
+  // offered, and neither the old "reserved for a super_admin" note nor the
+  // self-approval hint is shown.
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+  await expect(page.getByText(/Approval is reserved for a super_admin/)).toHaveCount(0);
+  await expect(page.getByText('You cannot approve a record you entered.')).toHaveCount(0);
 
   // The sheet must carry what a decision needs. Both of these were implemented
   // and asserted by nothing — removing either left the suite green.
@@ -287,6 +291,17 @@ test('a consultant may send a record back but is not offered Approve', async ({
     headers: bearer(token),
   });
   expect((await mid.json()).status).toBe('under_review');
+
+  // The consultant then approves it from the same sheet; the queue, defined by
+  // status, drops it, and the stored record names the consultant as reviewer.
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
+  await expect(page.getByText('Record approved')).toBeVisible();
+  await expect(row).toHaveCount(0);
+  const after = await (
+    await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })
+  ).json();
+  expect(after.status).toBe('approved');
+  expect(after.reviewedByName).toBe('Cem Consultant');
 });
 
 test('the queue is ordered by longest WAIT, not by oldest draft', async ({ page, request }) => {
@@ -353,11 +368,12 @@ test('the queue is ordered by longest WAIT, not by oldest draft', async ({ page,
   expect(text[draftedEarlier]).not.toContain('365d');
 });
 
-test('the API — not the UI — is what stops a consultant approving', async ({
+test('the API decides who approves: a consultant yes, with the submission seen; others no', async ({
   request,
 }) => {
   const admin = await getAccessToken(request, ADMIN_EMAIL);
   const consultant = await getAccessToken(request, CONSULTANT_EMAIL);
+  const viewer = await getAccessToken(request, VIEWER_EMAIL);
   const id = await createCommittedRecord(request, admin, {
     subsidiaryId: SUB.gas,
     category: 'Fuel',
@@ -365,26 +381,22 @@ test('the API — not the UI — is what stops a consultant approving', async ({
     activityValue: 900,
     activityUnit: 'litres',
   });
+  const approveAs = (token: string, data?: Record<string, unknown>) =>
+    request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(token), data });
 
-  // Hiding the button is a courtesy; this is the actual boundary.
-  const approve = await request.post(`${API_BASE}/activity-records/${id}/approve`, {
-    headers: bearer(consultant),
-  });
-  expect(approve.status()).toBe(403);
+  // A role that may not approve is refused on the role, before anything else.
+  const byViewer = await approveAs(viewer, { seenSubmittedAt: await seenSubmittedAt(request, admin, id) });
+  expect(byViewer.status()).toBe(403);
+  expect((await byViewer.json()).message).toMatch(/Only a consultant or super_admin may approve records/);
 
-  // Still 403 once the record is under review — the refusal is about the role,
-  // not about the record being in the wrong state.
-  const review = await request.post(`${API_BASE}/activity-records/${id}/review`, {
-    headers: bearer(consultant),
-  });
-  expect(review.status()).toBe(200);
-  const approveAgain = await request.post(
-    `${API_BASE}/activity-records/${id}/approve`,
-    { headers: bearer(consultant) },
-  );
-  expect(approveAgain.status()).toBe(403);
+  // A consultant passes the role check, so a request that names no submission
+  // (a review tab from before BUG-R2-03) is `record_changed`, not 403.
+  const unnamed = await approveAs(consultant);
+  expect(unnamed.status()).toBe(409);
+  expect((await unnamed.json()).code).toBe('record_changed');
 
-  // And a consultant cannot write data either (review-only, decision 2026-07-30).
+  // A consultant still cannot write data (decision 2026-07-30): approving is
+  // not authoring.
   const write = await request.post(`${API_BASE}/activity-records`, {
     headers: bearer(consultant),
     data: {
@@ -402,12 +414,29 @@ test('the API — not the UI — is what stops a consultant approving', async ({
   });
   expect(write.status()).toBe(403);
 
+  // Reject stays open to the consultant; the author resubmits.
   const reject = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
     headers: bearer(consultant),
     data: { varianceReason: 'meter reading missing', seenSubmittedAt: await seenSubmittedAt(request, consultant, id) },
   });
   expect(reject.status()).toBe(200);
   expect((await reject.json()).status).toBe('rejected');
+  const resubmit = await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(admin) });
+  expect(resubmit.status()).toBe(200);
+
+  // Naming the submission seen, the consultant's approval goes through.
+  const approved = await approveAs(consultant, { seenSubmittedAt: await seenSubmittedAt(request, consultant, id) });
+  expect(approved.status()).toBe(200);
+  expect((await approved.json()).status).toBe('approved');
+
+  // Approving is not voiding: void stays super_admin only.
+  const voided = await request.post(`${API_BASE}/activity-records/${id}/void`, {
+    headers: bearer(consultant),
+    data: { voidReason: 'consultant tries to withdraw' },
+  });
+  expect(voided.status()).toBe(403);
+  const still = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(admin) });
+  expect((await still.json()).status).toBe('approved');
 });
 
 test('data_entry is told the decision is not theirs, not shown a broken page', async ({

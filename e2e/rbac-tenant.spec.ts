@@ -107,7 +107,7 @@ test('super_admin cannot write to another organisation (tenant check on update/d
   expect(del.status()).toBe(404);
 });
 
-test('a non-approver role is refused with 403, not 404 (approval is super_admin only)', async ({
+test('a non-approver role is refused with 403, not 404 (data_entry may not approve)', async ({
   request,
 }) => {
   // Decision 2026-07-30: the seat that prepares data does not approve it.
@@ -115,10 +115,10 @@ test('a non-approver role is refused with 403, not 404 (approval is super_admin 
   // (so not a 404) — their ROLE simply may not approve it. Uses a seeded
   // record, so no writes and no interaction with the anomaly baseline.
   //
-  // `data_entry` rather than the consultant deliberately: the consultant's own
-  // approve-403 is covered in `review-queue.spec.ts`, and this is the seat that
-  // enters data, which is where "prepared it, therefore may approve it" would
-  // actually be assumed.
+  // `data_entry` because this is the seat that enters data, which is where
+  // "prepared it, therefore may approve it" would actually be assumed. The
+  // consultant MAY approve since K2 (Decisions 2026-11-12); the approver roles
+  // are covered in `review-queue.spec.ts`.
   //
   // THE SERIES IS PART OF THE FIXTURE, not an arbitrary pick. WP18 made
   // site-reported months exclusive, so the seed SKIPS the company-level row for

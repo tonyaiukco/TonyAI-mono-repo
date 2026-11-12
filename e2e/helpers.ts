@@ -8,7 +8,8 @@ import { INTERNAL_FACTOR_PUBLISHERS, type UserRole, type UserSummaryDTO } from '
 export const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
 export const ADMIN_EMAIL = 'admin@tonyai.local';
 export const ENTRY_EMAIL = 'entry@tonyai.local';
-/** Review-only: org-wide read, may review and reject, may NOT approve. Seeded
+/** Consultant: org-wide read, may review, reject and approve (K2, 2026-11-12;
+ * never a record they created), may NOT enter data, void or unlock. Seeded
  * with no per-subsidiary access rows on purpose — a consultant's visibility
  * comes from the organisation, so granting rows here would hide a regression in
  * that guard branch. */
@@ -355,7 +356,7 @@ export async function seenSubmittedAt(request: APIRequestContext, token: string,
   return ((await res.json()) as { submittedAt: string | null }).submittedAt;
 }
 
-/** Approve a submitted record (super_admin only, and never the record's creator — D01). */
+/** Approve a submitted record (consultant or super_admin — K2 — and never the record's creator — D01). */
 export async function approveRecord(request: APIRequestContext, token: string, id: string): Promise<void> {
   const res = await request.post(`${API_BASE}/activity-records/${id}/approve`, {
     headers: bearer(token),

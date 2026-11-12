@@ -4,16 +4,16 @@ import { createTranslator } from 'use-intl/core';
 import { MESSAGES } from '@/messages';
 import { describeApiError, type ErrorTranslator } from './i18n/errors';
 import type { Locale } from './types';
-import { canApproveRecord, canSubmitEntry, saveErrorDescription } from './record-lifecycle-view';
+import { canApproveRecord, canSubmitEntry, isOwnRecordForApprover, saveErrorDescription } from './record-lifecycle-view';
 
 describe('record lifecycle controls', () => {
   const admin = { id: 'author', role: 'super_admin' as const };
   it.each([
     ['super_admin', true],
+    ['consultant', true],
     ['data_entry', false],
-    ['consultant', false],
     ['executive_viewer', false],
-  ] as const)('offers approval only to a different super_admin: %s', (role, mayApproveOthers) => {
+  ] as const)('offers approval to a consultant or super_admin, never on their own record: %s', (role, mayApproveOthers) => {
     const user = { ...admin, role };
     expect(canApproveRecord(user, { createdBy: 'author' })).toBe(false);
     expect(canApproveRecord(user, { createdBy: 'other' })).toBe(mayApproveOthers);
@@ -21,6 +21,17 @@ describe('record lifecycle controls', () => {
   it('offers no approval without a loaded user or record', () => {
     expect(canApproveRecord(null, { createdBy: 'other' })).toBe(false);
     expect(canApproveRecord(admin, null)).toBe(false);
+  });
+  it.each([
+    ['super_admin', true],
+    ['consultant', true],
+    ['data_entry', false],
+    ['executive_viewer', false],
+  ] as const)('explains the withheld Approve only to an approver on their own record: %s', (role, explained) => {
+    const user = { ...admin, role };
+    expect(isOwnRecordForApprover(user, { createdBy: 'author' })).toBe(explained);
+    expect(isOwnRecordForApprover(user, { createdBy: 'other' })).toBe(false);
+    expect(isOwnRecordForApprover(null, { createdBy: 'author' })).toBe(false);
   });
   it.each(['super_admin', 'data_entry'] as const)('allows only own or new submissions for %s', (role) => {
     const user = { ...admin, role };

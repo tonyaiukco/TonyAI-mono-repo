@@ -2047,9 +2047,10 @@ function DataEntryPageInner() {
                 category={category}
                 onCountChange={handleEvidenceCountChange}
                 onShareWithYear={gasShortcut?.offered ? startShareWithYear : null}
-                // A consultant is review-only (decision 2026-07-30) and the
-                // evidence API 403s them, so offering upload/delete controls
-                // here only produced a button that always failed.
+                // A consultant does not author records (decision 2026-07-30;
+                // they review, reject and approve) and the evidence API 403s
+                // them, so offering upload/delete controls here only produced
+                // a button that always failed.
                 canManage={mayAuthorRecords(user)}
                 heldFiles={heldFiles}
                 onHeldFilesChange={setHeldFiles}

@@ -6,6 +6,7 @@ import {
   API_ERROR_STATUS,
   CATEGORY_SCOPE_MAP,
   mayAuthorRecords,
+  mayApproveRecords,
   mayEditRecord,
   mayRecallRecord,
   mayCopyVoidedRecord,
@@ -929,6 +930,29 @@ describe('mayAuthorRecords — the one record-write rule', () => {
   it('refuses a signed-out shell', () => {
     expect(mayAuthorRecords(null)).toBe(false);
     expect(mayAuthorRecords(undefined)).toBe(false);
+  });
+});
+
+describe('mayApproveRecords — who may approve (K2, Decisions 2026-11-12)', () => {
+  it.each([
+    ['super_admin', true],
+    ['consultant', true],
+    ['data_entry', false],
+    ['executive_viewer', false],
+    ['CONSULTANT', false],
+    ['', false],
+  ])('%s → %s', (role, allowed) => {
+    expect(mayApproveRecords({ role })).toBe(allowed);
+  });
+
+  it('refuses a signed-out shell', () => {
+    expect(mayApproveRecords(null)).toBe(false);
+    expect(mayApproveRecords(undefined)).toBe(false);
+  });
+
+  it('approving grants no authoring: a consultant still may not write', () => {
+    expect(mayApproveRecords({ role: 'consultant' })).toBe(true);
+    expect(mayAuthorRecords({ role: 'consultant' })).toBe(false);
   });
 });
 

@@ -77,7 +77,7 @@ describe('attachBlockReason — the upload’s refusals, in the evidence API’s
     expect(attachBlockReason(draft({ status: 'rejected' }), ME)).toBeNull();
   });
 
-  it('refuses a review-only role before anything else', () => {
+  it('refuses a non-authoring role (the consultant) before anything else', () => {
     expect(attachBlockReason(draft(), { id: ME.id, role: 'consultant' })).toBe(
       'Your role cannot attach evidence.',
     );
@@ -88,12 +88,22 @@ describe('attachBlockReason — the upload’s refusals, in the evidence API’s
     expect(attachBlockReason(draft({ status: 'under_review' }), ME)).toBe('Already under review.');
   });
 
-  it('refuses a colleague’s record, except for a super_admin', () => {
+  it('refuses a colleague’s record, a super_admin included (Decisions 2026-11-12)', () => {
     const theirs = draft({ createdBy: 'user-them' });
     expect(attachBlockReason(theirs, ME)).toBe('Entered by someone else.');
-    expect(attachBlockReason(theirs, ADMIN)).toBeNull();
+    expect(attachBlockReason(theirs, ADMIN)).toBe('Entered by someone else.');
+    expect(attachBlockReason(draft({ createdBy: ADMIN.id }), ADMIN)).toBeNull();
     // Authorship before status, as the API checks it.
     expect(attachBlockReason({ ...theirs, status: 'submitted' }, ME)).toBe('Entered by someone else.');
+  });
+
+  it('offers a super_admin only their own records in the attach step (Decisions 2026-11-12)', () => {
+    const own = draft({ id: 'own', createdBy: ADMIN.id });
+    const theirs = draft({ id: 'theirs', createdBy: 'user-them' });
+    expect(attachableRecords([own, theirs], ADMIN)).toEqual({
+      attachableIds: ['own'],
+      reasonById: { theirs: 'Entered by someone else.' },
+    });
   });
 
   it('refuses a record whose own period the server reports locked', () => {

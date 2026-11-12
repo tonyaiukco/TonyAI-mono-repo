@@ -429,12 +429,26 @@ describe('EvidenceService', () => {
       expect(storage.upload).not.toHaveBeenCalled();
     });
 
-    it('lets a super_admin upload to anyone’s editable record', async () => {
+    it('refuses a super_admin on a colleague’s editable record: author-only (Decisions 2026-11-12)', async () => {
+      // Without this a super_admin could change a colleague's draft's evidence
+      // and then approve it — D01 compares only the creator.
       const record = makeRecord({ id: 'rec-1', createdBy: 'someone-else' });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      stubStore([record]);
+      await expect(
+        service.upload(dataEntry({ role: 'super_admin', id: 'admin' }), 'rec-1', makeFile()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(storage.upload).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('lets a super_admin upload to a record they created, audited', async () => {
+      const record = makeRecord({ id: 'rec-1', createdBy: 'admin' });
       prisma.activityRecord.findUnique.mockResolvedValue(record);
       stubStore([record]);
       await service.upload(dataEntry({ role: 'super_admin', id: 'admin' }), 'rec-1', makeFile());
       expect(storage.upload).toHaveBeenCalledOnce();
+      expect(audit.record.mock.calls[0][1]).toMatchObject({ action: 'create', entity: 'evidence' });
     });
 
     it('blocks evidence changes once the record is no longer editable', async () => {
@@ -754,6 +768,26 @@ describe('EvidenceService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
+    it('refuses a super_admin whose selection holds a colleague’s record — all or nothing', async () => {
+      const own = makeRecord({ id: 'aaaaaaaa-0000-0000-0000-000000000001', createdBy: 'admin' });
+      const colleague = makeRecord({ id: 'aaaaaaaa-0000-0000-0000-000000000003', createdBy: 'someone-else' });
+      prisma.activityRecord.findMany.mockResolvedValue([own, colleague]);
+      // The store path is stubbed, so a regression would reach it and the
+      // "nothing stored" assertions below would fail rather than crash.
+      stubStore([own, colleague]);
+
+      const error = await service
+        .uploadForRecords(dataEntry({ role: 'super_admin', id: 'admin' }), [own.id, colleague.id], makeFile())
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      const body = (error as BadRequestException).getResponse() as EvidenceLinkRefusedDTO;
+      expect(body.refused.map((r) => r.recordId)).toEqual([colleague.id]);
+      expect(body.refused[0].reason).toMatch(/records you created/);
+      expect(storage.upload).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
     it.each(['consultant', 'executive_viewer'] as const)(
       'refuses a %s before reading any record',
       async (role) => {
@@ -954,6 +988,18 @@ describe('EvidenceService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
+    it('refuses a super_admin taking a file off a colleague’s record (Decisions 2026-11-12)', async () => {
+      const theirs = makeRecord({ id: 'rec-1', status: ActivityRecordStatus.rejected, createdBy: 'someone-else' });
+      prisma.activityRecord.findUnique.mockResolvedValue(theirs);
+      // The file is found, so a regression would reach the delete and fail below.
+      prisma.evidence.findFirst.mockResolvedValue(makeEvidence([theirs]));
+      await expect(
+        service.detach(dataEntry({ role: 'super_admin', id: 'admin' }), 'rec-1', 'ev-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.activityRecordEvidence.deleteMany).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
     it('is a 404 for a record out of reach before the file is even looked up', async () => {
       const foreign = makeRecord({ id: 'rec-x', subsidiaryId: 'sub-999' });
       prisma.activityRecord.findUnique.mockResolvedValue(foreign);
@@ -1018,6 +1064,18 @@ describe('EvidenceService', () => {
   });
 
   describe('remove — the file from every record', () => {
+    it('refuses a super_admin deleting a file that backs a colleague’s record (Decisions 2026-11-12)', async () => {
+      const record = makeRecord({ id: 'rec-1', createdBy: 'someone-else' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));
+      prisma.activityRecord.findMany.mockResolvedValue([record]);
+
+      await expect(service.remove(dataEntry({ role: 'super_admin', id: 'admin' }), 'ev-1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
     it('deletes a file backing one editable record: the row and its audit row in one transaction, then the object', async () => {
       const record = makeRecord({ id: 'rec-1' });
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));

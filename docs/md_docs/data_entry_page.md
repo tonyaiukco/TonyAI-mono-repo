@@ -154,7 +154,7 @@ The evidence API needs a record id, so on a new record (or a copy) the vault **h
 - the first `Save draft` or `Submit for review` creates the record, uploads the held files to it one at a time, reads the record again, and only then runs the evidence and anomaly checks and the submit. An evidence-required record with a file chosen is therefore submitted in one click
 - held files belong to the form they were chosen in: `Start new record`, a subsidiary switch, `Cancel`, `Copy to new draft` or opening another record drops them, and a save still in flight when that happens uploads nothing
 - a file that fails to upload leaves the record a saved draft and the form open on it. The vault lists the file under `Not uploaded. The record is saved as a draft.` with `Retry` and remove, and nothing is submitted
-- a review-only user sees no picker
+- a user who does not author records (consultant, executive viewer) sees no picker
 
 ### Supported Files
 - PDF
@@ -358,7 +358,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 
 #### Attaching One File to Several Records (Entered Records)
 - `Attach one file to several records` switches the list into its own selection. It is separate from the submit selection because the records it is for — drafts waiting for their invoice — are exactly the ones the submit selection leaves out
-- a row gets a checkbox when it can take a file: `draft` or `rejected`, entered by the current user (any, for a `super_admin`), period open. A draft or rejected row that cannot shows the reason (`Entered by someone else.`, `Q1 2026 is locked.`); there is no `Select all` — the user ticks the records this one document evidences
+- a row gets a checkbox when it can take a file: `draft` or `rejected`, entered by the current user (a `super_admin` included — Decisions 2026-11-12), period open. A draft or rejected row that cannot shows the reason (`Entered by someone else.`, `Q1 2026 is locked.`); there is no `Select all` — the user ticks the records this one document evidences
 - the bar reads `Tick the records this one document evidences.` until something is ticked, then `N selected`, `Cancel` and `Attach one file to N records`, which opens the file chooser (PDF, JPG, PNG, XLSX, CSV, ≤10 MB, checked before upload)
 - `Attach this file?` names every record the file will back and says reviewers see every record it backs; `Attach` uploads once and links all of them
 - all or nothing: if any record can no longer take the file, nothing is uploaded and the toast names each refused record and why; the selection stays so the user can untick them

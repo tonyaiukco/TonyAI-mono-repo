@@ -21,7 +21,7 @@ TonyAI uses four primary roles.
 | Role | Responsibility | Data Scope |
 | :--- | :--- | :--- |
 | `super_admin` | System governance, factor management, approvals, configuration, and the organisation's users | Their own organisation only — there is no platform-wide administrator (D18); organisations and first administrators are provisioned by the operator |
-| `consultant` | Review, anomaly flagging, advisory support | Assigned organisations only |
+| `consultant` | Review, anomaly flagging, approval (since 2026-11-12, K2 — never a record they created, D01), advisory support; never enters data | Assigned organisations only |
 | `data_entry` | Activity logging, evidence upload, draft and submission workflows | Assigned subsidiaries and permitted parent organisation context |
 | `executive_viewer` | Dashboard monitoring, report viewing, high level visibility | Assigned organisations only |
 
@@ -35,11 +35,11 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | :--- | :---: | :---: | :---: | :---: |
 | View dashboard and analytics | ✅ | ✅ | ✅ | ✅ |
 | Enter or edit activity data | ✅ | ❌ | ✅ | ❌ |
-| Upload evidence files | ✅ | ❌ | ✅ | ❌ |
-| Attach one evidence file to several records (own editable records of one subsidiary; any author's for `super_admin`) | ✅ | ❌ | ✅ | ❌ |
+| Upload, detach or delete evidence files (own records only, `super_admin` included — Decisions 2026-11-12) | ✅ | ❌ | ✅ | ❌ |
+| Attach one evidence file to several records (own editable records of one subsidiary, `super_admin` included — Decisions 2026-11-12) | ✅ | ❌ | ✅ | ❌ |
 | Save draft records | ✅ | ❌ | ✅ | ❌ |
 | Submit records for review (own records only — decision D02, `super_admin` included) | ✅ | ❌ | ✅ | ❌ |
-| Approve records (never a record you created — decision D01) | ✅ | ❌ | ❌ | ❌ |
+| Approve records (never a record you created — decision D01; consultant since 2026-11-12, K2) | ✅ | ✅ | ❌ | ❌ |
 | Reject records / flag for revision | ✅ | ✅ | ❌ | ❌ |
 | Lock records | ✅ | ❌ | ❌ | ❌ |
 | Manage subsidiaries | ✅ | ❌ | ❌ | ❌ |
@@ -73,7 +73,8 @@ The UI must show or hide navigation, pages, buttons, and actions based on role.
 ### Action Button Rules
 - `Add Supplier` renders only for `super_admin`
 - `Add Subsidiary` renders only for `super_admin`
-- `Approve` and `Lock` actions render only for `super_admin`; `Approve` not on a record the viewer created (D01)
+- `Approve` renders for `super_admin` and `consultant`, never on a record the viewer created (D01)
+- `Lock`, `Unlock` and `Void` render only for `super_admin`
 - `Flag for Revision` renders for `super_admin` and `consultant`
 - `Save Draft` and `Submit for Review` render for `data_entry` and `super_admin`; `Submit for Review` only on the viewer's own record (D02)
 
@@ -96,7 +97,7 @@ The Submit button must be disabled when:
 - user lacks permission
 
 ## 5.2 Approval Button
-The Approve button must only be enabled for `super_admin` when record status is:
+The Approve button must only be enabled for `super_admin` or `consultant`, on a record the viewer did not create (D01), when record status is:
 - `submitted`
 - `under_review`
 

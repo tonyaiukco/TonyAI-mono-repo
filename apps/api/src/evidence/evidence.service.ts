@@ -59,7 +59,8 @@ const SIGNED_URL_TTL_SECONDS = 60;
 
 // Mirrors activity-records: who may attach/remove evidence, and while the parent
 // record is still editable (evidence is frozen once a record is committed).
-// Mirrors activity-records: a consultant is review-only (decision 2026-07-30).
+// Mirrors activity-records: a consultant does not author records (decision
+// 2026-07-30; they review, reject and approve), so manages no evidence.
 // The contract's list, as the record edit gate reads it (BUG-R2-03 review).
 const EDITABLE_STATUSES = new Set<ActivityRecordStatus>(
   EDITABLE_RECORD_STATUSES.map((status) => ActivityRecordStatus[status]),
@@ -236,17 +237,21 @@ export class EvidenceService {
   /**
    * Why this caller may not change the evidence on `record`, or null.
    *
-   * Author-or-super_admin, on a still-editable record, in an open period —
-   * the same three rules a record's own edit obeys. The period lock is new
-   * here (WP8 PR7): until then a rejected record inside a locked period could
-   * still gain or lose a file.
+   * The record's author only — `super_admin` included — on a still-editable
+   * record, in an open period: the same three rules a record's own edit obeys
+   * since BUG-R2-03. Author-only since Decisions 2026-11-12 (option A): with a
+   * `super_admin` exception, a `super_admin` could change a colleague's draft's
+   * evidence and then approve it, which D01 (`createdBy` only) cannot see.
+   * Deleting a whole draft stays author-or-`super_admin` (the record service).
+   * The period lock is new here (WP8 PR7): until then a rejected record inside
+   * a locked period could still gain or lose a file.
    */
   private refusalFor(
     user: RequestUser,
     record: ActivityRecord,
     locked: boolean,
   ): HttpException | null {
-    if (user.role !== 'super_admin' && record.createdBy !== user.id) {
+    if (record.createdBy !== user.id) {
       return new ForbiddenException(
         'You may only modify evidence on records you created',
       );

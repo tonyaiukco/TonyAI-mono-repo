@@ -597,8 +597,9 @@ export const api = {
     }),
 
   // The review verbs. Each is a POST with no body except `reject`, which
-  // carries the reason the submitter will read. The role rules (consultant may
-  // review and reject but not approve) are enforced by the API — the UI hides
+  // carries the reason the submitter will read. The role rules (consultant and
+  // super_admin review, reject and approve; nobody approves their own record,
+  // D01) are enforced by the API — the UI hides
   // what a role cannot do, it does not decide it.
   reviewActivityRecord: (id: string) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/review`, {

@@ -39,7 +39,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | Role | Capability |
 | --- | --- |
 | `super_admin` | Full control of their own organisation; manage subsidiaries, factors, approvals, and users — invite, change roles and subsidiary access, disable and enable (never their own account; LP4-01) |
-| `consultant` | Organisation‑wide read + review/reject (**review‑only** — may not enter, edit or submit data, and may not approve) |
+| `consultant` | Organisation‑wide read + review, reject and approve (approve since 2026‑11‑12, K2; never a record they created, D01) — may not enter, edit or submit data, and may not void or unlock |
 | `data_entry` | Limited to assigned subsidiaries; submit activity data |
 | `executive_viewer` | Read‑only dashboards and reports |
 
