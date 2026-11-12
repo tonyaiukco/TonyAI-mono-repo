@@ -1064,6 +1064,24 @@ describe('EvidenceService', () => {
   });
 
   describe('remove — the file from every record', () => {
+    it('refuses a super_admin deleting a file shared with a colleague’s record: 409, naming it (Decisions 2026-11-12)', async () => {
+      const own = makeRecord({ id: 'rec-own', createdBy: 'admin' });
+      const theirs = makeRecord({ id: 'rec-theirs', createdBy: 'someone-else', periodValue: 'February' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([own, theirs]));
+      prisma.activityRecord.findMany.mockResolvedValue([own, theirs]);
+
+      const error = await service.remove(dataEntry({ role: 'super_admin', id: 'admin' }), 'ev-1').catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'evidence_backs_locked_records',
+        params: { count: 1 },
+      });
+      expect((error as Error).message).toMatch(/records you created/);
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
     it('refuses a super_admin deleting a file that backs a colleague’s record (Decisions 2026-11-12)', async () => {
       const record = makeRecord({ id: 'rec-1', createdBy: 'someone-else' });
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));
