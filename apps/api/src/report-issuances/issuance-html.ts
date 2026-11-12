@@ -32,7 +32,8 @@ import tr from './i18n/tr.json';
 
 /** The renderer's own version; the issuance records it with the browser's. */
 // v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
-export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v3';
+// v4 (UAT round 2, K1): the tier names — "Parent company" / "Ana Şirket" for the organisation.
+export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v4';
 
 export interface IssuanceDocument {
   issuanceId: string;

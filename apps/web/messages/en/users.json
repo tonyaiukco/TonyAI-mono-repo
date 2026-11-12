@@ -1,9 +1,9 @@
 {
   "title": "Users",
-  "subtitle": "Invite people to your organisation and manage their roles and access.",
+  "subtitle": "Invite people to your parent company and manage their roles and access.",
   "invite": "Invite user",
   "forbiddenTitle": "Only a super admin manages users",
-  "forbidden": "Inviting people and changing their roles or access is restricted to your organisation's super admins. Your role is {role}.",
+  "forbidden": "Inviting people and changing their roles or access is restricted to your parent company's super admins. Your role is {role}.",
   "loadFailed": "Users could not be loaded.",
   "empty": "No users yet.",
   "loadMore": "Load more",
@@ -34,7 +34,7 @@
   "invitationPending": "Invitation being sent",
   "deliveryFailed": "Invitation not delivered — re-send it",
   "authSyncPending": "Sign-in block not applied yet",
-  "wholeOrganisation": "Whole organisation",
+  "wholeOrganisation": "Whole parent company",
   "noAccess": "None granted",
   "accessCount": "Subsidiaries: {count}",
   "actions": {
@@ -54,7 +54,7 @@
     "language": "Email language",
     "subsidiaries": "Subsidiaries",
     "subsidiariesHelp": "Data Entry users work only in the subsidiaries ticked here.",
-    "noSubsidiaries": "Your organisation has no subsidiaries yet.",
+    "noSubsidiaries": "Your parent company has no subsidiaries yet.",
     "cancel": "Cancel",
     "submit": "Send invitation",
     "submitting": "Sending…"

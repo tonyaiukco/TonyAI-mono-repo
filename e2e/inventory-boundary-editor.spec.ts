@@ -57,10 +57,10 @@ const subsidiaryRow = (page: Page, name: string) =>
 /** Every category attributed to the company, annually, and excluded there with its reason. */
 async function declareHolding(page: Page, editor: Locator): Promise<void> {
   for (const category of CATEGORIES) {
-    await pick(page, editor, `${category}: attributed to`, 'The company');
+    await pick(page, editor, `${category}: attributed to`, 'The whole subsidiary');
     await pick(page, editor, `${category}: reported`, 'Annual');
-    await pick(page, editor, `${category} at Company`, 'Excluded');
-    await editor.getByRole('textbox', { name: `Reason for ${category} at Company`, exact: true })
+    await pick(page, editor, `${category} at Whole subsidiary`, 'Excluded');
+    await editor.getByRole('textbox', { name: `Reason for ${category} at Whole subsidiary`, exact: true })
       .fill('E2E holding company: no operations');
   }
 }
@@ -87,7 +87,7 @@ test('a super admin declares, is refused, resolves the gaps and confirms a versi
   const editor = page.getByTestId('declaration-editor');
   await expect(editor.getByRole('heading', { name: `${ENERGY} — version ${version}` })).toBeVisible();
   await editor.getByLabel(ANKARA, { exact: true }).check();
-  await pick(page, editor, 'Electricity: attributed to', 'Its sites');
+  await pick(page, editor, 'Electricity: attributed to', 'Its facilities');
   await pick(page, editor, 'Electricity: reported', 'Monthly');
   await pick(page, editor, `Electricity at ${ANKARA}`, 'Included');
   await editor.getByRole('button', { name: 'Add source' }).click();
@@ -144,8 +144,8 @@ test('a super admin declares, is refused, resolves the gaps and confirms a versi
   await expect(subsidiaryRow(page, TRADING).getByRole('button', { name: `Edit ${TRADING}` })).toHaveCount(0);
   await subsidiaryRow(page, TRADING).getByRole('button', { name: `View ${TRADING}` }).click();
   await expect(editor.getByText('This declaration is read-only.')).toBeVisible();
-  await expect(editor.getByRole('textbox', { name: 'Reason for Fuel at Company' })).toHaveValue('E2E holding company: no operations');
-  await expect(editor.getByRole('textbox', { name: 'Reason for Fuel at Company' })).toBeDisabled();
+  await expect(editor.getByRole('textbox', { name: 'Reason for Fuel at Whole subsidiary' })).toHaveValue('E2E holding company: no operations');
+  await expect(editor.getByRole('textbox', { name: 'Reason for Fuel at Whole subsidiary' })).toBeDisabled();
   await expect(editor.getByTestId('declaration-save')).toHaveCount(0);
   await editor.getByRole('button', { name: 'Close' }).first().click();
 
@@ -190,7 +190,7 @@ test('a new version copies the confirmed one, refuses a save over a concurrent c
     // Opened, then changed by someone else: the save is refused, not written over it.
     await trading.getByRole('button', { name: `Edit ${TRADING}` }).click();
     const editor = page.getByTestId('declaration-editor');
-    await editor.getByRole('textbox', { name: 'Reason for Fuel at Company' }).fill('Edited in the browser');
+    await editor.getByRole('textbox', { name: 'Reason for Fuel at Whole subsidiary' }).fill('Edited in the browser');
     const open = (await listVersions(request, headers))[0];
     const changed = await request.put(`${API_BASE}/inventory-boundaries/${open.id}/subsidiaries/${SUB.trading}`, {
       headers,

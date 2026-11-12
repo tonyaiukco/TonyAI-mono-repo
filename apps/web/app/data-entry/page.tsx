@@ -94,7 +94,10 @@ import { BoundaryCoverage } from "@/components/data-entry/boundary-coverage";
 import { FactorCoverageLegend } from "@/components/data-entry/factor-coverage-legend";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { RecentImports } from "@/components/data-entry/recent-imports";
-import { RecordsTable } from "@/components/data-entry/records-table";
+import { RecordsTable, type AttachRequest } from "@/components/data-entry/records-table";
+import { attachableRecords, refrigerantShortcut } from "@/lib/evidence-view";
+import { factorReleaseId, formatSealDate, sealDateFor, type SealDates } from "@/lib/release-seal-view";
+import { useReleaseSealDates } from "@/lib/use-release-seal-dates";
 import {
   ACTIVITY_UNITS,
   ACTIVITY_VALUE_MAX,
@@ -108,6 +111,7 @@ import {
   isInvoiceTracked,
   MARINE_GAS_OIL_ACTIVITY_TYPE,
   mayAuthorRecords,
+  MAX_PAGE_LIMIT,
   mayEditRecord,
   needsEvidenceBeforeSubmit,
   offeredActivityTypes,
@@ -119,7 +123,7 @@ import {
   UNSPECIFIED_ACTIVITY_TYPE,
   usesTrCalculationRules,
 } from "@/lib/types";
-import { appendById } from "@/lib/cursor-pages";
+import { appendById, readPages } from "@/lib/cursor-pages";
 import { uploadHeldFiles } from "@/lib/held-evidence";
 import {
   blankRecordsFilter,
@@ -185,6 +189,28 @@ type ContextValues = Record<string, string | number>;
  * a Suspense boundary — without this wrapper `next build` fails. This is the
  * first deep-linked page in the app, so the boundary is new here.
  */
+/** Pages a year's walk over the refrigerant records may read before it stops. */
+const YEAR_GASES_MAX_PAGES = 50;
+
+/**
+ * Every refrigerant record of one subsidiary and reporting year, page by page
+ * (UAT round 2, K5): the shortcut is offered, and ticks, over the whole year,
+ * never only the first page of it.
+ */
+function readYearGases(subsidiaryId: string, year: number): Promise<ActivityRecordPageItemDTO[]> {
+  return readPages(
+    (cursor) =>
+      api.listActivityRecordPage({
+        subsidiaryId,
+        year,
+        category: "Refrigerants",
+        limit: MAX_PAGE_LIMIT,
+        ...(cursor ? { cursor } : {}),
+      }),
+    YEAR_GASES_MAX_PAGES,
+  );
+}
+
 export default function DataEntryPage() {
   return (
     <Suspense fallback={null}>
@@ -561,6 +587,41 @@ function DataEntryPageInner() {
   // gained.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
 
+  // The refrigerant shortcut (UAT round 2, K5 option A): with a saved
+  // refrigerant record open, the year's gas records of its subsidiary are read
+  // on their own, whatever the records table is filtered to, so the shortcut
+  // is offered exactly when two or more of them can take a file.
+  const tEvidence = useTranslations("evidence");
+  const [yearGases, setYearGases] = useState<ActivityRecordPageItemDTO[] | null>(null);
+  const [yearGasesVersion, setYearGasesVersion] = useState(0);
+  useEffect(() => {
+    if (!editingId || category !== "Refrigerants" || !subsidiaryId) {
+      setYearGases(null);
+      return;
+    }
+    let live = true;
+    readYearGases(subsidiaryId, reportingYear)
+      .then((items) => live && setYearGases(items))
+      // Advisory: without the list the shortcut is simply not offered.
+      .catch(() => live && setYearGases(null));
+    return () => {
+      live = false;
+    };
+  }, [editingId, category, subsidiaryId, reportingYear, evidenceVersion, yearGasesVersion]);
+  const gasShortcut = useMemo(() => {
+    if (!yearGases) return null;
+    const { attachableIds } = attachableRecords(yearGases, user, { t: tEvidence, locale, words: recordWords });
+    return refrigerantShortcut(yearGases, attachableIds, reportingYear);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the copy follows `locale`/`recordWords`
+  }, [yearGases, user, locale, recordWords, reportingYear]);
+  const [attachRequest, setAttachRequest] = useState<AttachRequest | null>(null);
+  // The query the rows on screen answer (set with them), so a request is
+  // applied to the list it asked for, never to the one still showing.
+  const [recordsFetchedQuery, setRecordsFetchedQuery] = useState<string | null>(null);
+  // A request is for one subsidiary's table: switching drops it, so a remounted
+  // table never opens its attach step for the previous subsidiary's records.
+  useEffect(() => setAttachRequest(null), [subsidiaryId]);
+
   // The open record's files, read when Edit mode starts and after its vault
   // changes, so the band names what a category change would remove.
   useEffect(() => {
@@ -598,6 +659,14 @@ function DataEntryPageInner() {
       setRecords((rows) =>
         rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)),
       );
+      // The refrigerant shortcut ticks only records with no file: a file added
+      // to, or removed from, the open record changes what it ticks.
+      setYearGases((rows) =>
+        rows ? rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)) : rows,
+      );
+      // ...and the year is read again: a read still running began before the
+      // change and would write the old count back over this one.
+      setYearGasesVersion((v) => v + 1);
       // The band lists the record's files in Edit mode: a file added or
       // removed in the vault is read again there too.
       setEditFilesVersion((v) => v + 1);
@@ -620,6 +689,19 @@ function DataEntryPageInner() {
   }, [subsidiaryId]);
   const changeRecordsFilter = (change: Partial<RecordsFilter>) =>
     setRecordsFilterState((state) => pickRecordsFilter(state, subsidiaryId, change));
+
+  /** The refrigerant shortcut: filter the table to the year's gas records, then open its attach step. */
+  function startShareWithYear() {
+    if (!gasShortcut?.offered) return;
+    const preselect = gasShortcut.preselect;
+    const change = { year: reportingYear, category: "Refrigerants", status: "all" } as const;
+    changeRecordsFilter(change);
+    setAttachRequest((prev) => ({
+      nonce: (prev?.nonce ?? 0) + 1,
+      queryKey: JSON.stringify(recordsQuery(change)),
+      preselect,
+    }));
+  }
 
   /**
    * The subsidiary's first page and its record count — after every write, which
@@ -655,6 +737,8 @@ function DataEntryPageInner() {
       setRecordsCursor(page.nextCursor);
       setRecordsTotal(meta?.total ?? null);
       setRecordsFetchedFor(subId);
+      // Which query these rows answer: the refrigerant shortcut waits for its own.
+      setRecordsFetchedQuery(JSON.stringify(recordsQueryRef.current));
       // Every write path already funnels through here, so the collection-status
       // panel refetches with the record list rather than needing its own hook on
       // each of them. A panel that kept the pre-save fraction would be wrong at
@@ -703,6 +787,8 @@ function DataEntryPageInner() {
   // (BUG-R2-09). Advisory: a failure omits the legend without a toast — the
   // calls above already report a lost session.
   const [factorCoverage, setFactorCoverage] = useState<FactorCoverageDTO | null>(null);
+  // The package seal date beside the release behind a figure (UAT round 2, S2).
+  const sealDates = useReleaseSealDates();
   useEffect(() => {
     let live = true;
     api
@@ -1912,7 +1998,7 @@ function DataEntryPageInner() {
                         </p>
                       );
                     }
-                    const note = conversionNote(preview, previewing || !hasValidInput || !!previewError, locale, t);
+                    const note = conversionNote(preview, previewing || !hasValidInput || !!previewError, locale, t, sealDates);
                     return note ? <p className="mt-2 text-xs text-muted-foreground" data-testid="conversion-note">{note}</p> : null;
                   })()}
                   {inputMode === "natural_gas" && (
@@ -1960,6 +2046,7 @@ function DataEntryPageInner() {
                 recordId={editingId}
                 category={category}
                 onCountChange={handleEvidenceCountChange}
+                onShareWithYear={gasShortcut?.offered ? startShareWithYear : null}
                 // A consultant is review-only (decision 2026-07-30) and the
                 // evidence API 403s them, so offering upload/delete controls
                 // here only produced a button that always failed.
@@ -2317,6 +2404,7 @@ function DataEntryPageInner() {
                 error={previewErrorShown}
                 hasValidInput={hasValidInput}
                 geographyCode={effectiveGeography}
+                sealDates={sealDates}
               />
 
               {/* Round-1 DE-2: whether this subsidiary's year is actually
@@ -2375,6 +2463,8 @@ function DataEntryPageInner() {
             onFilterChange={changeRecordsFilter}
             yearOptions={recordsYearOptions(selectableReportingYears(reportingYear), recordsFilter)}
             narrowed={isNarrowed(recordsFilter)}
+            attachRequest={attachRequest}
+            fetchedQueryKey={recordsFetchedQuery}
           />
         </div>
       </main>
@@ -2415,12 +2505,14 @@ function PreviewCard({
   error,
   hasValidInput,
   geographyCode,
+  sealDates,
 }: {
   previewing: boolean;
   preview: ActivityCalculationSnapshot | null;
   error: ErrorDescription | null;
   hasValidInput: boolean;
   geographyCode: string | null;
+  sealDates: SealDates | null;
 }) {
   const t = useTranslations("dataEntry");
   const tCommon = useTranslations("common");
@@ -2525,6 +2617,13 @@ function PreviewCard({
                 label={t("preview.source")}
                 value={t("preview.sourceValue", { source: preview.source, version: preview.version })}
               />
+              {(() => {
+                // The factor release's seal date (UAT round 2, S2), when the list knows it.
+                const sealedAt = sealDateFor(sealDates, factorReleaseId(preview));
+                return sealedAt ? (
+                  <Row label={t("preview.sealedOn")} value={formatSealDate(sealedAt, locale)} />
+                ) : null;
+              })()}
               {/* Asked of the whole path, never the factor's status alone: a
                   figure is only as authoritative as its weakest link — the
                   conversion's release included (LP3-03). */}

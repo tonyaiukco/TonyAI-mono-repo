@@ -167,8 +167,8 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
     expect(text).not.toContain('(null)');
   });
 
-  it('says how to report for the whole company', async () => {
-    expect(await referenceText()).toContain('Whole company');
+  it('says how to report for the whole subsidiary', async () => {
+    expect(await referenceText()).toContain('Whole subsidiary');
   });
 
   it('lists each typed category\'s activity types, and says the others leave the column blank', async () => {

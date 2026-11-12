@@ -209,7 +209,7 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
           // Prisma hands back a relation only when the query ASKED for it.
           // Returning it regardless made both includes untestable: deleting
           // `location: { select: { name: true } }` from the query — which turns
-          // every row in every export into "Whole company" — killed nothing in
+          // every row in every export into "Whole subsidiary" — killed nothing in
           // 657 tests, and the same held for the evidence relation, under a
           // spec named "truthful evidence counts".
           evidenceLinks: include.evidenceLinks ? r.evidenceLinks : undefined,
@@ -971,7 +971,7 @@ describe('ReportsService', () => {
             status: { in: ['voided'] },
           }),
           // The include is half the feature: without the location join every
-          // row in every export reads "Whole company", and without evidence the
+          // row in every export reads "Whole subsidiary", and without evidence the
           // ledger's file counts are all zero. `objectContaining` on `where`
           // alone constrains neither.
           include: {
@@ -1018,7 +1018,7 @@ describe('ReportsService', () => {
       const withdrawn = lines.find((l) => l.includes('February'))!;
 
       expect(at(site, 'reporting_entity')).toBe('Istanbul HQ');
-      expect(at(company, 'reporting_entity')).toBe('Whole company');
+      expect(at(company, 'reporting_entity')).toBe('Whole subsidiary');
       // The withdrawn row too, and asserted beside `subsidiary`: the two halves
       // of a double-counted month differ ONLY in the reporting entity, and
       // naming the wrong one in the disclosure defeats the feature. A swap of
@@ -1890,7 +1890,7 @@ describe('report column descriptors', () => {
     // first cut of this test asserted two of the nine and called itself "only
     // those": marking `reporting_period` passed the entire suite.
     const unmarked: Record<string, string> = {
-      subsidiary: 'Energy', reporting_entity: 'Whole company',
+      subsidiary: 'Energy', reporting_entity: 'Whole subsidiary',
       category: 'Electricity', reporting_period: 'monthly',
       period_value: 'January', activity_unit: 'kWh', status: 'voided',
     };

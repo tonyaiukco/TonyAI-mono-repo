@@ -226,7 +226,7 @@ export async function buildTemplateWorkbook(
     'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
   ]);
   reference.addRow([
-    `Leave locationId blank to report for the whole company (shown below as "${WHOLE_COMPANY_ENTITY_LABEL}").`,
+    `Leave locationId blank to report for the whole subsidiary (shown below as "${WHOLE_COMPANY_ENTITY_LABEL}").`,
   ]);
   reference.addRow([
     `This sheet is ignored on upload, so you can keep notes here. Do not rename or reorder the columns on "${SHEET_RECORDS}" — the import refuses a file whose header it does not recognise.`,
@@ -236,12 +236,12 @@ export async function buildTemplateWorkbook(
   ]);
 
   section('Your reporting entities');
-  head(['subsidiaryId', 'Subsidiary', 'locationId', 'Location', 'Geography']);
+  head(['subsidiaryId', 'Subsidiary', 'locationId', 'Facility', 'Geography']);
   if (entities.truncated) {
     // Said out loud, because a register that quietly omits a site sends the
     // user hunting for an id that exists.
     reference.addRow([
-      'This list was truncated because your organisation has more reporting entities than one template can carry. Entities missing here can still be imported — ask an administrator for the ids.',
+      'This list was truncated because your parent company has more reporting entities than one template can carry. Entities missing here can still be imported — ask an administrator for the ids.',
     ]);
   }
   if (entities.subsidiaries.length === 0) {

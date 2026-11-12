@@ -16,12 +16,15 @@
     "detailOne": "Compared against {baseline}, the only earlier period for this reporting entity, and within {percent}%. The check rests on limited history (1 period).",
     "detail": "Compared against {baseline}, the average of the {count} earlier periods for this reporting entity, and within {percent}%. The check rests on limited history ({count} periods)."
   },
+  "firstPeriod": {
+    "headline": "First-period record",
+    "detail": "There is no earlier period to compare with — please check the evidence document and the unit."
+  },
   "notEvaluated": {
     "headline": "Not checked for anomalies",
     "noFigure": "This category produces no calculated figure, so there is nothing to compare against its history.",
     "zeroAverage": "The previous {periods} comparable periods average zero, so no deviation can be computed from them.",
     "zeroAverageLimited": "The earlier committed periods for this reporting entity average zero, so no deviation can be computed from them.",
-    "noHistory": "No earlier committed period exists for this reporting entity, so there is no history to compare against.",
     "scoredBefore": "This entry was scored when the check needed {periods} earlier committed periods. It had fewer ({count}), so it was not checked."
   },
   "note": {

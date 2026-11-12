@@ -196,10 +196,10 @@ describe('voidReasonError', () => {
 describe('entityLabel', () => {
   it('names the site, or says the row is the whole company', () => {
     expect(entityLabel({ locationId: 'loc-1', locationName: 'Istanbul HQ' })).toBe('Istanbul HQ');
-    expect(entityLabel({ locationId: null, locationName: null })).toBe('Whole company');
+    expect(entityLabel({ locationId: null, locationName: null })).toBe('Whole subsidiary');
     // Whitespace is not a name. A blank label here would read as a site whose
     // name failed to load, on the field the reader uses to tell a pair apart.
-    expect(entityLabel({ locationId: null, locationName: '   ' })).toBe('Whole company');
+    expect(entityLabel({ locationId: null, locationName: '   ' })).toBe('Whole subsidiary');
   });
 
   it('does not call a SITE row the whole company when the name is missing', () => {
@@ -207,7 +207,7 @@ describe('entityLabel', () => {
     // the dialog that precedes an irreversible write, so getting the entity
     // wrong here is worse than getting it vague.
     expect(entityLabel({ locationId: 'loc-1', locationName: null })).toBe(
-      'Site (name unavailable)',
+      'Facility (name unavailable)',
     );
   });
 });
@@ -229,7 +229,7 @@ describe('voidConsequence', () => {
 
     // And its twin must not read identically — that is the whole point.
     const company = voidConsequence(record(), 'TonyAI Energy');
-    expect(company.subject).toContain('Whole company');
+    expect(company.subject).toContain('Whole subsidiary');
     expect(company.subject).not.toBe(site.subject);
   });
 
@@ -329,8 +329,8 @@ describe('the void path in Turkish', () => {
 
   it("words the record's own values and entity in Turkish", () => {
     const { subject, effects } = voidConsequenceWith(record(), 'TonyAI Mfg', tr);
-    expect(subject).toBe('Elektrik · TonyAI Mfg · Şirket bütünü · Ocak 2026');
-    expect(effects[1]).toContain('Şirket bütünü için Ocak 2026');
+    expect(subject).toBe('Elektrik · TonyAI Mfg · Bağlı şirketin tamamı · Ocak 2026');
+    expect(effects[1]).toContain('Bağlı şirketin tamamı için Ocak 2026');
     expect(entityLabelWith({ locationId: 'loc-1', locationName: null }, tr.entity)).toBe('Tesis (adı alınamadı)');
   });
 

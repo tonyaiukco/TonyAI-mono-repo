@@ -5,8 +5,8 @@
   "subsidiary": "Subsidiary",
   "selectSubsidiary": "Select subsidiary",
   "noSubsidiaries": "No subsidiaries accessible to your account.",
-  "location": "Location",
-  "wholeCompany": "Whole company",
+  "location": "Facility",
+  "wholeCompany": "Whole subsidiary",
   "category": "Category",
   "fuelOrGas": "Fuel or gas",
   "vehicleMode": "Vehicle mode or vessel fuel",
@@ -17,7 +17,7 @@
   "periodValue": "Value",
   "factorGeography": "Factor geography:",
   "factorGeographySource": "{geography}, from {source}. Change it on the Subsidiaries page.",
-  "locationSource": "{name} (location)",
+  "locationSource": "{name} (facility)",
   "subsidiarySource": "{name} (subsidiary)",
   "thisSubsidiary": "this subsidiary",
   "factorCoverage": {
@@ -48,8 +48,8 @@
   "movedSubmitted": "Moved to {entity}, submitted for review",
   "anomalousBeforeSubmit": "This value looks anomalous — add a variance comment before submitting.",
   "evidenceBeforeSubmit": "Saved. Attach at least one evidence file below, then submit again.",
-  "aSite": "a site",
-  "theWholeCompany": "the whole company",
+  "aSite": "a facility",
+  "theWholeCompany": "the whole subsidiary",
   "duplicateAdvice": "Open it from Previous submissions to continue it.",
   "duplicateAdviceMoving": "The record has not been moved, and stays where it is.",
   "saveFailedServer": "Could not save — the server failed to process this record. Try again, and report it if it persists.",
@@ -57,7 +57,7 @@
   "previewPrompt": "Pick a subsidiary and category, then enter an activity value to see a live tCO₂e estimate.",
   "bulkColumns": {
     "subsidiaryId": "Reporting entity",
-    "locationId": "Site",
+    "locationId": "Facility",
     "reportingYear": "Year",
     "reportingPeriod": "Granularity",
     "periodValue": "Period",
@@ -147,7 +147,8 @@
       "user": "entered on this record",
       "derived": "derived from the billed gross calorific value"
     },
-    "volumeCorrection": " Volume correction factor: {factor}."
+    "volumeCorrection": " Volume correction factor: {factor}.",
+    "sealedOn": "Package sealed on {date}."
   },
   "inputs": {
     "title": "Calculation inputs",
@@ -197,12 +198,12 @@
       "empty_line": "Each line needs a capacity, a refill, or both.",
       "too_large": "The total capacity is too large."
     },
-    "unitReset": "This site follows the Türkiye rules, so the unit is now {unit} and the value was cleared. Enter it again.",
+    "unitReset": "This facility follows the Türkiye rules, so the unit is now {unit} and the value was cleared. Enter it again.",
     "choice": {
       "default": "default rate",
       "alternative": "alternative rate"
     },
-    "marineGasOilScope": "Marine gas oil covers vessels your organisation owns or operates (Scope 1), including a bareboat charter it operates. Leave out vessels you charter but do not operate (voyage or time charter) and third-party shipping: they are Scope 3, outside this inventory. Enter the mass on the Bunker Delivery Note, in kg or tonnes."
+    "marineGasOilScope": "Marine gas oil covers vessels your company owns or operates (Scope 1), including a bareboat charter it operates. Leave out vessels you charter but do not operate (voyage or time charter) and third-party shipping: they are Scope 3, outside this inventory. Enter the mass on the Bunker Delivery Note, in kg or tonnes."
   },
   "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",
   "selectAllLoaded": "Select all {count} loaded",
@@ -394,18 +395,22 @@
     "methodology": "Methodology",
     "source": "Source",
     "sourceValue": "{source} ({version})",
+    "sealedOn": "Package sealed on",
     "factorStatus": "Factor status",
     "authoritative": "Authoritative",
     "notAuthoritative": "Placeholder — not authoritative (factor or conversion)",
     "scopeLine": "Scope {scope} · {kg} kgCO₂e",
     "unitConverted": "Unit converted from {from} to {to} before applying the factor.",
     "invoiceRequired": "You can still save and submit this entry. An invoice is required before it can be submitted, since without an emission factor the invoice is the only record of what was consumed.",
-    "invoiceCompleteness": "Recorded against a site for a single month, it also counts towards that site's invoice completeness — which is measured from the invoice, not from the calculated figure."
+    "invoiceCompleteness": "Recorded against a facility for a single month, it also counts towards that facility's invoice completeness — which is measured from the invoice, not from the calculated figure."
   },
   "submissions": {
     "title": "Previous submissions",
     "attachStart": "Attach one file to several records",
     "attachHint": "Tick the records this one document evidences.",
+    "preselectLoading": "Reading the year's other gas records to tick them…",
+    "preselectMissingOne": "1 gas record of the year could not be ticked automatically. Tick it by hand, or attach without it.",
+    "preselectMissingMany": "{count} gas records of the year could not be ticked automatically. Tick them by hand, or attach without them.",
     "selectedCount": "{count} selected",
     "clear": "Clear",
     "moreNotShown": "+{count} more not shown.",
@@ -416,13 +421,13 @@
     "sendForReview": "Send for review",
     "checkboxAttach": "Attach the file to {record}",
     "checkboxSelect": "Select {record}",
-    "aSite": "A site",
+    "aSite": "A facility",
     "tooLarge": "{fileName}: exceeds the 10 MB limit",
     "tonnes": "{value} tCO₂e"
   },
   "move": {
-    "anotherSite": "another site",
-    "wholeCompany": "the whole company",
+    "anotherSite": "another facility",
+    "wholeCompany": "the whole subsidiary",
     "withFigure": "Saving moves this record from {from} to {to}. It is not copied — the emission factor is recalculated for its geography.",
     "withoutFigure": "Saving moves this record from {from} to {to}. It is not copied — and no emission factor resolves for it today, so it stays \"Not calculated\"."
   },
@@ -439,7 +444,7 @@
     "activityType": "Type: {from} → {to}",
     "year": "Reporting year: {from} → {to}",
     "period": "Period: {from} → {to}",
-    "location": "Location: {from} → {to}",
+    "location": "Facility: {from} → {to}",
     "none": "none"
   },
   "editMode": {
@@ -487,7 +492,7 @@
       "select": "Select",
       "period": "Period",
       "category": "Category",
-      "entity": "Location",
+      "entity": "Facility",
       "value": "Value",
       "emissions": "tCO₂e",
       "evidence": "Evidence",

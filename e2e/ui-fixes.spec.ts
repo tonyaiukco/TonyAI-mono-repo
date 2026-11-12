@@ -37,7 +37,7 @@ test('DE-1: a very long subsidiary name does not push the control over its neigh
     const field = (label: string) =>
       page.locator('div.space-y-2').filter({ has: page.getByText(label, { exact: true }) });
     const subBox = await field('Subsidiary').getByRole('combobox').boundingBox();
-    const locBox = await field('Location').getByRole('combobox').boundingBox();
+    const locBox = await field('Facility').getByRole('combobox').boundingBox();
     expect(subBox && locBox).toBeTruthy();
 
     // The two controls sit in adjacent grid columns: the first must end before
@@ -70,7 +70,7 @@ test('DASH-1: the dashboard picks up a location added elsewhere when the tab reg
   request,
 }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const locations = page.getByText('Locations', { exact: true }).locator('..');
+  const locations = page.getByText('Facilities', { exact: true }).locator('..');
 
   await login(page, ADMIN_EMAIL);
   const before = (await locations.textContent())?.replace(/\D/g, '');
@@ -91,7 +91,7 @@ test('DASH-1: the dashboard picks up a location added elsewhere when the tab reg
     // The background refresh must NOT blank the page into skeletons — that is
     // the whole point of `silent`, and nothing else asserts it.
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(locations).toHaveText(`${Number(before) + 1}Locations`);
+    await expect(locations).toHaveText(`${Number(before) + 1}Facilities`);
   } finally {
     await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
   }
@@ -105,7 +105,7 @@ test('DASH-1: a background refresh neither blanks the page nor stampedes', async
   // fetch has already resolved proves nothing, which is how the first attempt at
   // these guards passed against code that had neither behaviour.
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const locations = page.getByText('Locations', { exact: true }).locator('..');
+  const locations = page.getByText('Facilities', { exact: true }).locator('..');
   await login(page, ADMIN_EMAIL);
   // The first load must have LANDED before the probe. `login` returns once the
   // heading renders, while the first load may still be in flight — and the
@@ -115,7 +115,7 @@ test('DASH-1: a background refresh neither blanks the page nor stampedes', async
   // 15 ms before the first load finished, and the tile stayed one short.
   // `inFlight` is released in the same tick as the loading state.
   await expect(page.getByText('Loading…')).toHaveCount(0);
-  await expect(locations).toHaveText(/^\d+Locations$/);
+  await expect(locations).toHaveText(/^\d+Facilities$/);
   const before = Number((await locations.textContent())?.replace(/\D/g, ''));
 
   let kpiCalls = 0;
@@ -146,7 +146,7 @@ test('DASH-1: a background refresh neither blanks the page nor stampedes', async
     expect(await page.getByText('Loading…').count(), 'a silent refresh blanked the page').toBe(0);
     await expect(page.getByRole('cell', { name: 'TonyAI Energy A.Ş.' })).toBeVisible();
 
-    await expect(locations).toHaveText(`${before + 1}Locations`);
+    await expect(locations).toHaveText(`${before + 1}Facilities`);
     expect(kpiCalls, 'five focus events should coalesce into one refresh').toBe(1);
   } finally {
     await page.unroute('**/api/v1/kpi');

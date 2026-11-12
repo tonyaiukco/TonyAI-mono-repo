@@ -67,6 +67,9 @@ interface EvidenceVaultProps {
   onFailedFileDone?: (recordId: string, file: File) => void;
   /** A save is running: held files must not change under it. */
   busy?: boolean;
+  /** A saved refrigerant record whose year holds other gas records the user may
+   *  attach to (UAT round 2, K5): opens the records table's attach step. */
+  onShareWithYear?: (() => void) | null;
 }
 
 /**
@@ -101,12 +104,42 @@ function VaultTitle({ required, count }: { required: boolean; count: string | nu
   );
 }
 
-function RequiredNote() {
+function RequiredNote({ category }: { category: string }) {
   const t = useTranslations("evidence");
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+    <div
+      className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+      data-testid="evidence-required-note"
+    >
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-      <span>{t("requiredNote")}</span>
+      {category === "Refrigerants" ? (
+        // An installed-capacity record has no fuel receipt: the documents that
+        // stand in for one are named (UAT round 2, K5).
+        <div>
+          <p>{t("refrigerantNote.intro")}</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            <li>{t("refrigerantNote.inventory")}</li>
+            <li>{t("refrigerantNote.serviceForm")}</li>
+            <li>{t("refrigerantNote.nameplate")}</li>
+            <li>{t("refrigerantNote.invoice")}</li>
+          </ul>
+        </div>
+      ) : (
+        <span>{t("requiredNote")}</span>
+      )}
+    </div>
+  );
+}
+
+/** One document for the year's other gas records (UAT round 2, K5 option A). */
+function ShareWithYear({ onStart }: { onStart: () => void }) {
+  const t = useTranslations("evidence");
+  return (
+    <div className="space-y-1 rounded-lg border border-border px-3 py-2">
+      <Button type="button" variant="outline" size="sm" onClick={onStart} data-testid="evidence-share-with-year">
+        {t("shareShortcut.button")}
+      </Button>
+      <p className="text-xs text-muted-foreground">{t("shareShortcut.hint")}</p>
     </div>
   );
 }
@@ -250,7 +283,7 @@ function HeldVault({
     <Card data-testid="evidence-vault" data-mode="held">
       <VaultTitle required={required} count={null} />
       <CardContent className="space-y-3">
-        {required && heldFiles.length === 0 && <RequiredNote />}
+        {required && heldFiles.length === 0 && <RequiredNote category={category} />}
         {canManage ? (
           <>
             <DropZone
@@ -297,6 +330,7 @@ function RecordVault({
   onCountChange,
   failedFiles = [],
   onFailedFileDone,
+  onShareWithYear = null,
 }: EvidenceVaultProps & { recordId: string }) {
   const t = useTranslations("evidence");
   const locale = useLocale();
@@ -430,7 +464,9 @@ function RecordVault({
     <Card data-testid="evidence-vault" data-mode="record">
       <VaultTitle required={required} count={t("filesCount", { count: formatNumber(count, locale) })} />
       <CardContent className="space-y-3">
-        {needsEvidence && <RequiredNote />}
+        {needsEvidence && <RequiredNote category={category} />}
+
+        {onShareWithYear && <ShareWithYear onStart={onShareWithYear} />}
 
         {canManage && (
           <DropZone working={uploading} disabled={uploading} onFiles={(f) => void uploadFiles(f)} inputRef={inputRef} />

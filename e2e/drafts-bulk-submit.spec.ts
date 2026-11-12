@@ -120,10 +120,10 @@ test('sends the drafts that were ticked, and leaves the rest a draft', async ({
     // this test can do by accident.
     await list
       // Anchored at both ends: the name carries the reporting entity, and a
-      // prefix match stayed green whether this list said "Whole company" — as
-      // the template and every report do — or "Whole subsidiary".
+      // prefix match stayed green whether this list said "Whole subsidiary" — as
+      // the template and every report do — or carried more words after it.
       .getByRole('checkbox', {
-        name: new RegExp(`^Select Q3 ${E2E_YEAR} ${E2E_BULK_CATEGORY}, Whole company$`),
+        name: new RegExp(`^Select Q3 ${E2E_YEAR} ${E2E_BULK_CATEGORY}, Whole subsidiary$`),
       })
       .check();
     await expect(page.locator('[data-testid="drafts-submit-bar"]')).toContainText(

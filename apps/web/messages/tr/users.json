@@ -1,9 +1,9 @@
 {
   "title": "Kullanıcılar",
-  "subtitle": "Kuruluşunuza kişileri davet edin, rollerini ve erişimlerini yönetin.",
+  "subtitle": "Ana şirketinize kişileri davet edin, rollerini ve erişimlerini yönetin.",
   "invite": "Kullanıcı davet et",
   "forbiddenTitle": "Kullanıcıları yalnızca süper yöneticiler yönetir",
-  "forbidden": "Kişileri davet etmek, rollerini veya erişimlerini değiştirmek kuruluşunuzun süper yöneticilerine aittir. Rolünüz: {role}.",
+  "forbidden": "Kişileri davet etmek, rollerini veya erişimlerini değiştirmek ana şirketinizin süper yöneticilerine aittir. Rolünüz: {role}.",
   "loadFailed": "Kullanıcılar yüklenemedi.",
   "empty": "Henüz kullanıcı yok.",
   "loadMore": "Daha fazla yükle",
@@ -34,7 +34,7 @@
   "invitationPending": "Davet gönderiliyor",
   "deliveryFailed": "Davet iletilemedi; yeniden gönderin",
   "authSyncPending": "Giriş engeli henüz uygulanmadı",
-  "wholeOrganisation": "Tüm kuruluş",
+  "wholeOrganisation": "Ana şirketin tamamı",
   "noAccess": "Erişim verilmedi",
   "accessCount": "Bağlı şirket: {count}",
   "actions": {
@@ -54,7 +54,7 @@
     "language": "E-posta dili",
     "subsidiaries": "Bağlı şirketler",
     "subsidiariesHelp": "Veri Girişi kullanıcıları yalnızca burada işaretlenen bağlı şirketlerde çalışır.",
-    "noSubsidiaries": "Kuruluşunuzun henüz bağlı şirketi yok.",
+    "noSubsidiaries": "Ana şirketinizin henüz bağlı şirketi yok.",
     "cancel": "Vazgeç",
     "submit": "Daveti gönder",
     "submitting": "Gönderiliyor…"

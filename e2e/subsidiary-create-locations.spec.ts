@@ -226,7 +226,7 @@ test('the create form asks for a location, and the API does not', async ({ page,
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('textbox').first().fill(`E2E Test Co Form Rule ${Date.now()}`);
   await dialog.getByRole('button', { name: 'Create' }).click();
-  await expect(page.getByText('Add at least one operational location')).toBeVisible();
+  await expect(page.getByText('Add at least one operational facility')).toBeVisible();
   // …and nothing was written.
   const after = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
   expect(after.filter((s: { legalName: string }) => s.legalName.startsWith('E2E Test Co Form Rule'))).toHaveLength(0);
@@ -279,9 +279,9 @@ test('a draft location can be removed before the subsidiary exists', async ({ pa
   await page.getByRole('button', { name: 'Add Subsidiary' }).click();
   const dialog = page.getByRole('dialog');
 
-  await dialog.getByLabel('Location name').fill('E2E Draft One');
+  await dialog.getByLabel('Facility name').fill('E2E Draft One');
   await dialog.getByRole('button', { name: 'Add', exact: true }).click();
-  await dialog.getByLabel('Location name').fill('E2E Draft Two');
+  await dialog.getByLabel('Facility name').fill('E2E Draft Two');
   await dialog.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(dialog.getByText('E2E Draft One')).toBeVisible();
 
@@ -293,7 +293,7 @@ test('a draft location can be removed before the subsidiary exists', async ({ pa
 
   // A duplicate name is refused rather than silently creating two identical
   // sites, which would double WP17's completeness denominator.
-  await dialog.getByLabel('Location name').fill('E2E Draft Two');
+  await dialog.getByLabel('Facility name').fill('E2E Draft Two');
   await dialog.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByText(/is already in the list/)).toBeVisible();
 
@@ -303,7 +303,7 @@ test('a draft location can be removed before the subsidiary exists', async ({ pa
   await dialog.getByRole('button', { name: 'Remove E2E Draft Two' }).click();
   await dialog.getByRole('textbox').first().fill(`E2E Test Co Emptied ${Date.now()}`);
   await dialog.getByRole('button', { name: 'Create' }).click();
-  await expect(page.getByText('Add at least one operational location')).toBeVisible();
+  await expect(page.getByText('Add at least one operational facility')).toBeVisible();
 
   // The dialog resets on reopen. The reset lives in `openAdd`, a different
   // function from the close, so nothing guaranteed they stayed in step.

@@ -21,7 +21,7 @@ const labels: EditLabels = {
   category: (c) => c,
   activityType: (_c, v) => `type:${v}`,
   period: (p) => p,
-  location: (id) => (id ? `site:${id}` : 'the whole company'),
+  location: (id) => (id ? `site:${id}` : 'the whole subsidiary'),
 };
 const describeEdit = (original: EditIdentity, form: EditIdentity, locale: 'en' | 'tr' = 'en') =>
   describeEditIn(original, form, labels, copyFor('dataEntry', locale));
@@ -56,7 +56,7 @@ describe('describeEdit — the band names each identity change, before the save'
     expect(describeEdit(stored(), stored({ reportingYear: 2025 }))).toEqual(['Reporting year: 2026 → 2025']);
     expect(describeEdit(stored(), stored({ periodValue: 'Q1' }))).toEqual(['Period: Q3 → Q1']);
     expect(describeEdit(stored(), stored({ reportingPeriod: 'annual', periodValue: 'Annual' }))).toEqual(['Period: Q3 → Annual']);
-    expect(describeEdit(stored(), stored({ locationId: 'loc-1' }))).toEqual(['Location: the whole company → site:loc-1']);
+    expect(describeEdit(stored(), stored({ locationId: 'loc-1' }))).toEqual(['Facility: the whole subsidiary → site:loc-1']);
   });
 
   it('lists several changes in a fixed order — QA\'s Fuel Q3 to Electricity Q1', () => {
@@ -66,7 +66,7 @@ describe('describeEdit — the band names each identity change, before the save'
       'Category: Fuel → Electricity',
       'Reporting year: 2026 → 2025',
       'Period: Q3 → Q1',
-      'Location: the whole company → site:loc-1',
+      'Facility: the whole subsidiary → site:loc-1',
     ]);
   });
 

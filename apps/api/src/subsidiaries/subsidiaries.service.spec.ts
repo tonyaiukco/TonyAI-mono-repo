@@ -712,7 +712,7 @@ describe('SubsidiariesService', () => {
       ]);
 
       const message = await refusal(service.remove(user, 'sub-1'));
-      expect(message).toMatch(/1 location\(s\) holding a record that belongs to another subsidiary/);
+      expect(message).toMatch(/1 facility\(ies\) holding a record that belongs to another subsidiary/);
       expect(message).toMatch(/the record has to move or go first/);
       expect(locations.deleteLocationForTrustedParent).not.toHaveBeenCalled();
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();

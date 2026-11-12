@@ -1,9 +1,11 @@
 import { unitSymbol, isProvenanceSnapshot, type ActivityCalculationSnapshot, type Locale } from '@/lib/types';
 import { formatNumber } from '@/lib/i18n/number';
+import { formatSealDate, sealDateFor, type SealDates } from '@/lib/release-seal-view';
 import en from '@/messages/en/dataEntry.json';
 
 type ConversionKey = 'conversionNote.detail' | 'conversionNote.ncvDetail' | 'conversionNote.volumeCorrection'
   | 'conversionNote.unknownConditions'
+  | 'conversionNote.sealedOn'
   | `conversionNote.basis.${keyof typeof en.conversionNote.basis}`
   | `conversionNote.status.${keyof typeof en.conversionNote.status}`
   | `conversionNote.ncvOrigin.${keyof typeof en.conversionNote.ncvOrigin}`;
@@ -13,10 +15,13 @@ const DIGITS = { maximumSignificantDigits: 15 } as const;
 
 /** Describe the sourced step actually returned by the current preview. */
 export function conversionNote(snapshot: ActivityCalculationSnapshot | null,
-  pending: boolean, locale: Locale, translate: ConversionTranslator,
+  pending: boolean, locale: Locale, translate: ConversionTranslator, sealDates: SealDates | null = null,
 ): string | null {
   if (pending || !isProvenanceSnapshot(snapshot) || !snapshot.conversion) return null;
   const conversion = snapshot.conversion;
+  // The conversion release's seal date (UAT round 2, S2), when the list knows it.
+  const sealedAt = sealDateFor(sealDates, conversion.release.id);
+  const sealed = sealedAt ? ` ${translate('conversionNote.sealedOn', { date: formatSealDate(sealedAt, locale) })}` : '';
   const release = {
     conditions: conversion.referenceConditions ?? translate('conversionNote.unknownConditions'),
     publisher: conversion.release.publisher,
@@ -38,7 +43,7 @@ export function conversionNote(snapshot: ActivityCalculationSnapshot | null,
       origin: translate(`conversionNote.ncvOrigin.${ncv.origin}`),
       volume: volume ? translate('conversionNote.volumeCorrection', { factor: formatNumber(volume.value, locale, DIGITS) }) : '',
       ...release,
-    });
+    }) + sealed;
   }
   return translate('conversionNote.detail', {
     fromUnit: unitSymbol(conversion.fromUnit),
@@ -47,5 +52,5 @@ export function conversionNote(snapshot: ActivityCalculationSnapshot | null,
     calorificBasis: translate(`conversionNote.basis.${conversion.calorificBasis}`),
     basis: conversion.basis,
     ...release,
-  });
+  }) + sealed;
 }

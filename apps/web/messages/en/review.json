@@ -34,6 +34,7 @@
     "emissions": "Emissions",
     "factor": "Factor",
     "factorSource": "{source} v{version}",
+    "sealedOn": "Package sealed on",
     "created": "Created",
     "submitted": "Submitted",
     "notRecorded": "not recorded",

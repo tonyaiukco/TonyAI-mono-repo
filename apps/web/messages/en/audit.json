@@ -4,7 +4,7 @@
   "subtitleUser": "Append-only record of audited changes · {name} ({role})",
   "forbidden": {
     "title": "Only a super_admin can read the audit trail",
-    "body": "The trail spans every subsidiary in the organisation, so it is restricted at both the API and the database. Your role is <mono>{role}</mono>."
+    "body": "The trail spans every subsidiary of the parent company, so it is restricted at both the API and the database. Your role is <mono>{role}</mono>."
   },
   "filterPlaceholder": "Filter this page…",
   "allEntities": "All entities",

@@ -344,7 +344,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - a `data_entry` user sees only the imports they made, and only while they can still reach every subsidiary the file names (the original file holds every row); `consultant`, `executive_viewer` and `super_admin` see every import in their organisation
 
 #### The Entered Records Table (BUG-R2-05)
-- one row per record of the selected subsidiary: period and year (the open control, named `Q1 2026 Electricity, Whole company`), category with activity type, location or `Whole company`, value and unit, tCO₂e or `Not calculated`, evidence (`N files`, or `Missing` where the category requires a file and a live record has none), status, and the row's `Edit`, `Recall` and `Copy to new draft`
+- one row per record of the selected subsidiary: period and year (the open control, named `Q1 2026 Electricity, Whole subsidiary`), category with activity type, location or `Whole subsidiary`, value and unit, tCO₂e or `Not calculated`, evidence (`N files`, or `Missing` where the category requires a file and a live record has none), status, and the row's `Edit`, `Recall` and `Copy to new draft`
 - a voided row's value and tCO₂e are struck through. The table shows **no total**: a sum over drafts, submitted and approved records would read as a figure it is not; totals live on Emissions
 - filters for `Reporting year`, `Status` and `Category`, applied by the API so every page, Load more included, honours them. The year starts at the form's reporting year and follows it until the user picks a year (or `All years`); a subsidiary switch resets them. With a filter on and nothing found, the table says `No record matches these filters.`
 - `Showing N of M` counts the filtered set

@@ -256,7 +256,7 @@ export const BODY_COLUMNS = [
              withdrawnTotal: (_t, v) => v.text('totalWithdrawn') },
     pdf: { label: 'Subsidiary', cell: (r) => r.subsidiaryName } },
   { key: 'reporting_entity', aggregatable: false,
-    // `entityLabel` and not an inlined `?? 'Whole company'`: one phrase across
+    // `entityLabel` and not an inlined `?? 'Whole subsidiary'`: one phrase across
     // all three formats AND the web, which is the door WP20 closed.
     csv: { label: 'reporting_entity', cell: (r) => entityLabel(r) },
     // The PDF and the workbook say it in the report's language (`v.entity`,

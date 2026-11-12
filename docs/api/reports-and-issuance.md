@@ -93,16 +93,25 @@ certificate data exists every report says "No market-based result" (TR
 "Piyasa bazlı sonuç bulunmamaktadır") instead of copying the location-based
 figure: on the PDF tile, as a Summary row in Excel, and in a trailing
 `scope2_market_based` CSV column on every Scope 2 row (English, as every CSV
-cell). The issued renderers are `tonyai-issuance-pdf-v3` and
+cell). The issued renderers were then `tonyai-issuance-pdf-v3` and
 `tonyai-issuance-tables-v3`; a retained dataset's fingerprint is unchanged,
 since neither the dataset nor its assessments moved.
+
+**Tier names (UAT round 2, K1, 2026-11-12).** The organisation is "Parent
+company" / "Ana Şirket" and a subsidiary-level row "Whole subsidiary" /
+"Bağlı şirketin tamamı" (`openspec/specs/organisation-hierarchy`). The
+renderers are now `tonyai-issuance-pdf-v4` and `tonyai-issuance-tables-v4`. A
+stored PDF keeps the wording it was issued with; Excel and CSV are written on
+request from the current catalogue, so a re-download of an older issuance
+carries the new names and the v4 identity row. Figures, rows and fingerprints
+are unchanged.
 
 **Issued Excel and CSV (K5).** `GET /report-issuances/:id/xlsx` and `/csv`
 project the issuance's RETAINED dataset — re-read, re-verified as an issue
 verifies it (fingerprint, assessments, frozen version), and bound to the
 issuance by its fingerprint — exactly as its PDF does: the scopes' counted
 records, the same figures, gaps, exclusions and withdrawals
-(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v3`).
+(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v4`).
 Written on request and never stored (no migration, no new bucket); the same
 issuance always yields the same rows and figures under one renderer, which the
 tables name, so an issuance made under v1 now downloads with v2's two trailing

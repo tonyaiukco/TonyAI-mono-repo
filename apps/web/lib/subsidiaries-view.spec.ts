@@ -16,7 +16,7 @@ const SERVER: Record<string, (n: number) => string> = {
     `This subsidiary is declared in ${n} confirmed or captured inventory boundary version(s), which record the inventory a report was issued from and never change, so a subsidiary declared in one stays. Set its status to "inactive" to retire it instead.`,
   reviewRecords: (n) => `${n} record(s) awaiting review`,
   openRecords: (n) => `${n} draft or rejected record(s)`,
-  locationsHoldingForeignRecords: (n) => `${n} location(s) holding a record that belongs to another subsidiary`,
+  locationsHoldingForeignRecords: (n) => `${n} facility(ies) holding a record that belongs to another subsidiary`,
   periodLocks: (n) => `${n} closed reporting period(s)`,
   targets: (n) => `${n} reduction target(s)`,
   denominators: (n) => `${n} intensity denominator(s)`,
@@ -51,18 +51,18 @@ describe('deletableNote', () => {
   it('says what goes with the subsidiary, one or many, in both languages', () => {
     expect(deletableNote(0, en)).toBe('Nothing depends on this subsidiary, so it can be deleted from the register.');
     expect(deletableNote(1, en)).toBe(
-      'This subsidiary can be deleted from the register. Its 1 location would go with it, each recorded in the audit log.',
+      'This subsidiary can be deleted from the register. Its 1 facility would go with it, each recorded in the audit log.',
     );
-    expect(deletableNote(2, en)).toMatch(/^This subsidiary can be deleted from the register\. Its 2 locations would go/);
-    expect(deletableNote(1000, tr)).toMatch(/1\.000 lokasyonu/);
+    expect(deletableNote(2, en)).toMatch(/^This subsidiary can be deleted from the register\. Its 2 facilities would go/);
+    expect(deletableNote(1000, tr)).toMatch(/1\.000 tesisi/);
   });
 });
 
 describe('locationCountLine', () => {
   it('counts the locations beside the name', () => {
-    expect(locationCountLine('Acme', 1, en)).toBe('Acme · 1 location');
-    expect(locationCountLine('Acme', 2, en)).toBe('Acme · 2 locations');
-    expect(locationCountLine('Acme', 1500, tr)).toBe('Acme · 1.500 lokasyon');
+    expect(locationCountLine('Acme', 1, en)).toBe('Acme · 1 facility');
+    expect(locationCountLine('Acme', 2, en)).toBe('Acme · 2 facilities');
+    expect(locationCountLine('Acme', 1500, tr)).toBe('Acme · 1.500 tesis');
   });
 });
 

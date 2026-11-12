@@ -16,12 +16,15 @@
     "detailOne": "Bu raporlama birimi için önceki tek dönemin değeri olan {baseline} ile karşılaştırıldı; sapma %{percent} içinde. Kontrol kısıtlı geçmişe dayanıyor (1 dönem).",
     "detail": "Bu raporlama birimi için önceki {count} dönemin ortalaması olan {baseline} ile karşılaştırıldı; sapma %{percent} içinde. Kontrol kısıtlı geçmişe dayanıyor ({count} dönem)."
   },
+  "firstPeriod": {
+    "headline": "İlk dönem kaydı",
+    "detail": "Geçmiş karşılaştırma verisi yok — lütfen kanıt dokümanını ve birimi kontrol edin."
+  },
   "notEvaluated": {
     "headline": "Anormallik kontrolü yapılmadı",
     "noFigure": "Bu kategori hesaplanmış bir değer üretmiyor; bu yüzden geçmişiyle karşılaştırılacak bir şey yok.",
     "zeroAverage": "Önceki {periods} karşılaştırılabilir dönemin ortalaması sıfır; bu yüzden onlardan bir sapma hesaplanamaz.",
     "zeroAverageLimited": "Bu raporlama birimi için daha önce kesinleşmiş dönemlerin ortalaması sıfır; bu yüzden onlardan bir sapma hesaplanamaz.",
-    "noHistory": "Bu raporlama birimi için daha önce kesinleşmiş bir dönem yok; karşılaştırılacak geçmiş bulunmuyor.",
     "scoredBefore": "Bu kayıt, kontrol için {periods} kesinleşmiş önceki dönem gerektiği sırada değerlendirildi. Daha az dönemi ({count}) olduğu için kontrol yapılmadı."
   },
   "note": {

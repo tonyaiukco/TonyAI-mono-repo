@@ -13,6 +13,9 @@ import {
   removeFileLabel as removeFileLabelIn,
   sharedWithNote as sharedWithNoteIn,
   toggleAttach,
+  refrigerantShortcut,
+  applyAttachPreselect,
+  mergeArrivedPreselect,
 } from './evidence-view';
 import { selectableDrafts as selectableDraftsIn, type SubmittableRow, type SubmittingUser } from './bulk-submit-view';
 import { api, ApiError, SESSION_EXPIRED_MESSAGE } from './api';
@@ -241,5 +244,52 @@ describe('readEvidencePage — a page past the link budget is read again at the 
   it('passes every other refusal through', async () => {
     vi.spyOn(api, 'listEvidencePage').mockRejectedValueOnce(new ApiError('gone', 404, 'record_not_found'));
     await expect(readEvidencePage('rec-1')).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('the refrigerant shortcut (UAT round 2, K5 option A)', () => {
+  const gas = (id: string, over: Partial<SubmittableRow> = {}): SubmittableRow => ({
+    id,
+    status: 'draft',
+    category: 'Refrigerants',
+    evidenceCount: 0,
+    createdBy: 'me',
+    subsidiaryId: 'sub-1',
+    reportingYear: 2025,
+    reportingPeriod: 'annual',
+    periodValue: 'FY',
+    periodLocked: false,
+    ...over,
+  }) as SubmittableRow;
+
+  it('is offered for two or more attachable gas records of the year, ticking those without a file', () => {
+    const rows = [gas('r410a', { evidenceCount: 1 }), gas('r32'), gas('fm200')];
+    expect(refrigerantShortcut(rows, ['r410a', 'r32', 'fm200'], 2025)).toEqual({ offered: true, preselect: ['r32', 'fm200'] });
+  });
+
+  it('is not offered when the year holds only one attachable gas record', () => {
+    const rows = [gas('r410a'), gas('r32', { reportingYear: 2024 }), gas('gas', { category: 'Natural Gas' })];
+    expect(refrigerantShortcut(rows, ['r410a', 'r32', 'gas'], 2025)).toEqual({ offered: false, preselect: [] });
+  });
+
+  it('never counts or ticks a record the user may not attach to', () => {
+    const rows = [gas('r410a'), gas('r32'), gas('locked')];
+    const shortcut = refrigerantShortcut(rows, ['r410a', 'r32'], 2025);
+    expect(shortcut.preselect).not.toContain('locked');
+    expect(applyAttachPreselect(['r410a', 'locked'], ['r410a', 'r32'])).toEqual(['r410a']);
+  });
+});
+
+describe('mergeArrivedPreselect (a requested record on a later page)', () => {
+  it('ticks requested ids once their page arrives, and keeps waiting for the rest', () => {
+    expect(mergeArrivedPreselect(['a'], ['b', 'c'], ['a', 'b'])).toEqual({ selected: ['a', 'b'], pending: ['c'] });
+  });
+
+  it('never ticks an id the table may not tick, and changes nothing when none arrived', () => {
+    expect(mergeArrivedPreselect(['a'], ['c'], ['a', 'b'])).toEqual({ selected: ['a'], pending: ['c'] });
+  });
+
+  it('does not tick an id twice', () => {
+    expect(mergeArrivedPreselect(['a', 'b'], ['b'], ['a', 'b'])).toEqual({ selected: ['a', 'b'], pending: [] });
   });
 });

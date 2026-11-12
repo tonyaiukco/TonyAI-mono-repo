@@ -69,7 +69,7 @@ test('the dashboard and Emissions speak Turkish, and a total is the same number 
   await expect(cell).toHaveAttribute('aria-label', new RegExp(`: (${statusWords})`));
 
   // The drill-down: Turkish copy and Turkish month headers.
-  await page.getByRole('button', { name: /TonyAI Energy.*konum bazında/s }).first().click();
+  await page.getByRole('button', { name: /TonyAI Energy.*tesis bazında/s }).first().click();
   await expect(page.getByText(trDashboard.drawer.invoiceGrid, { exact: true })).toBeVisible();
   await expect(page.getByText('Oca', { exact: true }).first()).toBeVisible();
   await page.keyboard.press('Escape');

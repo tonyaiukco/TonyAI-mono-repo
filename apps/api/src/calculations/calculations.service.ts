@@ -35,6 +35,7 @@ import type {
   NaturalGasRecordParameters,
   RefrigerantRecordParameters,
   ReleaseParametersDTO,
+  SealedFactorReleaseDTO,
   ReleaseParametersQuery,
   RefrigerantTerm,
   SnapshotInput,
@@ -160,6 +161,25 @@ export class CalculationsService {
       dataYear: f.dataYear,
       release: releaseSnapshot(f.release),
     }));
+  }
+
+  /**
+   * The library's sealed releases with their seal date (UAT round 2, S2), so a
+   * screen can say when the package behind a figure was sealed. Reference data,
+   * not tenant-scoped. Withdrawn releases stay listed: past figures cite them.
+   * Only the snapshot's columns and `sealedAt` are selected, so reviewer,
+   * withdrawer and notes never leave the database on this path.
+   */
+  async listSealedReleases(): Promise<SealedFactorReleaseDTO[]> {
+    const releases = await this.prisma.factorRelease.findMany({
+      where: SEALED,
+      select: { ...RELEASE_SNAPSHOT_SELECT, sealedAt: true },
+      orderBy: [{ publisher: 'asc' }, { ordinal: 'asc' }],
+    });
+    // `SEALED` filters out a null seal; the guard keeps the wire type honest.
+    return releases.flatMap((r) =>
+      r.sealedAt ? [{ ...releaseSnapshot(r), sealedAt: r.sealedAt.toISOString() }] : [],
+    );
   }
 
   /**

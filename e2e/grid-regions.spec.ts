@@ -99,13 +99,13 @@ test('the locations drawer keeps a hidden geography reachable too', async ({ pag
   await page.goto('/subsidiaries');
   await page
     .locator('tr', { hasText: 'TonyAI Manufacturing GmbH' })
-    .getByRole('button', { name: 'Manage locations' })
+    .getByRole('button', { name: 'Manage facilities' })
     .click();
 
   const drawer = page.getByRole('dialog');
   // The ADD form seeds the parent's geography — the case that would blank.
   await expect(geoCombo(drawer, page, 'Geography *')).toContainText('European Union (EU)');
-  await expect(page.getByRole('button', { name: /^Add location$/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Add facility$/ })).toBeVisible();
   void token;
 });
 
@@ -125,10 +125,10 @@ test('Data Entry states the geography it will use — subsidiary and location', 
   // Targeting a location must switch both the geography AND the stated source —
   // this same value feeds the live preview, so getting the precedence wrong
   // shows a figure computed against a different factor than the one that saves.
-  await page.locator('div.space-y-2').filter({ has: page.getByText('Location', { exact: true }) }).last().getByRole('combobox').click();
+  await page.locator('div.space-y-2').filter({ has: page.getByText('Facility', { exact: true }) }).last().getByRole('combobox').click();
   const locOption = page.getByRole('option').nth(1);
   const locName = (await locOption.textContent())?.trim() ?? '';
   await locOption.click();
-  await expect(line).toContainText('(location)');
+  await expect(line).toContainText('(facility)');
   await expect(line).toContainText(locName.replace(/\s*\(.*\)$/, ''));
 });

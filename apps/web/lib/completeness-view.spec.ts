@@ -142,7 +142,7 @@ describe('shortfallReasons', () => {
     // The year is interpolated, so the sentence is wrong for every year but one
     // if the argument is ever dropped.
     expect(shortfallReasons(category({ outOfScopeRecords: 1 }), 2024)[0]).toBe(
-      '1 entry is at a site that did not exist yet at the end of 2024, so there is no row for them.',
+      '1 entry is at a facility that did not exist yet at the end of 2024, so there is no row for them.',
     );
   });
 
@@ -347,7 +347,7 @@ describe('deriveEntryCoverage — when the rule does not apply', () => {
       dto({ categories: [category({ required: 0, locations: [], outOfScopeRecords: 12 })] }),
     );
     if (view.kind !== 'no_locations') throw new Error(`expected no_locations, got ${view.kind}`);
-    expect(view.reasons.some((r) => r.includes('12 entries are at a site'))).toBe(true);
+    expect(view.reasons.some((r) => r.includes('12 entries are at a facility'))).toBe(true);
   });
 
   it('refuses to call a year with no sites complete', () => {
@@ -494,7 +494,7 @@ describe('deriveEntryCoverage — warnings about what is being keyed in', () => 
     const view = derive(dto(), { locationId: '' });
     if (view.kind !== 'tracked') throw new Error(`expected tracked, got ${view.kind}`);
     // The honest form of the thing that made a tester read green as "done".
-    expect(view.warnings[0]).toContain('closes none of the 12 site invoices');
+    expect(view.warnings[0]).toContain('closes none of the 12 facility invoices');
     // No site is selected, so there is no row of months to show.
     expect(view.selected).toBeNull();
   });
@@ -723,7 +723,7 @@ describe('in Turkish (LP4-04 slice 2)', () => {
       copy: tr(),
     });
     expect(view.kind === 'tracked' && view.warnings).toEqual([
-      'Ocak 2026 zaten tüm şirket için kaydedildi. Bunun için ayrıca bir tesis faturası girmek o ayı iki kez sayar — iki satır da emisyon toplamına girer.',
+      'Ocak 2026 zaten bağlı şirketin tamamı için kaydedildi. Bunun için ayrıca bir tesis faturası girmek o ayı iki kez sayar — iki satır da emisyon toplamına girer.',
     ]);
   });
 

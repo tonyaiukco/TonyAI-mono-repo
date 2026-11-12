@@ -101,7 +101,7 @@ test('reports: a withdrawn figure is disclosed in the export, not silently omitt
 
   // Attributed to a SITE, not to the company: the reporting-entity column is
   // half of what this package added, and a company-level record would read
-  // "Whole company" whether that column works or is hard-coded. Q2 rather than
+  // "Whole subsidiary" whether that column works or is hard-coded. Q2 rather than
   // Q3 keeps this off the tuple `turkish-filenames.spec` writes — sharing one
   // would leave two "/Q3 2026/" buttons in a list that spec clicks by `.first()`.
   const id = await createCommittedRecord(request, token, {

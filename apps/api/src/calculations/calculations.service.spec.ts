@@ -1865,3 +1865,70 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
     });
   });
 });
+
+describe('CalculationsService.listSealedReleases (UAT round 2, S2)', () => {
+  const sealed = new Date('2026-11-05T09:30:00.000Z');
+  const releaseRow = (over: Record<string, unknown> = {}) => ({
+    id: 'rel-tr',
+    publisher: 'ETKB',
+    title: 'Türkiye grid factors',
+    edition: 'TONYAI-EF-TR-2026.11',
+    ordinal: 1,
+    status: 'authoritative',
+    sourceUrl: 'https://example.invalid/source',
+    licence: 'public',
+    publishedAt: new Date('2026-11-04T00:00:00.000Z'),
+    gwpSet: 'AR6',
+    sealedAt: sealed,
+    ...over,
+  });
+  const makeService = (rows: unknown[]) => {
+    const findMany = vi.fn(async () => rows);
+    const prisma = { factorRelease: { findMany } };
+    return { findMany, service: new CalculationsService(prisma as unknown as PrismaService, ALLOW_PLACEHOLDERS) };
+  };
+
+  it('reads sealed releases only, without reviewer, withdrawer or notes, in a stable order', async () => {
+    const { findMany, service } = makeService([]);
+    await service.listSealedReleases();
+    expect(findMany).toHaveBeenCalledWith({
+      where: { sealedAt: { not: null } },
+      select: expect.objectContaining({ id: true, edition: true, status: true, sealedAt: true }),
+      orderBy: [{ publisher: 'asc' }, { ordinal: 'asc' }],
+    });
+    const select = (findMany.mock.calls[0] as unknown as [{ select: Record<string, unknown> }])[0].select;
+    for (const hidden of ['reviewedBy', 'reviewedAt', 'withdrawnBy', 'withdrawalReason', 'notes']) {
+      expect(select).not.toHaveProperty(hidden);
+    }
+  });
+
+  it('returns each release as its snapshot plus the ISO seal timestamp', async () => {
+    const { service } = makeService([releaseRow()]);
+    expect(await service.listSealedReleases()).toEqual([
+      {
+        id: 'rel-tr',
+        publisher: 'ETKB',
+        title: 'Türkiye grid factors',
+        edition: 'TONYAI-EF-TR-2026.11',
+        ordinal: 1,
+        status: 'authoritative',
+        sourceUrl: 'https://example.invalid/source',
+        licence: 'public',
+        publishedAt: '2026-11-04',
+        gwpSet: 'AR6',
+        sealedAt: '2026-11-05T09:30:00.000Z',
+      },
+    ]);
+  });
+
+  it('keeps a withdrawn release, because past figures still cite it', async () => {
+    const { service } = makeService([releaseRow({ id: 'rel-old', status: 'withdrawn' })]);
+    const [release] = await service.listSealedReleases();
+    expect(release).toMatchObject({ id: 'rel-old', status: 'withdrawn', sealedAt: '2026-11-05T09:30:00.000Z' });
+  });
+
+  it('never lists a row whose seal is missing, even if the query let one through', async () => {
+    const { service } = makeService([releaseRow({ id: 'rel-unsealed', sealedAt: null })]);
+    expect(await service.listSealedReleases()).toEqual([]);
+  });
+});

@@ -56,7 +56,7 @@ describe('every sentence is Turkish', () => {
   it('completeness reasons and badges', () => {
     const coverage = { unattributedRecords: 2, outOfScopeRecords: 0, nonMonthlyRecords: 0, missingEvidenceRecords: 1 } as never;
     expect(shortfallReasons(coverage, 2026, cc('tr'))).toEqual([
-      '2 kayıt bir tesis yerine tüm şirket için kaydedildi; bu yüzden hiçbir tesisin ayını kapatmaz.',
+      '2 kayıt bir tesis yerine bağlı şirketin tamamı için kaydedildi; bu yüzden hiçbir tesisin ayını kapatmaz.',
       '1 kayıtta ekli fatura yok.',
     ]);
     expect(reviewBadge({ awaitingReviewSlots: 3, awaitingReviewRecords: 0 }, cc('tr'))).toBe('3 fatura inceleme bekliyor');

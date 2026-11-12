@@ -72,13 +72,13 @@ describe('describeMove', () => {
     // The geography claim is not decoration: the location drives which emission
     // factor applies (data_entry_page.md §5.2), so a move can change the stored figure.
     expect(notice).toBe(
-      'Saving moves this record from the whole company to Ankara Power Plant. It is not copied — the emission factor is recalculated for its geography.',
+      'Saving moves this record from the whole subsidiary to Ankara Power Plant. It is not copied — the emission factor is recalculated for its geography.',
     );
   });
 
   it('describes a detach in the same terms', () => {
     expect(describeMove(opened({ locationId: 'loc-2' }), { locationId: '' }, names, true)).toContain(
-      'from Istanbul HQ to the whole company',
+      'from Istanbul HQ to the whole subsidiary',
     );
   });
 
@@ -95,7 +95,7 @@ describe('describeMove', () => {
       false,
     )!;
     expect(notice).toBe(
-      `Saving moves this record from the whole company to Ankara Power Plant. It is not copied — and no emission factor resolves for it today, so it stays "${copyFor('common').t('notCalculated')}".`,
+      `Saving moves this record from the whole subsidiary to Ankara Power Plant. It is not copied — and no emission factor resolves for it today, so it stays "${copyFor('common').t('notCalculated')}".`,
     );
   });
 
@@ -121,7 +121,7 @@ describe('describeMove', () => {
     // Reachable while the locations list is still loading, or for a site the
     // caller cannot see. A uuid in a sentence reads as a bug.
     const notice = describeMove(opened(), { locationId: 'loc-unknown' }, names, true)!;
-    expect(notice).toContain('another site');
+    expect(notice).toContain('another facility');
     expect(notice).not.toContain('loc-unknown');
   });
 

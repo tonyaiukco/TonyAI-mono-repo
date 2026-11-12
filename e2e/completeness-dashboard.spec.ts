@@ -49,11 +49,11 @@ test('the drawer names every open month, and says why the count is short', async
   page,
 }) => {
   await login(page, ADMIN_EMAIL);
-  await page.getByRole('button', { name: /TonyAI Energy.*per location/s }).click();
+  await page.getByRole('button', { name: /TonyAI Energy.*per facility/s }).click();
 
   const drawer = page.getByRole('dialog');
-  await expect(drawer.getByText('Invoices by site and month')).toBeVisible();
-  await expect(drawer.getByText('Measured per location · 2 sites')).toBeVisible();
+  await expect(drawer.getByText('Invoices by facility and month')).toBeVisible();
+  await expect(drawer.getByText('Measured per facility · 2 facilities')).toBeVisible();
 
   // The three seeded invoices, and the twenty-one that are not there.
   await expect(
@@ -69,14 +69,14 @@ test('the drawer names every open month, and says why the count is short', async
   // uncovered slot in those months is a `◆` and the grid refuses the click
   // rather than inviting a second row for a month that already has one.
   await expect(
-    drawer.getByRole('button', { name: /Ankara Power Plant July: recorded for the whole company/ }),
+    drawer.getByRole('button', { name: /Ankara Power Plant July: recorded for the whole subsidiary/ }),
   ).toBeDisabled();
 
   // The reconciliation line. Without it, "0 of 24" beside existing entries
   // reads as the app having lost data.
   await expect(
     drawer.getByText(
-      /9 entries are recorded for the whole company rather than a site/,
+      /9 entries are recorded for the whole subsidiary rather than a facility/,
     ),
   ).toBeVisible();
 
@@ -112,7 +112,7 @@ test('the drawer names every open month, and says why the count is short', async
 
 test('clicking an open month opens Data Entry on that exact slot', async ({ page }) => {
   await login(page, ADMIN_EMAIL);
-  await page.getByRole('button', { name: /TonyAI Energy.*per location/s }).click();
+  await page.getByRole('button', { name: /TonyAI Energy.*per facility/s }).click();
 
   const drawer = page.getByRole('dialog');
   // Water: no records at any level, so every one of its slots is open and the
@@ -138,7 +138,7 @@ test('clicking an open month opens Data Entry on that exact slot', async ({ page
   // trigger's text is the only honest evidence the form actually moved.
   const field = (label: string) =>
     page.locator('div.space-y-2').filter({ hasText: label }).getByRole('combobox');
-  await expect(field('Location')).toContainText('Ankara Power Plant');
+  await expect(field('Facility')).toContainText('Ankara Power Plant');
   await expect(field('Period')).toContainText('Monthly');
   await expect(field('Value')).toContainText('July');
   await expect(page.getByText(/records exist for/)).toHaveCount(0);

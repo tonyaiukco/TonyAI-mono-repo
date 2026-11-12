@@ -202,7 +202,7 @@ describe('the label maps are exhaustive', () => {
   it('names the two entity columns apart from each other', () => {
     // The swap above, pinned by meaning rather than by distinctness alone.
     expect(COLUMN_LABEL.subsidiaryId).toMatch(/entity/i);
-    expect(COLUMN_LABEL.locationId).toMatch(/site/i);
+    expect(COLUMN_LABEL.locationId).toMatch(/facility/i);
   });
 });
 

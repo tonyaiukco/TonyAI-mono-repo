@@ -4,7 +4,7 @@
   "subtitleUser": "Denetlenen değişikliklerin yalnızca eklenebilen kaydı · {name} ({role})",
   "forbidden": {
     "title": "Denetim izini yalnızca bir süper yönetici okuyabilir",
-    "body": "İz, kuruluştaki her bağlı şirketi kapsadığı için hem API'de hem veritabanında kısıtlanmıştır. Rolünüz: <mono>{role}</mono>."
+    "body": "İz, ana şirketin tüm bağlı şirketlerini kapsadığı için hem API'de hem veritabanında kısıtlanmıştır. Rolünüz: <mono>{role}</mono>."
   },
   "filterPlaceholder": "Bu sayfada ara…",
   "allEntities": "Tüm varlıklar",

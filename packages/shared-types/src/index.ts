@@ -2276,6 +2276,23 @@ export interface FactorReleaseSnapshot {
   gwpSet: GwpSet | null;
 }
 
+/**
+ * A sealed release as `GET /factors/releases` lists it (UAT round 2, S2): the
+ * snapshot's columns plus the seal date, so a screen can say when the package
+ * behind a figure was sealed. Never reviewer, withdrawer or notes. Withdrawn
+ * releases are listed too: past figures still cite them.
+ */
+export interface SealedFactorReleaseDTO extends FactorReleaseSnapshot {
+  // `status` here is the release's CURRENT status (it may since have been
+  // withdrawn); a snapshot's `status` is the status when it was calculated.
+  // Never compare the two.
+  /**
+   * ISO timestamp the database recorded when the loader sealed the release
+   * (`factor_releases.sealed_at`). Never taken from the release file.
+   */
+  sealedAt: string;
+}
+
 /** A release as the API lists it. */
 export interface FactorReleaseDTO extends FactorReleaseSnapshot {
   /**
@@ -4442,14 +4459,15 @@ export const SUBSIDIARY_TEXT_MAX_LENGTH = 200;
 /**
  * What a record with no location is called, everywhere it is named.
  *
- * TonyAI's tiers are organisation (the holding) -> subsidiary (a company) ->
- * location (a site), so a record attributed to the subsidiary itself is the
- * whole COMPANY, and "Whole organisation" means something else again (the
- * report scope filter). One constant because the app and the generated report
- * now both print this phrase, and the record drawer's confirmation dialog is
- * the one place a user reads it before an irreversible write.
+ * TonyAI's tiers are named parent company (the organisation) -> subsidiary ->
+ * facility (a location row) — see openspec/specs/organisation-hierarchy — so a
+ * record attributed to the subsidiary itself is the whole SUBSIDIARY, never
+ * "Whole company", which reads as the parent company. One constant because the
+ * app and the generated report both print this phrase, and the record drawer's
+ * confirmation dialog is the one place a user reads it before an irreversible
+ * write. The identifier keeps its historical name; only the copy changed.
  */
-export const WHOLE_COMPANY_ENTITY_LABEL = 'Whole company';
+export const WHOLE_COMPANY_ENTITY_LABEL = 'Whole subsidiary';
 
 /**
  * What a row attributed to a site whose NAME did not come back is called.
@@ -4458,7 +4476,7 @@ export const WHOLE_COMPANY_ENTITY_LABEL = 'Whole company';
  * join. Saying "whole company" there would misstate the reporting entity in an
  * audit-ready export; saying nothing would hide that a site is involved at all.
  */
-export const UNNAMED_SITE_ENTITY_LABEL = 'Site (name unavailable)';
+export const UNNAMED_SITE_ENTITY_LABEL = 'Facility (name unavailable)';
 
 /** The two phrases `entityLabel` falls back on — a screen passes its
  *  catalogue's (`common.entity.*`); the report keeps the English ones. */

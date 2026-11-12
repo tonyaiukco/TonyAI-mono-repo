@@ -54,7 +54,9 @@ import {
   toggleSelected,
 } from "@/lib/bulk-submit-view";
 import {
+  applyAttachPreselect,
   attachableRecords,
+  mergeArrivedPreselect,
   attachButtonLabel,
   attachConfirmation,
   attachErrorMessage,
@@ -173,6 +175,24 @@ export interface RecordsTableProps {
   yearOptions: readonly number[];
   /** A filter narrows the list: an empty table means nothing matches. */
   narrowed: boolean;
+  /**
+   * Open the attach step from outside (UAT round 2, K5: the refrigerant
+   * shortcut), once per `nonce`, with `preselect` ticked where the table
+   * allows it. Applied when the list shows that year's refrigerant records.
+   */
+  attachRequest?: AttachRequest | null;
+  /** The query the rows on screen answer, as `recordsQuery` serialises it. */
+  fetchedQueryKey?: string | null;
+}
+
+/** Pages the table reads on its own to reach a request's ticks. */
+const PRESELECT_MAX_AUTO_LOADS = 200;
+
+export interface AttachRequest {
+  nonce: number;
+  /** The list the request is for (`recordsQuery`, serialised): applied only once the rows answer it. */
+  queryKey: string;
+  preselect: readonly string[];
 }
 
 
@@ -257,6 +277,8 @@ export function RecordsTable({
   onFilterChange,
   yearOptions,
   narrowed,
+  attachRequest = null,
+  fetchedQueryKey = null,
 }: RecordsTableProps) {
   const tErrors = useTranslations("errors");
   const t = useTranslations("dataEntry");
@@ -317,13 +339,79 @@ export function RecordsTable({
   const attachRows = records.filter((r) => liveAttach.includes(r.id));
 
   function startAttach() {
+    setPendingPreselect([]);
     setSelected([]);
     setReport(null);
     setAttachSelected([]);
     setAttachMode(true);
   }
 
+  // The refrigerant shortcut's request: applied once the rows on screen answer
+  // the query it asked for (that year's refrigerant records). Checked by the
+  // query the rows were fetched for, not by the filter or the loading flag:
+  // the filter changes in the same commit as the request, before the refetch
+  // has even started, while the old rows are still showing.
+  const appliedRequest = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Ids the request asked for that are not on a loaded page yet: the table
+  // reads further pages and ticks each as it arrives, so a year longer than
+  // one page is ticked whole. An id leaves this list once ticked, so the user
+  // can untick it without it coming back.
+  const [pendingPreselect, setPendingPreselect] = useState<string[]>([]);
+  // Pages read on a request's behalf. A read that brings no new row (a failed
+  // page) stalls the walk rather than asking again and again; so does the
+  // sanity bound. A stalled or finished walk with ids still missing is said
+  // on screen, never passed over in silence.
+  const autoLoads = useRef(0);
+  const rowsAtAutoLoad = useRef<number | null>(null);
+  const [preselectStalled, setPreselectStalled] = useState(false);
+  useEffect(() => {
+    if (!attachRequest || appliedRequest.current === attachRequest.nonce || loading) return;
+    if (fetchedQueryKey !== attachRequest.queryKey) return;
+    appliedRequest.current = attachRequest.nonce;
+    setSelected([]);
+    setReport(null);
+    const ticked = applyAttachPreselect(attachRequest.preselect, attach.attachableIds);
+    setAttachSelected(ticked);
+    setPendingPreselect(attachRequest.preselect.filter((id) => !ticked.includes(id)));
+    autoLoads.current = 0;
+    rowsAtAutoLoad.current = null;
+    setPreselectStalled(false);
+    setAttachMode(true);
+    containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [attachRequest, loading, fetchedQueryKey, attach.attachableIds]);
+
+  // A later page brought requested rows: tick them, within one upload's cap.
+  useEffect(() => {
+    if (!attachMode || !pendingPreselect.some((id) => attach.attachableIds.includes(id))) return;
+    const merged = mergeArrivedPreselect(attachSelected, pendingPreselect, attach.attachableIds);
+    setAttachSelected(merged.selected);
+    setPendingPreselect(merged.pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when rows arrive, not on every tick
+  }, [attachMode, pendingPreselect, attach.attachableIds]);
+  // ...and while requested rows are still missing, read the next page.
+  useEffect(() => {
+    if (!attachMode || pendingPreselect.length === 0 || !hasMore || loading || loadingMore || preselectStalled) return;
+    // The last read on the request's behalf brought no row: it failed.
+    if (rowsAtAutoLoad.current !== null && records.length === rowsAtAutoLoad.current) {
+      setPreselectStalled(true);
+      return;
+    }
+    if (autoLoads.current >= PRESELECT_MAX_AUTO_LOADS) {
+      setPreselectStalled(true);
+      return;
+    }
+    autoLoads.current += 1;
+    rowsAtAutoLoad.current = records.length;
+    onLoadMore();
+  }, [attachMode, pendingPreselect, hasMore, loading, loadingMore, preselectStalled, records.length, onLoadMore]);
+  // While the walk still runs, the file cannot be chosen or confirmed: an
+  // upload now would leave the records still to be ticked without it.
+  const preselectLoading = attachMode && pendingPreselect.length > 0 && hasMore && !preselectStalled;
+  const preselectMissing = attachMode && !preselectLoading ? pendingPreselect.length : 0;
+
   function stopAttach() {
+    setPendingPreselect([]);
     setAttachMode(false);
     setAttachSelected([]);
     setPendingFile(null);
@@ -409,7 +497,7 @@ export function RecordsTable({
   }
 
   return (
-    <Card data-testid="previous-submissions">
+    <Card ref={containerRef} data-testid="previous-submissions">
       <CardHeader className="space-y-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Clock className="h-4 w-4 text-muted-foreground" />
@@ -513,6 +601,18 @@ export function RecordsTable({
                 ? t("submissions.attachHint")
                 : t("submissions.selectedCount", { count: formatNumber(liveAttach.length, locale) })}
             </span>
+            {preselectLoading && (
+              <span className="text-xs text-muted-foreground" data-testid="evidence-preselect-loading">
+                {t("submissions.preselectLoading")}
+              </span>
+            )}
+            {preselectMissing > 0 && (
+              <span className="text-xs text-status-incomplete-text" data-testid="evidence-preselect-missing">
+                {preselectMissing === 1
+                  ? t("submissions.preselectMissingOne")
+                  : t("submissions.preselectMissingMany", { count: formatNumber(preselectMissing, locale) })}
+              </span>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="ghost" onClick={stopAttach}>
                 {tCommon("cancel")}
@@ -521,7 +621,7 @@ export function RecordsTable({
                 size="sm"
                 className="h-auto min-h-8 max-w-full whitespace-normal py-1 text-left"
                 data-testid="evidence-attach-choose"
-                disabled={liveAttach.length === 0 || attaching}
+                disabled={liveAttach.length === 0 || attaching || preselectLoading}
                 onClick={() => fileInputRef.current?.click()}
               >
                 {attaching ? (
@@ -662,7 +762,7 @@ export function RecordsTable({
               // would label a site row as the whole company if the include
               // were ever dropped — a false claim on the one screen built to
               // tell the two apart. The label is the shared one: the import
-              // template and every report say "Whole company".
+              // template and every report say "Whole subsidiary".
               const entity = r.locationId ? (r.locationName ?? t("submissions.aSite")) : t("wholeCompany");
               // Uniqueness includes `location_id`, so a whole-company record
               // and a site record for the same period and category are two
@@ -828,7 +928,7 @@ export function RecordsTable({
               <Button
                 data-testid="evidence-attach-confirm"
                 onClick={() => void attachFile()}
-                disabled={attaching}
+                disabled={attaching || preselectLoading}
               >
                 {attaching && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
                 {t("submissions.attach")}

@@ -5,8 +5,8 @@
   "subsidiary": "Bağlı şirket",
   "selectSubsidiary": "Bağlı şirket seçin",
   "noSubsidiaries": "Hesabınızın erişebildiği bir bağlı şirket yok.",
-  "location": "Lokasyon",
-  "wholeCompany": "Tüm şirket",
+  "location": "İşletme / Tesis",
+  "wholeCompany": "Bağlı şirketin tamamı",
   "category": "Kategori",
   "fuelOrGas": "Yakıt veya gaz",
   "vehicleMode": "Araç kullanım modu veya gemi yakıtı",
@@ -17,7 +17,7 @@
   "periodValue": "Ay / çeyrek",
   "factorGeography": "Faktör coğrafyası:",
   "factorGeographySource": "{geography}; kaynağı: {source}. Bağlı Şirketler sayfasından değiştirilebilir.",
-  "locationSource": "{name} (lokasyon)",
+  "locationSource": "{name} (tesis)",
   "subsidiarySource": "{name} (bağlı şirket)",
   "thisSubsidiary": "bu bağlı şirket",
   "factorCoverage": {
@@ -48,8 +48,8 @@
   "movedSubmitted": "{entity} birimine taşındı, incelemeye gönderildi",
   "anomalousBeforeSubmit": "Bu değer olağandışı görünüyor — göndermeden önce bir sapma açıklaması ekleyin.",
   "evidenceBeforeSubmit": "Kaydedildi. Aşağıya en az bir kanıt dosyası ekleyin, ardından yeniden gönderin.",
-  "aSite": "bir lokasyon",
-  "theWholeCompany": "tüm şirket",
+  "aSite": "bir tesis",
+  "theWholeCompany": "bağlı şirketin tamamı",
   "duplicateAdvice": "Devam etmek için kaydı “Previous submissions” listesinden açın.",
   "duplicateAdviceMoving": "Kayıt taşınmadı; olduğu yerde duruyor.",
   "saveFailedServer": "Kaydedilemedi — sunucu bu kaydı işleyemedi. Yeniden deneyin; sürerse bildirin.",
@@ -57,7 +57,7 @@
   "previewPrompt": "Canlı tCO₂e tahmini görmek için bir bağlı şirket ve kategori seçip faaliyet değerini girin.",
   "bulkColumns": {
     "subsidiaryId": "Raporlayan şirket",
-    "locationId": "Tesis",
+    "locationId": "İşletme / Tesis",
     "reportingYear": "Yıl",
     "reportingPeriod": "Dönem türü",
     "periodValue": "Dönem",
@@ -147,7 +147,8 @@
       "user": "bu kayıtta girildi",
       "derived": "faturadaki üst ısıl değerden türetildi"
     },
-    "volumeCorrection": " Hacim düzeltme katsayısı: {factor}."
+    "volumeCorrection": " Hacim düzeltme katsayısı: {factor}.",
+    "sealedOn": "Paketin mühürlenme tarihi: {date}."
   },
   "inputs": {
     "title": "Hesaplama girdileri",
@@ -202,7 +203,7 @@
       "default": "varsayılan oran",
       "alternative": "alternatif oran"
     },
-    "marineGasOilScope": "Deniz motorini, kuruluşunuzun sahip olduğu veya işlettiği gemileri kapsar (Kapsam 1); işlettiğiniz çıplak (bareboat) kiralama gemiler de buna dahildir. Kiraladığınız ama işletmediğiniz gemileri (sefer veya süre kiralaması) ve üçüncü taraf deniz taşımacılığını eklemeyin: bunlar Kapsam 3'tür ve bu envanterin dışındadır. Yakıt teslim belgesindeki (Bunker Delivery Note) kütleyi kg veya ton olarak girin."
+    "marineGasOilScope": "Deniz motorini, şirketinizin sahip olduğu veya işlettiği gemileri kapsar (Kapsam 1); işlettiğiniz çıplak (bareboat) kiralama gemiler de buna dahildir. Kiraladığınız ama işletmediğiniz gemileri (sefer veya süre kiralaması) ve üçüncü taraf deniz taşımacılığını eklemeyin: bunlar Kapsam 3'tür ve bu envanterin dışındadır. Yakıt teslim belgesindeki (Bunker Delivery Note) kütleyi kg veya ton olarak girin."
   },
   "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",
   "selectAllLoaded": "Yüklenen {count} kaydın tümünü seç",
@@ -394,6 +395,7 @@
     "methodology": "Metodoloji",
     "source": "Kaynak",
     "sourceValue": "{source} ({version})",
+    "sealedOn": "Paketin mühürlenme tarihi",
     "factorStatus": "Faktör durumu",
     "authoritative": "Yetkili",
     "notAuthoritative": "Yer tutucu — yetkili değil (faktör veya dönüşüm)",
@@ -406,6 +408,9 @@
     "title": "Önceki gönderimler",
     "attachStart": "Tek dosyayı birden fazla kayda ekle",
     "attachHint": "Bu belgenin kanıtladığı kayıtları işaretleyin.",
+    "preselectLoading": "Yılın diğer gaz kayıtları işaretlenmek üzere okunuyor…",
+    "preselectMissingOne": "Yılın 1 gaz kaydı otomatik işaretlenemedi. Elle işaretleyin ya da o kayıt olmadan ekleyin.",
+    "preselectMissingMany": "Yılın {count} gaz kaydı otomatik işaretlenemedi. Elle işaretleyin ya da bu kayıtlar olmadan ekleyin.",
     "selectedCount": "{count} seçildi",
     "clear": "Temizle",
     "moreNotShown": "+{count} tane daha gösterilmiyor.",
@@ -422,9 +427,9 @@
   },
   "move": {
     "anotherSite": "başka bir tesis",
-    "wholeCompany": "tüm şirket",
-    "withFigure": "Kaydetmek bu kaydı {from} konumundan {to} konumuna taşır. Kopyalanmaz — emisyon faktörü coğrafyasına göre yeniden hesaplanır.",
-    "withoutFigure": "Kaydetmek bu kaydı {from} konumundan {to} konumuna taşır. Kopyalanmaz — bugün için hiçbir emisyon faktörü bulunmuyor, bu yüzden \"Hesaplanmadı\" olarak kalır."
+    "wholeCompany": "bağlı şirketin tamamı",
+    "withFigure": "Kaydetmek bu kaydı taşır: {from} → {to}. Kopyalanmaz — emisyon faktörü coğrafyasına göre yeniden hesaplanır.",
+    "withoutFigure": "Kaydetmek bu kaydı taşır: {from} → {to}. Kopyalanmaz — bugün için hiçbir emisyon faktörü bulunmuyor, bu yüzden \"Hesaplanmadı\" olarak kalır."
   },
   "rowActions": {
     "edit": "Düzenle",
@@ -439,7 +444,7 @@
     "activityType": "Tür: {from} → {to}",
     "year": "Raporlama yılı: {from} → {to}",
     "period": "Dönem: {from} → {to}",
-    "location": "Lokasyon: {from} → {to}",
+    "location": "İşletme / Tesis: {from} → {to}",
     "none": "yok"
   },
   "editMode": {
@@ -487,7 +492,7 @@
       "select": "Seç",
       "period": "Dönem",
       "category": "Kategori",
-      "entity": "Lokasyon",
+      "entity": "İşletme / Tesis",
       "value": "Değer",
       "emissions": "tCO₂e",
       "evidence": "Kanıt",

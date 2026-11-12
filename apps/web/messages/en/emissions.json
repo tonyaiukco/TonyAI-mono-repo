@@ -41,7 +41,7 @@
     "scopeDistribution": "Scope {scope} Category Distribution",
     "share": "{value}% share",
     "contributors": "Top 5 Contributors",
-    "byCompany": "By Company",
+    "byCompany": "By Subsidiary",
     "byCategory": "By Category"
   },
   "breakdown": {
@@ -113,6 +113,7 @@
     "normalised": "Normalised",
     "source": "Source",
     "version": "Factor Version",
+    "sealedOn": "Package sealed on",
     "recordedAs": "Recorded as",
     "notConverted": "{value} {unit} (not converted)",
     "auditTrail": "Audit Trail",

@@ -1,6 +1,7 @@
 import type {
   ReleaseParametersDTO,
   FactorCoverageDTO,
+  SealedFactorReleaseDTO,
   ReleaseParametersQuery,
   ActivityRecordDTO,
   ApproveInput,
@@ -562,6 +563,9 @@ export const api = {
   /** The geographies and years the library prices under this API's placeholder
    *  policy — the Data Entry coverage legend (UAT round 2, BUG-R2-09). */
   factorCoverage: () => apiFetch<FactorCoverageDTO>("/factors/coverage"),
+  /** The sealed releases with their database-set seal date (UAT round 2, S2), for
+   *  the "Package sealed on" line beside the release a figure names. */
+  listFactorReleases: () => apiFetch<SealedFactorReleaseDTO[]>("/factors/releases"),
 
   // --- Activity records ---
   /** One page of records (LP4-05 PR C). Never automatically drains later pages. */

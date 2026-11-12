@@ -69,7 +69,8 @@ export type AnomalyKey =
   | 'notEvaluated.noFigure'
   | 'notEvaluated.zeroAverage'
   | 'notEvaluated.zeroAverageLimited'
-  | 'notEvaluated.noHistory'
+  | 'firstPeriod.headline'
+  | 'firstPeriod.detail'
   | 'notEvaluated.scoredBefore'
   | 'note.one'
   | 'note.other';
@@ -153,8 +154,12 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
     return { tone: 'not_evaluated', headline, detail: t('notEvaluated.noFigure'), qualified: true };
   }
 
+  // A first-period record (UAT round 2, K4-3a option A): a figure with no
+  // earlier period. Named for what it is, with what the reviewer can still
+  // check — the evidence and the unit — never a count of periods it lacks.
+  // Still not flagged, still counted as not checked.
   if (priors === 0) {
-    return { tone: 'not_evaluated', headline, detail: t('notEvaluated.noHistory'), qualified: true };
+    return { tone: 'not_evaluated', headline: t('firstPeriod.headline'), detail: t('firstPeriod.detail'), qualified: true };
   }
 
   // Scored when one or two periods were not enough for the rule to run, and
@@ -178,6 +183,15 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
         : t('notEvaluated.zeroAverageLimited'),
     qualified: true,
   };
+}
+
+/**
+ * True for a first-period record: it has a figure of its own and no earlier
+ * period to compare it with. The review queue marks such a row, apart from the
+ * flag's amber triangle.
+ */
+export function isFirstPeriodRecord(record: AnomalyVerdictFields): boolean {
+  return !record.anomalyFlag && record.anomalyBaselinePriorCount === 0;
 }
 
 /**

@@ -29,6 +29,7 @@ import { CalculationsService } from '../../src/calculations/calculations.service
 import { errorCodeOf } from '../../src/common/api-error';
 import { InventoryBoundariesService } from '../../src/inventory-boundary/inventory-boundaries.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { ISSUANCE_RENDERER } from '../../src/report-issuances/issuance-html';
 import { ReportIssuancesService } from '../../src/report-issuances/report-issuances.service';
 import { PdfRenderer } from '../../src/common/pdf-renderer';
 import { REPORT_ARTIFACTS_BUCKET } from '../../src/storage/buckets';
@@ -309,7 +310,10 @@ describe('an issuance over HTTP', () => {
       template: 'executive_summary', options: { includeMethodologyNotes: true, includeEvidenceSummary: false },
       pdf: { mimeType: 'application/pdf' },
     });
-    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v3 \(.+\)$/);
+    // The renderer's own constant, not a copy of it: a version bump must not
+    // need this spec edited by hand (it did once, UAT round 2).
+    expect(issued.rendererVersion.startsWith(`${ISSUANCE_RENDERER} (`)).toBe(true);
+    expect(issued.rendererVersion).toMatch(/^tonyai-issuance-pdf-v\d+ \(.+\)$/);
 
     const dataset = await owner.reportDataset.findUniqueOrThrow({ where: { id: datasetId } });
     expect(issued.datasetFingerprint).toEqual({ algorithm: 'sha256', canonicalization: dataset.canonicalization, hex: dataset.fingerprintHex });

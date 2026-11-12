@@ -44,7 +44,10 @@ import {
  */
 
 // v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
-export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v3';
+// v4 (UAT round 2, K1): the tier names. Tables are written on request from the
+// current catalogue, so a re-download of an older issuance carries the new
+// wording; its identity row names this version.
+export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v4';
 
 export interface IssuedTablesDocument {
   issuanceId: string;
