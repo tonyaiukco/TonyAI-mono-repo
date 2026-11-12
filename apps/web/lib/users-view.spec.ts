@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { InvitationStateDTO, UserSummaryDTO } from '@/lib/types';
-import { accessSummary, appendPage, canResend, invitationNote, replaceUser } from './users-view';
+import {
+  accessSummary,
+  appendPage,
+  canResend,
+  invitationNote,
+  replaceUser,
+  selectAllSubsidiaries,
+  selectionState,
+  toggleSubsidiary,
+} from './users-view';
 
 const invitation = (over: Partial<InvitationStateDTO> = {}): InvitationStateDTO => ({
   status: 'sent', language: 'en', attempts: 1, lastErrorStep: null, lastErrorCode: null,
@@ -39,10 +48,76 @@ describe('canResend', () => {
 });
 
 describe('accessSummary', () => {
-  it('grants are a data_entry user\'s alone', () => {
-    expect(accessSummary(member({ role: 'consultant', subsidiaryIds: ['s'] }))).toEqual({ key: 'wholeOrganisation' });
-    expect(accessSummary(member())).toEqual({ key: 'noAccess' });
-    expect(accessSummary(member({ subsidiaryIds: ['s', 't'] }))).toEqual({ key: 'accessCount', values: { count: 2 } });
+  const names = new Map([
+    ['den', 'Denizli Dağıtım'],
+    ['cor', 'Çorum Dağıtım'],
+    ['ank', 'Ankara Dağıtım'],
+    ['izm', 'İzmir Dağıtım'],
+    ['bur', 'Bursa Dağıtım'],
+  ]);
+
+  it('every role but data_entry reads the whole parent company, grants or not', () => {
+    for (const role of ['consultant', 'executive_viewer', 'super_admin'] as const) {
+      expect(accessSummary(member({ role, subsidiaryIds: ['den'] }), names, 'tr-TR')).toEqual({ key: 'wholeOrganisation' });
+    }
+  });
+
+  it('a data_entry user with no grant has no access', () => {
+    expect(accessSummary(member(), names, 'tr-TR')).toEqual({ key: 'noAccess' });
+  });
+
+  it('names the grants in Turkish name order, never only a count', () => {
+    expect(accessSummary(member({ subsidiaryIds: ['den', 'cor'] }), names, 'tr-TR')).toEqual({
+      key: 'named',
+      names: ['Çorum Dağıtım', 'Denizli Dağıtım'],
+      overflow: 0,
+      all: ['Çorum Dağıtım', 'Denizli Dağıtım'],
+    });
+  });
+
+  it('shows three names and counts the rest', () => {
+    const summary = accessSummary(member({ subsidiaryIds: ['izm', 'den', 'cor', 'bur', 'ank'] }), names, 'tr-TR');
+    expect(summary).toEqual({
+      key: 'named',
+      names: ['Ankara Dağıtım', 'Bursa Dağıtım', 'Çorum Dağıtım'],
+      overflow: 2,
+      all: ['Ankara Dağıtım', 'Bursa Dağıtım', 'Çorum Dağıtım', 'Denizli Dağıtım', 'İzmir Dağıtım'],
+    });
+  });
+
+  it('counts a grant whose subsidiary is not loaded instead of showing its id', () => {
+    const summary = accessSummary(member({ subsidiaryIds: ['den', 'unknown-id'] }), names, 'tr-TR');
+    expect(summary).toEqual({ key: 'named', names: ['Denizli Dağıtım'], overflow: 1, all: ['Denizli Dağıtım'] });
+    expect(JSON.stringify(summary)).not.toContain('unknown-id');
+  });
+});
+
+describe('subsidiary picker', () => {
+  const listed = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+  it('ticks and unticks one subsidiary without repeating it', () => {
+    expect(toggleSubsidiary(['a'], 'b', true)).toEqual(['a', 'b']);
+    expect(toggleSubsidiary(['a', 'b'], 'b', true)).toEqual(['a', 'b']);
+    expect(toggleSubsidiary(['a', 'b'], 'a', false)).toEqual(['b']);
+    expect(toggleSubsidiary([], 'a', false)).toEqual([]);
+  });
+
+  it('selects every listed subsidiary, from none or from all', () => {
+    expect(selectAllSubsidiaries([], listed)).toEqual(['a', 'b', 'c']);
+    expect(selectAllSubsidiaries(['b'], listed)).toEqual(['a', 'b', 'c']);
+    expect(selectionState(selectAllSubsidiaries([], listed), listed)).toEqual({ count: 3, total: 3, allSelected: true, noneSelected: false });
+    expect(selectAllSubsidiaries([], [])).toEqual([]);
+  });
+
+  it('select all keeps a grant the list does not show', () => {
+    expect(selectAllSubsidiaries(['added-later', 'a'], listed)).toEqual(['added-later', 'a', 'b', 'c']);
+  });
+
+  it('counts only listed subsidiaries and says when nothing is ticked', () => {
+    expect(selectionState([], listed)).toEqual({ count: 0, total: 3, allSelected: false, noneSelected: true });
+    expect(selectionState(['a', 'gone'], listed)).toEqual({ count: 1, total: 3, allSelected: false, noneSelected: false });
+    expect(selectionState(['gone'], listed)).toEqual({ count: 0, total: 3, allSelected: false, noneSelected: true });
+    expect(selectionState([], [])).toEqual({ count: 0, total: 0, allSelected: false, noneSelected: true });
   });
 });
 

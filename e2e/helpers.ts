@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { INTERNAL_FACTOR_PUBLISHERS } from '@tonyai/shared-types';
+import { INTERNAL_FACTOR_PUBLISHERS, type UserRole, type UserSummaryDTO } from '@tonyai/shared-types';
 
 export const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
 export const ADMIN_EMAIL = 'admin@tonyai.local';
@@ -87,6 +87,44 @@ export async function resetSeedLanguages(request: APIRequestContext): Promise<vo
     const token = await getAccessToken(request, email);
     const res = await request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: 'en' } });
     if (res.status() !== 200) throw new Error(`reset language of ${email}: ${res.status()}`);
+  }
+}
+
+/** The seed users' roles that specs may change (the admin, the acting user, cannot change its own). */
+const SEED_ROLES: ReadonlyArray<readonly [string, UserRole]> = [
+  [APPROVER_EMAIL, 'super_admin'],
+  [ENTRY_EMAIL, 'data_entry'],
+  [CONSULTANT_EMAIL, 'consultant'],
+  [VIEWER_EMAIL, 'executive_viewer'],
+];
+
+/** `entry@tonyai.local`'s grants in the seed: the two `SUB` entries marked entry-accessible. */
+export const SEED_ENTRY_GRANTS: readonly string[] = [SUB.energy, SUB.logistics];
+
+/**
+ * Every seed user back to its seed role, and the Data Entry user back to its
+ * seed grants, through the API as an administrator would (globalSetup, and
+ * around each test of `users-access.spec.ts`, which changes both). A run killed
+ * mid-test skips that spec's hooks; globalSetup repairs it before any spec
+ * that relies on the seed's roles runs. Changes only what differs.
+ */
+export async function resetSeedAccess(request: APIRequestContext): Promise<void> {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const users = await listAllPages<UserSummaryDTO>(request, token, '/users');
+  for (const [email, role] of SEED_ROLES) {
+    const user = users.find((u) => u.email === email);
+    if (!user) throw new Error(`seed user ${email} not found`);
+    if (user.role === role) continue;
+    const res = await request.patch(`${API_BASE}/users/${user.id}/role`, { headers: bearer(token), data: { role } });
+    if (res.status() !== 200) throw new Error(`reset role of ${email}: ${res.status()} ${await res.text()}`);
+  }
+  const entry = users.find((u) => u.email === ENTRY_EMAIL)!;
+  const grants = [...SEED_ENTRY_GRANTS].sort();
+  // An entry user whose role was just reset to data_entry holds no grant.
+  const current = entry.role === 'data_entry' ? [...entry.subsidiaryIds].sort() : [];
+  if (current.join() !== grants.join()) {
+    const res = await request.put(`${API_BASE}/users/${entry.id}/access`, { headers: bearer(token), data: { subsidiaryIds: grants } });
+    if (res.status() !== 200) throw new Error(`reset grants of ${ENTRY_EMAIL}: ${res.status()} ${await res.text()}`);
   }
 }
 
