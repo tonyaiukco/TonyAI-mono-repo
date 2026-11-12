@@ -70,7 +70,7 @@ When the window holds one or two figures, the record SHALL be compared with the 
 - **THEN** the second month is checked against the first, on limited history of 1 period
 
 ### Requirement: No check without history
-A record whose window holds no figure SHALL be reported as not checked, never as within range. A record with no calculated figure of its own SHALL also be reported as not checked.
+A record whose window holds no figure SHALL be reported as not checked, never as within range. A record with no calculated figure of its own SHALL also be reported as not checked. A record with a figure and no figure in its window is a first-period record: it SHALL stay unflagged, SHALL need no variance reason, and SHALL count among the records not checked.
 
 #### Scenario: The first period of a series
 - **WHEN** a record is the first of its series
@@ -79,6 +79,21 @@ A record whose window holds no figure SHALL be reported as not checked, never as
 #### Scenario: A record without a figure
 - **WHEN** a record's category produces no calculated figure
 - **THEN** it is reported as not checked because it has no figure of its own
+
+### Requirement: A first-period record is named on screen
+Data Entry, the review sheet and the emissions record view SHALL name a first-period record as one, say there is no earlier period to compare it with, and ask the user to check the evidence document and the unit, in Turkish and English. They SHALL NOT say that a number of periods is needed. The review queue row SHALL mark it, distinct from a flag. The verdict is worked out when the record is saved, as every verdict is; an unsaved preview states none.
+
+#### Scenario: A first-period record in review
+- **WHEN** a consultant opens a submitted record that has a figure and no earlier period
+- **THEN** the review sheet calls it a first-period record, says there is no history to compare with, and asks for the evidence document and the unit to be checked
+
+#### Scenario: A first-period record in the review queue
+- **WHEN** the review queue lists a first-period record next to a flagged record
+- **THEN** both rows carry a mark, and the two marks differ
+
+#### Scenario: A first-period record on Data Entry
+- **WHEN** a user saves a record with no earlier period in Turkish
+- **THEN** the anomaly note says "İlk dönem kaydı" and asks for the evidence document and the unit to be checked, and the record can be submitted without a variance reason
 
 ### Requirement: No check against a zero average
 When the figures in the window average zero, the record SHALL be reported as not checked, whether the window holds one, two or three figures. It SHALL NOT be flagged.
@@ -127,7 +142,7 @@ Data Entry, the review queue and the emissions record view SHALL state, for a sh
 
 #### Scenario: No history is still named
 - **WHEN** a record has no earlier period
-- **THEN** the screen says it was not checked because there is no earlier period, and does not say that three periods are needed
+- **THEN** the screen calls it a first-period record with no earlier period to compare, and does not say that three periods are needed
 
 ### Requirement: The matrix and the dashboard treat every flag alike
 A flag on limited history SHALL turn its tracking-matrix cell amber and raise the dashboard alert exactly as a full-history flag does. The count of records not checked for anomalies SHALL include only records reported as not checked.
