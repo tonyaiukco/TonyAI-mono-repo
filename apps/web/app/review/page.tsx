@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "use-intl";
-import { canApproveRecord } from "@/lib/record-lifecycle-view";
+import { canApproveRecord, isOwnRecordForApprover } from "@/lib/record-lifecycle-view";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -135,8 +135,8 @@ export default function ReviewPage() {
   const [busy, setBusy] = useState(false);
 
   /**
-   * Who may do what. The API is the authority — a consultant who forged a
-   * request still gets a 403 from `APPROVE_ROLES`. These flags only decide
+   * Who may do what. The API is the authority — a forged request still gets
+   * its 403 (approval: `mayApproveRecords` plus D01). These flags only decide
    * whether to render a control the caller would be refused for using, because
    * offering a button that always fails is worse than not offering it.
    */
@@ -902,14 +902,9 @@ export default function ReviewPage() {
                   </Button>
                 )}
               </div>
-              {user?.role === "super_admin" && selected.createdBy === user.id && (
+              {isOwnRecordForApprover(user, selected) && (
                 <p className="text-xs text-muted-foreground">
                   {t("sheet.selfApproval")}
-                </p>
-              )}
-              {user?.role === "consultant" && (
-                <p className="text-xs text-muted-foreground">
-                  {t("sheet.consultantNote")}
                 </p>
               )}
             </div>

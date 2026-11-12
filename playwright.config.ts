@@ -33,7 +33,7 @@ loadE2EEnv();
  * Preconditions (the harness already provides these):
  *  - Local Supabase running on :54321 (DB :54322), migrated + seeded.
  *  - Seed users admin@tonyai.local (super_admin) / entry@tonyai.local (data_entry),
- *    password TonyAI!2026.
+ *    password TonyAI-CI!2026 (TONYAI_TEST_PASSWORD; Auth needs 12+ characters).
  *
  * This config auto-starts BOTH servers via `webServer`:
  *  - API: `node dist/main.js` launched with cwd = apps/api so NestJS ConfigModule

@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
 import { SelfApprovalRefusedError, SubmitAuthorRefusedError } from '../../src/activity-records/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { attachEvidence, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
-import { lifecycleServices } from './services';
+import { lifecycleServices, pdfFile } from './services';
 
 /**
  * The LP0-02 workflow decisions LP1-01 implements (Decisions log, 2026-09-29),
@@ -74,6 +74,63 @@ describe('D01 — the approver is neither the creator nor the submitter', () => 
 
     await s.records.approve({ ...tenant.users.superAdmin, id: colleague.id }, record.id);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.approved);
+  });
+
+  // K2 (Decisions 2026-11-12): a consultant may approve; D01 binds them too.
+  it("a consultant approves a data_entry user's submission, audited with the role consultant", async () => {
+    const record = await createRecord(prisma, tenant, {}, { priced: true });
+    await attachEvidence(prisma, tenant, [record.id]);
+    const submitted = await s.records.submit(tenant.users.dataEntry, record.id);
+
+    await s.records.approve(tenant.users.consultant, record.id, submitted.submittedAt);
+
+    const stored = await prisma.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+    expect(stored.status).toBe(ActivityRecordStatus.approved);
+    expect(stored.reviewedBy).toBe(tenant.users.consultant.id);
+    // The runtime role does not read the trail; the owner does.
+    const owner = connectOwner();
+    const rows = await owner.auditLog
+      .findMany({ where: { entityId: record.id, action: 'approve' } })
+      .finally(() => owner.$disconnect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ userId: tenant.users.consultant.id, role: 'consultant' });
+  });
+
+  it('a former author whose role changed to consultant cannot approve their own record', async () => {
+    const record = await createRecord(prisma, tenant, {}, { priced: true });
+    await attachEvidence(prisma, tenant, [record.id]);
+    const submitted = await s.records.submit(tenant.users.dataEntry, record.id);
+    // The role change as `setRole` leaves it: same id, role consultant, the
+    // data_entry grant dropped. Profiles and grants are the owner's to write.
+    const owner = connectOwner();
+    await owner
+      .$transaction([
+        owner.userSubsidiaryAccess.deleteMany({ where: { userId: tenant.users.dataEntry.id } }),
+        owner.profile.update({ where: { id: tenant.users.dataEntry.id }, data: { role: 'consultant' } }),
+      ])
+      .finally(() => owner.$disconnect());
+    const formerAuthor = { ...tenant.users.consultant, id: tenant.users.dataEntry.id };
+
+    await expect(s.records.approve(formerAuthor, record.id, submitted.submittedAt)).rejects.toBeInstanceOf(
+      SelfApprovalRefusedError,
+    );
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.submitted);
+  });
+});
+
+// Decisions 2026-11-12 (option A): evidence is author-only, super_admin
+// included — otherwise a super_admin could re-file a colleague's draft and then
+// approve it, which D01 (`createdBy` only) cannot see.
+describe("D01's evidence side — only the author changes a record's evidence", () => {
+  it("a super_admin cannot upload to a data_entry user's draft; nothing is stored", async () => {
+    const record = await createRecord(prisma, tenant);
+    const before = await prisma.activityRecordEvidence.count({ where: { activityRecordId: record.id } });
+
+    await expect(s.evidence.upload(tenant.users.superAdmin, record.id, pdfFile())).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(await prisma.activityRecordEvidence.count({ where: { activityRecordId: record.id } })).toBe(before);
+    expect(await prisma.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
   });
 });
 

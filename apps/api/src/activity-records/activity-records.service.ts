@@ -55,6 +55,7 @@ import {
   type RecordParameters,
   type ReportingPeriod,
   mayAuthorRecords,
+  mayApproveRecords,
   isRecallable,
   EDITABLE_RECORD_STATUSES,
   normalizeRecordParameters,
@@ -254,12 +255,15 @@ export function evidenceReadyWhere() {
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
-// Roles allowed to APPROVE — narrower than REVIEW_ROLES on purpose. A
-// consultant reviews and can send a record back ("flag for revision"), but the
-// act of accepting a figure into the inventory stays with the holding company's
-// own super_admin: an external advisor should not be able to sign off the
-// numbers their client will report. Matches permissions_and_roles.md §3.
-const APPROVE_ROLES = new Set(['super_admin']);
+// Who may APPROVE is `mayApproveRecords` (@tonyai/shared-types): `consultant`
+// or `super_admin`. Until 2026-11-12 approval was super_admin only; the owner
+// reversed that (Decisions 2026-11-12, K2) so that a one-person customer's
+// approver can be its external consultant. D01 still applies to every approver
+// (see `approve`), and every other approval gate is role-blind.
+//
+// Roles allowed to VOID — `super_admin` only, and deliberately NOT derived from
+// the approval rule: widening approval must never widen void (see `void`).
+const VOID_ROLES = new Set(['super_admin']);
 /**
  * A review decision is about the submission the reviewer saw (BUG-R2-03
  * review, P1). Since an author may recall a submitted record, edit it and
@@ -1658,8 +1662,8 @@ export class ActivityRecordsService {
 
   async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
-    if (!APPROVE_ROLES.has(user.role)) {
-      throw new ForbiddenException('Only a super_admin may approve records');
+    if (!mayApproveRecords(user)) {
+      throw new ForbiddenException('Only a consultant or super_admin may approve records');
     }
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recompute(user, seen);
@@ -1680,9 +1684,10 @@ export class ActivityRecordsService {
         assertSameSubmission(record, seenSubmittedAt);
       });
       // Segregation of duties (decision D01, 2026-09-29): the approver is
-      // neither the creator nor the submitter, `super_admin` included. Only
-      // the author may submit, so the submitter IS the creator and one
-      // comparison covers both.
+      // neither the creator nor the submitter, whatever the approver's role —
+      // `super_admin` and `consultant` included, and a user whose role changed
+      // since they created the record. Only the author may submit, so the
+      // submitter IS the creator and one comparison covers both.
       if (record.createdBy === user.id) {
         throw new SelfApprovalRefusedError();
       }
@@ -1736,7 +1741,8 @@ export class ActivityRecordsService {
    * `super_admin` only, narrower than `REVIEW_ROLES` on purpose: a consultant
    * may send a record back for revision (`reject`), but removing an accepted
    * figure from the client's reported inventory is the holding company's own
-   * decision. Same reasoning as `APPROVE_ROLES`.
+   * decision. A consultant may approve (Decisions 2026-11-12, K2) but not
+   * void: hence `VOID_ROLES`, separate from `mayApproveRecords`.
    *
    * The pilot's correction procedure (decision D04, 2026-09-29) is an audited
    * unlock → void → re-entry: the voided row leaves the uniqueness index, so
@@ -1748,7 +1754,7 @@ export class ActivityRecordsService {
     reason: string,
   ): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
-    if (!APPROVE_ROLES.has(user.role)) {
+    if (!VOID_ROLES.has(user.role)) {
       throw new ForbiddenException('Only a super_admin may void records');
     }
     const updated = await this.withLockedRecord(seen, async (tx, record) => {

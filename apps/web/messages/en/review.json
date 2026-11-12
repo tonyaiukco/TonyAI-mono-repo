@@ -54,8 +54,7 @@
     "startReview": "Start review",
     "reject": "Reject",
     "approve": "Approve",
-    "selfApproval": "You cannot approve a record you entered.",
-    "consultantNote": "Approval is reserved for a super_admin — as a consultant you can take a record into review or send it back."
+    "selfApproval": "You cannot approve a record you entered."
   },
   "toast": {
     "reviewed": "Taken into review",

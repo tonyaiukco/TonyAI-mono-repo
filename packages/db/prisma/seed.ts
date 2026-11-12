@@ -39,7 +39,7 @@ import { assertLocalSeedTarget, seedActivityType } from './seed-guards';
 const SEED_RECORD_STATUS = ActivityRecordStatus.approved;
 // Disposable CI uses a shared fixture password that meets the current Auth
 // policy. Keep the existing local-stack default until its owner upgrades it.
-const SEED_PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
+const SEED_PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI-CI!2026';
 
 /** The verdict the API would store for a record written after `written` (its
  *  series so far, oldest first) — the contract's own rule, not a copy of it, so
@@ -702,8 +702,9 @@ async function main() {
     create: { id: approverId, email: 'approver@tonyai.local', fullName: 'Arda Approver', role: UserRole.super_admin, organisationId: ORG_ID },
   });
 
-  // Review-only (decision 2026-07-30): may take records into review and reject
-  // them, may NOT enter, edit, submit or approve. Deliberately given NO
+  // Consultant: may take records into review, reject and — since K2
+  // (Decisions 2026-11-12) — approve them (never their own, D01); may NOT
+  // enter, edit or submit (decision 2026-07-30), void or unlock. Deliberately given NO
   // userSubsidiaryAccess rows — a consultant's visibility comes from the
   // organisation, not from per-subsidiary grants, so seeding grants here would
   // hide a regression in that guard branch behind data that papers over it.
@@ -1103,7 +1104,7 @@ const LOCATION_ACTIVITY = [
   console.log(`  super_admin -> admin@tonyai.local / ${passwordLabel} (sees all 5 subsidiaries)`);
   console.log(`  super_admin -> approver@tonyai.local / ${passwordLabel} (a second approver: nobody approves a record they created)`);
   console.log(`  data_entry  -> entry@tonyai.local / ${passwordLabel} (sees 2 subsidiaries)`);
-  console.log(`  consultant  -> review@tonyai.local / ${passwordLabel} (org-wide read; review/reject only, cannot approve)`);
+  console.log(`  consultant  -> review@tonyai.local / ${passwordLabel} (org-wide read; reviews, rejects and approves, never enters data)`);
   console.log(`  executive_viewer -> viewer@tonyai.local / ${passwordLabel} (org-wide read only)`);
 }
 

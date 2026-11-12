@@ -1,6 +1,6 @@
 import { ApiError } from '@/lib/api';
 import type { ErrorDescription } from '@/lib/i18n/errors';
-import { mayAuthorRecords } from '@/lib/types';
+import { mayApproveRecords, mayAuthorRecords } from '@/lib/types';
 import type { SubmittingUser } from '@/lib/bulk-submit-view';
 
 export const canSubmitEntry = (
@@ -9,10 +9,24 @@ export const canSubmitEntry = (
   createdBy: string | null,
 ): boolean => !!user && mayAuthorRecords(user) && (!editingId || createdBy === user.id);
 
+/**
+ * Approve is offered to an approver role (`consultant` or `super_admin`, K2 —
+ * Decisions 2026-11-12) on a record someone else created (D01). The API
+ * enforces both; this only decides what the review screen shows.
+ */
 export const canApproveRecord = (
   user: SubmittingUser | null,
   record: { createdBy: string } | null,
-): boolean => !!user && !!record && user.role === 'super_admin' && record.createdBy !== user.id;
+): boolean => !!user && !!record && mayApproveRecords(user) && record.createdBy !== user.id;
+
+/**
+ * An approver looking at a record they created: Approve is withheld (D01) and
+ * the screen says why — for a role-changed consultant as for a super_admin.
+ */
+export const isOwnRecordForApprover = (
+  user: SubmittingUser | null,
+  record: { createdBy: string } | null,
+): boolean => !!user && !!record && mayApproveRecords(user) && record.createdBy === user.id;
 
 type SaveErrorKey = 'duplicateAdvice' | 'duplicateAdviceMoving' | 'saveFailedServer';
 

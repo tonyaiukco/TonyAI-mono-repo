@@ -51,14 +51,14 @@
 | Mail catcher | **mailpit: http://127.0.0.1:54324**. Every invitation and reset email sent locally lands here. Nothing leaves your machine. |
 | Data handling | Synthetic data only: never real people's addresses or real company data. When your participation ends, wipe the local database or delete the clone. |
 
-### 2.1 Tenant A: seed users (password `TonyAI!2026`)
+### 2.1 Tenant A: seed users (password `TonyAI-CI!2026`)
 
 | User | Role (EN · TR label) | Sees in Tenant A |
 | --- | --- | --- |
 | `admin@tonyai.local` (Tony Admin) | super_admin · *Super admin · Süper yönetici* | all 5 subsidiaries; the only role that writes org structure, approves, withdraws, locks, reads `/audit`, manages `/users` |
 | `approver@tonyai.local` (Arda Approver) | super_admin | the same. Use this account to approve what `admin@` entered, because nobody approves their own record. |
 | `entry@tonyai.local` (Eda Entry) | data_entry · *Data entry · Veri girişi* | **TonyAI Energy** and **TonyAI Logistics** only |
-| `review@tonyai.local` (Cem Consultant) | consultant · *Consultant · Danışman* | whole organisation; take into review and reject, never approve or enter |
+| `review@tonyai.local` (Cem Consultant) | consultant · *Consultant · Danışman* | whole organisation; take into review, reject and approve (since 2026-11-12, K2; never their own record), never enter |
 | `viewer@tonyai.local` (Vera Viewer) | executive_viewer · *Executive viewer · Yönetici izleyici* | whole organisation, read only. **New this round.** |
 
 **Language is per account, not per browser.** If two testers use the same seed account,
@@ -226,7 +226,7 @@ role. A screen a role may not use explains why on the screen; it does not hide.
 | ID | Steps | Expected | A·EN | A·TR | B·EN | B·TR |
 | --- | --- | --- | --- | --- | --- | --- |
 | CON-01 | Dashboard, `/subsidiaries`, `/emissions` | Whole organisation (A 5, B 2), read only. No write controls on Subsidiaries. Withdraw absent. **Add target** absent. An organisation with no targets reads *Azaltım hedeflerini bir super_admin tanımlayabilir.*; Tenant A's seeded targets hide that line | | | | |
-| CON-02 | `/review` → a submitted record | **Start review · İncelemeye al** and **Reject · Reddet** present. **Approve** absent, with *Onay süper yöneticiye ayrılmıştır — danışman olarak bir kaydı incelemeye alabilir veya geri gönderebilirsiniz.* | | | | |
+| CON-02 | `/review` → a submitted record someone else created | **Start review · İncelemeye al**, **Reject · Reddet** and **Approve · Onayla** present (a consultant approves since 2026-11-12, K2); no "reserved for a super_admin" note. On a record the consultant created (only possible after a role change), **Approve** is absent with the self-approval hint (D01) | | | | |
 | CON-03 | Reject with a reason | Reject needs a reason (*Gerekçe (reddetmek için zorunlu)*). Toast *Kayıt reddedildi — gerekçe artık gönderen tarafından görülebiliyor* | | | | |
 | CON-04 | Data Entry | The **Bulk upload · Toplu yükleme** card is absent. The evidence vault has no upload or remove control. **Save draft** is refused: *Your role may not create activity records. · Rolünüz faaliyet kaydı oluşturamaz.* | | | | |
 | CON-05 | `/reports` live | Generate and export allowed | | | | |

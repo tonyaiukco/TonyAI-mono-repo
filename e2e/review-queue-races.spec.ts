@@ -6,8 +6,9 @@ import {
 /**
  * LP4-05 PR C's review queue under delayed and failing answers (Codex's B9
  * review of #209, P2-1 to P2-3). The queue's records are this spec's own lane —
- * TonyAI Gas, company-level Natural Gas, quarterly, which no other spec writes
- * — and go in `afterAll`; the switch target is TonyAI Mfg. The admin enters
+ * TonyAI Gas, company-level Natural Gas, quarterly; `review-queue.spec.ts` also
+ * writes this lane's Q1, which is safe only because this file runs first
+ * (alphabetical, one worker) and removes its records — they go in `afterAll`; the switch target is TonyAI Mfg. The admin enters
  * them and takes them into review (starting a review has no authorship rule).
  */
 const YEAR = E2E_YEAR;

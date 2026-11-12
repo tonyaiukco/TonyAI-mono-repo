@@ -995,7 +995,10 @@ small valid synthetic CSV evidence files are retained, one per accepted record.
 For primary, bootstrap author creates/uploads; TR admin's non-author submit
 must403/record_author_forbidden. EN consultant and later EN viewer each attempt
 one valid scoped create/submit/approve/evidence-upload/period-lock (ten expected
-role refusals). Consultant review/reject/dataset/partial-issuance rights are not
+role refusals). *Note 2026-11-12 (`uat2-consultant-approval`, K2): from that
+change on a consultant MAY approve, so a rerun of this probe expects nine role
+refusals — the consultant's approve is no longer one. The evidence recorded for
+the earlier runs stays as written.* Consultant review/reject/dataset/partial-issuance rights are not
 blanket mutation denials. After author submit200, author self-approve must
 403/self_approval_forbidden and TR admin approve200. Enumerate **all** primary
 November records/pagination before locking; require this approved Water to be

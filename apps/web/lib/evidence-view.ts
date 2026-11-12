@@ -97,7 +97,9 @@ export function attachBlockReason(
   { t, words }: EvidenceCopy,
 ): string | null {
   if (!mayAuthorRecords(user)) return t('block.role');
-  if (user.role !== 'super_admin' && !authoredBy(row, user)) return t('block.notAuthor');
+  // Author-only, super_admin included (Decisions 2026-11-12): the API refuses
+  // anyone else, so a colleague's record never offers a checkbox.
+  if (!authoredBy(row, user)) return t('block.notAuthor');
   if (!EVIDENCE_EDITABLE.has(row.status)) return t('block.already', { status: words.status(row.status) });
   if (row.periodLocked) return t('block.locked', { period: words.period(row.periodValue), year: row.reportingYear });
   return null;

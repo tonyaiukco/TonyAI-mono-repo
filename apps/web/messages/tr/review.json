@@ -54,8 +54,7 @@
     "startReview": "İncelemeye al",
     "reject": "Reddet",
     "approve": "Onayla",
-    "selfApproval": "Kendi girdiğiniz bir kaydı onaylayamazsınız.",
-    "consultantNote": "Onay süper yöneticiye ayrılmıştır — danışman olarak bir kaydı incelemeye alabilir veya geri gönderebilirsiniz."
+    "selfApproval": "Kendi girdiğiniz bir kaydı onaylayamazsınız."
   },
   "toast": {
     "reviewed": "İncelemeye alındı",

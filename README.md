@@ -147,14 +147,14 @@ Manual step-by-step setup and containers:
 
 #### Seed users
 
-All seed users share the password `TonyAI!2026`.
+All seed users share the password `TonyAI-CI!2026`, the seed's `TONYAI_TEST_PASSWORD` (Auth requires at least 12 characters).
 
 | Email | Role | Sees |
 | --- | --- | --- |
 | `admin@tonyai.local` | `super_admin` | All 5 subsidiaries |
 | `approver@tonyai.local` | `super_admin` | All 5 — the second approver |
 | `entry@tonyai.local` | `data_entry` | 2 subsidiaries (isolation demo) |
-| `review@tonyai.local` | `consultant` | Organisation-wide; review and reject only |
+| `review@tonyai.local` | `consultant` | Organisation-wide; review, reject and approve (never enters data) |
 | `viewer@tonyai.local` | `executive_viewer` | Organisation-wide, read only |
 
 > [!WARNING]

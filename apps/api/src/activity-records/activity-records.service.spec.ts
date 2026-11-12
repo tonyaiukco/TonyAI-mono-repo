@@ -303,6 +303,18 @@ function consultant(overrides: Partial<RequestUser> = {}): RequestUser {
   };
 }
 
+function executiveViewer(overrides: Partial<RequestUser> = {}): RequestUser {
+  return {
+    id: 'user-viewer',
+    email: 'viewer@tonyai.local',
+    fullName: 'Viewer User',
+    role: 'executive_viewer',
+    organisationId: 'org-1',
+    accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    ...overrides,
+  };
+}
+
 /**
  * A record's evidence LINKS go by themselves through the FK cascade; the files
  * it was the last to hold are deleted by the evidence service in the same
@@ -1348,19 +1360,57 @@ describe('ActivityRecordsService — RBAC', () => {
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('consultant may NOT approve — approval is super_admin only', async () => {
-    // Decision 2026-07-30: a consultant enters data on a client's behalf, so
-    // letting the same seat approve it breaks "the preparer does not approve".
+  it('executive_viewer cannot approve -> Forbidden, naming both approver roles', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted }),
     );
 
-    await expect(service.approve(consultant(), 'rec-a')).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    const refusal = await service.approve(executiveViewer(), 'rec-a').catch((e) => e);
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect(refusal.message).toBe('Only a consultant or super_admin may approve records');
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['data_entry', dataEntry],
+    ['executive_viewer', executiveViewer],
+  ] as const)('%s cannot reject -> Forbidden, nothing written (reject stays consultant / super_admin)', async (_role, as) => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted, createdBy: 'someone-else' }),
+    );
+
+    await expect(service.reject(as(), 'rec-a', 'Wrong meter')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('a consultant approves another user\'s submission (K2, Decisions 2026-11-12)', async () => {
+    // The consultant does not author (`mayAuthorRecords`), but since K2 is the
+    // approver a one-person customer can have. Recorded like any approval: the
+    // consultant is the reviewer, and the audit row is written as that user.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted, createdBy: 'user-entry' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-a', status: data.status, reviewedBy: data.reviewedBy }),
+    );
+
+    const dto = await service.approve(consultant(), 'rec-a');
+    expect(dto.status).toBe(ActivityRecordStatus.approved);
+    expect(prisma.activityRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: ActivityRecordStatus.approved, reviewedBy: 'user-consultant' }),
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'user-consultant', role: 'consultant' }),
+      expect.objectContaining({ action: 'approve', entity: 'activity_record' }),
+      prisma.tx,
+    );
   });
 
   it('super_admin approves a submitted record (audited as `approve`)', async () => {
@@ -1659,10 +1709,19 @@ describe('ActivityRecordsService — a decision names the submission it saw (BUG
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('names the role before the missing submission: a consultant approving is still a 403', async () => {
+  it('names the role before the missing submission: a data_entry user approving is still a 403', async () => {
     const { prisma, service } = build();
     pending(prisma);
-    await expect(service.approve(consultant(), 'rec-v', SUBMISSION_NOT_NAMED)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.approve(dataEntry(), 'rec-v', SUBMISSION_NOT_NAMED)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('a consultant passes the role check, so a missing submission is `record_changed` (K2)', async () => {
+    const { prisma, service } = build();
+    pending(prisma);
+    const refusal = await service.approve(consultant(), 'rec-v', SUBMISSION_NOT_NAMED).catch((e) => e);
+    expect(refusal).toBeInstanceOf(ReviewVersionRequiredError);
+    expect(errorCodeOf(refusal)).toBe('record_changed');
+    expect(prisma.tx.activityRecord.update).not.toHaveBeenCalled();
   });
 
   it('names a wrong status before a stale submission', async () => {
@@ -1812,7 +1871,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     },
   );
 
-  it('consultant is review-only: may NOT create, update, delete or submit', async () => {
+  it('consultant does not author: may NOT create, update, delete or submit', async () => {
     // Decision 2026-07-30 — the consultant seat is advisory (review, anomaly
     // flagging, guidance) and typically sits outside the holding company; data
     // preparation belongs to the tenant's own data_entry staff.
@@ -2090,6 +2149,20 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
+  it('D01 binds a consultant too: a former author whose role changed may not approve their own record', async () => {
+    // A consultant cannot author, so `createdBy` is a consultant's id only when
+    // the user created the record under another role and was later changed to
+    // consultant (`PATCH /users/:id/role` keeps the id). D01 compares the id.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-consultant' }),
+    );
+
+    await expect(service.approve(consultant(), 'rec-self')).rejects.toBeInstanceOf(SelfApprovalRefusedError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
   it('D01 does not stop a creator from reviewing or rejecting — only approving', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
@@ -2264,9 +2337,9 @@ describe('ActivityRecordsService — transition rules', () => {
       const { prisma, service } = build();
       prisma.activityRecord.findUnique.mockResolvedValue(approved());
 
-      // A consultant reviews and can send a record BACK. Taking an accepted
-      // figure out of the client's reported inventory is the holding company's
-      // decision, exactly as approving it is.
+      // A consultant reviews, sends a record BACK and — since K2 — approves it.
+      // Taking an accepted figure out of the client's reported inventory stays
+      // the holding company's decision: approving does not grant voiding.
       await expect(
         service.void(consultant(), 'rec-v', 'Not my call to make'),
       ).rejects.toBeInstanceOf(ForbiddenException);
@@ -3875,7 +3948,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
   });
 
   it('enforces the role gate BEFORE it queries anything', async () => {
-    // consultant is review-only: it may not author records, and asking the
+    // a consultant does not author records, and asking the
     // server to price one is authoring it in every sense but the write.
     // The query assertion is the half that matters: asserting only that a
     // ForbiddenException eventually emerges leaves the gate free to move
@@ -4684,7 +4757,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   it('a role refusal comes before the recompute', async () => {
     const { calc, service } = arrange(submitted({ calculation: STALE_FIGURE }));
     await expect(service.submit(consultant(), 'rec-k')).rejects.toBeInstanceOf(SubmitRoleRefusedError);
-    await expect(service.approve(consultant(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.approve(executiveViewer(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
     await expect(service.approve(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
     expect(calc.compute).not.toHaveBeenCalled();
   });
@@ -5146,6 +5219,18 @@ describe('ActivityRecordsService — every Scope 1–2 category needs a file bef
       const { prisma, service } = arrange('Waste', { status: ActivityRecordStatus.submitted });
       expect((await service.approve(superAdmin(), 'rec-v')).status).toBe(ActivityRecordStatus.approved);
       expect(prisma.activityRecordEvidence.count).not.toHaveBeenCalled();
+    });
+
+    it('holds a consultant approver to the same gates: no file, then a locked period (K2)', async () => {
+      const noFile = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted });
+      await expect(noFile.service.approve(consultant(), 'rec-v')).rejects.toBeInstanceOf(ApprovalEvidenceMissingError);
+      expect(noFile.prisma.activityRecord.update).not.toHaveBeenCalled();
+      const locked = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted }, 1);
+      locked.prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+      await expect(locked.service.approve(consultant(), 'rec-v')).rejects.toBeInstanceOf(PeriodLockedError);
+      expect(locked.prisma.activityRecord.update).not.toHaveBeenCalled();
+      const ok = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted }, 1);
+      expect((await ok.service.approve(consultant(), 'rec-v')).status).toBe(ActivityRecordStatus.approved);
     });
 
     it('names self-approval and a locked period before the missing file', async () => {

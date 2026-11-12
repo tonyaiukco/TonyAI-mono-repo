@@ -159,7 +159,8 @@ pnpm --filter @tonyai/db run seed
 step "Verifying the login chain"
 # The body goes in on stdin so the seed password never lands in the process
 # list, where any local user could read it via `ps`.
-AUTH_JSON="$(printf '%s' '{"email":"admin@tonyai.local","password":"TonyAI!2026"}' \
+SEED_PASSWORD="${TONYAI_TEST_PASSWORD:-TonyAI-CI!2026}"
+AUTH_JSON="$(SEED_PASSWORD="$SEED_PASSWORD" node -e 'process.stdout.write(JSON.stringify({email:"admin@tonyai.local",password:process.env.SEED_PASSWORD}))' \
   | curl -s -X POST "${API_URL}/auth/v1/token?grant_type=password" \
     -H "apikey: ${ANON_KEY}" -H "Content-Type: application/json" \
     --data @- --max-time 20 || true)"
@@ -221,7 +222,7 @@ cat <<EOF
 ${DIM}Start the apps:${RESET}  ${BOLD}pnpm dev${RESET}   ${DIM}(web :3000 · api :3001)${RESET}
 ${DIM}Run tests:${RESET}      ${BOLD}pnpm test${RESET}   ${DIM}· ${RESET}${BOLD}pnpm e2e${RESET}
 
-${BOLD}Seed users${RESET} (password: ${BOLD}TonyAI!2026${RESET})
+${BOLD}Seed users${RESET} (password: ${BOLD}TONYAI_TEST_PASSWORD${RESET}, default ${BOLD}TonyAI-CI!2026${RESET})
   admin@tonyai.local   super_admin   sees all 5 subsidiaries
   entry@tonyai.local   data_entry    sees 2 subsidiaries
 EOF

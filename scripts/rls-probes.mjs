@@ -59,7 +59,7 @@ if (!URL_ || !ANON || !SERVICE) {
 const ENTRY_EMAIL = 'entry@tonyai.local';
 const ADMIN_EMAIL = 'admin@tonyai.local';
 const CONSULTANT_EMAIL = 'review@tonyai.local';
-const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
+const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI-CI!2026';
 const TENANT_TABLES = [
   // `subsidiaries` was missing here until WP16 PR 2a, which is when it started
   // carrying contact PII (a named person's work email and phone). The blanket
@@ -1188,8 +1188,9 @@ async function main() {
   // --- The consultant seat (WP7 PR 3) -------------------------------------
   // Added with the reviewer UI. The NestJS guard grants a consultant org-wide
   // READ and no writes; that is the primary layer, and this asserts the second
-  // one independently agrees — otherwise the whole review-only decision would
-  // rest on the guard alone for a seat no probe had ever touched.
+  // one independently agrees — otherwise "the consultant writes nothing
+  // directly" would rest on the guard alone for a seat no probe had ever
+  // touched. (Its approve, since K2, goes through the API's runtime role.)
   const consultantToken = await getToken(CONSULTANT_EMAIL);
   const svcRecords = await count('activity_records', { key: SERVICE, token: SERVICE });
   const consultantRecords = await count('activity_records', {
@@ -1201,7 +1202,7 @@ async function main() {
     `consultant=${consultantRecords.total}, service=${svcRecords.total}`,
   );
 
-  // Review-only means review-only at the database too: RLS has no write policy
+  // No direct writes at the database either: RLS has no write policy
   // for this role, so an UPDATE straight through PostgREST must affect nothing.
   // A REAL, consultant-visible row: patching a nonexistent id returns `[]`
   // whether or not a write policy exists, so that form of the probe could never
