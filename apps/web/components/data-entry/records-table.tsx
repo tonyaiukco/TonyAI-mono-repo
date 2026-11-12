@@ -186,7 +186,7 @@ export interface RecordsTableProps {
 }
 
 /** Pages the table reads on its own to reach a request's ticks. */
-const PRESELECT_MAX_AUTO_LOADS = 20;
+const PRESELECT_MAX_AUTO_LOADS = 200;
 
 export interface AttachRequest {
   nonce: number;
@@ -358,9 +358,13 @@ export function RecordsTable({
   // one page is ticked whole. An id leaves this list once ticked, so the user
   // can untick it without it coming back.
   const [pendingPreselect, setPendingPreselect] = useState<string[]>([]);
-  // Pages read on a request's behalf: bounded, so a page that keeps failing
-  // to load is not asked for again and again.
+  // Pages read on a request's behalf. A read that brings no new row (a failed
+  // page) stalls the walk rather than asking again and again; so does the
+  // sanity bound. A stalled or finished walk with ids still missing is said
+  // on screen, never passed over in silence.
   const autoLoads = useRef(0);
+  const rowsAtAutoLoad = useRef<number | null>(null);
+  const [preselectStalled, setPreselectStalled] = useState(false);
   useEffect(() => {
     if (!attachRequest || appliedRequest.current === attachRequest.nonce || loading) return;
     if (fetchedQueryKey !== attachRequest.queryKey) return;
@@ -371,6 +375,8 @@ export function RecordsTable({
     setAttachSelected(ticked);
     setPendingPreselect(attachRequest.preselect.filter((id) => !ticked.includes(id)));
     autoLoads.current = 0;
+    rowsAtAutoLoad.current = null;
+    setPreselectStalled(false);
     setAttachMode(true);
     containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [attachRequest, loading, fetchedQueryKey, attach.attachableIds]);
@@ -385,11 +391,24 @@ export function RecordsTable({
   }, [attachMode, pendingPreselect, attach.attachableIds]);
   // ...and while requested rows are still missing, read the next page.
   useEffect(() => {
-    if (!attachMode || pendingPreselect.length === 0 || !hasMore || loading || loadingMore) return;
-    if (autoLoads.current >= PRESELECT_MAX_AUTO_LOADS) return;
+    if (!attachMode || pendingPreselect.length === 0 || !hasMore || loading || loadingMore || preselectStalled) return;
+    // The last read on the request's behalf brought no row: it failed.
+    if (rowsAtAutoLoad.current !== null && records.length === rowsAtAutoLoad.current) {
+      setPreselectStalled(true);
+      return;
+    }
+    if (autoLoads.current >= PRESELECT_MAX_AUTO_LOADS) {
+      setPreselectStalled(true);
+      return;
+    }
     autoLoads.current += 1;
+    rowsAtAutoLoad.current = records.length;
     onLoadMore();
-  }, [attachMode, pendingPreselect, hasMore, loading, loadingMore, onLoadMore]);
+  }, [attachMode, pendingPreselect, hasMore, loading, loadingMore, preselectStalled, records.length, onLoadMore]);
+  // While the walk still runs, the file cannot be chosen or confirmed: an
+  // upload now would leave the records still to be ticked without it.
+  const preselectLoading = attachMode && pendingPreselect.length > 0 && hasMore && !preselectStalled;
+  const preselectMissing = attachMode && !preselectLoading ? pendingPreselect.length : 0;
 
   function stopAttach() {
     setPendingPreselect([]);
@@ -582,6 +601,18 @@ export function RecordsTable({
                 ? t("submissions.attachHint")
                 : t("submissions.selectedCount", { count: formatNumber(liveAttach.length, locale) })}
             </span>
+            {preselectLoading && (
+              <span className="text-xs text-muted-foreground" data-testid="evidence-preselect-loading">
+                {t("submissions.preselectLoading")}
+              </span>
+            )}
+            {preselectMissing > 0 && (
+              <span className="text-xs text-status-incomplete-text" data-testid="evidence-preselect-missing">
+                {preselectMissing === 1
+                  ? t("submissions.preselectMissingOne")
+                  : t("submissions.preselectMissingMany", { count: formatNumber(preselectMissing, locale) })}
+              </span>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="ghost" onClick={stopAttach}>
                 {tCommon("cancel")}
@@ -590,7 +621,7 @@ export function RecordsTable({
                 size="sm"
                 className="h-auto min-h-8 max-w-full whitespace-normal py-1 text-left"
                 data-testid="evidence-attach-choose"
-                disabled={liveAttach.length === 0 || attaching}
+                disabled={liveAttach.length === 0 || attaching || preselectLoading}
                 onClick={() => fileInputRef.current?.click()}
               >
                 {attaching ? (
@@ -897,7 +928,7 @@ export function RecordsTable({
               <Button
                 data-testid="evidence-attach-confirm"
                 onClick={() => void attachFile()}
-                disabled={attaching}
+                disabled={attaching || preselectLoading}
               >
                 {attaching && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
                 {t("submissions.attach")}

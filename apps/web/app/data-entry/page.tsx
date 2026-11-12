@@ -593,6 +593,7 @@ function DataEntryPageInner() {
   // is offered exactly when two or more of them can take a file.
   const tEvidence = useTranslations("evidence");
   const [yearGases, setYearGases] = useState<ActivityRecordPageItemDTO[] | null>(null);
+  const [yearGasesVersion, setYearGasesVersion] = useState(0);
   useEffect(() => {
     if (!editingId || category !== "Refrigerants" || !subsidiaryId) {
       setYearGases(null);
@@ -606,7 +607,7 @@ function DataEntryPageInner() {
     return () => {
       live = false;
     };
-  }, [editingId, category, subsidiaryId, reportingYear, evidenceVersion]);
+  }, [editingId, category, subsidiaryId, reportingYear, evidenceVersion, yearGasesVersion]);
   const gasShortcut = useMemo(() => {
     if (!yearGases) return null;
     const { attachableIds } = attachableRecords(yearGases, user, { t: tEvidence, locale, words: recordWords });
@@ -663,6 +664,9 @@ function DataEntryPageInner() {
       setYearGases((rows) =>
         rows ? rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)) : rows,
       );
+      // ...and the year is read again: a read still running began before the
+      // change and would write the old count back over this one.
+      setYearGasesVersion((v) => v + 1);
       // The band lists the record's files in Edit mode: a file added or
       // removed in the vault is read again there too.
       setEditFilesVersion((v) => v + 1);

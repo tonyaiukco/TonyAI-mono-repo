@@ -1,4 +1,5 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Route } from '@playwright/test';
+import { DEFAULT_PAGE_LIMIT } from '../packages/shared-types/src/bounded-access';
 import anomalyEn from '../apps/web/messages/en/anomaly.json';
 import dataEntryEn from '../apps/web/messages/en/dataEntry.json';
 import evidenceEn from '../apps/web/messages/en/evidence.json';
@@ -182,14 +183,39 @@ test('a refrigerant record lists the evidence it accepts, and attaches one docum
     // screen are not the ones the shortcut asks for until the refetch lands
     // (qa-auditor P2-1).
     await draft(ANKARA_PLANT);
+
+    // The year's read is slowed, so the upload lands while it is still
+    // running: its old count must not be written back over the new one
+    // (review findings: a stale evidence count, then a stale year read).
+    const slowYear = '**/api/v1/activity-records?*';
+    const isYearRead = (u: string) => {
+      const url = new URL(u);
+      return url.searchParams.get('category') === 'Refrigerants' && url.searchParams.get('limit') === '100';
+    };
+    // Only the first read is slow, and slow on its way BACK: the server reads
+    // the count before the upload, and the answer lands after it.
+    let yearReads = 0;
+    let staleAnswered!: () => void;
+    const staleRead = new Promise<void>((resolve) => (staleAnswered = resolve));
+    const slowYearHandler = async (route: Route) => {
+      if (!isYearRead(route.request().url()) || yearReads++ > 0) return route.continue();
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      await route.fulfill({ response });
+      staleAnswered();
+    };
+    await page.route(slowYear, slowYearHandler);
     await open(ISTANBUL_HQ);
 
-    // A file added to the open record: the shortcut no longer ticks that
-    // record, only the other gas (review finding: a stale evidence count).
+    // A file added to the open record while that read runs: the shortcut no
+    // longer ticks that record, only the other gas, even once the read lands.
     await page.locator('[data-testid="evidence-vault-input"]').setInputFiles(EVIDENCE_FIXTURE);
     await expect(page.getByText(evidenceEn.uploaded)).toBeVisible();
+    await staleRead;
+    await page.waitForTimeout(300);
     await page.getByTestId('evidence-share-with-year').click();
     await expect(page.getByTestId('evidence-attach-choose')).toHaveText(evidenceEn.attachOne.replace('{count}', '1'));
+    await page.unroute(slowYear, slowYearHandler);
     await page.getByTestId('evidence-attach-bar').getByRole('button', { name: 'Cancel' }).click();
     // ...and once it is removed again, both are ticked.
     await page.getByRole('button', { name: /^Remove.*: sample-invoice\.pdf$/ }).click();
@@ -201,11 +227,45 @@ test('a refrigerant record lists the evidence it accepts, and attaches one docum
       .click();
     await page.getByRole('option', { name: enCategories.Electricity, exact: true }).click();
     await expect(page.getByTestId('records-table-empty')).toBeVisible();
+
+    // The table reads one row per page, and its second page is slow: the file
+    // cannot be chosen until every requested record is ticked (review
+    // finding: an upload before the ticking finished).
+    const tablePages = '**/api/v1/activity-records?*';
+    const tablePagesHandler = async (route: Route) => {
+      const url = new URL(route.request().url());
+      const tablePage =
+        route.request().method() === 'GET' &&
+        url.searchParams.get('category') === 'Refrigerants' &&
+        !url.searchParams.has('limit');
+      if (!tablePage) return route.continue();
+      url.searchParams.set('limit', '1');
+      if (url.searchParams.has('cursor')) await new Promise((resolve) => setTimeout(resolve, 2_500));
+      // Fetched from the test runner and handed back, so the browser's CORS
+      // preflight still matches the URL it asked for.
+      const response = await route.fetch({ url: url.toString() });
+      // The page answers the limit the browser asked for (none, so the
+      // default), as the client checks; only its rows are one per page.
+      const body = { ...((await response.json()) as Record<string, unknown>), limit: DEFAULT_PAGE_LIMIT };
+      const origin = (await route.request().headerValue('origin')) ?? 'http://localhost:3000';
+      await route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true' },
+        body: JSON.stringify(body),
+      });
+    };
+    await page.route(tablePages, tablePagesHandler);
     await page.getByTestId('evidence-share-with-year').click();
     const bar = page.getByTestId('evidence-attach-bar');
     await expect(bar).toBeVisible();
+    await expect(page.getByTestId('evidence-preselect-loading')).toBeVisible();
+    await expect(page.getByTestId('evidence-attach-choose')).toBeDisabled();
+    await expect(page.getByTestId('evidence-preselect-loading')).toHaveCount(0, { timeout: 15_000 });
     await expect(page.getByTestId('evidence-attach-choose')).toBeEnabled();
     await expect(page.getByTestId('evidence-attach-choose')).toContainText('2');
+    await expect(page.getByTestId('evidence-preselect-missing')).toHaveCount(0);
+    await page.unroute(tablePages, tablePagesHandler);
     await page.getByTestId('evidence-attach-input').setInputFiles(EVIDENCE_FIXTURE);
     await page.getByTestId('evidence-attach-confirm').click();
     await expect(page.getByText(/now backs 2 records/)).toBeVisible();
