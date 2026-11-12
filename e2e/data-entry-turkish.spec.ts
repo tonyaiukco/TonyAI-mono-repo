@@ -52,9 +52,12 @@ test('Data Entry speaks Turkish, and 1.234,5 typed in Turkish is saved as 1234.5
   await page.goto('/data-entry');
 
   await expect(page.getByText(trEntry.records.title, { exact: true })).toBeVisible();
-  // Collapsed (BUG-R2-05): its toggle names it.
-  await expect(page.getByText(trEntry.bulkSection.title, { exact: true })).toBeVisible();
-  await expect(page.getByText(trEntry.context.title, { exact: true })).toBeVisible();
+  // Collapsed (BUG-R2-05): its toggle names it. Asked of the toggle itself: a
+  // collapsed section stays mounted (#308), so the bulk upload card's own
+  // "Toplu yükleme" title is in the page too and a bare text match finds two.
+  const toggle = (title: string) => page.getByRole('button', { name: new RegExp(`^${title}`) });
+  await expect(toggle(trEntry.bulkSection.title)).toBeVisible();
+  await expect(toggle(trEntry.context.title)).toBeVisible();
   await expect(page.getByTestId('sign-out')).toHaveText('Çıkış yap');
 
   await pickByFieldLabel(page, trEntry.subsidiary, 'TonyAI Logistics (TR)');
