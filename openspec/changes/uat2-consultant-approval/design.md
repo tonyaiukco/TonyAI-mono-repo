@@ -94,44 +94,28 @@ The motivation is in proposal.md, under "Why". This section records the state of
 - [A user who authored records and is later made a consultant could approve their own old record] → D01 compares `createdBy` regardless of role. A new service test and an integration test cover this.
 - [Every consultant account on hosted QA gains approval when the image deploys] → This is intended. Tell QA in the deploy note so they retest K2 with the hosted consultant and a record created by someone else.
 - [A `super_admin` can no longer fix a colleague's missing invoice] → The remedy already exists, and it is the one K3 gives for approval: reject with a comment; the author attaches the file and resubmits. The refrigerant shortcut and the several-records attach step offer only the user's own records.
-- [Hosted QA or seed data already holds links made by a non-author] → The read-only query below lists them, with whether the same person approved the record. A row where `linker_also_approved` or `actor_also_approved` is true goes to the owner, who leaves it or corrects it through D04. So does a row where `still_open` is true: the new gate does not cover links made before the deploy, so another approver must decide that record, or it goes back to its author. The change itself rewrites no data.
+- [Hosted QA or seed data already holds links made by a non-author] → The read-only query below lists them, with whether the same person approved the record. A row where `also_approved` is true goes to the owner, who leaves it or corrects it through D04. So does a row where `still_open` is true: the new gate does not cover links made before the deploy, so another approver must decide that record, or it goes back to its author. The change itself rewrites no data.
 - [Rollback leaves consultant approvals in place] → Redeploying the previous image restores super_admin-only approval. Approvals already made by a consultant stay approved; they were valid under D01 when made, and the audit shows who made them. If such a figure needs reversing, the correction is D04 (void and re-enter).
 
 ## Migration Plan
 
-- **Before the merge, the owner runs this read-only query on hosted QA.** Use the owner `psql`, as for runbook 03's preflights, wrapped in `BEGIN READ ONLY; ... ROLLBACK;`.
-  - Part 1 lists files linked today by someone other than the record's creator.
-  - Part 2 lists the uploads, detaches and file deletes in the audit trail by someone other than the record's creator. A detach leaves no link behind, so only part 2 sees it. Files removed by deleting a whole record are audited on the record's own row, and that record no longer exists, so they cannot matter.
+- **Before the merge, the owner runs this read-only query on hosted QA.** It is one read-only `SELECT`, so it runs in the Supabase SQL editor (which shows only the last statement's rows), as runbook 11 allows for `hosted_no_demo_check.sql`, or through the owner `psql`.
+  - Rows with `source = 'link'` are files linked today by someone other than the record's creator.
+  - Rows with `source = 'audit'` are the uploads, detaches and file deletes in the audit trail by someone other than the record's creator. A detach leaves no link behind, so only these rows see it. Files removed by deleting a whole record are audited on the record's own row, and that record no longer exists, so they cannot matter.
 
   The PR records the row counts. Two kinds of row go to the owner:
-  - a row where either `..._also_approved` column is true: that person approved the record (`voided` included);
+  - a row where `also_approved` is true: that person approved the record (`voided` included);
   - a row where `still_open` is true: the record is not decided yet, so that person must not approve it. Another approver decides it, or it is rejected back to its author. Locally, on 2026-11-12, the query returned 0 rows, and it reported a synthetic non-author `detach` inside a rolled-back transaction.
 
   ```sql
-  -- Read-only. Who has changed evidence on a record they did not create?
-  -- `*_also_approved`: that person approved the record (voided included).
-  -- `still_open`: the record is not decided yet, so that person must not approve it.
-  -- (1) Files linked today by someone other than the record's creator.
-  SELECT r.id            AS record_id,
-         r.status,
-         r.created_by,
-         l.linked_by,
-         p.role          AS linker_role_now,
-         l.linked_at,
-         COALESCE(r.reviewed_by = l.linked_by AND r.status IN ('approved', 'locked', 'voided'), false) AS linker_also_approved,
-         r.status IN ('draft', 'rejected', 'submitted', 'under_review') AS still_open
-  FROM activity_record_evidence l
-  JOIN activity_records r ON r.id = l.activity_record_id
-  LEFT JOIN profiles p    ON p.id = l.linked_by
-  WHERE l.linked_by <> r.created_by
-  ORDER BY l.linked_at DESC;
-
-  -- (2) Evidence uploads, detaches and file deletes in the audit trail by someone
-  -- other than the record's creator (catches removals, which leave no link).
-  -- Files removed by deleting a whole record are audited on that record's own
-  -- row, and their record is gone, so they cannot matter here.
-  WITH touched AS (
-    SELECT a.created_at, a.action, a.user_id, a.role AS actor_role_then, x.rid::uuid AS record_id
+  -- Read-only, one SELECT (the Supabase SQL editor shows only the last statement's rows).
+  -- Evidence changed by someone other than the record's creator.
+  --   source = 'link'  : a file linked today by a non-author
+  --   source = 'audit' : an upload / detach / file delete by a non-author (detaches leave no link)
+  --   also_approved    : that person approved the record (voided included)
+  --   still_open       : the record is not decided yet; that person must not approve it
+  WITH audit_touched AS (
+    SELECT a.created_at, a.action, a.user_id, a.role AS actor_role, x.rid::uuid AS record_id
     FROM audit_log a
     CROSS JOIN LATERAL (
       SELECT a.diff -> 'before' ->> 'recordId' AS rid WHERE a.action = 'detach'
@@ -143,15 +127,24 @@ The motivation is in proposal.md, under "Why". This section records the state of
     WHERE a.entity = 'evidence'
       AND a.action IN ('create', 'detach', 'delete')
       AND x.rid IS NOT NULL
+  ),
+  events AS (
+    SELECT 'link'::text AS source, l.linked_at AS event_at, 'link'::text AS action,
+           l.linked_by AS actor_id, p.role::text AS actor_role, l.activity_record_id AS record_id
+    FROM activity_record_evidence l
+    LEFT JOIN profiles p ON p.id = l.linked_by
+    UNION ALL
+    SELECT 'audit', t.created_at, t.action, t.user_id, t.actor_role, t.record_id
+    FROM audit_touched t
   )
-  SELECT t.created_at, t.action, t.user_id, t.actor_role_then,
-         t.record_id, r.status, r.created_by,
-         COALESCE(r.reviewed_by = t.user_id AND r.status IN ('approved', 'locked', 'voided'), false) AS actor_also_approved,
+  SELECT e.source, e.event_at, e.action, e.actor_id, e.actor_role,
+         e.record_id, r.status, r.created_by,
+         COALESCE(r.reviewed_by = e.actor_id AND r.status IN ('approved', 'locked', 'voided'), false) AS also_approved,
          r.status IN ('draft', 'rejected', 'submitted', 'under_review') AS still_open
-  FROM touched t
-  JOIN activity_records r ON r.id = t.record_id
-  WHERE t.user_id IS DISTINCT FROM r.created_by
-  ORDER BY t.created_at DESC;
+  FROM events e
+  JOIN activity_records r ON r.id = e.record_id
+  WHERE e.actor_id IS DISTINCT FROM r.created_by
+  ORDER BY e.event_at DESC;
   ```
 
 - This is an image-only change. A merge to green `main` auto-deploys QA under the 2026-11-03 policy. There is no Prisma migration, so no runbook 03 preflight is needed.

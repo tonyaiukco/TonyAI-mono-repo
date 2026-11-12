@@ -106,7 +106,7 @@
 
 ## 7. Evidence author-only (owner, 2026-11-12, option A)
 
-- [x] 7.1 Write the read-only hosted query: links by a non-author (part 1), and audit uploads, detaches and deletes by a non-author (part 2), each with whether that person also approved the record. Put it in design.md (Migration Plan). Verify locally inside `BEGIN READ ONLY … ROLLBACK`: 0 rows, and a synthetic non-author `detach` in a rolled-back transaction is reported.
+- [x] 7.1 Write the read-only hosted query: one `SELECT` returning links by a non-author (`source = 'link'`) and audit uploads, detaches and deletes by a non-author (`source = 'audit'`), each with `also_approved` and `still_open`. Put it in design.md (Migration Plan). Verify locally inside `BEGIN READ ONLY … ROLLBACK`: 0 rows, and a synthetic non-author `detach` in a rolled-back transaction is reported.
 - [x] 7.2 In `apps/api/src/evidence/evidence.service.ts` `refusalFor`, refuse when `record.createdBy !== user.id` whatever the role. Update its doc comment: author-only, as BUG-R2-03's edit rule, and Decisions 2026-11-12. Keep the 403 message. Leave record deletion (author-or-`super_admin`, in the record service) unchanged. In `evidence.service.spec.ts`, flip every case where a `super_admin` changes a colleague's record's evidence: upload, several-records upload naming the colleague's record (all or nothing), detach and delete. Each must be Forbidden, with nothing written and no audit. Keep the author cases green. Verify with `pnpm --filter api test`.
 - [x] 7.3 In `apps/web/lib/evidence-view.ts` `attachBlockReason`, drop the `super_admin` exception (`block.notAuthor` for any non-author). Check the other web places that offer evidence controls on a record the user did not create: the Data Entry evidence card, the refrigerant shortcut and the records table attach step. Confirm that none offers them to a `super_admin` non-author. In `evidence-view.spec.ts`, flip the `super_admin` non-author cases. Verify with `pnpm --filter web test` and typecheck.
 - [x] 7.4 Integration: grep `apps/api/test/int` for a `super_admin` attaching, detaching or deleting evidence on a record it did not create, and rework those setups to use the author or the owner client. Add one case on the real database: a `super_admin` uploading to a data_entry draft is refused, and no `evidence` or `activity_record_evidence` row is written. Verify with `pnpm --filter api test:int`, with CI's env, for the touched files.
@@ -132,7 +132,7 @@
 
 ## Workflow follow-up
 
-- Before the merge, the owner runs the design.md query on hosted QA and the PR records its counts. Any row with `..._also_approved = true` goes to the owner for a decision.
+- Before the merge, the owner runs the design.md query on hosted QA and the PR records its counts. Any row with `also_approved` or `still_open` true goes to the owner for a decision.
 - Commit and open the PR only when the owner asks; the owner merges.
 - After merge, the QA auto-deploy runs (image-only, no migration). QA retests K2 with the hosted consultant: approves another user's record, gets no Approve on their own record, and is offered no void action.
 - Add the Current status entry, mark change 3 done in Next up, and archive the change (sync `record-lifecycle` and `record-evidence`) in a follow-up PR.
