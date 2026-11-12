@@ -56,6 +56,7 @@ import {
 import {
   applyAttachPreselect,
   attachableRecords,
+  mergeArrivedPreselect,
   attachButtonLabel,
   attachConfirmation,
   attachErrorMessage,
@@ -183,6 +184,9 @@ export interface RecordsTableProps {
   /** The query the rows on screen answer, as `recordsQuery` serialises it. */
   fetchedQueryKey?: string | null;
 }
+
+/** Pages the table reads on its own to reach a request's ticks. */
+const PRESELECT_MAX_AUTO_LOADS = 20;
 
 export interface AttachRequest {
   nonce: number;
@@ -335,6 +339,7 @@ export function RecordsTable({
   const attachRows = records.filter((r) => liveAttach.includes(r.id));
 
   function startAttach() {
+    setPendingPreselect([]);
     setSelected([]);
     setReport(null);
     setAttachSelected([]);
@@ -348,18 +353,46 @@ export function RecordsTable({
   // has even started, while the old rows are still showing.
   const appliedRequest = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Ids the request asked for that are not on a loaded page yet: the table
+  // reads further pages and ticks each as it arrives, so a year longer than
+  // one page is ticked whole. An id leaves this list once ticked, so the user
+  // can untick it without it coming back.
+  const [pendingPreselect, setPendingPreselect] = useState<string[]>([]);
+  // Pages read on a request's behalf: bounded, so a page that keeps failing
+  // to load is not asked for again and again.
+  const autoLoads = useRef(0);
   useEffect(() => {
     if (!attachRequest || appliedRequest.current === attachRequest.nonce || loading) return;
     if (fetchedQueryKey !== attachRequest.queryKey) return;
     appliedRequest.current = attachRequest.nonce;
     setSelected([]);
     setReport(null);
-    setAttachSelected(applyAttachPreselect(attachRequest.preselect, attach.attachableIds));
+    const ticked = applyAttachPreselect(attachRequest.preselect, attach.attachableIds);
+    setAttachSelected(ticked);
+    setPendingPreselect(attachRequest.preselect.filter((id) => !ticked.includes(id)));
+    autoLoads.current = 0;
     setAttachMode(true);
     containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [attachRequest, loading, fetchedQueryKey, attach.attachableIds]);
 
+  // A later page brought requested rows: tick them, within one upload's cap.
+  useEffect(() => {
+    if (!attachMode || !pendingPreselect.some((id) => attach.attachableIds.includes(id))) return;
+    const merged = mergeArrivedPreselect(attachSelected, pendingPreselect, attach.attachableIds);
+    setAttachSelected(merged.selected);
+    setPendingPreselect(merged.pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when rows arrive, not on every tick
+  }, [attachMode, pendingPreselect, attach.attachableIds]);
+  // ...and while requested rows are still missing, read the next page.
+  useEffect(() => {
+    if (!attachMode || pendingPreselect.length === 0 || !hasMore || loading || loadingMore) return;
+    if (autoLoads.current >= PRESELECT_MAX_AUTO_LOADS) return;
+    autoLoads.current += 1;
+    onLoadMore();
+  }, [attachMode, pendingPreselect, hasMore, loading, loadingMore, onLoadMore]);
+
   function stopAttach() {
+    setPendingPreselect([]);
     setAttachMode(false);
     setAttachSelected([]);
     setPendingFile(null);

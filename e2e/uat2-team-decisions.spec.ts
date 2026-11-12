@@ -183,6 +183,18 @@ test('a refrigerant record lists the evidence it accepts, and attaches one docum
     // (qa-auditor P2-1).
     await draft(ANKARA_PLANT);
     await open(ISTANBUL_HQ);
+
+    // A file added to the open record: the shortcut no longer ticks that
+    // record, only the other gas (review finding: a stale evidence count).
+    await page.locator('[data-testid="evidence-vault-input"]').setInputFiles(EVIDENCE_FIXTURE);
+    await expect(page.getByText(evidenceEn.uploaded)).toBeVisible();
+    await page.getByTestId('evidence-share-with-year').click();
+    await expect(page.getByTestId('evidence-attach-choose')).toHaveText(evidenceEn.attachOne.replace('{count}', '1'));
+    await page.getByTestId('evidence-attach-bar').getByRole('button', { name: 'Cancel' }).click();
+    // ...and once it is removed again, both are ticked.
+    await page.getByRole('button', { name: /^Remove.*: sample-invoice\.pdf$/ }).click();
+    await expect(page.getByText(evidenceEn.detached)).toBeVisible();
+
     await page
       .getByTestId('records-filters')
       .getByRole('combobox', { name: dataEntryEn.records.filters.category })

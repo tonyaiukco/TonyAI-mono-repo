@@ -20,3 +20,24 @@ export function appendById<T extends { id: string }>(list: readonly T[], page: r
 export function isStaleCursor(error: unknown): boolean {
   return error instanceof ApiError && error.status === 400;
 }
+
+/**
+ * Every row of a bounded set, read page by page, for a DECISION rather than a
+ * display: the refrigerant shortcut (UAT round 2, K5) must see a subsidiary's
+ * whole year to know whether to offer itself and what to tick. Stops after
+ * `maxPages`, returning what it read; never used to make a list look complete.
+ */
+export async function readPages<T extends { id: string }>(
+  read: (cursor: string | undefined) => Promise<{ items: readonly T[]; nextCursor: string | null }>,
+  maxPages: number,
+): Promise<T[]> {
+  let items: T[] = [];
+  let cursor: string | undefined;
+  for (let pages = 0; pages < maxPages; pages++) {
+    const page = await read(cursor);
+    items = appendById(items, page.items);
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return items;
+}

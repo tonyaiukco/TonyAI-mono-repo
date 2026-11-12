@@ -160,6 +160,24 @@ export function applyAttachPreselect(preselect: readonly string[], attachableIds
   return preselect.filter((id) => attachableIds.includes(id)).slice(0, EVIDENCE_MAX_LINKED_RECORDS);
 }
 
+/**
+ * Requested ids that a later page has brought within reach are ticked, within
+ * one upload's cap, and leave the pending list; the rest keep waiting. An id
+ * leaves the list once ticked, so a user who unticks it does not see it back.
+ */
+export function mergeArrivedPreselect(
+  selected: readonly string[],
+  pending: readonly string[],
+  attachableIds: readonly string[],
+): { selected: string[]; pending: string[] } {
+  const arrived = pending.filter((id) => attachableIds.includes(id));
+  if (arrived.length === 0) return { selected: [...selected], pending: [...pending] };
+  return {
+    selected: applyAttachPreselect([...selected, ...arrived.filter((id) => !selected.includes(id))], attachableIds),
+    pending: pending.filter((id) => !arrived.includes(id)),
+  };
+}
+
 /** Tick or untick one id, refusing to grow past what one upload may carry. */
 export function toggleAttach(
   selected: string[],

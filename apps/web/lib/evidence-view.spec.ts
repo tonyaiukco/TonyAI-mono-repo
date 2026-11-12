@@ -15,6 +15,7 @@ import {
   toggleAttach,
   refrigerantShortcut,
   applyAttachPreselect,
+  mergeArrivedPreselect,
 } from './evidence-view';
 import { selectableDrafts as selectableDraftsIn, type SubmittableRow, type SubmittingUser } from './bulk-submit-view';
 import { api, ApiError, SESSION_EXPIRED_MESSAGE } from './api';
@@ -276,5 +277,19 @@ describe('the refrigerant shortcut (UAT round 2, K5 option A)', () => {
     const shortcut = refrigerantShortcut(rows, ['r410a', 'r32'], 2025);
     expect(shortcut.preselect).not.toContain('locked');
     expect(applyAttachPreselect(['r410a', 'locked'], ['r410a', 'r32'])).toEqual(['r410a']);
+  });
+});
+
+describe('mergeArrivedPreselect (a requested record on a later page)', () => {
+  it('ticks requested ids once their page arrives, and keeps waiting for the rest', () => {
+    expect(mergeArrivedPreselect(['a'], ['b', 'c'], ['a', 'b'])).toEqual({ selected: ['a', 'b'], pending: ['c'] });
+  });
+
+  it('never ticks an id the table may not tick, and changes nothing when none arrived', () => {
+    expect(mergeArrivedPreselect(['a'], ['c'], ['a', 'b'])).toEqual({ selected: ['a'], pending: ['c'] });
+  });
+
+  it('does not tick an id twice', () => {
+    expect(mergeArrivedPreselect(['a', 'b'], ['b'], ['a', 'b'])).toEqual({ selected: ['a', 'b'], pending: [] });
   });
 });

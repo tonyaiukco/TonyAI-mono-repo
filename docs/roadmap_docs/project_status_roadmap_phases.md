@@ -1572,7 +1572,6 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 **UAT round 2 / team decisions copy notes (2026-11-12; `uat2-team-decisions-copy` review; filed per the pre-pilot rule):**
 
 - **"First-period record" when earlier periods have no figure:** the verdict leaves out an earlier period with no calculated figure, so a record whose earlier periods were all saved without a figure (for example before a year's factors existed) also has no prior count and reads "First-period record". The team's wording is kept; a stored reason (no period vs no figure) would let the screen say which.
-- **The refrigerant shortcut reads one page:** it pre-ticks from the first page of the year's refrigerant records (annual, one per gas and facility, so small); a subsidiary with more gas records than one page ticks the rest by hand.
 - **The shortcut on a record that cannot take a file:** it is offered on a submitted or locked refrigerant record when two other gas records of the year can still take one.
 - **The seal date beside a placeholder figure:** "Package sealed on" also shows beside placeholder and fixture releases, which already carry their non-authoritative label.
 - **A flaky API spec, older than this change:** `access-admin.service.spec.ts` checks that an audit trail does not contain `ada`, and a random UUID can contain that run (about 1–2% of runs).

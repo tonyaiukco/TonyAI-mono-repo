@@ -111,6 +111,7 @@ import {
   isInvoiceTracked,
   MARINE_GAS_OIL_ACTIVITY_TYPE,
   mayAuthorRecords,
+  MAX_PAGE_LIMIT,
   mayEditRecord,
   needsEvidenceBeforeSubmit,
   offeredActivityTypes,
@@ -122,7 +123,7 @@ import {
   UNSPECIFIED_ACTIVITY_TYPE,
   usesTrCalculationRules,
 } from "@/lib/types";
-import { appendById } from "@/lib/cursor-pages";
+import { appendById, readPages } from "@/lib/cursor-pages";
 import { uploadHeldFiles } from "@/lib/held-evidence";
 import {
   blankRecordsFilter,
@@ -188,6 +189,28 @@ type ContextValues = Record<string, string | number>;
  * a Suspense boundary — without this wrapper `next build` fails. This is the
  * first deep-linked page in the app, so the boundary is new here.
  */
+/** Pages a year's walk over the refrigerant records may read before it stops. */
+const YEAR_GASES_MAX_PAGES = 50;
+
+/**
+ * Every refrigerant record of one subsidiary and reporting year, page by page
+ * (UAT round 2, K5): the shortcut is offered, and ticks, over the whole year,
+ * never only the first page of it.
+ */
+function readYearGases(subsidiaryId: string, year: number): Promise<ActivityRecordPageItemDTO[]> {
+  return readPages(
+    (cursor) =>
+      api.listActivityRecordPage({
+        subsidiaryId,
+        year,
+        category: "Refrigerants",
+        limit: MAX_PAGE_LIMIT,
+        ...(cursor ? { cursor } : {}),
+      }),
+    YEAR_GASES_MAX_PAGES,
+  );
+}
+
 export default function DataEntryPage() {
   return (
     <Suspense fallback={null}>
@@ -576,9 +599,8 @@ function DataEntryPageInner() {
       return;
     }
     let live = true;
-    api
-      .listActivityRecordPage({ subsidiaryId, year: reportingYear, category: "Refrigerants" })
-      .then((page) => live && setYearGases(page.items))
+    readYearGases(subsidiaryId, reportingYear)
+      .then((items) => live && setYearGases(items))
       // Advisory: without the list the shortcut is simply not offered.
       .catch(() => live && setYearGases(null));
     return () => {
@@ -635,6 +657,11 @@ function DataEntryPageInner() {
     (count: number) => {
       setRecords((rows) =>
         rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)),
+      );
+      // The refrigerant shortcut ticks only records with no file: a file added
+      // to, or removed from, the open record changes what it ticks.
+      setYearGases((rows) =>
+        rows ? rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)) : rows,
       );
       // The band lists the record's files in Edit mode: a file added or
       // removed in the vault is read again there too.

@@ -12,7 +12,7 @@ A record with a calculated figure whose window holds no figure is a **first-peri
 
 They SHALL NOT say that a number of periods is needed. The review queue row SHALL mark a first-period record, distinct from the mark on a flagged record.
 
-A first-period record SHALL stay unflagged, SHALL need no variance reason, and SHALL count among the records not checked.
+A first-period record SHALL stay unflagged, SHALL need no variance reason, and SHALL count among the records not checked. The verdict is worked out when the record is saved, as every verdict is; an unsaved preview states none.
 
 #### Scenario: The first period of a series
 - **WHEN** a record is the first of its series
@@ -27,7 +27,7 @@ A first-period record SHALL stay unflagged, SHALL need no variance reason, and S
 - **THEN** both rows carry a mark, and the two marks differ
 
 #### Scenario: A first-period record on Data Entry
-- **WHEN** a user previews or saves a record with no earlier period in Turkish
+- **WHEN** a user saves a record with no earlier period in Turkish
 - **THEN** the anomaly note says "İlk dönem kaydı" and asks for the evidence document and the unit to be checked, and the record can be submitted without a variance reason
 
 #### Scenario: A record without a figure
