@@ -65,6 +65,7 @@ import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { waitingLabel } from "@/lib/review-view";
+import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
   formatTCo2e,
@@ -518,7 +519,10 @@ export default function ReviewPage() {
                             </TableCell>
                             <TableCell className="text-sm">
                               <span className="flex items-center gap-2">
-                                {recordWords.category(row.category)}
+                                {/* With its gas or fuel: one site and year can hold
+                                    several records of a category that differ only
+                                    by type (uat2-review-shows-gas). */}
+                                {categoryWithActivity(recordWords, row)}
                                 {row.anomalyFlag && (
                                   <AlertTriangle className="h-4 w-4 text-amber-500" />
                                 )}
@@ -634,7 +638,7 @@ export default function ReviewPage() {
             <SheetTitle>
               {selected
                 ? t("sheet.title", {
-                    category: recordWords.category(selected.category),
+                    category: categoryWithActivity(recordWords, selected),
                     period: recordWords.period(selected.periodValue),
                     year: selected.reportingYear,
                   })
