@@ -200,6 +200,56 @@ test.describe('self-service registration', () => {
     await expect(page.locator('#registrationCode')).toBeVisible();
   });
 
+  test('the sign-in page offers registration while it is open, in the visitor\'s language', async ({ page, context, baseURL }) => {
+    await page.goto('/login');
+    const link = page.getByRole('link', { name: 'Register your company', exact: true });
+    await expect(link).toBeVisible();
+    await expect(page.getByText('No account yet?')).toBeVisible();
+    // A path on this web app, never another host's page.
+    await expect(link).toHaveAttribute('href', '/register');
+    await link.click();
+    await page.waitForURL((url) => url.pathname === '/register');
+    expect(new URL(page.url()).origin).toBe(new URL(baseURL ?? 'http://localhost:3000').origin);
+    await expect(page.locator('#registrationCode')).toBeVisible();
+
+    await context.addCookies([{ name: 'tonyai-locale', value: 'tr', url: baseURL ?? 'http://localhost:3000' }]);
+    await page.goto('/login');
+    await expect(page.getByText('Hesabınız yok mu?')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Şirketinizi kaydedin', exact: true })).toBeVisible();
+  });
+
+  test('the sign-in page offers no registration where it is off or cannot be read, and still signs in', async ({ page }) => {
+    let asked = 0;
+    await page.route('**/api/v1/auth/registration', (route) => {
+      asked += 1;
+      return route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ statusCode: 404, code: 'registration_unavailable', message: 'Registration is not available' }),
+      });
+    });
+    await page.goto('/login');
+    // The answer has arrived before the absence is asserted.
+    await expect.poll(() => asked).toBeGreaterThan(0);
+    await expect(page.locator('#email')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Register your company' })).toHaveCount(0);
+    await expect(page.getByText('No account yet?')).toHaveCount(0);
+    await expect(page.getByText(/registration/i)).toHaveCount(0);
+
+    await page.unroute('**/api/v1/auth/registration');
+    let aborted = 0;
+    await page.route('**/api/v1/auth/registration', (route) => {
+      aborted += 1;
+      return route.abort();
+    });
+    await page.goto('/login');
+    await expect.poll(() => aborted).toBeGreaterThan(0);
+    await expect(page.getByRole('link', { name: 'Register your company' })).toHaveCount(0);
+    // No error is shown for it, and signing in does not depend on it.
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    await login(page, ADMIN_EMAIL);
+  });
+
   test('a page built for another notice than the API records shows no form', async ({ page }) => {
     await page.route('**/api/v1/auth/registration', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ consentVersion: 'kvkk-other-build', consentIsPlaceholder: false }) }),
