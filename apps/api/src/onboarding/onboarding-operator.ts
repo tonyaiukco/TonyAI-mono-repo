@@ -3,9 +3,13 @@ import { InvitationStatus, type Prisma, type PrismaClient, UserRole } from '@ton
 import type { Locale } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { lockTenantAdmin, normaliseEmail } from '../auth/access-admin.service';
+import { createDefaultSubsidiary } from '../subsidiaries/default-subsidiary';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { AuthSyncService } from '../users/auth-sync.service';
 import type { DeliveryOutcome, InvitationDeliveryService } from '../users/invitation-delivery.service';
+
+/** What a provisioning reports when it creates no subsidiary. */
+const NO_SUBSIDIARY = Object.freeze({ id: null, created: false });
 
 /** A refusal the operator must act on (wrong address, wrong organisation…). */
 export class OperatorRefusal extends Error {
@@ -36,6 +40,10 @@ export interface ProvisionInput {
 export interface ProvisionReport {
   applied: boolean;
   organisation: { id: string | null; created: boolean };
+  /** The default subsidiary a new organisation is born with (UAT round 2,
+   *  K1) — in a dry run, whether --apply would create it. Never for an
+   *  existing organisation. */
+  subsidiary: { id: string | null; created: boolean };
   /** `invitation` as found before this run. */
   admin: { id: string | null; created: boolean; invitation: InvitationStatus | 'none' | 'new' };
   /** A sent, unaccepted invitation re-opened and sent again with a fresh link
@@ -151,7 +159,7 @@ export class OnboardingOperator {
       const resend = invitation === InvitationStatus.sent;
       if (!apply || (invitation !== InvitationStatus.pending && !resend)) {
         // A dry run states its plan: whether --apply would re-send.
-        return { applied: apply, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: !apply && resend, delivery: null };
+        return { applied: apply, organisation: { id: org.id, created: false }, subsidiary: NO_SUBSIDIARY, admin: { id: existing.id, created: false, invitation }, resent: !apply && resend, delivery: null };
       }
       if (resend) {
         const reopened = await this.db.$transaction(async (tx) => {
@@ -174,11 +182,11 @@ export class OnboardingOperator {
         });
         // Nothing re-opened: report that, and send nothing.
         if (!reopened) {
-          return { applied: true, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: false, delivery: null };
+          return { applied: true, organisation: { id: org.id, created: false }, subsidiary: NO_SUBSIDIARY, admin: { id: existing.id, created: false, invitation }, resent: false, delivery: null };
         }
       }
       const delivery = await this.delivery.deliver(this.db, existing.id);
-      return { applied: true, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: resend, delivery };
+      return { applied: true, organisation: { id: org.id, created: false }, subsidiary: NO_SUBSIDIARY, admin: { id: existing.id, created: false, invitation }, resent: resend, delivery };
     }
 
     let organisationId = input.organisationId ?? null;
@@ -193,6 +201,7 @@ export class OnboardingOperator {
       return {
         applied: false,
         organisation: { id: organisationId, created: !organisationId },
+        subsidiary: { id: null, created: !organisationId },
         admin: { id: null, created: true, invitation: 'new' },
         resent: false,
         delivery: null,
@@ -201,6 +210,7 @@ export class OnboardingOperator {
 
     const profileId = randomUUID();
     const createOrganisation = !organisationId;
+    let subsidiaryId: string | null = null;
     organisationId = await this.db.$transaction(async (tx) => {
       let orgId = organisationId;
       if (orgId) {
@@ -235,6 +245,17 @@ export class OnboardingOperator {
           },
           tx,
         );
+        // K1: the company itself as its one subsidiary, so its administrator can
+        // add a facility at once. Only for an organisation created here — an
+        // existing one (--organisation-id) keeps the subsidiaries it has.
+        ({ id: subsidiaryId } = await createDefaultSubsidiary(tx, this.audit, {
+          organisationId: orgId,
+          legalName: o.legalName,
+          tradingName: o.tradingName ?? null,
+          sector: o.sector ?? null,
+          geographyCode: o.geographyCode,
+          source: this.operatorDiff('provision'),
+        }));
       }
       await tx.profile.create({
         data: { id: profileId, email, fullName: input.adminName.trim(), role: UserRole.super_admin, language: input.language, organisationId: orgId },
@@ -256,6 +277,7 @@ export class OnboardingOperator {
     return {
       applied: true,
       organisation: { id: organisationId, created: createOrganisation },
+      subsidiary: { id: subsidiaryId, created: subsidiaryId !== null },
       admin: { id: profileId, created: true, invitation: 'new' },
       resent: false,
       delivery,

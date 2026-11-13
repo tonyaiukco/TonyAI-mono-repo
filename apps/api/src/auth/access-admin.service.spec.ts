@@ -11,6 +11,7 @@ import type { RequestUser } from './auth.types';
 // on PostgreSQL in test/int/access-admin.int.spec.ts.
 
 const ORG = '11111111-1111-4111-8111-111111111111';
+const SUB = '22222222-2222-4222-8222-222222222222';
 
 function setup() {
   const prisma = { $transaction: vi.fn() };
@@ -164,7 +165,7 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     consentVersion: 'placeholder-1',
   };
 
-  function registrationSetup(options: { taken?: boolean; failAt?: 'organisation' | 'profile' | 'invitation' | 'consent' | 'audit' } = {}) {
+  function registrationSetup(options: { taken?: boolean; failAt?: 'organisation' | 'subsidiary' | 'profile' | 'invitation' | 'consent' | 'audit' } = {}) {
     const writes: { model: string; data: Record<string, unknown> }[] = [];
     const audits: Record<string, unknown>[] = [];
     let committed = false;
@@ -176,6 +177,7 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     const tx = {
       profile: { findUnique: vi.fn(async () => (options.taken ? { id: 'someone' } : null)), create: create('profile') },
       organisation: { create: create('organisation', { id: ORG }) },
+      subsidiary: { create: create('subsidiary', { id: SUB }) },
       invitation: { create: create('invitation') },
       consent: { create: create('consent') },
     };
@@ -198,13 +200,24 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     return { service, tx, prisma, audit, writes, audits, committed: () => committed };
   }
 
-  it('writes the organisation, its first super_admin, the invitation and the consent in one transaction', async () => {
+  it('writes the organisation, its default subsidiary, its first super_admin, the invitation and the consent in one transaction', async () => {
     const { service, tx, prisma, writes } = registrationSetup();
     const result = await service.registerOrganisation(INPUT);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.profile.findUnique).toHaveBeenCalledWith({ where: { email: 'ada@example.test' }, select: { id: true } });
     const byModel = Object.fromEntries(writes.map((w) => [w.model, w.data]));
     expect(byModel.organisation).toEqual({ legalName: 'Example Holding', country: 'TR', geographyCode: 'TR', reportingCurrency: 'TRY' });
+    // K1: the company itself, as its one subsidiary — a facility can be added at once.
+    expect(byModel.subsidiary).toEqual({
+      organisationId: ORG,
+      legalName: 'Example Holding',
+      tradingName: null,
+      sector: null,
+      geographyCode: 'TR',
+      reportingStatus: 'pending',
+      includedScopes: [1, 2],
+      trackingGranularity: 'subsidiary',
+    });
     expect(byModel.profile).toEqual({
       id: result.profileId,
       email: 'ada@example.test',
@@ -217,15 +230,16 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     expect(byModel.invitation).toEqual({ profileId: result.profileId, language: 'tr', invitedBy: null });
     expect(byModel.consent).toEqual({ profileId: result.profileId, kind: 'kvkk_registration', textVersion: 'placeholder-1', language: 'tr' });
     expect(result.organisationId).toBe(ORG);
-    expect(writes.map((w) => w.model)).toEqual(['organisation', 'profile', 'invitation', 'consent']);
+    expect(writes.map((w) => w.model)).toEqual(['organisation', 'subsidiary', 'profile', 'invitation', 'consent']);
   });
 
-  it('audits the organisation, the invitation and the consent with no actor — and no name, address, job title or company in any row', async () => {
+  it('audits the organisation, its subsidiary, the invitation and the consent with no actor — and no name, address, job title or company in any row', async () => {
     const { service, audit, audits } = registrationSetup();
     const { profileId } = await service.registerOrganisation(INPUT);
     expect(audit.record).not.toHaveBeenCalled(); // there is no actor to record as
     expect(audits.map((a) => [a.action, a.entity, a.entityId])).toEqual([
       ['create', 'organisation', ORG],
+      ['create', 'subsidiary', SUB],
       ['invite', 'invitation', profileId],
       ['create', 'consent', profileId],
     ]);
@@ -233,7 +247,8 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
       expect(row.organisationId).toBe(ORG);
       expect((row.diff as { source: string }).source).toBe('auth:registration');
     }
-    expect(audits[2].diff).toMatchObject({ kind: 'kvkk_registration', textVersion: 'placeholder-1' });
+    expect(audits[1].diff).toMatchObject({ default: true, geographyCode: 'TR' });
+    expect(audits[3].diff).toMatchObject({ kind: 'kvkk_registration', textVersion: 'placeholder-1' });
     const trail = JSON.stringify(audits).toLowerCase();
     for (const personal of ['ada', 'yilmaz', 'example.test', 'sustainability', 'example holding']) {
       expect(trail, personal).not.toContain(personal);
@@ -254,7 +269,7 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     await expect(service.registerOrganisation(INPUT)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
   });
 
-  it.each(['organisation', 'profile', 'invitation', 'consent', 'audit'] as const)('a failure at the %s step leaves the transaction uncommitted', async (failAt) => {
+  it.each(['organisation', 'subsidiary', 'profile', 'invitation', 'consent', 'audit'] as const)('a failure at the %s step leaves the transaction uncommitted', async (failAt) => {
     const { service, committed } = registrationSetup({ failAt });
     await expect(service.registerOrganisation(INPUT)).rejects.toThrow(`${failAt} failed`);
     expect(committed()).toBe(false);

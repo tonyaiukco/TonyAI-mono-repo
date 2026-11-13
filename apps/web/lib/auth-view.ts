@@ -3,7 +3,7 @@
  * (LP4-01), kept out of the components so they are tested (`auth-view.spec.ts`).
  */
 
-import { REGISTRATION_CONSENT_VERSION, type Locale, type RegistrationRequest, type RegistrationStatus } from "@/lib/types";
+import { REGISTRATION_COMPANY_NAME_MIN, REGISTRATION_CONSENT_VERSION, type Locale, type RegistrationRequest, type RegistrationStatus } from "@/lib/types";
 
 /**
  * The shortest password the product accepts — Supabase Auth's
@@ -99,9 +99,13 @@ export const EMPTY_REGISTRATION_FORM: RegistrationForm = {
  * blank (spaces only count as blank), or the notice not accepted. The API
  * checks again; this only tells the person sooner.
  */
-export function registrationProblem(form: RegistrationForm): "incomplete" | "consentRequired" | null {
+export function registrationProblem(
+  form: RegistrationForm,
+): "incomplete" | "companyNameTooShort" | "consentRequired" | null {
   const typed = [form.firstName, form.lastName, form.companyName, form.jobTitle, form.email, form.registrationCode];
   if (typed.some((value) => value.trim() === "")) return "incomplete";
+  // The new company's default subsidiary carries the name (UAT round 2, K1).
+  if (form.companyName.trim().length < REGISTRATION_COMPANY_NAME_MIN) return "companyNameTooShort";
   if (!form.consent) return "consentRequired";
   return null;
 }

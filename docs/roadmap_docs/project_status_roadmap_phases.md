@@ -1571,6 +1571,13 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 
 ### Open questions
 
+**Standalone default subsidiary follow-ups (2026-11-13, `uat2-standalone-default-subsidiary`; filed per the pre-pilot rule):**
+
+- **A holding is not told what its first subsidiary is:** every new organisation, holding or standalone, starts with one subsidiary named after the parent company (K1; owner, 2026-11-12). A holding's administrator may record parent-level data there, or leave it beside the real subsidiaries, because no screen says it is a default to rename or delete. No marker column was added. A hint on the subsidiaries screen while an organisation has only that one subsidiary, or a question at registration, would serve them after the pilot.
+- **The company name is stored twice (`security-rls` seat, P3):** a registration writes it to the organisation and to its default subsidiary. Deleting the organisation removes both (cascade); the D24 deletion and KVKK erasure inventory should list the subsidiary copy.
+- **The CLI accepts `UK` and `EU` for a new organisation (`security-rls` seat, P3):** they are the subsidiary geographies the API allows, though new subsidiaries in the UI offer only `UK` and `TR` and the pilot runs on Türkiye's factors. Whether provisioning should be held to `TR` until UK returns is a product question.
+- **The operator path's screen step is untested (`qa-auditor` seat, P3):** the e2e test proves the new administrator sees the default subsidiary and adds a facility only for a registered company; a provisioned one shares the same screens and API, and its rows are proven in the integration test.
+
 **Consultant approval follow-ups (2026-11-12, `uat2-consultant-approval`; filed per the pre-pilot rule):**
 
 - **Long requirements in two main specs (found at this change's archive; post-pilot):** `openspec validate --specs --strict` fails on `emission-calculation` (3 requirements) and `emission-factor-library` (2), whose descriptions exceed OpenSpec's 500-character limit ("Natural gas net-basis chain with per-record calorific inputs" is 838). Non-strict validation passes (14/14) and CI does not run it. Splitting them rewords normative calculation and factor-library text, so it is its own OpenSpec change (each long block kept under MODIFIED, the split-out behaviours as ADDED), with the calc-path review seats, after the pilot.

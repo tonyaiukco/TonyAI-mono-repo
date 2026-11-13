@@ -1520,6 +1520,11 @@ export function isPlaceholderConsentVersion(version: string): boolean {
  *  case-sensitively (owner decision 2026-11-11). */
 export const REGISTRATION_CODE_PATTERN = /^[A-Za-z0-9]{5}$/;
 
+/** The shortest company name a registration accepts: the new organisation's
+ *  default subsidiary carries it, and a subsidiary's legal name needs two
+ *  characters (UAT round 2, K1). */
+export const REGISTRATION_COMPANY_NAME_MIN = 2;
+
 /** The longest value each typed registration field may hold. */
 export const REGISTRATION_FIELD_MAX = Object.freeze({
   firstName: 100,

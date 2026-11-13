@@ -49,6 +49,39 @@ describe('parseArgs', () => {
   ])('refuses %s', (_label, argv) => {
     expect(() => parseArgs(argv)).toThrow(UsageError);
   });
+
+  // UAT round 2, K1: the default subsidiary takes the organisation's geography,
+  // and a subsidiary may only be UK, TR or EU — refused before anything is written.
+  it.each(['de', 'GB', 'TR-34'])('refuses a geography no subsidiary can have (%s), naming the accepted ones', (code) => {
+    const argv = PROVISION.map((a) => (a === '--geography-code=tr' ? `--geography-code=${code}` : a));
+    expect(() => parseArgs(argv)).toThrow(new UsageError('--geography-code must be one of UK, TR, EU'));
+  });
+
+  it.each([['tr', 'TR'], ['uk', 'UK'], ['EU', 'EU']])('accepts the geography %s as %s', (given, stored) => {
+    const argv = PROVISION.map((a) => (a === '--geography-code=tr' ? `--geography-code=${given}` : a));
+    expect(parseArgs(argv).provision?.organisation?.geographyCode).toBe(stored);
+  });
+
+  it.each([
+    ['a one-character legal name', '--legal-name=X', '--legal-name must be 2 to 200 characters'],
+    ['a legal name past 200 characters', `--legal-name=${'x'.repeat(201)}`, '--legal-name must be 2 to 200 characters'],
+    ['a trading name past 200 characters', `--trading-name=${'x'.repeat(201)}`, '--trading-name must be at most 200 characters'],
+    ['a sector past 200 characters', `--sector=${'x'.repeat(201)}`, '--sector must be at most 200 characters'],
+  ])('refuses %s — the default subsidiary carries it (K1)', (_label, flag, message) => {
+    const argv = flag.startsWith('--legal-name') ? PROVISION.map((a) => (a.startsWith('--legal-name') ? flag : a)) : [...PROVISION, flag];
+    expect(() => parseArgs(argv)).toThrow(new UsageError(message));
+  });
+
+  it('accepts names at a subsidiary\'s bounds', () => {
+    const argv = [...PROVISION.map((a) => (a.startsWith('--legal-name') ? `--legal-name=${'x'.repeat(200)}` : a)), `--trading-name=${'t'.repeat(200)}`, `--sector=${'s'.repeat(200)}`];
+    expect(parseArgs(argv).provision?.organisation).toMatchObject({ legalName: 'x'.repeat(200) });
+    expect(parseArgs(PROVISION.map((a) => (a.startsWith('--legal-name') ? '--legal-name=XY' : a))).provision?.organisation?.legalName).toBe('XY');
+  });
+
+  it('needs no geography for an existing organisation', () => {
+    const org = '11111111-1111-1111-1111-111111111111';
+    expect(() => parseArgs(['provision', '--operator=o@x.io', `--organisation-id=${org}`, '--admin-email=a@x.io', '--admin-name=A', '--language=en'])).not.toThrow();
+  });
 });
 
 describe('isLoopback and refuseUnsafe', () => {

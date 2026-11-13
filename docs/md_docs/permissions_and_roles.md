@@ -51,7 +51,7 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | Reset one's own password from the sign-in page | ✅ | ✅ | ✅ | ✅ |
 | View audit trail | ✅ | ❌ ¹ | ❌ ¹ | ❌ ¹ |
 
-² Own organisation only, never one's own role or account (ask another `super_admin`), serialised per organisation with the actor re-read; every change audited. Creating an organisation, its first administrator, and offboarding are the operator's (`pnpm onboarding`, §6a).
+² Own organisation only, never one's own role or account (ask another `super_admin`), serialised per organisation with the actor re-read; every change audited. Creating an organisation and its first administrator is the operator's (`pnpm onboarding`, §6a) or, where an environment enables it, self-service registration's; offboarding is the operator's.
 
 ### Limited Audit Visibility
 - `data_entry` may view audit history for records they created or are assigned to
@@ -210,7 +210,7 @@ How an account starts, recovers access and ends. The design is Decisions 2026-10
 
 | Step | Who | What happens |
 | :--- | :--- | :--- |
-| Provision an organisation and its first `super_admin` | Operator (`pnpm onboarding provision`, owner connection) | Organisation, profile and invitation created in one transaction, audited with a null `userId` and the operator in the diff; the invitation email follows. Re-run, it completes what failed and re-sends an unaccepted invitation; a dry run unless `--apply` |
+| Provision an organisation and its first `super_admin` | Operator (`pnpm onboarding provision`, owner connection) | Organisation, its default subsidiary (the company itself, so a facility can be added at once — UAT round 2, K1; none for `--organisation-id`), profile and invitation created in one transaction, audited with a null `userId` and the operator in the diff; the invitation email follows. Re-run, it completes what failed and re-sends an unaccepted invitation; a dry run unless `--apply` |
 | Invite | `super_admin` (`/users`) | Profile (role, language), data_entry grants and invitation created first, audited; then the Supabase Auth user (same id) and the TR/EN email. A failed step is recorded on the invitation and shown on the screen; **Re-send** retries it with a fresh link |
 | Accept | The invitee | Opens the emailed link → `/auth/confirm` (a click, then `verifyOtp`) → invitation `accepted` (audited as the invitee) → chooses a password (≥ 12 characters) |
 | Reset a password | Anyone, signed out | `/forgot-password`: the same answer for every address; an enabled account gets a link in its own language, at most once per 5 minutes per address, audited |

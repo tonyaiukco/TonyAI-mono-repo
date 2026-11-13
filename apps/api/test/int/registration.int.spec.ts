@@ -104,6 +104,8 @@ async function pastCooldown(profileId: string): Promise<void> {
 }
 
 const organisationsNamed = (legalName: string) => owner.organisation.count({ where: { legalName } });
+const subsidiariesOf = (organisationId: string) =>
+  owner.subsidiary.findMany({ where: { organisationId }, include: { locations: true, access: true, inventoryBoundaries: true } });
 
 beforeAll(async () => {
   tag = randomUUID().slice(0, 8);
@@ -132,8 +134,8 @@ afterAll(async () => {
   }
 }, 60_000);
 
-describe('a new address — the organisation, its first administrator, the invitation and the consent', () => {
-  it('writes all four on the runtime role, born as the pilot defaults say, and emails the self-registered wording', async () => {
+describe('a new address — the organisation, its default subsidiary, its first administrator, the invitation and the consent', () => {
+  it('writes all five on the runtime role, born as the pilot defaults say, and emails the self-registered wording', async () => {
     const { sent, transport } = inbox();
     const request = job({ firstName: ' Ada ', email: address().toUpperCase() });
     const before = new Date(Date.now() - 5_000);
@@ -157,6 +159,21 @@ describe('a new address — the organisation, its first administrator, the invit
       offboardedAt: null,
     });
     expect(profile.subsidiaryAccess).toEqual([]);
+    // K1: the company itself as its one subsidiary, so a facility can be added at once.
+    const subsidiaries = await subsidiariesOf(profile.organisationId!);
+    expect(subsidiaries).toHaveLength(1);
+    expect(subsidiaries[0]).toMatchObject({
+      legalName: request.companyName,
+      tradingName: null,
+      sector: null,
+      geographyCode: 'TR',
+      reportingStatus: 'pending',
+      includedScopes: [1, 2],
+      trackingGranularity: 'subsidiary',
+      locations: [],
+      access: [],
+      inventoryBoundaries: [],
+    });
     expect(profile.invitation).toMatchObject({ status: InvitationStatus.sent, invitedBy: null, language: 'tr', attempts: 1 });
     expect(profile.consents).toHaveLength(1);
     expect(profile.consents[0]).toMatchObject({ kind: 'kvkk_registration', textVersion: REGISTRATION_CONSENT_VERSION, language: 'tr' });
@@ -172,20 +189,23 @@ describe('a new address — the organisation, its first administrator, the invit
     expect(sent[0].text).not.toContain("TonyAI'dan yeni bir davet");
   });
 
-  it('audits the three rows with no actor, and holds no name, address, job title or company', async () => {
+  it('audits the four rows with no actor, and holds no name, address, job title or company', async () => {
     const request = job({ firstName: 'Zeynep', lastName: 'Karaca', jobTitle: 'Chief Carbon Officer' });
     await wire(inbox().transport).registrations.run(request);
     const profile = (await profileOf(request.email))!;
     const rows = await owner.auditLog.findMany({ where: { organisationId: profile.organisationId! }, orderBy: { createdAt: 'asc' } });
+    const [{ id: subsidiaryId }] = await subsidiariesOf(profile.organisationId!);
     expect(rows.map((r) => [r.action, r.entity, r.entityId, r.userId, r.role])).toEqual(
       expect.arrayContaining([
         ['create', 'organisation', profile.organisationId, null, null],
+        ['create', 'subsidiary', subsidiaryId, null, null],
         ['invite', 'invitation', profile.id, null, null],
         ['create', 'consent', profile.id, null, null],
       ]),
     );
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     for (const row of rows) expect((row.diff as { source: string }).source).toBe('auth:registration');
+    expect(rows.find((r) => r.entity === 'subsidiary')!.diff).toMatchObject({ default: true, geographyCode: 'TR', trackingGranularity: 'subsidiary' });
     const trail = JSON.stringify(rows.map((r) => r.diff)).toLowerCase();
     for (const personal of ['zeynep', 'karaca', 'carbon officer', request.email.toLowerCase(), request.companyName.toLowerCase()]) {
       expect(trail, personal).not.toContain(personal);
@@ -244,6 +264,10 @@ describe('a new address — the organisation, its first administrator, the invit
     expect(await registrations.run(job({ companyName: name }))).toBe('sent');
     expect(await registrations.run(job({ companyName: name }))).toBe('sent');
     expect(await organisationsNamed(name)).toBe(2);
+    // Each with its own subsidiary — never one shared across the two tenants.
+    const subsidiaries = await owner.subsidiary.findMany({ where: { legalName: name }, select: { organisationId: true } });
+    expect(new Set(subsidiaries.map((s) => s.organisationId)).size).toBe(2);
+    expect(subsidiaries).toHaveLength(2);
   });
 
   it('two submissions of one new address at once create one organisation and send one email', async () => {
@@ -253,6 +277,7 @@ describe('a new address — the organisation, its first administrator, the invit
     const outcomes = await Promise.all([registrations.run(request), registrations.run({ ...request })]);
     expect(outcomes.sort()).toEqual(['sent', 'skipped']);
     expect(await organisationsNamed(request.companyName)).toBe(1);
+    expect(await owner.subsidiary.count({ where: { legalName: request.companyName } })).toBe(1);
     expect(sent).toHaveLength(1);
   });
 
@@ -282,6 +307,7 @@ describe('a new address — the organisation, its first administrator, the invit
     ).rejects.toThrow('injected');
     expect(await profileOf(request.email)).toBeNull();
     expect(await organisationsNamed(request.companyName)).toBe(0);
+    expect(await owner.subsidiary.count({ where: { legalName: request.companyName } })).toBe(0);
   });
 });
 
@@ -309,6 +335,9 @@ describe('an address that is already known — the same job, no second organisat
     expect(after.invitation).toMatchObject({ status: InvitationStatus.sent, attempts: 2 });
     expect(after.consents).toHaveLength(1);
     expect(await owner.organisation.count({ where: { legalName: { startsWith: `${TENANT_ORG_PREFIX}registration ${tag} other` } } })).toBe(0);
+    // A re-submission creates no second subsidiary either.
+    expect(await subsidiariesOf(profile.organisationId!)).toHaveLength(1);
+    expect(await owner.subsidiary.count({ where: { legalName: { startsWith: `${TENANT_ORG_PREFIX}registration ${tag} other` } } })).toBe(0);
     const resends = await owner.auditLog.findMany({ where: { entityId: profile.id, entity: 'invitation', action: 'invite' }, orderBy: { createdAt: 'asc' } });
     expect(resends).toHaveLength(2);
     expect(resends[1]).toMatchObject({ userId: null, organisationId: profile.organisationId });

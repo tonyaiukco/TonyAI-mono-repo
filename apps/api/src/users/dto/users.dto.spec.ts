@@ -72,6 +72,10 @@ describe('the registration DTO (self-service registration)', () => {
     },
   );
 
+  it('accepts a two-character company name, the shortest a subsidiary may have', async () => {
+    expect(await errorsOf(RegistrationDto, { ...REGISTRATION, companyName: 'XY' })).toEqual([]);
+  });
+
   it('trims the typed values', () => {
     const dto = plainToInstance(RegistrationDto, { ...REGISTRATION, firstName: '  Ada ', companyName: ' Example Holding  ' });
     expect(dto.firstName).toBe('Ada');
@@ -82,6 +86,8 @@ describe('the registration DTO (self-service registration)', () => {
     ['a missing first name', { ...REGISTRATION, firstName: undefined }, 'firstName'],
     ['a blank last name', { ...REGISTRATION, lastName: '   ' }, 'lastName'],
     ['a blank company name', { ...REGISTRATION, companyName: '' }, 'companyName'],
+    // The default subsidiary carries it, and a subsidiary's name needs two (K1).
+    ['a one-character company name', { ...REGISTRATION, companyName: ' X ' }, 'companyName'],
     ['a company name past its bound', { ...REGISTRATION, companyName: 'x'.repeat(201) }, 'companyName'],
     ['a missing job title', { ...REGISTRATION, jobTitle: undefined }, 'jobTitle'],
     ['an address that is not one', { ...REGISTRATION, email: 'nope' }, 'email'],

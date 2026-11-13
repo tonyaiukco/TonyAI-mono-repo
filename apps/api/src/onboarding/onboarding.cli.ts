@@ -20,7 +20,10 @@
  *                    against a typo, not a control (a tunnel to production is "localhost" too)
  *
  * `provision` creates the organisation (or uses --organisation-id's) and its
- * first `super_admin`, and sends the invitation (TR/EN by --language). Re-run
+ * first `super_admin`, and sends the invitation (TR/EN by --language). A new
+ * organisation also gets its default subsidiary — named by --legal-name, with
+ * its trading name, sector and geography (one of UK, TR, EU) — so a facility
+ * can be added at once (UAT round 2, K1); --organisation-id adds none. Re-run
  * with the same arguments, it completes a provisioning a failure left half
  * done — the invitation's Auth step or email — and re-sends an invitation that
  * went out but was not accepted (a fresh link: the old one stops working; the
@@ -46,7 +49,7 @@
  */
 import { Logger } from '@nestjs/common';
 import { PrismaClient } from '@tonyai/db';
-import { isLocale, type Locale } from '@tonyai/shared-types';
+import { GEOGRAPHY_CODES, isLocale, SUBSIDIARY_TEXT_MAX_LENGTH, type Locale } from '@tonyai/shared-types';
 import { UUID_SHAPE } from '../common/parse-uuid-param.pipe';
 import { MailService } from '../mail/mail.service';
 import { AuthAdminService } from '../users/auth-admin.service';
@@ -135,9 +138,24 @@ export function parseArgs(argv: string[]): Options {
       const currency = (text('currency') ?? 'EUR').toUpperCase();
       if (!/^[A-Z]{3}$/.test(currency)) throw new UsageError('--currency must be a three-letter ISO 4217 code');
       const geographyCode = text('geography-code')!.toUpperCase();
-      if (!/^[A-Z0-9-]{2,16}$/.test(geographyCode)) throw new UsageError('--geography-code must be a code such as UK or TR');
+      // The organisation's default subsidiary takes this geography (UAT round 2,
+      // K1), and a subsidiary may only have one of these — refused here, before
+      // anything is written, rather than half-way through the transaction.
+      if (!(GEOGRAPHY_CODES as readonly string[]).includes(geographyCode)) {
+        throw new UsageError(`--geography-code must be one of ${GEOGRAPHY_CODES.join(', ')}`);
+      }
+      // The default subsidiary carries these names, so they keep a subsidiary's
+      // bounds: a legal name of 2 to 200 characters, a trading name and a
+      // sector of at most 200 (UAT round 2, K1).
+      const legalName = text('legal-name')!;
+      if (legalName.trim().length < 2 || legalName.length > SUBSIDIARY_TEXT_MAX_LENGTH) {
+        throw new UsageError(`--legal-name must be 2 to ${SUBSIDIARY_TEXT_MAX_LENGTH} characters`);
+      }
+      for (const f of ['trading-name', 'sector']) {
+        if ((text(f)?.length ?? 0) > SUBSIDIARY_TEXT_MAX_LENGTH) throw new UsageError(`--${f} must be at most ${SUBSIDIARY_TEXT_MAX_LENGTH} characters`);
+      }
       organisation = {
-        legalName: text('legal-name')!,
+        legalName,
         tradingName: text('trading-name'),
         country,
         geographyCode,

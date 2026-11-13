@@ -77,7 +77,7 @@ export default function RegisterPage() {
     const problem = registrationProblem(form);
     setConsentMissing(problem === "consentRequired");
     if (problem) {
-      toast.error(t(problem === "consentRequired" ? "register.consentRequired" : "register.incomplete"));
+      toast.error(t(`register.${problem}`));
       return;
     }
     setSending(true);

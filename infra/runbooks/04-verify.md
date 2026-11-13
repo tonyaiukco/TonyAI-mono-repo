@@ -525,7 +525,10 @@ pnpm onboarding provision --apply --allow-remote --operator='<operator-email>' \
   --admin-name='<first-admin-name>' --language=en
 ```
 
-Choose `tr` for a Turkish first invitation. Use the real approved metadata in the
+Choose `tr` for a Turkish first invitation. `--geography-code` must be `UK`, `TR`
+or `EU`; the new organisation is created with one default subsidiary named by
+`--legal-name` (the CLI report's `subsidiary.created` is `true`), which a holding renames to its first
+subsidiary or deletes while empty. Use the real approved metadata in the
 private terminal only. The CLI reads `DIRECT_URL`, audits `diff.operator`, and a
 re-run completes partial work/re-sends an unaccepted invitation. Inspect its report;
 an Auth/SMTP failure is not success. For an existing organisation use the returned

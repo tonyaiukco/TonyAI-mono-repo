@@ -18,7 +18,8 @@ Do not guess a hostname, use a local demo URL or share vault access with testers
 
 After L4a privilege acceptance, migrations, runtime checks and SMTP acceptance,
 the owner uses [runbook 04 §4.6](04-verify.md#46-lp4-01-hosted-auth-and-first-organisation-owner-run)
-to provision one synthetic holding and its first super_admin. That admin invites
+to provision one synthetic holding and its first super_admin (the holding starts
+with one default subsidiary named after itself; rename it or add the others). That admin invites
 the second super_admin, data_entry, consultant and executive_viewer, assigning
 explicit subsidiary access to data_entry. Use individual accounts and private
 invitations; never share passwords or reuse `@tonyai.local` demo accounts.
@@ -850,7 +851,9 @@ QA is `staging`, the only environment where that is accepted.
    `"consentIsPlaceholder":true`. `gh workflow enable "QA deploy" -R tonyaiukco/TonyAI-mono-repo`.
 7. Register one company at `https://qa.tonyai.io/register` with an address the owner
    reads; a wrong code is refused on the page, the right one leads to the email, the
-   link, a password and a first sign-in as `super_admin` of an empty organisation.
+   link, a password and a first sign-in as `super_admin` of a new organisation whose
+   one subsidiary bears the company's name (an organisation registered before
+   `uat2-standalone-default-subsidiary` deployed has none).
    Record the release id and the secret's version identifier — never the code.
 
 **Backing out.** The manifest that was live before cannot be applied again as it
