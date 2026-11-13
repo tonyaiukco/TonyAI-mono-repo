@@ -18,7 +18,7 @@ A record whose window holds no figure SHALL NOT be checked against history. A re
 - **THEN** it is flagged and is not counted among the records not checked
 
 ### Requirement: A first-period record is named on screen
-Data Entry, the review sheet and the emissions record view SHALL name a first-period record that is not above its ceiling as a first-period record. They SHALL say there is no earlier period to compare it with, and ask the user to check the evidence document and the unit, in Turkish and English. They SHALL NOT say that a number of periods is needed. The review queue row SHALL mark it, distinct from a flag. The verdict is worked out when the record is saved, as every verdict is; an unsaved preview states none.
+Data Entry, the review sheet and the emissions record view SHALL name a first-period record below its ceiling as a first-period record, say there is no earlier period to compare it with, and ask for the evidence document and the unit to be checked, in Turkish and English. They SHALL NOT say that a number of periods is needed. The review queue row SHALL mark it, distinct from a flag. An unsaved preview states no verdict.
 
 #### Scenario: A first-period record in review
 - **WHEN** a consultant opens a submitted record that has a figure, no earlier period, and is not above its ceiling
