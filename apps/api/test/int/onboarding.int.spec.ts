@@ -959,43 +959,114 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     }
   });
 
+  it('adding an administrator to an existing organisation creates no subsidiary (K1)', async () => {
+    // Its own tenant: the second administrator must not outlive this test in A.
+    const D = await createTenant();
+    let added: string | null = null;
+    try {
+      const real = new AuthAdminService();
+      const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
+      const before = await owner.subsidiary.findMany({ where: { organisationId: D.organisationId }, select: { id: true }, orderBy: { id: 'asc' } });
+      const report = await operator.provision({ organisationId: D.organisationId, adminEmail: address(), adminName: 'Second Admin', language: 'en' }, true);
+      added = report.admin.id;
+      expect(report).toMatchObject({ organisation: { id: D.organisationId, created: false }, subsidiary: { id: null, created: false } });
+      expect(await owner.subsidiary.findMany({ where: { organisationId: D.organisationId }, select: { id: true }, orderBy: { id: 'asc' } })).toEqual(before);
+      expect(await owner.auditLog.count({ where: { organisationId: D.organisationId, entity: 'subsidiary', userId: null } })).toBe(0);
+    } finally {
+      // Before D's own teardown, which removes only its fixture's members.
+      if (added) {
+        await admin.deleteUser(added).catch(() => undefined);
+        await owner.auditLog.deleteMany({ where: { OR: [{ entityId: added }, { userId: added }] } });
+        await owner.profile.deleteMany({ where: { id: added } });
+      }
+      await D.cleanup();
+    }
+  });
+
+  it('a failure part-way through provisioning stores nothing — not the organisation either (K1)', async () => {
+    const real = new AuthAdminService();
+    const deliver = vi.fn();
+    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', { deliver } as unknown as InvitationDeliveryService, new AuthSyncService(real));
+    // The subsidiary's audit row fails: after the organisation and the subsidiary are written.
+    const audit = (operator as unknown as { audit: AuditService }).audit;
+    vi.spyOn(audit, 'recordSystem').mockImplementation(async (entry, tx) => {
+      if (entry.entity === 'subsidiary') throw new Error('injected');
+      await AuditService.prototype.recordSystem.call(audit, entry, tx);
+    });
+    const legalName = `${orgName()} rollback`;
+    const email = address();
+    await expect(operator.provision({
+      organisation: { legalName, country: 'TR', geographyCode: 'TR', reportingCurrency: 'TRY' },
+      adminEmail: email, adminName: 'Never', language: 'en',
+    }, true)).rejects.toThrow('injected');
+    expect(await owner.organisation.count({ where: { legalName } })).toBe(0);
+    expect(await owner.subsidiary.count({ where: { legalName } })).toBe(0);
+    expect(await owner.profile.count({ where: { email } })).toBe(0);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
   it('provisions an organisation and its first administrator, idempotently; then offboards it', async () => {
     const { sent, transport } = inbox();
     const real = new AuthAdminService();
     const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
     const input = {
-      organisation: { legalName: orgName(), country: 'TR', geographyCode: 'TR', reportingCurrency: 'TRY' },
+      organisation: { legalName: orgName(), tradingName: 'Int Trading', country: 'TR', geographyCode: 'TR', reportingCurrency: 'TRY', sector: 'Int Sector' },
       adminEmail: address(),
       adminName: 'Int Operator Admin',
       language: 'tr' as const,
     };
     const dry = await operator.provision(input, false);
-    expect(dry).toMatchObject({ applied: false, organisation: { created: true }, admin: { created: true } });
+    expect(dry).toMatchObject({ applied: false, organisation: { created: true }, subsidiary: { id: null, created: true }, admin: { created: true } });
     expect(await owner.organisation.count({ where: { legalName: orgName() } })).toBe(0);
+    expect(await owner.subsidiary.count({ where: { legalName: orgName() } })).toBe(0);
 
     const first = await operator.provision(input, true);
     const orgId = first.organisation.id!;
     createdOrgs.push(orgId);
     invitedIds.push(first.admin.id!);
-    expect(first).toMatchObject({ applied: true, organisation: { created: true }, admin: { created: true }, delivery: { delivered: true } });
+    expect(first).toMatchObject({ applied: true, organisation: { created: true }, subsidiary: { created: true }, admin: { created: true }, delivery: { delivered: true } });
+    // K1: born with its one subsidiary — the company itself — so a facility can be added at once.
+    const subsidiaries = await owner.subsidiary.findMany({ where: { organisationId: orgId }, include: { locations: true, access: true, inventoryBoundaries: true } });
+    expect(subsidiaries).toHaveLength(1);
+    expect(subsidiaries[0]).toMatchObject({
+      id: first.subsidiary.id,
+      legalName: orgName(),
+      tradingName: 'Int Trading',
+      sector: 'Int Sector',
+      geographyCode: 'TR',
+      reportingStatus: 'pending',
+      includedScopes: [1, 2],
+      trackingGranularity: 'subsidiary',
+      locations: [],
+      access: [],
+      inventoryBoundaries: [],
+    });
     expect(sent).toHaveLength(1);
     expect(sent[0].text).toContain("TonyAI'dan yeni bir davet");
-    const rows = await owner.auditLog.findMany({ where: { organisationId: orgId }, orderBy: { action: 'asc' } });
+    const rows = await owner.auditLog.findMany({ where: { organisationId: orgId }, orderBy: [{ action: 'asc' }, { entity: 'asc' }] });
     expect(rows.map((r) => [r.action, r.entity, r.userId, (r.diff as { operator?: string }).operator])).toEqual([
       ['create', 'organisation', null, 'ops@tonyai.test'],
+      ['create', 'subsidiary', null, 'ops@tonyai.test'],
       ['invite', 'invitation', null, 'ops@tonyai.test'],
     ]);
+    const subsidiaryRow = rows.find((r) => r.entity === 'subsidiary')!;
+    expect(subsidiaryRow).toMatchObject({ entityId: first.subsidiary.id, role: null });
+    expect(subsidiaryRow.diff).toMatchObject({ source: 'onboarding:provision', default: true, geographyCode: 'TR' });
+    // The operator's typed names stay out, as on the organisation's own row.
+    for (const typed of [orgName(), 'Int Trading', 'Int Sector']) expect(JSON.stringify(subsidiaryRow.diff)).not.toContain(typed);
 
     // Re-run: the invitation went out but was not accepted — sent again with a
     // fresh link (the first administrator has nobody else to ask; QA P2-1).
     const again = await operator.provision(input, true);
     expect(again).toMatchObject({
       organisation: { id: orgId, created: false },
+      subsidiary: { id: null, created: false },
       admin: { id: first.admin.id, created: false, invitation: 'sent' },
       resent: true,
       delivery: { delivered: true },
     });
     expect(sent).toHaveLength(2);
+    expect(await owner.subsidiary.count({ where: { organisationId: orgId } })).toBe(1);
     const resend = await owner.auditLog.findMany({ where: { organisationId: orgId, action: 'invite' } });
     // As a set: two quick runs' rows can share `created_at` to the millisecond ((21)).
     expect(resend.map((r) => [r.userId, (r.diff as { resend?: boolean; operator?: string }).resend ?? false, (r.diff as { operator?: string }).operator])

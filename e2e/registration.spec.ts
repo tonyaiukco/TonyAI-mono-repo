@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test';
 import {
   ADMIN_EMAIL,
   API_BASE,
+  bearer,
   cleanupE2ERegistrations,
+  E2E_PERIOD,
+  E2E_YEAR,
   E2E_REGISTRATION_PREFIX,
   getAccessToken,
   login,
@@ -15,7 +18,8 @@ import {
  * Self-service registration, through the real page, API, database and Auth:
  * an invited company registers behind the registration code, follows its
  * invitation link, chooses a password and lands signed in as the first
- * administrator of a new organisation.
+ * administrator of a new organisation — whose one subsidiary, named by the
+ * company, takes a facility at once (UAT round 2, K1).
  *
  * The API under test runs with `REGISTRATION_CODE=local` (playwright.config.ts;
  * `pnpm setup` writes the same to apps/api/.env). The public endpoint shares
@@ -98,6 +102,36 @@ test.describe('self-service registration', () => {
     const me = await (await request.get(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${token}` } })).json();
     expect(me).toMatchObject({ email, fullName: 'Ada Yilmaz', role: 'super_admin', organisationId: account.organisationId });
     await expect.poll(async () => (await registeredAccount(email))?.invitationStatus).toBe('accepted');
+
+    // K1: the new company is born with one subsidiary — itself. Before any
+    // facility exists, Data Entry offers it and a record can be entered for it.
+    const subsidiaries = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
+    expect(subsidiaries.map((s: { legalName: string }) => s.legalName)).toEqual([company]);
+    const [defaultSubsidiary] = subsidiaries as { id: string }[];
+    await page.goto('/data-entry');
+    await expect(page.getByRole('heading', { name: 'Data Entry' })).toBeVisible();
+    await expect(page.getByText('No subsidiaries accessible to your account.')).toHaveCount(0);
+    await expect(page.getByRole('combobox').filter({ hasText: company })).toBeVisible();
+    const draft = await request.post(`${API_BASE}/activity-records`, {
+      headers: bearer(token),
+      data: { subsidiaryId: defaultSubsidiary.id, locationId: null, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD,
+        periodValue: 'Q1', category: 'Electricity', activityValue: 1, activityUnit: 'kWh', varianceReason: null, input: null },
+    });
+    expect(draft.status(), await draft.text()).toBe(201);
+    // Removed again, so the organisation's teardown is not held by a record.
+    const removed = await request.delete(`${API_BASE}/activity-records/${(await draft.json()).id}`, { headers: bearer(token) });
+    expect(removed.ok(), await removed.text()).toBe(true);
+
+    // And a facility is added to it as to any subsidiary.
+    await page.goto('/subsidiaries');
+    const row = page.locator('tr', { hasText: company });
+    await expect(row).toHaveCount(1);
+    await row.getByRole('button', { name: 'Manage facilities' }).click();
+    const nameField = page.getByRole('dialog').locator('div.space-y-2', { has: page.getByText('Name *', { exact: true }) });
+    await nameField.getByRole('textbox').fill('E2E Registered Plant');
+    await page.getByRole('button', { name: 'Add facility', exact: true }).click();
+    await expect(page.getByRole('dialog').getByText('E2E Registered Plant')).toBeVisible();
+    await page.keyboard.press('Escape');
 
     // The same address again: the same answer, and still one organisation.
     await page.context().clearCookies();

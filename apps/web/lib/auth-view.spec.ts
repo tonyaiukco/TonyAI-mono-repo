@@ -106,6 +106,13 @@ describe('the registration form (self-service registration)', () => {
     },
   );
 
+  it('stops on a one-character company name — the default subsidiary carries it (K1)', () => {
+    expect(registrationProblem({ ...COMPLETE, companyName: ' X ' })).toBe('companyNameTooShort');
+    expect(registrationProblem({ ...COMPLETE, companyName: 'XY' })).toBeNull();
+    // Blank still reads as incomplete, before the length.
+    expect(registrationProblem({ ...COMPLETE, companyName: '  ' })).toBe('incomplete');
+  });
+
   it('stops on the notice not accepted, only once every field is filled', () => {
     expect(registrationProblem({ ...COMPLETE, consent: false })).toBe('consentRequired');
     expect(registrationProblem({ ...COMPLETE, consent: false, email: '' })).toBe('incomplete');

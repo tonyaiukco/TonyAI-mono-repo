@@ -8,6 +8,7 @@ import {
 import { InvitationStatus, Prisma, UserRole as DbUserRole } from '@tonyai/db';
 import { isLocale, type ConsentKind, type Locale, type UserRole } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
+import { createDefaultSubsidiary } from '../subsidiaries/default-subsidiary';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AccessRoleMismatchError,
@@ -318,13 +319,14 @@ export class AccessAdminService {
   }
 
   /**
-   * Self-service registration: creates an organisation, its first
-   * `super_admin`, that account's invitation and the consent it gave — in one
-   * audited transaction, all or nothing. There is no actor: the caller is the
-   * public registration endpoint, which has already checked the registration
-   * code. Delivery follows outside, as for an invitation. The audit rows name
-   * the defaults, role, language and notice version — never the address, the
-   * name, the job title or the company (D20). An address that already has a
+   * Self-service registration: creates an organisation, its default
+   * subsidiary (named by the company, so a facility can be added at once —
+   * UAT round 2, K1), its first `super_admin`, that account's invitation and
+   * the consent it gave — in one audited transaction, all or nothing. There is
+   * no actor: the caller is the public registration endpoint, which has
+   * already checked the registration code. Delivery follows outside, as for an
+   * invitation. The audit rows name the defaults, role, language and notice
+   * version — never the address, the name, the job title or the company (D20). An address that already has a
    * profile anywhere is refused (D17), the unique index catching a race.
    */
   async registerOrganisation(input: RegisterOrganisation): Promise<{ organisationId: string; profileId: string }> {
@@ -349,6 +351,12 @@ export class AccessAdminService {
           },
           tx,
         );
+        await createDefaultSubsidiary(tx, this.audit, {
+          organisationId: organisation.id,
+          legalName: input.companyName.trim(),
+          geographyCode: REGISTRATION_ORGANISATION_DEFAULTS.geographyCode,
+          source: { source: REGISTRATION_SOURCE },
+        });
         await tx.profile.create({
           data: {
             id: profileId,

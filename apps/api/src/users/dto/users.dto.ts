@@ -13,7 +13,7 @@ import {
 } from 'class-validator';
 import {
   REGISTRATION_CONSENT_VERSION,
-  REGISTRATION_FIELD_MAX,
+  REGISTRATION_COMPANY_NAME_MIN, REGISTRATION_FIELD_MAX,
   SUPPORTED_LOCALES,
   type InviteUserRequest,
   type ListUsersParams,
@@ -121,9 +121,11 @@ export class RegistrationDto implements RegistrationRequest {
   @MaxLength(REGISTRATION_FIELD_MAX.lastName)
   lastName!: string;
 
+  // Two characters at least: the default subsidiary carries the name, and a
+  // subsidiary's legal name may be no shorter (UAT round 2, K1).
   @Transform(trimmed)
   @IsString()
-  @MinLength(1)
+  @MinLength(REGISTRATION_COMPANY_NAME_MIN)
   @MaxLength(REGISTRATION_FIELD_MAX.companyName)
   companyName!: string;
 
