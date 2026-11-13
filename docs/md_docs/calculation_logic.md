@@ -161,8 +161,10 @@ The system must flag a record when the calculated result differs by more than `5
 - `reportingPeriod` (granularity)
 
 With one or two priors carrying a figure the record is judged against their
-average, as *limited history* (since 2026-11-11). With none the rule does not
-run — the record is then *not evaluated*, not *clean*. **`validation_anomaly_rules.md` §4.1 is the
+average, as *limited history* (since 2026-11-11). With none, or with
+priors averaging zero, the history rule cannot judge: the record is checked
+against its typo ceiling (since 2026-11-13) and flagged only above it;
+otherwise it is *not evaluated*, not *clean*. **`validation_anomaly_rules.md` §4.1 is the
 single normative statement of this rule**, including why the key deviates from
 the original specification; this section is a pointer to it and must not be
 edited independently. It was an independent copy until 2026-08-27, and the two

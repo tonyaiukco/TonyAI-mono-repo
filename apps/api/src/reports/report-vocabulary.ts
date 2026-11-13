@@ -131,6 +131,10 @@ export function reportVocabulary(locale: Locale): ReportVocabulary {
           return text('anomalyYes');
         case 'flagged_limited':
           return text('anomalyYesLimited', { priors });
+        case 'flagged_ceiling':
+          return text('anomalyYesCeiling');
+        case 'flagged_ceiling_zero_average':
+          return text('anomalyYesCeilingZeroAverage');
         case 'clean':
           return '';
         case 'clean_limited':

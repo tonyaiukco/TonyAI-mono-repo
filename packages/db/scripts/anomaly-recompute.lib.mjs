@@ -21,8 +21,11 @@ import {
   COUNTED_STATUSES,
   canonicalPeriodValue,
   isCalculated,
+  isCeilingEligible,
+  isLegacyPreCeilingVerdict,
   isLegacyShortWindowVerdict,
   PENDING_REVIEW_STATUSES,
+  withFirstPeriodCeiling,
   PERIOD_VALUES,
 } from '@tonyai/shared-types';
 
@@ -112,13 +115,36 @@ export const indexRecord = (row) => ({
  */
 export function freshVerdict(item, pools) {
   if (item.tCo2e === null) return anomalyNotEvaluated();
-  return computeAnomalyVerdict(
+  const history = computeAnomalyVerdict(
     item.tCo2e,
     (pools.get(poolKey(item.row)) ?? [])
       .filter((p) => p.key < item.key && p.row.id !== item.row.id)
       .map((p) => p.tCo2e),
   );
+  // A first period is judged by its typo ceiling (BUG-R2-07 tier 3), on the
+  // record's own stored amount — the same composition the API's gate applies.
+  return withFirstPeriodCeiling(history, ceilingInputOf(item.row));
 }
+
+/** What the first-period ceiling judges: the record's own stored fields. */
+export const ceilingInputOf = (row) => ({
+  category: row.category,
+  activityType: row.activityType ?? null,
+  activityValue: row.activityValue,
+  activityUnit: row.activityUnit,
+  parameters: row.parameters ?? null,
+});
+
+/**
+ * A first-period verdict stored before the typo ceilings existed (2026-11-13):
+ * count 0, unflagged, and above its ceiling today. Kept on a COMMITTED record
+ * for the reason `keepsLegacyVerdict` gives — re-scoring would hand the
+ * reviewer, or an approved record, a flag its author never saw. Not drift. A
+ * draft or a rejected record meets the ceiling at its next save, so this tool
+ * may re-score it.
+ */
+export const keepsPreCeilingVerdict = (row) =>
+  COUNTED_STATUSES.includes(row.status) && isLegacyPreCeilingVerdict({ ...row, ...ceilingInputOf(row) });
 
 /**
  * A verdict this tool leaves as it is although the rule would now give another.
@@ -143,6 +169,21 @@ export const keepsLegacyVerdict = (row) =>
   row.anomalyFlag === false &&
   isLegacyShortWindowVerdict(row);
 
+/**
+ * A verdict as the tool prints it. A ceiling flag is named as one before the
+ * null-average case: a first period that gains a flag must not read "not
+ * evaluated" on both sides of the change (owner review, 2026-11-13).
+ */
+export function describeVerdict(v) {
+  if (v.priorCount === null) return 'not evaluated (no figure)';
+  if (isCeilingEligible(v)) {
+    const basis = v.priorCount === 0 ? 'no earlier period' : `${v.priorCount} priors averaging 0`;
+    return v.anomalous ? `ANOMALOUS — above the typo ceiling (${basis})` : `not evaluated (${basis})`;
+  }
+  if (v.baseline === null) return `not evaluated (${v.priorCount} priors)`;
+  return `${v.anomalous ? 'ANOMALOUS' : 'clean'} vs ${v.baseline.toFixed(6)} over ${v.priorCount} priors`;
+}
+
 export const storedVerdict = (row) => ({
   anomalous: row.anomalyFlag,
   priorCount: row.anomalyBaselinePriorCount,
@@ -160,7 +201,7 @@ export function verdictsAgree(stored, fresh) {
 /**
  * Every scoreable record whose stored verdict is not the one it would get
  * today, with what may be done about it — and how many verdicts were kept
- * because they predate the short-history check.
+ * because they predate the short-history check or the first-period ceilings.
  *
  * Here rather than in the shell so the skip is testable: the shell's loop was
  * the one place `keepsLegacyVerdict` could be dropped with every test green,
@@ -170,6 +211,7 @@ export function verdictsAgree(stored, fresh) {
 export function findStale(scoreable, pools, lockedPeriods) {
   const stale = [];
   let keptLegacy = 0;
+  let keptPreCeiling = 0;
   for (const item of scoreable) {
     if (keepsLegacyVerdict(item.row)) {
       keptLegacy++;
@@ -177,10 +219,22 @@ export function findStale(scoreable, pools, lockedPeriods) {
     }
     const stored = storedVerdict(item.row);
     const fresh = freshVerdict(item, pools);
+    // Only while history still cannot judge it, and only when the stored count
+    // and average are the ones history gives today: a moved pool, or a broken
+    // stored average, is ordinary drift (owner review, 2026-11-13).
+    if (
+      isCeilingEligible(fresh) &&
+      keepsPreCeilingVerdict(item.row) &&
+      stored.priorCount === fresh.priorCount &&
+      sameBaseline(stored.baseline, fresh.baseline)
+    ) {
+      keptPreCeiling++;
+      continue;
+    }
     if (verdictsAgree(stored, fresh)) continue;
     stale.push({ item, stored, fresh, disposition: classify(item.row, lockedPeriods, { stored, fresh }) });
   }
-  return { stale, keptLegacy };
+  return { stale, keptLegacy, keptPreCeiling };
 }
 
 /**

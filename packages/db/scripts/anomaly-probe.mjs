@@ -36,6 +36,12 @@
  * section and does not count as drift: nothing moved beneath the record, the
  * rule did. `anomaly:recompute` leaves the same records alone.
  *
+ * A second known difference since 2026-11-13 (BUG-R2-07 tier 3): a first
+ * period is held to a typo ceiling, and one stored unflagged before the
+ * ceilings existed — still with no earlier period, above its ceiling today —
+ * is kept the same way (section 2c). A FLAG beside no earlier period whose
+ * amount is not above its ceiling is a row no writer produced: drift.
+ *
  * THE RULE IS REIMPLEMENTED HERE, DELIBERATELY
  * --------------------------------------------
  * This SQL does not call the service and shares no code with it. That is the
@@ -69,6 +75,7 @@ import {
   BASELINE_MIN_PERIODS,
   DRIFT_WHERE,
   LEGACY_WHERE,
+  PRE_CEILING_WHERE,
 } from './anomaly-probe.lib.mjs';
 
 const args = process.argv.slice(2);
@@ -173,8 +180,22 @@ async function main() {
     }
   }
 
+  const preCeiling = await q(`
+    SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e
+    FROM verdict WHERE ${PRE_CEILING_WHERE} ORDER BY sub, category, key;`);
+  console.log(
+    `\n2c. Known difference — ${preCeiling.length} record(s) above their typo ceiling where history cannot judge ` +
+      `(no earlier period, or a zero average), scored before the ceilings existed (kept, not drift)`,
+  );
+  for (const row of preCeiling) {
+    console.log(
+      `   ${row.id}  ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)} [${row.status}]`,
+    );
+  }
+
   const weak = await q(`
-    SELECT sub, loc, category, period_value, reporting_year, status, tco2e, priors, baseline, legacy
+    SELECT sub, loc, category, period_value, reporting_year, status, tco2e, priors, baseline, legacy,
+           anomaly_flag, above_ceiling
     FROM verdict WHERE priors < ${BASELINE_MAX_PERIODS} ORDER BY sub, loc NULLS FIRST, category, key;`);
 
   console.log(
@@ -186,11 +207,19 @@ async function main() {
     // still not checked, and a zero average yields no ratio at any count.
     const gate =
       row.priors === 0
-        ? 'NOT EVALUATED — no prior period'
+        ? row.anomaly_flag
+          ? row.above_ceiling
+            ? 'FLAGGED — first period above its typo ceiling'
+            : 'FLAGGED with no earlier period, NOT above its ceiling — drift (section 2)'
+          : row.above_ceiling
+            ? 'NOT EVALUATED — no prior period (above its ceiling; scored before the ceilings)'
+            : 'NOT EVALUATED — no prior period'
         : row.legacy
           ? `NOT EVALUATED — scored before the short-history check (${row.priors} of ${BASELINE_MAX_PERIODS} priors today)`
           : Number(row.baseline) === 0
-            ? `NOT EVALUATED — ${row.priors} prior(s) averaging zero`
+            ? row.anomaly_flag && row.above_ceiling
+              ? `FLAGGED — above its typo ceiling, ${row.priors} prior(s) averaging zero`
+              : `NOT EVALUATED — ${row.priors} prior(s) averaging zero`
             : `limited history — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
     console.log(
       `   ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)} ` +

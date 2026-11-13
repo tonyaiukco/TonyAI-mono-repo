@@ -38,6 +38,8 @@ import {
   anomalyNotEvaluated,
   type AnomalyVerdict,
   computeAnomalyVerdict,
+  withFirstPeriodCeiling,
+  varianceBasisOf,
   COUNTED_STATUSES,
   PERIOD_VALUES,
   SUBMITTABLE_STATUSES as SUBMITTABLE_STATUSES_CONTRACT,
@@ -186,6 +188,13 @@ function refusalName(error: HttpException): string {
   const body = error.getResponse();
   const code = typeof body === 'object' && body !== null ? (body as { code?: unknown }).code : undefined;
   return typeof code === 'string' ? code : error.constructor.name;
+}
+
+/** What the first-period typo ceiling judges, beside the series key. */
+interface CeilingAmount {
+  activityValue: number;
+  activityUnit: string;
+  parameters: unknown;
 }
 
 /** Inputs to the VAR §4 rolling-baseline check, minus the figure itself. */
@@ -853,6 +862,7 @@ export class ActivityRecordsService {
   private async detectAnomalyFor(
     calculation: ActivityCalculationSnapshot,
     params: Omit<AnomalyParams, 'currentTCo2e'>,
+    amount: CeilingAmount,
     client: Pick<Prisma.TransactionClient, 'activityRecord'> = this.prisma,
   ): Promise<AnomalyVerdict> {
     // Reports 0 priors because none were ever queried, not because none exist.
@@ -860,7 +870,18 @@ export class ActivityRecordsService {
     // facts; a reader separates them with isCalculated() on the snapshot, which
     // travels on the same DTO.
     if (!isCalculated(calculation)) return anomalyNotEvaluated();
-    return this.detectAnomaly({ ...params, currentTCo2e: calculation.tCo2e }, client);
+    const history = await this.detectAnomaly({ ...params, currentTCo2e: calculation.tCo2e }, client);
+    // A first period has no history to judge it by; its typo ceiling does
+    // (BUG-R2-07 tier 3, Decisions 2026-11-12). Judged on the values the
+    // record will STORE — the canonical unit, the merged parameters — so the
+    // consistency tools, reading the row, reach the same verdict.
+    return withFirstPeriodCeiling(history, {
+      category: params.category,
+      activityType: params.activityType,
+      activityValue: amount.activityValue,
+      activityUnit: storedUnit(amount.activityUnit),
+      parameters: amount.parameters,
+    });
   }
 
   /**
@@ -1119,6 +1140,10 @@ export class ActivityRecordsService {
       reportingPeriod: dto.reportingPeriod,
       reportingYear: dto.reportingYear,
       periodValue,
+    }, {
+      activityValue: dto.activityValue,
+      activityUnit: dto.activityUnit,
+      parameters: dto.parameters ?? null,
     });
 
     return {
@@ -1302,7 +1327,7 @@ export class ActivityRecordsService {
       reportingYear,
       periodValue,
       excludeId: id, // the record's own row must not seed its baseline
-    });
+    }, { activityValue, activityUnit, parameters });
 
     const data: Prisma.ActivityRecordUncheckedUpdateInput = {
       reportingYear,
@@ -1573,10 +1598,15 @@ export class ActivityRecordsService {
           periodValue: record.periodValue,
           excludeId: record.id,
         },
+        {
+          activityValue: record.activityValue,
+          activityUnit: record.activityUnit,
+          parameters: record.parameters ?? null,
+        },
         tx,
       );
       if (verdict.anomalous && !record.varianceReason?.trim()) {
-        throw new VarianceReasonRequiredError();
+        throw new VarianceReasonRequiredError(varianceBasisOf(verdict));
       }
       // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
       // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so

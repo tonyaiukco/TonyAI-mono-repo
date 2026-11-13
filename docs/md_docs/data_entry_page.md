@@ -208,7 +208,8 @@ Calculated result differs by more than 50 percent from the rolling average of th
 |---|---|
 | `3` and a non-zero average | the amber banner when flagged, naming the average; nothing when not |
 | `1`–`2` and a non-zero average | the amber banner when flagged, naming the average and "limited history (N periods)"; a neutral "Within range on limited history" note when not |
-| `0`, or an average of zero | a neutral "Not checked for anomalies" note saying why. Deliberately not amber: no earlier period is the normal state of a new series' first period |
+| `0` flagged, or an average of zero and flagged | the amber banner "Above the first-period ceiling" (or, over a zero average, "Above the plausibility ceiling", saying the earlier periods average zero), with the amount and the ceiling in the entered unit (or, for refrigerants, the equipment line's capacity or refill and the limit it passed), asking for the evidence and the unit to be checked; the variance field is mandatory (since 2026-11-13, Decisions 2026-11-12) |
+| `0` unflagged, or an average of zero unflagged (below its ceiling) | a neutral note saying why: "First-period record" for no earlier period, "Not checked for anomalies" for a zero average. Deliberately not amber: no earlier period is the normal state of a new series' first period |
 | `1`–`2` and no average | the same neutral note, saying the record was scored when the check needed three periods (a verdict from before 2026-11-11, kept until the record is next saved or submitted) |
 | `null` | "no calculated figure", so there is nothing to compare — the Water case |
 

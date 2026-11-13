@@ -25,6 +25,7 @@ import {
   SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
   VARIANCE_REFUSAL,
+  CEILING_VARIANCE_REFUSAL,
   VarianceReasonRequiredError,
 } from '../activity-records/errors';
 import { AuditService } from '../audit/audit.service';
@@ -807,6 +808,45 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     expect(report.submitted.map((r) => r.recordId)).toEqual(['jan']);
     expect(report.failed).toEqual([
       expect.objectContaining({ recordId: 'feb', code: 'variance_reason_required' }),
+    ]);
+  });
+
+  it('refuses a ceiling-flagged first period with a message that names the ceiling (BUG-R2-07 tier 3)', async () => {
+    // The bulk report carries the server's sentence; its label ("Needs a
+    // variance reason") is true for both bases, the sentence must say which.
+    const { records, service } = build([candidate({ id: 'jan', periodValue: 'January' })]);
+    records.submit.mockRejectedValue(new VarianceReasonRequiredError('ceiling'));
+
+    const report = await service.submitMany(dataEntry(), ids('jan'));
+
+    expect(report.failed).toEqual([
+      expect.objectContaining({
+        recordId: 'jan',
+        code: 'variance_reason_required',
+        message: CEILING_VARIANCE_REFUSAL,
+      }),
+    ]);
+  });
+
+  it('sends a new series in period order, refusing January for its ceiling and sending February', async () => {
+    // January is the first period: its ceiling refuses it. February is judged
+    // against history — and with January refused, it is a first period too,
+    // so its own ceiling applies; here it is under it and goes through.
+    const { records, service } = build([
+      candidate({ id: 'feb', periodValue: 'February' }),
+      candidate({ id: 'jan', periodValue: 'January' }),
+    ]);
+    records.submit.mockImplementation(async (_user: unknown, id: string) => {
+      if (id === 'jan') throw new VarianceReasonRequiredError('ceiling');
+      return record({ id });
+    });
+
+    const report = await service.submitMany(dataEntry(), ids('feb', 'jan'));
+
+    expect(records.submit.mock.calls.map((c) => c[1])).toEqual(['jan', 'feb']);
+    expect(report.submitted.map((r) => r.recordId)).toEqual(['feb']);
+    expect(report.failed).toEqual([
+      expect.objectContaining({ recordId: 'jan', message: CEILING_VARIANCE_REFUSAL }),
     ]);
   });
 });

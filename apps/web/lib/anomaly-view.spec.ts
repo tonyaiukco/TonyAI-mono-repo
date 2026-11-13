@@ -258,3 +258,137 @@ describe('in Turkish (LP4-04)', () => {
     expect(before.detail).toContain('(2)');
   });
 });
+
+// BUG-R2-07 tier 3 (Decisions 2026-11-12): a first period above its typo ceiling.
+describe('a first-period ceiling flag', () => {
+  const ceilingFlag = (over: Partial<Parameters<typeof statementIn>[0]> = {}) =>
+    record({
+      anomalyFlag: true,
+      anomalyBaselinePriorCount: 0,
+      anomalyBaselineTCo2e: null,
+      category: 'Electricity',
+      activityType: null,
+      activityValue: 1_500,
+      activityUnit: 'MWh',
+      ...over,
+    });
+
+  it('states the amount and the ceiling in the entered unit, never an average', () => {
+    const s = anomalyStatement(ceilingFlag());
+    expect(s.tone).toBe('flagged');
+    expect(s.qualified).toBe(false);
+    expect(s.headline).toBe('Above the first-period ceiling');
+    expect(s.detail).toContain('1,500 MWh is above the plausibility ceiling of 1,000 MWh');
+    expect(s.detail).toContain('no earlier period');
+    expect(s.detail).toMatch(/evidence document and the unit/);
+    expect(s.detail).not.toMatch(/historical average/);
+  });
+
+  it('names the largest equipment line for a refrigerant record', () => {
+    const lines = (...c: number[]) => ({
+      equipment: c.map((capacityKg) => ({ equipmentType: 'chiller', capacityKg, refillKg: 0, leakRateChoice: 'default' })),
+    });
+    const s = anomalyStatement(
+      ceilingFlag({ category: 'Refrigerants', activityType: 'R-410A', activityValue: 770, activityUnit: 'kg', parameters: lines(120, 650) }),
+    );
+    expect(s.detail).toContain('An equipment line of 650 kg is above the plausibility ceiling of 500 kg');
+  });
+
+  describe('a refill above its limit', () => {
+    const refill = (capacityKg: number, refillKg: number) =>
+      ceilingFlag({
+        category: 'Refrigerants',
+        activityType: 'HFC-227ea',
+        activityValue: capacityKg,
+        activityUnit: 'kg',
+        parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg, refillKg, leakRateChoice: 'default' }] },
+      });
+
+    it('names 125% of the capacity, to the kilogram decimal', () => {
+      const s = anomalyStatement(refill(10, 50_000));
+      expect(s.headline).toBe('Above the first-period ceiling');
+      expect(s.detail).toContain("An equipment line's refill of 50,000 kg is above its limit of 12.5 kg, 125% of the line's 10 kg capacity");
+    });
+
+    it('names the 500 kg cap for a line with no capacity', () => {
+      expect(anomalyStatement(refill(0, 600)).detail).toContain("refill of 600 kg is above the 500 kg per-line limit");
+    });
+
+    it('names the 500 kg cap for a large line', () => {
+      expect(anomalyStatement(refill(450, 501)).detail).toContain('above the 500 kg per-line limit');
+    });
+
+    it('is in Turkish with Turkish separators', () => {
+      const s = anomalyStatement(refill(10, 50_000), 'tr');
+      expect(s.detail).toContain('50.000 kg dolumu');
+      expect(s.detail).toContain("10 kg kapasitesinin %125'i olan 12,5 kg");
+    });
+  });
+
+  // K1 (owner, 2026-11-13): over a zero average, not a first period.
+  it('says the earlier periods average zero, not that there are none', () => {
+    const s = anomalyStatement(ceilingFlag({ anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 0 }));
+    expect(s.tone).toBe('flagged');
+    expect(s.headline).toBe('Above the plausibility ceiling');
+    expect(s.detail).toMatch(/^The earlier periods of this series average zero/);
+    expect(s.detail).toContain('1,500 MWh is above the plausibility ceiling of 1,000 MWh');
+    expect(s.detail).not.toMatch(/first period/);
+    const tr = anomalyStatement(ceilingFlag({ anomalyBaselinePriorCount: 2, anomalyBaselineTCo2e: 0 }), 'tr');
+    expect(tr.headline).toBe('Makul üst sınırın üstünde');
+    expect(tr.detail).toMatch(/^Bu serinin önceki dönemlerinin ortalaması sıfır/);
+  });
+
+  // K2: metered m³ × the record's own factor, held to the Sm³ ceiling.
+  it('states m³ × the volume correction factor against the Sm³ ceiling', () => {
+    const s = anomalyStatement(
+      ceilingFlag({ category: 'Natural Gas', activityValue: 240_000, activityUnit: 'cubic_metres', parameters: { volumeCorrectionFactor: 30 } }),
+    );
+    expect(s.detail).toContain('240,000 m³ × the volume correction factor 30 = 7,200,000 Sm³, above the plausibility ceiling of 250,000 Sm³');
+    const tr = anomalyStatement(
+      ceilingFlag({ category: 'Natural Gas', activityValue: 240_000, activityUnit: 'cubic_metres', parameters: { volumeCorrectionFactor: 30 } }),
+      'tr',
+    );
+    expect(tr.detail).toContain('240.000 m³ × hacim düzeltme katsayısı 30 = 7.200.000 Sm³');
+  });
+
+  it('still states the flag when the screen does not hold the amount', () => {
+    const s = anomalyStatement(record({ anomalyFlag: true, anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }));
+    expect(s.tone).toBe('flagged');
+    expect(s.headline).toBe('Above the first-period ceiling');
+    expect(s.detail).toMatch(/above the plausibility ceiling for this category/);
+    expect(s.detail).not.toMatch(/undefined|null|NaN/);
+  });
+
+  it('still states the flag, without figures, when today\'s table no longer shows the record above it', () => {
+    const s = anomalyStatement(ceilingFlag({ activityValue: 900 }));
+    expect(s.headline).toBe('Above the first-period ceiling');
+    expect(s.detail).not.toContain('900');
+  });
+
+  it('is in Turkish with Turkish separators', () => {
+    const s = anomalyStatement(ceilingFlag({ activityValue: 4_500_000, activityUnit: 'kWh' }), 'tr');
+    expect(s.headline).toBe('İlk dönem tavanının üstünde');
+    expect(s.detail).toContain('4.500.000 kWh');
+    expect(s.detail).toContain('1.000.000 kWh');
+    expect(s.detail).toContain('kanıt dokümanını ve birimi');
+  });
+
+  it('carries the flag mark in the review queue, not the first-period mark', () => {
+    expect(isFirstPeriodRecord(ceilingFlag())).toBe(false);
+    expect(isFirstPeriodRecord(ceilingFlag({ anomalyFlag: false }))).toBe(true);
+  });
+
+  it('reads a record scored before the ceilings, above it and unflagged, as a first-period record', () => {
+    // Spec: "An approved first-period record from before the change" keeps its
+    // verdict and is reported as a first-period record, not checked.
+    const s = anomalyStatement(ceilingFlag({ anomalyFlag: false, activityValue: 4_500_000, activityUnit: 'kWh' }));
+    expect(s.headline).toBe('First-period record');
+    expect(s.tone).toBe('not_evaluated');
+  });
+
+  it('leaves a first period below its ceiling named as a first-period record', () => {
+    const s = anomalyStatement(ceilingFlag({ anomalyFlag: false, activityValue: 900 }));
+    expect(s.headline).toBe('First-period record');
+    expect(s.tone).toBe('not_evaluated');
+  });
+});

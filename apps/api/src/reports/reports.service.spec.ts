@@ -613,6 +613,13 @@ describe('ReportsService', () => {
         anomalyBaselineTCo2e: 0,
       }),
       makeRecord({
+        id: 'rec-ceiling',
+        periodValue: 'October',
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+      makeRecord({
         id: 'rec-no-figure',
         periodValue: 'April',
         anomalyBaselinePriorCount: null,
@@ -647,6 +654,9 @@ describe('ReportsService', () => {
     expect(rows.find((r) => r.includes('May'))).toContain('Not evaluated (baseline is zero)');
     expect(rows.find((r) => r.includes('September'))).toContain('Not evaluated (baseline is zero)');
     expect(rows.find((r) => r.includes('June'))).toContain('Not evaluated (no earlier period)');
+    // BUG-R2-07 tier 3: a first period above its typo ceiling is a flag, and
+    // says what it was judged against.
+    expect(rows.find((r) => r.includes('October'))).toContain('yes (above the first-period ceiling)');
     // BUG-R2-07: a verdict on one or two periods names its basis on BOTH
     // outcomes — a blank would claim a full-history check that did not happen.
     expect(rows.find((r) => r.includes('July'))).toContain('yes (limited history: 1 period)');
@@ -1843,7 +1853,7 @@ describe('report column descriptors', () => {
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
-    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false,
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false, anomalyCeiling: false,
     anomalyBaselinePriorCount: 3,
   };
   const withdrawnRow: ReportWithdrawnRow = {
@@ -2104,7 +2114,7 @@ describe('no column can opt out of CSV neutralisation', () => {
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
-    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false,
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false, anomalyCeiling: false,
     anomalyBaselinePriorCount: 3,
   };
 

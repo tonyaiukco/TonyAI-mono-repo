@@ -31,6 +31,8 @@ import {
   type BulkUploadReportDTO,
   type BulkUploadRowIssue,
   type RecordParameters,
+  isCeilingFlag,
+  varianceBasisOf,
   isRecordActivityTypeAllowed,
   mayAuthorRecords,
   recordActivityTypesFor,
@@ -572,6 +574,7 @@ export class BulkUploadService {
       this.warnIfUnsubmittable(
         row,
         preview.verdict.anomalous,
+        varianceBasisOf(preview.verdict) === 'ceiling',
         dto.varianceReason,
         rowWarnings,
       );
@@ -595,6 +598,7 @@ export class BulkUploadService {
     this.warnIfUnsubmittable(
       row,
       created.anomalyFlag,
+      isCeilingFlag(created),
       created.varianceReason,
       rowWarnings,
     );
@@ -641,6 +645,7 @@ export class BulkUploadService {
   private warnIfUnsubmittable(
     row: number,
     anomalous: boolean,
+    aboveCeiling: boolean,
     varianceReason: string | null | undefined,
     warnings: BulkUploadRowIssue[],
   ): void {
@@ -649,8 +654,11 @@ export class BulkUploadService {
       row,
       column: 'varianceReason',
       code: 'would_block_submit',
-      message:
-        'This figure deviates from its baseline and carries no variance reason, so it cannot be submitted for review until one is added.',
+      // A first period has no baseline to deviate from: its flag is the typo
+      // ceiling (BUG-R2-07 tier 3), and the sentence must say which.
+      message: aboveCeiling
+        ? 'This figure has no usable history to compare with and is above the plausibility ceiling for its category; it carries no variance reason, so it cannot be submitted for review until one is added — check the unit and the amount first.'
+        : 'This figure deviates from its baseline and carries no variance reason, so it cannot be submitted for review until one is added.',
     });
   }
 

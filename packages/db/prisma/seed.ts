@@ -13,7 +13,9 @@ import {
   ANOMALY_THRESHOLD,
   COUNTED_STATUSES,
   computeAnomalyVerdict,
+  withFirstPeriodCeiling,
   type AnomalyVerdict,
+  type CeilingInput,
   CALCULATION_GAS,
   MONTH_NAMES,
   factorActivityTypeFor,
@@ -44,9 +46,11 @@ const SEED_PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI-CI!2026';
 /** The verdict the API would store for a record written after `written` (its
  *  series so far, oldest first) — the contract's own rule, not a copy of it, so
  *  neither loop can drift from the other or from the gate. Since 2026-11-11 one
- *  or two earlier periods are judged too, on limited history (BUG-R2-07). */
-function seedVerdict(tCo2e: number, written: number[]): AnomalyVerdict {
-  return computeAnomalyVerdict(tCo2e, [...written].reverse());
+ *  or two earlier periods are judged too, on limited history (BUG-R2-07); since
+ *  2026-11-13 a first period is held to its typo ceiling (`amount`, the
+ *  record's own stored fields). */
+function seedVerdict(tCo2e: number, written: number[], amount: CeilingInput): AnomalyVerdict {
+  return withFirstPeriodCeiling(computeAnomalyVerdict(tCo2e, [...written].reverse()), amount);
 }
 
 // The seed writes organisations, profiles, grants and reference data, which
@@ -888,7 +892,12 @@ const LOCATION_ACTIVITY = [
       const kgCo2e = activityValue * factor.factorValue;
       const tCo2e = kgCo2e / 1000;
       const isAnomaly = spec.anomaly?.month === month;
-      const verdict = seedVerdict(tCo2e, writtenTCo2e);
+      const verdict = seedVerdict(tCo2e, writtenTCo2e, {
+        category: spec.category,
+        activityType: seedActivityType(spec.category),
+        activityValue,
+        activityUnit: spec.unit,
+      });
       const baselineTCo2e = verdict.baseline;
       // The staged flag must be the one the rule gives, in BOTH directions. A
       // staged anomaly the rule would not raise ships a row no code path can
@@ -900,7 +909,9 @@ const LOCATION_ACTIVITY = [
       if (isAnomaly !== verdict.anomalous) {
         const judged =
           baselineTCo2e === null
-            ? `has no earlier period to be judged against`
+            ? verdict.anomalous
+              ? `is above its first-period typo ceiling`
+              : `has no earlier period to be judged against`
             : `is ${isAnomaly ? 'within' : 'more than'} ${ANOMALY_THRESHOLD * 100}% ` +
               `${isAnomaly ? 'of' : 'from'} its baseline (${baselineTCo2e.toFixed(3)} tCO2e ` +
               `over ${verdict.priorCount} period(s))`;
@@ -989,7 +1000,12 @@ const LOCATION_ACTIVITY = [
         factorUnit: factor.factorUnit, methodology: factor.methodology, source: factor.source, version: factor.release.edition,
         ...snapshotProvenance(factor, LOCATION_YEAR),
       };
-      const siteVerdict = seedVerdict(kgCo2e / 1000, siteWrittenTCo2e);
+      const siteVerdict = seedVerdict(kgCo2e / 1000, siteWrittenTCo2e, {
+        category: spec.category,
+        activityType: seedActivityType(spec.category),
+        activityValue,
+        activityUnit: spec.unit,
+      });
       // Written unflagged below, so the rule must agree (see the company loop).
       if (siteVerdict.anomalous) {
         throw new Error(

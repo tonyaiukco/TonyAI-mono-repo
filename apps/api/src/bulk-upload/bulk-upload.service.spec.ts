@@ -843,6 +843,84 @@ describe('BulkUploadService — warnings', () => {
     ).toMatchObject({ row: 2, column: 'varianceReason' });
   });
 
+  it('names the first-period ceiling when the row has no history (BUG-R2-07 tier 3)', async () => {
+    // A first period has no baseline to deviate from; "deviates from its
+    // baseline" would send the user looking for a history that is not there.
+    const { records, service } = build();
+    records.previewCreate.mockResolvedValue({
+      subsidiaryId: SUB_1,
+      locationId: null,
+      periodValue: 'January',
+      calculation: SNAPSHOT,
+      scope: 2,
+      verdict: { anomalous: true, priorCount: 0, baseline: null },
+    });
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    const warning = report.warnings.find((w) => w.code === 'would_block_submit');
+    expect(warning).toMatchObject({ row: 2, column: 'varianceReason' });
+    expect(warning?.message).toMatch(/no usable history to compare with and is above the plausibility ceiling/);
+    expect(warning?.message).not.toMatch(/baseline/);
+  });
+
+  it('keeps the history wording for a history flag', async () => {
+    const { records, service } = build();
+    records.previewCreate.mockResolvedValue({
+      subsidiaryId: SUB_1,
+      locationId: null,
+      periodValue: 'January',
+      calculation: SNAPSHOT,
+      scope: 2,
+      verdict: { anomalous: true, priorCount: 1, baseline: 0.1 },
+    });
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(report.warnings.find((w) => w.code === 'would_block_submit')?.message).toMatch(
+      /deviates from its baseline/,
+    );
+  });
+
+  it('names the ceiling on an applied import too, from the stored flag', async () => {
+    const { records, service } = build();
+    records.create.mockResolvedValueOnce({
+      id: 'rec-big',
+      calculation: SNAPSHOT,
+      anomalyFlag: true,
+      anomalyBaselinePriorCount: 0,
+      anomalyBaselineTCo2e: null,
+      periodValue: 'January',
+      varianceReason: null,
+    });
+
+    const report = await service.import(dataEntry(), csvFile([row()]), NOTHING);
+
+    expect(report.warnings.find((w) => w.code === 'would_block_submit')?.message).toMatch(
+      /plausibility ceiling/,
+    );
+  });
+
+  it('stays quiet about a ceiling flag the row explains', async () => {
+    const { records, service } = build();
+    records.previewCreate.mockResolvedValue({
+      subsidiaryId: SUB_1,
+      locationId: null,
+      periodValue: 'January',
+      calculation: SNAPSHOT,
+      scope: 2,
+      verdict: { anomalous: true, priorCount: 0, baseline: null },
+    });
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ varianceReason: 'New plant; meter read checked' })]),
+      DRY,
+    );
+
+    expect(report.warnings.find((w) => w.code === 'would_block_submit')).toBeUndefined();
+  });
+
   it('stays quiet when the anomalous row explains itself', async () => {
     const { records, service } = build();
     records.previewCreate.mockResolvedValue({

@@ -68,6 +68,7 @@ import {
   buildPools,
   exitCodeFor,
   findStale,
+  describeVerdict,
   indexRecord,
   isLoopback,
   lockKey,
@@ -114,12 +115,7 @@ if (allowRemoteHost && host !== allowRemoteHost) {
 
 const prisma = new PrismaClient();
 
-const describe = (v) =>
-  v.priorCount === null
-    ? 'not evaluated (no figure)'
-    : v.baseline === null
-      ? `not evaluated (${v.priorCount} priors)`
-      : `${v.anomalous ? 'ANOMALOUS' : 'clean'} vs ${v.baseline.toFixed(6)} over ${v.priorCount} priors`;
+const describe = (v) => describeVerdict(v);
 
 async function main() {
   const target = url.replace(/:\/\/[^@]*@/, '://***@');
@@ -137,6 +133,10 @@ async function main() {
       locationId: true,
       category: true,
       activityType: true,
+      // The first-period typo ceiling judges the stored amount (2026-11-13).
+      activityValue: true,
+      activityUnit: true,
+      parameters: true,
       reportingPeriod: true,
       reportingYear: true,
       periodValue: true,
@@ -167,7 +167,7 @@ async function main() {
 
   // A verdict scored before the short-history check and committed since is
   // kept as it is, and is not drift (see `keepsLegacyVerdict`).
-  const { stale, keptLegacy } = findStale(scoreable, pools, lockedPeriods);
+  const { stale, keptLegacy, keptPreCeiling } = findStale(scoreable, pools, lockedPeriods);
 
   console.log(
     `Checked ${scoreable.length} record(s)` +
@@ -180,6 +180,12 @@ async function main() {
     console.log(
       `${keptLegacy} committed record(s) were scored before the short-history check ` +
         `(2026-11-11) and keep that verdict: not re-scored, not drift.`,
+    );
+  }
+  if (keptPreCeiling > 0) {
+    console.log(
+      `${keptPreCeiling} committed first-period record(s) above their typo ceiling were scored ` +
+        `before the ceilings existed (2026-11-13) and keep that verdict: not re-scored, not drift.`,
     );
   }
   if (stale.length === 0) {

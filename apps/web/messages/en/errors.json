@@ -152,6 +152,11 @@
     "bulk_workbook_first_sheet_not_worksheet": "The workbook's first sheet is not a worksheet. Move the sheet with the records to the front.",
     "bulk_workbook_too_large": "The workbook is larger than {limitMb} MB once unpacked. Remove unused formatting, or split it into smaller files."
   },
+  "variants": {
+    "variance_reason_required": {
+      "ceiling": "This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting."
+    }
+  },
   "bulkOutcomes": {
     "imported": "{count} imported",
     "refused": "{count} refused",

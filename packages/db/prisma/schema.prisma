@@ -336,13 +336,16 @@ model ActivityRecord {
   //            facts, and a column that said 0 for both forced every non-
   //            TypeScript reader to re-implement isCalculated() to tell them
   //            apart -- three copies of that predicate already exist.
-  //   0     -- no earlier period: the rule did not run.
+  //   0     -- no earlier period: the history rule did not run. Unflagged,
+  //            not evaluated; FLAGGED, a first-period record above its typo
+  //            ceiling (Decisions 2026-11-12), judged against the ceiling.
   //   1..2  -- evaluated on limited history; `anomalyBaselineTCo2e` is the
   //            average of those periods. A NULL average beside this count is
   //            a verdict written before 2026-11-11, when such a window was
   //            not evaluated; it is kept, not re-scored.
   //   3     -- evaluated on a full window.
-  // An average of 0 yields no ratio, at any count: not evaluated.
+  // An average of 0 yields no ratio, at any count: history cannot judge. Unflagged,
+  // not evaluated; FLAGGED, the typo ceiling judged it (since 2026-11-13).
   //
   // Named `anomalyBaseline*` and not `baseline*`: `Target.baselineTCo2e` in
   // this same schema is a reduction target's baseline-year emissions, an

@@ -38,6 +38,7 @@ import {
   SUBMIT_ROLE_REFUSAL,
   SubmitRoleRefusedError,
   VARIANCE_REFUSAL,
+  CEILING_VARIANCE_REFUSAL,
   VarianceReasonRequiredError,
   ActivityTypeSlotConflictError,
   SLOT_HOLDS_UNTYPED_MESSAGE,
@@ -3337,6 +3338,212 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     const dto = await service.submit(dataEntry(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
+  });
+});
+
+describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3)', () => {
+  // The first period of a series has no history; its typo ceiling judges it
+  // (Decisions 2026-11-12). calc.compute() returns 19.8 tCO₂e whatever the
+  // amount, so these cases turn on the AMOUNT, not on the figure.
+  const BIG = { activityValue: 4_500_000, activityUnit: 'kWh' }; // ceiling 1,000,000 kWh
+  const priorAnnual = (reportingYear: number, tCo2e: number) =>
+    makeRecord({
+      reportingYear,
+      status: ActivityRecordStatus.approved,
+      calculation: { tCo2e, factorId: 'f-1' },
+    });
+  const draft = (over = {}) =>
+    makeRecord({ id: 'rec-c', status: ActivityRecordStatus.draft, varianceReason: null, ...over });
+
+  it('stores a first-period record above its ceiling as flagged, count 0, no average', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    const dto = await service.create(dataEntry(), { ...CREATE_DTO, ...BIG });
+
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(true);
+    expect(data.anomalyBaselinePriorCount).toBe(0);
+    expect(data.anomalyBaselineTCo2e).toBeNull();
+    expect(dto.anomalyFlag).toBe(true);
+  });
+
+  it('judges the canonical unit: 1,200 MWh is above, 900 MWh is not', async () => {
+    for (const [activityValue, flagged] of [[1_200, true], [900, false]] as const) {
+      const { prisma, service } = build(2);
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.activityRecord.findMany.mockResolvedValue([]);
+      prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+        makeRecord({ ...data, id: 'rec-new' }),
+      );
+      await service.create(dataEntry(), { ...CREATE_DTO, activityValue, activityUnit: 'mwh' });
+      expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(flagged);
+    }
+  });
+
+  it('refuses submit with no reason, naming the ceiling basis — nothing is written', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft(BIG));
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+
+    const refusal = await service.submit(dataEntry(), 'rec-c').catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(VarianceReasonRequiredError);
+    expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
+      code: 'variance_reason_required',
+      message: CEILING_VARIANCE_REFUSAL,
+      params: { basis: 'ceiling' },
+    });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('submits it once a reason is present, storing the ceiling flag', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft({ ...BIG, varianceReason: 'New plant, metered' }));
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
+
+    const dto = await service.submit(dataEntry(), 'rec-c');
+
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    const { data } = prisma.activityRecord.update.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(true);
+    expect(data.anomalyBaselinePriorCount).toBe(0);
+    expect(data.anomalyBaselineTCo2e).toBeNull();
+  });
+
+  it('a history flag\'s refusal names the history basis', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 10)]);
+
+    const refusal = await service.submit(dataEntry(), 'rec-c').catch((e: unknown) => e);
+    expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
+      message: VARIANCE_REFUSAL,
+      params: { basis: 'history' },
+    });
+  });
+
+  it('an update that lowers the amount below the ceiling clears the flag', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      draft({ ...BIG, anomalyFlag: true, anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
+
+    await service.update(dataEntry(), 'rec-c', { activityValue: 450_000 } as never);
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
+  });
+
+  it('a draft saved before the ceiling meets it at its next save', async () => {
+    // Stored first-period and unflagged (as the old rule wrote it), above the
+    // ceiling: the next save re-scores it and flags it (spec: "A draft meets
+    // the ceiling at its next save").
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      draft({ ...BIG, anomalyFlag: false, anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
+
+    await service.update(dataEntry(), 'rec-c', { varianceReason: null } as never);
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
+      anomalyFlag: true,
+      anomalyBaselinePriorCount: 0,
+      anomalyBaselineTCo2e: null,
+    });
+  });
+
+  it('never judges a record with an earlier period by the ceiling', async () => {
+    // One prior of 19.8 tCO₂e: the figure is in line with history, however
+    // large the amount.
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft(BIG));
+    prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 19.8)]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
+
+    const dto = await service.submit(dataEntry(), 'rec-c');
+
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
+      anomalyFlag: false,
+      anomalyBaselinePriorCount: 1,
+    });
+  });
+
+  it('applies the ceiling over a zero average too (owner, 2026-11-13, K1)', async () => {
+    // One earlier period of 0 tCO₂e: no ratio can be taken, so history cannot
+    // judge — and a January of 0 must not let a typo through in February.
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft(BIG));
+    prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
+
+    const refusal = await service.submit(dataEntry(), 'rec-c').catch((e: unknown) => e);
+    expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
+      code: 'variance_reason_required',
+      params: { basis: 'ceiling' },
+    });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('stores a zero-average ceiling flag with the count and the zero average history gave', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft({ ...BIG, varianceReason: 'New plant, metered' }));
+    prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
+
+    await service.submit(dataEntry(), 'rec-c');
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
+      anomalyFlag: true,
+      anomalyBaselinePriorCount: 1,
+      anomalyBaselineTCo2e: 0,
+    });
+  });
+
+  it('leaves a zero average below the ceiling unflagged and not checked', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
+
+    const dto = await service.submit(dataEntry(), 'rec-c');
+
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
+      anomalyFlag: false,
+      anomalyBaselinePriorCount: 1,
+      anomalyBaselineTCo2e: 0,
+    });
+  });
+
+  it('approve does not check a ceiling flag', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-a',
+        status: ActivityRecordStatus.submitted,
+        ...BIG,
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+        varianceReason: null,
+      }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-a', status: data.status }),
+    );
+
+    const dto = await service.approve(superAdmin(), 'rec-a');
+    expect(dto.status).toBe(ActivityRecordStatus.approved);
   });
 });
 

@@ -1014,6 +1014,40 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(cell.notEvaluatedRecordCount).toBe(0);
   });
 
+  it('turns the cell amber for a first-period ceiling flag, and does not count it as not checked', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'January',
+        status: ActivityRecordStatus.submitted,
+        anomalyFlag: true,
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+      // A first period below its ceiling: still not checked.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'February',
+        status: ActivityRecordStatus.submitted,
+        anomalyFlag: false,
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    expect(cell.anomaly).toBe(true);
+    expect(cell.notEvaluatedRecordCount).toBe(1);
+  });
+
   it('returns an empty matrix for an empty accessible set without hitting the DB', async () => {
     const user = dataEntry({ accessibleSubsidiaryIds: [] });
 

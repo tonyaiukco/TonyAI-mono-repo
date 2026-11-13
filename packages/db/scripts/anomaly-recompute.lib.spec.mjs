@@ -9,6 +9,8 @@ import {
   indexRecord,
   isLoopback,
   keepsLegacyVerdict,
+  keepsPreCeilingVerdict,
+  describeVerdict,
   lockKey,
   parseArgs,
   parseHost,
@@ -24,6 +26,10 @@ const rec = (over = {}) => ({
   subsidiaryId: 'sub-1',
   locationId: null,
   category: 'Electricity',
+  activityType: null,
+  activityValue: 45_000,
+  activityUnit: 'kWh',
+  parameters: null,
   reportingPeriod: 'monthly',
   reportingYear: 2026,
   periodValue: 'January',
@@ -308,6 +314,146 @@ describe('verdicts scored before the short-history check', () => {
     // and no average is corruption or a direct write, and must stay drift.
     expect(keepsLegacyVerdict(legacy({ status: 'approved', anomalyFlag: true }))).toBe(false);
     expect(keepsLegacyVerdict(legacy({ status: 'submitted', anomalyFlag: true }))).toBe(false);
+  });
+});
+
+// BUG-R2-07 tier 3 (2026-11-13): a first period is judged by its typo ceiling.
+describe('the first-period typo ceiling', () => {
+  const BIG = { activityValue: 4_500_000 }; // Electricity ceiling: 1,000,000 kWh
+  const first = (over) =>
+    rec({ id: 'jan', anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null, ...over });
+  const runAlone = (row) => {
+    const indexed = [indexRecord(row)];
+    return findStale(indexed, buildPools(indexed), new Set());
+  };
+
+  it('flags a first period above its ceiling, as the API does', () => {
+    expect(freshVerdict(indexRecord(first(BIG)), new Map())).toEqual({
+      anomalous: true,
+      priorCount: 0,
+      baseline: null,
+    });
+  });
+
+  it('leaves a first period below its ceiling unflagged', () => {
+    expect(freshVerdict(indexRecord(first()), new Map()).anomalous).toBe(false);
+  });
+
+  it('judges a refrigerant record line by line', () => {
+    const lines = (...c) => ({
+      equipment: c.map((capacityKg) => ({ equipmentType: 'chiller', capacityKg, refillKg: 0, leakRateChoice: 'default' })),
+    });
+    const fridge = (parameters) =>
+      first({ category: 'Refrigerants', activityType: 'R-410A', activityUnit: 'kg', activityValue: 770, parameters });
+    expect(freshVerdict(indexRecord(fridge(lines(120, 650))), new Map()).anomalous).toBe(true);
+    expect(freshVerdict(indexRecord(fridge(lines(300, 300))), new Map()).anomalous).toBe(false);
+  });
+
+  // Owner review, 2026-11-13 (P2): a broken stored average beside a count of 0
+  // is not a verdict any rule wrote, so it is drift — not a kept one.
+  it('does not keep a first period whose stored average is broken', () => {
+    const { stale, keptPreCeiling } = runAlone(
+      first({ ...BIG, status: 'approved', anomalyBaselineTCo2e: 99 }),
+    );
+    expect(keptPreCeiling).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0].disposition).toBe('terminal_status');
+  });
+
+  it('names a ceiling flag in its printout, so a gained flag is visible (owner review P2)', () => {
+    expect(describeVerdict({ anomalous: false, priorCount: 0, baseline: null })).toBe('not evaluated (no earlier period)');
+    expect(describeVerdict({ anomalous: true, priorCount: 0, baseline: null })).toBe(
+      'ANOMALOUS — above the typo ceiling (no earlier period)',
+    );
+    expect(describeVerdict({ anomalous: true, priorCount: 1, baseline: 0 })).toBe(
+      'ANOMALOUS — above the typo ceiling (1 priors averaging 0)',
+    );
+    expect(describeVerdict({ anomalous: true, priorCount: 2, baseline: 10 })).toMatch(/^ANOMALOUS vs 10/);
+  });
+
+  // K1 (owner, 2026-11-13): over a zero average the ceiling judges too.
+  describe('over a zero average', () => {
+    const zeroPrior = rec({
+      id: 'jan0',
+      periodValue: 'January',
+      status: 'approved',
+      calculation: { factorId: 'f-1', tCo2e: 0 },
+      anomalyBaselinePriorCount: 0,
+    });
+    const feb = (over) =>
+      rec({ id: 'feb', periodValue: 'February', ...BIG, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 0, ...over });
+    const run2 = (row) => {
+      const indexed = [zeroPrior, row].map(indexRecord);
+      return findStale(indexed, buildPools(indexed), new Set());
+    };
+    it('flags a draft above its ceiling', () => {
+      const { stale } = run2(feb({ status: 'draft' }));
+      expect(stale[0]).toMatchObject({ disposition: 'rewritable', fresh: { anomalous: true, priorCount: 1, baseline: 0 } });
+    });
+    it('keeps an approved one scored before the ceilings: not drift', () => {
+      const { stale, keptPreCeiling } = run2(feb({ status: 'approved' }));
+      expect(stale).toEqual([]);
+      expect(keptPreCeiling).toBe(1);
+    });
+    it('agrees with a ceiling flag stored right', () => {
+      expect(run2(feb({ status: 'approved', anomalyFlag: true })).stale).toEqual([]);
+    });
+  });
+
+  it('re-scores a draft refill breach to a flag', () => {
+    const row = first({
+      category: 'Refrigerants',
+      activityType: 'HFC-227ea',
+      activityUnit: 'kg',
+      activityValue: 10,
+      parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 10, refillKg: 50_000, leakRateChoice: 'default' }] },
+    });
+    const { stale } = runAlone(row);
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({ disposition: 'rewritable', fresh: { anomalous: true, priorCount: 0 } });
+  });
+
+  it.each(['submitted', 'under_review', 'approved', 'locked'])(
+    'keeps a %s first period stored unflagged before the ceilings existed: not drift',
+    (status) => {
+      const row = first({ ...BIG, status });
+      expect(keepsPreCeilingVerdict(row)).toBe(true);
+      const { stale, keptPreCeiling } = runAlone(row);
+      expect(stale).toEqual([]);
+      expect(keptPreCeiling).toBe(1);
+    },
+  );
+
+  it.each(['draft', 'rejected'])('re-scores a %s first period above its ceiling', (status) => {
+    const { stale, keptPreCeiling } = runAlone(first({ ...BIG, status }));
+    expect(keptPreCeiling).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({
+      disposition: 'rewritable',
+      fresh: { anomalous: true, priorCount: 0, baseline: null },
+    });
+  });
+
+  it('agrees with a ceiling flag stored correctly', () => {
+    const { stale } = runAlone(first({ ...BIG, status: 'approved', anomalyFlag: true }));
+    expect(stale).toEqual([]);
+  });
+
+  it('reports a flag with no earlier period whose amount is not above its ceiling as drift', () => {
+    const { stale, keptPreCeiling } = runAlone(first({ status: 'approved', anomalyFlag: true }));
+    expect(keptPreCeiling).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0].disposition).toBe('terminal_status');
+  });
+
+  it('never hands a record in review a ceiling flag it has no reason for', () => {
+    // A submitted draft whose verdict was not stored as first-period (count
+    // 1, its pool since voided away) would gain a ceiling flag: refused.
+    const { stale } = runAlone(
+      first({ ...BIG, status: 'submitted', anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 10 }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0].disposition).toBe('unexplained_flag');
   });
 });
 

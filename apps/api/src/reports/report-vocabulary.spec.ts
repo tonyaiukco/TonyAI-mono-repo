@@ -95,7 +95,7 @@ describe('the Turkish catalogue covers every word a live PDF or workbook prints'
 // One table for three writers — the CSV cell must be the English vocabulary's
 // cell word for word, or one request yields two files that disagree.
 describe('the anomaly column, state by state', () => {
-  const base = { anomalyFlag: false, anomalyEvaluated: false, anomalyBaselinePriorCount: null, anomalyLegacy: false };
+  const base = { anomalyFlag: false, anomalyEvaluated: false, anomalyBaselinePriorCount: null, anomalyLegacy: false, anomalyCeiling: false };
   it.each([
     ['a full-history flag', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 3 },
       'yes', 'evet'],
@@ -103,6 +103,14 @@ describe('the anomaly column, state by state', () => {
       'yes (limited history: 1 period)', 'evet (kısıtlı geçmiş: 1 dönem)'],
     ['a flag on two periods', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 2 },
       'yes (limited history: 2 periods)', 'evet (kısıtlı geçmiş: 2 dönem)'],
+    // BUG-R2-07 tier 3: a flag with no earlier period is a first-period record
+    // above its typo ceiling — never "limited history: 0 periods".
+    ['a first-period ceiling flag', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 0, anomalyCeiling: true },
+      'yes (above the first-period ceiling)', 'evet (ilk dönem tavanının üstünde)'],
+    // K1 (owner, 2026-11-13): a ceiling flag over earlier periods averaging zero.
+    ['a ceiling flag over a zero average', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 1, anomalyCeiling: true },
+      'yes (above the plausibility ceiling; earlier periods average zero)',
+      'evet (makul üst sınırın üstünde; önceki dönemlerin ortalaması sıfır)'],
     ['clean on a full history', { anomalyEvaluated: true, anomalyBaselinePriorCount: 3 },
       '', ''],
     ['clean on one period', { anomalyEvaluated: true, anomalyBaselinePriorCount: 1 },
