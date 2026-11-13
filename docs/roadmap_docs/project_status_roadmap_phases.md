@@ -55,6 +55,7 @@
     - `architect`: two P1s fixed. Bulk submit refuses rejected records, and there is no record preview route.
     - `data-factors`: one P1 fixed. The CO2 edition must carry the package's leak rates.
     - The P2s are fixed or decided by the owner: the erratum over a supplement. The 4% and 2% rates for CO2 go to external review.
+    - The owner's review round 1 found three P2s, all fixed: Submit takes only "clean" rows, so an unsaved newer value never lets the stored one through; a gas change keeps today's identity band and its file keep or remove choice; a row whose figure is out of date after an erratum is marked and re-saved unchanged (K11).
   - **Next:** `uat2-review-shows-gas`, a pre-pilot change. Change 5's second hosted query is recorded in its entry (open 0, committed 1).
 - **UAT ROUND 2 TEAM DECISIONS, CHANGE 5 OF 6 (K4-3a, BUG-R2-07 TIER 3), MERGED AS [PR #322](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/322) (merge `42457e9`), DEPLOYED (`ci56-1`), ARCHIVED as `openspec/changes/archive/2026-11-13-uat2-anomaly-typo-ceiling/`, which modifies 3 requirements in `anomaly-check` and adds 10 (Claude Code; OpenSpec `uat2-anomaly-typo-ceiling`, branch `feat/uat2-anomaly-typo-ceiling`; 2026-11-13; Decisions 2026-11-12 and 2026-11-13).**
   - **Shipped:**

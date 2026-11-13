@@ -53,3 +53,10 @@ This change is design only. No task touches code, a migration, the API contract 
 - Commit and push only on the owner's word. The PR is docs-only, so the QA deploy skips it (non-image merge), and the owner merges.
 - Archive the change (`/opsx:archive`; no specs to sync). It can be archived in the same PR before merge, because nothing deploys. If so, the LP7-07 card's link points at the archived path, `openspec/changes/archive/<date>-uat2-refrigerant-multigas-design/design.md`.
 - Next: `/opsx:propose uat2-review-shows-gas` from a fresh branch off `origin/main`.
+
+## 4. Owner review round 1 (2026-11-13)
+
+- [x] 4.1 P2-1: a row whose newer input failed to save could be submitted with its old stored value. D3 now defines a "clean" row: its on-screen input is stored, its save did not fail and was not skipped, its figure is not out of date, and no upload failed. D7's Submit takes only clean rows and names the rest with their reason. D6 marks a row whose upload failed. A draft requirement and a Risk are added. Verify: D3, D6, D7 and the draft requirements agree on "clean".
+- [x] 4.2 P2-2: a gas change lost today's identity band and its file keep or remove choice. D3's table and D5 now treat a gas change as an identity change, with today's Edit-mode band per row (`activity-data-entry` "Edit mode states what happens to attached files": keep or remove for each file, kept by default). A draft requirement is added. Verify: no D3 row says a gas change shows no band.
+- [x] 4.3 P2-3: after an erratum, an unchanged draft is never re-saved, so K11's `calculation_stale` could not be cleared. On load, D3 previews each editable row from its stored inputs and marks a row whose snapshot differs as "figure out of date". Save re-saves it with unchanged inputs; the update always recomputes (`activity-records.service.ts` `update` → `computeSnapshot`). A `calculation_stale` at submit marks the row the same way. D10's Risk now points to this. Verify: the D10 risk line and D3 agree.
+- [x] 4.4 Re-validate with `openspec validate uat2-refrigerant-multigas-design --strict` and verify it passes.
