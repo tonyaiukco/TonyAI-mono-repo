@@ -31,7 +31,7 @@ Two code paths create an organisation, and neither creates a subsidiary:
 
 **Goals:**
 - One writer for the default subsidiary, shared by both paths and inside their existing transactions.
-- No schema, migration, contract or web change.
+- No schema or migration change. The contract and web changes are limited to D5's name bounds: one shared constant, the registration DTO's minimum, and the form's check with its TR/EN copy.
 
 **Non-Goals:**
 - **Backfill** of existing organisations (owner, 2026-11-12).
@@ -52,7 +52,7 @@ Alternatives considered:
 
 ### D2. A small trusted writer in the subsidiaries module
 
-`apps/api/src/subsidiaries/default-subsidiary.ts` exports `createDefaultSubsidiary(tx, audit, { organisationId, legalName, tradingName?, sector?, geographyCode, source })`, where `source` is typed `{ source: string; operator?: string }` so that no caller can put a name in it. It returns the id and:
+`apps/api/src/subsidiaries/default-subsidiary.ts` exports `createDefaultSubsidiary(tx, audit, { organisationId, legalName, tradingName?, sector?, geographyCode, source })`, where `source` is typed `{ source: string; operator?: string }`. The writer copies those two fields into the diff one by one, never spreading the object, so an extra field a caller passes cannot carry a name into the audit row. It returns the id and:
 
 1. inserts the row with explicit values: `reportingStatus: 'pending'`, `includedScopes: [1, 2]`, `trackingGranularity: 'subsidiary'`. The values are written out rather than left to database defaults, so a change of default cannot silently change the default subsidiary.
 2. writes `audit.recordSystem({ action: 'create', entity: 'subsidiary', entityId, diff })` with the same `tx`.
@@ -76,7 +76,7 @@ Alternatives considered:
 
 `parseArgs` already upper-cases `--geography-code`. It now refuses a code outside `GEOGRAPHY_CODES` (from `@tonyai/shared-types`) with a `UsageError` listing them. The check applies only to provisioning a new organisation, since `--organisation-id` takes no geography.
 
-A subsidiary's geography is guarded by the same list in its DTO, and by a trigger after insert. Refusing at the CLI is earlier and clearer than creating an organisation whose default subsidiary could not legally exist.
+A subsidiary's geography is guarded by the same list in its DTO. The database guards only a later change of geography (`subsidiaries_geography_writer`, BEFORE UPDATE); an INSERT is not guarded. So on the operator path `parseArgs` is the only gate for the geography and the name bounds (D5): `OnboardingOperator.provision` trusts its input, and the CLI is its only caller. Refusing at the CLI is earlier and clearer than creating an organisation whose default subsidiary could not legally exist.
 
 Alternative considered: skip the subsidiary for an unknown geography. That would leave two behaviours to explain and test, for no pilot need.
 

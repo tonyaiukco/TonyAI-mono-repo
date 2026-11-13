@@ -10,7 +10,6 @@ import { AccessAdminService, lockTenantAdmin } from '../../src/auth/access-admin
 import type { RequestUser } from '../../src/auth/auth.types';
 import { MailService, type MailConfig, type MailTransport } from '../../src/mail/mail.service';
 import { OnboardingOperator, OperatorRefusal } from '../../src/onboarding/onboarding-operator';
-import { parseArgs } from '../../src/onboarding/onboarding.cli';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { AuthAdminError, AuthAdminService } from '../../src/users/auth-admin.service';
 import { AuthSyncService } from '../../src/users/auth-sync.service';
@@ -1004,15 +1003,6 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     expect(await owner.subsidiary.count({ where: { legalName } })).toBe(0);
     expect(await owner.profile.count({ where: { email } })).toBe(0);
     expect(deliver).not.toHaveBeenCalled();
-  });
-
-  it('refuses a geography no subsidiary can have before anything is written (K1)', async () => {
-    const legalName = `${orgName()} geography`;
-    expect(() => parseArgs([
-      'provision', '--operator=ops@tonyai.test', `--legal-name=${legalName}`, '--country=DE', '--geography-code=DE',
-      `--admin-email=${address()}`, '--admin-name=Nobody', '--language=en', '--apply',
-    ])).toThrow(/--geography-code must be one of UK, TR, EU/);
-    expect(await owner.organisation.count({ where: { legalName } })).toBe(0);
   });
 
   it('provisions an organisation and its first administrator, idempotently; then offboards it', async () => {

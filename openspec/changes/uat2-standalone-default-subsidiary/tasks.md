@@ -26,7 +26,7 @@
   - the audit rows become `[create organisation, create subsidiary, invite invitation]`;
   - the subsidiary carries the trading name and sector given;
   - adding an administrator by `--organisation-id` leaves the subsidiary count unchanged;
-  - an unsupported geography writes nothing.
+  - (an unsupported geography is refused in `parseArgs`, before any connection, and is proven in `onboarding.cli.spec.ts`; an integration test of it would run nothing that writes, so none is kept).
 
   Verify that `pnpm --filter @tonyai/api test:int onboarding` passes.
 

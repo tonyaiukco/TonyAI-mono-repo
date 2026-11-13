@@ -23,9 +23,10 @@ export interface DefaultSubsidiaryInput {
   /** The organisation's geography — one of `GEOGRAPHY_CODES`; callers check it. */
   geographyCode: string;
   /**
-   * The caller's audit origin, spread first into the row's diff: registration's
-   * `{ source: 'auth:registration' }` or the operator's `operatorDiff(...)`.
-   * Typed, not free-form, so no caller can carry a name into the row (D20).
+   * The caller's audit origin: registration's `{ source: 'auth:registration' }`
+   * or the operator's `{ source: 'onboarding:provision', operator }`. Only these
+   * two fields are copied into the row — named one by one, never spread — so
+   * nothing else a caller passes can carry a name into the audit log (D20).
    */
   source: { source: string; operator?: string };
 }
@@ -64,7 +65,8 @@ export async function createDefaultSubsidiary(
       entity: 'subsidiary',
       entityId: created.id,
       diff: {
-        ...input.source,
+        source: input.source.source,
+        ...(input.source.operator !== undefined ? { operator: input.source.operator } : {}),
         default: true,
         geographyCode: input.geographyCode,
         includedScopes: [...DEFAULT_SUBSIDIARY_SETTINGS.includedScopes],

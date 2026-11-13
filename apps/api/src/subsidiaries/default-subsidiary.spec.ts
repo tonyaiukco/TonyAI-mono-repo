@@ -97,6 +97,17 @@ describe('createDefaultSubsidiary (UAT round 2, K1)', () => {
     for (const secret of ['Örnek', 'Food']) expect(text).not.toContain(secret);
   });
 
+  it('copies only the source and the operator from the caller — never another field it carries (D20)', async () => {
+    const { tx, audit } = setup();
+    const leaky = { source: 'onboarding:provision', operator: 'ops@tonyai.test', legalName: 'Örnek Gıda A.Ş.' };
+    await createDefaultSubsidiary(tx as never, audit as unknown as AuditService, { ...INPUT, source: leaky });
+    const [entry] = audit.recordSystem.mock.calls[0] as unknown as [{ diff: Record<string, unknown> }];
+    expect(Object.keys(entry.diff).sort()).toEqual(
+      ['default', 'geographyCode', 'includedScopes', 'operator', 'reportingStatus', 'source', 'trackingGranularity'],
+    );
+    expect(JSON.stringify(entry)).not.toContain('Örnek');
+  });
+
   it('writes no audit row when the insert fails', async () => {
     const { tx, audit } = setup('subsidiary');
     await expect(createDefaultSubsidiary(tx as never, audit as unknown as AuditService, INPUT)).rejects.toThrow('subsidiary failed');

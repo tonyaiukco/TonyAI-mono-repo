@@ -520,6 +520,11 @@ describe('through the HTTP API — the public routes, the switch and the answers
       expect(await call('POST', quoted)).toMatchObject({ status: 400, body: { code: 'validation_failed' } });
       expect(await organisationsNamed(quoted.companyName)).toBe(0);
       expect(await profileOf(refused.email)).toBeNull();
+      // K1: the default subsidiary carries the name, and a subsidiary's needs two characters.
+      const tooShort = form({ companyName: ' X ' });
+      expect(await call('POST', tooShort)).toMatchObject({ status: 400, body: { code: 'validation_failed' } });
+      expect(await profileOf(tooShort.email)).toBeNull();
+      expect(await organisationsNamed('X')).toBe(0);
     });
 
     it('answers a new address and a known one the same 202 with no body, and the work follows the answer', async () => {
