@@ -32,7 +32,7 @@ The system SHALL refuse a registration whose code does not match the environment
 - **THEN** the system answers 429 until the quota window passes
 
 ### Requirement: Registration input is validated
-The system SHALL require a first name, a last name, a company name, a job title, an email address the authentication service accepts (an unquoted ASCII local part and ASCII domain labels) and an accepted consent, and SHALL refuse a submission that lacks any of them without creating anything. It SHALL accept an address from any email domain.
+The system SHALL require a first name, a last name, a company name of at least two characters, a job title, an email address the authentication service accepts (an unquoted ASCII local part and ASCII domain labels) and an accepted consent, and SHALL refuse a submission that lacks any of them without creating anything. It SHALL accept an address from any email domain.
 
 #### Scenario: Consent not accepted
 - **WHEN** a client submits a registration with a valid code and the consent not accepted
@@ -50,20 +50,28 @@ The system SHALL require a first name, a last name, a company name, a job title,
 - **WHEN** a client submits a valid registration with an address at a free email provider
 - **THEN** the system accepts it like any other address
 
+#### Scenario: One-character company name
+- **WHEN** a client submits a registration whose company name, trimmed, is one character
+- **THEN** the system answers with a validation error and creates nothing, and the page says so before sending
+
 ### Requirement: A valid registration creates the organisation and its first administrator
-For a valid registration with an address that has no account, the system SHALL create an organisation named by the company name with country `TR`, geography `TR` and reporting currency `TRY`, one `super_admin` profile in it holding the full name and job title, and an invitation in the language the form was submitted in — all or nothing.
+For a valid registration with an address that has no account, the system SHALL create an organisation named by the company name with country `TR`, geography `TR` and reporting currency `TRY`, its default subsidiary, one `super_admin` profile in it holding the full name and job title, and an invitation in the language the form was submitted in — all or nothing.
 
 #### Scenario: New address
 - **WHEN** a client submits a valid registration with an address that has no account
-- **THEN** one organisation, one `super_admin` profile and one invitation exist for it, and no subsidiary access grants
+- **THEN** one organisation, one subsidiary named by the company name, one `super_admin` profile and one invitation exist for it, and no subsidiary access grants
 
 #### Scenario: A failure part-way
-- **WHEN** writing any of the organisation, profile, invitation or consent record fails
+- **WHEN** writing any of the organisation, subsidiary, profile, invitation or consent record fails
 - **THEN** none of them is stored
 
 #### Scenario: Two companies with the same name
 - **WHEN** two valid registrations with different addresses give the same company name
-- **THEN** two separate organisations are created
+- **THEN** two separate organisations are created, each with its own subsidiary
+
+#### Scenario: Registration submitted again
+- **WHEN** a registration is submitted again for an address whose invitation is not accepted
+- **THEN** no organisation or subsidiary is created
 
 ### Requirement: The new administrator receives the invitation email
 After a registration is stored, the system SHALL send the address an invitation email in the registration's language whose link opens the existing invitation acceptance flow, and SHALL record the delivery outcome on the invitation. The email SHALL tell a self-registered administrator to submit the form again if the link has expired, and SHALL contain nothing the registrant typed.
@@ -142,11 +150,11 @@ The system SHALL label a placeholder KVKK notice as a placeholder on the page, a
 - **THEN** the API refuses to start and names the reason
 
 ### Requirement: Registration is audited without personal data
-The system SHALL write an audit row for the organisation, the invitation and the consent it creates, with no acting user and a source naming registration, and SHALL keep the name, address, job title and company name out of every audit row.
+The system SHALL write an audit row for the organisation, the subsidiary, the invitation and the consent it creates, with no acting user and a source naming registration, and SHALL keep the name, address, job title and company name out of every audit row.
 
 #### Scenario: Audit rows of a registration
 - **WHEN** a valid registration with a new address is stored
-- **THEN** audit rows exist for the organisation, the invitation and the consent, none containing the name, the address, the job title or the company name
+- **THEN** audit rows exist for the organisation, the subsidiary, the invitation and the consent, none containing the name, the address, the job title or the company name
 
 ### Requirement: The registration page
 The web app SHALL serve a registration page to signed-out visitors, in Turkish and English, with the fields first name, last name, company name, job title, company email and registration code, the notice text with its consent checkbox, and a confirmation after submission that tells the visitor to check their email or, if they already have an account, to sign in or reset their password.
