@@ -68,6 +68,7 @@ import {
   buildPools,
   exitCodeFor,
   findStale,
+  describeVerdict,
   indexRecord,
   isLoopback,
   lockKey,
@@ -114,12 +115,7 @@ if (allowRemoteHost && host !== allowRemoteHost) {
 
 const prisma = new PrismaClient();
 
-const describe = (v) =>
-  v.priorCount === null
-    ? 'not evaluated (no figure)'
-    : v.baseline === null
-      ? `not evaluated (${v.priorCount} priors)`
-      : `${v.anomalous ? 'ANOMALOUS' : 'clean'} vs ${v.baseline.toFixed(6)} over ${v.priorCount} priors`;
+const describe = (v) => describeVerdict(v);
 
 async function main() {
   const target = url.replace(/:\/\/[^@]*@/, '://***@');

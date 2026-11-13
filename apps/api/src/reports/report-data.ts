@@ -110,6 +110,9 @@ export interface ReportLedgerRow {
    *  that was NOT evaluated and is not re-scored (`isLegacyShortWindowVerdict`).
    *  Carried because the count alone cannot tell it from a zero average. */
   anomalyLegacy: boolean;
+  /** Flagged by the typo ceiling where history could not judge
+   *  (`isCeilingFlag`): derived once, through the contract helper. */
+  anomalyCeiling: boolean;
 }
 
 /** What the anomaly column has to say about one row — see `anomalyColumnState`. */
@@ -117,6 +120,7 @@ export type AnomalyColumnState =
   | 'flagged'
   | 'flagged_limited'
   | 'flagged_ceiling'
+  | 'flagged_ceiling_zero_average'
   | 'clean'
   | 'clean_limited'
   | 'no_figure'
@@ -140,12 +144,13 @@ export function anomalyColumnState(r: {
   anomalyEvaluated: boolean;
   anomalyBaselinePriorCount: number | null;
   anomalyLegacy: boolean;
+  anomalyCeiling: boolean;
 }): AnomalyColumnState {
   const priors = r.anomalyBaselinePriorCount;
-  // A flag with no earlier period is a first-period record above its typo
-  // ceiling (BUG-R2-07 tier 3). Named before the limited test, which would
-  // otherwise call it "limited history: 0 periods".
-  if (r.anomalyFlag && priors === 0) return 'flagged_ceiling';
+  // A typo-ceiling flag (BUG-R2-07 tier 3): a first period, or earlier periods
+  // averaging zero. Named before the limited test, which would otherwise call
+  // it "limited history: 0 periods".
+  if (r.anomalyCeiling) return priors === 0 ? 'flagged_ceiling' : 'flagged_ceiling_zero_average';
   const limited = r.anomalyEvaluated && priors !== null && priors < ANOMALY_BASELINE_PERIODS;
   if (r.anomalyFlag) return limited ? 'flagged_limited' : 'flagged';
   if (r.anomalyEvaluated) return limited ? 'clean_limited' : 'clean';

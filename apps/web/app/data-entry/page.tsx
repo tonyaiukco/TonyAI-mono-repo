@@ -124,7 +124,7 @@ import {
   mayAuthorRecords,
   MAX_PAGE_LIMIT,
   mayEditRecord,
-  isFirstPeriodCeilingFlag,
+  isCeilingFlag,
   needsEvidenceBeforeSubmit,
   offeredActivityTypes,
   PERIOD_VALUES,
@@ -1453,7 +1453,7 @@ function DataEntryPageInner() {
           t(
             !rec.anomalyFlag
               ? "editMode.saved"
-              : isFirstPeriodCeilingFlag(rec)
+              : isCeilingFlag(rec)
                 ? "editMode.savedAboveCeiling"
                 : "editMode.savedAnomalous",
           ),
@@ -1541,7 +1541,7 @@ function DataEntryPageInner() {
         // A first period has no history: its flag is the typo ceiling
         // (BUG-R2-07 tier 3), and "looks anomalous" would not say why.
         toast.error(
-          t(isFirstPeriodCeilingFlag(rec) ? "aboveCeilingBeforeSubmit" : "anomalousBeforeSubmit"),
+          t(isCeilingFlag(rec) ? "aboveCeilingBeforeSubmit" : "anomalousBeforeSubmit"),
         );
         await refreshRecords(subsidiaryId);
         return;

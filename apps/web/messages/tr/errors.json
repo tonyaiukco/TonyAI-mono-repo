@@ -154,7 +154,7 @@
   },
   "variants": {
     "variance_reason_required": {
-      "ceiling": "Bu ilk dönem değeri, kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma açıklaması ekleyin."
+      "ceiling": "Bu değerin karşılaştırılacak kullanılabilir bir geçmişi yok ve kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma gerekçesi ekleyin."
     }
   },
   "bulkOutcomes": {

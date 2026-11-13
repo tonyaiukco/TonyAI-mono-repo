@@ -72,6 +72,7 @@
   "anomalyYes": "evet",
   "anomalyYesLimited": "evet (kısıtlı geçmiş: {priors} dönem)",
   "anomalyYesCeiling": "evet (ilk dönem tavanının üstünde)",
+  "anomalyYesCeilingZeroAverage": "evet (makul üst sınırın üstünde; önceki dönemlerin ortalaması sıfır)",
   "anomalyCleanLimited": "aralık içinde (kısıtlı geçmiş: {priors} dönem)",
   "wholeCompany": "Bağlı şirketin tamamı",
   "unnamedSite": "Tesis (adı bilinmiyor)",

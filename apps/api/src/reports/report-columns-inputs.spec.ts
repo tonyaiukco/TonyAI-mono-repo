@@ -14,7 +14,7 @@ const row = (over: Partial<ReportLedgerRow> = {}): ReportLedgerRow => ({
   factorStanding: null, activityValue: 10, activityUnit: 'kg',
   calculationInputs: 'split klima: 10 kg × %10 + 0,5 kg dolum = 1,5 kg salım',
   calculationInputsCsv: 'split air conditioner: 10 kg × 10% + 0.5 kg refilled = 1.5 kg released',
-  tCo2e: 3.384, status: 'approved', evidenceCount: 0, anomalyFlag: false, anomalyEvaluated: false, anomalyBaselinePriorCount: null, anomalyLegacy: false,
+  tCo2e: 3.384, status: 'approved', evidenceCount: 0, anomalyFlag: false, anomalyEvaluated: false, anomalyBaselinePriorCount: null, anomalyLegacy: false, anomalyCeiling: false,
   ...over,
 } as ReportLedgerRow);
 

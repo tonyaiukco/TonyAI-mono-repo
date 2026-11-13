@@ -21,6 +21,7 @@ import {
   FACTOR_STATUS_RANK,
   isAnomalyEvaluated,
   isLegacyShortWindowVerdict,
+  isCeilingFlag,
   isAuthoritativeSnapshot,
   isCalculated,
   isProvenanceSnapshot,
@@ -585,6 +586,7 @@ export class ReportsService {
         anomalyEvaluated: isAnomalyEvaluated(r),
         anomalyBaselinePriorCount: r.anomalyBaselinePriorCount,
         anomalyLegacy: isLegacyShortWindowVerdict(r),
+        anomalyCeiling: isCeilingFlag(r),
       };
     };
 

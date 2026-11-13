@@ -3478,9 +3478,39 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     });
   });
 
-  it('does not fall back to the ceiling on a zero average', async () => {
+  it('applies the ceiling over a zero average too (owner, 2026-11-13, K1)', async () => {
+    // One earlier period of 0 tCO₂e: no ratio can be taken, so history cannot
+    // judge — and a January of 0 must not let a typo through in February.
     const { prisma, service } = build(2);
     prisma.activityRecord.findUnique.mockResolvedValue(draft(BIG));
+    prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
+
+    const refusal = await service.submit(dataEntry(), 'rec-c').catch((e: unknown) => e);
+    expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
+      code: 'variance_reason_required',
+      params: { basis: 'ceiling' },
+    });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('stores a zero-average ceiling flag with the count and the zero average history gave', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft({ ...BIG, varianceReason: 'New plant, metered' }));
+    prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
+
+    await service.submit(dataEntry(), 'rec-c');
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
+      anomalyFlag: true,
+      anomalyBaselinePriorCount: 1,
+      anomalyBaselineTCo2e: 0,
+    });
+  });
+
+  it('leaves a zero average below the ceiling unflagged and not checked', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
     prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
 

@@ -52,7 +52,7 @@ describe("the variance refusal names its basis (BUG-R2-07 tier 3)", () => {
   it("words a ceiling refusal as a first-period ceiling, in both languages", () => {
     const e = new ApiError("x", 400, "variance_reason_required", { basis: "ceiling" });
     expect(describe_(e, "en").title).toBe(MESSAGES.en.errors.variants.variance_reason_required.ceiling);
-    expect(describe_(e, "tr").title).toMatch(/^Bu ilk dönem değeri/);
+    expect(describe_(e, "tr").title).toMatch(/^Bu değerin karşılaştırılacak kullanılabilir bir geçmişi yok/);
     expect(describe_(e, "en").title).not.toMatch(/historical average/);
   });
 

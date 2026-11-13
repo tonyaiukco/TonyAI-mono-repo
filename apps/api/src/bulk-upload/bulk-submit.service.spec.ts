@@ -828,7 +828,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     ]);
   });
 
-  it('judges a new series by the ceiling, then by history, in period order', async () => {
+  it('sends a new series in period order, refusing January for its ceiling and sending February', async () => {
     // January is the first period: its ceiling refuses it. February is judged
     // against history — and with January refused, it is a first period too,
     // so its own ceiling applies; here it is under it and goes through.

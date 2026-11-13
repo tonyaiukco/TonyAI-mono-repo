@@ -184,8 +184,8 @@ async function main() {
     SELECT id, sub, loc, category, period_value, reporting_year, status, tco2e
     FROM verdict WHERE ${PRE_CEILING_WHERE} ORDER BY sub, category, key;`);
   console.log(
-    `\n2c. Known difference — ${preCeiling.length} first-period record(s) above their typo ceiling, ` +
-      `scored before the ceilings existed (kept, not drift)`,
+    `\n2c. Known difference — ${preCeiling.length} record(s) above their typo ceiling where history cannot judge ` +
+      `(no earlier period, or a zero average), scored before the ceilings existed (kept, not drift)`,
   );
   for (const row of preCeiling) {
     console.log(
@@ -217,7 +217,9 @@ async function main() {
         : row.legacy
           ? `NOT EVALUATED — scored before the short-history check (${row.priors} of ${BASELINE_MAX_PERIODS} priors today)`
           : Number(row.baseline) === 0
-            ? `NOT EVALUATED — ${row.priors} prior(s) averaging zero`
+            ? row.anomaly_flag && row.above_ceiling
+              ? `FLAGGED — above its typo ceiling, ${row.priors} prior(s) averaging zero`
+              : `NOT EVALUATED — ${row.priors} prior(s) averaging zero`
             : `limited history — ${row.priors} of ${BASELINE_MAX_PERIODS} priors`;
     console.log(
       `   ${row.sub} · ${entity(row)} · ${row.category} · ${period(row)} ` +

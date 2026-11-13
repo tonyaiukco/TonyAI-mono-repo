@@ -117,6 +117,14 @@ export const CEILING_ABOVE_SQL = (() => {
                                        THEN parameters->'equipment' ELSE '[]'::jsonb END) e
       ) line
     )
+    -- Metered natural gas with its own volume correction factor: m³ × factor
+    -- against the Sm³ ceiling (K2 of 2026-11-13). A nested CASE, so the cast
+    -- runs only on a number.
+    WHEN category = 'Natural Gas' AND activity_unit = 'cubic_metres'
+         AND jsonb_typeof(parameters->'volumeCorrectionFactor') = 'number' THEN CASE
+      WHEN (parameters->>'volumeCorrectionFactor')::float8 > 0
+        THEN activity_value * (parameters->>'volumeCorrectionFactor')::float8 > ${sqlNumber(FIRST_PERIOD_CEILINGS['Natural Gas'].standard_cubic_metres)}
+      ELSE activity_value > ${sqlNumber(FIRST_PERIOD_CEILINGS['Natural Gas'].cubic_metres)} END
     WHEN category = 'Mobile Combustion' AND activity_type = ${sqlText(MARINE_GAS_OIL_ACTIVITY_TYPE)} THEN CASE
       ${mgoRows.join('\n      ')}
       ELSE NULL END
@@ -182,9 +190,11 @@ scored AS (
 verdict AS (
   SELECT *, CASE
     WHEN tco2e IS NULL THEN false
-    -- A first period is judged by its typo ceiling (BUG-R2-07 tier 3).
+    -- Where history cannot judge — a first period, or earlier periods averaging
+    -- zero — the typo ceiling does (BUG-R2-07 tier 3; K1 of 2026-11-13).
     WHEN priors = 0 THEN COALESCE(above_ceiling, false)
-    WHEN priors < ${BASELINE_MIN_PERIODS} OR baseline IS NULL OR baseline = 0 THEN false
+    WHEN priors >= ${BASELINE_MIN_PERIODS} AND baseline = 0 THEN COALESCE(above_ceiling, false)
+    WHEN priors < ${BASELINE_MIN_PERIODS} OR baseline IS NULL THEN false
     ELSE abs(tco2e - baseline) / baseline > ${ANOMALY_THRESHOLD} END AS computed,
     -- What the rule STORES beside the flag: no count for a record with no
     -- figure of its own, and an average once the window holds a figure.
@@ -193,8 +203,13 @@ verdict AS (
     -- A first period stored unflagged before the ceilings existed (2026-11-13)
     -- and above its ceiling today, still with no earlier period. Kept, not
     -- re-scored — every row here is committed — and not drift.
-    (tco2e IS NOT NULL AND priors = 0 AND stored_priors = 0 AND NOT anomaly_flag
-       AND COALESCE(above_ceiling, false)) AS pre_ceiling
+    -- Only when the stored count and average are the ones history gives today
+    -- (no earlier period and NO average, or the same count and a zero
+    -- average): a broken stored average stays drift (owner review, 2026-11-13).
+    (tco2e IS NOT NULL AND NOT anomaly_flag AND COALESCE(above_ceiling, false) AND (
+       (priors = 0 AND stored_priors = 0 AND stored_baseline IS NULL)
+       OR (priors >= ${BASELINE_MIN_PERIODS} AND baseline = 0 AND stored_priors = priors AND stored_baseline = 0)
+    )) AS pre_ceiling
   FROM scored
 )`;
 

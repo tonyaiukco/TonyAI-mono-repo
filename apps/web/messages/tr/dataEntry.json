@@ -47,7 +47,7 @@
   "submitted": "İncelemeye gönderildi",
   "movedSubmitted": "{entity} birimine taşındı, incelemeye gönderildi",
   "anomalousBeforeSubmit": "Bu değer olağandışı görünüyor — göndermeden önce bir sapma açıklaması ekleyin.",
-  "aboveCeilingBeforeSubmit": "Bu ilk dönem değeri, kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma açıklaması ekleyin.",
+  "aboveCeilingBeforeSubmit": "Bu değerin karşılaştırılacak kullanılabilir bir geçmişi yok ve kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma gerekçesi ekleyin.",
   "evidenceBeforeSubmit": "Kaydedildi. Aşağıya en az bir kanıt dosyası ekleyin, ardından yeniden gönderin.",
   "aSite": "bir tesis",
   "theWholeCompany": "bağlı şirketin tamamı",
@@ -454,7 +454,7 @@
     "cancel": "Düzenlemeyi iptal et",
     "saved": "Değişiklikler kayda kaydedildi.",
     "savedAnomalous": "Değişiklikler kayda kaydedildi. Değer geçmişinden sapıyor — göndermeden önce bir sapma açıklaması ekleyin.",
-    "savedAboveCeiling": "Değişiklikler kayda kaydedildi. Bu ilk dönem değeri, kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma açıklaması ekleyin.",
+    "savedAboveCeiling": "Değişiklikler kayda kaydedildi. Bu değerin karşılaştırılacak kullanılabilir bir geçmişi yok ve kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma gerekçesi ekleyin.",
     "evidence": {
       "removeAllTitle": "Kategoriyi değiştirmek bu kaydın {count} kanıt dosyasını kaldırır:",
       "deletionWarning": "Başka bir kayda bağlı olmayan dosya silinir ve yeniden yüklenmesi gerekir.",

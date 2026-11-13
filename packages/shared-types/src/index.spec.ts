@@ -25,9 +25,10 @@ import {
   anomalyBasis,
   isLegacyShortWindowVerdict,
   isLegacyPreCeilingVerdict,
-  isFirstPeriodCeilingFlag,
+  isCeilingFlag,
   firstPeriodCeiling,
   withFirstPeriodCeiling,
+  varianceBasisOf,
   FIRST_PERIOD_CEILINGS,
   CEILING_UNIT_MULTIPLIERS,
   MARINE_GAS_OIL_CEILING_KG,
@@ -857,6 +858,47 @@ describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', 
     });
   });
 
+  // K2 (owner, 2026-11-13): metered m³ carrying its own volume correction
+  // factor is judged as m³ × factor against the Sm³ ceiling.
+  describe('metered natural gas with a volume correction factor', () => {
+    const gas = (value: number, factor?: number) =>
+      firstPeriodCeiling(rec('Natural Gas', value, 'cubic_metres', null, factor === undefined ? null : { volumeCorrectionFactor: factor }));
+    it.each([
+      [240_000, 30, true], // 7,200,000 Sm³
+      [240_000, 1.05, true], // 252,000 Sm³
+      [240_000, 1, false], // 240,000 Sm³
+      [260_000, 0.95, false], // 247,000 Sm³ — under, though the m³ number is over
+    ] as const)('%d m³ × %d → above %s', (value, factor, above) => {
+      expect(gas(value, factor)).toMatchObject({ above, kind: 'corrected_volume', ceiling: 250_000 });
+    });
+    it('keeps the bare m³ guard without a factor', () => {
+      expect(gas(260_000)).toMatchObject({ above: true, kind: 'amount' });
+    });
+    it('states the corrected amount', () => {
+      expect(gas(240_000, 30)).toEqual({
+        above: true,
+        kind: 'corrected_volume',
+        amount: 240_000,
+        ceiling: 250_000,
+        unit: 'cubic_metres',
+        volumeCorrectionFactor: 30,
+        correctedAmount: 7_200_000,
+      });
+    });
+  });
+
+  // Exactly at the ceiling, in every route (second owner review, 2026-11-13).
+  it.each([
+    ['Natural Gas', 9_000, 'gj'],
+    ['Electricity', 1_000, 'MWh'],
+    ['Natural Gas', 2_500, 'MWh'],
+    ['Fuel', 150_000, 'kg'],
+    ['Mobile Combustion', 100, 'tonnes'],
+    ['Fugitive Gas', 200_000, 'standard_cubic_metres'],
+  ] as const)('%s at exactly %d %s is not above', (category, value, unit) => {
+    expect(firstPeriodCeiling(rec(category, value, unit, category === 'Fuel' ? 'coal' : 'diesel'))?.above).toBe(false);
+  });
+
   it('has no ceiling for a refrigerant record without equipment lines', () => {
     // Outside TR (not in the pilot) the amount is leaked kg, a different
     // measure; the owner chose no ceiling over reusing the 500 (2026-11-13).
@@ -940,9 +982,23 @@ describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', 
       expect(withFirstPeriodCeiling(history, big)).toBe(history);
     });
 
-    it('does not fall back to the ceiling on a zero average', () => {
+    // K1 (owner, 2026-11-13): a zero average gives no ratio, so history cannot
+    // judge, and the ceiling does. The count and the zero average are kept.
+    it('applies the ceiling over a zero average, keeping the count and the average', () => {
       const history = computeAnomalyVerdict(500, [0]);
-      expect(withFirstPeriodCeiling(history, big)).toEqual({ anomalous: false, priorCount: 1, baseline: 0 });
+      expect(withFirstPeriodCeiling(history, big)).toEqual({ anomalous: true, priorCount: 1, baseline: 0 });
+      expect(withFirstPeriodCeiling(computeAnomalyVerdict(500, [0, 0, 0]), big)).toEqual({
+        anomalous: true,
+        priorCount: 3,
+        baseline: 0,
+      });
+      expect(withFirstPeriodCeiling(history, small)).toEqual({ anomalous: false, priorCount: 1, baseline: 0 });
+    });
+
+    it('names the refusal basis for both ceiling states', () => {
+      expect(varianceBasisOf({ anomalous: true, priorCount: 0, baseline: null })).toBe('ceiling');
+      expect(varianceBasisOf({ anomalous: true, priorCount: 1, baseline: 0 })).toBe('ceiling');
+      expect(varianceBasisOf({ anomalous: true, priorCount: 1, baseline: 10 })).toBe('history');
     });
 
     it('never applies to a record with no figure (a null count)', () => {
@@ -959,7 +1015,11 @@ describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', 
       [false, 0, null, below, null, false, false, false],
       [false, 0, null, above, null, false, false, true], // scored before the ceiling
       [true, 1, 10, above, 'limited', true, false, false],
-      [false, 1, 0, above, null, false, false, false], // zero average: not pre-ceiling
+      [true, 1, 0, above, 'ceiling', true, true, false], // K1: a ceiling flag over a zero average
+      [false, 1, 0, below, null, false, false, false], // zero average, below: not checked
+      [false, 1, 0, above, null, false, false, true], // zero average, scored before the ceiling
+      [false, 0, 99, above, null, false, false, false], // a broken stored average is drift, not kept (owner review)
+      [true, 0, 99, above, 'ceiling', true, true, false],
       [false, null, null, above, null, false, false, false], // no figure
     ] as const)(
       'flag %s, count %s, average %s → basis %s, evaluated %s',
@@ -972,7 +1032,7 @@ describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', 
         };
         expect(anomalyBasis(record)).toBe(basis);
         expect(isAnomalyEvaluated(record)).toBe(evaluated);
-        expect(isFirstPeriodCeilingFlag(record)).toBe(ceilingFlag);
+        expect(isCeilingFlag(record)).toBe(ceilingFlag);
         expect(isLegacyPreCeilingVerdict(record)).toBe(preCeiling);
       },
     );

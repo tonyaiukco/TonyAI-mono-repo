@@ -72,7 +72,11 @@ export type AnomalyKey =
   | 'flagged.detailLimited'
   | 'flagged.detailNoBaseline'
   | 'ceiling.headline'
+  | 'ceiling.headlineZeroAverage'
+  | 'ceiling.leadFirstPeriod'
+  | 'ceiling.leadZeroAverage'
   | 'ceiling.detail'
+  | 'ceiling.detailCorrected'
   | 'ceiling.detailLine'
   | 'ceiling.detailRefillRatio'
   | 'ceiling.detailRefillCap'
@@ -116,7 +120,15 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
   // longer show the record above it (a later revision), the flag is still
   // stated, without figures.
   if (basis === 'ceiling') {
-    return { tone: 'flagged', headline: t('ceiling.headline'), detail: ceilingDetail(record, t, locale), qualified: false };
+    // A first period, or earlier periods averaging zero (owner, 2026-11-13):
+    // each says which, and neither names an average that could not be used.
+    const firstPeriod = priors === 0;
+    return {
+      tone: 'flagged',
+      headline: t(firstPeriod ? 'ceiling.headline' : 'ceiling.headlineZeroAverage'),
+      detail: `${t(firstPeriod ? 'ceiling.leadFirstPeriod' : 'ceiling.leadZeroAverage')} ${ceilingDetail(record, t, locale)}`,
+      qualified: false,
+    };
   }
 
   if (record.anomalyFlag && basis === 'limited') {
@@ -241,6 +253,16 @@ function ceilingDetail(record: AnomalyVerdictFields, t: AnomalyTranslator, local
     return byRatio
       ? t('ceiling.detailRefillRatio', { refill: amount, ceiling: kg(result.ceiling), capacity: kg(capacityKg) })
       : t('ceiling.detailRefillCap', { refill: amount, ceiling: kg(result.ceiling) });
+  }
+  if (result.kind === 'corrected_volume') {
+    // m³ × the record's own factor, held to the Sm³ ceiling (K2).
+    const sm3 = unitSymbol('standard_cubic_metres');
+    return t('ceiling.detailCorrected', {
+      amount,
+      factor: formatNumber(result.volumeCorrectionFactor ?? 1, locale, { maximumFractionDigits: 6 }),
+      corrected: `${formatNumber(result.correctedAmount ?? 0, locale, { maximumFractionDigits: 3 })} ${sm3}`,
+      ceiling: `${formatNumber(result.ceiling, locale, { maximumFractionDigits: 0 })} ${sm3}`,
+    });
   }
   return result.kind === 'equipment_line'
     ? t('ceiling.detailLine', { capacity: amount, ceiling })

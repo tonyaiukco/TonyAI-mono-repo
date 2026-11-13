@@ -325,6 +325,32 @@ describe('a first-period ceiling flag', () => {
     });
   });
 
+  // K1 (owner, 2026-11-13): over a zero average, not a first period.
+  it('says the earlier periods average zero, not that there are none', () => {
+    const s = anomalyStatement(ceilingFlag({ anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 0 }));
+    expect(s.tone).toBe('flagged');
+    expect(s.headline).toBe('Above the plausibility ceiling');
+    expect(s.detail).toMatch(/^The earlier periods of this series average zero/);
+    expect(s.detail).toContain('1,500 MWh is above the plausibility ceiling of 1,000 MWh');
+    expect(s.detail).not.toMatch(/first period/);
+    const tr = anomalyStatement(ceilingFlag({ anomalyBaselinePriorCount: 2, anomalyBaselineTCo2e: 0 }), 'tr');
+    expect(tr.headline).toBe('Makul üst sınırın üstünde');
+    expect(tr.detail).toMatch(/^Bu serinin önceki dönemlerinin ortalaması sıfır/);
+  });
+
+  // K2: metered m³ × the record's own factor, held to the Sm³ ceiling.
+  it('states m³ × the volume correction factor against the Sm³ ceiling', () => {
+    const s = anomalyStatement(
+      ceilingFlag({ category: 'Natural Gas', activityValue: 240_000, activityUnit: 'cubic_metres', parameters: { volumeCorrectionFactor: 30 } }),
+    );
+    expect(s.detail).toContain('240,000 m³ × the volume correction factor 30 = 7,200,000 Sm³, above the plausibility ceiling of 250,000 Sm³');
+    const tr = anomalyStatement(
+      ceilingFlag({ category: 'Natural Gas', activityValue: 240_000, activityUnit: 'cubic_metres', parameters: { volumeCorrectionFactor: 30 } }),
+      'tr',
+    );
+    expect(tr.detail).toContain('240.000 m³ × hacim düzeltme katsayısı 30 = 7.200.000 Sm³');
+  });
+
   it('still states the flag when the screen does not hold the amount', () => {
     const s = anomalyStatement(record({ anomalyFlag: true, anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }));
     expect(s.tone).toBe('flagged');

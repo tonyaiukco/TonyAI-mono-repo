@@ -39,7 +39,7 @@ See `proposal.md` for the motivation and `specs/anomaly-check/spec.md` for the r
 
 ### D1. A ceiling flag is stored as flag true, count 0, average null, and its basis is derived
 
-The ceiling only applies when the window holds no figure, so the stored count is 0 either way. A flag beside a count of 0 is a state no earlier rule wrote, so it identifies a ceiling flag without ambiguity. `AnomalyBasis` gains `'ceiling'`, and `anomalyBasis` returns it for `anomalyFlag && priorCount === 0`. `isAnomalyEvaluated` returns true for that state, so the matrix's not-checked count and the report's `anomalyEvaluated` leave it out without their own change.
+The ceiling applies where history cannot judge (`isCeilingEligible`): no figure in the window (count 0), or figures averaging zero (count ≥ 1, average 0). The latter was added by the owner on 2026-11-13 (K1 of the owner's review): a January of 0 must not let a February typo through. The count and the average are stored as history gave them. A flag beside a count of 0, or beside an average of 0, is a state no earlier rule wrote, so it identifies a ceiling flag without ambiguity. `AnomalyBasis` gains `'ceiling'`, and `anomalyBasis` returns it for `isCeilingFlag` (the flag and either state). `isAnomalyEvaluated` returns true for that state, so the matrix's not-checked count and the report's `anomalyEvaluated` leave it out without their own change.
 
 Alternative considered: the stored basis column that D9 kept room for. It needs a migration and a backfill, and it would tell nothing the count and the flag do not. A manual flag (K4-3b) would have needed it, but the team chose reject-with-comment instead.
 
@@ -54,7 +54,7 @@ Alternative considered: the stored basis column that D9 kept room for. It needs 
   | Electricity | kWh | 1,000,000 |
   | Natural Gas | kWh | 2,500,000 |
   | Natural Gas | standard_cubic_metres | 250,000 |
-  | Natural Gas | cubic_metres | 250,000 (the Sm³ number, as a guard, not a conversion) |
+  | Natural Gas | cubic_metres | 250,000 Sm³ for m³ × the record's own volume correction factor when it carries one (the TR rules), and otherwise the Sm³ number as a guard (K2, owner 2026-11-13) |
   | Mobile Combustion | litres | 100,000 |
   | Mobile Combustion | kg | 100,000 |
   | Mobile Combustion, `marine_gas_oil` | kg | 1,000,000 |
@@ -81,11 +81,11 @@ Alternative considered: compare against the normalised quantity in the calculati
 
 ### D3. The ceiling composes with the history verdict, in one place
 
-A contract helper, `withFirstPeriodCeiling(historyVerdict, ceilingInput)`, returns the history verdict unchanged unless that verdict is first-period (count 0, which implies a figure). In that case it returns `{ anomalous: ceiling?.above ?? false, priorCount: 0, baseline: null }`. `computeAnomalyVerdict` stays history-only, so its many specs keep their meaning.
+A contract helper, `withFirstPeriodCeiling(historyVerdict, ceilingInput)`, returns the history verdict unchanged unless history cannot judge it (`isCeilingEligible`: count 0, which implies a figure, or a zero average). In that case it returns the same count and average with `anomalous: ceiling?.above ?? false`. `computeAnomalyVerdict` stays history-only, so its many specs keep their meaning.
 
 The API's `AnomalyParams` gains `activityValue`, `activityUnit` and `parameters` (it already has `category` and `activityType`). Create, update, submit and `previewCreate` pass them from the record that will be stored, not from the request: on update, the merged values. The seed's `seedVerdict` and `anomaly-recompute.lib.mjs`'s `freshVerdict` call the same helper.
 
-A zero average and a record with no figure never reach the ceiling. The first is count ≥ 1, and the second is count null.
+A record with no figure never reaches the ceiling (count null). A zero average does (K1).
 
 ### D4. The refusal carries its basis
 
@@ -112,13 +112,20 @@ Alternative considered: a single neutral text. The owner chose the basis param o
 
 - Numbers are formatted by the user's locale (the `localise-ui` skill).
 - A ceiling in a non-base unit is shown as base ÷ multiplier, rounded to whole units. Only the display is rounded, never the comparison.
-- Report column (`anomalyColumnState` gains `ceiling`): CSV `yes (above first-period ceiling)`; Excel vocabulary EN "Yes — above the first-period ceiling", TR "Evet — ilk dönem tavanının üstünde".
+- Report column. `anomalyColumnState` gains `flagged_ceiling` and `flagged_ceiling_zero_average`, read through `isCeilingFlag`, never by hand.
+  - `flagged_ceiling`: CSV and EN `yes (above the first-period ceiling)`, TR `evet (ilk dönem tavanının üstünde)`.
+  - `flagged_ceiling_zero_average`: EN `yes (above the plausibility ceiling; earlier periods average zero)`, TR `evet (makul üst sınırın üstünde; önceki dönemlerin ortalaması sıfır)`.
+- **Over a zero average (K1):** the headline is "Above the plausibility ceiling" / "Makul üst sınırın üstünde". The detail opens "The earlier periods of this series average zero…" instead of the first-period sentence; every other part is the same.
+- **Metered gas with a factor (K2):** "{m³} × the volume correction factor {f} = {Sm³}, above the plausibility ceiling of 250,000 Sm³ — check the evidence, the unit and the factor".
+- **The refusal and the toasts** say "no usable history to compare with", which is true for a first period and for a zero average alike.
 - The review queue row and the emissions table already read the raw flag, so they show the flag mark unchanged.
 - The first-period mark (`isFirstPeriodRecord`, `!flag && count === 0`) stays as it is, so the two marks remain distinct.
 
 ### D6. Verdicts scored before the ceiling are a known difference
 
-- **The state.** A committed record (submitted, under review, approved, locked) stored as count 0, unflagged, whose ceiling says above. After this deploy no writer produces that state: submit re-scores, recall keeps the verdict, and the next save re-scores. So it is pre-ceiling.
+- **The state.** A committed record (submitted, under review, approved, locked), stored unflagged, whose ceiling says above. Its stored count and average must be the ones history gives today and must make it ceiling-eligible: count 0 with NO average, or the same count with an average of 0.
+  - A count of 0 beside any other stored average is a broken verdict, and it stays drift (owner review, 2026-11-13: an average of 99 beside count 0 was excused).
+  - After this deploy no writer produces the kept state: submit re-scores, recall keeps the verdict, and the next save re-scores. So it is pre-ceiling.
 - **`isLegacyPreCeilingVerdict(record)`** in the contract names it.
 - **`anomaly:recompute`** leaves it alone on a committed record and does not count it as unrepaired. On a draft or a rejected record it re-scores, as the next save would. The existing `unexplained_flag` refusal already stops it from flagging a record in review that has no reason.
 - **`anomaly:probe`** gains the ceiling in SQL: a `CASE` over category, activity type and unit, the multipliers, and `jsonb_array_elements(parameters->'equipment')`, for any line whose `capacityKg` is above 500 or whose `refillKg` is above its refill ceiling (`REFRIGERANT_REFILL_RATIO`, copied and pinned like the other constants). That gives `expected_flag` for count 0. The probe lists the pre-ceiling state in its own known-difference section, which does not affect its exit code.
@@ -151,10 +158,11 @@ The ceiling applies wherever the category and unit have one, in every geography.
   - `open`: draft or rejected; needs a variance reason at its next submit.
   - `committed`: kept as a known difference, which `anomaly:probe` section 2c lists.
 
-  The ceiling expression is the probe's own `CEILING_ABOVE_SQL`. "First period" is approximated as "no earlier committed period of the series with a figure". It differs from the rule only when the three most recent earlier periods all lack a figure, which never happens for Scope 1–2. Locally (seeded database, 2026-11-13) it returns 0 rows, in line with the probe's section 2c (0).
+  The ceiling expression is the probe's own `CEILING_ABOVE_SQL`, regenerated after the owner's review: it includes the refill tolerance, K1 and K2. "History cannot judge" is approximated as "no earlier committed period of the series with a figure above zero", which covers a first period and a zero average (figures are never negative). It differs from the rule only when the three most recent earlier periods all lack a figure, which never happens for Scope 1–2. Locally (seeded database, 2026-11-13) it returns 0 rows, in line with the probe's section 2c (0).
 
 ```sql
--- Read-only. First-period records above their typo ceiling, by organisation,
+-- Read-only. Records above their typo ceiling where history cannot judge them
+-- (no earlier committed period with a figure above zero), by organisation,
 -- category and kind: 'open' (draft/rejected: needs a variance reason at its
 -- next submit) or 'committed' (kept as a known difference, not re-scored).
 WITH r AS (
@@ -165,15 +173,16 @@ WITH r AS (
            ELSE 0 END, 0) AS key,
          (jsonb_typeof(calculation->'factorId') = 'string' AND length(calculation->>'factorId') > 0
            AND jsonb_typeof(calculation->'tCo2e') = 'number') AS has_figure,
+         CASE WHEN jsonb_typeof(calculation->'tCo2e') = 'number' THEN (calculation->>'tCo2e')::float8 END AS tco2e,
          CASE
     WHEN category = 'Refrigerants' THEN (
       -- NULL with no lines (no ceiling); otherwise whether any line's capacity
       -- is above the line ceiling, or its refill above its refill ceiling. A
       -- value that is not a number counts as 0, as in the contract.
       SELECT bool_or(cap > 500::float8
-                     OR refill > CASE WHEN cap > 0
-                                      THEN least(1.25::float8 * cap, 500::float8)
-                                      ELSE 500::float8 END)
+                     OR refill > (CASE WHEN cap > 0
+                                       THEN least(1.25::float8 * cap, 500::float8)
+                                       ELSE 500::float8 END) * 1.000000001::float8)
       FROM (
         SELECT CASE WHEN jsonb_typeof(e->'capacityKg') = 'number' THEN (e->>'capacityKg')::float8 ELSE 0 END AS cap,
                CASE WHEN jsonb_typeof(e->'refillKg') = 'number' THEN (e->>'refillKg')::float8 ELSE 0 END AS refill
@@ -181,6 +190,14 @@ WITH r AS (
                                        THEN parameters->'equipment' ELSE '[]'::jsonb END) e
       ) line
     )
+    -- Metered natural gas with its own volume correction factor: m³ × factor
+    -- against the Sm³ ceiling (K2 of 2026-11-13). A nested CASE, so the cast
+    -- runs only on a number.
+    WHEN category = 'Natural Gas' AND activity_unit = 'cubic_metres'
+         AND jsonb_typeof(parameters->'volumeCorrectionFactor') = 'number' THEN CASE
+      WHEN (parameters->>'volumeCorrectionFactor')::float8 > 0
+        THEN activity_value * (parameters->>'volumeCorrectionFactor')::float8 > 250000::float8
+      ELSE activity_value > 250000::float8 END
     WHEN category = 'Mobile Combustion' AND activity_type = 'marine_gas_oil' THEN CASE
       WHEN activity_unit = 'kg' THEN activity_value * 1::float8 > 1000000::float8
       WHEN activity_unit = 'tonnes' THEN activity_value * 1000::float8 > 1000000::float8
@@ -219,7 +236,7 @@ JOIN organisations o ON o.id = s.organisation_id
 WHERE r.has_figure AND r.above_ceiling
   AND NOT EXISTS (
     SELECT 1 FROM r c
-    WHERE c.status IN ('submitted', 'under_review', 'approved', 'locked') AND c.has_figure
+    WHERE c.status IN ('submitted', 'under_review', 'approved', 'locked') AND c.has_figure AND c.tco2e > 0
       AND c.subsidiary_id = r.subsidiary_id
       AND c.location_id IS NOT DISTINCT FROM r.location_id
       AND c.category = r.category
@@ -231,6 +248,8 @@ GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3;
 ```
 - **Rollback:** the previous image. It reads a stored ceiling flag (flag true, count 0) as flagged with no baseline, and prints "deviates significantly from the historical average" (`detailNoBaseline`). The submit gate still holds, because it re-scores, and under the old rule the record is no longer flagged. A draft saved by the new image is re-scored at its next save.
+  - **Operator tools after a rollback:** do not run `anomaly:recompute --apply` under the old image. It would clear the ceiling flags of records in review; their variance reasons would stay.
+  - The old `anomaly:probe` reports every ceiling flag (count 0, or an average of 0) as drift; that drift is expected after a rollback.
 
 ## Open Questions
 

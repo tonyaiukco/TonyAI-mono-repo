@@ -32,6 +32,21 @@ Data Entry, the review sheet and the emissions record view SHALL name a first-pe
 - **WHEN** a user saves a record with no earlier period, below its ceiling, in Turkish
 - **THEN** the anomaly note says "İlk dönem kaydı" and asks for the evidence document and the unit to be checked, and the record can be submitted without a variance reason
 
+### Requirement: No check against a zero average
+When the figures in the window average zero, the record SHALL NOT be checked against history, whether the window holds one, two or three figures. It SHALL be checked against its ceiling where its category, unit and entry have one, and flagged only above it. Otherwise it SHALL be reported as not checked and SHALL NOT be flagged.
+
+#### Scenario: A single zero period
+- **WHEN** a series holds one earlier period of 0 tCO2e, the record's figure is 500 tCO2e and its amount is not above its ceiling
+- **THEN** the record is not flagged and is reported as not checked because the average is zero
+
+#### Scenario: Three zero periods
+- **WHEN** the three earlier figures are all 0 tCO2e and the record's amount is not above its ceiling
+- **THEN** the record is reported as not checked because the average is zero
+
+#### Scenario: A zero January does not let a February typo through
+- **WHEN** a site's January of 0 kWh is committed and its February is saved as 50,000,000 kWh
+- **THEN** February is flagged as above the plausibility ceiling, keeps its count of 1 and its average of 0, and needs a variance reason at submit
+
 ## ADDED Requirements
 
 ### Requirement: First-period ceilings
@@ -79,7 +94,7 @@ A first-period Mobile Combustion record of marine gas oil SHALL be checked again
 - **THEN** it is flagged as above the first-period ceiling
 
 ### Requirement: Other units reach the same ceiling by definition
-An amount in another unit of a ceiling's unit family SHALL be compared through exact definitional equivalences only: MWh, GJ and therms with kWh, UK and US gallons with litres, and tonnes with kg. A metered cubic metre of natural gas SHALL be held to the Sm³ ceiling's number. No other limit value SHALL be introduced.
+An amount in another unit of a ceiling's unit family SHALL be compared through exact definitional equivalences only: MWh, GJ and therms with kWh, UK and US gallons with litres, and tonnes with kg. A metered cubic metre of natural gas that carries its own volume correction factor SHALL be compared as cubic metres × that factor with the Sm³ ceiling; without one, it SHALL be held to the Sm³ ceiling's number. No other limit value SHALL be introduced.
 
 #### Scenario: Electricity in MWh
 - **WHEN** the first electricity record of a site is saved as 1,200 MWh
@@ -90,8 +105,12 @@ An amount in another unit of a ceiling's unit family SHALL be compared through e
 - **THEN** it is not flagged, because 20,000 UK gallons is 90,921.8 L
 
 #### Scenario: Natural gas in metered cubic metres
-- **WHEN** the first natural gas record of a site is saved as 260,000 m³
+- **WHEN** the first natural gas record of a site is saved as 260,000 m³ with no volume correction factor
 - **THEN** it is flagged as above the first-period ceiling
+
+#### Scenario: Metered gas with a volume correction factor
+- **WHEN** the first natural gas record of a site is saved as 240,000 m³ with a volume correction factor of 30
+- **THEN** it is flagged, because 7,200,000 Sm³ is above 250,000 Sm³, although the m³ amount is not
 
 ### Requirement: Refrigerants are checked per equipment line
 A first-period refrigerant record SHALL be flagged when any one of its equipment lines has an installed capacity strictly above 500 kg, or a refill strictly above its refill ceiling. The refill ceiling is 125% of the line's capacity, capped at 500 kg; for a line with no capacity it is 500 kg. The record's totals SHALL NOT be compared. A record with no equipment lines SHALL have no ceiling.
@@ -128,16 +147,16 @@ A first-period refrigerant record SHALL be flagged when any one of its equipment
 - **WHEN** the first refrigerant record of a site holds a line of 400 kg capacity with a refill of 501 kg
 - **THEN** it is flagged, although the refill is below 125% of its capacity
 
-### Requirement: The ceiling applies to the first period only
-A record whose window holds at least one figure SHALL be checked against history only, and never against a ceiling, whatever its amount.
+### Requirement: The ceiling applies only where history cannot judge
+A record whose window holds at least one figure, averaging above zero, SHALL be checked against history only, and never against a ceiling, whatever its amount.
 
 #### Scenario: The second period is judged by history
 - **WHEN** a site's first electricity month of 4,000,000 kWh was submitted with a reason, and its second month of 4,100,000 kWh is saved
 - **THEN** the second month is checked against the first, on limited history of 1 period, and is not flagged
 
-#### Scenario: A zero average does not fall back to the ceiling
+#### Scenario: A zero average falls back to the ceiling
 - **WHEN** a series holds one earlier period of 0 tCO2e and the record is above its ceiling
-- **THEN** the record is reported as not checked because the average is zero, and is not flagged
+- **THEN** the record is flagged as above the plausibility ceiling, and its refusal at submit names the ceiling
 
 ### Requirement: A ceiling flag needs a variance reason at submit
 Submitting a record flagged as above its first-period ceiling, with no variance reason, SHALL be refused with `variance_reason_required`, and the record SHALL stay as it was. Submit, bulk submit and the bulk import warning SHALL treat a ceiling flag exactly as a flag on history.
@@ -200,7 +219,7 @@ A ceiling flag SHALL turn its tracking-matrix cell amber and raise the dashboard
 - **THEN** its anomaly cell says yes and names the first-period ceiling
 
 ### Requirement: Verdicts scored before the ceiling are kept
-No committed record SHALL be re-scored because the ceilings were introduced. A record that is committed, first-period and unflagged, but above its ceiling, SHALL keep its verdict. The consistency tools SHALL report it as a known difference, not drift. A draft or rejected record SHALL be checked against the ceiling at its next save, and the re-score tool MAY rewrite it.
+No committed record SHALL be re-scored because the ceilings were introduced. A committed, unflagged record above its ceiling SHALL keep its verdict while history still cannot judge it and its stored count and average are the ones history gives. The consistency tools SHALL report it as a known difference, not drift. A draft or rejected record SHALL be checked against the ceiling at its next save, and the re-score tool MAY rewrite it.
 
 #### Scenario: An approved first-period record from before the change
 - **WHEN** a record approved before this change, the first of its series and above its ceiling, is opened
@@ -217,6 +236,10 @@ No committed record SHALL be re-scored because the ceilings were introduced. A r
 #### Scenario: A draft meets the ceiling at its next save
 - **WHEN** a draft saved before the change, the first of its series and above its ceiling, is saved again
 - **THEN** it is flagged as above the first-period ceiling
+
+#### Scenario: A broken stored average is not excused
+- **WHEN** a committed record is stored unflagged with no earlier period but an average of 99, and is above its ceiling
+- **THEN** the consistency tools report it as drift, not as a known difference
 
 #### Scenario: A flag with no earlier period is not excused
 - **WHEN** a committed record is stored as flagged with no earlier period while its amount is not above its ceiling

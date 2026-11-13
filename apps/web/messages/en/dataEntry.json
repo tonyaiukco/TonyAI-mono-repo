@@ -47,7 +47,7 @@
   "submitted": "Submitted for review",
   "movedSubmitted": "Moved to {entity}, submitted for review",
   "anomalousBeforeSubmit": "This value looks anomalous — add a variance comment before submitting.",
-  "aboveCeilingBeforeSubmit": "This first-period figure is above the plausibility ceiling for its category — check the evidence and the unit, and add a variance comment before submitting.",
+  "aboveCeilingBeforeSubmit": "This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting.",
   "evidenceBeforeSubmit": "Saved. Attach at least one evidence file below, then submit again.",
   "aSite": "a facility",
   "theWholeCompany": "the whole subsidiary",
@@ -454,7 +454,7 @@
     "cancel": "Cancel editing",
     "saved": "Changes saved to the record.",
     "savedAnomalous": "Changes saved to the record. The value deviates from its history — add a variance comment before submitting.",
-    "savedAboveCeiling": "Changes saved to the record. This first-period figure is above the plausibility ceiling for its category — check the evidence and the unit, and add a variance comment before submitting.",
+    "savedAboveCeiling": "Changes saved to the record. This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting.",
     "evidence": {
       "removeAllTitle": "Changing the category removes this record's {count} evidence file(s):",
       "deletionWarning": "A file that backs no other record is deleted and must be uploaded again.",

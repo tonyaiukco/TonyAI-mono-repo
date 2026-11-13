@@ -168,6 +168,56 @@ describe('the first-period typo ceiling', () => {
     expect((await stored(atRatio.id)).anomalyFlag).toBe(false);
   });
 
+  it('applies the ceiling over a zero-tCO2e earlier period (owner, 2026-11-13, K1)', async () => {
+    // January 0 kWh committed, then February at 50,000,000 kWh on the same site.
+    const site = await owner.location.create({
+      data: { subsidiaryId: tenant.subsidiaryId, name: `R2-07 zero ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
+    });
+    const month = async (periodValue: string, activityValue: number) => {
+      const record = await s.records.create(tenant.users.dataEntry, {
+        subsidiaryId: tenant.subsidiaryId,
+        locationId: site.id,
+        reportingYear: 2025,
+        reportingPeriod: 'monthly',
+        periodValue,
+        category: 'Electricity',
+        activityValue,
+        activityUnit: 'kWh',
+      } as never);
+      await attachEvidence(runtime, tenant, [record.id]);
+      return record;
+    };
+    const january = await month('January', 0);
+    await s.records.submit(tenant.users.dataEntry, january.id);
+
+    const february = await month('February', 50_000_000);
+    expect(await stored(february.id)).toEqual({
+      status: ActivityRecordStatus.draft,
+      anomalyFlag: true,
+      anomalyBaselinePriorCount: 1,
+      anomalyBaselineTCo2e: 0,
+    });
+    const refusal = await s.records.submit(tenant.users.dataEntry, february.id).catch((e: unknown) => e);
+    expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({ params: { basis: 'ceiling' } });
+  });
+
+  it('holds metered gas to m³ × its own volume correction factor (owner, 2026-11-13, K2)', async () => {
+    const gas = (activityValue: number, volumeCorrectionFactor: number) => ({
+      reportingPeriod: 'monthly',
+      periodValue: 'January',
+      category: 'Natural Gas',
+      activityValue,
+      activityUnit: 'cubic_metres',
+      parameters: { volumeCorrectionFactor },
+    });
+    // 240,000 m³ × 30 = 7,200,000 Sm³: flagged, though the m³ number is under.
+    const scaled = await firstPeriod(gas(240_000, 30));
+    expect((await stored(scaled.id)).anomalyFlag).toBe(true);
+    // 240,000 m³ × 1.0 = 240,000 Sm³: under.
+    const plain = await firstPeriod(gas(240_000, 1));
+    expect((await stored(plain.id)).anomalyFlag).toBe(false);
+  });
+
   it('holds marine gas oil to 1,000 t, not to the 100,000 kg Mobile Combustion row', async () => {
     const mgo = (activityValue: number, activityUnit: string) => ({
       reportingPeriod: 'monthly',

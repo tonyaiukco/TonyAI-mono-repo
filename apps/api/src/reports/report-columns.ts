@@ -65,6 +65,8 @@ export function anomalyCell(r: Parameters<typeof anomalyColumnState>[0]): string
       return `yes (limited history: ${periods(r.anomalyBaselinePriorCount)})`;
     case 'flagged_ceiling':
       return 'yes (above the first-period ceiling)';
+    case 'flagged_ceiling_zero_average':
+      return 'yes (above the plausibility ceiling; earlier periods average zero)';
     case 'clean':
       return '';
     case 'clean_limited':

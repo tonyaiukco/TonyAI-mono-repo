@@ -48,10 +48,11 @@ export const APPROVAL_EVIDENCE_REFUSAL_FRAGMENT =
   'has no evidence file — reject the record so its author can attach one';
 export const VARIANCE_REFUSAL =
   'This value deviates significantly from the historical average — add a variance comment before submitting.';
-/** A first-period record above its typo ceiling (BUG-R2-07 tier 3): there is
- *  no history, so "deviates from the historical average" would be untrue. */
+/** A record above its typo ceiling where history cannot judge it (BUG-R2-07
+ *  tier 3): no earlier period, or earlier periods averaging zero. "Deviates
+ *  from the historical average" would be untrue for both. */
 export const CEILING_VARIANCE_REFUSAL =
-  'This is a first-period figure above the plausibility ceiling for its category — check the evidence and the unit, and add a variance comment before submitting.';
+  'This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence and the unit, and add a variance comment before submitting.';
 
 /** The uniqueness index refused the slot: one record per entity, period and category. */
 export class DuplicateActivityRecordError extends ConflictException {

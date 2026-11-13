@@ -9,11 +9,15 @@
   },
   "ceiling": {
     "headline": "Above the first-period ceiling",
-    "detail": "This is the first period of this series, so there is no earlier period to compare it with. {amount} is above the plausibility ceiling of {ceiling} for this category — please check the evidence document and the unit (an extra zero?). If the figure is right, explain it in the variance reason.",
-    "detailLine": "This is the first period of this series, so there is no earlier period to compare it with. An equipment line of {capacity} is above the plausibility ceiling of {ceiling} installed capacity per line — please check the nameplate or the inventory and the unit. If the figure is right, explain it in the variance reason.",
-    "detailRefillRatio": "This is the first period of this series, so there is no earlier period to compare it with. An equipment line's refill of {refill} is above its limit of {ceiling}, 125% of the line's {capacity} capacity — please check the service form or invoice and the unit. If the figure is right, explain it in the variance reason.",
-    "detailRefillCap": "This is the first period of this series, so there is no earlier period to compare it with. An equipment line's refill of {refill} is above the {ceiling} per-line limit — please check the service form or invoice and the unit. If the figure is right, explain it in the variance reason.",
-    "detailUnknown": "This is the first period of this series, so there is no earlier period to compare it with. The figure is above the plausibility ceiling for this category — please check the evidence document and the unit."
+    "headlineZeroAverage": "Above the plausibility ceiling",
+    "leadFirstPeriod": "This is the first period of this series, so there is no earlier period to compare it with.",
+    "leadZeroAverage": "The earlier periods of this series average zero, so no deviation can be computed from them.",
+    "detail": "{amount} is above the plausibility ceiling of {ceiling} for this category — please check the evidence document and the unit (an extra zero?). If the figure is right, explain it in the variance reason.",
+    "detailCorrected": "{amount} × the volume correction factor {factor} = {corrected}, above the plausibility ceiling of {ceiling} for this category — please check the evidence document, the unit and the factor. If the figure is right, explain it in the variance reason.",
+    "detailLine": "An equipment line of {capacity} is above the plausibility ceiling of {ceiling} installed capacity per line — please check the nameplate or the inventory and the unit. If the figure is right, explain it in the variance reason.",
+    "detailRefillRatio": "An equipment line's refill of {refill} is above its limit of {ceiling}, 125% of the line's {capacity} capacity — please check the service form or invoice and the unit. If the figure is right, explain it in the variance reason.",
+    "detailRefillCap": "An equipment line's refill of {refill} is above the {ceiling} per-line limit — please check the service form or invoice and the unit. If the figure is right, explain it in the variance reason.",
+    "detailUnknown": "The figure is above the plausibility ceiling for this category — please check the evidence document and the unit."
   },
   "clean": {
     "headline": "Within the expected range",

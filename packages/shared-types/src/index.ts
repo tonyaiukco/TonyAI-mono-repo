@@ -2946,10 +2946,10 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
 export type VarianceBasis = 'history' | 'ceiling';
 export const VARIANCE_BASES = Object.freeze(['history', 'ceiling'] as const satisfies readonly VarianceBasis[]);
 
-/** The refusal's basis for a flagged verdict: a flag with no earlier period is
- *  a ceiling flag, since the history rule never flags a count of 0. */
+/** The refusal's basis for a flagged verdict: a flag history could not have
+ *  raised (no earlier period, or a zero average) is a ceiling flag. */
 export function varianceBasisOf(verdict: AnomalyVerdict): VarianceBasis {
-  return verdict.priorCount === 0 ? 'ceiling' : 'history';
+  return isCeilingEligible(verdict) ? 'ceiling' : 'history';
 }
 
 /**
@@ -4753,7 +4753,7 @@ export function isAnomalyEvaluated(record: {
   // A first-period record above its typo ceiling WAS judged — against the
   // ceiling, not against history (`withFirstPeriodCeiling`). A flag beside a
   // count of 0 has no other author, and it is never counted as not checked.
-  if (isFirstPeriodCeilingFlag(record)) return true;
+  if (isCeilingFlag(record)) return true;
   return (
     priors !== null &&
     priors >= ANOMALY_MIN_PRIORS &&
@@ -4767,16 +4767,33 @@ export function isAnomalyEvaluated(record: {
 }
 
 /** What an evaluated verdict rests on: a full or limited window of history,
- *  or — for a first-period record — its typo ceiling. */
+ *  or — when history cannot judge it — its typo ceiling. */
 export type AnomalyBasis = 'full' | 'limited' | 'ceiling';
 
-/** A stored first-period ceiling flag: flagged with no earlier period. No rule
- *  before the ceilings ever flagged a count of 0, so the state is unambiguous. */
-export function isFirstPeriodCeilingFlag(record: {
+/**
+ * Can history not judge this verdict, so that its typo ceiling does? A first
+ * period (count 0), or a window whose figures average zero, where no ratio can
+ * be taken (owner, 2026-11-13, K1 of the owner's review: a January of 0 must
+ * not let a February of 50,000,000 kWh through unexplained). A record with no
+ * figure (count null) is never ceiling-eligible.
+ */
+export function isCeilingEligible(verdict: { priorCount: number | null; baseline: number | null }): boolean {
+  if (verdict.priorCount === 0) return true;
+  return verdict.priorCount !== null && verdict.priorCount >= ANOMALY_MIN_PRIORS && verdict.baseline === 0;
+}
+
+/** A stored ceiling flag: flagged where history could not judge — no earlier
+ *  period, or earlier periods averaging zero. No rule before the ceilings ever
+ *  flagged either state, so it is unambiguous. */
+export function isCeilingFlag(record: {
   anomalyFlag: boolean;
   anomalyBaselinePriorCount: number | null;
+  anomalyBaselineTCo2e: number | null;
 }): boolean {
-  return record.anomalyFlag && record.anomalyBaselinePriorCount === 0;
+  return (
+    record.anomalyFlag &&
+    isCeilingEligible({ priorCount: record.anomalyBaselinePriorCount, baseline: record.anomalyBaselineTCo2e })
+  );
 }
 
 /**
@@ -4795,7 +4812,7 @@ export function anomalyBasis(record: {
   anomalyBaselinePriorCount: number | null;
   anomalyBaselineTCo2e: number | null;
 }): AnomalyBasis | null {
-  if (isFirstPeriodCeilingFlag(record)) return 'ceiling';
+  if (isCeilingFlag(record)) return 'ceiling';
   if (!isAnomalyEvaluated(record)) return null;
   return record.anomalyBaselinePriorCount === ANOMALY_BASELINE_PERIODS ? 'full' : 'limited';
 }
@@ -4937,13 +4954,17 @@ export interface CeilingInput {
  */
 export interface CeilingResult {
   above: boolean;
-  kind: 'amount' | 'equipment_line' | 'equipment_refill';
+  kind: 'amount' | 'corrected_volume' | 'equipment_line' | 'equipment_refill';
   amount: number;
+  /** For `corrected_volume`: in Sm³ (the corrected amount is compared). */
   ceiling: number;
   unit: string;
   lineIndex?: number;
   /** For `equipment_refill`: the line's installed capacity, 0 for none. */
   capacityKg?: number;
+  /** For `corrected_volume`: the record's own factor, and m³ × factor in Sm³. */
+  volumeCorrectionFactor?: number;
+  correctedAmount?: number;
 }
 
 const finiteOrZero = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -4958,8 +4979,6 @@ function equipmentLines(parameters: unknown): { capacityKg: number; refillKg: nu
   });
 }
 
-/** A line's refill ceiling: `REFRIGERANT_REFILL_RATIO` of its capacity, capped
- *  at `REFRIGERANT_LINE_CEILING_KG`; the cap alone for a line with no capacity. */
 /**
  * Is a refill above its line's ceiling? Strictly, with a relative tolerance
  * far below any amount a person enters: 1.25 × a decimal capacity is rounded
@@ -4971,6 +4990,8 @@ export function isRefillAboveCeiling(refillKg: number, capacityKg: number): bool
   return refillKg > refrigerantRefillCeilingKg(capacityKg) * (1 + REFILL_CEILING_TOLERANCE);
 }
 
+/** A line's refill ceiling: `REFRIGERANT_REFILL_RATIO` of its capacity, capped
+ *  at `REFRIGERANT_LINE_CEILING_KG`; the cap alone for a line with no capacity. */
 export function refrigerantRefillCeilingKg(capacityKg: number): number {
   return capacityKg > 0
     ? Math.min(REFRIGERANT_REFILL_RATIO * capacityKg, REFRIGERANT_LINE_CEILING_KG)
@@ -5044,6 +5065,30 @@ export function firstPeriodCeiling(input: CeilingInput): CeilingResult | null {
       : undefined
     : FIRST_PERIOD_CEILINGS[input.category as Category]?.[route.base];
   if (baseCeiling === undefined) return null;
+  // Metered natural gas carrying its own volume correction factor (the TR
+  // rules): the engine prices m³ × factor as Sm³, so that is what the Sm³
+  // ceiling judges — a factor typo (9.5 for 0.95) moves the figure as much as
+  // an extra zero does (owner, 2026-11-13, K2 of the owner's review). Without a
+  // factor, the m³ amount is held to the Sm³ number, a guard, as before.
+  const factor = (input.parameters as { volumeCorrectionFactor?: unknown } | null | undefined)?.volumeCorrectionFactor;
+  if (
+    input.category === 'Natural Gas' &&
+    input.activityUnit === 'cubic_metres' &&
+    typeof factor === 'number' &&
+    Number.isFinite(factor) &&
+    factor > 0
+  ) {
+    const corrected = input.activityValue * factor;
+    return {
+      above: corrected > baseCeiling,
+      kind: 'corrected_volume',
+      amount: input.activityValue,
+      ceiling: baseCeiling,
+      unit: input.activityUnit,
+      volumeCorrectionFactor: factor,
+      correctedAmount: corrected,
+    };
+  }
   return {
     above: input.activityValue * route.multiplier > baseCeiling,
     kind: 'amount',
@@ -5054,31 +5099,30 @@ export function firstPeriodCeiling(input: CeilingInput): CeilingResult | null {
 }
 
 /**
- * The history verdict, with the first-period ceiling applied where it belongs.
- *
- * Only a first-period verdict (count 0 — which implies the record has a figure,
- * since a record without one is never given a pool) is touched. A count of one
- * or more is judged by history alone, a zero average included; a null count
- * (no figure) is never first-period. Stored as flag, count 0, average null: a
- * state no earlier rule wrote, which is what lets `anomalyBasis` derive
- * `ceiling` without a column.
+ * The history verdict, with the typo ceiling applied where history cannot
+ * judge (`isCeilingEligible`): a first period (count 0 — which implies a
+ * figure, since a record without one is never given a pool), or a window whose
+ * figures average zero (owner, 2026-11-13). The count and the average are kept
+ * as history gave them; only the flag comes from the ceiling. A flag beside a
+ * count of 0, or beside a zero average, is a state no earlier rule wrote, which
+ * is what lets `anomalyBasis` derive `ceiling` without a column.
  */
 export function withFirstPeriodCeiling(
   historyVerdict: AnomalyVerdict,
   input: CeilingInput,
 ): AnomalyVerdict {
-  if (historyVerdict.priorCount !== 0) return historyVerdict;
-  return {
-    anomalous: firstPeriodCeiling(input)?.above ?? false,
-    priorCount: 0,
-    baseline: null,
-  };
+  if (!isCeilingEligible(historyVerdict)) return historyVerdict;
+  return { ...historyVerdict, anomalous: firstPeriodCeiling(input)?.above ?? false };
 }
 
 /**
- * Is this a first-period verdict stored BEFORE the ceilings existed?
+ * Is this a verdict stored BEFORE the ceilings existed, that the ceiling would
+ * now flag?
  *
- * Count 0, unflagged, and above its ceiling today. After the ceilings ship no
+ * Unflagged, ceiling-eligible as stored — count 0 with NO average, or a count
+ * with an average of exactly 0 (any other stored average is a broken verdict,
+ * and stays drift: owner review, 2026-11-13) — and above its ceiling today.
+ * After the ceilings ship no
  * writer leaves that state on a committed record: submit re-scores, recall
  * keeps the verdict and the next save re-scores. It is NOT re-scored because
  * the rule changed (Decisions 2026-11-12, as for the short-history check), and
@@ -5088,13 +5132,14 @@ export function isLegacyPreCeilingVerdict(
   record: {
     anomalyFlag: boolean;
     anomalyBaselinePriorCount: number | null;
+    anomalyBaselineTCo2e: number | null;
   } & CeilingInput,
 ): boolean {
-  return (
-    !record.anomalyFlag &&
-    record.anomalyBaselinePriorCount === 0 &&
-    (firstPeriodCeiling(record)?.above ?? false)
-  );
+  const priors = record.anomalyBaselinePriorCount;
+  const storedEligible =
+    (priors === 0 && record.anomalyBaselineTCo2e === null) ||
+    (priors !== null && priors >= ANOMALY_MIN_PRIORS && record.anomalyBaselineTCo2e === 0);
+  return !record.anomalyFlag && storedEligible && (firstPeriodCeiling(record)?.above ?? false);
 }
 
 /**

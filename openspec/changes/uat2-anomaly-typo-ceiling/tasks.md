@@ -51,6 +51,7 @@
   - `bulk-upload.service.spec.ts`: a first-period row above its ceiling with no reason gets `would_block_submit`, and the message names the ceiling; with a reason it does not; an equipment-line row above 500 kg is warned.
   - `bulk-submit.service.spec.ts`: a ceiling-flagged January with no reason is refused with a message naming the ceiling; a new series' January and February are judged by the ceiling and by history in period order.
   - Verify with `pnpm --filter @tonyai/api test`.
+  - Correction (owner review, 2026-11-13): the bulk spec mocks the verdict, so it proves the warning's wording, not the ceiling itself. The equipment-line ceiling is proven through the record service in 2.7 and 8.4; the bulk-submit test title was narrowed to what it shows.
 - [x] 2.6 Add a `ceiling` state to `anomalyColumnState` in `apps/api/src/reports/report-data.ts`, so it is never re-derived as "limited". Give it the cells from design D5 in `report-columns.ts` (`anomalyCell`), `report-vocabulary.ts` and `apps/api/src/reports/i18n/{en,tr}.json`.
   - Update `report-vocabulary`, `reports.service` and `report-columns-inputs` specs, and `emissions.service.spec.ts`: a committed ceiling flag turns its cell amber and is not counted in `notEvaluatedRecordCount`.
   - Verify with `pnpm --filter @tonyai/api test`.
@@ -181,6 +182,28 @@
   - Results (2026-11-13): neither seat found a P1.
     - `security-rls`: no P2. Its P3 test gap is fixed: the probe int spec now runs the SQL's 0/600 and 400/501 branches. Its float8-cast note is filed.
     - `qa-auditor`: P2 fixed. A refill of exactly 125% of a decimal capacity was flagged (1.25 × 1.44 = 1.7999999999999998); the comparison now has a 1e-9 relative tolerance (`REFILL_CEILING_TOLERANCE`), in the contract and in the SQL, with tests in both (1.44/1.8). Its P3s are fixed (the flagged-side SQL branches; the ANOM-16 row order; the task 8.5 text) or filed under Open questions ("125%" in the copy, refill display rounding, the limit/ceiling wording).
+
+## 9. Owner review of the branch (2026-11-13)
+
+- [x] 9.1 K1 (owner decision): a zero average falls back to the ceiling.
+  - Contract: `isCeilingEligible`, and `isCeilingFlag` (renamed from `isFirstPeriodCeilingFlag`, now taking the average). `withFirstPeriodCeiling` keeps history's count and average; `varianceBasisOf` uses the eligibility.
+  - Reports: a `flagged_ceiling_zero_average` state, and the column is read through `isCeilingFlag`.
+  - Web: a zero-average lead sentence and headline. The refusal and toast copy is neutral ("no usable history").
+  - Probe SQL and the re-score tool are updated to match.
+  - Tests: contract, service (the old "does not fall back" case flipped deliberately), reports, recompute lib, probe int, and an API int test with January 0 kWh then February 50,000,000 kWh.
+- [x] 9.2 K2 (owner decision): metered m³ with a volume correction factor is held to the Sm³ ceiling as m³ × factor (kind `corrected_volume`), in the contract and the probe SQL. Tests: contract, web (EN/TR), probe int, API int (240,000 m³ × 30 flagged, × 1 not).
+- [x] 9.3 K3 (owner decision): the per-line rule stays. `validation_anomaly_rules.md` and UAT ANOM-14 say that a line is one equipment type, not one device.
+- [x] 9.4 First review's P2s:
+  - `isLegacyPreCeilingVerdict` and the probe's `pre_ceiling` require the stored count and average history gives (a count of 0 with no average, or an average of 0). The recompute tool also requires them to equal today's.
+  - `anomaly:recompute` prints a ceiling flag as one (`describeVerdict`).
+  - Tests: an average of 99 beside count 0 is drift, and the printout cases.
+- [x] 9.5 Docs and tests from the second review:
+  - Design: the hosted query is regenerated (refill tolerance, K1, K2); the rollback note covers the operator tools; the D5 report wording matches the code; the misplaced JSDoc is fixed.
+  - Tests: exact-ceiling boundaries (9,000 GJ, 1,000 MWh, 2,500 MWh, 150,000 kg Fuel, 100 t Mobile, 200,000 Sm³).
+  - e2e: the tautological headline assertion is replaced and the teardown delete is checked.
+  - The rest is under Open questions.
+  - Verify with `openspec validate uat2-anomaly-typo-ceiling --strict`.
+- [x] 9.6 Run `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, the full integration suite and `e2e/anomaly-typo-ceiling.spec.ts`. Verify that all pass.
 
 ## Workflow follow-up
 

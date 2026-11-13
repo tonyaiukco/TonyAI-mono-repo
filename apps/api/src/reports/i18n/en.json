@@ -72,6 +72,7 @@
   "anomalyYes": "yes",
   "anomalyYesLimited": "yes (limited history: {priors, plural, one {# period} other {# periods}})",
   "anomalyYesCeiling": "yes (above the first-period ceiling)",
+  "anomalyYesCeilingZeroAverage": "yes (above the plausibility ceiling; earlier periods average zero)",
   "anomalyCleanLimited": "within range (limited history: {priors, plural, one {# period} other {# periods}})",
   "wholeCompany": "Whole subsidiary",
   "unnamedSite": "Facility (name unavailable)",

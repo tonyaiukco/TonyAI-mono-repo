@@ -115,8 +115,10 @@ revise any of them.
 
 - **Other units** reach the same ceiling through exact definitional
   equivalences only (owner, 2026-11-13): MWh, GJ and therms to kWh, UK and US
-  gallons to litres, tonnes to kg. A **metered m³** of natural gas is held to
-  the Sm³ number — the same guard, not a conversion.
+  gallons to litres, tonnes to kg. A **metered m³** of natural gas that carries
+  its own volume correction factor (the TR rules) is held to the Sm³ ceiling as
+  m³ × factor, the figure the engine prices (owner, 2026-11-13); without a
+  factor it is held to the Sm³ number, as a guard.
 - **Refrigerants** are checked line by line; the record's totals are never
   compared. A line is above its ceiling when its capacity is over 500 kg or its
   refill is over its refill ceiling (owner, 2026-11-13). The refill limit
@@ -124,14 +126,22 @@ revise any of them.
   the full charge in a calendar year, used as a yardstick. A line's emission is
   capacity × leak rate + refill, so a refill typo moves the figure most. A
   refrigerant record without equipment lines (outside TR) has no ceiling.
-- **First period only.** Once the window holds a figure — a zero average
-  included — the history rule alone applies. Scope 3 categories have no
-  ceiling.
-- **Stored** as `anomalyFlag` true beside a count of 0 and a null average, a
-  state no earlier rule wrote; the basis (`ceiling`) is derived, and the record
+- **Only where history cannot judge.** A first period, or a window whose
+  figures average zero (owner, 2026-11-13: a January of 0 must not let a
+  February typo through). Once the window holds a figure above zero, the
+  history rule alone applies. Scope 3 categories have no ceiling.
+- **A refrigerant "line" is one equipment type in a record**, not one device:
+  200 split air conditioners of 3 kg are one 600 kg line, which is flagged and
+  needs one sentence of reason. The data model holds no device count, so a
+  per-device ceiling is not possible (owner, 2026-11-13).
+- **Stored** as `anomalyFlag` true beside the count and average history gave —
+  a count of 0 and a null average, or an average of 0 — a state no earlier
+  rule wrote; the basis (`ceiling`) is derived, and the record
   counts as evaluated. The submit refusal `variance_reason_required` carries
   `params.basis` = `ceiling` (or `history`).
-- **Verdicts scored before the ceilings** (count 0, unflagged, above a ceiling)
+- **Verdicts scored before the ceilings** (unflagged, above a ceiling, with the
+  count and average history still gives — count 0 and no average, or an
+  average of 0; any other stored average is drift)
   are kept on committed records and reported by the consistency tools as a
   known difference; a draft or a rejected record meets the ceiling at its next
   save.

@@ -293,6 +293,39 @@ describe('anomaly:probe — the first-period typo ceiling', () => {
     expect(await selected(PRE_CEILING_WHERE)).toEqual([kept]);
   });
 
+  it('applies the ceiling over a zero average and to m³ × its factor, and keeps no broken average (owner review)', async () => {
+    // K1: December at 0 tCO₂e, then January above its ceiling.
+    const zeroSeries = async (category: string, data: Partial<Prisma.ActivityRecordUncheckedCreateInput>, flagged: boolean) => {
+      await createRecord(runtime, tenant, {
+        category,
+        reportingPeriod: 'monthly',
+        reportingYear: 2025,
+        periodValue: 'December',
+        status: ActivityRecordStatus.approved,
+        calculation: { tCo2e: 0, factorId: 'int-test-placeholder' },
+        anomalyFlag: false,
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+        ...(data.activityUnit ? { activityUnit: data.activityUnit } : {}),
+      });
+      return first({ category, reportingPeriod: 'monthly', anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 0, ...data }, flagged);
+    };
+    const zeroFlagged = await zeroSeries('Electricity', { activityValue: 4_500_000, activityUnit: 'kWh' }, true);
+    const zeroKept = await zeroSeries('Fugitive Gas', { activityValue: 300_000, activityUnit: 'standard_cubic_metres' }, false);
+    // K2: 240,000 m³ × 30 = 7,200,000 Sm³, flagged and right; the same unflagged is pre-ceiling.
+    const vcf = { volumeCorrectionFactor: 30 };
+    const corrected = await first({ category: 'Natural Gas', activityValue: 240_000, activityUnit: 'cubic_metres', parameters: vcf }, true);
+    // A broken stored average beside a count of 0, unflagged and above: drift, not kept.
+    const broken = await first({ category: 'Fuel', activityType: 'coal', activityValue: 200_000, activityUnit: 'kg', anomalyBaselineTCo2e: 99 }, false);
+
+    const drift = await selected(DRIFT_WHERE);
+    expect(drift).not.toContain(zeroFlagged);
+    expect(drift).not.toContain(zeroKept);
+    expect(drift).not.toContain(corrected);
+    expect(drift).toContain(broken);
+    expect(await selected(PRE_CEILING_WHERE)).toEqual([zeroKept]);
+  });
+
   it('stops excusing a pre-ceiling verdict once the series has an earlier period', async () => {
     // December (2025) committed, then January 2026 stored as "no earlier
     // period" and above its ceiling: the count is stale, which is drift.

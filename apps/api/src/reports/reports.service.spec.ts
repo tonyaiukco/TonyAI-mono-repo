@@ -1853,7 +1853,7 @@ describe('report column descriptors', () => {
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
-    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false,
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false, anomalyCeiling: false,
     anomalyBaselinePriorCount: 3,
   };
   const withdrawnRow: ReportWithdrawnRow = {
@@ -2114,7 +2114,7 @@ describe('no column can opt out of CSV neutralisation', () => {
     activityType: null,
     factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', calculationInputs: '', calculationInputsCsv: '', tCo2e: 0.44, status: 'approved',
-    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false,
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true, anomalyLegacy: false, anomalyCeiling: false,
     anomalyBaselinePriorCount: 3,
   };
 

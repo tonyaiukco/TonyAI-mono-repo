@@ -10,6 +10,7 @@ import {
   isLoopback,
   keepsLegacyVerdict,
   keepsPreCeilingVerdict,
+  describeVerdict,
   lockKey,
   parseArgs,
   parseHost,
@@ -346,6 +347,57 @@ describe('the first-period typo ceiling', () => {
       first({ category: 'Refrigerants', activityType: 'R-410A', activityUnit: 'kg', activityValue: 770, parameters });
     expect(freshVerdict(indexRecord(fridge(lines(120, 650))), new Map()).anomalous).toBe(true);
     expect(freshVerdict(indexRecord(fridge(lines(300, 300))), new Map()).anomalous).toBe(false);
+  });
+
+  // Owner review, 2026-11-13 (P2): a broken stored average beside a count of 0
+  // is not a verdict any rule wrote, so it is drift — not a kept one.
+  it('does not keep a first period whose stored average is broken', () => {
+    const { stale, keptPreCeiling } = runAlone(
+      first({ ...BIG, status: 'approved', anomalyBaselineTCo2e: 99 }),
+    );
+    expect(keptPreCeiling).toBe(0);
+    expect(stale).toHaveLength(1);
+    expect(stale[0].disposition).toBe('terminal_status');
+  });
+
+  it('names a ceiling flag in its printout, so a gained flag is visible (owner review P2)', () => {
+    expect(describeVerdict({ anomalous: false, priorCount: 0, baseline: null })).toBe('not evaluated (no earlier period)');
+    expect(describeVerdict({ anomalous: true, priorCount: 0, baseline: null })).toBe(
+      'ANOMALOUS — above the typo ceiling (no earlier period)',
+    );
+    expect(describeVerdict({ anomalous: true, priorCount: 1, baseline: 0 })).toBe(
+      'ANOMALOUS — above the typo ceiling (1 priors averaging 0)',
+    );
+    expect(describeVerdict({ anomalous: true, priorCount: 2, baseline: 10 })).toMatch(/^ANOMALOUS vs 10/);
+  });
+
+  // K1 (owner, 2026-11-13): over a zero average the ceiling judges too.
+  describe('over a zero average', () => {
+    const zeroPrior = rec({
+      id: 'jan0',
+      periodValue: 'January',
+      status: 'approved',
+      calculation: { factorId: 'f-1', tCo2e: 0 },
+      anomalyBaselinePriorCount: 0,
+    });
+    const feb = (over) =>
+      rec({ id: 'feb', periodValue: 'February', ...BIG, anomalyBaselinePriorCount: 1, anomalyBaselineTCo2e: 0, ...over });
+    const run2 = (row) => {
+      const indexed = [zeroPrior, row].map(indexRecord);
+      return findStale(indexed, buildPools(indexed), new Set());
+    };
+    it('flags a draft above its ceiling', () => {
+      const { stale } = run2(feb({ status: 'draft' }));
+      expect(stale[0]).toMatchObject({ disposition: 'rewritable', fresh: { anomalous: true, priorCount: 1, baseline: 0 } });
+    });
+    it('keeps an approved one scored before the ceilings: not drift', () => {
+      const { stale, keptPreCeiling } = run2(feb({ status: 'approved' }));
+      expect(stale).toEqual([]);
+      expect(keptPreCeiling).toBe(1);
+    });
+    it('agrees with a ceiling flag stored right', () => {
+      expect(run2(feb({ status: 'approved', anomalyFlag: true })).stale).toEqual([]);
+    });
   });
 
   it('re-scores a draft refill breach to a flag', () => {

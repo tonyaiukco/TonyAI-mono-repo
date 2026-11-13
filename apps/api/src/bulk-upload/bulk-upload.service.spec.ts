@@ -860,7 +860,7 @@ describe('BulkUploadService — warnings', () => {
 
     const warning = report.warnings.find((w) => w.code === 'would_block_submit');
     expect(warning).toMatchObject({ row: 2, column: 'varianceReason' });
-    expect(warning?.message).toMatch(/first-period figure is above the plausibility ceiling/);
+    expect(warning?.message).toMatch(/no usable history to compare with and is above the plausibility ceiling/);
     expect(warning?.message).not.toMatch(/baseline/);
   });
 

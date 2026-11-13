@@ -154,7 +154,7 @@
   },
   "variants": {
     "variance_reason_required": {
-      "ceiling": "This is a first-period figure above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting."
+      "ceiling": "This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting."
     }
   },
   "bulkOutcomes": {

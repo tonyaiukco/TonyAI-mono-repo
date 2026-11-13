@@ -122,7 +122,9 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
     // Below its ceiling: the first-period note, no flag, no variance field.
     await open('Natural Gas');
     await expect(page.getByText(anomalyEn.firstPeriod.headline, { exact: false })).toBeVisible();
-    await expect(page.getByText(anomalyEn.ceiling.headline)).toHaveCount(0);
+    // Data Entry prints the statement's detail, not its headline: assert the
+    // ceiling sentence itself is absent (owner review, 2026-11-13).
+    await expect(page.getByText(/above the plausibility ceiling/)).toHaveCount(0);
     await expect(page.getByLabel('Reason for variance *')).toHaveCount(0);
 
     // The reviewer reads the same statement, in Turkish, beside the reason.
@@ -154,6 +156,8 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
   } finally {
     await setReviewerLanguage('en');
     await deleteRecordsAsService(request, ids);
-    await request.delete(`${API_BASE}/subsidiaries/${subsidiaryId}`, { headers: bearer(token) });
+    const removed = await request.delete(`${API_BASE}/subsidiaries/${subsidiaryId}`, { headers: bearer(token) });
+    // Checked, so a subsidiary left behind fails here rather than in a later spec.
+    expect(removed.ok(), `subsidiary cleanup: ${removed.status()}`).toBe(true);
   }
 });

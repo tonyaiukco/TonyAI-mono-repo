@@ -21,6 +21,7 @@ import {
   COUNTED_STATUSES,
   canonicalPeriodValue,
   isCalculated,
+  isCeilingEligible,
   isLegacyPreCeilingVerdict,
   isLegacyShortWindowVerdict,
   PENDING_REVIEW_STATUSES,
@@ -168,6 +169,21 @@ export const keepsLegacyVerdict = (row) =>
   row.anomalyFlag === false &&
   isLegacyShortWindowVerdict(row);
 
+/**
+ * A verdict as the tool prints it. A ceiling flag is named as one before the
+ * null-average case: a first period that gains a flag must not read "not
+ * evaluated" on both sides of the change (owner review, 2026-11-13).
+ */
+export function describeVerdict(v) {
+  if (v.priorCount === null) return 'not evaluated (no figure)';
+  if (isCeilingEligible(v)) {
+    const basis = v.priorCount === 0 ? 'no earlier period' : `${v.priorCount} priors averaging 0`;
+    return v.anomalous ? `ANOMALOUS — above the typo ceiling (${basis})` : `not evaluated (${basis})`;
+  }
+  if (v.baseline === null) return `not evaluated (${v.priorCount} priors)`;
+  return `${v.anomalous ? 'ANOMALOUS' : 'clean'} vs ${v.baseline.toFixed(6)} over ${v.priorCount} priors`;
+}
+
 export const storedVerdict = (row) => ({
   anomalous: row.anomalyFlag,
   priorCount: row.anomalyBaselinePriorCount,
@@ -203,9 +219,15 @@ export function findStale(scoreable, pools, lockedPeriods) {
     }
     const stored = storedVerdict(item.row);
     const fresh = freshVerdict(item, pools);
-    // Only while it is STILL a first period: once an earlier period has been
-    // committed, a stored count of 0 is ordinary drift, as it always was.
-    if (fresh.priorCount === 0 && keepsPreCeilingVerdict(item.row)) {
+    // Only while history still cannot judge it, and only when the stored count
+    // and average are the ones history gives today: a moved pool, or a broken
+    // stored average, is ordinary drift (owner review, 2026-11-13).
+    if (
+      isCeilingEligible(fresh) &&
+      keepsPreCeilingVerdict(item.row) &&
+      stored.priorCount === fresh.priorCount &&
+      sameBaseline(stored.baseline, fresh.baseline)
+    ) {
       keptPreCeiling++;
       continue;
     }
