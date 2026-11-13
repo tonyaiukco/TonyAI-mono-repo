@@ -9,7 +9,7 @@ Enforce an invariant on the activity-record lifecycle. The **canonical exemplars
 `apps/api/src/activity-records/activity-records.service.ts` — read them first:
 
 - **Evidence gate** (`submit`): evidence-required category + 0 files → block submit (FR §4.1).
-- **Anomaly gate** (`submit`): recomputes the baseline at submit time; flagged + no `varianceReason` → block (VAR §4). One earlier committed period is enough for the rule to run (limited history, since 2026-11-11); a record with none is held to its first-period typo ceiling (`withFirstPeriodCeiling`, Decisions 2026-11-12) and blocked only above it — the refusal's `params.basis` is `ceiling` then, `history` otherwise. Pass the values the record will STORE (canonical unit, merged parameters) to the verdict.
+- **Anomaly gate** (`submit`): recomputes the baseline at submit time; flagged + no `varianceReason` → block (VAR §4). One earlier committed period is enough for the rule to run (limited history, since 2026-11-11); a record with none, or with priors averaging zero, is held to its typo ceiling (`withFirstPeriodCeiling`, Decisions 2026-11-12/13) and blocked only above it — the refusal's `params.basis` is `ceiling` then, `history` otherwise. Pass the values the record will STORE (canonical unit, merged parameters) to the verdict.
 - **Period-lock gate** (`create`/`update`/`remove`/`submit`): a `period_locks` row for the record's
   (subsidiary, year, period, periodValue) → block everything (FR §4.2).
 

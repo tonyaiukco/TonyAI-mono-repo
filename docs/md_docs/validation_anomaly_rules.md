@@ -81,8 +81,10 @@ three it is showing, with the number of periods for a limited verdict. The
 record carries `baselinePriorCount` (0–3) and `baselineTCo2e` (the average, or
 null when the rule did not run) beside `anomalyFlag` for exactly that reason.
 
-An average of **zero** yields no ratio, whatever the count: the record is *not
-evaluated* and is never flagged.
+An average of **zero** yields no ratio, whatever the count, so history cannot
+judge the record. Since 2026-11-13 it is held to its typo ceiling instead, as a
+first period is (below), and flagged only above it; otherwise it is *not
+evaluated*.
 
 A prior that carries **no figure** — an invoice-tracked category with no seeded
 factor — occupies one of the three slots and is then dropped rather than

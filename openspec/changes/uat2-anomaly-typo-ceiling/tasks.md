@@ -205,6 +205,16 @@
   - Verify with `openspec validate uat2-anomaly-typo-ceiling --strict`.
 - [x] 9.6 Run `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, the full integration suite and `e2e/anomaly-typo-ceiling.spec.ts`. Verify that all pass.
 
+## 10. Re-review of the owner-review round (2026-11-13)
+
+- [x] 10.1 `anomaly:probe`'s `pre_ceiling` is NULL-safe (`COALESCE(…, false)`). A NULL stored count or average no longer drops a row from both the drift and the known-difference lists. Probe int cases cover a first period stored with count NULL, three zero priors stored 3/NULL, and one zero prior stored NULL/NULL. The case fails against the previous commit and passes now.
+- [x] 10.2 The spec delta is aligned with K1 and the neutral copy: ceiling refusal, bulk and screen texts; the CSV cell for a zero average; scenarios for a zero-average flag on screen and in a CSV, a kept zero-average verdict, and NULL stored counts as drift.
+- [x] 10.3 K1 is carried through the docs and comments: `validation_anomaly_rules.md` (the zero-average paragraph), `data_entry_page.md`, `calculation_logic.md`, `functional_requirements.md`, `commands.md`, the `workflow-gate` and `e2e-flow` skills, the DTO JSDoc and the `schema.prisma` comment.
+- [x] 10.4 Design:
+  - The hosted query is exact: the rule's three-period window, as in `anomaly:probe`. It no longer undercounts an old positive period followed by three zeros.
+  - The rollback note covers how the old image shows a zero-average flag. It is mirrored in `docs/development/commands.md`.
+- [x] 10.5 Run `pnpm typecheck`, `pnpm test`, the probe and ceiling integration specs, and `pnpm anomaly:probe`. Verify that all pass and the probe reports no drift.
+
 ## Workflow follow-up
 
 - Commit and push on the owner's word; the owner reviews the branch, then asks for the PR. The owner merges.

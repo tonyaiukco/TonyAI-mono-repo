@@ -156,10 +156,10 @@ A record whose window holds at least one figure, averaging above zero, SHALL be 
 
 #### Scenario: A zero average falls back to the ceiling
 - **WHEN** a series holds one earlier period of 0 tCO2e and the record is above its ceiling
-- **THEN** the record is flagged as above the plausibility ceiling, and its refusal at submit names the ceiling
+- **THEN** the record is flagged as above the plausibility ceiling, and its refusal at submit carries `basis` `ceiling`
 
 ### Requirement: A ceiling flag needs a variance reason at submit
-Submitting a record flagged as above its first-period ceiling, with no variance reason, SHALL be refused with `variance_reason_required`, and the record SHALL stay as it was. Submit, bulk submit and the bulk import warning SHALL treat a ceiling flag exactly as a flag on history.
+Submitting a record flagged as above its ceiling (a first period, or earlier periods averaging zero), with no variance reason, SHALL be refused with `variance_reason_required`, and the record SHALL stay as it was. Submit, bulk submit and the bulk import warning SHALL treat a ceiling flag exactly as a flag on history.
 
 #### Scenario: A ceiling flag blocks submit
 - **WHEN** the author submits a first-period record above its ceiling with no variance reason
@@ -171,14 +171,14 @@ Submitting a record flagged as above its first-period ceiling, with no variance 
 
 #### Scenario: Bulk import warns about a ceiling
 - **WHEN** an imported row is the first period of its series, is above its ceiling and carries no variance reason
-- **THEN** the import reports that the row would be blocked at submit, naming the first-period ceiling
+- **THEN** the import reports that the row would be blocked at submit, and its message names the plausibility ceiling and says the row has no usable history
 
 ### Requirement: The refusal names its basis
-A single submit's `variance_reason_required` refusal SHALL carry the parameter `basis`. Its value SHALL be `ceiling` for a first-period ceiling flag and `history` for a flag on full or limited history. Data Entry's refusal text SHALL say which applies, in Turkish and English. A bulk submit refusal's message SHALL name the basis too.
+A single submit's `variance_reason_required` refusal SHALL carry the parameter `basis`. Its value SHALL be `ceiling` for a ceiling flag (a first period, or earlier periods averaging zero) and `history` for a flag on full or limited history. Data Entry's refusal text SHALL say which applies, in Turkish and English. A bulk submit refusal's message SHALL name the basis too.
 
 #### Scenario: A ceiling refusal on Data Entry
 - **WHEN** a Turkish user submits a first-period record above its ceiling with no variance reason
-- **THEN** the refusal carries `basis` `ceiling` and its text says the figure is above the first-period ceiling, not that it deviates from a historical average
+- **THEN** the refusal carries `basis` `ceiling` and its text says the figure has no usable history and is above the plausibility ceiling, not that it deviates from a historical average
 
 #### Scenario: A history refusal keeps its meaning
 - **WHEN** a record flagged on 2 earlier periods is submitted with no variance reason
@@ -186,14 +186,18 @@ A single submit's `variance_reason_required` refusal SHALL carry the parameter `
 
 #### Scenario: Bulk submit names the ceiling
 - **WHEN** a ceiling-flagged draft with no variance reason is sent in a bulk submit
-- **THEN** it is refused with `variance_reason_required`, and the refusal's message names the first-period ceiling
+- **THEN** it is refused with `variance_reason_required`, and the refusal's message names the plausibility ceiling
 
 ### Requirement: Screens state a ceiling flag
-For a ceiling flag, Data Entry, the review sheet and the emissions record view SHALL say, in Turkish and English, that it is a first-period record above its ceiling, with no earlier period. They SHALL show the amount and the ceiling in the entered unit, or a refrigerant line's capacity or refill and the limit it passed, and ask for the evidence and the unit to be checked. A history average SHALL NOT be mentioned. The review queue row SHALL carry the flag mark.
+For a ceiling flag, Data Entry, the review sheet and the emissions record view SHALL say, in Turkish and English, that it is above its ceiling and why history cannot judge it: no earlier period, or a zero average. They SHALL show the amount and the ceiling, or a refrigerant line's capacity or refill and its limit, and ask for the evidence and the unit to be checked. No history average SHALL be named. The review queue row SHALL carry the flag mark.
 
 #### Scenario: A reviewer opens a ceiling flag
 - **WHEN** a consultant opens a submitted first-period record of 1,500 MWh of electricity
 - **THEN** the review sheet says it is above the first-period ceiling of 1,000 MWh, that there is no earlier period, and asks for the evidence and the unit to be checked, beside the author's variance reason
+
+#### Scenario: A ceiling flag over a zero average
+- **WHEN** a reviewer opens a record flagged above its ceiling whose earlier periods average zero
+- **THEN** the sheet says the earlier periods average zero and the figure is above the plausibility ceiling, and does not call it a first-period record
 
 #### Scenario: A refrigerant line above the ceiling
 - **WHEN** a user saves a first-period refrigerant record with a 650 kg line
@@ -208,7 +212,7 @@ For a ceiling flag, Data Entry, the review sheet and the emissions record view S
 - **THEN** the first carries the flag mark and the second the first-period mark
 
 ### Requirement: The matrix, dashboard and exports treat a ceiling flag as a flag
-A ceiling flag SHALL turn its tracking-matrix cell amber and raise the dashboard alert, like any flag. It SHALL NOT be counted among records not checked. The anomaly column of every report and CSV export SHALL state that the record is above the first-period ceiling, in the export's language.
+A ceiling flag SHALL turn its tracking-matrix cell amber and raise the dashboard alert, like any flag. It SHALL NOT be counted among records not checked. The anomaly column of every report and CSV export SHALL state that the record is above the ceiling, and whether history had no earlier period or earlier periods averaging zero, in the export's language.
 
 #### Scenario: A ceiling flag in the matrix
 - **WHEN** a committed record flagged as above its first-period ceiling sits in a tracking cell
@@ -218,12 +222,24 @@ A ceiling flag SHALL turn its tracking-matrix cell amber and raise the dashboard
 - **WHEN** a record flagged as above its first-period ceiling is exported
 - **THEN** its anomaly cell says yes and names the first-period ceiling
 
+#### Scenario: A zero-average ceiling flag in a CSV
+- **WHEN** a record flagged above its ceiling over earlier periods averaging zero is exported
+- **THEN** its anomaly cell says yes, names the plausibility ceiling and says the earlier periods average zero
+
 ### Requirement: Verdicts scored before the ceiling are kept
 No committed record SHALL be re-scored because the ceilings were introduced. A committed, unflagged record above its ceiling SHALL keep its verdict while history still cannot judge it and its stored count and average are the ones history gives. The consistency tools SHALL report it as a known difference, not drift. A draft or rejected record SHALL be checked against the ceiling at its next save, and the re-score tool MAY rewrite it.
 
 #### Scenario: An approved first-period record from before the change
 - **WHEN** a record approved before this change, the first of its series and above its ceiling, is opened
 - **THEN** it is reported as a first-period record, not checked, and its verdict is unchanged
+
+#### Scenario: A zero-average record from before the change
+- **WHEN** a record approved before this change, above its ceiling and stored unflagged with one earlier period and an average of 0, is checked by the consistency tools
+- **THEN** it is reported as a known difference, not drift, while its earlier periods still average zero
+
+#### Scenario: A NULL stored count is not excused
+- **WHEN** a committed record above its ceiling is stored unflagged with no count, or with three earlier periods and no average, where history gives a count and an average
+- **THEN** the consistency probe and the re-score tool both report it as drift
 
 #### Scenario: The probe on an upgraded database
 - **WHEN** the consistency probe runs on a database that holds such committed records

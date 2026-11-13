@@ -158,22 +158,23 @@ The ceiling applies wherever the category and unit have one, in every geography.
   - `open`: draft or rejected; needs a variance reason at its next submit.
   - `committed`: kept as a known difference, which `anomaly:probe` section 2c lists.
 
-  The ceiling expression is the probe's own `CEILING_ABOVE_SQL`, regenerated after the owner's review: it includes the refill tolerance, K1 and K2. "History cannot judge" is approximated as "no earlier committed period of the series with a figure above zero", which covers a first period and a zero average (figures are never negative). It differs from the rule only when the three most recent earlier periods all lack a figure, which never happens for Scope 1–2. Locally (seeded database, 2026-11-13) it returns 0 rows, in line with the probe's section 2c (0).
+  The ceiling expression is the probe's own `CEILING_ABOVE_SQL`, with the refill tolerance, K1 and K2. The window is the rule's own: the three most recent earlier committed periods, where a period without a figure takes a slot, as in `anomaly:probe`. The query is exact, not an approximation (re-review, 2026-11-13: the earlier "no earlier figure above zero" undercounted a series with an old positive period followed by three zero periods). Locally (seeded database, 2026-11-13) it returns 0 rows, in line with the probe's section 2c (0).
 
 ```sql
 -- Read-only. Records above their typo ceiling where history cannot judge them
--- (no earlier committed period with a figure above zero), by organisation,
--- category and kind: 'open' (draft/rejected: needs a variance reason at its
--- next submit) or 'committed' (kept as a known difference, not re-scored).
+-- (no figure among the 3 most recent earlier committed periods, or those figures
+-- averaging zero) — the rule's own window, as anomaly:probe computes it — by
+-- organisation, category and kind: 'open' (draft/rejected: needs a variance
+-- reason at its next submit) or 'committed' (kept as a known difference).
 WITH r AS (
   SELECT id, subsidiary_id, location_id, category, activity_type, reporting_period, status,
          reporting_year * 100 + COALESCE(CASE reporting_period
            WHEN 'monthly'   THEN array_position(ARRAY['January','February','March','April','May','June','July','August','September','October','November','December'], period_value) - 1
            WHEN 'quarterly' THEN array_position(ARRAY['Q1','Q2','Q3','Q4'], period_value)
            ELSE 0 END, 0) AS key,
-         (jsonb_typeof(calculation->'factorId') = 'string' AND length(calculation->>'factorId') > 0
-           AND jsonb_typeof(calculation->'tCo2e') = 'number') AS has_figure,
-         CASE WHEN jsonb_typeof(calculation->'tCo2e') = 'number' THEN (calculation->>'tCo2e')::float8 END AS tco2e,
+         CASE WHEN jsonb_typeof(calculation->'factorId') = 'string' AND length(calculation->>'factorId') > 0
+                   AND jsonb_typeof(calculation->'tCo2e') = 'number'
+              THEN (calculation->>'tCo2e')::float8 END AS tco2e,
          CASE
     WHEN category = 'Refrigerants' THEN (
       -- NULL with no lines (no ceiling); otherwise whether any line's capacity
@@ -226,30 +227,42 @@ WITH r AS (
     ELSE NULL END AS above_ceiling
   FROM activity_records
   WHERE status <> 'voided'
+),
+judged AS (
+  SELECT r.*, w.priors, w.baseline
+  FROM r
+  LEFT JOIN LATERAL (
+    SELECT count(t.tco2e)::int AS priors, avg(t.tco2e) AS baseline
+    FROM (
+      SELECT c.tco2e FROM r c
+      WHERE c.status IN ('submitted', 'under_review', 'approved', 'locked')
+        AND c.subsidiary_id = r.subsidiary_id
+        AND c.location_id IS NOT DISTINCT FROM r.location_id
+        AND c.category = r.category
+        AND c.activity_type IS NOT DISTINCT FROM r.activity_type
+        AND c.reporting_period = r.reporting_period
+        AND c.key < r.key AND c.id <> r.id
+      ORDER BY c.key DESC
+      LIMIT 3
+    ) t
+  ) w ON TRUE
 )
-SELECT o.legal_name AS organisation, r.category,
-       CASE WHEN r.status IN ('draft', 'rejected') THEN 'open' ELSE 'committed' END AS kind,
+SELECT o.legal_name AS organisation, j.category,
+       CASE WHEN j.status IN ('draft', 'rejected') THEN 'open' ELSE 'committed' END AS kind,
        count(*) AS records
-FROM r
-JOIN subsidiaries s ON s.id = r.subsidiary_id
+FROM judged j
+JOIN subsidiaries s ON s.id = j.subsidiary_id
 JOIN organisations o ON o.id = s.organisation_id
-WHERE r.has_figure AND r.above_ceiling
-  AND NOT EXISTS (
-    SELECT 1 FROM r c
-    WHERE c.status IN ('submitted', 'under_review', 'approved', 'locked') AND c.has_figure AND c.tco2e > 0
-      AND c.subsidiary_id = r.subsidiary_id
-      AND c.location_id IS NOT DISTINCT FROM r.location_id
-      AND c.category = r.category
-      AND c.activity_type IS NOT DISTINCT FROM r.activity_type
-      AND c.reporting_period = r.reporting_period
-      AND c.key < r.key AND c.id <> r.id
-  )
+WHERE j.tco2e IS NOT NULL AND COALESCE(j.above_ceiling, false)
+  AND (j.priors = 0 OR j.baseline = 0)
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3;
 ```
 - **Rollback:** the previous image. It reads a stored ceiling flag (flag true, count 0) as flagged with no baseline, and prints "deviates significantly from the historical average" (`detailNoBaseline`). The submit gate still holds, because it re-scores, and under the old rule the record is no longer flagged. A draft saved by the new image is re-scored at its next save.
   - **Operator tools after a rollback:** do not run `anomaly:recompute --apply` under the old image. It would clear the ceiling flags of records in review; their variance reasons would stay.
   - The old `anomaly:probe` reports every ceiling flag (count 0, or an average of 0) as drift; that drift is expected after a rollback.
+  - **On screen under the old image, a zero-average ceiling flag** (flag, count ≥ 1, average 0) reads as a history flag against an average of 0: "deviates significantly from the historical average — 0 tCO₂e over the previous comparable periods". The export cell reads a plain `yes`. The submit gate re-scores under the old rule, and that rule does not flag a zero average.
+  - The same notes are in `docs/development/commands.md`, so they outlive this change's archive.
 
 ## Open Questions
 

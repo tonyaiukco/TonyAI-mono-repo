@@ -169,9 +169,10 @@ Records with more than 50 percent variance from the rolling average of the
 previous **3** comparable periods for the same reporting entity must be flagged.
 With one or two priors carrying a figure the record is checked against their
 average and the surface must say that the verdict rests on **limited history**
-(since 2026-11-11, BUG-R2-07). With no prior the record is checked against a
-fixed **first-period typo ceiling** for its category and unit (Decisions
-2026-11-12) and flagged, with a variance reason required, only above it;
+(since 2026-11-11, BUG-R2-07). With no prior, or with priors averaging zero,
+the record is checked against a fixed **typo ceiling** for its category and
+unit (Decisions 2026-11-12 and 2026-11-13) and flagged, with a variance reason
+required, only above it;
 otherwise it is **not evaluated** rather than clean, and the surface must say so.
 
 The normative rule — the full baseline key, the counted statuses that seed it,

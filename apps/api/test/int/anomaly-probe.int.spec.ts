@@ -326,6 +326,47 @@ describe('anomaly:probe — the first-period typo ceiling', () => {
     expect(await selected(PRE_CEILING_WHERE)).toEqual([zeroKept]);
   });
 
+  it('reports an unflagged record above its ceiling with a NULL stored count or average as drift (re-review)', async () => {
+    // A NULL beside the comparisons once turned pre_ceiling NULL, and the row
+    // fell out of BOTH the drift and the known-difference lists (exit 0).
+    const zeroPrior = (category: string, activityUnit: string, periodValue = 'December') =>
+      createRecord(runtime, tenant, {
+        category,
+        activityUnit,
+        reportingPeriod: 'monthly',
+        reportingYear: 2025,
+        periodValue,
+        status: ActivityRecordStatus.approved,
+        calculation: { tCo2e: 0, factorId: 'int-test-placeholder' },
+        anomalyFlag: false,
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      });
+    // First period, stored count NULL.
+    const nullCount = await first(
+      { category: 'Electricity', activityValue: 4_500_000, activityUnit: 'kWh', anomalyBaselinePriorCount: null },
+      false,
+    );
+    // One prior averaging 0, stored count and average NULL.
+    await zeroPrior('Fugitive Gas', 'standard_cubic_metres');
+    const nullBoth = await first(
+      { category: 'Fugitive Gas', reportingPeriod: 'monthly', activityValue: 300_000, activityUnit: 'standard_cubic_metres', anomalyBaselinePriorCount: null },
+      false,
+    );
+    // Three priors averaging 0, stored count 3 and average NULL. (A count of
+    // 1–2 beside a NULL average is the short-history legacy class, excused by
+    // design since 2026-11-11; a count of 3 never was.)
+    for (const month of ['October', 'November', 'December']) await zeroPrior('Natural Gas', 'standard_cubic_metres', month);
+    const nullAverage = await first(
+      { category: 'Natural Gas', reportingPeriod: 'monthly', activityValue: 300_000, activityUnit: 'standard_cubic_metres', anomalyBaselinePriorCount: 3 },
+      false,
+    );
+
+    const drift = await selected(DRIFT_WHERE);
+    expect(drift).toEqual(expect.arrayContaining([nullCount, nullBoth, nullAverage]));
+    expect(await selected(PRE_CEILING_WHERE)).toEqual([]);
+  });
+
   it('stops excusing a pre-ceiling verdict once the series has an earlier period', async () => {
     // December (2025) committed, then January 2026 stored as "no earlier
     // period" and above its ceiling: the count is stale, which is drift.

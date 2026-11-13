@@ -4225,10 +4225,10 @@ export interface ActivityRecordDTO {
    * `ANOMALY_MIN_PRIORS`, with ONE exception: a count of `1`–`2` beside a null
    * average is a verdict written before the short-history check existed, when
    * such a window was not evaluated (`isLegacyShortWindowVerdict`). **A value
-   * of `0` is a further state**: an average of zero yields no ratio, so the
-   * verdict is vacuous rather than clean — 500 tCO₂e against zero priors is
-   * reported identically to a value in line with its history. Present it as
-   * *not evaluated*, never as a baseline that was met. Read these through
+   * of `0` is a further state**: an average of zero yields no ratio, so history
+   * cannot judge. Unflagged, the verdict is vacuous rather than clean — present
+   * it as *not evaluated*, never as a baseline that was met. FLAGGED, it is a
+   * typo-ceiling flag (since 2026-11-13; `isCeilingFlag`), and it is evaluated. Read these through
    * `anomalyBasis()` and `isAnomalyEvaluated()`, never by hand.
    *
    * Not to be confused with `TargetDTO.baselineTCo2e`, which is a reduction

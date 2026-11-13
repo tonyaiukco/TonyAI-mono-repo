@@ -206,10 +206,13 @@ verdict AS (
     -- Only when the stored count and average are the ones history gives today
     -- (no earlier period and NO average, or the same count and a zero
     -- average): a broken stored average stays drift (owner review, 2026-11-13).
-    (tco2e IS NOT NULL AND NOT anomaly_flag AND COALESCE(above_ceiling, false) AND (
+    -- COALESCE: a NULL stored count or average turns every comparison NULL, and
+    -- "NOT pre_ceiling" would then drop the row from the drift report as well
+    -- (re-review, 2026-11-13) — the same trap the legacy column guards above.
+    COALESCE(tco2e IS NOT NULL AND NOT anomaly_flag AND COALESCE(above_ceiling, false) AND (
        (priors = 0 AND stored_priors = 0 AND stored_baseline IS NULL)
        OR (priors >= ${BASELINE_MIN_PERIODS} AND baseline = 0 AND stored_priors = priors AND stored_baseline = 0)
-    )) AS pre_ceiling
+    ), false) AS pre_ceiling
   FROM scored
 )`;
 
