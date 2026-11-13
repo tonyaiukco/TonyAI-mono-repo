@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "use-intl";
+import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { signInFailureKey } from "@/lib/auth-view";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,22 @@ function LoginForm() {
   const t = useTranslations("auth");
   const [loading, setLoading] = useState(false);
   const reason = searchParams.get("reason");
+  // The way to /register is offered only where registration is open. Off, or
+  // an answer that cannot be read, shows nothing: signing in never waits on it.
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+
+  useEffect(() => {
+    let current = true;
+    api.getRegistrationStatus().then(
+      (status) => {
+        if (current) setRegistrationOpen(status !== null);
+      },
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
 
   // Sent here because the account was disabled (D19) or its session revoked
   // since it began: `lib/api.ts` ended the session on the API's 401.
@@ -115,6 +132,14 @@ function LoginForm() {
               {loading ? t("signIn.submitting") : t("signIn.submit")}
             </Button>
           </form>
+          {registrationOpen && (
+            <p className="mt-4 text-center text-sm text-muted-foreground">
+              {t("signIn.noAccount")}{" "}
+              <Link href="/register" className="font-medium text-primary underline-offset-4 hover:underline">
+                {t("signIn.register")}
+              </Link>
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
