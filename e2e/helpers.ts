@@ -246,6 +246,11 @@ interface CommittedRecordInput {
   activityUnit?: string;
   reportingYear?: number;
   reportingPeriod?: string;
+  /** Category inputs where the geography takes them, e.g. a TR Refrigerants
+   *  record's equipment lines. Omitted from the request when not given. */
+  parameters?: Record<string, unknown>;
+  /** The author's reason, needed to submit a record the anomaly check flags. */
+  varianceReason?: string | null;
 }
 
 /**
@@ -272,7 +277,8 @@ export async function createCommittedRecord(
       activityType: input.activityType !== undefined ? input.activityType : e2eActivityTypeFor(input.category),
       activityValue: input.activityValue,
       activityUnit: input.activityUnit ?? 'kWh',
-      varianceReason: null,
+      ...(input.parameters ? { parameters: input.parameters } : {}),
+      varianceReason: input.varianceReason ?? null,
       input: null,
     },
   });
@@ -1176,6 +1182,10 @@ export const E2E_TR_INPUTS = {
   gasFactor: 0.2,
   refrigerant: 'R-410A',
   refrigerantFactor: 1000,
+  /** A second gas, so one site and year can hold two refrigerant records that
+   *  differ only by gas (`review-shows-gas.spec.ts`). */
+  secondRefrigerant: 'R-32',
+  secondRefrigerantFactor: 500,
   splitDefaultRate: 0.05,
   splitAlternativeRate: 0.5,
   mode: 'on_road_diesel',
@@ -1193,6 +1203,7 @@ export async function seedTrInputsFixture(): Promise<void> {
   const factors = [
     ['Natural Gas', 'natural_gas', 'net', f.gasFactor, 'kgCO2e/kWh', 'kWh'],
     ['Refrigerants', f.refrigerant, 'not_applicable', f.refrigerantFactor, 'kgCO2e/kg', 'kg'],
+    ['Refrigerants', f.secondRefrigerant, 'not_applicable', f.secondRefrigerantFactor, 'kgCO2e/kg', 'kg'],
     ['Mobile Combustion', f.mode, 'not_applicable', f.modeFactor, 'kgCO2e/litre', 'litres'],
     ['Mobile Combustion', f.marineGasOil, 'not_applicable', f.marineGasOilFactor, 'kgCO2e/kg', 'kg'],
     ['Fugitive Gas', 'gas_network_leakage', 'not_applicable', f.leakageFactor, 'kgCO2e/Sm3', 'standard_cubic_metres'],

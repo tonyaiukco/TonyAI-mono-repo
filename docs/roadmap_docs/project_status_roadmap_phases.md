@@ -1599,6 +1599,18 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 
 ### Open questions
 
+**Review shows gas follow-ups (2026-11-13, `uat2-review-shows-gas`; filed per the pre-pilot rule):**
+
+- **One activity-label resolver:** Data Entry still resolves activity-type labels in four local copies: `categoryWithActivity` in `components/data-entry/records-table.tsx`, `activityLabel` and an inline copy in `app/data-entry/page.tsx`, and `bulkActivityLabel` in `lib/bulk-upload-view.ts`. They could all use `RecordWords.activity` / `categoryWithActivity` in `lib/vocabulary.ts`. Unlike the new resolver, records-table shows a legacy `unspecified` type raw, in English. This is a refactor with no defect behind it today.
+- **`/review` at phone width:** at 375 px the queue cannot be used, even with the sidebar collapsed. The content column stays narrow and the table is clipped (browser check, task 3.4). This predates the change and is a case of "Mobile/responsive support targets" below.
+  - **Root cause (app-wide, not `/review` only):** each of the 10 screens that mount `Sidebar` offsets its `<main>` by a fixed `pl-[280px]`, beside a fixed sidebar 280 px wide. Collapsing the sidebar changes only the sidebar's own state, so the offset stays. At 375 px about 95 px is left for content. On desktop a collapsed sidebar leaves a 216 px empty strip.
+  - **Proposed fix:** a shared shell. Below `md` the sidebar is hidden and a menu button opens it as a left drawer. `<main>` is offset only from `md` up and follows the collapsed state. The table already scrolls sideways (`overflow-x-auto`).
+  - **Size:** the sidebar, a shared layout and the 10 screens, plus a browser check of every screen at 375 px and on desktop, in EN and TR, and a 375 px e2e.
+  - **Decision:** kept out of `uat2-review-shows-gas` (owner, 2026-11-13). It waits for the owner's answer on whether the pilot targets phones; if yes, it ships as its own small change.
+- **Nested brackets (`qa-auditor`, P3):** a label that already holds brackets reads, for example, "Refrigerants (SF6 (sulphur hexafluoride))" or "Fuel (Gas oil (red diesel))". Data Entry's records table shows them the same way today. Cosmetic only.
+- **A partly created e2e record can leak (`qa-auditor`, P3; predates this change):** if `createCommittedRecord` (`e2e/helpers.ts`) creates a record and then its evidence upload or submit throws, the id is never returned, so the spec cannot delete it. The leftover makes the next run's create fail on uniqueness until `db:seed`.
+- **Implicit values resolve differently (`qa-auditor`, P3):** Data Entry's `activityLabel` labels a category's implicit value, for example `grid_electricity`; `RecordWords.activity` shows it raw, because it reads `recordActivityTypesFor`. No record can store one today, since the calculation refuses it. This belongs with "One activity-label resolver" above.
+
 **First-period typo ceiling follow-ups (2026-11-13, `uat2-anomaly-typo-ceiling`; filed per the pre-pilot rule):**
 
 - **A later revision of the ceilings (`design.md`, Open Questions):** a flag stored under the old table reads its figures from the new one. The screens then fall back to the sentence without figures. The probe reports committed flags the new table no longer gives as drift. A revision PR must state its own known-difference rule.
@@ -1913,6 +1925,8 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 - Mobile/responsive support targets
 
 ## Decisions log
+
+**2026-11-13 (third) — The gas on `/review` covers every typed category (owner, in chat, `/opsx:propose`; OpenSpec `uat2-review-shows-gas`).** The review queue row and the review sheet title name the record's activity type beside its category, for example "Refrigerants (R-410A)" or "Fuel (Diesel)". This applies to every category that has activity types, not only Refrigerants: the uniqueness key ends with `activity_type`, so two Fuel or Mobile Combustion records of one site and period can also differ only by type. It is the same pre-pilot exception as 2026-11-13 (second), item 3. The change is web only. The list endpoint already returns `activityType`, so no API, contract or migration changes, and no new message copy is added. Not chosen: Refrigerants only, the narrowest reading of D8.
 
 **2026-11-13 (second) — The multi-gas refrigerant form's design (K5 option B, LP7-07): the owner's answers to its approach questions (in chat, `/opsx:propose`; OpenSpec `uat2-refrigerant-multigas-design`, a design only).**
 1. **Save path (design D3):** the gas-set form saves through today's per-record endpoints, one call per changed gas, and then reloads the set, showing each gas's result. No new all-or-nothing endpoint and no group id are added; the set is the uniqueness slot with the gas left free (D1, D2). A partial save leaves drafts, which count nothing.
