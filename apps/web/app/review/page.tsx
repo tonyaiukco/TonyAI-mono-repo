@@ -524,7 +524,7 @@ export default function ReviewPage() {
                                     by type (uat2-review-shows-gas). */}
                                 {categoryWithActivity(recordWords, row)}
                                 {row.anomalyFlag && (
-                                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                                  <AlertTriangle className="h-4 w-4 text-amber-500" data-testid="anomaly-flag-marker" />
                                 )}
                                 {/* A first-period record (UAT round 2, K4-3a): nothing to
                                     compare with, so the reviewer checks the evidence and

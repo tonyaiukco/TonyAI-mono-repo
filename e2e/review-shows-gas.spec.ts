@@ -34,7 +34,8 @@ import {
  * reviewed by the consultant:
  * - `SUB.logistics`, Refrigerants, annual `E2E_TR_INPUTS_YEAR`, the whole
  *   subsidiary: two records that differ ONLY by gas, priced by the TR inputs
- *   fixture's two gases. `data-entry-tr-inputs.spec.ts` writes a draft there
+ *   fixture's two gases. R-410A's one line is above the first-period ceiling
+ *   (500 kg a line), so its row carries the flag mark beside its gas. `data-entry-tr-inputs.spec.ts` writes a draft there
  *   and deletes it; files run one at a time.
  * - `SUB.mfg`, Fuel diesel, quarterly Q3 of `E2E_YEAR`, priced by the seed's
  *   placeholder (EU diesel).
@@ -63,7 +64,11 @@ async function setConsultantLanguage(language: 'tr' | 'en') {
 
 const GASES = [E2E_TR_INPUTS.refrigerant, E2E_TR_INPUTS.secondRefrigerant] as const;
 
-const refrigerant = (activityType: string) => ({
+/** First-period ceiling of one refrigerant line (Decisions 2026-11-12): 600 kg is above it. */
+const FLAGGED_CAPACITY_KG = 600;
+const PLAIN_CAPACITY_KG = 10;
+
+const refrigerant = (activityType: string, capacityKg: number) => ({
   subsidiaryId: SUB.logistics,
   locationId: null,
   category: 'Refrigerants',
@@ -71,10 +76,12 @@ const refrigerant = (activityType: string) => ({
   reportingYear: E2E_TR_INPUTS_YEAR,
   reportingPeriod: 'annual',
   periodValue: 'Annual',
-  // One small line, well under the first-period ceilings (500 kg a line; refill ≤ 125%).
-  activityValue: 10,
+  // One line; refill 0, so only the capacity can cross the line's ceiling.
+  activityValue: capacityKg,
   activityUnit: 'kg',
-  parameters: { equipment: [{ equipmentType: 'split_air_conditioner', capacityKg: 10, refillKg: 0, leakRateChoice: 'default' }] },
+  parameters: { equipment: [{ equipmentType: 'split_air_conditioner', capacityKg, refillKg: 0, leakRateChoice: 'default' }] },
+  // Submit asks a flagged record for a reason; a plain one takes none.
+  varianceReason: capacityKg > 500 ? 'E2E: a large chiller, checked against the service record' : null,
 });
 
 const diesel = {
@@ -108,7 +115,9 @@ test('the review queue and sheet name each record’s gas or fuel, in English an
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const created: string[] = [];
   try {
-    for (const gas of GASES) created.push(await createCommittedRecord(request, token, refrigerant(gas)));
+    const [flaggedGas, plainGas] = GASES;
+    created.push(await createCommittedRecord(request, token, refrigerant(flaggedGas, FLAGGED_CAPACITY_KG)));
+    created.push(await createCommittedRecord(request, token, refrigerant(plainGas, PLAIN_CAPACITY_KG)));
     created.push(await createCommittedRecord(request, token, diesel));
 
     // English: the two gas records read apart, and the fuel names its type too.
@@ -118,6 +127,9 @@ test('the review queue and sheet name each record’s gas or fuel, in English an
     const enGas = (gas: string) =>
       row(page, LOGISTICS, enPeriods.values.Annual, E2E_TR_INPUTS_YEAR, `${enCategories.Refrigerants} (${enDataEntry.activityTypes[gas as 'R-410A']})`);
     for (const gas of GASES) await expect(enGas(gas)).toHaveCount(1);
+    // A flagged gas record keeps its flag mark beside the gas; its sibling has none.
+    await expect(enGas(flaggedGas).getByTestId('anomaly-flag-marker')).toBeVisible();
+    await expect(enGas(plainGas).getByTestId('anomaly-flag-marker')).toHaveCount(0);
     await expect(row(page, MFG, enPeriods.values.Q3, E2E_YEAR, `${enCategories.Fuel} (${enDataEntry.activityTypes.diesel})`)).toHaveCount(1);
 
     // The sheet's title names the gas of the row opened, not its sibling's.
@@ -138,6 +150,20 @@ test('the review queue and sheet name each record’s gas or fuel, in English an
     const trGas = (gas: string) =>
       row(page, LOGISTICS, trPeriods.values.Annual, E2E_TR_INPUTS_YEAR, `${trCategories.Refrigerants} (${trDataEntry.activityTypes[gas as 'R-410A']})`);
     for (const gas of GASES) await expect(trGas(gas)).toHaveCount(1);
+    await expect(trGas(flaggedGas).getByTestId('anomaly-flag-marker')).toBeVisible();
+
+    // The Turkish sheet title names the gas too.
+    await trGas(flaggedGas).click();
+    const trGasTitle = title(
+      trReview.sheet.title,
+      `${trCategories.Refrigerants} (${trDataEntry.activityTypes[flaggedGas]})`,
+      trPeriods.values.Annual,
+      E2E_TR_INPUTS_YEAR,
+    );
+    await expect(page.getByRole('dialog').getByText(trGasTitle, { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
     const trDiesel = row(page, MFG, trPeriods.values.Q3, E2E_YEAR, `${trCategories.Fuel} (${trDataEntry.activityTypes.diesel})`);
     await expect(trDiesel).toHaveCount(1);
 

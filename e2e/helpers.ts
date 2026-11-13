@@ -249,6 +249,8 @@ interface CommittedRecordInput {
   /** Category inputs where the geography takes them, e.g. a TR Refrigerants
    *  record's equipment lines. Omitted from the request when not given. */
   parameters?: Record<string, unknown>;
+  /** The author's reason, needed to submit a record the anomaly check flags. */
+  varianceReason?: string | null;
 }
 
 /**
@@ -276,7 +278,7 @@ export async function createCommittedRecord(
       activityValue: input.activityValue,
       activityUnit: input.activityUnit ?? 'kWh',
       ...(input.parameters ? { parameters: input.parameters } : {}),
-      varianceReason: null,
+      varianceReason: input.varianceReason ?? null,
       input: null,
     },
   });

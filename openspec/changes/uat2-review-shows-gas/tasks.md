@@ -74,6 +74,17 @@
   Done 2026-11-13. `qa-auditor` found no P1 or P2. Fixed in this change: P3-1 (the `unspecified` scenario: legacy records store an empty type, which is now its own scenario), P3-3 (the e2e rows are tied to their subsidiary) and P3-5 (this task's author is `admin@`). Filed under Open questions: P3-2 (nested brackets), P3-4 (a `createCommittedRecord` leak that predates this change) and P3-6 (implicit values resolve differently on Data Entry and `/review`).
 - [x] 5.2 Run the full local gate: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, and `openspec validate uat2-review-shows-gas --strict`. Verify: all green, with the counts noted for the PR body.
 
+## 6. Owner review round 1 (2026-11-13)
+
+- [x] 6.1 P3: two scenarios had no direct e2e. One was the Turkish sheet title of a gas record; the Turkish check opened only the Fuel sheet. The other was a flagged Refrigerants row showing its gas next to the flag mark; no e2e record was flagged, and the queue's flag icon had no test id. Fix:
+  - the queue's flag icon gets `data-testid="anomaly-flag-marker"`, next to `first-period-marker`;
+  - `createCommittedRecord` takes an optional `varianceReason`;
+  - in `review-shows-gas.spec.ts`, R-410A's one line is 600 kg, above the first-period ceiling of 500 kg a line, so it is flagged and submitted with a reason;
+  - the spec checks the flag mark beside the gas in EN and TR, and its absence on the R-32 row;
+  - the spec opens the R-410A sheet in Turkish and checks its title.
+
+  Verify: `typecheck:e2e` and the web typecheck pass, and `review-shows-gas` passes, leaving no records behind.
+
 ## Workflow follow-up
 
 - Commit, push and open a PR only on the owner's word. The owner reviews the branch first and merges; Claude Code never self-merges.
