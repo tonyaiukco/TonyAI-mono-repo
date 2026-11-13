@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api";
 import {
   API_ERROR_PARAMS,
+  API_ERROR_SENTENCE_SELECTORS,
   CALCULATION_REFUSAL_CODES,
   genericErrorCode,
   isGenericErrorCode,
@@ -111,7 +112,13 @@ export function describeApiError(error: unknown, t: ErrorTranslator, locale: Loc
     // render as a broken sentence: the status's generic one is better.
     const complete = (API_ERROR_PARAMS[code] ?? []).every((name) => error.params?.[name] !== undefined);
     if (!complete) return describeApiError(new ApiError(error.message, error.status), t, locale);
-    const title = t(`errors.codes.${code}`, localiseParams(error.params, t, locale));
+    // A selector param picks `errors.variants.<code>.<value>` when that value
+    // has a sentence of its own (`API_ERROR_SENTENCE_SELECTORS`); catalogue
+    // messages stay simple `{name}` sentences, with no `select` in them.
+    const selector = API_ERROR_SENTENCE_SELECTORS[code];
+    const variant = selector ? `errors.variants.${code}.${String(error.params?.[selector])}` : null;
+    const key = variant && t.has(variant) ? variant : `errors.codes.${code}`;
+    const title = t(key, localiseParams(error.params, t, locale));
     const detail = SERVER_DETAILED.has(code) && !STATUS_ONLY.test(error.message) ? error.message : undefined;
     if (detail && locale === "en") return { title: detail };
     return { title, ...(detail ? { description: detail } : {}) };

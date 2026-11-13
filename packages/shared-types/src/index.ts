@@ -2912,6 +2912,9 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
   Object.freeze({
     evidence_required: Object.freeze(['category']),
     approval_evidence_missing: Object.freeze(['category']),
+    /** `basis` (`VarianceBasis`): a SENTENCE SELECTOR, see
+     *  `API_ERROR_SENTENCE_SELECTORS`. */
+    variance_reason_required: Object.freeze(['basis']),
     period_locked: Object.freeze(['period', 'year']),
     location_in_boundary: Object.freeze(['count']),
     location_has_records: Object.freeze(['count']),
@@ -2936,6 +2939,30 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     bulk_too_many_rows: Object.freeze(['rows', 'max']),
     bulk_workbook_too_large: Object.freeze(['limitMb']),
   });
+
+/** What a `variance_reason_required` refusal rests on: a flag on history
+ *  (full or limited), or a first-period record above its typo ceiling
+ *  (BUG-R2-07 tier 3, owner 2026-11-13). Sent as `params.basis`. */
+export type VarianceBasis = 'history' | 'ceiling';
+export const VARIANCE_BASES = Object.freeze(['history', 'ceiling'] as const satisfies readonly VarianceBasis[]);
+
+/** The refusal's basis for a flagged verdict: a flag with no earlier period is
+ *  a ceiling flag, since the history rule never flags a count of 0. */
+export function varianceBasisOf(verdict: AnomalyVerdict): VarianceBasis {
+  return verdict.priorCount === 0 ? 'ceiling' : 'history';
+}
+
+/**
+ * Params that choose WHICH sentence a code is shown with, rather than being
+ * named inside one — the one exception to `API_ERROR_PARAMS` being "the names a
+ * sentence uses". A client reads `errors.variants.<code>.<value>` for a value
+ * that has a sentence of its own, and the code's own sentence otherwise; no
+ * catalogue sentence names a selector. Only `variance_reason_required`'s
+ * `basis` today: a first period has no historical average to deviate from.
+ */
+export const API_ERROR_SENTENCE_SELECTORS: Readonly<Partial<Record<ApiErrorCode, string>>> = Object.freeze({
+  variance_reason_required: 'basis',
+});
 
 export type ApiErrorParams = Readonly<Record<string, string | number>>;
 
@@ -4186,8 +4213,10 @@ export interface ActivityRecordDTO {
    *   and "has no priors" are different facts about different rows, and a `0`
    *   for both forced every reader outside TypeScript to re-implement
    *   `isCalculated()` to separate them.
-   * - `0` — no earlier period. The rule did NOT run; the record is *not
-   *   evaluated*, which is not the same claim as *not anomalous*.
+   * - `0` — no earlier period. The history rule did NOT run. Unflagged, the
+   *   record is *not evaluated*, which is not the same claim as *not
+   *   anomalous*. FLAGGED, it is a first-period record above its typo ceiling
+   *   (`anomalyBasis` → `ceiling`, Decisions 2026-11-12), and it is evaluated.
    * - `1`–`2` — evaluated on LIMITED history (BUG-R2-07, 2026-11-11), and
    *   `anomalyBaselineTCo2e` is the average of those periods.
    * - `ANOMALY_BASELINE_PERIODS` — evaluated on a full window.
@@ -4623,10 +4652,13 @@ export const ANOMALY_MIN_PRIORS = 1;
  * worst.
  */
 export interface AnomalyVerdict {
-  /** VAR §4.3 — the warning. False whenever the rule did not run. */
+  /** VAR §4.3 — the warning. False whenever the rule did not run. A
+   *  first-period record is flagged only by its typo ceiling. */
   anomalous: boolean;
   /** Comparable periods that carried a figure, 0..`ANOMALY_BASELINE_PERIODS` —
-   *  or null when the pool was never queried at all. */
+   *  or null when the pool was never queried at all. A count of 0 is a
+   *  first-period record; it is flagged only above its typo ceiling
+   *  (`withFirstPeriodCeiling`). */
   priorCount: number | null;
   /** The average of those periods — non-null exactly when there were at least
    *  `ANOMALY_MIN_PRIORS` of them. Zero means no ratio could be taken. */
@@ -4702,15 +4734,26 @@ export function computeAnomalyVerdict(
  *   value in line with its history. The subtlest of the four, and the one a
  *   hand-written check at a call site would miss.
  *
+ * One more evaluated state: a flag beside a count of 0 is a first-period
+ * record above its typo ceiling, judged against the ceiling (`anomalyBasis`
+ * says `ceiling`). Deliberately asymmetric: a first period BELOW its ceiling
+ * stays not evaluated — passing a typo guard is not "in line with history",
+ * and it keeps counting among the records not checked.
+ *
  * When this is false, "not anomalous" is not a claim anyone made — and any
  * surface that renders a blank, a tick or a green cell is overstating. When it
  * is true, `anomalyBasis` says HOW MUCH history the claim rests on.
  */
 export function isAnomalyEvaluated(record: {
+  anomalyFlag: boolean;
   anomalyBaselinePriorCount: number | null;
   anomalyBaselineTCo2e: number | null;
 }): boolean {
   const priors = record.anomalyBaselinePriorCount;
+  // A first-period record above its typo ceiling WAS judged — against the
+  // ceiling, not against history (`withFirstPeriodCeiling`). A flag beside a
+  // count of 0 has no other author, and it is never counted as not checked.
+  if (isFirstPeriodCeilingFlag(record)) return true;
   return (
     priors !== null &&
     priors >= ANOMALY_MIN_PRIORS &&
@@ -4723,13 +4766,24 @@ export function isAnomalyEvaluated(record: {
   );
 }
 
-/** How much history an evaluated verdict rests on. */
-export type AnomalyBasis = 'full' | 'limited';
+/** What an evaluated verdict rests on: a full or limited window of history,
+ *  or — for a first-period record — its typo ceiling. */
+export type AnomalyBasis = 'full' | 'limited' | 'ceiling';
+
+/** A stored first-period ceiling flag: flagged with no earlier period. No rule
+ *  before the ceilings ever flagged a count of 0, so the state is unambiguous. */
+export function isFirstPeriodCeilingFlag(record: {
+  anomalyFlag: boolean;
+  anomalyBaselinePriorCount: number | null;
+}): boolean {
+  return record.anomalyFlag && record.anomalyBaselinePriorCount === 0;
+}
 
 /**
  * What an evaluated verdict was taken against — `full` for a window of
- * `ANOMALY_BASELINE_PERIODS` figures, `limited` for fewer — or null when the
- * rule did not run (`isAnomalyEvaluated` is false).
+ * `ANOMALY_BASELINE_PERIODS` figures, `limited` for fewer, `ceiling` for a
+ * first-period record flagged above its typo ceiling — or null when the rule
+ * did not run (`isAnomalyEvaluated` is false).
  *
  * Derived from the stored count, not stored beside it: a column would say
  * nothing the count does not. A verdict on one period is a weaker claim than
@@ -4737,9 +4791,11 @@ export type AnomalyBasis = 'full' | 'limited';
  * which is exactly what the 2026-08-27 rule was written to prevent.
  */
 export function anomalyBasis(record: {
+  anomalyFlag: boolean;
   anomalyBaselinePriorCount: number | null;
   anomalyBaselineTCo2e: number | null;
 }): AnomalyBasis | null {
+  if (isFirstPeriodCeilingFlag(record)) return 'ceiling';
   if (!isAnomalyEvaluated(record)) return null;
   return record.anomalyBaselinePriorCount === ANOMALY_BASELINE_PERIODS ? 'full' : 'limited';
 }
@@ -4764,6 +4820,280 @@ export function isLegacyShortWindowVerdict(record: {
     priors >= ANOMALY_MIN_PRIORS &&
     priors < ANOMALY_BASELINE_PERIODS &&
     record.anomalyBaselineTCo2e === null
+  );
+}
+
+// ---------------------------------------------------------------------------
+// First-period typo ceilings (BUG-R2-07 tier 3, K4-3a option B)
+// ---------------------------------------------------------------------------
+
+/** The unit a ceiling is stated in: the base unit of its definitional family,
+ *  plus metered cubic metres, which have no definitional route to Sm³. */
+export type CeilingBaseUnit = 'kWh' | 'standard_cubic_metres' | 'cubic_metres' | 'litres' | 'kg';
+
+/**
+ * The first-period typo ceilings, in base units (Decisions 2026-11-12).
+ *
+ * A record with a figure and NO earlier comparable period cannot be judged
+ * against history, so an extra zero in a first-year figure would reach the
+ * reviewer unexplained. Above one of these, the record is flagged exactly as a
+ * history flag is: a variance reason is required before submit. Strictly
+ * above: a figure equal to its ceiling is not flagged.
+ *
+ * These are PLAUSIBILITY GUARDS, not emission factors, and no calculation reads
+ * them. The team set Electricity, Natural Gas, Mobile Combustion in litres,
+ * Fugitive Gas and Refrigerants from the largest facilities in the pilot
+ * holding's V8-2 inventory with a safety margin (2026-11-11); the owner set
+ * Mobile Combustion in kg, marine gas oil and Fuel (2026-11-12; Fuel in kg by
+ * energy equivalence to the team's 100,000 L at IPCC 2006 default NCVs). The
+ * owner may revise them; a revision is a PR, never a runtime setting.
+ *
+ * `cubic_metres` repeats the Sm³ number (owner, 2026-11-13). It is the same
+ * guard applied to a metered volume, NOT a conversion: m³ and Sm³ are
+ * different quantities and only a sourced row may convert one to the other.
+ *
+ * Not here: marine gas oil (`MARINE_GAS_OIL_CEILING_KG`, checked first) and
+ * Refrigerants (`REFRIGERANT_LINE_CEILING_KG`, per equipment line). Scope 3
+ * categories have no ceiling.
+ */
+export const FIRST_PERIOD_CEILINGS: Readonly<
+  Partial<Record<Category, Readonly<Partial<Record<CeilingBaseUnit, number>>>>>
+> = Object.freeze({
+  Electricity: Object.freeze({ kWh: 1_000_000 }),
+  'Natural Gas': Object.freeze({
+    kWh: 2_500_000,
+    standard_cubic_metres: 250_000,
+    cubic_metres: 250_000,
+  }),
+  'Mobile Combustion': Object.freeze({ litres: 100_000, kg: 100_000 }),
+  'Fugitive Gas': Object.freeze({ standard_cubic_metres: 200_000 }),
+  Fuel: Object.freeze({ litres: 100_000, kg: 150_000 }),
+});
+
+/** Marine gas oil's own ceiling: 1,000 t. Checked BEFORE the Mobile Combustion
+ *  kg row, which would otherwise flag a vessel's ordinary 150 t bunkering. */
+export const MARINE_GAS_OIL_CEILING_KG = 1_000_000;
+
+/** Installed capacity on any ONE refrigerant equipment line. The record's
+ *  total (the sum of its lines) is never compared with it. */
+export const REFRIGERANT_LINE_CEILING_KG = 500;
+
+/**
+ * The refill on any ONE refrigerant line is held to this share of that line's
+ * installed capacity, capped at `REFRIGERANT_LINE_CEILING_KG` — or to the cap
+ * alone when the line has no capacity, since "125% of nothing" would flag every
+ * refill (owner, 2026-11-13, after the `security-rls` review found refill
+ * unguarded). A line's emission is capacity × leak rate + REFILL, so a refill
+ * typo moves the figure most of all.
+ *
+ * The share is US EPA 40 CFR 82.157's reporting trigger — an owner reports an
+ * appliance that leaks 125% or more of its full charge in a calendar year —
+ * used as a yardstick, not as law that applies here: losing more than the whole
+ * charge in a year is the regulator's mark of an exceptional event. The value
+ * is the owner's decision.
+ */
+export const REFRIGERANT_REFILL_RATIO = 1.25;
+
+/**
+ * Exact, definitional routes from each unit a ceiling category accepts to the
+ * ceiling's base unit (owner, 2026-11-13: no unit escapes the guard, and no new
+ * limit value is introduced). The same multipliers as the API's unit
+ * normaliser (`calculations/normalization.ts`); an API spec pins the parity.
+ */
+export const CEILING_UNIT_MULTIPLIERS: Readonly<
+  Record<string, { readonly base: CeilingBaseUnit; readonly multiplier: number }>
+> = Object.freeze({
+  kWh: Object.freeze({ base: 'kWh', multiplier: 1 }),
+  MWh: Object.freeze({ base: 'kWh', multiplier: 1000 }),
+  // The UK statutory therm, as the normaliser has it.
+  therms: Object.freeze({ base: 'kWh', multiplier: 105_505_585.257348 / 3_600_000 }),
+  gj: Object.freeze({ base: 'kWh', multiplier: 1000 / 3.6 }),
+  standard_cubic_metres: Object.freeze({ base: 'standard_cubic_metres', multiplier: 1 }),
+  cubic_metres: Object.freeze({ base: 'cubic_metres', multiplier: 1 }),
+  litres: Object.freeze({ base: 'litres', multiplier: 1 }),
+  uk_gallons: Object.freeze({ base: 'litres', multiplier: 4.54609 }),
+  us_gallons: Object.freeze({ base: 'litres', multiplier: 3.785411784 }),
+  kg: Object.freeze({ base: 'kg', multiplier: 1 }),
+  tonnes: Object.freeze({ base: 'kg', multiplier: 1000 }),
+});
+
+/** What `firstPeriodCeiling` judges: the record's own stored fields. */
+export interface CeilingInput {
+  category: string;
+  activityType: string | null;
+  activityValue: number;
+  activityUnit: string;
+  parameters?: unknown;
+}
+
+/**
+ * The ceiling a record was held to, with the figures a screen states.
+ *
+ * `amount` and `ceiling` are in the ENTERED unit (`unit`), for display only:
+ * the comparison was made in base units. For a refrigerant record, `kind` says
+ * which limit a line is held to: `equipment_line` (its capacity, in `amount`)
+ * or `equipment_refill` (its refill, in `amount`, against a ceiling derived
+ * from its `capacityKg`). `lineIndex` is the line's position.
+ */
+export interface CeilingResult {
+  above: boolean;
+  kind: 'amount' | 'equipment_line' | 'equipment_refill';
+  amount: number;
+  ceiling: number;
+  unit: string;
+  lineIndex?: number;
+  /** For `equipment_refill`: the line's installed capacity, 0 for none. */
+  capacityKg?: number;
+}
+
+const finiteOrZero = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+function equipmentLines(parameters: unknown): { capacityKg: number; refillKg: number }[] {
+  if (parameters === null || typeof parameters !== 'object') return [];
+  const equipment = (parameters as { equipment?: unknown }).equipment;
+  if (!Array.isArray(equipment)) return [];
+  return equipment.map((line) => {
+    const l = line as { capacityKg?: unknown; refillKg?: unknown } | null;
+    return { capacityKg: finiteOrZero(l?.capacityKg), refillKg: finiteOrZero(l?.refillKg) };
+  });
+}
+
+/** A line's refill ceiling: `REFRIGERANT_REFILL_RATIO` of its capacity, capped
+ *  at `REFRIGERANT_LINE_CEILING_KG`; the cap alone for a line with no capacity. */
+/**
+ * Is a refill above its line's ceiling? Strictly, with a relative tolerance
+ * far below any amount a person enters: 1.25 × a decimal capacity is rounded
+ * in binary (1.25 × 1.44 = 1.7999999999999998), and a refill of exactly 125%
+ * must not be flagged for the last bit of a double (qa-auditor, 2026-11-13).
+ */
+export const REFILL_CEILING_TOLERANCE = 1e-9;
+export function isRefillAboveCeiling(refillKg: number, capacityKg: number): boolean {
+  return refillKg > refrigerantRefillCeilingKg(capacityKg) * (1 + REFILL_CEILING_TOLERANCE);
+}
+
+export function refrigerantRefillCeilingKg(capacityKg: number): number {
+  return capacityKg > 0
+    ? Math.min(REFRIGERANT_REFILL_RATIO * capacityKg, REFRIGERANT_LINE_CEILING_KG)
+    : REFRIGERANT_LINE_CEILING_KG;
+}
+
+/**
+ * The first-period ceiling for a record, or null when none applies: a Scope 3
+ * category, a refrigerant record with no equipment lines (outside TR; owner,
+ * 2026-11-13), or a unit with no definitional route to a ceiling.
+ *
+ * Pure, so the API's gate, the seed, the re-score tool and the screens judge
+ * the same thing. Whether the record IS first-period is not this function's
+ * question — see `withFirstPeriodCeiling`.
+ */
+export function firstPeriodCeiling(input: CeilingInput): CeilingResult | null {
+  if (input.category === 'Refrigerants') {
+    const lines = equipmentLines(input.parameters);
+    if (lines.length === 0) return null;
+    // A capacity breach is named first: it is the team's own ceiling, and the
+    // refill limit is derived from that capacity.
+    const capacityBreach = lines.findIndex((l) => l.capacityKg > REFRIGERANT_LINE_CEILING_KG);
+    if (capacityBreach >= 0) {
+      return {
+        above: true,
+        kind: 'equipment_line',
+        amount: lines[capacityBreach].capacityKg,
+        ceiling: REFRIGERANT_LINE_CEILING_KG,
+        unit: 'kg',
+        lineIndex: capacityBreach,
+      };
+    }
+    const refillBreach = lines.findIndex((l) => isRefillAboveCeiling(l.refillKg, l.capacityKg));
+    if (refillBreach >= 0) {
+      const line = lines[refillBreach];
+      return {
+        above: true,
+        kind: 'equipment_refill',
+        amount: line.refillKg,
+        ceiling: refrigerantRefillCeilingKg(line.capacityKg),
+        unit: 'kg',
+        lineIndex: refillBreach,
+        capacityKg: line.capacityKg,
+      };
+    }
+    // Nothing above: the largest line, for a screen that states the check.
+    let lineIndex = 0;
+    lines.forEach((l, i) => {
+      if (l.capacityKg > lines[lineIndex].capacityKg) lineIndex = i;
+    });
+    return {
+      above: false,
+      kind: 'equipment_line',
+      amount: lines[lineIndex].capacityKg,
+      ceiling: REFRIGERANT_LINE_CEILING_KG,
+      unit: 'kg',
+      lineIndex,
+    };
+  }
+  const route = CEILING_UNIT_MULTIPLIERS[input.activityUnit];
+  if (!route || !Number.isFinite(input.activityValue)) return null;
+  // Marine gas oil by volume has no ceiling: it relies on the MGO release
+  // pricing kg only, so a volume entry has no figure and never reaches here
+  // (security review, 2026-11-13). A per-litre MGO factor must bring a
+  // ceiling of its own, or this guard silently skips it.
+  const isMarineGasOil =
+    input.category === 'Mobile Combustion' && input.activityType === MARINE_GAS_OIL_ACTIVITY_TYPE;
+  const baseCeiling = isMarineGasOil
+    ? route.base === 'kg'
+      ? MARINE_GAS_OIL_CEILING_KG
+      : undefined
+    : FIRST_PERIOD_CEILINGS[input.category as Category]?.[route.base];
+  if (baseCeiling === undefined) return null;
+  return {
+    above: input.activityValue * route.multiplier > baseCeiling,
+    kind: 'amount',
+    amount: input.activityValue,
+    ceiling: baseCeiling / route.multiplier,
+    unit: input.activityUnit,
+  };
+}
+
+/**
+ * The history verdict, with the first-period ceiling applied where it belongs.
+ *
+ * Only a first-period verdict (count 0 — which implies the record has a figure,
+ * since a record without one is never given a pool) is touched. A count of one
+ * or more is judged by history alone, a zero average included; a null count
+ * (no figure) is never first-period. Stored as flag, count 0, average null: a
+ * state no earlier rule wrote, which is what lets `anomalyBasis` derive
+ * `ceiling` without a column.
+ */
+export function withFirstPeriodCeiling(
+  historyVerdict: AnomalyVerdict,
+  input: CeilingInput,
+): AnomalyVerdict {
+  if (historyVerdict.priorCount !== 0) return historyVerdict;
+  return {
+    anomalous: firstPeriodCeiling(input)?.above ?? false,
+    priorCount: 0,
+    baseline: null,
+  };
+}
+
+/**
+ * Is this a first-period verdict stored BEFORE the ceilings existed?
+ *
+ * Count 0, unflagged, and above its ceiling today. After the ceilings ship no
+ * writer leaves that state on a committed record: submit re-scores, recall
+ * keeps the verdict and the next save re-scores. It is NOT re-scored because
+ * the rule changed (Decisions 2026-11-12, as for the short-history check), and
+ * the consistency tools report it as a known difference, not as drift.
+ */
+export function isLegacyPreCeilingVerdict(
+  record: {
+    anomalyFlag: boolean;
+    anomalyBaselinePriorCount: number | null;
+  } & CeilingInput,
+): boolean {
+  return (
+    !record.anomalyFlag &&
+    record.anomalyBaselinePriorCount === 0 &&
+    (firstPeriodCeiling(record)?.above ?? false)
   );
 }
 

@@ -152,6 +152,11 @@
     "bulk_workbook_first_sheet_not_worksheet": "Çalışma kitabının ilk sayfası bir çalışma sayfası değil. Kayıtların bulunduğu sayfayı en başa taşıyın.",
     "bulk_workbook_too_large": "Çalışma kitabı açıldığında {limitMb} MB'tan büyük. Kullanılmayan biçimlendirmeyi kaldırın ya da daha küçük dosyalara bölün."
   },
+  "variants": {
+    "variance_reason_required": {
+      "ceiling": "Bu ilk dönem değeri, kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma açıklaması ekleyin."
+    }
+  },
   "bulkOutcomes": {
     "imported": "{count} satır içe aktarıldı",
     "refused": "{count} satır reddedildi",

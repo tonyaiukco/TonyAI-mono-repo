@@ -107,6 +107,10 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts.
 1. **Contract** (`packages/shared-types/src/index.ts`, a shared slot): add the
    code to `DOMAIN_ERROR_STATUS` with its status — snake_case, never renamed
    afterwards. If its sentence names values, add them to `API_ERROR_PARAMS`.
+   If one code needs a different SENTENCE by case, declare a sentence selector
+   (`API_ERROR_SENTENCE_SELECTORS`, e.g. `variance_reason_required`'s `basis`)
+   and put each non-default sentence under `errors.variants.<code>.<value>` —
+   never an ICU `select`, which `messages.spec.ts` refuses.
 2. **API:** throw `new XxxException(errorBody('the_code', englishSentence,
    params?))` (`apps/api/src/common/api-error.ts`) — or give an existing error
    class that body in its constructor so `instanceof` readers keep working. A

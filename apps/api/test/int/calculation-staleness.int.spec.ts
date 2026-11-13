@@ -365,6 +365,9 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
       ...(activityType ? { activityType } : {}),
       activityValue: value,
       activityUnit: unit,
+      // 123,456.789 MWh and US gallons are first periods above their typo
+      // ceilings (BUG-R2-07 tier 3): explained, so the digits stay the point.
+      varianceReason: 'K11 fixture: a large first-period figure, explained',
     } as Parameters<ReturnType<typeof lifecycleServices>['records']['create']>[1]);
     await attachEvidence(runtime, tenant, [record.id]);
     return record;

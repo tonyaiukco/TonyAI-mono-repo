@@ -30,6 +30,12 @@ in `e2e/helpers.ts`.
   **One committed earlier period is enough to raise a flag** (since 2026-11-11): a second committed
   record in someone else's series, more than 50% away, is refused at submit for a missing variance
   reason. Check the lane for committed records before you add one, and delete yours in `finally`.
+  **A first period has a typo ceiling** (since 2026-11-13): keep first-period amounts below it unless
+  the test is about it — Electricity 1,000,000 kWh; Natural Gas 250,000 Sm³/m³ or 2,500,000 kWh; Mobile
+  Combustion 100,000 L or 100,000 kg (marine gas oil 1,000 t); Fugitive Gas 200,000 Sm³; Fuel
+  100,000 L or 150,000 kg; Refrigerants 500 kg on any one equipment line, and a line's refill above 125% of its capacity (500 kg cap, 500 kg alone for no capacity). Above it, submit needs a
+  variance reason. For a guaranteed first period, create a subsidiary in the test
+  (`e2e/anomaly-typo-ceiling.spec.ts`).
 - **Arrange heavy state via the API, act via the UI.** Building a committed record (draft → evidence →
   submit) or an anomaly baseline through the UI is slow/flaky — use `createCommittedRecord`. Every
   Scope 1 and 2 category (and Water) is evidence-required since K3, at submit AND approve, so committing

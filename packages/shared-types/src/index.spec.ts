@@ -5,6 +5,7 @@ import {
   API_ERROR_PARAMS,
   API_ERROR_STATUS,
   CATEGORY_SCOPE_MAP,
+  CATEGORY_UNITS,
   mayAuthorRecords,
   mayApproveRecords,
   mayEditRecord,
@@ -23,6 +24,16 @@ import {
   ANOMALY_MIN_PRIORS,
   anomalyBasis,
   isLegacyShortWindowVerdict,
+  isLegacyPreCeilingVerdict,
+  isFirstPeriodCeilingFlag,
+  firstPeriodCeiling,
+  withFirstPeriodCeiling,
+  FIRST_PERIOD_CEILINGS,
+  CEILING_UNIT_MULTIPLIERS,
+  MARINE_GAS_OIL_CEILING_KG,
+  REFRIGERANT_LINE_CEILING_KG,
+  REFRIGERANT_REFILL_RATIO,
+  refrigerantRefillCeilingKg,
   anomalyNotEvaluated,
   computeAnomalyVerdict,
   ANOMALY_THRESHOLD,
@@ -541,7 +552,7 @@ describe('the anomaly rule (VAR §4)', () => {
   });
 
   describe('isAnomalyEvaluated', () => {
-    const evaluated = { anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 41.2 };
+    const evaluated = { anomalyFlag: false, anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 41.2 };
 
     it('is true on a full window with a usable divisor', () => {
       expect(isAnomalyEvaluated(evaluated)).toBe(true);
@@ -549,19 +560,19 @@ describe('the anomaly rule (VAR §4)', () => {
 
     it.each([1, 2])('is true on a limited window of %i priors with an average', (priors) => {
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: 41.2 }),
+        isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: 41.2 }),
       ).toBe(true);
     });
 
     it('is false when the pool was never queried', () => {
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: null, anomalyBaselineTCo2e: null }),
+        isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: null, anomalyBaselineTCo2e: null }),
       ).toBe(false);
     });
 
     it('is false with no earlier period', () => {
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }),
+        isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: 0, anomalyBaselineTCo2e: null }),
       ).toBe(false);
     });
 
@@ -571,14 +582,14 @@ describe('the anomaly rule (VAR §4)', () => {
         // Count without an average: the old rule's "not evaluated". It stays
         // not evaluated — the record is not re-scored because the rule changed.
         expect(
-          isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: null }),
+          isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: null }),
         ).toBe(false);
       },
     );
 
     it.each([1, 2])('is false when a limited window of %i averages to zero', (priors) => {
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: 0 }),
+        isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: 0 }),
       ).toBe(false);
     });
 
@@ -587,13 +598,13 @@ describe('the anomaly rule (VAR §4)', () => {
       // A hand-written `priorCount === 3` check at a call site would call this
       // evaluated and render 500 tCO₂e against three zero priors as clean.
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 0 }),
+        isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 0 }),
       ).toBe(false);
     });
 
     it('is false when a full window somehow carries no average', () => {
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: null }),
+        isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: null }),
       ).toBe(false);
     });
 
@@ -602,7 +613,7 @@ describe('the anomaly rule (VAR §4)', () => {
       // produced it disagrees with the one reading it, and "evaluated" would be
       // the wrong thing to conclude from a contradiction.
       expect(
-        isAnomalyEvaluated({ anomalyBaselinePriorCount: 4, anomalyBaselineTCo2e: 41.2 }),
+        isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: 4, anomalyBaselineTCo2e: 41.2 }),
       ).toBe(false);
     });
   });
@@ -624,7 +635,7 @@ describe('the anomaly rule (VAR §4)', () => {
       [3, 10, 'full', false],
       [4, 10, null, false], // a count the rule cannot produce
     ] as const)('count %s, average %s → basis %s, legacy %s', (count, average, basis, legacy) => {
-      const record = { anomalyBaselinePriorCount: count, anomalyBaselineTCo2e: average };
+      const record = { anomalyFlag: false, anomalyBaselinePriorCount: count, anomalyBaselineTCo2e: average };
       expect(anomalyBasis(record)).toBe(basis);
       expect(isLegacyShortWindowVerdict(record)).toBe(legacy);
     });
@@ -713,7 +724,7 @@ describe('computeAnomalyVerdict', () => {
     const v = computeAnomalyVerdict(500, [0]);
     expect(v).toEqual({ anomalous: false, priorCount: 1, baseline: 0 });
     expect(
-      isAnomalyEvaluated({ anomalyBaselinePriorCount: v.priorCount, anomalyBaselineTCo2e: v.baseline }),
+      isAnomalyEvaluated({ anomalyFlag: false, anomalyBaselinePriorCount: v.priorCount, anomalyBaselineTCo2e: v.baseline }),
     ).toBe(false);
   });
 
@@ -727,6 +738,248 @@ describe('computeAnomalyVerdict', () => {
     // an anomaly as a spike, and a one-sided comparison would miss a meter
     // that stopped reporting.
     expect(computeAnomalyVerdict(1, [10, 10, 10]).anomalous).toBe(true);
+  });
+});
+
+describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', () => {
+  const rec = (
+    category: string,
+    activityValue: number,
+    activityUnit: string,
+    activityType: string | null = null,
+    parameters: unknown = undefined,
+  ) => ({ category, activityValue, activityUnit, activityType, parameters });
+  const lines = (...capacities: number[]) => ({
+    equipment: capacities.map((capacityKg) => ({
+      equipmentType: 'chiller',
+      capacityKg,
+      refillKg: 0,
+      leakRateChoice: 'default',
+    })),
+  });
+
+  it('pins the owner-decided ceilings', () => {
+    // A one-character edit here changes what blocks submit for every first
+    // period in the product; the values are the team's and the owner's.
+    expect(FIRST_PERIOD_CEILINGS).toEqual({
+      Electricity: { kWh: 1_000_000 },
+      'Natural Gas': { kWh: 2_500_000, standard_cubic_metres: 250_000, cubic_metres: 250_000 },
+      'Mobile Combustion': { litres: 100_000, kg: 100_000 },
+      'Fugitive Gas': { standard_cubic_metres: 200_000 },
+      Fuel: { litres: 100_000, kg: 150_000 },
+    });
+    expect(MARINE_GAS_OIL_CEILING_KG).toBe(1_000_000);
+    expect(REFRIGERANT_LINE_CEILING_KG).toBe(500);
+  });
+
+  it.each([
+    // [what, record, above]
+    ['electricity with an extra zero', rec('Electricity', 4_500_000, 'kWh'), true],
+    ['electricity exactly at the ceiling', rec('Electricity', 1_000_000, 'kWh'), false],
+    ['electricity in MWh', rec('Electricity', 1_200, 'MWh'), true],
+    ['natural gas by volume', rec('Natural Gas', 300_000, 'standard_cubic_metres'), true],
+    ['natural gas in metered m³ (the Sm³ number)', rec('Natural Gas', 260_000, 'cubic_metres'), true],
+    ['natural gas in kWh below', rec('Natural Gas', 2_400_000, 'kWh'), false],
+    ['natural gas in GJ above (9,000 GJ = 2,500,000 kWh)', rec('Natural Gas', 9_001, 'gj'), true],
+    ['natural gas in therms below', rec('Natural Gas', 85_000, 'therms'), false],
+    ['fuel in UK gallons (90,921.8 L)', rec('Fuel', 20_000, 'uk_gallons', 'diesel'), false],
+    ['fuel in US gallons above', rec('Fuel', 27_000, 'us_gallons', 'diesel'), true],
+    ['fuel by mass below its own kg ceiling', rec('Fuel', 120_000, 'kg', 'coal'), false],
+    ['fuel by mass above', rec('Fuel', 150_001, 'kg', 'coal'), true],
+    ['road diesel by mass', rec('Mobile Combustion', 120_000, 'kg', 'diesel'), true],
+    ['road fuel in litres above', rec('Mobile Combustion', 100_001, 'litres', 'diesel'), true],
+    ['road fuel in tonnes (100 t = 100,000 kg)', rec('Mobile Combustion', 101, 'tonnes', 'diesel'), true],
+    ['marine gas oil between the two ceilings', rec('Mobile Combustion', 400_000, 'kg', 'marine_gas_oil'), false],
+    ['marine gas oil above, in tonnes', rec('Mobile Combustion', 1_200, 'tonnes', 'marine_gas_oil'), true],
+    ['marine gas oil exactly 1,000 t', rec('Mobile Combustion', 1_000, 'tonnes', 'marine_gas_oil'), false],
+    ['fugitive gas above', rec('Fugitive Gas', 200_001, 'standard_cubic_metres'), true],
+    ['one large refrigerant line', rec('Refrigerants', 770, 'kg', 'R-410A', lines(120, 650)), true],
+    ['many small refrigerant lines (600 kg in total)', rec('Refrigerants', 600, 'kg', 'R-410A', lines(...Array(6).fill(100))), false],
+    ['a refrigerant line exactly at 500 kg', rec('Refrigerants', 500, 'kg', 'R-410A', lines(500)), false],
+  ] as const)('%s → above %s', (_what, record, above) => {
+    expect(firstPeriodCeiling(record)?.above).toBe(above);
+  });
+
+  // The refill ceiling (owner, 2026-11-13): 125% of the line's capacity,
+  // capped at 500 kg; 500 kg for a line with no capacity.
+  describe('the refrigerant refill ceiling', () => {
+    const refillLines = (...pairs: [number, number][]) => ({
+      equipment: pairs.map(([capacityKg, refillKg], i) => ({
+        equipmentType: ['fire_suppression_system', 'fire_extinguisher', 'chiller'][i],
+        capacityKg,
+        refillKg,
+        leakRateChoice: 'default',
+      })),
+    });
+    const fridge = (...pairs: [number, number][]) =>
+      firstPeriodCeiling(rec('Refrigerants', pairs.reduce((a, [c]) => a + c, 0), 'kg', 'HFC-227ea', refillLines(...pairs)));
+
+    it('pins the ratio', () => {
+      expect(REFRIGERANT_REFILL_RATIO).toBe(1.25);
+      expect(refrigerantRefillCeilingKg(40)).toBe(50);
+      expect(refrigerantRefillCeilingKg(0)).toBe(500);
+      expect(refrigerantRefillCeilingKg(600)).toBe(500);
+    });
+
+    it.each([
+      // [capacity, refill, above]
+      [10, 50_000, true], // the typo
+      [40, 50, false], // exactly 125%
+      [40, 51, true],
+      [0, 400, false], // no capacity: the cap alone
+      [0, 600, true],
+      [400, 501, true], // the cap, though below 125% of 400
+      [400, 500, false],
+      // Exactly 125% of a decimal capacity: 1.25 × 1.44 is 1.7999999999999998
+      // in binary, and 1.8 must not be flagged for it.
+      [1.44, 1.8, false],
+      [12.34, 15.425, false],
+      [1.44, 1.81, true],
+    ] as const)('capacity %d kg, refill %d kg → above %s', (capacity, refill, above) => {
+      expect(fridge([capacity, refill])?.above).toBe(above);
+    });
+
+    it('states the refill, its ceiling and the line capacity', () => {
+      expect(fridge([20, 5], [10, 50_000])).toEqual({
+        above: true,
+        kind: 'equipment_refill',
+        amount: 50_000,
+        ceiling: 12.5,
+        unit: 'kg',
+        lineIndex: 1,
+        capacityKg: 10,
+      });
+    });
+
+    it('names a capacity breach ahead of a refill breach on an earlier line', () => {
+      const result = fridge([10, 50_000], [650, 0]);
+      expect(result).toMatchObject({ above: true, kind: 'equipment_line', amount: 650, lineIndex: 1 });
+    });
+  });
+
+  it('has no ceiling for a refrigerant record without equipment lines', () => {
+    // Outside TR (not in the pilot) the amount is leaked kg, a different
+    // measure; the owner chose no ceiling over reusing the 500 (2026-11-13).
+    expect(firstPeriodCeiling(rec('Refrigerants', 5_000, 'kg', 'R-410A'))).toBeNull();
+    expect(firstPeriodCeiling(rec('Refrigerants', 5_000, 'kg', 'R-410A', { equipment: [] }))).toBeNull();
+  });
+
+  it('has no ceiling for a Scope 3 category', () => {
+    for (const category of Object.keys(CATEGORY_SCOPE_MAP)) {
+      if (CATEGORY_SCOPE_MAP[category as keyof typeof CATEGORY_SCOPE_MAP] !== 3) continue;
+      for (const unit of CATEGORY_UNITS[category as keyof typeof CATEGORY_UNITS] ?? ['kg']) {
+        expect(firstPeriodCeiling(rec(category, 1e9, unit))).toBeNull();
+      }
+    }
+  });
+
+  it('reaches a ceiling from every unit a ceiling category accepts', () => {
+    // No unit escapes the guard (owner, 2026-11-13).
+    for (const category of Object.keys(FIRST_PERIOD_CEILINGS)) {
+      for (const unit of CATEGORY_UNITS[category as keyof typeof CATEGORY_UNITS] ?? []) {
+        expect(firstPeriodCeiling(rec(category, 1, unit)), `${category} in ${unit}`).not.toBeNull();
+      }
+    }
+    for (const unit of ['kg', 'tonnes']) {
+      expect(firstPeriodCeiling(rec('Mobile Combustion', 1, unit, 'marine_gas_oil'))).not.toBeNull();
+    }
+  });
+
+  it('gives no marine gas oil ceiling for a volume unit', () => {
+    // MGO is offered by mass only; a volume would need a density.
+    expect(firstPeriodCeiling(rec('Mobile Combustion', 1e9, 'litres', 'marine_gas_oil'))).toBeNull();
+  });
+
+  it('states the ceiling in the entered unit, and the largest line', () => {
+    expect(firstPeriodCeiling(rec('Electricity', 1_500, 'MWh'))).toEqual({
+      above: true,
+      kind: 'amount',
+      amount: 1_500,
+      ceiling: 1_000,
+      unit: 'MWh',
+    });
+    expect(firstPeriodCeiling(rec('Refrigerants', 770, 'kg', 'R-410A', lines(120, 650)))).toEqual({
+      above: true,
+      kind: 'equipment_line',
+      amount: 650,
+      ceiling: 500,
+      unit: 'kg',
+      lineIndex: 1,
+    });
+  });
+
+  it('holds the definitional multipliers exactly', () => {
+    expect(CEILING_UNIT_MULTIPLIERS.uk_gallons).toEqual({ base: 'litres', multiplier: 4.54609 });
+    expect(CEILING_UNIT_MULTIPLIERS.us_gallons).toEqual({ base: 'litres', multiplier: 3.785411784 });
+    expect(CEILING_UNIT_MULTIPLIERS.tonnes).toEqual({ base: 'kg', multiplier: 1000 });
+    expect(CEILING_UNIT_MULTIPLIERS.therms.multiplier).toBeCloseTo(29.30710701593, 10);
+  });
+
+  describe('withFirstPeriodCeiling', () => {
+    const big = rec('Electricity', 4_500_000, 'kWh');
+    const small = rec('Electricity', 100, 'kWh');
+
+    it('flags a first-period record above its ceiling — a flag a first period never had before', () => {
+      expect(withFirstPeriodCeiling(computeAnomalyVerdict(900, []), big)).toEqual({
+        anomalous: true,
+        priorCount: 0,
+        baseline: null,
+      });
+    });
+
+    it('leaves a first-period record below its ceiling unflagged', () => {
+      expect(withFirstPeriodCeiling(computeAnomalyVerdict(1, []), small)).toEqual({
+        anomalous: false,
+        priorCount: 0,
+        baseline: null,
+      });
+    });
+
+    it('never applies once a window holds a figure', () => {
+      const history = computeAnomalyVerdict(920, [900]);
+      expect(withFirstPeriodCeiling(history, big)).toBe(history);
+    });
+
+    it('does not fall back to the ceiling on a zero average', () => {
+      const history = computeAnomalyVerdict(500, [0]);
+      expect(withFirstPeriodCeiling(history, big)).toEqual({ anomalous: false, priorCount: 1, baseline: 0 });
+    });
+
+    it('never applies to a record with no figure (a null count)', () => {
+      expect(withFirstPeriodCeiling(anomalyNotEvaluated(), big)).toEqual(anomalyNotEvaluated());
+    });
+  });
+
+  describe('the stored states', () => {
+    const above = rec('Electricity', 4_500_000, 'kWh');
+    const below = rec('Electricity', 100, 'kWh');
+    it.each([
+      // [flag, count, average, amount, basis, evaluated, ceilingFlag, preCeiling]
+      [true, 0, null, above, 'ceiling', true, true, false],
+      [false, 0, null, below, null, false, false, false],
+      [false, 0, null, above, null, false, false, true], // scored before the ceiling
+      [true, 1, 10, above, 'limited', true, false, false],
+      [false, 1, 0, above, null, false, false, false], // zero average: not pre-ceiling
+      [false, null, null, above, null, false, false, false], // no figure
+    ] as const)(
+      'flag %s, count %s, average %s → basis %s, evaluated %s',
+      (flag, count, average, amount, basis, evaluated, ceilingFlag, preCeiling) => {
+        const record = {
+          ...amount,
+          anomalyFlag: flag,
+          anomalyBaselinePriorCount: count,
+          anomalyBaselineTCo2e: average,
+        };
+        expect(anomalyBasis(record)).toBe(basis);
+        expect(isAnomalyEvaluated(record)).toBe(evaluated);
+        expect(isFirstPeriodCeilingFlag(record)).toBe(ceilingFlag);
+        expect(isLegacyPreCeilingVerdict(record)).toBe(preCeiling);
+      },
+    );
+  });
+
+  it('registers basis as the variance refusal\'s param', () => {
+    expect(API_ERROR_PARAMS.variance_reason_required).toEqual(['basis']);
   });
 });
 

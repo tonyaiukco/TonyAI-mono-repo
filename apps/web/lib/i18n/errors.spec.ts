@@ -48,6 +48,26 @@ describe("a code the catalogue knows", () => {
   });
 });
 
+describe("the variance refusal names its basis (BUG-R2-07 tier 3)", () => {
+  it("words a ceiling refusal as a first-period ceiling, in both languages", () => {
+    const e = new ApiError("x", 400, "variance_reason_required", { basis: "ceiling" });
+    expect(describe_(e, "en").title).toBe(MESSAGES.en.errors.variants.variance_reason_required.ceiling);
+    expect(describe_(e, "tr").title).toMatch(/^Bu ilk dönem değeri/);
+    expect(describe_(e, "en").title).not.toMatch(/historical average/);
+  });
+
+  it("keeps the history sentence for a history refusal", () => {
+    const e = new ApiError("x", 400, "variance_reason_required", { basis: "history" });
+    expect(describe_(e, "en").title).toBe(MESSAGES.en.errors.codes.variance_reason_required);
+    expect(describe_(e, "tr").title).toBe(MESSAGES.tr.errors.codes.variance_reason_required);
+  });
+
+  it("falls back to the status's sentence when an older API sends no basis", () => {
+    const e = new ApiError("API 400", 400, "variance_reason_required");
+    expect(describe_(e, "tr").title).toBe(MESSAGES.tr.errors.codes.bad_request);
+  });
+});
+
 describe("LP4-04 slice 2 PR C's codes (M3)", () => {
   it("words a record status and a granularity in the user's language", () => {
     const status = new ApiError('Cannot modify a record in status "under_review"', 400, "record_not_editable", { status: "under_review" });

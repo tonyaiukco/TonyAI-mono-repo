@@ -21,8 +21,10 @@ import {
   COUNTED_STATUSES,
   canonicalPeriodValue,
   isCalculated,
+  isLegacyPreCeilingVerdict,
   isLegacyShortWindowVerdict,
   PENDING_REVIEW_STATUSES,
+  withFirstPeriodCeiling,
   PERIOD_VALUES,
 } from '@tonyai/shared-types';
 
@@ -112,13 +114,36 @@ export const indexRecord = (row) => ({
  */
 export function freshVerdict(item, pools) {
   if (item.tCo2e === null) return anomalyNotEvaluated();
-  return computeAnomalyVerdict(
+  const history = computeAnomalyVerdict(
     item.tCo2e,
     (pools.get(poolKey(item.row)) ?? [])
       .filter((p) => p.key < item.key && p.row.id !== item.row.id)
       .map((p) => p.tCo2e),
   );
+  // A first period is judged by its typo ceiling (BUG-R2-07 tier 3), on the
+  // record's own stored amount — the same composition the API's gate applies.
+  return withFirstPeriodCeiling(history, ceilingInputOf(item.row));
 }
+
+/** What the first-period ceiling judges: the record's own stored fields. */
+export const ceilingInputOf = (row) => ({
+  category: row.category,
+  activityType: row.activityType ?? null,
+  activityValue: row.activityValue,
+  activityUnit: row.activityUnit,
+  parameters: row.parameters ?? null,
+});
+
+/**
+ * A first-period verdict stored before the typo ceilings existed (2026-11-13):
+ * count 0, unflagged, and above its ceiling today. Kept on a COMMITTED record
+ * for the reason `keepsLegacyVerdict` gives — re-scoring would hand the
+ * reviewer, or an approved record, a flag its author never saw. Not drift. A
+ * draft or a rejected record meets the ceiling at its next save, so this tool
+ * may re-score it.
+ */
+export const keepsPreCeilingVerdict = (row) =>
+  COUNTED_STATUSES.includes(row.status) && isLegacyPreCeilingVerdict({ ...row, ...ceilingInputOf(row) });
 
 /**
  * A verdict this tool leaves as it is although the rule would now give another.
@@ -160,7 +185,7 @@ export function verdictsAgree(stored, fresh) {
 /**
  * Every scoreable record whose stored verdict is not the one it would get
  * today, with what may be done about it — and how many verdicts were kept
- * because they predate the short-history check.
+ * because they predate the short-history check or the first-period ceilings.
  *
  * Here rather than in the shell so the skip is testable: the shell's loop was
  * the one place `keepsLegacyVerdict` could be dropped with every test green,
@@ -170,6 +195,7 @@ export function verdictsAgree(stored, fresh) {
 export function findStale(scoreable, pools, lockedPeriods) {
   const stale = [];
   let keptLegacy = 0;
+  let keptPreCeiling = 0;
   for (const item of scoreable) {
     if (keepsLegacyVerdict(item.row)) {
       keptLegacy++;
@@ -177,10 +203,16 @@ export function findStale(scoreable, pools, lockedPeriods) {
     }
     const stored = storedVerdict(item.row);
     const fresh = freshVerdict(item, pools);
+    // Only while it is STILL a first period: once an earlier period has been
+    // committed, a stored count of 0 is ordinary drift, as it always was.
+    if (fresh.priorCount === 0 && keepsPreCeilingVerdict(item.row)) {
+      keptPreCeiling++;
+      continue;
+    }
     if (verdictsAgree(stored, fresh)) continue;
     stale.push({ item, stored, fresh, disposition: classify(item.row, lockedPeriods, { stored, fresh }) });
   }
-  return { stale, keptLegacy };
+  return { stale, keptLegacy, keptPreCeiling };
 }
 
 /**

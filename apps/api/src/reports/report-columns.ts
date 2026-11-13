@@ -63,6 +63,8 @@ export function anomalyCell(r: Parameters<typeof anomalyColumnState>[0]): string
       return 'yes';
     case 'flagged_limited':
       return `yes (limited history: ${periods(r.anomalyBaselinePriorCount)})`;
+    case 'flagged_ceiling':
+      return 'yes (above the first-period ceiling)';
     case 'clean':
       return '';
     case 'clean_limited':

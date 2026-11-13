@@ -103,6 +103,10 @@ describe('the anomaly column, state by state', () => {
       'yes (limited history: 1 period)', 'evet (kısıtlı geçmiş: 1 dönem)'],
     ['a flag on two periods', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 2 },
       'yes (limited history: 2 periods)', 'evet (kısıtlı geçmiş: 2 dönem)'],
+    // BUG-R2-07 tier 3: a flag with no earlier period is a first-period record
+    // above its typo ceiling — never "limited history: 0 periods".
+    ['a first-period ceiling flag', { anomalyFlag: true, anomalyEvaluated: true, anomalyBaselinePriorCount: 0 },
+      'yes (above the first-period ceiling)', 'evet (ilk dönem tavanının üstünde)'],
     ['clean on a full history', { anomalyEvaluated: true, anomalyBaselinePriorCount: 3 },
       '', ''],
     ['clean on one period', { anomalyEvaluated: true, anomalyBaselinePriorCount: 1 },

@@ -71,6 +71,7 @@
   "notEvaluatedScoredBefore": "Değerlendirilmedi (kısa geçmiş kontrolünden önce puanlandı)",
   "anomalyYes": "evet",
   "anomalyYesLimited": "evet (kısıtlı geçmiş: {priors} dönem)",
+  "anomalyYesCeiling": "evet (ilk dönem tavanının üstünde)",
   "anomalyCleanLimited": "aralık içinde (kısıtlı geçmiş: {priors} dönem)",
   "wholeCompany": "Bağlı şirketin tamamı",
   "unnamedSite": "Tesis (adı bilinmiyor)",

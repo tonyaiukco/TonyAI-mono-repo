@@ -116,6 +116,7 @@ export interface ReportLedgerRow {
 export type AnomalyColumnState =
   | 'flagged'
   | 'flagged_limited'
+  | 'flagged_ceiling'
   | 'clean'
   | 'clean_limited'
   | 'no_figure'
@@ -141,6 +142,10 @@ export function anomalyColumnState(r: {
   anomalyLegacy: boolean;
 }): AnomalyColumnState {
   const priors = r.anomalyBaselinePriorCount;
+  // A flag with no earlier period is a first-period record above its typo
+  // ceiling (BUG-R2-07 tier 3). Named before the limited test, which would
+  // otherwise call it "limited history: 0 periods".
+  if (r.anomalyFlag && priors === 0) return 'flagged_ceiling';
   const limited = r.anomalyEvaluated && priors !== null && priors < ANOMALY_BASELINE_PERIODS;
   if (r.anomalyFlag) return limited ? 'flagged_limited' : 'flagged';
   if (r.anomalyEvaluated) return limited ? 'clean_limited' : 'clean';

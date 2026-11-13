@@ -4,6 +4,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
+import type { VarianceBasis } from '@tonyai/shared-types';
 import { errorBody } from '../common/api-error';
 
 /**
@@ -47,6 +48,10 @@ export const APPROVAL_EVIDENCE_REFUSAL_FRAGMENT =
   'has no evidence file — reject the record so its author can attach one';
 export const VARIANCE_REFUSAL =
   'This value deviates significantly from the historical average — add a variance comment before submitting.';
+/** A first-period record above its typo ceiling (BUG-R2-07 tier 3): there is
+ *  no history, so "deviates from the historical average" would be untrue. */
+export const CEILING_VARIANCE_REFUSAL =
+  'This is a first-period figure above the plausibility ceiling for its category — check the evidence and the unit, and add a variance comment before submitting.';
 
 /** The uniqueness index refused the slot: one record per entity, period and category. */
 export class DuplicateActivityRecordError extends ConflictException {
@@ -204,8 +209,14 @@ export class ApprovalEvidenceMissingError extends BadRequestException {
 
 /** An anomalous figure with no variance reason. */
 export class VarianceReasonRequiredError extends BadRequestException {
-  constructor() {
-    super(errorBody('variance_reason_required', VARIANCE_REFUSAL));
+  constructor(readonly basis: VarianceBasis = 'history') {
+    super(
+      errorBody(
+        'variance_reason_required',
+        basis === 'ceiling' ? CEILING_VARIANCE_REFUSAL : VARIANCE_REFUSAL,
+        { basis },
+      ),
+    );
   }
 }
 

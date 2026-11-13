@@ -7,6 +7,14 @@
     "detailLimited": "Bu değer, bu raporlama birimi için önceki {count} dönemin ortalaması olan {baseline} ile karşılaştırıldı; sapma %{percent} sınırını aşıyor. Kontrol kısıtlı geçmişe dayanıyor ({count} dönem).",
     "detailNoBaseline": "Bu değer, bu raporlama birimi için geçmiş ortalamadan önemli ölçüde sapıyor."
   },
+  "ceiling": {
+    "headline": "İlk dönem tavanının üstünde",
+    "detail": "Bu, serinin ilk dönemi; karşılaştırılacak önceki dönem yok. {amount}, bu kategori için makul üst sınır olan {ceiling} değerinin üstünde — lütfen kanıt dokümanını ve birimi kontrol edin (fazladan bir sıfır mı?). Değer doğruysa sapma gerekçesinde açıklayın.",
+    "detailLine": "Bu, serinin ilk dönemi; karşılaştırılacak önceki dönem yok. {capacity} kurulu kapasiteli bir ekipman satırı, satır başına {ceiling} olan makul üst sınırın üstünde — lütfen cihaz etiketini veya envanteri ve birimi kontrol edin. Değer doğruysa sapma gerekçesinde açıklayın.",
+    "detailRefillRatio": "Bu, serinin ilk dönemi; karşılaştırılacak önceki dönem yok. Bir ekipman satırının {refill} dolumu, satırın {capacity} kapasitesinin %125'i olan {ceiling} sınırının üstünde — lütfen servis formunu veya faturayı ve birimi kontrol edin. Değer doğruysa sapma gerekçesinde açıklayın.",
+    "detailRefillCap": "Bu, serinin ilk dönemi; karşılaştırılacak önceki dönem yok. Bir ekipman satırının {refill} dolumu, satır başına {ceiling} olan sınırın üstünde — lütfen servis formunu veya faturayı ve birimi kontrol edin. Değer doğruysa sapma gerekçesinde açıklayın.",
+    "detailUnknown": "Bu, serinin ilk dönemi; karşılaştırılacak önceki dönem yok. Değer, bu kategori için makul üst sınırın üstünde — lütfen kanıt dokümanını ve birimi kontrol edin."
+  },
   "clean": {
     "headline": "Beklenen aralıkta",
     "detail": "Önceki {periods} karşılaştırılabilir dönemin ortalaması olan {baseline} ile karşılaştırıldı; sapma %{percent} içinde."

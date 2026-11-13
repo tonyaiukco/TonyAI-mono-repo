@@ -73,16 +73,27 @@ import {
   type AnomalyVerdictFields,
 } from "@/lib/anomaly-view";
 
-/** The three fields that make up a VAR §4 verdict, off a record DTO. Picked
+/** The three fields that make up a VAR §4 verdict, off a record DTO, and the
+ *  saved amount a first-period ceiling flag states (BUG-R2-07 tier 3). Picked
  *  rather than spread so a future DTO field cannot quietly join the state. */
 const verdictOf = (rec: {
   anomalyFlag: boolean;
   anomalyBaselinePriorCount: number | null;
   anomalyBaselineTCo2e: number | null;
+  category: string;
+  activityType?: string | null;
+  activityValue: number;
+  activityUnit: string;
+  parameters?: unknown;
 }): AnomalyVerdictFields => ({
   anomalyFlag: rec.anomalyFlag,
   anomalyBaselinePriorCount: rec.anomalyBaselinePriorCount,
   anomalyBaselineTCo2e: rec.anomalyBaselineTCo2e,
+  category: rec.category,
+  activityType: rec.activityType ?? null,
+  activityValue: rec.activityValue,
+  activityUnit: rec.activityUnit,
+  parameters: rec.parameters,
 });
 import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -113,6 +124,7 @@ import {
   mayAuthorRecords,
   MAX_PAGE_LIMIT,
   mayEditRecord,
+  isFirstPeriodCeilingFlag,
   needsEvidenceBeforeSubmit,
   offeredActivityTypes,
   PERIOD_VALUES,
@@ -1435,7 +1447,17 @@ function DataEntryPageInner() {
       setEditingTuple(tupleOf(rec));
       setVerdict(verdictOf(rec));
       if (wasEditing) {
-        toast.success(t(rec.anomalyFlag ? "editMode.savedAnomalous" : "editMode.saved"));
+        // A first period has no history: its flag is the typo ceiling, and the
+        // history sentence would be untrue (BUG-R2-07 tier 3, qa-auditor P2).
+        toast.success(
+          t(
+            !rec.anomalyFlag
+              ? "editMode.saved"
+              : isFirstPeriodCeilingFlag(rec)
+                ? "editMode.savedAboveCeiling"
+                : "editMode.savedAnomalous",
+          ),
+        );
         await refreshRecords(subsidiaryId);
         return;
       }
@@ -1516,7 +1538,11 @@ function DataEntryPageInner() {
       // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
       // a variance comment before it can be submitted.
       if (rec.anomalyFlag && !varianceReason.trim()) {
-        toast.error(t("anomalousBeforeSubmit"));
+        // A first period has no history: its flag is the typo ceiling
+        // (BUG-R2-07 tier 3), and "looks anomalous" would not say why.
+        toast.error(
+          t(isFirstPeriodCeilingFlag(rec) ? "aboveCeilingBeforeSubmit" : "anomalousBeforeSubmit"),
+        );
         await refreshRecords(subsidiaryId);
         return;
       }

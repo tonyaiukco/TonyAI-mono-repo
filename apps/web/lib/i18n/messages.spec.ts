@@ -7,6 +7,8 @@ import {
   VOLUME_CORRECTION_FACTOR_MIN,
   API_ERROR_CODES,
   API_ERROR_PARAMS,
+  API_ERROR_SENTENCE_SELECTORS,
+  VARIANCE_BASES,
   BULK_UPLOAD_ISSUE_CODES,
   CATEGORIES,
   CATEGORY_ACTIVITY_TYPES,
@@ -188,9 +190,22 @@ describe("the error codes", () => {
     expect(keys.sort()).toEqual([...API_ERROR_CODES].sort());
   });
 
+  it("every variance basis has a sentence: its own variant, or the code's own on purpose", () => {
+    // `history` IS the code's own sentence; every other basis has a variant.
+    for (const basis of VARIANCE_BASES) {
+      if (basis === "history") continue;
+      for (const locale of SUPPORTED_LOCALES) {
+        const variants = (MESSAGES[locale].errors as { variants?: Record<string, Record<string, string>> }).variants;
+        expect(variants?.variance_reason_required?.[basis], `${locale}: ${basis}`).toBeTruthy();
+      }
+    }
+  });
+
   it("each sentence names exactly the params its code carries (API_ERROR_PARAMS)", () => {
     for (const code of API_ERROR_CODES) {
-      expect(args(en.get(`errors.codes.${code}`) ?? ""), code).toEqual([...(API_ERROR_PARAMS[code] ?? [])].sort());
+      // A selector param picks the sentence and is named in none of them.
+      const named = (API_ERROR_PARAMS[code] ?? []).filter((p) => p !== API_ERROR_SENTENCE_SELECTORS[code]);
+      expect(args(en.get(`errors.codes.${code}`) ?? ""), code).toEqual([...named].sort());
     }
   });
 });

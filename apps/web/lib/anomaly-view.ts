@@ -4,7 +4,10 @@ import {
   ANOMALY_BASELINE_PERIODS,
   ANOMALY_THRESHOLD,
   anomalyBasis,
+  firstPeriodCeiling,
   isLegacyShortWindowVerdict,
+  REFRIGERANT_LINE_CEILING_KG,
+  unitSymbol,
   type Locale,
 } from '@/lib/types';
 
@@ -48,6 +51,14 @@ export interface AnomalyVerdictFields {
   anomalyFlag: boolean;
   anomalyBaselinePriorCount: number | null;
   anomalyBaselineTCo2e: number | null;
+  /** The record's own amount, for a first-period ceiling flag's figures
+   *  (BUG-R2-07 tier 3). Optional: a screen that does not hold them states the
+   *  flag without its figures, never without the flag. */
+  category?: string;
+  activityType?: string | null;
+  activityValue?: number;
+  activityUnit?: string;
+  parameters?: unknown;
 }
 
 const pct = Math.round(ANOMALY_THRESHOLD * 100);
@@ -60,6 +71,12 @@ export type AnomalyKey =
   | 'flagged.detailLimitedOne'
   | 'flagged.detailLimited'
   | 'flagged.detailNoBaseline'
+  | 'ceiling.headline'
+  | 'ceiling.detail'
+  | 'ceiling.detailLine'
+  | 'ceiling.detailRefillRatio'
+  | 'ceiling.detailRefillCap'
+  | 'ceiling.detailUnknown'
   | 'clean.headline'
   | 'clean.detail'
   | 'cleanLimited.headline'
@@ -90,6 +107,17 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
   // `limited` — judged on one or two periods. A weaker claim than `full`, so
   // both the warning and the all-clear name the number of periods.
   const basis = anomalyBasis(record);
+
+  // A first period above its typo ceiling (BUG-R2-07 tier 3, Decisions
+  // 2026-11-12). There is no history, so no average may be named: the sentence
+  // states the amount and the ceiling it passed, in the unit the user entered,
+  // and asks for the two things an extra zero hides behind — the evidence and
+  // the unit. The figures are derived from the CURRENT table; when they no
+  // longer show the record above it (a later revision), the flag is still
+  // stated, without figures.
+  if (basis === 'ceiling') {
+    return { tone: 'flagged', headline: t('ceiling.headline'), detail: ceilingDetail(record, t, locale), qualified: false };
+  }
 
   if (record.anomalyFlag && basis === 'limited') {
     const values = { baseline: tonnes(baseline as number, t, locale), percent: pct };
@@ -183,6 +211,40 @@ export function anomalyStatement(record: AnomalyVerdictFields, t: AnomalyTransla
         : t('notEvaluated.zeroAverageLimited'),
     qualified: true,
   };
+}
+
+function ceilingDetail(record: AnomalyVerdictFields, t: AnomalyTranslator, locale: Locale): string {
+  const { category, activityValue, activityUnit } = record;
+  const result =
+    category !== undefined && activityValue !== undefined && activityUnit !== undefined
+      ? firstPeriodCeiling({
+          category,
+          activityType: record.activityType ?? null,
+          activityValue,
+          activityUnit,
+          parameters: record.parameters,
+        })
+      : null;
+  if (!result?.above) return t('ceiling.detailUnknown');
+  const symbol = unitSymbol(result.unit);
+  // The amount as entered; the ceiling rounded to whole units, for display
+  // only — the comparison was made in base units, unrounded.
+  const amount = `${formatNumber(result.amount, locale, { maximumFractionDigits: 3 })} ${symbol}`;
+  const ceiling = `${formatNumber(result.ceiling, locale, { maximumFractionDigits: 0 })} ${symbol}`;
+  if (result.kind === 'equipment_refill') {
+    // Which limit it passed: 125% of the line's capacity, or the 500 kg cap
+    // (a line with no capacity, or a large one). Kilograms, to three places:
+    // 125% of 10 kg is 12.5 kg, not 13.
+    const kg = (v: number) => `${formatNumber(v, locale, { maximumFractionDigits: 3 })} ${symbol}`;
+    const capacityKg = result.capacityKg ?? 0;
+    const byRatio = capacityKg > 0 && result.ceiling < REFRIGERANT_LINE_CEILING_KG;
+    return byRatio
+      ? t('ceiling.detailRefillRatio', { refill: amount, ceiling: kg(result.ceiling), capacity: kg(capacityKg) })
+      : t('ceiling.detailRefillCap', { refill: amount, ceiling: kg(result.ceiling) });
+  }
+  return result.kind === 'equipment_line'
+    ? t('ceiling.detailLine', { capacity: amount, ceiling })
+    : t('ceiling.detail', { amount, ceiling });
 }
 
 /**
