@@ -43,7 +43,7 @@
 
 ## Current status — as of 2026-11-14
 
-- **FORM-CONTROL BORDERS ARE VISIBLE APP-WIDE, IN REVIEW (Claude Code with the owner; OpenSpec `input-border-contrast`, branch `fix/input-border-contrast`; 2026-11-14; a pre-pilot exception, by owner request).** The owner reported that on `qa.tonyai.io/register` the consent checkbox could not be seen and the text fields were invisible until focused.
+- **FORM-CONTROL BORDERS ARE VISIBLE APP-WIDE, IN REVIEW AS [PR #331](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/331) (Claude Code with the owner; OpenSpec `input-border-contrast`, branch `fix/input-border-contrast`; 2026-11-14; a pre-pilot exception, by owner request).** The owner reported that on `qa.tonyai.io/register` the consent checkbox could not be seen and the text fields were invisible until focused.
   - **Cause:** the `--input` theme token, which every shadcn form control draws its border with, had been `#FFFFFF` since the scaffold (2026-06-30). On a white card that is 1:1, so every form in the web app was affected (sign-in, data entry and the rest), not only registration.
   - **What:** `--input` is now `#8E8E93` in `:root` and `.dark` of `apps/web/app/globals.css`, which gives 3.26:1 on the card and 3.12:1 on the page, the WCAG 1.4.11 floor of 3:1. Nothing else changes: markup, sizes, the green focus ring, the red invalid border and the dimmed disabled state stay as they were. The unused switch's unchecked track turns grey. The new capability is `web-form-controls`.
   - **Owner decisions (2026-11-14):** fix it globally at the token, not on the register page alone; use `#8E8E93` over shadcn's default `#D2D2D7` (1.51:1, still too faint).
