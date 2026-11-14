@@ -27,9 +27,10 @@
   --destructive: #FF3B30;
   --destructive-foreground: #FFFFFF;
   
-  /* Borders and Inputs - Subtle but visible */
+  /* Borders - subtle structural lines; --input is the form-control border
+     and must keep at least 3:1 contrast on --card and --background (WCAG 1.4.11) */
   --border: #D2D2D7;
-  --input: #FFFFFF;
+  --input: #8E8E93;
   --ring: #1B5E3B;
   
   /* Status Colors - Apple-style vibrant but accessible */
@@ -87,7 +88,7 @@
   --destructive: #FF3B30;
   --destructive-foreground: #FFFFFF;
   --border: #D2D2D7;
-  --input: #FFFFFF;
+  --input: #8E8E93;
   --ring: #1B5E3B;
   --chart-1: #1B5E3B;
   --chart-2: #007AFF;
