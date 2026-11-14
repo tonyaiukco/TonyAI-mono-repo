@@ -11,7 +11,7 @@
 
 - [x] 2.1 Run `pnpm typecheck`, `pnpm lint` (ignoring `.claude/worktrees`), `pnpm test` and `pnpm build`; all pass.
 - [x] 2.2 Run `openspec validate login-register-link --strict`; it passes.
-- [ ] 2.3 Record the change in `docs/roadmap_docs/project_status_roadmap_phases.md` (Current status entry; the "Self-service registration" line notes that the sign-in page now advertises the page where registration is open) and open the pull request; verify CI is green on it.
+- [x] 2.3 Record the change in `docs/roadmap_docs/project_status_roadmap_phases.md` (Current status entry; the "Self-service registration" line notes that the sign-in page now advertises the page where registration is open) and open the pull request; verify CI is green on it.
 
 ## Workflow follow-up
 
