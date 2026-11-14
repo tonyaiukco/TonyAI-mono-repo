@@ -9,8 +9,8 @@
 ## 2. Integration checks and the record
 
 - [x] 2.1 Run `pnpm typecheck`, `pnpm lint` (ignoring `.claude/worktrees`), `pnpm test` and `pnpm build`; all pass.
-- [ ] 2.2 Run `openspec validate input-border-contrast --strict`; it passes.
-- [ ] 2.3 Record the change in `docs/roadmap_docs/project_status_roadmap_phases.md` (a Current status entry: form-control borders made visible app-wide, reported on QA registration) and open the pull request from `fix/input-border-contrast`; verify CI is green on it.
+- [x] 2.2 Run `openspec validate input-border-contrast --strict`; it passes.
+- [x] 2.3 Record the change in `docs/roadmap_docs/project_status_roadmap_phases.md` (a Current status entry: form-control borders made visible app-wide, reported on QA registration) and open the pull request from `fix/input-border-contrast`; verify CI is green on it.
 
 ## Workflow follow-up
 
