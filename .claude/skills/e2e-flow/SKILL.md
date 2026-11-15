@@ -37,6 +37,11 @@ in `e2e/helpers.ts`.
   100,000 L or 150,000 kg; Refrigerants 500 kg on any one equipment line, and a line's refill above 125% of its capacity (500 kg cap, 500 kg alone for no capacity). Above it, submit needs a
   variance reason. For a guaranteed first period, create a subsidiary in the test
   (`e2e/anomaly-typo-ceiling.spec.ts`).
+- **TR Natural Gas goes on the TR inputs fixture, never the seed's year.** TR prices gas on the net
+  basis, so a kWh gas entry is refused (`calorific_basis_mismatch`) and gas is entered in Sm³. CI's seed
+  holds no Sm³ conversion; a local authoritative TR release does, so a spec that leans on it passes locally and
+  fails every CI run (`no_conversion`). Use `seedTrInputsFixture` / `cleanupTrInputsFixture` in
+  `beforeAll` / `afterAll` and draft in `E2E_TR_INPUTS_YEAR`, which no release covers.
 - **Arrange heavy state via the API, act via the UI.** Building a committed record (draft → evidence →
   submit) or an anomaly baseline through the UI is slow/flaky — use `createCommittedRecord`. Every
   Scope 1 and 2 category (and Water) is evidence-required since K3, at submit AND approve, so committing
