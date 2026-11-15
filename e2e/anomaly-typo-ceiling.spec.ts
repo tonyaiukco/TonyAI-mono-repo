@@ -12,6 +12,9 @@ import {
   EVIDENCE_FIXTURE,
   getAccessToken,
   deleteRecordsAsService,
+  seedTrInputsFixture,
+  cleanupTrInputsFixture,
+  E2E_TR_INPUTS_YEAR,
 } from './helpers';
 
 /**
@@ -27,6 +30,11 @@ import {
  * Lane: a subsidiary created by this test (TR), so every series in it is a
  * first period no other spec can give history to. Its records are deleted
  * through the service role and the subsidiary through the API in `finally`.
+ *
+ * Electricity is in the seed's year. Natural Gas is in `E2E_TR_INPUTS_YEAR`,
+ * on the TR inputs fixture: TR prices gas on the net basis, so it is entered
+ * in Sm³, and only the fixture holds an Sm³ conversion in every environment
+ * (CI's seed has none; an authoritative TR release has one only where loaded).
  */
 
 const YEAR = 2026;
@@ -43,7 +51,11 @@ async function setReviewerLanguage(language: 'tr' | 'en') {
   }
 }
 
-test.afterAll(async () => setReviewerLanguage('en'));
+test.beforeAll(async () => seedTrInputsFixture());
+test.afterAll(async () => {
+  await setReviewerLanguage('en');
+  await cleanupTrInputsFixture();
+});
 
 test('a first period above its ceiling is flagged, gated and stated; one below it is a first-period record', async ({
   page,
@@ -59,12 +71,12 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
   const subsidiaryId = ((await created.json()) as { id: string }).id;
   const ids: string[] = [];
 
-  const draft = async (body: Record<string, unknown>) => {
+  const draft = async (body: Record<string, unknown>, year = YEAR) => {
     const res = await request.post(`${API_BASE}/activity-records`, {
       headers: bearer(token),
       data: {
         subsidiaryId,
-        reportingYear: YEAR,
+        reportingYear: year,
         reportingPeriod: 'monthly',
         periodValue: 'January',
         varianceReason: null,
@@ -77,11 +89,11 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
     ids.push(record.id);
     return record;
   };
-  const open = async (category: string) => {
+  const open = async (category: string, year = YEAR) => {
     const query = new URLSearchParams({
       subsidiaryId,
       category,
-      year: String(YEAR),
+      year: String(year),
       period: 'monthly',
       periodValue: 'January',
     });
@@ -95,7 +107,10 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
     const big = await draft({ category: 'Electricity', activityValue: 4_500_000, activityUnit: 'kWh' });
     expect(big).toMatchObject({ anomalyFlag: true, anomalyBaselinePriorCount: 0 });
     // 100 Sm³ of natural gas: a first period well under its ceiling.
-    const small = await draft({ category: 'Natural Gas', activityValue: 100, activityUnit: 'standard_cubic_metres' });
+    const small = await draft(
+      { category: 'Natural Gas', activityValue: 100, activityUnit: 'standard_cubic_metres' },
+      E2E_TR_INPUTS_YEAR,
+    );
     expect(small).toMatchObject({ anomalyFlag: false, anomalyBaselinePriorCount: 0 });
 
     await login(page, ADMIN_EMAIL);
@@ -120,7 +135,7 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
     await expect(page.getByText('Submitted for review')).toBeVisible();
 
     // Below its ceiling: the first-period note, no flag, no variance field.
-    await open('Natural Gas');
+    await open('Natural Gas', E2E_TR_INPUTS_YEAR);
     await expect(page.getByText(anomalyEn.firstPeriod.headline, { exact: false })).toBeVisible();
     // Data Entry prints the statement's detail, not its headline: assert the
     // ceiling sentence itself is absent (owner review, 2026-11-13).
