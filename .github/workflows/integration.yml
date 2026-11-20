@@ -47,7 +47,12 @@ concurrency:
 
 jobs:
   api-integration:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the reviewed database image is accepted only by
+    # its config digest as `docker image inspect` reports it (.Id, checked in
+    # infra/scripts/ci_database_image.py). ubuntu-latest moved to 26.04 on
+    # 2026-11-17; there .Id is no longer that digest, and every supabase-stack
+    # job failed. Moving to 26.04 means re-qualifying that check first.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
