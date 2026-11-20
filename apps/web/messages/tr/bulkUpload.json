@@ -53,8 +53,8 @@
     "retryAppliedMany": "Düzeltip yalnızca o satırları içeren bir dosya yükleyin — tüm dosyayı yeniden göndermek içe aktarılmış satırları mükerrer olarak raporlar.",
     "warnedOne": "{count} satırla gönderilmeden önce ilgilenilmesi gerekiyor — aşağıya bakın.",
     "warnedMany": "{count} satırla gönderilmeden önce ilgilenilmesi gerekiyor — aşağıya bakın.",
-    "draftOne": "İçe aktarılan satır bir taslaktır: aşağıdan gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez.",
-    "draftMany": "İçe aktarılan satırlar taslaktır: aşağıdan gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez."
+    "draftOne": "İçe aktarılan satır bir taslaktır: aşağıdan gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmez.",
+    "draftMany": "İçe aktarılan satırlar taslaktır: aşağıdan gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmez."
   },
   "tonnes": {
     "none": "Hesaplanmış değer yok",
@@ -62,8 +62,8 @@
     "partialOne": "{figure}; {rows} içinden {counted} satır için. {missing} satırın hesaplanmış değeri yok",
     "partialMany": "{figure}; {rows} içinden {counted} satır için. {missing} satırın hesaplanmış değeri yok"
   },
-  "applyConfirmOne": "1 satırı içe aktar ({tonnes}). Taslak olarak gelir: gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez.",
-  "applyConfirmMany": "{count} satırı içe aktar ({tonnes}). Her biri ayrı bir kayıt olur ve bu işlem toplu olarak geri alınamaz. Taslak olarak gelirler: gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmezler.",
+  "applyConfirmOne": "1 satırı içe aktar ({tonnes}). Taslak olarak gelir: gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmez.",
+  "applyConfirmMany": "{count} satırı içe aktar ({tonnes}). Her biri ayrı bir kayıt olur ve bu işlem toplu olarak geri alınamaz. Taslak olarak gelirler: gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmezler.",
   "appliedOne": "1 kayıt taslak olarak içe aktarıldı. Envanterinize sayılması için aşağıdan incelemeye gönderin.",
   "appliedMany": "{count} kayıt taslak olarak içe aktarıldı. Envanterinize sayılmaları için aşağıdan incelemeye gönderin.",
   "appliedNone": "Hiçbir satır içe aktarılmadı — nedeni aşağıdaki raporda.",
@@ -82,8 +82,8 @@
     "rowsMany": "{count} kayıt",
     "importTitle": "Bu kayıtlar içe aktarılsın mı?",
     "appliedNone": "Hiçbir kayıt içe aktarılmadı — nedeni aşağıdaki raporda.",
-    "applyConfirmOne": "1 kaydı içe aktar ({tonnes}). Taslak olarak gelir: gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez.",
-    "applyConfirmMany": "{count} kaydı içe aktar ({tonnes}). Bu işlem toplu olarak geri alınamaz. Taslak olarak gelirler: gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmezler.",
+    "applyConfirmOne": "1 kaydı içe aktar ({tonnes}). Taslak olarak gelir: gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmez.",
+    "applyConfirmMany": "{count} kaydı içe aktar ({tonnes}). Bu işlem toplu olarak geri alınamaz. Taslak olarak gelirler: gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmezler.",
     "summary": {
       "refusedPreview": "Hiçbir kayıt içe aktarılamaz.",
       "refusedApplied": "Hiçbir kayıt içe aktarılmadı.",
@@ -99,8 +99,8 @@
       "retryAppliedMany": "Düzeltip yalnızca o kayıtları, her birinin oluştuğu bütün dosya satırlarıyla birlikte içeren bir dosya yükleyin; kayıt bütün olarak aktarılır. Tüm dosyayı yeniden göndermek içe aktarılmış kayıtları mükerrer olarak raporlar.",
       "warnedOne": "{count} kayıtla gönderilmeden önce ilgilenilmesi gerekiyor — aşağıya bakın.",
       "warnedMany": "{count} kayıtla gönderilmeden önce ilgilenilmesi gerekiyor — aşağıya bakın.",
-      "draftOne": "İçe aktarılan kayıt bir taslaktır: aşağıdan gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez.",
-      "draftMany": "İçe aktarılan kayıtlar taslaktır: aşağıdan gönderilene kadar hiçbir toplama sayılmaz ve inceleme kuyruğunda görünmez."
+      "draftOne": "İçe aktarılan kayıt bir taslaktır: aşağıdan gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmez.",
+      "draftMany": "İçe aktarılan kayıtlar taslaktır: aşağıdan gönderilene kadar hesaplamaya dahil edilmez ve inceleme kuyruğunda görünmez."
     }
   }
 }

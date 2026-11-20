@@ -192,7 +192,7 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   expect(items[0].diff.before.calculation.tCo2e).toBeGreaterThan(0);
 });
 
-test('the withdrawn figure stops counting, and its slot reopens', async ({
+test('the withdrawn figure is no longer included, and its slot reopens', async ({
   page,
   request,
 }) => {

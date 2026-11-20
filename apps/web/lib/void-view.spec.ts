@@ -256,9 +256,9 @@ describe('voidConsequence', () => {
   // appeared somewhere let a mutant invert the sentence — "March 2026 stays
   // closed, no corrected figure can be entered" satisfied it — and deleting
   // either of the first two lines outright broke nothing in the whole repo.
-  it('says the figure stops counting', () => {
+  it('says the figure is no longer included in totals', () => {
     const { effects } = voidConsequence(record(), 'TonyAI Energy');
-    expect(effects.some((e) => /stops counting/i.test(e))).toBe(true);
+    expect(effects.some((e) => /no longer included in totals/i.test(e))).toBe(true);
   });
 
   it('says the period reopens for that entity, and that a figure can replace it', () => {

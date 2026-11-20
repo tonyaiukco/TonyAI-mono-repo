@@ -19,7 +19,6 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 const STATIC_METADATA: Metadata = {
-  generator: 'v0.app',
   icons: {
     icon: [
       {

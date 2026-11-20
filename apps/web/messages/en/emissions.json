@@ -145,7 +145,7 @@
     "removes": "This removes {tonnes} tCO₂e from the inventory.",
     "noFigure": "This entry produced no tCO₂e figure, so no emissions total changes.",
     "subject": "{category} · {subsidiary} · {entity} · {period} {year}",
-    "stopsCounting": "It stops counting towards totals, reports and invoice coverage.",
+    "stopsCounting": "It is no longer included in totals, reports or invoice coverage.",
     "reopens": "{period} {year} then reopens for {entity}, so a corrected {category} figure can be entered in its place.",
     "staysOnRecord": "The entry stays on record with your reason, and the withdrawal is written to the audit log.",
     "printed": "Your reason is printed verbatim in every generated report — PDF, Excel and CSV — and cannot be edited afterwards.",
