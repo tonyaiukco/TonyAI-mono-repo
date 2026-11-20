@@ -43,7 +43,7 @@
 
 ## Current status — as of 2026-11-20
 
-- **UAT ROUND 3 (SPEC v2.5): THE OWNER'S DECISIONS D1–D9 ARE RECORDED, A DECISION RECORD ONLY, ARCHIVED as `openspec/changes/archive/2026-11-20-uat3-decisions/` (Claude Code with the owner; OpenSpec [`uat3-decisions`](../../openspec/changes/archive/2026-11-20-uat3-decisions/design.md), branch `chore/uat3-decisions`; 2026-11-20).** Docs only: no code, migration, contract, factor release or UI change.
+- **UAT ROUND 3 (SPEC v2.5): THE OWNER'S DECISIONS D1–D9 ARE RECORDED, A DECISION RECORD ONLY, OPENED AS [PR #334](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/334), ARCHIVED as `openspec/changes/archive/2026-11-20-uat3-decisions/` (Claude Code with the owner; OpenSpec [`uat3-decisions`](../../openspec/changes/archive/2026-11-20-uat3-decisions/design.md), branch `chore/uat3-decisions`; 2026-11-20).** Docs only: no code, migration, contract, factor release or UI change.
   - **Source:** the UAT round 3 bug report (v3, 2026-11-20): the sealed calculation spec v2.4 merged with the increment v2.5 (natural gas in kWh; self-generation behind the meter). It stays outside the repo; its substance is in the design and Decisions 2026-11-20.
   - **Checked against `main` (`ac5853a9`):** rounds 1 and 2 are shipped apart from the D9 remnants, S1's QA run (not recorded) and the parked items. v2.5 is not built: TR natural gas in kWh is refused on purpose (`emission-calculation`, "Natural gas net-basis chain"), and no self-generation field exists. v2.5's claim that the engine already handles gas kWh is wrong.
   - **What this change adds:** Decisions 2026-11-20 (D1–D9), cards LP4-06, LP4-07 and LP7-09 with their ledger rows, Next up item 4's round 3 order, and Open questions "UAT round 3 follow-ups".
