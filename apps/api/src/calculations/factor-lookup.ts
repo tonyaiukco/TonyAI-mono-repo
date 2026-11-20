@@ -194,7 +194,7 @@ export async function lookupFactorPath(
   const result = await run(pricedStatuses(policy));
   if (result.ok || allowPlaceholders) return result;
   // Diagnostic only. A library that is defective among its non-authoritative
-  // rows (over the cap) must not turn this lookup's 404 into a 409.
+  // rows (over the cap) must not turn this lookup's coverage refusal (422) into a 409.
   try {
     const why = await run(LIVE_STATUSES);
     return why.ok ? result : why;

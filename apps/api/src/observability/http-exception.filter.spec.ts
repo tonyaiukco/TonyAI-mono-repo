@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { BadRequestException, HttpStatus } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
+import { NoEmissionFactorError } from '../calculations/errors';
 import { captureException } from './sentry';
 vi.mock('./sentry', () => ({ captureException: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -59,4 +60,20 @@ describe('HttpExceptionFilter — oversized bodies', () => {
   const { logger } = run(error, '/api/v1/evidence?subsidiaryId=private-marker');
   expect(JSON.stringify(logger.event.mock.calls)).not.toContain('private-marker');
   expect(captureException).toHaveBeenCalledWith(error, expect.objectContaining({ path: '/api/v1/evidence' }));
+});
+
+describe('HttpExceptionFilter — calculation coverage refusals (calc-refusal-422)', () => {
+  // The wire answer, end to end through the filter: the status map and the
+  // thrown class must agree, or the filter strips the code to a generic one.
+  it.each(['no_factor', 'placeholder_refused', 'no_conversion', 'calorific_basis_mismatch'] as const)(
+    'answers %s with 422, its code and its coverage, logged as a warning',
+    (code) => {
+      const coverage = { category: 'Electricity', activityType: 'grid_electricity', geographyCode: 'UK', reportingYear: 2031, unit: 'kWh' };
+      const { status, json, logger } = run(new NoEmissionFactorError('No emission factor found', { code, coverage }), '/api/v1/activity-records');
+      expect(status).toHaveBeenCalledWith(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(json.mock.calls[0][0]).toMatchObject({ statusCode: 422, code, coverage });
+      expect(logger.event.mock.calls[0][0]).toBe('warn');
+      expect(captureException).not.toHaveBeenCalled();
+    },
+  );
 });

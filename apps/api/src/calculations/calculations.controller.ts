@@ -21,7 +21,7 @@ export class CalculationsController {
   @HttpCode(HttpStatus.OK)
   // The preview mirrors what would be STORED, so it returns the same union the
   // record does: an invoice-tracked category with no factor previews as the
-  // explicit "not calculated" shape rather than 404-ing the Data Entry form.
+  // explicit "not calculated" shape rather than refusing the Data Entry form.
   preview(@Body() dto: CalculationInputDto): Promise<ActivityCalculationSnapshot> {
     return this.service.compute(dto);
   }

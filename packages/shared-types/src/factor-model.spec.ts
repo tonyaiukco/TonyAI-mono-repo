@@ -529,12 +529,14 @@ describe('snapshot v2', () => {
 });
 
 describe('calculation refusals', () => {
-  it('gives every code a status, and coverage gaps a 404', () => {
+  // Decisions 2026-11-20, D4 (calculation spec v2.4 §1.1): a coverage gap is
+  // 422, never a 404 — that stays the code of an entity the caller cannot reach.
+  it('gives every code a status, and coverage gaps a 422', () => {
     for (const code of CALCULATION_REFUSAL_CODES) {
-      expect([400, 404, 409]).toContain(CALCULATION_REFUSAL_STATUS[code]);
+      expect([400, 409, 422]).toContain(CALCULATION_REFUSAL_STATUS[code]);
     }
-    for (const code of ['no_factor', 'placeholder_refused', 'no_conversion'] as const) {
-      expect(CALCULATION_REFUSAL_STATUS[code]).toBe(404);
+    for (const code of ['no_factor', 'placeholder_refused', 'no_conversion', 'calorific_basis_mismatch'] as const) {
+      expect(CALCULATION_REFUSAL_STATUS[code]).toBe(422);
     }
     expect(CALCULATION_REFUSAL_STATUS.ambiguous_factor).toBe(409);
   });
@@ -1403,12 +1405,12 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       billed_gcv_out_of_range: 400,
       ncv_out_of_range: 400,
       volume_correction_out_of_range: 400,
-      no_factor: 404,
-      placeholder_refused: 404,
+      no_factor: 422,
+      placeholder_refused: 422,
       ambiguous_factor: 409,
       factor_scope_mismatch: 409,
-      no_conversion: 404,
-      calorific_basis_mismatch: 404,
+      no_conversion: 422,
+      calorific_basis_mismatch: 422,
     });
   });
 

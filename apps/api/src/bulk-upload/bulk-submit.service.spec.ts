@@ -13,7 +13,7 @@ import {
   BULK_UPLOAD_MAX_ROWS,
 } from '@tonyai/shared-types';
 import { BulkSubmitService } from './bulk-submit.service';
-import { CalculationInputError } from '../calculations/errors';
+import { CalculationInputError, FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import {
   CalculationStaleError,
@@ -501,9 +501,22 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     // Changed by someone else between the batch's read and the record's lock.
     [new RecordChangedError(), 'not_submittable', /reload it and try again/i],
     // K11 (LP4-02 B2): a ConflictException, which the fallbacks below would
-    // read as `unexpected` — and a recompute that refused (a 404 or a 400 from
+    // read as `unexpected` — and a recompute that refused (a 422 or a 400 from
     // the engine) arrives as this class too, never as `not_found`.
     [new CalculationStaleError(), 'calculation_stale', /save the draft again/i],
+    // calc-refusal-422 (design D2): a library refusal that escapes the
+    // wrapper is the same stale issue — never `not_found`, never `unexpected`.
+    [
+      new NoEmissionFactorError('No emission factor found', { code: 'no_factor' }),
+      'calculation_stale',
+      /save the draft again/i,
+    ],
+    [
+      new NoEmissionFactorError('Placeholder only', { code: 'placeholder_refused' }),
+      'calculation_stale',
+      /save the draft again/i,
+    ],
+    [new FactorLibraryConflictError('ambiguous_factor', 'Two releases claim it'), 'calculation_stale', /save the draft again/i],
     // C8 (LP4-02 B2): an untyped record of a typed category is not committed;
     // its sentence names the remedy.
     [

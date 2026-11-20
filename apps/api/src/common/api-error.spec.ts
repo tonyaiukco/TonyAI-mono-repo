@@ -336,8 +336,15 @@ describe('the filter codes what arrives uncoded', () => {
 
   it('keeps a calculation refusal whole — its code and its coverage', () => {
     const coverage = { category: 'Fuel', activityType: 'diesel', geographyCode: 'GB', reportingYear: 2019, unit: 'litres' };
-    const body = toErrorBody(404, { statusCode: 404, message: 'No factor', code: 'no_factor', coverage });
-    expect(body).toMatchObject({ code: 'no_factor', coverage });
+    const body = toErrorBody(422, { statusCode: 422, message: 'No factor', code: 'no_factor', coverage });
+    expect(body).toMatchObject({ statusCode: 422, error: 'Unprocessable Entity', code: 'no_factor', coverage });
+  });
+
+  it('drops a coverage code thrown at its old 404 — the map and the class move together', () => {
+    // Decisions 2026-11-20, D4: `no_factor` answers 422. A 404 carrying it is
+    // a half-done change, and the filter answers the 404's generic code.
+    const body = toErrorBody(404, { statusCode: 404, message: 'No factor', code: 'no_factor' });
+    expect(body).toMatchObject({ statusCode: 404, code: 'not_found' });
   });
 });
 

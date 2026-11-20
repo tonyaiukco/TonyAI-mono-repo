@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { CALCULATION_REFUSAL_CODES, CALCULATION_REFUSAL_STATUS } from '@tonyai/shared-types';
+import { toErrorBody } from '../common/api-error';
 import {
   CalculationInputError,
   COVERAGE_REFUSAL_CODES,
@@ -24,7 +25,11 @@ describe('calculation refusal classes', () => {
     }
     for (const code of COVERAGE_REFUSAL_CODES) {
       const e = new NoEmissionFactorError('m', { code });
-      expect(e).toBeInstanceOf(NotFoundException);
+      expect(e).toBeInstanceOf(UnprocessableEntityException);
+      // Never a NotFoundException: a catch that maps 404s to "not yours"
+      // (the bulk paths) must not swallow a library gap.
+      expect(e).not.toBeInstanceOf(NotFoundException);
+      expect(e.getStatus()).toBe(422);
       expect(e.getStatus()).toBe(CALCULATION_REFUSAL_STATUS[code]);
     }
     for (const code of LIBRARY_REFUSAL_CODES) {
@@ -51,18 +56,29 @@ describe('calculation refusal classes', () => {
 
   it('give a coverage refusal its lookup only when the engine supplies one', () => {
     expect(new NoEmissionFactorError('No factor.', { code: 'placeholder_refused', coverage: COVERAGE }).getResponse()).toEqual({
-      statusCode: 404,
-      error: 'Not Found',
+      statusCode: 422,
+      error: 'Unprocessable Entity',
       message: 'No factor.',
       code: 'placeholder_refused',
       coverage: COVERAGE,
     });
     expect(new NoEmissionFactorError('No factor.').getResponse()).toEqual({
-      statusCode: 404,
-      error: 'Not Found',
+      statusCode: 422,
+      error: 'Unprocessable Entity',
       message: 'No factor.',
       code: 'no_factor',
     });
+  });
+
+  // Decisions 2026-11-20, D4: the map and the class change together. The
+  // error filter keeps a code only at its registered status, so reverting
+  // either half alone strips the coverage code to the generic one.
+  it('keep every coverage code and its lookup through the error filter', () => {
+    for (const code of COVERAGE_REFUSAL_CODES) {
+      const thrown = new NoEmissionFactorError('No factor.', { code, coverage: COVERAGE });
+      const body = toErrorBody(thrown.getStatus(), thrown.getResponse());
+      expect(body).toMatchObject({ statusCode: 422, error: 'Unprocessable Entity', code, coverage: COVERAGE });
+    }
   });
 
   it('keep the one-string constructor the bulk importer and its specs use', () => {
