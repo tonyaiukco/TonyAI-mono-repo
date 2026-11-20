@@ -617,7 +617,7 @@ describe('retry advice', () => {
       }),
     );
     expect(s.detail).toBe(
-      '1 row was not. Fix it and upload a file containing only that row — re-sending the whole file would report the imported ones as duplicates. The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.',
+      '1 row was not. Fix it and upload a file containing only that row — re-sending the whole file would report the imported ones as duplicates. The imported row is a draft: it is not included in any total and does not appear in the review queue until it is submitted below.',
     );
   });
 
@@ -626,7 +626,7 @@ describe('retry advice', () => {
       summarise(report({ dryRun: false, warnings: [issue({ row: 2, code: 'evidence_required' })] }))
         .detail,
     ).toBe(
-      '1 row needs attention before it can be submitted — see below. The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.',
+      '1 row needs attention before it can be submitted — see below. The imported row is a draft: it is not included in any total and does not appear in the review queue until it is submitted below.',
     );
   });
 

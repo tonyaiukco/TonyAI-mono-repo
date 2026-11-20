@@ -53,8 +53,8 @@
     "retryAppliedMany": "Fix them and upload a file containing only those rows — re-sending the whole file would report the imported ones as duplicates.",
     "warnedOne": "{count} row needs attention before it can be submitted — see below.",
     "warnedMany": "{count} rows need attention before they can be submitted — see below.",
-    "draftOne": "The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.",
-    "draftMany": "Imported rows are drafts: they count towards no total and do not appear in the review queue until they are submitted below."
+    "draftOne": "The imported row is a draft: it is not included in any total and does not appear in the review queue until it is submitted below.",
+    "draftMany": "Imported rows are drafts: they are not included in any total and do not appear in the review queue until they are submitted below."
   },
   "tonnes": {
     "none": "No calculated figure",
@@ -99,8 +99,8 @@
       "retryAppliedMany": "Fix them and upload a file containing only those records, each with every file row it is built from, since a record is imported whole. Re-sending the whole file would report the imported ones as duplicates.",
       "warnedOne": "{count} record needs attention before it can be submitted — see below.",
       "warnedMany": "{count} records need attention before they can be submitted — see below.",
-      "draftOne": "The imported record is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.",
-      "draftMany": "Imported records are drafts: they count towards no total and do not appear in the review queue until they are submitted below."
+      "draftOne": "The imported record is a draft: it is not included in any total and does not appear in the review queue until it is submitted below.",
+      "draftMany": "Imported records are drafts: they are not included in any total and do not appear in the review queue until they are submitted below."
     }
   }
 }

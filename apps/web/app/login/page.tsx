@@ -9,6 +9,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { signInFailureKey } from "@/lib/auth-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/auth/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -121,9 +122,8 @@ function LoginForm() {
                   {t("signIn.forgot")}
                 </Link>
               </div>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 required
                 autoComplete="current-password"
               />

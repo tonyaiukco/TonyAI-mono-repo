@@ -145,7 +145,7 @@
     "removes": "Bu işlem envanterden {tonnes} tCO₂e çıkarır.",
     "noFigure": "Bu giriş bir tCO₂e değeri üretmedi; bu yüzden hiçbir emisyon toplamı değişmez.",
     "subject": "{category} · {subsidiary} · {entity} · {period} {year}",
-    "stopsCounting": "Toplamlara, raporlara ve fatura kapsamına sayılmaz hale gelir.",
+    "stopsCounting": "Toplamlara, raporlara ve fatura kapsamına artık dahil edilmez.",
     "reopens": "{entity} için {period} {year} dönemi ardından yeniden açılır; böylece yerine düzeltilmiş bir {category} rakamı girilebilir.",
     "staysOnRecord": "Giriş gerekçenizle birlikte kayıtta kalır ve geri çekme denetim kaydına yazılır.",
     "printed": "Gerekçeniz oluşturulan her rapora — PDF, Excel ve CSV — olduğu gibi basılır ve sonradan düzenlenemez.",

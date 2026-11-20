@@ -8,7 +8,7 @@ import { KeyRound, Leaf, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/auth/password-input";
 import { Label } from "@/components/ui/label";
 import { MIN_PASSWORD_LENGTH, passwordProblem, setPasswordFailureKey } from "@/lib/auth-view";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -93,9 +93,8 @@ export function SetPasswordForm() {
             <form onSubmit={onSubmit} className="space-y-4" noValidate>
               <div className="space-y-2">
                 <Label htmlFor="new-password">{t("setPassword.password")}</Label>
-                <Input
+                <PasswordInput
                   id="new-password"
-                  type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="new-password"
@@ -106,9 +105,8 @@ export function SetPasswordForm() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="repeat-password">{t("setPassword.repeat")}</Label>
-                <Input
+                <PasswordInput
                   id="repeat-password"
-                  type="password"
                   value={repeat}
                   onChange={(e) => setRepeat(e.target.value)}
                   autoComplete="new-password"
