@@ -551,6 +551,23 @@ export async function registeredAccount(email: string): Promise<RegisteredAccoun
   return rows[0] ?? null;
 }
 
+/**
+ * Whether the API's invitation delivery for this address has finished: the
+ * invitation left `pending` (sent, accepted, revoked) or recorded the step it
+ * stopped at (`last_error_step`, e.g. no mail transport in CI). Read as the owner.
+ */
+async function invitationDeliveryFinished(email: string): Promise<boolean> {
+  const rows = await withOwner((prisma) =>
+    prisma.$queryRawUnsafe<{ finished: boolean }[]>(
+      `SELECT (i.status <> 'pending' OR i.last_error_step IS NOT NULL) AS finished
+       FROM invitations i JOIN profiles p ON p.id = i.profile_id
+       WHERE p.email = $1`,
+      email.toLowerCase(),
+    ),
+  );
+  return rows[0]?.finished === true;
+}
+
 /** How many organisations carry exactly this legal name, read as the owner. */
 export async function organisationsNamed(legalName: string): Promise<number> {
   const rows = await withOwner((prisma) =>
@@ -606,6 +623,17 @@ export async function registrationInvitePath(request: APIRequestContext, email: 
   if (catcher) throw new Error(`the invitation email was not delivered to the mail catcher: ${seen}`);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  // The API mints its own invitation link after the registration rows commit,
+  // and minting voids the previous link. A link minted here before the API's
+  // delivery has run is voided by it, and the page then answers "This link no
+  // longer works" (Auth's verify 403; nightly of 2026-11-20). So wait until the
+  // delivery has finished, sent or stopped, before minting the one we follow.
+  await expect
+    .poll(async () => invitationDeliveryFinished(email), {
+      timeout: 15_000,
+      message: `the API never finished delivering the invitation for ${email}`,
+    })
+    .toBe(true);
   const res = await request.post(`${url}/auth/v1/admin/generate_link`, {
     headers: { apikey: service, Authorization: `Bearer ${service}` },
     data: { type: 'invite', email: email.toLowerCase() },
