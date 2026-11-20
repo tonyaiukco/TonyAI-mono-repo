@@ -32,6 +32,7 @@ import {
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
 } from '../activity-records/errors';
+import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { AuditService } from '../audit/audit.service';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
@@ -408,6 +409,17 @@ export class BulkSubmitService {
         recordId,
         code: 'variance_reason_required',
         message: this.messageOf(error),
+      };
+    }
+    // A recompute refusal that reached here unwrapped (calc-refusal-422,
+    // design D2): `submit` raises it as CalculationStaleError, but a library
+    // gap must never fall through to the fallbacks below and read as
+    // `not_found` or `unexpected`. The same issue and sentence as the wrapper.
+    if (error instanceof NoEmissionFactorError || error instanceof FactorLibraryConflictError) {
+      return {
+        recordId,
+        code: 'calculation_stale',
+        message: this.messageOf(new CalculationStaleError()),
       };
     }
     if (error instanceof NotFoundException) {

@@ -131,7 +131,7 @@ describe("a calculation refusal keeps its lookup-specific English (independent r
   });
 
   it("with no sentence to show, the catalogue's alone", () => {
-    const bare = new ApiError("API 404", 404, "no_factor");
+    const bare = new ApiError("API 422", 422, "no_factor");
     expect(describe_(bare, "en")).toEqual({ title: MESSAGES.en.errors.codes.no_factor });
   });
 

@@ -302,8 +302,8 @@ describe('the 2027 rollover (D06, D07)', () => {
       body: JSON.stringify({ category: 'Electricity', geographyCode: 'UK', reportingYear: 2027, value: 100, unit: 'kWh' }),
     });
     const body = (await res.json()) as { code?: string };
-    expect(res.status, JSON.stringify(body)).toBeGreaterThanOrEqual(400);
-    expect(res.status).toBeLessThan(500);
+    // A coverage refusal answers 422 (calc-refusal-422; v2.4 §1.1).
+    expect(res.status, JSON.stringify(body)).toBe(422);
     expect(body.code).toBe('no_factor');
     // The control: the same calculation for a year the library covers is priced.
     const priced = await fetch(`${base}/calculations/preview`, {

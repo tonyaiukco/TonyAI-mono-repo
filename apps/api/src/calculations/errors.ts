@@ -1,7 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
-  NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   type CalculationRefusalBody,
@@ -76,31 +76,33 @@ export class CalculationInputError extends BadRequestException {
 }
 
 /**
- * No factor path covers this lookup (404): none at all (`no_factor`), only
- * non-authoritative ones where placeholders are refused
- * (`placeholder_refused`), a factor whose sourced conversion nobody loaded
- * (`no_conversion`), or only the other calorific basis
- * (`calorific_basis_mismatch`).
+ * No factor path covers this lookup (422, calculation spec v2.4 §1.1;
+ * Decisions 2026-11-20, D4): none at all (`no_factor`), only non-authoritative
+ * ones where placeholders are refused (`placeholder_refused`), a factor whose
+ * sourced conversion nobody loaded (`no_conversion`), or only the other
+ * calorific basis (`calorific_basis_mismatch`). The record and the route exist;
+ * the request cannot be processed against the library, so it is not a 404.
  *
- * A 404 like "Subsidiary not found", and the bulk importer has to tell the two
- * apart: one is a row the factor library cannot price yet (`no_factor`), the
- * other a reporting entity the caller may not name (`not_found`). The class is
- * that contract — every coverage refusal is this class, whatever its code, or
- * the importer would report it as "not yours".
+ * The class, not the status, is the bulk importer's contract: it must tell a
+ * row the factor library cannot price yet (`no_factor`) from a reporting entity
+ * the caller may not name (`not_found`), and every coverage refusal is this
+ * class, whatever its code. The status map (`CALCULATION_REFUSAL_STATUS`) and
+ * this class change together: the error filter keeps a code only when it is
+ * thrown at its registered status.
  *
  * `coverage` is the exact lookup, built by the engine from validated canonical
  * values only — and only after the record path's tenant checks have passed, so
  * a foreign subsidiary still gets the plain 404 with nothing about the library.
  */
-export class NoEmissionFactorError extends NotFoundException {
+export class NoEmissionFactorError extends UnprocessableEntityException {
   readonly code: CoverageRefusalCode;
   readonly coverage: CoverageKey | undefined;
 
   constructor(message: string, options: { code?: CoverageRefusalCode; coverage?: CoverageKey } = {}) {
     const code = options.code ?? 'no_factor';
     super({
-      statusCode: 404,
-      error: 'Not Found',
+      statusCode: 422,
+      error: 'Unprocessable Entity',
       message,
       code,
       ...(options.coverage ? { coverage: options.coverage } : {}),

@@ -4922,8 +4922,8 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   });
 
   it.each([
-    ['no factor (404)', () => new NoEmissionFactorError('No emission factor found', { code: 'no_factor' })],
-    ['a withdrawn release’s gap (404)', () => new NoEmissionFactorError('No emission factor found', { code: 'placeholder_refused' })],
+    ['no factor (422)', () => new NoEmissionFactorError('No emission factor found', { code: 'no_factor' })],
+    ['a withdrawn release’s gap (422)', () => new NoEmissionFactorError('No emission factor found', { code: 'placeholder_refused' })],
     ['an input refusal (400)', () => new CalculationInputError('unit_not_for_category', 'Unit "x" is not valid')],
     ['a library conflict (409)', () => new FactorLibraryConflictError('ambiguous_factor', 'Two releases claim it')],
     ['a site that no longer resolves (404)', () => new ResourceNotFoundError('location_not_found')],

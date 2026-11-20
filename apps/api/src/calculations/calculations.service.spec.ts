@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import { CalculationInputError, FactorLibraryConflictError, NoEmissionFactorError } from './errors';
 import type { EmissionFactor, FactorRelease, UnitConversion } from '@tonyai/db';
 import {
@@ -655,7 +655,7 @@ describe('CalculationsService.compute', () => {
     expect(prisma.emissionFactor.findMany).not.toHaveBeenCalled();
   });
 
-  it('throws NotFound when no factor exists for the key', async () => {
+  it('refuses with no_factor (422) when no factor exists for the key', async () => {
     useFactor(prisma, null);
 
     await expect(
@@ -666,7 +666,7 @@ describe('CalculationsService.compute', () => {
         value: 1,
         unit: 'kWh',
       }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
     // The CLASS the bulk importer tells a coverage miss from an access
     // problem by — never the words "emission factor".
     await expect(
@@ -876,7 +876,7 @@ describe('CalculationsService.compute', () => {
       );
 
       // Not the factorless snapshot either: a factor exists, so the gap is a
-      // missing conversion row, which is a 404 to fix, not a category without
+      // missing conversion row, which is a coverage refusal (422) to fix, not a category without
       // a methodology.
       await expect(
         service.compute({
@@ -903,7 +903,7 @@ describe('CalculationsService.compute', () => {
           value: 1000,
           unit: 'kWh',
         }),
-      ).rejects.toBeInstanceOf(NotFoundException);
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
     });
   });
 
@@ -1014,7 +1014,7 @@ describe('CalculationsService.compute', () => {
           value: 100,
           unit: `cubic${char(0xfeff)}${char(0x09)}metres`,
         })
-        .then(() => null, (e: unknown) => e as NotFoundException);
+        .then(() => null, (e: unknown) => e as NoEmissionFactorError);
       expect(refusal).toBeInstanceOf(NoEmissionFactorError);
       if (!refusal) return;
       expect(refusal.message).toContain('no sourced conversion from "cubic_metres"');
@@ -1034,7 +1034,7 @@ describe('CalculationsService.compute', () => {
           value: 100,
           unit: `cubic${' '.repeat(30_000)}metres`,
         })
-        .then(() => null, (e: unknown) => e as NotFoundException);
+        .then(() => null, (e: unknown) => e as NoEmissionFactorError);
       expect(refusal).toBeInstanceOf(NoEmissionFactorError);
       if (!refusal) return;
       expect(refusal.message).toContain('no sourced conversion from "cubic_metres"');
@@ -1357,7 +1357,7 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
       .then(() => null, (e: unknown) => e as NoEmissionFactorError);
     expect(refusal).toBeInstanceOf(NoEmissionFactorError);
     expect(refusal?.getResponse()).toMatchObject({
-      statusCode: 404,
+      statusCode: 422,
       code: 'placeholder_refused',
       coverage: { category: 'Electricity', activityType: 'grid_electricity', geographyCode: 'UK', reportingYear: 2026, unit: 'kWh' },
     });
@@ -1470,14 +1470,14 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
     await expect(service(true).compute(electricityUK)).rejects.toMatchObject({ code: 'ambiguous_factor' });
   });
 
-  it("keeps the 404 when only the diagnostic pass over non-authoritative rows exceeds the cap", async () => {
+  it("keeps the 422 coverage refusal when only the diagnostic pass over non-authoritative rows exceeds the cap", async () => {
     useFactor(
       prisma,
       ...Array.from({ length: FACTOR_CANDIDATE_CAP + 1 }, (_, i) =>
         makeFactor({ geographyCode: 'UK', reportingYear: 2026, release: makeRelease({ ordinal: i + 1 }) }),
       ),
     );
-    await expect(service(false).compute(electricityUK)).rejects.toMatchObject({ status: 404 });
+    await expect(service(false).compute(electricityUK)).rejects.toMatchObject({ status: 422 });
   });
 
   it('reads conversions only from the base unit of the record\'s family, and caps them too', async () => {

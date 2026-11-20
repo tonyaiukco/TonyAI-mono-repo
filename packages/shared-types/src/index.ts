@@ -2586,12 +2586,14 @@ export const CALCULATION_REFUSAL_CODES = [
 export type CalculationRefusalCode = (typeof CALCULATION_REFUSAL_CODES)[number];
 
 /**
- * The HTTP status of each refusal: 400 for what the caller sent, 404 for a
- * coverage gap (as `NoEmissionFactorError` has always been), 409 for a factor
- * library that contradicts itself.
+ * The HTTP status of each refusal: 400 for what the caller sent, 422 for a
+ * coverage gap the factor library cannot price (calculation spec v2.4 §1.1;
+ * Decisions 2026-11-20, D4 — 404 until then), 409 for a factor library that
+ * contradicts itself. A reporting entity the caller cannot reach is never a
+ * refusal here: it stays the plain 404 of its own not-found code.
  */
 export const CALCULATION_REFUSAL_STATUS: Readonly<
-  Record<CalculationRefusalCode, 400 | 404 | 409>
+  Record<CalculationRefusalCode, 400 | 409 | 422>
 > = {
   unit_unknown: 400,
   unit_blocked: 400,
@@ -2607,12 +2609,12 @@ export const CALCULATION_REFUSAL_STATUS: Readonly<
   billed_gcv_out_of_range: 400,
   ncv_out_of_range: 400,
   volume_correction_out_of_range: 400,
-  no_factor: 404,
-  placeholder_refused: 404,
+  no_factor: 422,
+  placeholder_refused: 422,
   ambiguous_factor: 409,
   factor_scope_mismatch: 409,
-  no_conversion: 404,
-  calorific_basis_mismatch: 404,
+  no_conversion: 422,
+  calorific_basis_mismatch: 422,
 };
 
 /** The exact lookup a refusal is about — what LP3-04 lists as missing. */
@@ -2626,7 +2628,7 @@ export interface CoverageKey {
 
 /** The body of a refused calculation (preview, create, update). */
 export interface CalculationRefusalBody {
-  statusCode: 400 | 404 | 409;
+  statusCode: 400 | 409 | 422;
   error?: string;
   message: string;
   code: CalculationRefusalCode;
