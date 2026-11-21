@@ -9,6 +9,7 @@ import {
   API_ERROR_PARAMS,
   API_ERROR_SENTENCE_SELECTORS,
   VARIANCE_BASES,
+  PARAMETERS_REQUIRED_INPUTS,
   BULK_UPLOAD_ISSUE_CODES,
   CATEGORIES,
   CATEGORY_ACTIVITY_TYPES,
@@ -128,6 +129,9 @@ describe("the catalogues", () => {
       'evidence.size.bytes',
       'evidence.removeAria',
       'geography.TR',
+      // The calorific basis "net" is the same word in Turkish (ng-kwh-engine).
+      'dataEntry.inputs.cvBasis.net',
+      'review.sheet.calorificBasisValue.net',
       // Units and formats with no words (LP4-04 slice 2 PR B).
       'common.tco2e',
       'dashboard.tonnes',
@@ -197,6 +201,17 @@ describe("the error codes", () => {
       for (const locale of SUPPORTED_LOCALES) {
         const variants = (MESSAGES[locale].errors as { variants?: Record<string, Record<string, string>> }).variants;
         expect(variants?.variance_reason_required?.[basis], `${locale}: ${basis}`).toBeTruthy();
+      }
+    }
+  });
+
+  it("every parameters_required input has a sentence: its own variant, or the code's own on purpose (ng-kwh-engine)", () => {
+    // `equipment` IS the code's own sentence (the refrigerant's); every other input has a variant.
+    for (const input of PARAMETERS_REQUIRED_INPUTS) {
+      if (input === "equipment") continue;
+      for (const locale of SUPPORTED_LOCALES) {
+        const variants = (MESSAGES[locale].errors as { variants?: Record<string, Record<string, string>> }).variants;
+        expect(variants?.parameters_required?.[input], `${locale}: ${input}`).toBeTruthy();
       }
     }
   });

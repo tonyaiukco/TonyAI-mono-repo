@@ -134,6 +134,7 @@
   "inputsOriginDerived": "faturadaki ÜID'den türetildi",
   "inputsBilledGcv": "faturadaki ÜID {value} kcal/Sm³",
   "inputsVolume": "hacim düzeltme ×{value}",
+  "inputsGrossToNet": "brütten nete ×{value} (faktör sürümünün referans değerleri)",
   "inputsLine": "{equipment}: {capacity} kg × {rate} + {refill} kg dolum = {mass} kg salım",
   "scope2LocationBased": "Kapsam 2 (konum bazlı)",
   "noMarketBased": "Piyasa bazlı sonuç bulunmamaktadır",

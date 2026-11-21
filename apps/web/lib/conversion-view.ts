@@ -13,6 +13,16 @@ type ConversionTranslator = (key: ConversionKey, values?: Record<string, string>
 
 const DIGITS = { maximumSignificantDigits: 15 } as const;
 
+/**
+ * The gross-to-net ratio a TR natural gas bill on the gross basis was reduced
+ * by (ng-kwh-engine), from the snapshot's derived input, or null: a net bill,
+ * a volume reading or any other record carries none.
+ */
+export function grossToNetRatioOf(snapshot: ActivityCalculationSnapshot | null): number | null {
+  if (!isProvenanceSnapshot(snapshot) || !('parameters' in snapshot)) return null;
+  return snapshot.parameters.find((p) => p.name === 'grossToNetRatio' && p.origin === 'derived')?.value ?? null;
+}
+
 /** Describe the sourced step actually returned by the current preview. */
 export function conversionNote(snapshot: ActivityCalculationSnapshot | null,
   pending: boolean, locale: Locale, translate: ConversionTranslator, sealDates: SealDates | null = null,

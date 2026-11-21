@@ -107,4 +107,18 @@ describe('the inputs read (LP4-02 PR4)', () => {
     expect(gasInputs).toContain(locale === 'en' ? '0.97' : '0,97');
     expect(html).toContain(m.bulkPreview.lineRows.replace('{rows}', '2, 3'));
   });
+
+  it.each([
+    ['en', 'Calorific basis: Gross'],
+    ['tr', 'Isıl değer esası: Brüt'],
+  ] as const)('%s names a bill\'s calorific basis, as a word (ng-kwh-engine)', (locale, expected) => {
+    const bill: BulkUploadAcceptedRow = { ...gas, row: 5, activityUnit: 'kWh', activityValue: 1000, parameters: { cvBasis: 'gross' } };
+    const html = renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale], children: createElement(AcceptedRows, { rows: [bill, gas] }),
+    }));
+    const [basis, volume] = inputs(html);
+    expect(basis).toBe(expected);
+    // A volume row's echo is unchanged: no basis.
+    expect(volume).not.toContain(MESSAGES[locale].dataEntry.bulkColumns.cvBasis);
+  });
 });

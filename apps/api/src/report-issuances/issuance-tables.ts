@@ -47,7 +47,8 @@ import {
 // v4 (UAT round 2, K1): the tier names. Tables are written on request from the
 // current catalogue, so a re-download of an older issuance carries the new
 // wording; its identity row names this version.
-export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v4';
+// v5 (ng-kwh-engine): a gross energy bill's gross-to-net ratio among a record's inputs.
+export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v5';
 
 export interface IssuedTablesDocument {
   issuanceId: string;

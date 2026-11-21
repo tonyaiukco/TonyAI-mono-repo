@@ -28,6 +28,7 @@ import {
   EQUIPMENT_TYPES,
   VOLUME_CORRECTION_FACTOR_MAX,
   VOLUME_CORRECTION_FACTOR_MIN,
+  type CvBasis,
   type EquipmentType,
   type LeakRateChoice,
   type ReleaseParametersDTO,
@@ -168,6 +169,24 @@ function ReferenceNote({ reference, value }: { reference: ReferenceState; value:
         status: release.status === "authoritative" ? "" : t("notAuthoritative"),
       })}
     </p>
+  );
+}
+
+/**
+ * A TR natural gas bill's calorific basis, read-only (ng-kwh-engine): what an
+ * opened or copied kWh or MWh record sends with every preview and save.
+ * Nothing when none is stored; the API then names the missing choice.
+ * `ng-kwh-form` turns this into the author's choice.
+ */
+export function StoredCalorificBasis({ basis }: { basis: CvBasis | null }) {
+  const t = useTranslations("dataEntry.inputs.cvBasis");
+  if (basis === null) return null;
+  return (
+    <div className="space-y-1 rounded-lg border p-4" data-testid="gas-energy-basis">
+      <p className="text-sm font-medium">{t("title")}</p>
+      <p className="text-sm" data-testid="gas-energy-basis-value">{t(basis)}</p>
+      <p className="text-xs text-muted-foreground">{t("stored")}</p>
+    </div>
   );
 }
 

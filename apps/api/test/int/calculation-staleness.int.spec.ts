@@ -526,6 +526,56 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     expect(await failure(savedTr({ ...fm200(undefined), activityType: 'HFC-227ea', periodValue: 'Annual' }))).toMatchObject({ code: 'parameters_required' });
   });
 
+  // ng-kwh-engine: a natural gas bill in kWh, priced through the API on its stated basis.
+  const bill = (parameters: unknown, periodValue = 'March') =>
+    ({ ...gas(parameters), periodValue, activityUnit: 'kWh', activityValue: 1000 });
+
+  it('prices a gross kWh bill through the API, stores its basis, and submits it fresh (ng-kwh-engine)', async () => {
+    await loadTr();
+    const record = await savedTr(bill({ cvBasis: 'gross' }));
+    expect(record.parameters).toEqual({ cvBasis: 'gross' });
+    expect(record.calculation).toMatchObject({
+      snapshotSchema: 3, conversion: null, calorificBasis: 'net',
+      parameters: [{ name: 'grossToNetRatio', origin: 'derived' }],
+    });
+    // 1,000 × 8,250 / 9,155 × the fixture's 0.2.
+    expect((record.calculation as { kgCo2e: number }).kgCo2e).toBeCloseTo((1000 * 8250 / 9155) * 0.2, 9);
+    await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('reads an explicit null basis as an absent one on create and update, never a server error (ng-kwh-engine)', async () => {
+    await loadTr();
+    const { records } = lifecycleServices(runtime);
+    // A volume reading: priced and stored as sent, the CHECK admitting the null.
+    const volume = await savedTr(gas({ cvBasis: null, ncvKcalPerSm3: 8100 }));
+    expect(volume.parameters).toEqual({ cvBasis: null, ncvKcalPerSm3: 8100 });
+    expect(volume.calculation).toMatchObject({ parameters: [{ name: 'ncvKcalPerSm3', value: 8100, origin: 'user' }] });
+    const patched = await records.update(tenant.users.dataEntry, volume.id, { parameters: { cvBasis: null } } as never);
+    expect(patched.parameters).toEqual({ cvBasis: null });
+    // An energy bill: refused as the missing input it is, on create and on update.
+    const created = await failure(savedTr(bill({ cvBasis: null }, 'April')));
+    expect(created).toMatchObject({ code: 'parameters_required' });
+    const energy = await savedTr(bill({ cvBasis: 'net' }, 'May'));
+    const updated = await failure(records.update(tenant.users.dataEntry, energy.id, { parameters: { cvBasis: null } } as never));
+    expect(updated).toMatchObject({ code: 'parameters_required' });
+    expect((await row(energy.id)).parameters).toEqual({ cvBasis: 'net' });
+  });
+
+  it('refuses at submit, and at bulk submit, a kWh bill a direct writer stripped of its basis or flipped to the other: stale, nothing committed (ng-kwh-engine)', async () => {
+    await loadTr();
+    const stripped = await savedTr(bill({ cvBasis: 'gross' }, 'June'));
+    const flipped = await savedTr(bill({ cvBasis: 'gross' }, 'July'));
+    await owner.activityRecord.update({ where: { id: stripped.id }, data: { parameters: Prisma.DbNull } });
+    await owner.activityRecord.update({ where: { id: flipped.id }, data: { parameters: { cvBasis: 'net' } } });
+    const { records } = lifecycleServices(runtime);
+    expect(await failure(records.submit(tenant.users.dataEntry, stripped.id))).toBeInstanceOf(CalculationStaleError);
+    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.dataEntry, [flipped.id]);
+    expect(JSON.stringify(report)).toContain('calculation_stale');
+    expect((await row(stripped.id)).status).toBe(ActivityRecordStatus.draft);
+    expect((await row(flipped.id)).status).toBe(ActivityRecordStatus.draft);
+  });
+
   it('refuses at submit a TR refrigerant draft a direct writer stripped of its equipment: stale, nothing committed', async () => {
     await loadTr();
     const record = await savedTr(fm200(EQUIPMENT));

@@ -2288,6 +2288,26 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
     expect(html).not.toContain('prototype demo emission factors');
   });
 
+  it('gives a gross energy bill its own appendix line, so its gross-to-net step is neither hidden nor stated for net bills (ng-kwh-engine)', async () => {
+    const bill = (id: string, periodValue: string, gross: boolean) => makeRecord({
+      id, category: 'Natural Gas', periodValue, activityUnit: 'kWh',
+      calculation: {
+        ...v2({ factorId: 'f-tr-gas', activityType: 'natural_gas', geographyCode: 'TR', calorificBasis: 'net', factorRelease: authoritativeRelease }),
+        snapshotSchema: 3, refrigerantTerms: null,
+        parameters: gross ? [{ name: 'grossToNetRatio', value: 8250 / 9155, origin: 'derived' }] : [],
+        parameterRows: [],
+        ...(gross ? { conversionApplied: true, conversionFactor: 8250 / 9155, conversionBasis: 'gross to net calorific basis × reference_ncv / reference_gcv' } : {}),
+      },
+    });
+    for (const order of [[false, true], [true, false]]) {
+      stubRecords(prisma, [bill('r-a', 'January', order[0]), bill('r-b', 'February', order[1])]);
+      const data = await service.assemble(admin, q);
+      const lines = data.factors.filter((f) => f.category === 'Natural Gas');
+      expect(lines).toHaveLength(2);
+      expect(lines.filter((f) => f.conversionBasis?.includes('gross to net'))).toHaveLength(1);
+    }
+  });
+
   it('calls a snapshot written before releases not authoritative, and says so when every figure is', async () => {
     stubRecords(prisma, [makeRecord()]);
     const data = await service.assemble(admin, q);

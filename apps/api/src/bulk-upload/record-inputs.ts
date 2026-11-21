@@ -1,7 +1,11 @@
 import {
   ACTIVITY_VALUE_MAX,
   BULK_EQUIPMENT_COLUMNS,
+  BULK_GAS_BASIS_COLUMN,
+  BULK_GAS_INPUT_COLUMNS,
   BULK_GAS_PARAMETER_COLUMNS,
+  CV_BASES,
+  isCvBasis,
   EQUIPMENT_TYPES,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   LEAK_RATE_CHOICES,
@@ -155,12 +159,15 @@ function notThisCategory(column: BulkUploadColumn, category: string): CellIssue 
 
 /**
  * A row's Natural Gas inputs (D3, D5): null when it carries none. Whether the
- * row's unit and geography take them is the engine's answer, on the row.
+ * row's unit and geography take them is the engine's answer, on the row. The
+ * basis column (`cvBasis`, ng-kwh-engine) is text, `net` or `gross` in any
+ * letter case, stored lower-case; a bill in kWh or MWh without one is the
+ * engine's `parameters_required`, which the row reads as `invalid`.
  */
 export function gasParametersOf(
   cells: ParsedRow['cells'],
 ): { parameters: NaturalGasRecordParameters | null } | { issue: CellIssue } {
-  const filled = firstFilled(cells, BULK_GAS_PARAMETER_COLUMNS);
+  const filled = firstFilled(cells, BULK_GAS_INPUT_COLUMNS);
   const equipment = firstFilled(cells, BULK_EQUIPMENT_COLUMNS);
   if (equipment !== null) return { issue: notThisCategory(equipment, 'Refrigerants') };
   if (filled === null) return { parameters: null };
@@ -170,6 +177,20 @@ export function gasParametersOf(
     const read = numberCell(cells, column, { positive: true, max: GAS_INPUT_MAX });
     if ('issue' in read) return read;
     if (read.value !== null) parameters[column] = read.value;
+  }
+  const basis = cells[BULK_GAS_BASIS_COLUMN].trim();
+  if (basis !== '') {
+    const canonical = basis.toLowerCase();
+    if (!isCvBasis(canonical)) {
+      return {
+        issue: {
+          column: BULK_GAS_BASIS_COLUMN,
+          code: 'invalid',
+          message: `"${quoteCallerText(basis)}" is not a calorific basis. Write ${CV_BASES.join(' or ')}: the basis the bill states its energy on.`,
+        },
+      };
+    }
+    parameters.cvBasis = canonical;
   }
   if (parameters.ncvKcalPerSm3 !== undefined && parameters.billedGcvKcalPerSm3 !== undefined) {
     return {
@@ -207,7 +228,7 @@ export function equipmentOf(
         message: "Leave activityValue blank on an equipment line: the record's quantity is the sum of its capacityKg.",
       });
     }
-    const gas = firstFilled(cells, BULK_GAS_PARAMETER_COLUMNS);
+    const gas = firstFilled(cells, BULK_GAS_INPUT_COLUMNS);
     if (gas !== null) return fail(notThisCategory(gas, 'Natural Gas'));
     for (const column of RECORD_LEVEL_COLUMNS) {
       if (cells[column].trim() !== first.cells[column].trim()) {

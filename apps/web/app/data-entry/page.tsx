@@ -1,7 +1,7 @@
 "use client";
 
 import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } from "@/lib/i18n/message-keys";
-import { conversionNote } from "@/lib/conversion-view";
+import { conversionNote, grossToNetRatioOf } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -52,12 +52,14 @@ import { checkActivityParse, formatNumber } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import { ContextNumberField } from "@/components/data-entry/context-number-field";
-import { EquipmentLines, NaturalGasInputs, type ReferenceState } from "@/components/data-entry/record-inputs";
+import { EquipmentLines, NaturalGasInputs, StoredCalorificBasis, type ReferenceState } from "@/components/data-entry/record-inputs";
 import {
   NO_GAS_INPUTS,
   equipmentIssue,
   equipmentParameters,
   equipmentTotal,
+  clearsNetEnergyQuantity,
+  copyKeepsOwnUnit,
   gasInputsFromRecord,
   gasInputsIssue,
   gasParameters,
@@ -66,7 +68,9 @@ import {
   recordInputMode,
   referenceValue,
   type EquipmentLineDraft,
+  type CopySource,
   type GasInputs,
+  type RecordInputMode,
 } from "@/lib/record-inputs-view";
 import {
   anomalyStatement,
@@ -403,6 +407,12 @@ function DataEntryPageInner() {
   // Set while the form holds a copy of a voided record: a subsidiary switch
   // then keeps the copied values and clears only the location.
   const [copying, setCopying] = useState(false);
+  // The copied record's category and type (ng-kwh-engine): while the copy is
+  // still on them, its own unit stays listed, as an opened record's does, so a
+  // kWh bill is not narrowed to Sm³ and its quantity cleared.
+  // Keyed on the geography the source was priced under too: a copy moved to
+  // the other side of the TR rules is narrowed like a new record (qa-auditor).
+  const [copyTuple, setCopyTuple] = useState<CopySource | null>(null);
   // The submitted record whose recall waits for the user's confirmation.
   const [recallTarget, setRecallTarget] = useState<ActivityRecordPageItemDTO | null>(null);
   const [recalling, setRecalling] = useState(false);
@@ -457,9 +467,10 @@ function DataEntryPageInner() {
   // listed; once its type is changed it is narrowed like a new record, so a
   // vehicle mode's litres never stay on marine gas oil or the reverse.
   const onOwnType =
-    editingId !== null &&
-    editingTuple?.category === category &&
-    (editingTuple.activityType ?? "") === activityType;
+    (editingId !== null &&
+      editingTuple?.category === category &&
+      (editingTuple.activityType ?? "") === activityType) ||
+    (copying && copyKeepsOwnUnit(copyTuple, category, activityType, effectiveGeography));
   // A TR mobile record's units follow its type: litres for a vehicle mode,
   // kg or tonnes for marine gas oil (UAT2 BUG-R2-11).
   const unitOptions = useMemo(() => {
@@ -550,7 +561,7 @@ function DataEntryPageInner() {
     inputMode === "natural_gas" &&
     [...refusedGasInputs].some((field) => field !== "volumeCorrectionFactor" || activityUnit === "cubic_metres");
   const recordParameters: RecordParameters | null =
-    inputMode === "natural_gas"
+    inputMode === "natural_gas" || inputMode === "natural_gas_energy"
       ? gasParameters(gasInputs, activityUnit, defaultNcv)
       : refrigerantMode && equipmentProblem === null
         ? equipmentParameters(equipment)
@@ -1066,7 +1077,8 @@ function DataEntryPageInner() {
   // engine's own lookup, so the form never holds 8,250 or a rate itself (D2).
   const referenceGas = refrigerantMode ? activityType : "";
   useEffect(() => {
-    if (inputMode === null || effectiveGeography === null) return;
+    // A bill's energy reads no release value on the form (ng-kwh-engine).
+    if (inputMode === null || inputMode === "natural_gas_energy" || effectiveGeography === null) return;
     let active = true;
     setReference({ status: "loading" });
     api
@@ -1118,6 +1130,24 @@ function DataEntryPageInner() {
   useEffect(() => {
     if (refrigerantMode && !editingId && reportingPeriod !== "annual") handlePeriodChange("annual");
   }, [refrigerantMode, editingId, reportingPeriod]);
+
+  // A net bill leaving the TR rules (ng-kwh-engine): outside them an energy
+  // bill is priced as gross and no basis is sent, so the net figure is cleared
+  // and asked for again rather than priced as gross without a word. Its basis
+  // goes with it: a figure typed meanwhile is gross, and returning to the TR
+  // rules must not price it as net (qa-auditor S1), so the API then asks again.
+  const previousInputMode = useRef<RecordInputMode>(inputMode);
+  useEffect(() => {
+    const previous = previousInputMode.current;
+    previousInputMode.current = inputMode;
+    if (!clearsNetEnergyQuantity(previous, inputMode, activityUnit, gasInputs.cvBasis)) return;
+    setGasInputs((prev) => ({ ...prev, cvBasis: null }));
+    if (activity.text.trim() !== "") {
+      activity.setValue(null);
+      toast.info(t("inputs.basisReset"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputMode]);
 
   function resetInputs(parameters: unknown = null) {
     setGasInputs(gasInputsFromRecord(parameters));
@@ -1626,6 +1656,11 @@ function DataEntryPageInner() {
       const values = copyPrefill(rec);
       resetForm();
       setCopying(true);
+      setCopyTuple({
+        category: values.category,
+        activityType: values.activityType || null,
+        geography: isProvenanceSnapshot(rec.calculation) ? rec.calculation.geographyCode : null,
+      });
       setSubsidiaryId(values.subsidiaryId);
       setLocationId(values.locationId);
       setReportingYear(values.reportingYear);
@@ -2027,6 +2062,7 @@ function DataEntryPageInner() {
                     const note = conversionNote(preview, previewing || !hasValidInput || !!previewError, locale, t, sealDates);
                     return note ? <p className="mt-2 text-xs text-muted-foreground" data-testid="conversion-note">{note}</p> : null;
                   })()}
+                  {inputMode === "natural_gas_energy" && <StoredCalorificBasis basis={gasInputs.cvBasis} />}
                   {inputMode === "natural_gas" && (
                     <NaturalGasInputs
                       unit={activityUnit}
@@ -2667,13 +2703,24 @@ function PreviewCard({
               )}
             </dl>
 
-            {preview.conversionApplied && (
+            {preview.conversionApplied && preview.inputUnit !== preview.normalizedUnit && (
               <div className="flex items-start gap-2 rounded-lg bg-secondary/60 p-2.5 text-xs text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   {t("preview.unitConverted", {
                     from: unitSymbol(preview.inputUnit),
                     to: unitSymbol(preview.normalizedUnit),
+                  })}
+                </span>
+              </div>
+            )}
+            {/* A gross bill's reduction to net, by the factor release's own ratio (ng-kwh-engine). */}
+            {grossToNetRatioOf(preview) !== null && (
+              <div className="flex items-start gap-2 rounded-lg bg-secondary/60 p-2.5 text-xs text-muted-foreground" data-testid="gross-to-net-note">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  {t("preview.grossToNet", {
+                    ratio: formatNumber(grossToNetRatioOf(preview) as number, locale, { maximumFractionDigits: 6 }),
                   })}
                 </span>
               </div>

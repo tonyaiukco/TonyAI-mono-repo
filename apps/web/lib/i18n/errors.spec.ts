@@ -68,6 +68,26 @@ describe("the variance refusal names its basis (BUG-R2-07 tier 3)", () => {
   });
 });
 
+describe("parameters_required names the missing input (ng-kwh-engine)", () => {
+  it("asks a gas energy record for its net or gross basis, in both languages", () => {
+    const e = new ApiError("API 400", 400, "parameters_required", { input: "cvBasis" });
+    expect(describe_(e, "en").title).toBe(MESSAGES.en.errors.variants.parameters_required.cvBasis);
+    expect(describe_(e, "tr").title).toBe(MESSAGES.tr.errors.variants.parameters_required.cvBasis);
+    expect(describe_(e, "en").title).not.toMatch(/refrigerant/i);
+  });
+
+  it("titles a Turkish screen with the gas sentence when the server's English one is present", () => {
+    const e = new ApiError("A natural gas record in kWh in Türkiye states its calorific basis.", 400, "parameters_required", { input: "cvBasis" });
+    expect(describe_(e, "tr").title).toBe(MESSAGES.tr.errors.variants.parameters_required.cvBasis);
+  });
+
+  it("keeps the refrigerant's equipment sentence for its own input", () => {
+    const e = new ApiError("API 400", 400, "parameters_required", { input: "equipment" });
+    expect(describe_(e, "en").title).toBe(MESSAGES.en.errors.codes.parameters_required);
+    expect(describe_(e, "tr").title).toBe(MESSAGES.tr.errors.codes.parameters_required);
+  });
+});
+
 describe("LP4-04 slice 2 PR C's codes (M3)", () => {
   it("words a record status and a granularity in the user's language", () => {
     const status = new ApiError('Cannot modify a record in status "under_review"', 400, "record_not_editable", { status: "under_review" });

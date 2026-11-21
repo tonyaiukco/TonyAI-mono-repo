@@ -14,9 +14,11 @@ import {
 import { plainToInstance, type ClassConstructor } from 'class-transformer';
 import {
   ACTIVITY_VALUE_MAX,
+  CV_BASES,
   EQUIPMENT_TYPES,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   LEAK_RATE_CHOICES,
+  type CvBasis,
   type EquipmentType,
   type LeakRateChoice,
 } from '@tonyai/shared-types';
@@ -49,6 +51,15 @@ class NaturalGasParametersDto {
   @Min(CALORIFIC_MIN)
   @Max(CALORIFIC_MAX)
   volumeCorrectionFactor?: number | null;
+
+  /**
+   * An energy bill's calorific basis (ng-kwh-engine). `null` is an absent
+   * basis, as for the fields above and in the shape CHECK; which unit takes
+   * it, and which requires it, is the engine's rule.
+   */
+  @IsOptional()
+  @IsIn(CV_BASES)
+  cvBasis?: CvBasis | null;
 }
 
 /** One equipment line (D3, D7). A mass may be zero, but not both. */

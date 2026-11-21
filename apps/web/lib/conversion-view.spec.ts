@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createTranslator } from 'use-intl/core';
 import type { CalculationResultV2, CalculationResultV3, FactorStatus, UncalculatedSnapshot } from '@/lib/types';
 import { MESSAGES } from '@/messages';
-import { conversionNote } from './conversion-view';
+import { conversionNote, grossToNetRatioOf } from './conversion-view';
 
 // Synthetic display fixture only; none of these numbers is an emission factor source.
 const release = {
@@ -104,3 +104,27 @@ describe('conversionNote', () => {
     });
   });
 });
+
+describe('grossToNetRatioOf (ng-kwh-engine)', () => {
+  const bill = (parameters: CalculationResultV3['parameters']): CalculationResultV3 => ({
+    ...snapshot, snapshotSchema: 3, inputUnit: 'kWh', normalizedUnit: 'kWh', conversion: null, conversionApplied: parameters.length > 0,
+    parameters, parameterRows: [], refrigerantTerms: null,
+  });
+
+  it('reads a gross bill\'s derived ratio', () => {
+    expect(grossToNetRatioOf(bill([{ name: 'grossToNetRatio', value: 8250 / 9155, origin: 'derived' }]))).toBeCloseTo(0.901147, 6);
+  });
+
+  it('reads nothing for a net bill, a volume reading, an older snapshot or no figure', () => {
+    expect(grossToNetRatioOf(bill([]))).toBeNull();
+    expect(grossToNetRatioOf(bill([{ name: 'ncvKcalPerSm3', value: 8250, origin: 'default' }]))).toBeNull();
+    expect(grossToNetRatioOf(snapshot)).toBeNull();
+    expect(grossToNetRatioOf(null)).toBeNull();
+  });
+
+  it.each(['en', 'tr'] as const)('%s words the reduction with the ratio', (locale) => {
+    const t = createTranslator({ locale, messages: MESSAGES[locale].dataEntry });
+    expect(t('preview.grossToNet', { ratio: locale === 'en' ? '0.901147' : '0,901147' })).toContain(locale === 'en' ? '× 0.901147' : '× 0,901147');
+  });
+});
+

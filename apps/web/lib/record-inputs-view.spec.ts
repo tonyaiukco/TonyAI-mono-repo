@@ -21,6 +21,8 @@ import {
   gasInputsFromRecord,
   gasInputsIssue,
   gasParameters,
+  clearsNetEnergyQuantity,
+  copyKeepsOwnUnit,
   leakRateOf,
   leakRatePercent,
   linesFromRecord,
@@ -61,7 +63,11 @@ describe('which inputs a record takes (D11)', () => {
   it('asks for them only under the TR rules, for natural gas in a volume and for refrigerants', () => {
     expect(recordInputMode('Natural Gas', 'TR', 'standard_cubic_metres')).toBe('natural_gas');
     expect(recordInputMode('Natural Gas', 'TR', 'cubic_metres')).toBe('natural_gas');
-    expect(recordInputMode('Natural Gas', 'TR', 'kWh')).toBeNull();
+    // A bill's energy carries its stored basis (ng-kwh-engine).
+    expect(recordInputMode('Natural Gas', 'TR', 'kWh')).toBe('natural_gas_energy');
+    expect(recordInputMode('Natural Gas', 'TR', 'MWh')).toBe('natural_gas_energy');
+    expect(recordInputMode('Natural Gas', 'TR', 'therms')).toBeNull();
+    expect(recordInputMode('Natural Gas', 'UK', 'kWh')).toBeNull();
     expect(recordInputMode('Refrigerants', 'TR', 'kg')).toBe('refrigerant');
     expect(recordInputMode('Natural Gas', 'UK', 'cubic_metres')).toBeNull();
     expect(recordInputMode('Refrigerants', 'UK', 'kg')).toBeNull();
@@ -108,6 +114,58 @@ describe('which inputs a record takes (D11)', () => {
   });
 });
 
+describe('a bill\'s stored calorific basis (ng-kwh-engine)', () => {
+  it('round-trips a stored basis from the record to what the form sends', () => {
+    const opened = gasInputsFromRecord({ cvBasis: 'gross' });
+    expect(opened.cvBasis).toBe('gross');
+    expect(gasParameters(opened, 'kWh', 8250)).toEqual({ cvBasis: 'gross' });
+    expect(gasParameters(gasInputsFromRecord({ cvBasis: 'net' }), 'MWh', 8250)).toEqual({ cvBasis: 'net' });
+  });
+
+  it('sends nothing for a bill without a basis, so the API names the missing choice', () => {
+    expect(gasParameters(NO_GAS_INPUTS, 'kWh', 8250)).toBeNull();
+    expect(gasInputsFromRecord({ cvBasis: 'lower' }).cvBasis).toBeNull();
+  });
+
+  it('never sends a basis on a volume reading, nor a volume input on a bill', () => {
+    const both = { ...NO_GAS_INPUTS, cvBasis: 'gross' as const, ncv: 8100, volumeCorrectionFactor: 0.97 };
+    expect(gasParameters(both, 'standard_cubic_metres', 8250)).toEqual({ ncvKcalPerSm3: 8100 });
+    expect(gasParameters(both, 'cubic_metres', 8250)).toEqual({ ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 });
+    expect(gasParameters(both, 'kWh', 8250)).toEqual({ cvBasis: 'gross' });
+  });
+
+  it('still offers a new TR natural gas record Sm³ and m³ only, until ng-kwh-form', () => {
+    expect(new Set(unitsForRecord('Natural Gas', 'TR').map((u) => u.value))).toEqual(new Set(['cubic_metres', 'standard_cubic_metres']));
+  });
+
+  it.each([
+    ['a net bill leaving the TR rules', 'natural_gas_energy', null, 'kWh', 'net', true],
+    ['a net MWh bill leaving the TR rules', 'natural_gas_energy', null, 'MWh', 'net', true],
+    ['a gross bill leaving the TR rules', 'natural_gas_energy', null, 'kWh', 'gross', false],
+    ['a bill with no basis', 'natural_gas_energy', null, 'kWh', null, false],
+    ['a net bill staying under the TR rules', 'natural_gas_energy', 'natural_gas_energy', 'kWh', 'net', false],
+    ['a volume reading leaving the TR rules', 'natural_gas', null, 'standard_cubic_metres', 'net', false],
+    ['a record arriving under the TR rules', null, 'natural_gas_energy', 'kWh', 'net', false],
+  ] as const)('clears the quantity for %s: %s', (_case, previous, next, unit, basis, clears) => {
+    expect(clearsNetEnergyQuantity(previous, next, unit, basis)).toBe(clears);
+  });
+});
+
+describe('a copy keeps its own unit only where it was priced (ng-kwh-engine, qa-auditor S2)', () => {
+  const tr = { category: 'Natural Gas', activityType: null, geography: 'TR' };
+  it('keeps it on the source\'s category, type and geography', () => {
+    expect(copyKeepsOwnUnit(tr, 'Natural Gas', '', 'TR')).toBe(true);
+    expect(copyKeepsOwnUnit({ category: 'Mobile Combustion', activityType: 'diesel', geography: 'UK' }, 'Mobile Combustion', 'diesel', 'UK')).toBe(true);
+  });
+  it('narrows it like a new record once it crosses the TR rules, changes category or type, or has no known geography', () => {
+    expect(copyKeepsOwnUnit({ ...tr, geography: 'UK' }, 'Natural Gas', '', 'TR')).toBe(false);
+    expect(copyKeepsOwnUnit({ category: 'Mobile Combustion', activityType: 'diesel', geography: 'UK' }, 'Mobile Combustion', 'diesel', 'TR')).toBe(false);
+    expect(copyKeepsOwnUnit(tr, 'Fuel', '', 'TR')).toBe(false);
+    expect(copyKeepsOwnUnit({ ...tr, geography: null }, 'Natural Gas', '', null)).toBe(false);
+    expect(copyKeepsOwnUnit(null, 'Natural Gas', '', 'TR')).toBe(false);
+  });
+});
+
 describe('natural gas inputs (D5)', () => {
   it('sends nothing for an unedited NCV, so its origin stays the default', () => {
     expect(gasParameters({ ...NO_GAS_INPUTS, ncv: 8250 }, 'standard_cubic_metres', 8250)).toBeNull();
@@ -131,7 +189,7 @@ describe('natural gas inputs (D5)', () => {
   it('reads the default from the release, and opens a stored record as it was saved', () => {
     expect(referenceValue(ROWS, 'reference_ncv')).toBe(8250);
     expect(referenceValue([], 'reference_ncv')).toBeNull();
-    expect(gasInputsFromRecord({ billedGcvKcalPerSm3: 9300 })).toEqual({ ncv: null, billedGcv: 9300, volumeCorrectionFactor: null });
+    expect(gasInputsFromRecord({ billedGcvKcalPerSm3: 9300 })).toEqual({ ncv: null, billedGcv: 9300, volumeCorrectionFactor: null, cvBasis: null });
     expect(gasInputsFromRecord(null)).toEqual(NO_GAS_INPUTS);
   });
 

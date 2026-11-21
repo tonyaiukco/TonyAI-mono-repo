@@ -155,6 +155,9 @@
   "variants": {
     "variance_reason_required": {
       "ceiling": "This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting."
+    },
+    "parameters_required": {
+      "cvBasis": "State whether this energy figure is on the bill's net or gross calorific basis."
     }
   },
   "bulkOutcomes": {

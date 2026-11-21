@@ -31,6 +31,11 @@
     "subsidiary": "Subsidiary",
     "entity": "Reporting entity",
     "activity": "Activity",
+    "calorificBasis": "Calorific basis",
+    "calorificBasisValue": {
+      "net": "Net",
+      "gross": "Gross"
+    },
     "emissions": "Emissions",
     "factor": "Factor",
     "factorSource": "{source} v{version}",

@@ -155,6 +155,9 @@
   "variants": {
     "variance_reason_required": {
       "ceiling": "Bu değerin karşılaştırılacak kullanılabilir bir geçmişi yok ve kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma gerekçesi ekleyin."
+    },
+    "parameters_required": {
+      "cvBasis": "Bu enerji miktarının faturadaki net mi yoksa brüt ısıl değere mi dayandığını belirtin."
     }
   },
   "bulkOutcomes": {

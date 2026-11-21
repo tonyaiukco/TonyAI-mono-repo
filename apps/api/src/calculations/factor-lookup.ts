@@ -6,6 +6,7 @@ import {
   resolveFactorPath,
   scope2MethodFor,
   unitDimensionOf,
+  type CalorificBasis,
   type FactorPathResolution,
   type FactorStatus,
 } from '@tonyai/shared-types';
@@ -95,6 +96,15 @@ export interface FactorLookupKey {
 
 export type FactorLookupResult = FactorPathResolution<Ranked<FactorRow>, Ranked<ConversionRow>>;
 
+/** More candidates than a lookup searches: a library defect, refused (409). */
+function overCap(key: FactorLookupKey): FactorLibraryConflictError {
+  return new FactorLibraryConflictError(
+    'ambiguous_factor',
+    `The factor library holds more than ${FACTOR_CANDIDATE_CAP} candidate rows for category ` +
+      `"${key.category}" (${key.activityType}, ${key.geographyCode}, ${key.reportingYear}) — a library defect, refused rather than searched.`,
+  );
+}
+
 /**
  * The candidate factors and conversions of one lookup, matched EXACTLY on
  * category, activity type, geography and reporting year — a loose match
@@ -116,6 +126,7 @@ async function candidates(
   key: FactorLookupKey,
   baseUnit: string,
   statuses: readonly FactorStatus[],
+  directOnly = false,
 ): Promise<{ factors: FactorRow[]; conversions: ConversionRow[] }> {
   const db = snapshot ? CaptureSnapshot.txOf(snapshot) : prisma;
   const where = { ...key, release: { status: { in: [...statuses] }, ...SEALED } };
@@ -125,6 +136,13 @@ async function candidates(
     orderBy: { id: 'asc' },
     take: FACTOR_CANDIDATE_CAP + 1,
   });
+  // A direct-only lookup (ng-kwh-engine) reads factors alone: it prices no
+  // conversion, so it queries none. One query needs no shared snapshot.
+  if (directOnly) {
+    const factors = await factorQuery;
+    if (factors.length > FACTOR_CANDIDATE_CAP) throw overCap(key);
+    return { factors, conversions: [] };
+  }
   const conversionQuery = db.unitConversion.findMany({
     where: { ...where, fromUnit: baseUnit },
     include: { release: true },
@@ -137,11 +155,7 @@ async function candidates(
         isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
       });
   if (factors.length > FACTOR_CANDIDATE_CAP || conversions.length > FACTOR_CANDIDATE_CAP) {
-    throw new FactorLibraryConflictError(
-      'ambiguous_factor',
-      `The factor library holds more than ${FACTOR_CANDIDATE_CAP} candidate rows for category ` +
-        `"${key.category}" (${key.activityType}, ${key.geographyCode}, ${key.reportingYear}) — a library defect, refused rather than searched.`,
-    );
+    throw overCap(key);
   }
   return { factors, conversions };
 }
@@ -158,6 +172,10 @@ async function candidates(
  * (`placeholder_refused` — "load the source" — rather than `no_factor`). In a
  * caller's snapshot both passes read that snapshot; in the engine's own, each
  * pass is a snapshot of its own, as before.
+ *
+ * `directBasis` makes the lookup direct-only (ng-kwh-engine): a factor in the
+ * record's base unit on that basis, no conversion read or priced, in either
+ * pass. Only the TR natural gas energy path sets it.
  */
 export async function lookupFactorPath(
   prisma: PrismaService,
@@ -165,6 +183,7 @@ export async function lookupFactorPath(
   lookup: FactorLookupKey,
   inputUnit: string,
   snapshot?: CaptureSnapshot,
+  directBasis?: Exclude<CalorificBasis, 'not_applicable'>,
 ): Promise<FactorLookupResult> {
   if (snapshot !== undefined && !CaptureSnapshot.isOpened(snapshot)) {
     throw new CaptureSnapshotError('The factor lookup reads in a snapshot opened by CaptureSnapshot.open only.');
@@ -182,13 +201,14 @@ export async function lookupFactorPath(
   const baseUnit = DIMENSION_BASE_UNIT[dimension];
   const allowPlaceholders = policy.allowPlaceholders;
   const run = async (statuses: readonly FactorStatus[]) => {
-    const { factors, conversions } = await candidates(prisma, snapshot, key, baseUnit, statuses);
+    const { factors, conversions } = await candidates(prisma, snapshot, key, baseUnit, statuses, directBasis !== undefined);
     return resolveFactorPath({
       category: key.category,
       inputUnit,
       factors: factors.map(ranked),
       conversions: conversions.map(ranked),
       allowPlaceholders,
+      ...(directBasis !== undefined ? { directBasis } : {}),
     });
   };
   const result = await run(pricedStatuses(policy));

@@ -5,6 +5,7 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   CATEGORIES,
   CATEGORY_UNITS,
+  CV_BASES,
   EQUIPMENT_TYPES,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   LEAK_RATE_CHOICES,
@@ -160,6 +161,8 @@ export async function buildTemplateWorkbook(
     // equipment columns belong to Refrigerants rows alone (LP4-02 PR4).
     ['equipmentType', EQUIPMENT_TYPES],
     ['leakRateChoice', LEAK_RATE_CHOICES],
+    // Natural Gas bills alone carry a basis (ng-kwh-engine).
+    ['cvBasis', CV_BASES],
   ];
   for (const [column, values] of dropdowns) {
     const letter = records.getColumn(columnIndex(column)).letter;
@@ -319,6 +322,10 @@ export async function buildTemplateWorkbook(
   reference.addRow([
     'volumeCorrectionFactor',
     'Natural Gas in cubic_metres (a meter reading): the factor that brings it to Sm³. Required for cubic_metres, blank for standard_cubic_metres.',
+  ]);
+  reference.addRow([
+    'cvBasis',
+    `Natural Gas in kWh or MWh (a bill's energy): the calorific basis the bill states it on, ${CV_BASES.join(' or ')}. Required for kWh and MWh, blank for standard_cubic_metres and cubic_metres. A gross figure is reduced to net by the factor release's own reference values.`,
   ]);
   reference.addRow([
     'equipmentType',
