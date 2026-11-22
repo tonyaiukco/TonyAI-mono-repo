@@ -210,7 +210,9 @@
       "title": "Calorific basis of the bill",
       "net": "Net",
       "gross": "Gross",
-      "stored": "As stored on the record."
+      "help": "Your bill states which one it uses: gross is the upper calorific value, net the lower.",
+      "missing": "Choose the bill's calorific basis, net or gross, before the figure can be calculated or saved.",
+      "derivedNet": "Priced on ≈ {net} {unit} net: × {ratio} ({ncv} / {gcv} kcal/Sm³), the reference ratio of {publisher} {edition}{status}."
     },
     "basisReset": "This figure was on the net calorific basis. Outside Türkiye's rules an energy bill is priced as gross, so enter the bill's gross figure.",
     "unitChangeReset": "The quantity was cleared: a figure entered for one unit is not the same number in another. Enter it in the new unit.",

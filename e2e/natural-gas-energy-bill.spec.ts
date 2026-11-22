@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
+import enCategories from '../apps/web/messages/en/categories.json';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
+import enPeriods from '../apps/web/messages/en/periods.json';
 import enReview from '../apps/web/messages/en/review.json';
 import enUnits from '../apps/web/messages/en/units.json';
 import {
@@ -17,6 +19,7 @@ import {
   cleanupE2ELocations,
   cleanupTrInputsFixture,
   deleteRecordsAsService,
+  findRecordId,
   getAccessToken,
   login,
   pickByFieldLabel,
@@ -26,12 +29,12 @@ import {
 } from './helpers';
 
 /**
- * UAT round 3, `ng-kwh-engine` (LP4-06; Decisions 2026-11-20 D2): a TR natural
- * gas bill in kWh, imported with its calorific basis, then opened on Data
- * Entry before the form can choose a basis (`ng-kwh-form`). The form must
- * carry the stored basis through an unrelated edit, the save and the submit,
- * show it read-only, and the review sheet must show it too, so the reviewer
- * can check it against the bill.
+ * UAT round 3, LP4-06 (Decisions 2026-11-20 D2): a TR natural gas bill in kWh.
+ * `ng-kwh-engine`: imported with its calorific basis, then opened on Data
+ * Entry, which carries the stored basis through an unrelated edit, the save
+ * and the submit, and the review sheet shows it, so the reviewer can check it
+ * against the bill. `ng-kwh-form`: entered on the form, which asks for the
+ * basis with no default and shows a gross bill's net figure before save.
  *
  * Priced by the TR inputs fixture (`seedTrInputsFixture`: reference NCV 9,000,
  * GCV 10,000, gas factor 0.2), never the TR package: 1,000 kWh gross is
@@ -74,6 +77,23 @@ async function post(request: import('@playwright/test').APIRequestContext, token
 }
 
 const listOf = (page: Page) => page.locator('[data-testid="previous-submissions"]');
+const basis = (page: Page, value: 'net' | 'gross') =>
+  page.getByTestId('gas-energy-basis').getByRole('radio', { name: enDataEntry.inputs.cvBasis[value], exact: true });
+
+/** A new Data Entry form on the lane's Natural Gas Q1, with the user's unit picked. */
+async function newBill(page: Page, unit: 'kWh' | 'MWh') {
+  await login(page, ENTRY_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.category, enCategories['Natural Gas']);
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_TR_INPUTS_YEAR));
+  await pickByFieldLabel(page, enDataEntry.period, enPeriods.granularity.quarterly);
+  await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values.Q1);
+  const unitSelect = page.getByRole('combobox', { name: enDataEntry.unit, exact: true });
+  await unitSelect.click();
+  await page.getByRole('option', { name: unit, exact: true }).click();
+  await expect(unitSelect).toHaveText(unit);
+}
 
 test('an imported gross kWh bill keeps its basis through an edit on Data Entry, the submit and the review sheet', async ({ page, request }) => {
   const token = await getAccessToken(request, ENTRY_EMAIL);
@@ -89,14 +109,15 @@ test('an imported gross kWh bill keeps its basis through an edit on Data Entry, 
   // Natural Gas needs its evidence at submit (K3).
   await attachEvidence(request, token, id);
 
-  // Data Entry: the stored basis is shown read-only, with no gas field to edit.
+  // Data Entry: the stored basis comes selected, with no volume field to edit.
   await login(page, ENTRY_EMAIL);
   await page.goto('/data-entry');
   await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
   await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_TR_INPUTS_YEAR));
   await listOf(page).getByRole('button', { name: `Edit Q1 ${E2E_TR_INPUTS_YEAR} Natural Gas` }).click();
   await expect(page.getByTestId('edit-mode-band')).toBeVisible();
-  await expect(page.getByTestId('gas-energy-basis-value')).toHaveText(enDataEntry.inputs.cvBasis.gross);
+  await expect(basis(page, 'gross')).toBeChecked();
+  await expect(basis(page, 'net')).not.toBeChecked();
   await expect(page.getByTestId('gas-inputs')).toHaveCount(0);
   // The preview prices the bill on its stored basis, not as a missing one.
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
@@ -161,7 +182,7 @@ test('a voided net kWh bill is copied with its unit, quantity and basis, and mov
   const value = page.getByPlaceholder(enDataEntry.activityValuePlaceholder);
   await expect(page.getByRole('combobox', { name: enDataEntry.unit, exact: true })).toHaveText('kWh');
   await expect(value).toHaveValue('1000');
-  await expect(page.getByTestId('gas-energy-basis-value')).toHaveText(enDataEntry.inputs.cvBasis.net);
+  await expect(basis(page, 'net')).toBeChecked();
   // 1,000 kWh net × 0.2 = 200 kg.
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.2');
 
@@ -172,11 +193,16 @@ test('a voided net kWh bill is copied with its unit, quantity and basis, and mov
   await expect(page.getByTestId('gas-energy-basis')).toHaveCount(0);
 
   // The basis went with the figure: the gross figure typed outside Türkiye is
-  // never priced as net when the copy comes back (qa-auditor S1).
+  // never priced as net when the copy comes back (qa-auditor S1). The choice
+  // is asked for again, with neither option selected (ng-kwh-form).
   await value.fill('1109.7');
   await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
-  await expect(page.getByTestId('gas-energy-basis')).toHaveCount(0);
+  await expect(page.getByTestId('gas-energy-basis')).toBeVisible();
+  await expect(basis(page, 'net')).not.toBeChecked();
+  await expect(basis(page, 'gross')).not.toBeChecked();
+  await expect(page.getByTestId('gas-energy-basis-missing')).toBeVisible();
   await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: enDataEntry.saveDraft, exact: true })).toBeDisabled();
 });
 
 test('switching an imported kWh bill to Sm³ clears its figure and basis, and kWh stays on offer (ng-kwh-engine review)', async ({ page, request }) => {
@@ -209,7 +235,7 @@ test('switching an imported kWh bill to Sm³ clears its figure and basis, and kW
   await page.getByRole('option', { name: 'kWh', exact: true }).click();
   await expect(unit).toHaveText('kWh');
   // Undoing brings the record's own basis back: the figure entered again is priced as before (third review).
-  await expect(page.getByTestId('gas-energy-basis-value')).toHaveText(enDataEntry.inputs.cvBasis.gross);
+  await expect(basis(page, 'gross')).toBeChecked();
   await value.fill('1000');
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
 });
@@ -253,4 +279,92 @@ test('a net kWh draft on a site created and re-classified after the page loaded 
   await value.fill('1109.7');
   await expect(value).toHaveValue('1109.7');
   await expect(page.getByText(enDataEntry.inputs.basisReset)).toHaveCount(1);
+});
+
+test('a TR gas bill entered on the form in kWh asks for its basis, and a gross one shows its net figure before save (ng-kwh-form)', async ({ page, request }) => {
+  await login(page, ENTRY_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.category, enCategories['Natural Gas']);
+  // A new TR gas record still starts on m³, though the form opened on kWh (Decision 1), and
+  // offers a bill's units after the volumes.
+  const unit = page.getByRole('combobox', { name: enDataEntry.unit, exact: true });
+  await expect(unit).toHaveText(enUnits.label.cubic_metres);
+  await unit.click();
+  await expect(page.getByRole('option')).toHaveText([
+    enUnits.label.cubic_metres,
+    enUnits.label.standard_cubic_metres,
+    enUnits.label.kWh,
+    enUnits.label.MWh,
+  ]);
+  await page.getByRole('option', { name: enUnits.label.kWh, exact: true }).click();
+  await expect(unit).toHaveText('kWh');
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_TR_INPUTS_YEAR));
+  await pickByFieldLabel(page, enDataEntry.period, enPeriods.granularity.quarterly);
+  await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values.Q1);
+
+  const value = page.getByPlaceholder(enDataEntry.activityValuePlaceholder);
+  await value.fill('1000');
+  // No basis yet: no volume field, neither option chosen, nothing priced, nothing to save.
+  await expect(page.getByTestId('gas-inputs')).toHaveCount(0);
+  await expect(basis(page, 'net')).not.toBeChecked();
+  await expect(basis(page, 'gross')).not.toBeChecked();
+  await expect(page.getByTestId('gas-energy-basis-missing')).toHaveText(enDataEntry.inputs.cvBasis.missing);
+  await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: enDataEntry.saveDraft, exact: true })).toBeDisabled();
+
+  // Gross: the net figure and the release's ratio before save (fixture 9,000 / 10,000).
+  await basis(page, 'gross').click();
+  await expect(page.getByTestId('gas-energy-basis-missing')).toHaveCount(0);
+  const derived = page.getByTestId('gas-energy-derived-net');
+  await expect(derived).toContainText('900 kWh');
+  await expect(derived).toContainText('× 0.9 (9,000 / 10,000');
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
+
+  // The basis is corrected, not the bill: the figure stays.
+  await basis(page, 'net').click();
+  await expect(value).toHaveValue('1000');
+  await expect(derived).toHaveCount(0);
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.2');
+  await basis(page, 'gross').click();
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
+
+  await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
+  await expect(page.getByText(enDataEntry.draftSaved)).toBeVisible();
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const id = await findRecordId(request, token, { subsidiaryId: SUB.logistics, category: 'Natural Gas', reportingPeriod: 'quarterly', periodValue: 'Q1' });
+  created.push(id);
+  const saved = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })).json();
+  expect(saved).toMatchObject({ activityUnit: 'kWh', activityValue: 1000, parameters: { cvBasis: 'gross' } });
+  expect(saved.calculation.kgCo2e).toBeCloseTo(EXPECTED_KG, 9);
+});
+
+test('a gross MWh bill shows its net figure in MWh, and a net kWh bill is saved as entered (ng-kwh-form)', async ({ page, request }) => {
+  await newBill(page, 'MWh');
+  const value = page.getByPlaceholder(enDataEntry.activityValuePlaceholder);
+  await value.fill('1');
+  await basis(page, 'gross').click();
+  await expect(page.getByTestId('gas-energy-derived-net')).toContainText('0.9 MWh');
+  // 1 MWh gross × 0.9 × 0.2 = 180 kg.
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
+
+  // A change of scale asks for the figure again and keeps the basis.
+  const unit = page.getByRole('combobox', { name: enDataEntry.unit, exact: true });
+  await unit.click();
+  await page.getByRole('option', { name: 'kWh', exact: true }).click();
+  await expect(value).toHaveValue('');
+  await expect(basis(page, 'gross')).toBeChecked();
+
+  await basis(page, 'net').click();
+  await value.fill('1000');
+  // 1,000 kWh net × 0.2 = 200 kg.
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.2');
+  await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
+  await expect(page.getByText(enDataEntry.draftSaved)).toBeVisible();
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const id = await findRecordId(request, token, { subsidiaryId: SUB.logistics, category: 'Natural Gas', reportingPeriod: 'quarterly', periodValue: 'Q1' });
+  created.push(id);
+  const saved = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })).json();
+  expect(saved).toMatchObject({ activityUnit: 'kWh', activityValue: 1000, parameters: { cvBasis: 'net' } });
+  expect(saved.calculation.kgCo2e).toBeCloseTo(1000 * E2E_TR_INPUTS.gasFactor, 9);
 });

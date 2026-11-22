@@ -52,7 +52,7 @@ import { checkActivityParse, formatNumber } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import { ContextNumberField } from "@/components/data-entry/context-number-field";
-import { EquipmentLines, NaturalGasInputs, StoredCalorificBasis, type ReferenceState } from "@/components/data-entry/record-inputs";
+import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, type ReferenceState } from "@/components/data-entry/record-inputs";
 import {
   NO_GAS_INPUTS,
   equipmentIssue,
@@ -64,6 +64,7 @@ import {
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
+  gasEnergyIssue,
   gasInputsIssue,
   gasParameters,
   linesFromRecord,
@@ -280,6 +281,10 @@ function DataEntryPageInner() {
   const activity = useDecimalInput();
   const activityValue = activity.text;
   const [activityUnit, setActivityUnit] = useState("kWh");
+  // Whether the unit is one the user picked, or a record's own: a unit nobody
+  // picked follows the first one offered, so a new TR gas record starts on m³
+  // even though kWh, the form's starting unit, is offered there (ng-kwh-form).
+  const [unitPicked, setUnitPicked] = useState(false);
 
   // Optional context (demo extras)
   const [context, setContext] = useState<ContextValues>({});
@@ -569,6 +574,8 @@ function DataEntryPageInner() {
   const referenceRows = reference.status === "ready" ? reference.data.parameters : [];
   const defaultNcv = referenceValue(referenceRows, "reference_ncv");
   const gasProblem = inputMode === "natural_gas" ? gasInputsIssue(gasInputs, activityUnit, defaultNcv) : null;
+  // A bill's basis has no default: nothing is previewed or saved until it is chosen (ng-kwh-form).
+  const gasEnergyProblem = gasEnergyIssue(gasInputs, inputMode);
   // Only the fields on screen: the correction factor's field is gone in Sm³.
   const gasRefused =
     inputMode === "natural_gas" &&
@@ -605,6 +612,7 @@ function DataEntryPageInner() {
     activityTypeChosen &&
     quantityReady &&
     gasProblem === null &&
+    gasEnergyProblem === null &&
     !gasRefused;
 
   const contextSet = contextFieldSet(category);
@@ -1096,15 +1104,17 @@ function DataEntryPageInner() {
   // and a gas's leak rates come from the release in force, read through the
   // engine's own lookup, so the form never holds 8,250 or a rate itself (D2).
   const referenceGas = refrigerantMode ? activityType : "";
+  // A bill reads its FACTOR's release, the one its gross ratio comes from (ng-kwh-form).
+  const referenceUnit = inputMode === "natural_gas_energy" ? activityUnit : "";
   useEffect(() => {
-    // A bill's energy reads no release value on the form (ng-kwh-engine).
-    if (inputMode === null || inputMode === "natural_gas_energy" || effectiveGeography === null) return;
+    if (inputMode === null || effectiveGeography === null) return;
     let active = true;
     setReference({ status: "loading" });
     api
       .releaseParameters({
         category,
         ...(referenceGas ? { activityType: referenceGas } : {}),
+        ...(referenceUnit ? { unit: referenceUnit } : {}),
         geographyCode: effectiveGeography,
         year: reportingYear,
       })
@@ -1119,7 +1129,7 @@ function DataEntryPageInner() {
     return () => {
       active = false;
     };
-  }, [inputMode, category, referenceGas, effectiveGeography, reportingYear, stableErrorToast]);
+  }, [inputMode, category, referenceGas, referenceUnit, effectiveGeography, reportingYear, stableErrorToast]);
 
   // A new record moved under the TR rules (a site picked, a category chosen
   // by a link) may hold a unit or type they do not offer: picked again rather
@@ -1131,7 +1141,7 @@ function DataEntryPageInner() {
   useEffect(() => {
     if (onOwnType) return;
     const units = unitsForRecord(category, effectiveGeography, activityType);
-    if (units.length > 0 && !units.some((u) => u.value === activityUnit)) {
+    if (units.length > 0 && (!units.some((u) => u.value === activityUnit) || (!unitPicked && units[0].value !== activityUnit))) {
       setActivityUnit(units[0].value);
       // A bill's basis means nothing for the volume it is narrowed to (qa-auditor N3).
       if (unitChangeClearsBasis(activityUnit, units[0].value)) {
@@ -1146,7 +1156,7 @@ function DataEntryPageInner() {
       setActivityType("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, effectiveGeography, onOwnType, activityUnit, activityType]);
+  }, [category, effectiveGeography, onOwnType, activityUnit, activityType, unitPicked]);
 
   // The capacity method is annual (D7): a new TR refrigerant record is filed
   // on the year. An opened one keeps its own period; the preview names the
@@ -1189,6 +1199,7 @@ function DataEntryPageInner() {
   function handleUnitChange(next: string) {
     const previous = activityUnit;
     setActivityUnit(next);
+    setUnitPicked(true);
     // The record's own basis comes back with its own energy unit, so a unit picked by mistake can be undone.
     setGasInputs((prev) => ({ ...prev, cvBasis: basisAfterUnitChange(previous, next, prev.cvBasis, { unit: ownUnit, cvBasis: ownBasis }) }));
     if (unitChangeClearsQuantity(previous, next) && activity.text.trim() !== "") {
@@ -1273,6 +1284,7 @@ function DataEntryPageInner() {
     setActivityType(rec.activityType ?? "");
     activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
+    setUnitPicked(true);
     setOwnUnit(rec.activityUnit);
     setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
     setContext((rec.input as ContextValues | null) ?? {});
@@ -1730,6 +1742,7 @@ function DataEntryPageInner() {
       setActivityType(values.activityType);
       activity.setValue(values.activityValue);
       setActivityUnit(values.activityUnit);
+      setUnitPicked(true);
       setOwnUnit(values.activityUnit);
       setOwnBasis(gasInputsFromRecord(values.parameters).cvBasis);
       setContext((values.input as ContextValues | null) ?? {});
@@ -1896,6 +1909,8 @@ function DataEntryPageInner() {
                           toast.info(t("inputs.categoryReset"));
                         }
                         setCategory(next);
+                        // A new category's unit is chosen afresh: kWh of electricity is not kWh of gas.
+                        if (next !== category) setUnitPicked(false);
                         setContext({});
                         setContextEpoch((n) => n + 1);
                         resetInputs();
@@ -2129,7 +2144,17 @@ function DataEntryPageInner() {
                     const note = conversionNote(preview, previewing || !hasValidInput || !!previewError, locale, t, sealDates);
                     return note ? <p className="mt-2 text-xs text-muted-foreground" data-testid="conversion-note">{note}</p> : null;
                   })()}
-                  {inputMode === "natural_gas_energy" && <StoredCalorificBasis basis={gasInputs.cvBasis} />}
+                  {inputMode === "natural_gas_energy" && (
+                    <CalorificBasisChoice
+                      basis={gasInputs.cvBasis}
+                      quantity={valueCheck.ok ? valueCheck.value : null}
+                      unit={activityUnit}
+                      reference={reference}
+                      issue={gasEnergyProblem}
+                      // The figure is the bill's; the basis says how to read it, so it stays.
+                      onChange={(cvBasis) => setGasInputs((prev) => ({ ...prev, cvBasis }))}
+                    />
+                  )}
                   {inputMode === "natural_gas" && (
                     <NaturalGasInputs
                       unit={activityUnit}

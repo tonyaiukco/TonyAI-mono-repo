@@ -41,8 +41,7 @@ export function recordInputMode(category: string, geographyCode: string | null, 
   if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return null;
   if (category === "Refrigerants") return "refrigerant";
   if (category === "Natural Gas" && (unit === "standard_cubic_metres" || unit === "cubic_metres")) return "natural_gas";
-  // A bill's energy (ng-kwh-engine): the form carries its stored basis, and
-  // shows it read-only until `ng-kwh-form` lets the author choose it.
+  // A bill's energy: the author states its calorific basis (ng-kwh-form).
   if (category === "Natural Gas" && isGasEnergyUnit(unit)) return "natural_gas_energy";
   return null;
 }
@@ -54,7 +53,7 @@ export interface GasInputs {
   ncv: number | null;
   billedGcv: number | null;
   volumeCorrectionFactor: number | null;
-  /** A bill's calorific basis, as stored on the record (ng-kwh-engine). */
+  /** A bill's calorific basis, as chosen or stored on the record (ng-kwh-engine, ng-kwh-form). */
   cvBasis: CvBasis | null;
 }
 
@@ -97,6 +96,32 @@ export function gasInputsIssue(inputs: GasInputs, unit: string, referenceNcv: nu
   if (editedNcv(inputs, referenceNcv) !== null && inputs.billedGcv !== null) return "ncv_and_gcv";
   if (unit === "cubic_metres" && inputs.volumeCorrectionFactor === null) return "volume_correction_required";
   return null;
+}
+
+/**
+ * Why a natural gas bill cannot be sent yet, or null (ng-kwh-form): its basis
+ * has no default, so nothing is previewed or saved until the author states it.
+ */
+export function gasEnergyIssue(inputs: GasInputs, mode: RecordInputMode): "basis_missing" | null {
+  return mode === "natural_gas_energy" && inputs.cvBasis === null ? "basis_missing" : null;
+}
+
+/**
+ * A gross bill's net quantity, in its own unit, and the ratio that derives it
+ * (ng-kwh-form): `reference_ncv / reference_gcv` of the release the bill's
+ * factor sits in, the rows its calculation reads. Null when the release cannot
+ * give a ratio below 1; no default stands in, the calculation's refusal speaks.
+ */
+export function derivedNetQuantity(
+  quantity: number,
+  rows: readonly ReleaseParameterDTO[],
+): { ratio: number; net: number; ncv: number; gcv: number } | null {
+  const ncv = referenceValue(rows, "reference_ncv");
+  const gcv = referenceValue(rows, "reference_gcv");
+  if (ncv === null || gcv === null || !(ncv > 0) || !(gcv > 0)) return null;
+  const ratio = ncv / gcv;
+  if (!(ratio < 1)) return null;
+  return { ratio, net: quantity * ratio, ncv, gcv };
 }
 
 /** A stored record's natural gas inputs, for the form. */

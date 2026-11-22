@@ -557,6 +557,8 @@ export const api = {
       year: String(query.year),
     });
     if (query.activityType) search.set("activityType", query.activityType);
+    // A gas bill in kWh or MWh reads its factor's release (ng-kwh-form).
+    if (query.unit) search.set("unit", query.unit);
     return apiFetch<ReleaseParametersDTO>(`/factors/parameters?${search.toString()}`);
   },
 

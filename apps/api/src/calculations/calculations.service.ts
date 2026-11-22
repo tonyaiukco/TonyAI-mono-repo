@@ -18,6 +18,7 @@ import {
   isRecordableWithoutFactor,
   normalizeRecordParameters,
   recordActivityTypesFor,
+  TR_NATURAL_GAS_UNITS,
   usesTrCalculationRules,
   yearPolicyOf,
 } from '@tonyai/shared-types';
@@ -244,6 +245,11 @@ export class CalculationsService {
     if (!gas && query.category !== 'Refrigerants') return none;
     const recordType = query.activityType ?? null;
     if (!isRecordActivityTypeAllowed(query.category, recordType)) return none;
+    // A gas bill in kWh or MWh resolves as its calculation does: the net factor
+    // directly, no conversion, its ratio from the FACTOR's release (ng-kwh-form).
+    const energyBill = gas && (query.unit === 'kWh' || query.unit === 'MWh');
+    // Therms and GJ are refused by the TR engine, so nothing would read a release.
+    if (gas && !energyBill && query.unit !== undefined && !TR_NATURAL_GAS_UNITS.some((u) => u === query.unit)) return none;
     const path = await this.lookupFactorPath(
       {
         category: query.category,
@@ -251,10 +257,13 @@ export class CalculationsService {
         geographyCode: query.geographyCode,
         reportingYear: query.year,
       },
-      gas ? 'standard_cubic_metres' : 'kg',
+      energyBill ? (query.unit as string) : gas ? 'standard_cubic_metres' : 'kg',
+      undefined,
+      energyBill ? 'net' : undefined,
     );
     if (!path.ok) return none;
-    const release = gas ? path.conversion?.release : path.factor.release;
+    if (energyBill && (path.conversion !== null || path.factor.calorificBasis !== 'net')) return none;
+    const release = gas && !energyBill ? path.conversion?.release : path.factor.release;
     if (!release) return none;
     const rows = await readReleaseParameters(this.prisma, release.id);
     return {

@@ -123,6 +123,15 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
     expect(Math.abs(kwh.kgCo2e - sm3.kgCo2e) / sm3.kgCo2e).toBeLessThan(0.005);
   });
 
+  it('shows a gas bill the factor release\'s 8,250 / 9,155, the ratio its calculation applies (ng-kwh-form)', async () => {
+    const shown = await engine.releaseParameters({ category: 'Natural Gas', geographyCode: 'TR', year: 2025, unit: 'kWh' });
+    const value = (key: string) => shown.parameters.find((p) => p.key === key)?.value;
+    expect([value('reference_ncv'), value('reference_gcv')]).toEqual([8250, 9155]);
+    expect(shown.release?.edition).toBe('TONYAI-EF-TR-UK-2026.11-AR6-SEALED');
+    const result = await priced(tr({ category: 'Natural Gas', value: 1000, unit: 'kWh', parameters: { cvBasis: 'gross' } }));
+    expect(result.factorRelease.id).toBe(shown.release?.id);
+  });
+
   it('refuses a billed GCV outside the ŞİD range the release carries (task 5.5)', async () => {
     const billed = (billedGcvKcalPerSm3: number) =>
       tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres', parameters: { billedGcvKcalPerSm3 } });

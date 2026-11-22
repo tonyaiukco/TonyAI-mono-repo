@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { EquipmentLines, NaturalGasInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
+import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
 import { checkDecimal, parseLocaleDecimal } from '@/lib/i18n/number';
 import { MESSAGES } from '@/messages';
 
@@ -10,14 +10,17 @@ import {
   ACTIVITY_VALUE_MAX,
   STANDARD_REFERENCE_CONDITIONS,
   offeredActivityTypes,
+  unitsForCategory,
   unitsForRecord,
   type ReleaseParameterDTO,
 } from '@/lib/types';
 import {
   NO_GAS_INPUTS,
+  derivedNetQuantity,
   equipmentIssue,
   equipmentParameters,
   equipmentTotal,
+  gasEnergyIssue,
   gasInputsFromRecord,
   gasInputsIssue,
   gasParameters,
@@ -78,9 +81,11 @@ describe('which inputs a record takes (D11)', () => {
     expect(recordInputMode('Fugitive Gas', 'TR', 'standard_cubic_metres')).toBeNull();
   });
 
-  it('offers TR natural gas in Sm³ and m³ only, and a TR vehicle mode in litres', () => {
-    expect(new Set(unitsForRecord('Natural Gas', 'TR').map((u) => u.value))).toEqual(new Set(['cubic_metres', 'standard_cubic_metres']));
-    expect(unitsForRecord('Natural Gas', 'UK').map((u) => u.value)).toContain('kWh');
+  it('offers TR natural gas as a volume first, then as a bill, and a TR vehicle mode in litres', () => {
+    // m³ first: the unit a new TR gas record starts on (ng-kwh-form, Decision 1).
+    expect(unitsForRecord('Natural Gas', 'TR').map((u) => u.value)).toEqual(['cubic_metres', 'standard_cubic_metres', 'kWh', 'MWh']);
+    // Outside the TR rules the category's whole list, unchanged.
+    expect(unitsForRecord('Natural Gas', 'UK')).toEqual(unitsForCategory('Natural Gas'));
     expect(unitsForRecord('Mobile Combustion', 'TR').map((u) => u.value)).toEqual(['litres']);
     expect(unitsForRecord('Fuel', 'TR').map((u) => u.value)).toContain('kg');
     expect(unitsForRecord('Fugitive Gas', 'TR').map((u) => u.value)).toEqual(['standard_cubic_metres']);
@@ -135,10 +140,6 @@ describe('a bill\'s stored calorific basis (ng-kwh-engine)', () => {
     expect(gasParameters(both, 'standard_cubic_metres', 8250)).toEqual({ ncvKcalPerSm3: 8100 });
     expect(gasParameters(both, 'cubic_metres', 8250)).toEqual({ ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 });
     expect(gasParameters(both, 'kWh', 8250)).toEqual({ cvBasis: 'gross' });
-  });
-
-  it('still offers a new TR natural gas record Sm³ and m³ only, until ng-kwh-form', () => {
-    expect(new Set(unitsForRecord('Natural Gas', 'TR').map((u) => u.value))).toEqual(new Set(['cubic_metres', 'standard_cubic_metres']));
   });
 
   it.each([
@@ -272,6 +273,83 @@ describe('refrigerant equipment lines (D7)', () => {
     expect(linesFromRecord({ equipment: [{ equipmentType: 'chiller', capacityKg: 5, refillKg: 0, leakRateChoice: 'alternative' }] }, id))
       .toEqual([{ id: 'id-1', equipmentType: 'chiller', capacityKg: 5, refillKg: 0, leakRateChoice: 'alternative' }]);
     expect(linesFromRecord(null, id)).toEqual([newEquipmentLine('id-2')]);
+  });
+});
+
+describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
+  it('holds a bill without a basis back from preview and save, and nothing else', () => {
+    expect(gasEnergyIssue(NO_GAS_INPUTS, 'natural_gas_energy')).toBe('basis_missing');
+    expect(gasEnergyIssue({ ...NO_GAS_INPUTS, cvBasis: 'net' }, 'natural_gas_energy')).toBeNull();
+    expect(gasEnergyIssue({ ...NO_GAS_INPUTS, cvBasis: 'gross' }, 'natural_gas_energy')).toBeNull();
+    expect(gasEnergyIssue(NO_GAS_INPUTS, 'natural_gas')).toBeNull();
+    expect(gasEnergyIssue(NO_GAS_INPUTS, null)).toBeNull();
+  });
+
+  it('derives a gross bill\'s net quantity from the release\'s own 8,250 / 9,155, never 0.9', () => {
+    const derived = derivedNetQuantity(1000, ROWS);
+    expect(derived?.ratio).toBeCloseTo(8250 / 9155, 12);
+    expect(derived?.net).toBeCloseTo(901.147, 3);
+    expect(derived?.ratio).not.toBe(0.9);
+    expect(derivedNetQuantity(2, ROWS)?.net).toBeCloseTo(1.802294, 6);
+  });
+
+  it.each([
+    ['no reference GCV', [param('reference_ncv', null, 8250)]],
+    ['no reference NCV', [param('reference_gcv', null, 9155)]],
+    ['no rows at all', []],
+    ['a zero GCV', [param('reference_ncv', null, 8250), param('reference_gcv', null, 0)]],
+    ['an NCV not below the GCV', [param('reference_ncv', null, 9155), param('reference_gcv', null, 8250)]],
+    ['an equal NCV and GCV', [param('reference_ncv', null, 9155), param('reference_gcv', null, 9155)]],
+  ])('derives nothing, and invents no ratio, with %s', (_case, rows) => {
+    expect(derivedNetQuantity(1000, rows)).toBeNull();
+  });
+
+  const render = (locale: 'en' | 'tr', props: object) =>
+    renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale],
+      children: createElement(CalorificBasisChoice, {
+        basis: null, quantity: null, unit: 'kWh', reference: READY, issue: null, onChange: () => {}, ...props,
+      } as never),
+    }));
+  const checked = (html: string) => [...html.matchAll(/<button[^>]*role="radio"[^>]*aria-checked="true"[^>]*value="([a-z]+)"/g)].map((m) => m[1]);
+
+  it.each(['en', 'tr'] as const)('%s offers net and gross with neither chosen, and says what is missing', (locale) => {
+    const html = render(locale, { issue: 'basis_missing' });
+    const copy = MESSAGES[locale].dataEntry.inputs.cvBasis;
+    expect(html).toContain(copy.net);
+    expect(html).toContain(copy.gross);
+    expect(html).toContain(copy.help);
+    expect(html).toContain(copy.missing.replace(/'/g, '&#x27;'));
+    expect(html).toContain('aria-required="true"');
+    expect(html.match(/role="radio"/g)).toHaveLength(2);
+    expect(html).not.toContain('aria-checked="true"');
+  });
+
+  it('selects a stored basis', () => {
+    expect(render('en', { basis: 'gross' })).toMatch(/aria-checked="true"[^>]*value="gross"|value="gross"[^>]*aria-checked="true"/);
+    expect(checked(render('en', { basis: 'net' }))).not.toContain('gross');
+  });
+
+  it.each([
+    ['en', 'kWh', 1000, '901.15 kWh', '0.901147', '8,250', '9,155'],
+    ['tr', 'kWh', 1000, '901,15 kWh', '0,901147', '8.250', '9.155'],
+    ['en', 'MWh', 2, '1.8023 MWh', '0.901147', '8,250', '9,155'],
+  ] as const)('%s shows a gross %s bill\'s net figure and its ratio, with the release named', (locale, unit, quantity, net, ratio, ncv, gcv) => {
+    const html = render(locale, { basis: 'gross', quantity, unit });
+    expect(html).toContain('data-testid="gas-energy-derived-net"');
+    for (const part of [net, ratio, ncv, gcv, 'Display fixture', 'test-edition']) expect(html).toContain(part);
+    expect(html).toContain(MESSAGES[locale].dataEntry.inputs.notAuthoritative.trim());
+  });
+
+  it.each([
+    ['a net bill', { basis: 'net', quantity: 1000 }],
+    ['no basis yet', { quantity: 1000 }],
+    ['no quantity yet', { basis: 'gross' }],
+    ['a release still loading', { basis: 'gross', quantity: 1000, reference: { status: 'loading' } }],
+    ['a failed release read', { basis: 'gross', quantity: 1000, reference: { status: 'failed' } }],
+    ['a release without its GCV', { basis: 'gross', quantity: 1000, reference: { ...READY, data: { ...READY.data, parameters: [param('reference_ncv', null, 8250)] } } }],
+  ])('shows no derived figure for %s', (_case, props) => {
+    expect(render('en', props)).not.toContain('gas-energy-derived-net');
   });
 });
 

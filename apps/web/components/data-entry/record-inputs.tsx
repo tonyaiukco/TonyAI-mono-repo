@@ -7,11 +7,13 @@ import { DecimalNote } from "@/components/i18n/decimal-note";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { checkDecimal, formatNumber, parseLocaleDecimal, typedValue, type DecimalRule } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import {
+  derivedNetQuantity,
   editedNcv,
   equipmentTotal,
   leakRateOf,
@@ -28,6 +30,8 @@ import {
   EQUIPMENT_TYPES,
   VOLUME_CORRECTION_FACTOR_MAX,
   VOLUME_CORRECTION_FACTOR_MIN,
+  CV_BASES,
+  isCvBasis,
   type CvBasis,
   type EquipmentType,
   type LeakRateChoice,
@@ -173,19 +177,78 @@ function ReferenceNote({ reference, value }: { reference: ReferenceState; value:
 }
 
 /**
- * A TR natural gas bill's calorific basis, read-only (ng-kwh-engine): what an
- * opened or copied kWh or MWh record sends with every preview and save.
- * Nothing when none is stored; the API then names the missing choice.
- * `ng-kwh-form` turns this into the author's choice.
+ * A TR natural gas bill's calorific basis, chosen by the author (ng-kwh-form):
+ * no default, so nothing is priced until it is stated; an opened or copied
+ * record's stored basis comes selected. A gross bill shows the net quantity it
+ * is priced on, by its factor release's own ratio, before save.
  */
-export function StoredCalorificBasis({ basis }: { basis: CvBasis | null }) {
-  const t = useTranslations("dataEntry.inputs.cvBasis");
-  if (basis === null) return null;
+export function CalorificBasisChoice({
+  basis,
+  quantity,
+  unit,
+  reference,
+  issue,
+  onChange,
+}: {
+  basis: CvBasis | null;
+  /** The quantity as entered, or null while it is not a number. */
+  quantity: number | null;
+  unit: string;
+  reference: ReferenceState;
+  issue: "basis_missing" | null;
+  onChange: (basis: CvBasis) => void;
+}) {
+  const t = useTranslations("dataEntry.inputs");
+  const tUnits = useTranslations("units");
+  const locale = useLocale();
+  const derived =
+    basis === "gross" && quantity !== null && reference.status === "ready"
+      ? derivedNetQuantity(quantity, reference.data.parameters)
+      : null;
+  const release = reference.status === "ready" ? reference.data.release : null;
   return (
-    <div className="space-y-1 rounded-lg border p-4" data-testid="gas-energy-basis">
-      <p className="text-sm font-medium">{t("title")}</p>
-      <p className="text-sm" data-testid="gas-energy-basis-value">{t(basis)}</p>
-      <p className="text-xs text-muted-foreground">{t("stored")}</p>
+    <div className="space-y-3 rounded-lg border p-4" data-testid="gas-energy-basis">
+      <div>
+        <p className="text-sm font-medium" id="gas-energy-basis-title">{t("cvBasis.title")}</p>
+        <p className="text-xs text-muted-foreground">{t("cvBasis.help")}</p>
+      </div>
+      <RadioGroup
+        // "" selects neither: the basis has no default.
+        value={basis ?? ""}
+        onValueChange={(value) => {
+          if (isCvBasis(value)) onChange(value);
+        }}
+        aria-labelledby="gas-energy-basis-title"
+        // Not Radix's `required`: its hidden native input would join a form's own validation.
+        aria-required
+        aria-invalid={issue !== null}
+        className="flex flex-wrap gap-6"
+        data-testid="gas-energy-basis-choice"
+      >
+        {CV_BASES.map((value) => (
+          <div key={value} className="flex items-center gap-2">
+            {/* The group carries aria-invalid; the items stay calm, as the amber line beside them does. */}
+            <RadioGroupItem value={value} id={`gas-energy-basis-${value}`} />
+            <Label htmlFor={`gas-energy-basis-${value}`} className="font-normal">{t(`cvBasis.${value}`)}</Label>
+          </div>
+        ))}
+      </RadioGroup>
+      {issue && <p className="text-xs text-amber-700" role="status" data-testid="gas-energy-basis-missing">{t("cvBasis.missing")}</p>}
+      {derived && release && (
+        <p className="text-xs text-muted-foreground" data-testid="gas-energy-derived-net">
+          {t("cvBasis.derivedNet", {
+            net: formatNumber(derived.net, locale, { maximumFractionDigits: unit === "MWh" ? 4 : 2 }),
+            unit: tUnits(`label.${unit}` as "label.kWh"),
+            ratio: formatNumber(derived.ratio, locale, { maximumFractionDigits: 6 }),
+            ncv: formatNumber(derived.ncv, locale),
+            gcv: formatNumber(derived.gcv, locale),
+            publisher: release.publisher,
+            edition: release.edition,
+            // A placeholder or fixture value is never shown as if it were sourced.
+            status: release.status === "authoritative" ? "" : t("notAuthoritative"),
+          })}
+        </p>
+      )}
     </div>
   );
 }
