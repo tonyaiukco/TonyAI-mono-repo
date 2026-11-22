@@ -29,6 +29,17 @@ For a TR natural gas record in Sm³, the form SHALL show NCV prefilled with 8,25
 - **WHEN** a user downloads the bulk template
 - **THEN** its calculation-inputs reference names `cvBasis`, its two values, and that a TR natural gas row in kWh or MWh requires it
 
+### Requirement: A category change in Edit mode resets the category's fields
+When the category changes in Edit mode, the form SHALL clear the activity type, unit and category-specific inputs, so that the user enters them for the new category. In any mode, a quantity already entered SHALL be cleared with a notice when the category changes, because another category reads the figure as something else.
+
+#### Scenario: Refrigerant lines go when the record becomes Fuel
+- **WHEN** the author changes a Refrigerants draft to Fuel in Edit mode
+- **THEN** the equipment lines are cleared and the form asks for a fuel type and unit
+
+#### Scenario: An imported gas bill re-filed as Water
+- **WHEN** the author changes an imported natural gas draft of 1,000 kWh to Water in Edit mode
+- **THEN** the quantity is cleared with a notice, and nothing is saved until a Water quantity is entered
+
 ## ADDED Requirements
 
 ### Requirement: Data Entry carries a stored calorific basis
@@ -73,18 +84,23 @@ Whenever Data Entry holds a natural gas record in kWh or MWh with `cvBasis` `net
 - **WHEN** a voided net kWh record is copied and the copy is placed under a UK subsidiary
 - **THEN** the quantity and the basis are cleared, as for a move
 
+#### Scenario: A site the page has not loaded
+- **WHEN** a draft is opened whose site was created after the page loaded
+- **THEN** nothing is previewed or saved until the site is read, so the record is never priced, or cleared, under its subsidiary's geography in place of its site's
+
 #### Scenario: Back to Türkiye after the figure was entered again
 - **WHEN** the user enters the gross figure on the UK site and moves the draft back to the TR subsidiary
 - **THEN** no basis is shown or sent, and the figure is not priced until a basis is stated, never as net
 
-### Requirement: A natural gas unit change between energy and volume clears the quantity
-When a natural gas record's unit changes between an energy unit (kWh, MWh) and a volume (Sm³, m³), Data Entry SHALL clear the quantity and any calorific basis and ask for the quantity in the new unit. An opened or copied record's own unit SHALL stay listed while the form is on the record's own type, so the unit can be picked again; doing so SHALL NOT bring back a basis, which is stated again before the record is priced.
+### Requirement: A unit change clears the quantity
+When the user picks another unit, Data Entry SHALL clear a quantity already entered and ask for it again, in every category. A move between energy (kWh, MWh) and volume (Sm³, m³) SHALL also clear a gas bill's basis. An opened or copied record's own unit SHALL stay listed on its own type; picking it again SHALL restore the record's stored basis.
 
 #### Scenario: An imported kWh bill switched to Sm³
 - **WHEN** a user opens an imported TR natural gas draft of 1,000 kWh and picks Sm³
-- **THEN** the quantity and the basis are cleared with a notice, nothing is priced as 1,000 Sm³, and kWh is still offered in the unit list; picking kWh again brings back no basis, and nothing is priced
+- **THEN** the quantity and the basis are cleared with a notice, nothing is priced as 1,000 Sm³, and kWh is still offered in the unit list; picking kWh again restores the stored basis, and the figure entered again is priced on it
 
-#### Scenario: A change within one dimension
-- **WHEN** a user changes Sm³ to m³, or kWh to MWh
-- **THEN** the quantity is kept, as before
+#### Scenario: A change of scale
+- **WHEN** a user changes kWh to MWh on a draft holding 1,000
+- **THEN** the quantity is cleared with a notice, and the calorific basis is kept
+
 

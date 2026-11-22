@@ -16,7 +16,7 @@ import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
   mayEditRecord,
 } from '@tonyai/shared-types';
 import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
-import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsNetBillQuantityElsewhere } from './activity-records.service';
+import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsQuantityElsewhere } from './activity-records.service';
 import {
   CALCULATION_STALE_MESSAGE,
   CalculationStaleError,
@@ -787,7 +787,8 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
 
-    await service.update(dataEntry(), 'rec-p', { category: 'Electricity', parameters: null });
+    // The quantity sent too: a kWh gas bill re-filed without it is asked for it (ng-kwh-engine review).
+    await service.update(dataEntry(), 'rec-p', { category: 'Electricity', parameters: null, activityValue: 100 });
     expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
   });
 });
@@ -5493,14 +5494,31 @@ describe('a stored net bill\'s quantity is re-entered where it would be read oth
     ['the basis sent as {}', { ...net, parameters: {} }, true],
     ['the basis sent as null', { ...net, parameters: { cvBasis: null } }, true],
   ] as const)('%s: %s', (_case, next, refused) => {
-    expect(inheritsNetBillQuantityElsewhere(net, next)).toBe(refused);
+    expect(inheritsQuantityElsewhere(net, next)).toBe(refused);
   });
 
-  it('never applies to a gross bill, a volume reading or another category', () => {
-    const moved = { locationId: 'site-uk' };
-    expect(inheritsNetBillQuantityElsewhere({ ...net, parameters: { cvBasis: 'gross' } }, { ...net, ...moved, parameters: null })).toBe(false);
-    expect(inheritsNetBillQuantityElsewhere({ ...net, activityUnit: 'standard_cubic_metres', parameters: null }, { ...net, ...moved })).toBe(false);
-    expect(inheritsNetBillQuantityElsewhere({ ...net, category: 'Electricity', parameters: null }, { ...net, ...moved })).toBe(false);
+  it('lets a gross bill, a volume reading or another category move site or basis, on the same unit and category', () => {
+    const gross = { ...net, parameters: { cvBasis: 'gross' } };
+    expect(inheritsQuantityElsewhere(gross, { ...gross, locationId: 'site-uk', parameters: null })).toBe(false);
+    const volume = { ...net, activityUnit: 'standard_cubic_metres', parameters: null };
+    expect(inheritsQuantityElsewhere(volume, { ...volume, locationId: 'site-uk' })).toBe(false);
+    const grid = { ...net, category: 'Electricity', parameters: null };
+    expect(inheritsQuantityElsewhere(grid, { ...grid, locationId: 'site-uk' })).toBe(false);
+  });
+
+  it.each([
+    ['a gross bill to MWh (×1,000)', { ...net, parameters: { cvBasis: 'gross' } }, { activityUnit: 'MWh' }],
+    ['a gross bill to Sm³ with its basis cleared', { ...net, parameters: { cvBasis: 'gross' } }, { activityUnit: 'standard_cubic_metres', parameters: null }],
+    ['a gross bill re-filed as Water', { ...net, parameters: { cvBasis: 'gross' } }, { category: 'Water', activityUnit: 'cubic_metres', parameters: null }],
+  ] as const)('asks for the quantity of %s, whatever its basis (second review)', (_case, stored, change) => {
+    expect(inheritsQuantityElsewhere(stored, { ...stored, ...change })).toBe(true);
+  });
+
+  it('keeps the API\'s inheritance for every other record, as before', () => {
+    const grid = { ...net, category: 'Electricity', parameters: null };
+    expect(inheritsQuantityElsewhere(grid, { ...grid, activityUnit: 'MWh' })).toBe(false);
+    const volume = { ...net, activityUnit: 'cubic_metres', parameters: null };
+    expect(inheritsQuantityElsewhere(volume, { ...volume, category: 'Water' })).toBe(false);
   });
 });
 

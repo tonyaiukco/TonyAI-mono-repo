@@ -145,7 +145,12 @@ Once this change ships, bulk upload can create TR kWh drafts, and Data Entry can
   - A net basis is cleared **with** the quantity (`qa-auditor` review, data integrity). Kept, it would come back on a return to TR and price the gross figure typed meanwhile as net, about 11% high. After the return the API answers `parameters_required` until a basis is stated.
 - **The preview names the step.** A gross bill's preview says it was reduced to net by the release's ratio (`preview.grossToNet`, from `grossToNetRatioOf`), and the "converted from kWh to kWh" line is no longer shown when the unit did not change.
 - **A state, not a move (second review).** The net-basis clear is a condition the form checks once the geography is known, not a transition it watches: an opened draft whose site's geography changed since, or a copy placed under a non-TR subsidiary, is caught too (`clearsNetEnergyQuantity(category, mode, unit, basis)`).
-- **Energy and volume do not share a number (second review).** A natural gas unit change between kWh/MWh and Sm³/m³ clears the quantity and the basis (`unitChangeClearsQuantity`, the select's handler); before, 1,000 kWh became 1,000 Sm³, about ten times the figure. The opened or copied record's own unit stays listed while the form is on its own type (`ownUnit`), so the change can be undone.
+- **A unit or a category the user picks asks for the figure again (second and third reviews).**
+  - Any unit picked in the select clears a figure already entered, in every category (`unitChangeClearsQuantity`). 1,000 kWh is neither 1,000 Sm³ nor 1,000 MWh.
+  - A move between energy and volume also clears a bill's basis (`unitChangeClearsBasis`); kWh to MWh keeps it.
+  - A category change clears the figure too, because another category reads it as something else (an imported 1,000 kWh gas bill re-filed as Water kept 1,000 m³). This modifies the live requirement on Edit-mode category changes.
+  - The opened or copied record's own unit stays listed while the form is on its own type (`ownUnit`), refreshed on save. Picking it again restores the record's stored basis (`ownBasis`, `basisAfterUnitChange`; third review), so undoing a unit change works without reopening the record; the figure is still entered again.
+- **The site's own geography, or none (third review).** `geographyKnown` gates `hasValidInput`. A record naming a site the page has not loaded (created after it opened) previews and saves nothing until the list is read again, once per site, so it is never priced, or cleared, under its subsidiary's geography.
 - **No release fetch in the energy mode.** `GET /factors/parameters` resolves the Sm³ path; the energy mode reads nothing from it, so the form does not call it.
 - **Review sheet.** `apps/web/app/review/page.tsx` adds a read-only "Calorific basis" row under the activity row when `record.parameters.cvBasis` is present. The record read DTO already carries `parameters`. Without it, the approver could not check the basis against the bill, which is the guard the Risks section relies on.
 - **Specs.**
@@ -171,11 +176,21 @@ The snapshot stays at schema 3. A new snapshot key or a schema bump would mark e
 Added after the `architect` review. A report's calculation-inputs cell (`common/calculation-inputs.ts`, shared by live and issued reports) names a gross bill's `grossToNetRatio` ("gross to net ×0.901147"). The factor appendix keys a path by its factor, its conversion row **and its conversion steps** (`factorId|conversionId|conversionBasis`, second review): records that share a factor and no conversion can still differ in their steps (net against gross, kWh against MWh's ×1,000), and the first record seen would otherwise lend its steps to the others.
 
 - A report that mixed kWh and MWh records of one factor now shows two lines where it showed one, the second naming MWh's ×1,000. That corrects an existing misattribution; no figure changes.
+- The Excel "Factors Used" sheet appends a `Conversion` column (third review), so those lines are told apart there as in the PDF. It is appended, never inserted, by this file's rule.
 - The issuance renderers become `tonyai-issuance-pdf-v5` and `tonyai-issuance-tables-v5`. No issued dataset holds a gross bill, so no figure, row or fingerprint of an earlier issuance changes.
 
-### 9. The API asks for a net bill's quantity again when an update moves it (second review)
+### 9. The API asks for a gas bill's quantity again when an update changes its meaning (second and third reviews)
 
-An update inherits every field it does not send, the quantity included. A stored net kWh bill moved by the API to a UK site with its basis dropped would be priced as a gross figure. `ActivityRecordsService.update` therefore refuses, with `activity_value_reentry_required` (400), an update to a stored NET bill that changes its site, category, unit or basis without the quantity (`inheritsNetBillQuantityElsewhere`). Data Entry always sends the quantity, so only direct API callers meet it. A gross bill moves freely, since gross is what every geography prices.
+An update inherits every field it does not send, the quantity included. `ActivityRecordsService.update` refuses with `activity_value_reentry_required` (400) an update to a stored natural gas bill in kWh or MWh that sends no quantity, or sends `null`, and does any of these (`inheritsQuantityElsewhere`):
+- changes its unit or category, on either basis: a gross 1,000 kWh bill set to MWh would be priced ×1,000, and one set to Sm³ as a volume;
+- moves a NET bill to another site, or changes its basis: its figure could be priced as gross.
+
+Details:
+- Units compare in their stored spelling.
+- The check runs after the scope, period-lock and calculation checks, so a foreign site's 404 and a locked period's 409 keep their answers. It runs before any write.
+- Data Entry always sends the quantity, so only direct API callers meet it.
+- A gross bill may move site, since gross is what every geography prices.
+- Other categories keep the API's inheritance as before (Open questions): widening the rule to every record was tried and breaks callers that re-file a record by category alone.
 
 - **Alternative: compare the geography of the old and new site.** Rejected: it needs the site lookup before the rule, and a stricter rule costs a direct caller one field.
 

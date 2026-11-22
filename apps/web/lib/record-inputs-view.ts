@@ -164,14 +164,38 @@ function isGasVolumeUnit(unit: string): boolean {
 }
 
 /**
- * Whether a unit change must clear the quantity (ng-kwh-engine): a natural gas
- * record moved between an energy unit (kWh, MWh) and a volume (Sm³, m³). The
- * figure is not the same number in the other dimension, about ten times apart,
- * and an energy bill's basis means nothing for a volume. Any other change
- * keeps it, as before.
+ * Whether a unit the user picks must clear the quantity (ng-kwh-engine
+ * reviews): any change, in any category. A figure entered for one unit is not
+ * the same number in another, kWh against MWh (×1,000) as much as kWh against
+ * Sm³, so the form asks for it again rather than carry it over.
  */
-export function unitChangeClearsQuantity(category: string, previous: string, next: string): boolean {
-  if (category !== "Natural Gas" || previous === next) return false;
+export function unitChangeClearsQuantity(previous: string, next: string): boolean {
+  return previous !== next;
+}
+
+/**
+ * The calorific basis a unit change leaves on the form (ng-kwh-engine
+ * reviews): the record's own stored basis when the user picks its own energy
+ * unit again, so undoing a unit change works; none after a move between
+ * energy and volume; otherwise the current one. The figure is asked for again
+ * either way (`unitChangeClearsQuantity`).
+ */
+export function basisAfterUnitChange(
+  previous: string,
+  next: string,
+  current: CvBasis | null,
+  own: { unit: string | null; cvBasis: CvBasis | null },
+): CvBasis | null {
+  if (next === own.unit && isGasEnergyUnit(next) && own.cvBasis !== null) return own.cvBasis;
+  return unitChangeClearsBasis(previous, next) ? null : current;
+}
+
+/**
+ * Whether a unit change must clear a bill's calorific basis (ng-kwh-engine):
+ * a move between an energy unit (kWh, MWh) and a volume (Sm³, m³), where the
+ * basis means nothing. kWh to MWh keeps it: the same bill, another scale.
+ */
+export function unitChangeClearsBasis(previous: string, next: string): boolean {
   return (isGasEnergyUnit(previous) && isGasVolumeUnit(next)) || (isGasVolumeUnit(previous) && isGasEnergyUnit(next));
 }
 

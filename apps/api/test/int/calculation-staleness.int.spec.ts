@@ -570,10 +570,10 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     const other = await owner.location.create({
       data: { subsidiaryId: tenant.subsidiaryId, name: `K11 TR ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
     });
-    const moved = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id, parameters: null } as never));
+    const moved = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id } as never));
     expect(moved).toMatchObject({ response: { code: 'activity_value_reentry_required', statusCode: 400 } });
     // An explicit null quantity inherits the stored figure too (security-rls re-review).
-    const nulled = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id, parameters: null, activityValue: null } as never));
+    const nulled = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id, activityValue: null } as never));
     expect(nulled).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
     const toVolume = await failure(records.update(tenant.users.dataEntry, net.id, { activityUnit: 'standard_cubic_metres', parameters: null } as never));
     expect(toVolume).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
@@ -584,6 +584,10 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     // A gross bill keeps its figure on a move: gross is what every geography prices.
     const gross = await savedTr(bill({ cvBasis: 'gross' }, 'September'));
     expect(await records.update(tenant.users.dataEntry, gross.id, { locationId: other.id } as never)).toMatchObject({ locationId: other.id });
+    // ...but not on a new unit: 1,000 kWh is not 1,000 MWh, whatever the basis (second review).
+    const scaled = await failure(records.update(tenant.users.dataEntry, gross.id, { activityUnit: 'MWh' } as never));
+    expect(scaled).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
+    expect((await row(gross.id))).toMatchObject({ activityUnit: 'kWh', activityValue: 1000 });
   });
 
   it('refuses at submit, and at bulk submit, a kWh bill a direct writer stripped of its basis or flipped to the other: stale, nothing committed (ng-kwh-engine)', async () => {

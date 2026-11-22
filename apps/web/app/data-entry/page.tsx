@@ -60,6 +60,8 @@ import {
   equipmentTotal,
   clearsNetEnergyQuantity,
   copyKeepsOwnUnit,
+  basisAfterUnitChange,
+  unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
   gasInputsIssue,
@@ -122,6 +124,7 @@ import {
   isAuthoritativeSnapshot,
   isCalculated,
   isProvenanceSnapshot,
+  type CvBasis,
   canonicalPeriodValue,
   isInvoiceTracked,
   MARINE_GAS_OIL_ACTIVITY_TYPE,
@@ -417,6 +420,8 @@ function DataEntryPageInner() {
   // the form is on the record's own type, so a unit picked by mistake can be
   // undone, whatever the TR rules offer a new record.
   const [ownUnit, setOwnUnit] = useState<string | null>(null);
+  // ...and its stored calorific basis, restored when that unit is picked again (third review).
+  const [ownBasis, setOwnBasis] = useState<CvBasis | null>(null);
   // The submitted record whose recall waits for the user's confirmation.
   const [recallTarget, setRecallTarget] = useState<ActivityRecordPageItemDTO | null>(null);
   const [recalling, setRecalling] = useState(false);
@@ -586,7 +591,14 @@ function DataEntryPageInner() {
     editingTuple.category === category &&
     activityType === "";
   const activityTypeChosen = !isTypedCategory || activityType !== "" || keepsLegacyUntyped;
+  // The geography a record is priced under (ng-kwh-engine reviews): its site's
+  // when it names one, never the subsidiary's in its place. A site the page has
+  // not loaded (created after it opened) holds the preview and the save until
+  // it is read, so no figure is priced, or cleared, under the wrong geography.
+  const geographyKnown =
+    effectiveGeography !== null && (locationId === "" || selectedLocation !== null);
   const hasValidInput =
+    geographyKnown &&
     !!selectedSubsidiary &&
     !!category &&
     !!activityUnit &&
@@ -1122,7 +1134,7 @@ function DataEntryPageInner() {
     if (units.length > 0 && !units.some((u) => u.value === activityUnit)) {
       setActivityUnit(units[0].value);
       // A bill's basis means nothing for the volume it is narrowed to (qa-auditor N3).
-      if (unitChangeClearsQuantity(category, activityUnit, units[0].value)) {
+      if (unitChangeClearsBasis(activityUnit, units[0].value)) {
         setGasInputs((prev) => ({ ...prev, cvBasis: null }));
       }
       if (activity.text.trim() !== "") {
@@ -1150,8 +1162,6 @@ function DataEntryPageInner() {
   // draft whose site was re-classified since, a copy into another subsidiary.
   // Its basis goes with it: a figure typed meanwhile is gross, and returning
   // to the TR rules must not price it as net (qa-auditor S1).
-  const geographyKnown =
-    effectiveGeography !== null && (locationId === "" || selectedLocation !== null);
   useEffect(() => {
     if (!geographyKnown) return;
     if (!clearsNetEnergyQuantity(category, inputMode, activityUnit, gasInputs.cvBasis)) return;
@@ -1163,17 +1173,27 @@ function DataEntryPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geographyKnown, category, inputMode, activityUnit, gasInputs.cvBasis]);
 
-  // A natural gas unit changed between energy and volume (ng-kwh-engine
-  // review): the figure is not the same number in the other dimension, and a
-  // bill's basis means nothing for a volume, so both are cleared.
+  // A site the page has not loaded yet (created after it opened): read the
+  // list again, once per site, so the record's geography is its own.
+  const relistedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (subsLoading || locationId === "" || selectedLocation !== null || relistedFor.current === locationId) return;
+    relistedFor.current = locationId;
+    api.listLocations().then(setLocations).catch((e) => stableErrorToast(e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subsLoading, locationId, selectedLocation]);
+
+  // A unit the user picks (ng-kwh-engine reviews): a figure entered for one
+  // unit is not the same number in another, so it is asked for again; a bill's
+  // basis goes too when the move is between energy and volume.
   function handleUnitChange(next: string) {
-    const clears = unitChangeClearsQuantity(category, activityUnit, next);
+    const previous = activityUnit;
     setActivityUnit(next);
-    if (!clears) return;
-    setGasInputs((prev) => ({ ...prev, cvBasis: null }));
-    if (activity.text.trim() !== "") {
+    // The record's own basis comes back with its own energy unit, so a unit picked by mistake can be undone.
+    setGasInputs((prev) => ({ ...prev, cvBasis: basisAfterUnitChange(previous, next, prev.cvBasis, { unit: ownUnit, cvBasis: ownBasis }) }));
+    if (unitChangeClearsQuantity(previous, next) && activity.text.trim() !== "") {
       activity.setValue(null);
-      toast.info(t("inputs.dimensionReset"));
+      toast.info(t("inputs.unitChangeReset"));
     }
   }
 
@@ -1254,6 +1274,7 @@ function DataEntryPageInner() {
     activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
     setOwnUnit(rec.activityUnit);
+    setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
     if (hasContextValue(rec.input)) setContextOpen(true);
@@ -1301,6 +1322,7 @@ function DataEntryPageInner() {
     setEditingCreatedBy(null);
     setEditingTuple(null);
     setOwnUnit(null);
+    setOwnBasis(null);
     toast.info(t("nowEnteringNew"));
   }, [
     editingId,
@@ -1327,6 +1349,7 @@ function DataEntryPageInner() {
     clearEditChoices();
     setCopying(false);
     setOwnUnit(null);
+    setOwnBasis(null);
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
@@ -1508,6 +1531,7 @@ function DataEntryPageInner() {
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
+      setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
       setVerdict(verdictOf(rec));
       if (wasEditing) {
         // A first period has no history: its flag is the typo ceiling, and the
@@ -1579,6 +1603,7 @@ function DataEntryPageInner() {
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
+      setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
       setVerdict(verdictOf(rec));
       // A file that did not upload: the record stays a draft, the vault lists
       // the file with Retry, and nothing is submitted (BUG-R2-05).
@@ -1706,6 +1731,7 @@ function DataEntryPageInner() {
       activity.setValue(values.activityValue);
       setActivityUnit(values.activityUnit);
       setOwnUnit(values.activityUnit);
+      setOwnBasis(gasInputsFromRecord(values.parameters).cvBasis);
       setContext((values.input as ContextValues | null) ?? {});
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
@@ -1864,6 +1890,11 @@ function DataEntryPageInner() {
                       value={category}
                       onValueChange={(v) => {
                         const next = v as Category;
+                        // Another category reads the figure as something else (ng-kwh-engine review).
+                        if (next !== category && activity.text.trim() !== "") {
+                          activity.setValue(null);
+                          toast.info(t("inputs.categoryReset"));
+                        }
                         setCategory(next);
                         setContext({});
                         setContextEpoch((n) => n + 1);

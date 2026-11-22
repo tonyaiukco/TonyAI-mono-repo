@@ -199,7 +199,7 @@ test('switching an imported kWh bill to Sm³ clears its figure and basis, and kW
   const unit = page.getByRole('combobox', { name: enDataEntry.unit, exact: true });
   await unit.click();
   await page.getByRole('option', { name: enUnits.label.standard_cubic_metres, exact: true }).click();
-  await expect(page.getByText(enDataEntry.inputs.dimensionReset)).toBeVisible();
+  await expect(page.getByText(enDataEntry.inputs.unitChangeReset)).toBeVisible();
   await expect(value).toHaveValue('');
   await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
 
@@ -208,36 +208,40 @@ test('switching an imported kWh bill to Sm³ clears its figure and basis, and kW
   await expect(page.getByRole('option', { name: 'kWh', exact: true })).toBeVisible();
   await page.getByRole('option', { name: 'kWh', exact: true }).click();
   await expect(unit).toHaveText('kWh');
-  // Undoing does not bring a basis back: none is shown, and nothing is priced until one is stated (qa-auditor N1).
+  // Undoing brings the record's own basis back: the figure entered again is priced as before (third review).
+  await expect(page.getByTestId('gas-energy-basis-value')).toHaveText(enDataEntry.inputs.cvBasis.gross);
   await value.fill('1000');
-  await expect(page.getByTestId('gas-energy-basis')).toHaveCount(0);
-  await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
 });
 
-test('a net kWh draft opened after its site was re-classified outside Türkiye asks for the gross figure, once (ng-kwh-engine review)', async ({ page, request }) => {
+test('a net kWh draft on a site created and re-classified after the page loaded asks for the gross figure, once (ng-kwh-engine reviews)', async ({ page, request }) => {
+  // The page loads its sites first; the site below does not exist yet.
+  await login(page, ENTRY_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_TR_INPUTS_YEAR));
+
   const admin = await getAccessToken(request, ADMIN_EMAIL);
-  const created_ = await request.post(`${API_BASE}/locations`, {
+  const made = await request.post(`${API_BASE}/locations`, {
     headers: bearer(admin),
     data: { subsidiaryId: SUB.logistics, name: 'E2E ng-kwh re-classified site', geographyCode: 'TR' },
   });
-  expect(created_.ok(), await created_.text()).toBe(true);
-  const site = (await created_.json()) as { id: string };
-
+  expect(made.ok(), await made.text()).toBe(true);
+  const site = (await made.json()) as { id: string };
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const res = await postBulkImport(request, token, { buffer: csv('net', 'Q4', site.id), dryRun: 'false' });
   expect(res.ok(), await res.text()).toBe(true);
   const report = await res.json();
   expect(report.errors).toEqual([]);
   created.push(report.accepted[0].recordId as string);
-
-  // The site is re-classified after the draft was priced under the TR rules.
+  // Re-classified after the draft was priced under the TR rules (subsidiary: TR, site: now UK).
   const moved = await request.patch(`${API_BASE}/locations/${site.id}`, { headers: bearer(admin), data: { geographyCode: 'UK' } });
   expect(moved.ok(), await moved.text()).toBe(true);
 
-  await login(page, ENTRY_EMAIL);
-  await page.goto('/data-entry');
+  // The records list is read again by switching the subsidiary away and back,
+  // without reloading the page: its list of sites is still the one it opened with.
+  await pickByFieldLabel(page, enDataEntry.subsidiary, 'TonyAI Energy (TR)');
   await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
-  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_TR_INPUTS_YEAR));
   await listOf(page).getByRole('button', { name: new RegExp(`^Edit Q4 ${E2E_TR_INPUTS_YEAR} Natural Gas`) }).click();
 
   // Outside Türkiye the stored net figure would be priced as gross: cleared on opening, with its basis.
@@ -250,4 +254,3 @@ test('a net kWh draft opened after its site was re-classified outside Türkiye a
   await expect(value).toHaveValue('1109.7');
   await expect(page.getByText(enDataEntry.inputs.basisReset)).toHaveCount(1);
 });
-

@@ -2409,8 +2409,23 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
     const sheet = wb.getWorksheet('Factors Used')!;
-    expect((sheet.getRow(1).values as unknown[]).slice(-3)).toEqual(['Activity type', 'Release', 'Standing']);
-    expect((sheet.getRow(2).values as unknown[]).slice(-3)).toEqual(['Diesel', 'TonyAI prototype 2026.1', 'Not authoritative (placeholder)']);
+    // Read by position: `Conversion` is appended after them (ng-kwh-engine review).
+    expect((sheet.getRow(1).values as unknown[]).slice(8, 11)).toEqual(['Activity type', 'Release', 'Standing']);
+    expect((sheet.getRow(2).values as unknown[]).slice(8, 11)).toEqual(['Diesel', 'TonyAI prototype 2026.1', 'Not authoritative (placeholder)']);
+  });
+
+  it('tells one factor\'s Excel lines apart by their conversion steps (ng-kwh-engine review)', async () => {
+    const MWH = 'definitional — 1 MWh = 1,000 kWh (exact)';
+    stubRecords(prisma, [
+      makeRecord({ id: 'r1', periodValue: 'January', calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease }) }),
+      makeRecord({ id: 'r2', periodValue: 'February', activityUnit: 'MWh', calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease, conversionApplied: true, conversionFactor: 1000, conversionBasis: MWH }) }),
+    ]);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+    const sheet = wb.getWorksheet('Factors Used')!;
+    expect((sheet.getRow(1).values as unknown[]).at(-1)).toBe('Conversion');
+    const conversions = [2, 3].map((n) => (sheet.getRow(n).values as unknown[])[11] ?? '');
+    expect(conversions.sort()).toEqual(['', MWH].sort());
   });
 });
 

@@ -70,6 +70,15 @@
     - an e2e case for a re-classified site.
 
     After all fixes: api 3,966, web 1,336, int 210, e2e 35.
+  - **Owner's re-review (2026-11-22), all fixed:**
+    - the API asks for a gas bill's quantity again on a unit or category change on either basis (a gross kWh → MWh was inherited ×1,000);
+    - Data Entry clears the figure on any unit or category change;
+    - a site the page has not loaded holds the preview and the save until it is read;
+    - the re-entry check follows the 404 and 409 checks;
+    - Excel's factor sheet names each line's conversion;
+    - picking the record's own energy unit again restores its stored basis, so a unit change can be undone.
+
+    After: api 3,971, web 1,338, int 210, e2e 48 plus a re-run of 34.
   - **Next:** the owner opens the PR and merges. `ng-kwh-form` (LP4-06, the second change) follows.
 - **UAT ROUND 3, CHANGE 2 (D4): COVERAGE REFUSALS ANSWER HTTP 422, MERGED AS [PR #338](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/338) (merge `863185e`), DEPLOYED (`ci72-1`, 0 migrations), ARCHIVED as `openspec/changes/archive/2026-11-20-calc-refusal-422/`, which syncs `emission-calculation` (Claude Code; OpenSpec `calc-refusal-422`, branch `fix/calc-refusal-422`; 2026-11-20; Decisions 2026-11-20 D4, v2.4 §1.1).** API contract change; no migration.
   - **What:** `no_factor`, `placeholder_refused`, `no_conversion` and `calorific_basis_mismatch` answer 422 (`CALCULATION_REFUSAL_STATUS`; `NoEmissionFactorError` now extends `UnprocessableEntityException`, both in one commit, because the error filter drops a code thrown at a status the registry does not give it). The refusal status unions are `400 | 409 | 422`. Input refusals stay 400, library conflicts 409, and an unreachable subsidiary, location or record the plain 404. Bulk submit maps a raw coverage or library error to `calculation_stale`, never `not_found`. `docs/api/endpoints.md` states the statuses.
@@ -1607,7 +1616,7 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
   - **`cvBasis` on therms or GJ** answers 422 `calorific_basis_mismatch`, not `parameters_not_applicable`. It fails closed; the spec does not cover the case.
   - **Older TR kWh drafts, or copies, without a basis** now open in the energy mode, and their refusal asks for net or gross with no control to give it until `ng-kwh-form`. Committed seed records are frozen.
   - **Bulk row messages are English in the Turkish UI:** the panel prints each row issue's server sentence (`bulk-upload-panel.tsx`, `IssueItem`), the new `cvBasis` refusals as every other. A localised row message needs a code or a selector per cell issue (owner's branch review, 2026-11-21).
-  - **Unit changes within one dimension keep the figure:** kWh↔MWh (×1,000) and kWh↔therms keep the number on Data Entry for every category, as before; only natural gas energy↔volume clears it (`ng-kwh-engine` re-review).
+  - **The API's inherited quantity outside natural gas bills:** a PATCH changing only the unit or category of any other record (kWh → MWh electricity, litres → gallons) keeps the stored number. The re-entry rule covers natural gas bills in kWh/MWh only, because widening it broke callers that re-file by category alone (`ng-kwh-engine` third review). Data Entry clears the figure on any unit or category change.
   - **`PATCH /activity-records/:id {activityUnit: null}` answers 500:** the DTO lets null through and `storedUnit(null)` throws. Nothing is written. This predates `ng-kwh-engine` (security-rls re-review).
   - **The re-entry rule's scope:**
     - it guards only a stored NET bill; a gross bill switched to net by the API, or a non-TR kWh record moved to TR with `cvBasis: 'net'`, keeps its figure, because the caller states the basis;

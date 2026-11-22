@@ -210,6 +210,15 @@
 
   Filed under Open questions: kWh↔MWh keeping the figure, `PATCH {activityUnit: null}` answering 500 (pre-existing), a site missing from the loaded list skipping the form check, the guard's net-only scope. Verify: typecheck, lint (0 errors), unit tests, int, e2e. *Result: api 3,966, web 1,336, shared-types 512, db 251; int 210; e2e 35 (`natural-gas-energy-bill` 4, `record-edit`, `data-entry-tr-inputs`, `locations`, `smoke`).*
 
+## 8. Third review (the owner's re-review, 2026-11-22)
+
+- [x] 8.1 P2-1, API: the re-entry rule covers a stored gas bill in kWh or MWh on **either** basis for a unit or category change (a gross 1,000 kWh set to MWh, or to Sm³), and a NET bill for a site or basis change. A rule for every record was tried and broke callers that re-file by category alone, so other categories are filed under Open questions. Verify: unit table, int case (gross kWh → MWh refused, the record unchanged), the record specs. *Result: api 3,971, int 27.*
+- [x] 8.2 P2-2, web: any unit the user picks clears a figure already entered, in every category (`unitChangeClearsQuantity`); energy↔volume also clears the basis (`unitChangeClearsBasis`). A category change clears the figure with a notice (`inputs.categoryReset`), modifying the live Edit-mode category requirement. Verify: view specs; e2e `record-edit` re-enters the figure after its category change. *Result: pass.*
+- [x] 8.3 P2-3, web: `geographyKnown` gates `hasValidInput`. A site the page has not loaded is fetched again, once per site, and nothing previews or saves meanwhile. Verify: the e2e case creates and re-classifies the site after the page loaded; the clear fires only once the site is read. *Result: pass.*
+- [x] 8.4 P3: the re-entry check moved after the scope, period-lock and calculation checks, which keep their answers. The Excel "Factors Used" sheet appends `Conversion` (TR "Dönüşüm"), with a spec for one factor's kWh and MWh lines. Verify: report specs; e2e `reports`. *Result: pass.*
+- [x] 8.6 P3 (undo): picking the record's own energy unit again restores its stored basis (`basisAfterUnitChange`, `ownBasis` set on open, copy and save, cleared on reset), so the figure entered again is priced without reopening the record. Verify: the view spec; the e2e unit-switch case shows "Gross" and previews 0.18 t after kWh is picked again. *Result: web 1,338; e2e in 8.5.*
+- [x] 8.5 Gate. Verify: typecheck, lint (0 errors), unit, int, e2e, `openspec validate --strict`. *Result: api 3,971, web 1,336, shared-types 512, db 251; int 210; e2e 48 (`natural-gas-energy-bill` 4, `record-edit`, `data-entry-tr-inputs`, `data-entry-layout`, `data-entry-happy`, `data-entry-preview-period`, `locations`, `reports`, `smoke`).*
+
 ## Workflow follow-up
 
 - Branch `feat/ng-kwh-engine` (created). Commit and push on the owner's word. The owner merges, and the QA deploy runs on merge (one migration).

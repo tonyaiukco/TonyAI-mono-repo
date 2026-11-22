@@ -23,6 +23,8 @@ import {
   gasParameters,
   clearsNetEnergyQuantity,
   copyKeepsOwnUnit,
+  unitChangeClearsBasis,
+  basisAfterUnitChange,
   unitChangeClearsQuantity,
   leakRateOf,
   leakRatePercent,
@@ -152,16 +154,30 @@ describe('a bill\'s stored calorific basis (ng-kwh-engine)', () => {
   });
 
   it.each([
-    ['kWh', 'standard_cubic_metres', true],
-    ['MWh', 'cubic_metres', true],
-    ['standard_cubic_metres', 'kWh', true],
-    ['kWh', 'MWh', false],
-    ['standard_cubic_metres', 'cubic_metres', false],
-    ['kWh', 'kWh', false],
-    ['kWh', 'therms', false],
-  ] as const)('a natural gas unit change from %s to %s clears the quantity: %s', (previous, next, clears) => {
-    expect(unitChangeClearsQuantity('Natural Gas', previous, next)).toBe(clears);
-    expect(unitChangeClearsQuantity('Fuel', previous, next)).toBe(false);
+    ['kWh', 'standard_cubic_metres', true, true],
+    ['MWh', 'cubic_metres', true, true],
+    ['standard_cubic_metres', 'kWh', true, true],
+    ['kWh', 'MWh', true, false],
+    ['standard_cubic_metres', 'cubic_metres', true, false],
+    ['litres', 'gallons_us', true, false],
+    ['kWh', 'kWh', false, false],
+  ] as const)('a unit change from %s to %s clears the quantity: %s, and a bill\'s basis: %s (second review)', (previous, next, quantity, basis) => {
+    expect(unitChangeClearsQuantity(previous, next)).toBe(quantity);
+    expect(unitChangeClearsBasis(previous, next)).toBe(basis);
+  });
+});
+
+describe('the basis a unit change leaves (ng-kwh-engine, third review)', () => {
+  const own = { unit: 'kWh', cvBasis: 'gross' as const };
+  it('restores the record\'s own basis when its own energy unit is picked again', () => {
+    expect(basisAfterUnitChange('standard_cubic_metres', 'kWh', null, own)).toBe('gross');
+  });
+  it('clears it between energy and volume, keeps it within energy, and restores nothing a record never had', () => {
+    expect(basisAfterUnitChange('kWh', 'standard_cubic_metres', 'gross', own)).toBeNull();
+    expect(basisAfterUnitChange('kWh', 'MWh', 'gross', own)).toBe('gross');
+    expect(basisAfterUnitChange('standard_cubic_metres', 'MWh', null, own)).toBeNull();
+    expect(basisAfterUnitChange('standard_cubic_metres', 'kWh', null, { unit: 'kWh', cvBasis: null })).toBeNull();
+    expect(basisAfterUnitChange('standard_cubic_metres', 'kWh', null, { unit: null, cvBasis: null })).toBeNull();
   });
 });
 
