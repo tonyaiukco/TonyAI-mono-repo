@@ -2,9 +2,12 @@ import {
   ACTIVITY_VALUE_MAX,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   isCvBasis,
+  isProvenanceSnapshot,
   usesTrCalculationRules,
+  type ActivityCalculationSnapshot,
   type CvBasis,
   type EquipmentType,
+  type FactorReleaseSnapshot,
   type LeakRateChoice,
   type Locale,
   type NaturalGasRecordParameters,
@@ -124,6 +127,29 @@ export function derivedNetQuantity(
   return { ratio, net: quantity * ratio, ncv, gcv };
 }
 
+/** The release and parameters a gross bill's net figure is read from. */
+export interface NetSource {
+  release: FactorReleaseSnapshot;
+  parameters: readonly ReleaseParameterDTO[];
+}
+
+/**
+ * The release and NCV/GCV a successful preview priced a gross bill on, or null
+ * (ng-kwh-form review). The form's own reference read and the preview resolve
+ * the factor's release in two requests, so a release sealed between them could
+ * leave the net figure shown beside the bill on one edition and the price on
+ * another. The figure shown is read from the preview's own rows, the ones the
+ * price used; the reference read stands in only until a preview holds them. A
+ * net or non-bill preview reads no ratio, so it yields null.
+ */
+export function previewedNetSource(preview: ActivityCalculationSnapshot | null): NetSource | null {
+  if (!isProvenanceSnapshot(preview) || preview.snapshotSchema !== 3) return null;
+  if (referenceValue(preview.parameterRows, "reference_ncv") === null || referenceValue(preview.parameterRows, "reference_gcv") === null) {
+    return null;
+  }
+  return { release: preview.factorRelease, parameters: preview.parameterRows };
+}
+
 /** A stored record's natural gas inputs, for the form. */
 export function gasInputsFromRecord(parameters: unknown): GasInputs {
   const stored = (parameters ?? {}) as NaturalGasRecordParameters;
@@ -201,9 +227,12 @@ export function unitChangeClearsQuantity(previous: string, next: string): boolea
 /**
  * The calorific basis a unit change leaves on the form (ng-kwh-engine
  * reviews): the record's own stored basis when the user picks its own energy
- * unit again, so undoing a unit change works; none after a move between
- * energy and volume; otherwise the current one. The figure is asked for again
- * either way (`unitChangeClearsQuantity`).
+ * unit again after a detour that cleared it (a volume unit), so undoing that
+ * move works; none after a move between energy and volume; otherwise the
+ * current one. Between kWh and MWh the basis the user holds stays, even back
+ * onto the record's own unit: it was never cleared, and a stored net must not
+ * overwrite a gross the user chose (ng-kwh-form review). The figure is asked
+ * for again either way (`unitChangeClearsQuantity`).
  */
 export function basisAfterUnitChange(
   previous: string,
@@ -211,8 +240,19 @@ export function basisAfterUnitChange(
   current: CvBasis | null,
   own: { unit: string | null; cvBasis: CvBasis | null },
 ): CvBasis | null {
-  if (next === own.unit && isGasEnergyUnit(next) && own.cvBasis !== null) return own.cvBasis;
+  if (next === own.unit && isGasEnergyUnit(next) && !isGasEnergyUnit(previous) && own.cvBasis !== null) return own.cvBasis;
   return unitChangeClearsBasis(previous, next) ? null : current;
+}
+
+/**
+ * The category a unit counts as chosen for once the form is reset for the next
+ * record (ng-kwh-form review). A kWh or MWh a bill was entered in is not the
+ * next record's choice: it is let go (empty), so the unit counts as carried
+ * over and the next TR gas record starts on its first unit, m³, as a new one
+ * does. Any other unit stays with its category, as before.
+ */
+export function unitCategoryAfterReset(unit: string, unitCategory: string): string {
+  return isGasEnergyUnit(unit) ? "" : unitCategory;
 }
 
 /**

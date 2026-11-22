@@ -24,6 +24,7 @@ import {
   type EquipmentLineDraft,
   type GasInputs,
   type GasInputsIssue,
+  type NetSource,
 } from "@/lib/record-inputs-view";
 import {
   ACTIVITY_VALUE_MAX,
@@ -187,6 +188,7 @@ export function CalorificBasisChoice({
   quantity,
   unit,
   reference,
+  previewed = null,
   issue,
   onChange,
 }: {
@@ -195,17 +197,26 @@ export function CalorificBasisChoice({
   quantity: number | null;
   unit: string;
   reference: ReferenceState;
+  /**
+   * The release and NCV/GCV the last successful preview priced the bill on
+   * (`previewedNetSource`). The net figure is read from them, so it names the
+   * edition the price used; the reference read stands in until a preview holds
+   * them (ng-kwh-form review).
+   */
+  previewed?: NetSource | null;
   issue: "basis_missing" | null;
   onChange: (basis: CvBasis) => void;
 }) {
   const t = useTranslations("dataEntry.inputs");
   const tUnits = useTranslations("units");
   const locale = useLocale();
-  const derived =
-    basis === "gross" && quantity !== null && reference.status === "ready"
-      ? derivedNetQuantity(quantity, reference.data.parameters)
-      : null;
-  const release = reference.status === "ready" ? reference.data.release : null;
+  const source: NetSource | null =
+    previewed ??
+    (reference.status === "ready" && reference.data.release
+      ? { release: reference.data.release, parameters: reference.data.parameters }
+      : null);
+  const derived = basis === "gross" && quantity !== null && source ? derivedNetQuantity(quantity, source.parameters) : null;
+  const release = source?.release ?? null;
   return (
     <div className="space-y-3 rounded-lg border p-4" data-testid="gas-energy-basis">
       <div>

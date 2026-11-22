@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import enCategories from '../apps/web/messages/en/categories.json';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
@@ -19,7 +19,6 @@ import {
   cleanupE2ELocations,
   cleanupTrInputsFixture,
   deleteRecordsAsService,
-  findRecordId,
   getAccessToken,
   login,
   pickByFieldLabel,
@@ -57,6 +56,27 @@ const created: string[] = [];
 test.afterEach(async ({ request }) => {
   if (created.length > 0) await deleteRecordsAsService(request, created.splice(0));
 });
+
+/**
+ * Saves the form's draft and returns the stored record. Its id comes from the
+ * create's own answer and joins the teardown at once, before anything else is
+ * asserted: a missed toast or a failed lookup cannot leak a draft that would
+ * collide with the next run, and no list search by period can pick another
+ * year's record up for deletion (ng-kwh-form review).
+ */
+const saveDraft = async (page: Page, request: APIRequestContext) => {
+  const createdResponse = page.waitForResponse(
+    (r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'),
+  );
+  await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
+  const response = await createdResponse;
+  expect(response.status()).toBe(201);
+  const id = (await response.json()).id as string;
+  created.push(id);
+  await expect(page.getByText(enDataEntry.draftSaved)).toBeVisible();
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  return (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })).json();
+};
 
 const SUBSIDIARY_OPTION = 'TonyAI Logistics (TR)';
 const LOGISTICS = 'TonyAI Logistics';
@@ -303,6 +323,12 @@ test('a TR gas bill entered on the form in kWh asks for its basis, and a gross o
   await pickByFieldLabel(page, enDataEntry.period, enPeriods.granularity.quarterly);
   await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values.Q1);
 
+  // Every preview the page sends: none may leave before a basis is chosen, so a request
+  // the API refuses cannot pass for the blank screen the spec describes.
+  const previews: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/calculations/preview')) previews.push(r.postData() ?? '');
+  });
   const value = page.getByPlaceholder(enDataEntry.activityValuePlaceholder);
   await value.fill('1000');
   // No basis yet: no volume field, neither option chosen, nothing priced, nothing to save.
@@ -311,6 +337,9 @@ test('a TR gas bill entered on the form in kWh asks for its basis, and a gross o
   await expect(basis(page, 'gross')).not.toBeChecked();
   await expect(page.getByTestId('gas-energy-basis-missing')).toHaveText(enDataEntry.inputs.cvBasis.missing);
   await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+  // Past the preview's 400 ms debounce, twice over: a request would have left by now.
+  await page.waitForTimeout(1_000);
+  expect(previews).toHaveLength(0);
   await expect(page.getByRole('button', { name: enDataEntry.saveDraft, exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Submit for review', exact: true })).toBeDisabled();
 
@@ -321,6 +350,9 @@ test('a TR gas bill entered on the form in kWh asks for its basis, and a gross o
   await expect(derived).toContainText('900 kWh');
   await expect(derived).toContainText('× 0.9 (9,000 / 10,000');
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
+  // The first preview to leave carries the basis chosen.
+  expect(previews.length).toBeGreaterThan(0);
+  expect(previews.every((body) => body.includes('"cvBasis":"gross"'))).toBe(true);
 
   // The basis is corrected, not the bill: the figure stays.
   await basis(page, 'net').click();
@@ -330,22 +362,10 @@ test('a TR gas bill entered on the form in kWh asks for its basis, and a gross o
   await basis(page, 'gross').click();
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
 
-  await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
-  await expect(page.getByText(enDataEntry.draftSaved)).toBeVisible();
-  const token = await getAccessToken(request, ENTRY_EMAIL);
-  const id = await findRecordId(request, token, { subsidiaryId: SUB.logistics, category: 'Natural Gas', reportingPeriod: 'quarterly', periodValue: 'Q1' });
-  created.push(id);
-  const saved = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })).json();
+  const saved = await saveDraft(page, request);
   expect(saved).toMatchObject({ activityUnit: 'kWh', activityValue: 1000, parameters: { cvBasis: 'gross' } });
   expect(saved.calculation.kgCo2e).toBeCloseTo(EXPECTED_KG, 9);
 });
-
-const savedQ1 = async (request: import('@playwright/test').APIRequestContext) => {
-  const token = await getAccessToken(request, ENTRY_EMAIL);
-  const id = await findRecordId(request, token, { subsidiaryId: SUB.logistics, category: 'Natural Gas', reportingPeriod: 'quarterly', periodValue: 'Q1' });
-  created.push(id);
-  return (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })).json();
-};
 
 test('a gross MWh bill shows its net figure in MWh and is saved in MWh (ng-kwh-form)', async ({ page, request }) => {
   await newBill(page, 'MWh');
@@ -354,9 +374,7 @@ test('a gross MWh bill shows its net figure in MWh and is saved in MWh (ng-kwh-f
   await expect(page.getByTestId('gas-energy-derived-net')).toContainText('0.9 MWh');
   // 1 MWh gross × 0.9 × 0.2 = 180 kg.
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.18');
-  await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
-  await expect(page.getByText(enDataEntry.draftSaved)).toBeVisible();
-  const saved = await savedQ1(request);
+  const saved = await saveDraft(page, request);
   expect(saved).toMatchObject({ activityUnit: 'MWh', activityValue: 1, parameters: { cvBasis: 'gross' } });
   expect(saved.calculation.kgCo2e).toBeCloseTo(EXPECTED_KG, 9);
 });
@@ -377,9 +395,7 @@ test('a change of scale keeps the basis, and a net kWh bill is saved as entered 
   await value.fill('1000');
   // 1,000 kWh net × 0.2 = 200 kg.
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0.2');
-  await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
-  await expect(page.getByText(enDataEntry.draftSaved)).toBeVisible();
-  const saved = await savedQ1(request);
+  const saved = await saveDraft(page, request);
   expect(saved).toMatchObject({ activityUnit: 'kWh', activityValue: 1000, parameters: { cvBasis: 'net' } });
   expect(saved.calculation.kgCo2e).toBeCloseTo(1000 * E2E_TR_INPUTS.gasFactor, 9);
 });

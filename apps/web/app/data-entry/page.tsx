@@ -61,6 +61,8 @@ import {
   clearsNetEnergyQuantity,
   copyKeepsOwnUnit,
   basisAfterUnitChange,
+  previewedNetSource,
+  unitCategoryAfterReset,
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
@@ -1366,6 +1368,9 @@ function DataEntryPageInner() {
     setCopying(false);
     setOwnUnit(null);
     setOwnBasis(null);
+    // The next record does not inherit a bill's kWh or MWh: it is narrowed to
+    // the category's first unit, m³ under the TR rules (ng-kwh-form review).
+    setUnitCategory((c) => unitCategoryAfterReset(activityUnit, c));
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
@@ -2152,6 +2157,7 @@ function DataEntryPageInner() {
                       quantity={valueCheck.ok ? valueCheck.value : null}
                       unit={activityUnit}
                       reference={reference}
+                      previewed={previewedNetSource(preview)}
                       issue={gasEnergyProblem}
                       // The figure is the bill's; the basis says how to read it, so it stays.
                       onChange={(cvBasis) => setGasInputs((prev) => ({ ...prev, cvBasis }))}

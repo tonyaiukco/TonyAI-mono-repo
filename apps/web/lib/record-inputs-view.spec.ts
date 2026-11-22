@@ -28,6 +28,8 @@ import {
   copyKeepsOwnUnit,
   unitChangeClearsBasis,
   basisAfterUnitChange,
+  unitCategoryAfterReset,
+  previewedNetSource,
   unitChangeClearsQuantity,
   leakRateOf,
   leakRatePercent,
@@ -179,6 +181,35 @@ describe('the basis a unit change leaves (ng-kwh-engine, third review)', () => {
     expect(basisAfterUnitChange('standard_cubic_metres', 'MWh', null, own)).toBeNull();
     expect(basisAfterUnitChange('standard_cubic_metres', 'kWh', null, { unit: 'kWh', cvBasis: null })).toBeNull();
     expect(basisAfterUnitChange('standard_cubic_metres', 'kWh', null, { unit: null, cvBasis: null })).toBeNull();
+  });
+  it('keeps the basis the user chose across kWh and MWh, even back onto the record\'s own unit (ng-kwh-form review)', () => {
+    // A stored NET draft in kWh: the user picks gross, goes to MWh and back to kWh.
+    const net = { unit: 'kWh', cvBasis: 'net' as const };
+    const inMwh = basisAfterUnitChange('kWh', 'MWh', 'gross', net);
+    expect(inMwh).toBe('gross');
+    expect(basisAfterUnitChange('MWh', 'kWh', inMwh, net)).toBe('gross');
+    // The reverse: an own MWh record, left for kWh and returned to.
+    expect(basisAfterUnitChange('kWh', 'MWh', 'gross', { unit: 'MWh', cvBasis: 'net' })).toBe('gross');
+  });
+  it('still restores the stored basis after a detour through a volume unit', () => {
+    const net = { unit: 'kWh', cvBasis: 'net' as const };
+    expect(basisAfterUnitChange('cubic_metres', 'kWh', null, net)).toBe('net');
+  });
+});
+
+describe('the unit the next record starts on after a reset (ng-kwh-form review)', () => {
+  it.each([
+    ['kWh', 'Natural Gas'],
+    ['MWh', 'Natural Gas'],
+  ] as const)('lets go of a bill\'s %s, so the next record is narrowed to its category\'s first unit', (unit, category) => {
+    expect(unitCategoryAfterReset(unit, category)).toBe('');
+  });
+  it.each([
+    ['standard_cubic_metres', 'Natural Gas'],
+    ['cubic_metres', 'Natural Gas'],
+    ['litres', 'Diesel'],
+  ] as const)('keeps %s with its category', (unit, category) => {
+    expect(unitCategoryAfterReset(unit, category)).toBe(category);
   });
 });
 
@@ -343,6 +374,29 @@ describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
     expect(html).toContain(MESSAGES[locale].dataEntry.inputs.notAuthoritative.trim());
   });
 
+  // A preview priced on another edition than the form's own reference read (a release sealed between the two requests).
+  const PREVIEWED = {
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1,
+    factorRelease: { ...READY.data.release, id: 'r-preview', edition: 'preview-edition' },
+    parameterRows: [
+      { ...param('reference_ncv', null, 8000), releaseId: 'r-preview', edition: 'preview-edition', id: 'p1' },
+      { ...param('reference_gcv', null, 10000), releaseId: 'r-preview', edition: 'preview-edition', id: 'p2' },
+    ],
+  } as never;
+
+  it('shows the net figure and ratio of the edition the preview priced, not the reference read (ng-kwh-form review)', () => {
+    const html = render('en', { basis: 'gross', quantity: 1000, previewed: previewedNetSource(PREVIEWED) });
+    // 8,000 / 10,000 = 0.8 from the preview's rows; the reference's 8,250 / 9,155 is not shown.
+    for (const part of ['800 kWh', '0.8', '8,000', '10,000', 'preview-edition']) expect(html).toContain(part);
+    for (const part of ['901.15', '9,155', 'test-edition']) expect(html).not.toContain(part);
+  });
+
+  it('falls back to the reference read until a preview holds the rows', () => {
+    const html = render('en', { basis: 'gross', quantity: 1000, previewed: previewedNetSource(null) });
+    expect(html).toContain('901.15 kWh');
+    expect(html).toContain('test-edition');
+  });
+
   it.each([
     ['a net bill', { basis: 'net', quantity: 1000 }],
     ['no basis yet', { quantity: 1000 }],
@@ -352,6 +406,27 @@ describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
     ['a release without its GCV', { basis: 'gross', quantity: 1000, reference: { ...READY, data: { ...READY.data, parameters: [param('reference_ncv', null, 8250)] } } }],
   ])('shows no derived figure for %s', (_case, props) => {
     expect(render('en', props)).not.toContain('gas-energy-derived-net');
+  });
+});
+
+describe('the net source a preview offers (ng-kwh-form review)', () => {
+  const snapshot = (over: object = {}) => ({
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1, factorRelease: READY.status === 'ready' ? READY.data.release : null,
+    parameterRows: [param('reference_ncv', null, 8250), param('reference_gcv', null, 9155)], ...over,
+  }) as never;
+  it('is the preview\'s own release and NCV/GCV rows', () => {
+    const source = previewedNetSource(snapshot());
+    expect(source?.release.id).toBe('r');
+    expect(source && derivedNetQuantity(1000, source.parameters)?.ratio).toBeCloseTo(8250 / 9155, 9);
+  });
+  it.each([
+    ['no preview', null],
+    ['an uncalculated preview', { snapshotSchema: 3 }],
+    ['a net bill\'s preview, which reads no ratio', snapshot({ parameterRows: [] })],
+    ['a preview without its GCV', snapshot({ parameterRows: [param('reference_ncv', null, 8250)] })],
+    ['a snapshot of an older schema', snapshot({ snapshotSchema: 2 })],
+  ])('is nothing for %s', (_case, preview) => {
+    expect(previewedNetSource(preview as never)).toBeNull();
   });
 });
 
