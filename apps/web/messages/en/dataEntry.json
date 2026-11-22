@@ -212,7 +212,8 @@
       "gross": "Gross",
       "stored": "As stored on the record."
     },
-    "basisReset": "This figure was on the net calorific basis. Outside Türkiye's rules an energy bill is priced as gross, so enter the bill's gross figure."
+    "basisReset": "This figure was on the net calorific basis. Outside Türkiye's rules an energy bill is priced as gross, so enter the bill's gross figure.",
+    "dimensionReset": "The quantity was cleared: an energy figure and a gas volume are not the same number. Enter it in the new unit."
   },
   "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",
   "selectAllLoaded": "Select all {count} loaded",

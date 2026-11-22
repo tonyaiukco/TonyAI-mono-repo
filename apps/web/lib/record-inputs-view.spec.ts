@@ -23,6 +23,7 @@ import {
   gasParameters,
   clearsNetEnergyQuantity,
   copyKeepsOwnUnit,
+  unitChangeClearsQuantity,
   leakRateOf,
   leakRatePercent,
   linesFromRecord,
@@ -139,15 +140,28 @@ describe('a bill\'s stored calorific basis (ng-kwh-engine)', () => {
   });
 
   it.each([
-    ['a net bill leaving the TR rules', 'natural_gas_energy', null, 'kWh', 'net', true],
-    ['a net MWh bill leaving the TR rules', 'natural_gas_energy', null, 'MWh', 'net', true],
-    ['a gross bill leaving the TR rules', 'natural_gas_energy', null, 'kWh', 'gross', false],
-    ['a bill with no basis', 'natural_gas_energy', null, 'kWh', null, false],
-    ['a net bill staying under the TR rules', 'natural_gas_energy', 'natural_gas_energy', 'kWh', 'net', false],
-    ['a volume reading leaving the TR rules', 'natural_gas', null, 'standard_cubic_metres', 'net', false],
-    ['a record arriving under the TR rules', null, 'natural_gas_energy', 'kWh', 'net', false],
-  ] as const)('clears the quantity for %s: %s', (_case, previous, next, unit, basis, clears) => {
-    expect(clearsNetEnergyQuantity(previous, next, unit, basis)).toBe(clears);
+    ['a net bill outside the TR rules (moved, a site re-classified, or copied there)', 'Natural Gas', null, 'kWh', 'net', true],
+    ['a net MWh bill outside the TR rules', 'Natural Gas', null, 'MWh', 'net', true],
+    ['a gross bill outside the TR rules', 'Natural Gas', null, 'kWh', 'gross', false],
+    ['a bill with no basis', 'Natural Gas', null, 'kWh', null, false],
+    ['a net bill under the TR rules', 'Natural Gas', 'natural_gas_energy', 'kWh', 'net', false],
+    ['a volume reading holding a stale basis', 'Natural Gas', 'natural_gas', 'standard_cubic_metres', 'net', false],
+    ['another category', 'Electricity', null, 'kWh', 'net', false],
+  ] as const)('clears the quantity for %s: %s', (_case, category, mode, unit, basis, clears) => {
+    expect(clearsNetEnergyQuantity(category, mode, unit, basis)).toBe(clears);
+  });
+
+  it.each([
+    ['kWh', 'standard_cubic_metres', true],
+    ['MWh', 'cubic_metres', true],
+    ['standard_cubic_metres', 'kWh', true],
+    ['kWh', 'MWh', false],
+    ['standard_cubic_metres', 'cubic_metres', false],
+    ['kWh', 'kWh', false],
+    ['kWh', 'therms', false],
+  ] as const)('a natural gas unit change from %s to %s clears the quantity: %s', (previous, next, clears) => {
+    expect(unitChangeClearsQuantity('Natural Gas', previous, next)).toBe(clears);
+    expect(unitChangeClearsQuantity('Fuel', previous, next)).toBe(false);
   });
 });
 

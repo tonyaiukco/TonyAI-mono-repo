@@ -2308,6 +2308,24 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
     }
   });
 
+  it('gives kWh and MWh records of one factor a line each, in either order, so MWh\'s ×1,000 is never lent to kWh or lost (ng-kwh-engine review)', async () => {
+    const MWH = 'definitional — 1 MWh = 1,000 kWh (exact)';
+    const reading = (id: string, periodValue: string, unit: 'kWh' | 'MWh') => makeRecord({
+      id, periodValue, activityUnit: unit,
+      calculation: v2({
+        factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease,
+        ...(unit === 'MWh' ? { conversionApplied: true, conversionFactor: 1000, conversionBasis: MWH } : {}),
+      }),
+    });
+    for (const units of [['kWh', 'MWh'], ['MWh', 'kWh']] as const) {
+      stubRecords(prisma, [reading('r-1', 'January', units[0]), reading('r-2', 'February', units[1])]);
+      const lines = (await service.assemble(admin, q)).factors.filter((f) => f.category === 'Electricity');
+      expect(lines).toHaveLength(2);
+      expect(lines.filter((f) => f.conversionBasis === MWH)).toHaveLength(1);
+      expect(lines.filter((f) => f.conversionBasis === undefined)).toHaveLength(1);
+    }
+  });
+
   it('calls a snapshot written before releases not authoritative, and says so when every figure is', async () => {
     stubRecords(prisma, [makeRecord()]);
     const data = await service.assemble(admin, q);

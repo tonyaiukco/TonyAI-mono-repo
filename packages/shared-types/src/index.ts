@@ -2699,6 +2699,11 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
    *  only refusal (with others it stays `validation_failed`). No params: the
    *  catalogue states the bound, and a spec pins it to the constant. */
   activity_value_too_large: 400,
+  /** ng-kwh-engine: an update that moves a NET natural gas bill in kWh or MWh
+   *  to another site or unit, or changes its basis, without sending the
+   *  quantity again. The stored figure was net; where the record now goes it
+   *  could be priced as something else. No params. */
+  activity_value_reentry_required: 400,
   /** params: `category` (canonical, from `CATEGORIES`). */
   evidence_required: 400,
   /** K3: approving a record of an evidence-required category with no file

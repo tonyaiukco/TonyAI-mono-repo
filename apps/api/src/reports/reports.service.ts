@@ -637,12 +637,12 @@ export class ReportsService {
       }
       const calc = (r.calculation ?? {}) as Snapshot;
       const provenance = isProvenanceSnapshot(snapshot) ? snapshot : null;
-      // A gross energy bill (ng-kwh-engine) shares its factor and its absent
-      // conversion with a net one, but not its gross-to-net step: its own line,
-      // so the appendix neither hides the step nor states it for net bills.
-      const grossToNet = provenance !== null && 'parameters' in provenance &&
-        provenance.parameters.some((p) => p.name === 'grossToNetRatio');
-      const pathKey = `${calc.factorId}|${provenance?.conversion?.id ?? ''}${grossToNet ? '|gross-to-net' : ''}`;
+      // Keyed on the steps actually taken too (ng-kwh-engine review): records
+      // that share a factor and a conversion row (or none) can still differ in
+      // their steps, kWh against MWh's ×1,000, a net bill against a gross one's
+      // reduction. One line per path, so the appendix never lends one record's
+      // steps to another.
+      const pathKey = `${calc.factorId}|${provenance?.conversion?.id ?? ''}|${calc.conversionBasis ?? ''}`;
       if (calc.factorId && !factorByPath.has(pathKey)) {
         factorByPath.set(pathKey, {
           category: r.category,

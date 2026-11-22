@@ -557,9 +557,33 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     const created = await failure(savedTr(bill({ cvBasis: null }, 'April')));
     expect(created).toMatchObject({ code: 'parameters_required' });
     const energy = await savedTr(bill({ cvBasis: 'net' }, 'May'));
-    const updated = await failure(records.update(tenant.users.dataEntry, energy.id, { parameters: { cvBasis: null } } as never));
+    // The quantity sent too: without it the re-entry rule answers first (its own case).
+    const updated = await failure(records.update(tenant.users.dataEntry, energy.id, { activityValue: 1000, parameters: { cvBasis: null } } as never));
     expect(updated).toMatchObject({ code: 'parameters_required' });
     expect((await row(energy.id)).parameters).toEqual({ cvBasis: 'net' });
+  });
+
+  it('asks for a net bill\'s quantity again when an update moves it to another site or unit without one, and moves it when sent (ng-kwh-engine review)', async () => {
+    await loadTr();
+    const { records } = lifecycleServices(runtime);
+    const net = await savedTr(bill({ cvBasis: 'net' }, 'August'));
+    const other = await owner.location.create({
+      data: { subsidiaryId: tenant.subsidiaryId, name: `K11 TR ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
+    });
+    const moved = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id, parameters: null } as never));
+    expect(moved).toMatchObject({ response: { code: 'activity_value_reentry_required', statusCode: 400 } });
+    // An explicit null quantity inherits the stored figure too (security-rls re-review).
+    const nulled = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id, parameters: null, activityValue: null } as never));
+    expect(nulled).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
+    const toVolume = await failure(records.update(tenant.users.dataEntry, net.id, { activityUnit: 'standard_cubic_metres', parameters: null } as never));
+    expect(toVolume).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
+    expect((await row(net.id))).toMatchObject({ activityUnit: 'kWh', activityValue: 1000, parameters: { cvBasis: 'net' } });
+    // With the quantity sent again, the move is the user's own figure.
+    const resent = await records.update(tenant.users.dataEntry, net.id, { locationId: other.id, activityValue: 1000 } as never);
+    expect(resent).toMatchObject({ locationId: other.id, parameters: { cvBasis: 'net' } });
+    // A gross bill keeps its figure on a move: gross is what every geography prices.
+    const gross = await savedTr(bill({ cvBasis: 'gross' }, 'September'));
+    expect(await records.update(tenant.users.dataEntry, gross.id, { locationId: other.id } as never)).toMatchObject({ locationId: other.id });
   });
 
   it('refuses at submit, and at bulk submit, a kWh bill a direct writer stripped of its basis or flipped to the other: stale, nothing committed (ng-kwh-engine)', async () => {

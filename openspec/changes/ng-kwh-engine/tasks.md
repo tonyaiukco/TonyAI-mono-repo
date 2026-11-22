@@ -193,6 +193,23 @@
 
   Verify: Current status holds at most ten entries.
 
+## 7. Second review (the owner's branch review, 2026-11-21)
+
+- [x] 7.1 Finding 1: a natural gas unit change between energy and volume clears the quantity and the basis (`unitChangeClearsQuantity`, the unit select's handler, `inputs.dimensionReset`), and an opened or copied record's own unit stays listed (`ownUnit`). Verify: `record-inputs-view.spec.ts` and the e2e case "switching an imported kWh bill to Sm³" pass. *Result: pass.*
+- [x] 7.2 Finding 2, web: the net-basis clear is a state checked once the geography is known (`clearsNetEnergyQuantity(category, mode, unit, basis)`), so an opened draft whose site was re-classified, or a copy under a non-TR subsidiary, is caught too. Verify: the helper's spec and the copy-to-UK e2e pass. *Result: pass.*
+- [x] 7.3 Finding 2, API: `update` refuses with the new code `activity_value_reentry_required` (400) a stored NET bill moved to another site, category, unit or basis without `activityValue` (`inheritsNetBillQuantityElsewhere`). The code is registered, with TR/EN copy and an `api-error.spec` thrower. Verify: the unit spec and the `calculation-staleness` int case (a refused move, a refused switch to Sm³, the move with its quantity, a gross bill moving freely) pass. *Result: pass (int 27).*
+- [x] 7.4 Finding 3: the report appendix keys a path by `factorId|conversionId|conversionBasis`, so kWh and MWh records, and net and gross bills, keep their own lines. Verify: the mixed-unit spec, in both orders, passes. *Result: pass; e2e `reports` green.*
+- [x] 7.5 P3: the direct-only factor read keeps its own REPEATABLE READ batch (spec asserts it); `calorific_basis_mismatch` copy is basis-neutral (API, EN, TR); the design states the database guarantees only the value's shape, and covers the rollout window before an automatic rollback. The bulk panel's English row messages in Turkish are filed (Open questions): every bulk issue shows the server sentence, not only these. Verify: typecheck, lint (0 errors), unit tests, `openspec validate --strict`. *Result: api 3,962, web 1,336, shared-types 512, db 251; int 210 (four files); e2e 31 (`natural-gas-energy-bill` 3, `record-edit`, `data-entry-tr-inputs`, `void-record`, `reports`, `smoke`).*
+
+- [x] 7.6 Re-review of the delta (`security-rls`, `qa-auditor`; a second design, the API's re-entry rule): no blocker. Fixed:
+  - `security-rls`: `activityValue: null` skipped the re-entry rule (the DTO lets null through and the service inherits it); the guard now reads `== null`, with an int case;
+  - both seats: unit spellings are compared as stored (`kwh` is `kWh`), with spec cases;
+  - `qa-auditor` S1: `ownUnit` is refreshed on every save and cleared when the form leaves the record, so a unit the record no longer has is not listed;
+  - `qa-auditor` S2: an e2e case opens a net kWh draft whose site was re-classified to UK: cleared on opening, one notice;
+  - `qa-auditor` N1/N3: picking the own unit again brings back no basis (spec wording and e2e), and the narrowing effect drops a basis with the unit.
+
+  Filed under Open questions: kWh↔MWh keeping the figure, `PATCH {activityUnit: null}` answering 500 (pre-existing), a site missing from the loaded list skipping the form check, the guard's net-only scope. Verify: typecheck, lint (0 errors), unit tests, int, e2e. *Result: api 3,966, web 1,336, shared-types 512, db 251; int 210; e2e 35 (`natural-gas-energy-bill` 4, `record-edit`, `data-entry-tr-inputs`, `locations`, `smoke`).*
+
 ## Workflow follow-up
 
 - Branch `feat/ng-kwh-engine` (created). Commit and push on the owner's word. The owner merges, and the QA deploy runs on merge (one migration).

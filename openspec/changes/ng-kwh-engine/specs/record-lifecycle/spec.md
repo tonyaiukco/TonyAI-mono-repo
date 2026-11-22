@@ -12,3 +12,19 @@ The review sheet SHALL show, read-only, the `cvBasis` a TR natural gas record in
 #### Scenario: Reviewing a volume record
 - **WHEN** a reviewer opens the review sheet of a TR natural gas record in Sm³
 - **THEN** the sheet shows no calorific-basis line
+
+### Requirement: A net energy bill's quantity is sent again when an update moves it
+An update to a natural gas record in kWh or MWh stored with `cvBasis` `net` that changes its site, category, unit or basis SHALL carry the quantity, or be refused with `activity_value_reentry_required` (400) and change nothing. The inherited figure would otherwise be read as something it is not: outside the TR rules an energy bill is priced as gross.
+
+#### Scenario: A net bill moved to another site without its quantity
+- **WHEN** an update moves a stored net kWh bill to another site and sends no quantity
+- **THEN** it is refused with `activity_value_reentry_required`, and the record keeps its site, unit, quantity and basis
+
+#### Scenario: The quantity sent with the move
+- **WHEN** the same update also sends the quantity
+- **THEN** the record moves and is priced from the figure sent
+
+#### Scenario: A gross bill moved
+- **WHEN** an update moves a stored gross kWh bill to another site without its quantity
+- **THEN** it moves, since a gross figure is what every geography prices
+

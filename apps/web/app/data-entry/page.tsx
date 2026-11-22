@@ -60,6 +60,7 @@ import {
   equipmentTotal,
   clearsNetEnergyQuantity,
   copyKeepsOwnUnit,
+  unitChangeClearsQuantity,
   gasInputsFromRecord,
   gasInputsIssue,
   gasParameters,
@@ -70,7 +71,6 @@ import {
   type EquipmentLineDraft,
   type CopySource,
   type GasInputs,
-  type RecordInputMode,
 } from "@/lib/record-inputs-view";
 import {
   anomalyStatement,
@@ -413,6 +413,10 @@ function DataEntryPageInner() {
   // Keyed on the geography the source was priced under too: a copy moved to
   // the other side of the TR rules is narrowed like a new record (qa-auditor).
   const [copyTuple, setCopyTuple] = useState<CopySource | null>(null);
+  // The opened or copied record's own unit (ng-kwh-engine review): listed while
+  // the form is on the record's own type, so a unit picked by mistake can be
+  // undone, whatever the TR rules offer a new record.
+  const [ownUnit, setOwnUnit] = useState<string | null>(null);
   // The submitted record whose recall waits for the user's confirmation.
   const [recallTarget, setRecallTarget] = useState<ActivityRecordPageItemDTO | null>(null);
   const [recalling, setRecalling] = useState(false);
@@ -475,10 +479,14 @@ function DataEntryPageInner() {
   // kg or tonnes for marine gas oil (UAT2 BUG-R2-11).
   const unitOptions = useMemo(() => {
     const offered = unitsForRecord(category, effectiveGeography, activityType);
-    if (!onOwnType || offered.some((u) => u.value === activityUnit)) return offered;
-    const own = unitsForCategory(category).find((u) => u.value === activityUnit);
-    return own ? [...offered, own] : offered;
-  }, [category, effectiveGeography, activityType, onOwnType, activityUnit]);
+    if (!onOwnType) return offered;
+    const kept = [ownUnit, activityUnit]
+      .filter((unit): unit is string => unit !== null && !offered.some((u) => u.value === unit))
+      .filter((unit, index, all) => all.indexOf(unit) === index)
+      .map((unit) => unitsForCategory(category).find((u) => u.value === unit))
+      .filter((u): u is NonNullable<typeof u> => u !== undefined);
+    return [...offered, ...kept];
+  }, [category, effectiveGeography, activityType, onOwnType, activityUnit, ownUnit]);
   const marineGasOil = category === "Mobile Combustion" && activityType === MARINE_GAS_OIL_ACTIVITY_TYPE;
   const inputMode = recordInputMode(category, effectiveGeography, activityUnit);
   const refrigerantMode = inputMode === "refrigerant";
@@ -1113,6 +1121,10 @@ function DataEntryPageInner() {
     const units = unitsForRecord(category, effectiveGeography, activityType);
     if (units.length > 0 && !units.some((u) => u.value === activityUnit)) {
       setActivityUnit(units[0].value);
+      // A bill's basis means nothing for the volume it is narrowed to (qa-auditor N3).
+      if (unitChangeClearsQuantity(category, activityUnit, units[0].value)) {
+        setGasInputs((prev) => ({ ...prev, cvBasis: null }));
+      }
       if (activity.text.trim() !== "") {
         activity.setValue(null);
         toast.info(t("inputs.unitReset", { unit: unitSymbol(units[0].value) }));
@@ -1131,23 +1143,39 @@ function DataEntryPageInner() {
     if (refrigerantMode && !editingId && reportingPeriod !== "annual") handlePeriodChange("annual");
   }, [refrigerantMode, editingId, reportingPeriod]);
 
-  // A net bill leaving the TR rules (ng-kwh-engine): outside them an energy
-  // bill is priced as gross and no basis is sent, so the net figure is cleared
-  // and asked for again rather than priced as gross without a word. Its basis
-  // goes with it: a figure typed meanwhile is gross, and returning to the TR
-  // rules must not price it as net (qa-auditor S1), so the API then asks again.
-  const previousInputMode = useRef<RecordInputMode>(inputMode);
+  // A net bill where nothing prices it as net (ng-kwh-engine): outside the TR
+  // rules an energy bill is priced as gross and no basis is sent, so the net
+  // figure is cleared and asked for again rather than priced as gross without
+  // a word. A state, checked once the geography is known: a move, an opened
+  // draft whose site was re-classified since, a copy into another subsidiary.
+  // Its basis goes with it: a figure typed meanwhile is gross, and returning
+  // to the TR rules must not price it as net (qa-auditor S1).
+  const geographyKnown =
+    effectiveGeography !== null && (locationId === "" || selectedLocation !== null);
   useEffect(() => {
-    const previous = previousInputMode.current;
-    previousInputMode.current = inputMode;
-    if (!clearsNetEnergyQuantity(previous, inputMode, activityUnit, gasInputs.cvBasis)) return;
+    if (!geographyKnown) return;
+    if (!clearsNetEnergyQuantity(category, inputMode, activityUnit, gasInputs.cvBasis)) return;
     setGasInputs((prev) => ({ ...prev, cvBasis: null }));
     if (activity.text.trim() !== "") {
       activity.setValue(null);
       toast.info(t("inputs.basisReset"));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputMode]);
+  }, [geographyKnown, category, inputMode, activityUnit, gasInputs.cvBasis]);
+
+  // A natural gas unit changed between energy and volume (ng-kwh-engine
+  // review): the figure is not the same number in the other dimension, and a
+  // bill's basis means nothing for a volume, so both are cleared.
+  function handleUnitChange(next: string) {
+    const clears = unitChangeClearsQuantity(category, activityUnit, next);
+    setActivityUnit(next);
+    if (!clears) return;
+    setGasInputs((prev) => ({ ...prev, cvBasis: null }));
+    if (activity.text.trim() !== "") {
+      activity.setValue(null);
+      toast.info(t("inputs.dimensionReset"));
+    }
+  }
 
   function resetInputs(parameters: unknown = null) {
     setGasInputs(gasInputsFromRecord(parameters));
@@ -1225,6 +1253,7 @@ function DataEntryPageInner() {
     setActivityType(rec.activityType ?? "");
     activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
+    setOwnUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
     if (hasContextValue(rec.input)) setContextOpen(true);
@@ -1271,6 +1300,7 @@ function DataEntryPageInner() {
     setEditingId(null);
     setEditingCreatedBy(null);
     setEditingTuple(null);
+    setOwnUnit(null);
     toast.info(t("nowEnteringNew"));
   }, [
     editingId,
@@ -1296,6 +1326,7 @@ function DataEntryPageInner() {
     setContextOpen(false);
     clearEditChoices();
     setCopying(false);
+    setOwnUnit(null);
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
@@ -1475,6 +1506,8 @@ function DataEntryPageInner() {
       setEditingId(rec.id);
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
+      // The saved record is the open one again: its own unit is the one saved.
+      setOwnUnit(rec.activityUnit);
       setVerdict(verdictOf(rec));
       if (wasEditing) {
         // A first period has no history: its flag is the typo ceiling, and the
@@ -1544,6 +1577,8 @@ function DataEntryPageInner() {
       setEditingId(rec.id);
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
+      // The saved record is the open one again: its own unit is the one saved.
+      setOwnUnit(rec.activityUnit);
       setVerdict(verdictOf(rec));
       // A file that did not upload: the record stays a draft, the vault lists
       // the file with Retry, and nothing is submitted (BUG-R2-05).
@@ -1670,6 +1705,7 @@ function DataEntryPageInner() {
       setActivityType(values.activityType);
       activity.setValue(values.activityValue);
       setActivityUnit(values.activityUnit);
+      setOwnUnit(values.activityUnit);
       setContext((values.input as ContextValues | null) ?? {});
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
@@ -2029,7 +2065,7 @@ function DataEntryPageInner() {
                       )}
                     </Field>
                     <Field label={t("unit")}>
-                      <Select value={activityUnit} onValueChange={setActivityUnit}>
+                      <Select value={activityUnit} onValueChange={handleUnitChange}>
                         {/* Named: the Additional context card has a field labelled Unit too. */}
                         <SelectTrigger aria-label={t("unit")}>
                           <SelectValue />

@@ -208,6 +208,23 @@ export class ApprovalEvidenceMissingError extends BadRequestException {
   }
 }
 
+/**
+ * A stored NET natural gas bill (kWh or MWh) moved to another site or unit, or
+ * given another basis, by an update that sends no quantity (ng-kwh-engine). The
+ * figure inherited would be read as something it is not: outside the TR rules
+ * an energy bill is priced as gross, and a volume is another number entirely.
+ */
+export class ActivityValueReentryRequiredError extends BadRequestException {
+  constructor() {
+    super(
+      errorBody(
+        'activity_value_reentry_required',
+        'This record\'s quantity is a net energy figure. Send the quantity again with its new site, unit or calorific basis.',
+      ),
+    );
+  }
+}
+
 /** An anomalous figure with no variance reason. */
 export class VarianceReasonRequiredError extends BadRequestException {
   constructor(readonly basis: VarianceBasis = 'history') {

@@ -56,7 +56,21 @@
     - `security-rls` verified the CHECK (expand-only, fail-closed, smuggling refused, md5 matches), the 404-before-library order, and `directBasis` having one caller.
     - `qa-auditor` recomputed the golden vectors, ran the old engine against the snapshots, and killed 8 of 8 mutations. It found two web defects, now fixed: a net basis restored after a round trip outside TR (data integrity), and a copy tuple that ignored geography.
     - `architect` found the report disclosure gap, a spec sentence and an untested selector, all fixed. The rest is under Open questions.
-  - **Next:** the owner commits and pushes, opens the PR, and merges. `ng-kwh-form` (LP4-06, the second change) follows.
+  - **Owner's branch review (2026-11-21), all fixed:**
+    - a kWh bill switched to Sm³ kept its figure: energy↔volume now clears it, and the own unit stays listed;
+    - a net figure could be read as gross on an opened re-classified draft, a copy, or an API update without the quantity: the form checks a state, and the API answers `activity_value_reentry_required` (400, a new code);
+    - the appendix merged kWh and MWh steps: it now keys on the steps;
+    - the direct-only read kept its REPEATABLE READ batch;
+    - the basis-mismatch copy is basis-neutral;
+    - the design's database claim is narrowed, and the rollout window is documented.
+
+    A re-review (`security-rls`, `qa-auditor`) found no blocker. Its fixes:
+    - an `activityValue: null` bypass of the re-entry rule;
+    - the own-unit list after a save;
+    - an e2e case for a re-classified site.
+
+    After all fixes: api 3,966, web 1,336, int 210, e2e 35.
+  - **Next:** the owner opens the PR and merges. `ng-kwh-form` (LP4-06, the second change) follows.
 - **UAT ROUND 3, CHANGE 2 (D4): COVERAGE REFUSALS ANSWER HTTP 422, MERGED AS [PR #338](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/338) (merge `863185e`), DEPLOYED (`ci72-1`, 0 migrations), ARCHIVED as `openspec/changes/archive/2026-11-20-calc-refusal-422/`, which syncs `emission-calculation` (Claude Code; OpenSpec `calc-refusal-422`, branch `fix/calc-refusal-422`; 2026-11-20; Decisions 2026-11-20 D4, v2.4 §1.1).** API contract change; no migration.
   - **What:** `no_factor`, `placeholder_refused`, `no_conversion` and `calorific_basis_mismatch` answer 422 (`CALCULATION_REFUSAL_STATUS`; `NoEmissionFactorError` now extends `UnprocessableEntityException`, both in one commit, because the error filter drops a code thrown at a status the registry does not give it). The refusal status unions are `400 | 409 | 422`. Input refusals stay 400, library conflicts 409, and an unreachable subsidiary, location or record the plain 404. Bulk submit maps a raw coverage or library error to `calculation_stale`, never `not_found`. `docs/api/endpoints.md` states the statuses.
   - **Measured locally:** typecheck, lint (0 errors), build; unit tests api 3,893, shared-types 506, db 251, web 1,300. Mutations: the map alone reverted fails 6 tests, the class alone 7, the bulk-submit branch removed 3. `HttpExceptionFilter` answers each coverage code with 422, its code and coverage, at warn, with no Sentry report. `test:int`: 31 of 34 files pass, `factor-model`'s foreign-subsidiary 404 included; the other 3 are rate-limited locally exactly as on `main` (Open questions). Live API: own subsidiary, UK electricity 2031 → 422 `no_factor` with `coverage`; an unknown subsidiary → 404 `subsidiary_not_found`.
@@ -1592,6 +1606,12 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
   - **"Typed natural gas inputs are bounded" wording:** on a kWh or MWh record, `parameters_not_applicable` answers before a range code. The requirement could say "on a record in Sm³ or m³".
   - **`cvBasis` on therms or GJ** answers 422 `calorific_basis_mismatch`, not `parameters_not_applicable`. It fails closed; the spec does not cover the case.
   - **Older TR kWh drafts, or copies, without a basis** now open in the energy mode, and their refusal asks for net or gross with no control to give it until `ng-kwh-form`. Committed seed records are frozen.
+  - **Bulk row messages are English in the Turkish UI:** the panel prints each row issue's server sentence (`bulk-upload-panel.tsx`, `IssueItem`), the new `cvBasis` refusals as every other. A localised row message needs a code or a selector per cell issue (owner's branch review, 2026-11-21).
+  - **Unit changes within one dimension keep the figure:** kWh↔MWh (×1,000) and kWh↔therms keep the number on Data Entry for every category, as before; only natural gas energy↔volume clears it (`ng-kwh-engine` re-review).
+  - **`PATCH /activity-records/:id {activityUnit: null}` answers 500:** the DTO lets null through and `storedUnit(null)` throws. Nothing is written. This predates `ng-kwh-engine` (security-rls re-review).
+  - **The re-entry rule's scope:**
+    - it guards only a stored NET bill; a gross bill switched to net by the API, or a non-TR kWh record moved to TR with `cvBasis: 'net'`, keeps its figure, because the caller states the basis;
+    - Data Entry's net check needs the site in the loaded location list; a missing site falls back to the subsidiary's geography (narrow; security-rls note).
   - **Local e2e and the rate limiter:** UI flows against the local API answer 429 at the default `RATE_*_PER_MINUTE`. Run e2e with CI's overrides (`.github/workflows/e2e.yml`).
 
 - **Report copy still counts (`uat3-ui-polish`, filed per the pre-pilot rule):** the issued report's withdrawn note (`apps/api/src/reports/i18n/tr.json` `withdrawnNote`, "…sayılmazlar"; en `restatementListed`, "counts towards no figure") keeps the counting phrasing. The widened `record-lifecycle` wording requirement names the dashboard, Emissions, the void dialog and bulk upload, not reports. Changing it means a report renderer version bump.

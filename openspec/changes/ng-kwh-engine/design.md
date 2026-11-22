@@ -30,7 +30,7 @@ See `proposal.md` (Why) and `uat3-decisions/design.md` (D2, D3, the draft requir
 
 **Goals:**
 - Price TR natural gas in kWh and MWh on a stated basis, exactly as the spec delta says, with no effect on any Sm³, m³, UK or non-gas calculation.
-- Make the basis choice impossible to skip, from the API, the bulk file and the database.
+- Make the basis choice impossible to skip through the API and the bulk file: the engine refuses a TR energy bill without one, on create, update and every recompute. The database CHECK guarantees only the value's shape (`net`, `gross` or JSON null), not that a TR energy record has one (review of the change).
 
 **Non-Goals:**
 - The Data Entry kWh option for a new record, the NET/GROSS control and the derived-net preview (`ng-kwh-form`). `unitsForRecord` stays Sm³ and m³ until then, so no screen offers a unit the form cannot complete. An imported kWh record is the one case the form must already carry (Decision 7).
@@ -46,7 +46,7 @@ See `proposal.md` (Why) and `uat3-decisions/design.md` (D2, D3, the draft requir
 
 `resolveFactorPath` and `lookupFactorPath` take an optional `directBasis`. When it is given, the lookup is **direct-only**:
 - a factor must be in the base unit and on that basis;
-- `candidates()` issues **no `unitConversion` query**, in the pricing pass and in the diagnostic pass alike;
+- `candidates()` issues **no `unitConversion` query**, in the pricing pass and in the diagnostic pass alike, and still reads the factors in a REPEATABLE READ batch of its own (second review: Prisma reads a factor and its release in two statements, and a withdrawal between them would drop the factor chosen);
 - the resolver receives `conversions: []`;
 - the resolver itself builds **no conversion path** when `directBasis` is given, whatever conversions it is handed. The shared contract does not rely on its caller passing an empty list.
 
@@ -144,6 +144,8 @@ Once this change ships, bulk upload can create TR kWh drafts, and Data Entry can
   - A gross basis keeps the quantity, because gross is what the target prices.
   - A net basis is cleared **with** the quantity (`qa-auditor` review, data integrity). Kept, it would come back on a return to TR and price the gross figure typed meanwhile as net, about 11% high. After the return the API answers `parameters_required` until a basis is stated.
 - **The preview names the step.** A gross bill's preview says it was reduced to net by the release's ratio (`preview.grossToNet`, from `grossToNetRatioOf`), and the "converted from kWh to kWh" line is no longer shown when the unit did not change.
+- **A state, not a move (second review).** The net-basis clear is a condition the form checks once the geography is known, not a transition it watches: an opened draft whose site's geography changed since, or a copy placed under a non-TR subsidiary, is caught too (`clearsNetEnergyQuantity(category, mode, unit, basis)`).
+- **Energy and volume do not share a number (second review).** A natural gas unit change between kWh/MWh and Sm³/m³ clears the quantity and the basis (`unitChangeClearsQuantity`, the select's handler); before, 1,000 kWh became 1,000 Sm³, about ten times the figure. The opened or copied record's own unit stays listed while the form is on its own type (`ownUnit`), so the change can be undone.
 - **No release fetch in the energy mode.** `GET /factors/parameters` resolves the Sm³ path; the energy mode reads nothing from it, so the form does not call it.
 - **Review sheet.** `apps/web/app/review/page.tsx` adds a read-only "Calorific basis" row under the activity row when `record.parameters.cvBasis` is present. The record read DTO already carries `parameters`. Without it, the approver could not check the basis against the bill, which is the guard the Risks section relies on.
 - **Specs.**
@@ -166,10 +168,16 @@ The snapshot stays at schema 3. A new snapshot key or a schema bump would mark e
 
 ### 8. Reports disclose the gross-to-net step
 
-Added after the `architect` review. A report's calculation-inputs cell (`common/calculation-inputs.ts`, shared by live and issued reports) names a gross bill's `grossToNetRatio` ("gross to net ×0.901147"). The factor appendix keys a gross bill's path apart (`factorId|conversionId|gross-to-net`), because a net and a gross bill share the factor and the absent conversion, and the first record seen would otherwise lend its `conversionBasis` to both.
+Added after the `architect` review. A report's calculation-inputs cell (`common/calculation-inputs.ts`, shared by live and issued reports) names a gross bill's `grossToNetRatio` ("gross to net ×0.901147"). The factor appendix keys a path by its factor, its conversion row **and its conversion steps** (`factorId|conversionId|conversionBasis`, second review): records that share a factor and no conversion can still differ in their steps (net against gross, kWh against MWh's ×1,000), and the first record seen would otherwise lend its steps to the others.
 
-- Every other path key is unchanged, so no existing report's appendix moves.
+- A report that mixed kWh and MWh records of one factor now shows two lines where it showed one, the second naming MWh's ×1,000. That corrects an existing misattribution; no figure changes.
 - The issuance renderers become `tonyai-issuance-pdf-v5` and `tonyai-issuance-tables-v5`. No issued dataset holds a gross bill, so no figure, row or fingerprint of an earlier issuance changes.
+
+### 9. The API asks for a net bill's quantity again when an update moves it (second review)
+
+An update inherits every field it does not send, the quantity included. A stored net kWh bill moved by the API to a UK site with its basis dropped would be priced as a gross figure. `ActivityRecordsService.update` therefore refuses, with `activity_value_reentry_required` (400), an update to a stored NET bill that changes its site, category, unit or basis without the quantity (`inheritsNetBillQuantityElsewhere`). Data Entry always sends the quantity, so only direct API callers meet it. A gross bill moves freely, since gross is what every geography prices.
+
+- **Alternative: compare the geography of the old and new site.** Rejected: it needs the site lookup before the rule, and a stricter rule costs a direct caller one field.
 
 ## Risks / Trade-offs
 
@@ -185,6 +193,7 @@ Added after the `architect` review. A report's calculation-inputs cell (`common/
 ## Migration Plan
 
 - **Order.** One migration, expand-only. Deploy order is migrate → image, as usual; the old image never writes `cvBasis`. The re-pinned `INTEGRITY_CHECKS` hash ships in the same PR, so the runtime-role verification reads the new definition as expected.
+- **The window before a failed rollout's rollback (second review).** `QA deploy` serves the new API before its smoke check (`infra/scripts/qa_autodeploy.py`), so a record written with `cvBasis` in that window meets the old image after an automatic rollback. The old image refuses to recompute or edit it (its engine refuses kWh, its DTO refuses the key): the record reads as stale and is fixed after the forward fix ships. Nothing is mispriced, and the CHECK still admits the row. On QA no pilot data is written in a rollout window.
 - **A rollout that fails (automatic).** `QA deploy`'s rollback step (runbook 11, step 7) redeploys the previous images when rollout, verification, smoke, budget or cancel fails. The migration stays applied, since migrations are never rolled back. The old image runs against the widened CHECK safely: it never writes `cvBasis`, and the expand-only CHECK still admits every shape it writes.
 - **A rollout that succeeded, then a defect (fix forward).** The on-demand `QA rollback` refuses a candidate whose migration chain differs from the live source's (runbook 11, "On-demand rollback"). After this change, every earlier candidate differs. So a defect found after a successful deploy is fixed forward, with a new PR through `QA deploy`.
   - A calculation defect can be contained in that fix by refusing the energy path again: `assertTrGasUnit` answers `calorific_basis_mismatch` for kWh, with no migration. Open kWh records then read as stale, which is fail-closed, never mispriced.

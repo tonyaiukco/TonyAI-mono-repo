@@ -309,7 +309,9 @@ export class CalculationsService {
       case 'no_conversion':
         return `The emission factor for ${what} is quoted in another unit, and no sourced conversion from "${quoteCallerText(key.unit)}" to it is loaded.`;
       case 'calorific_basis_mismatch':
-        return `The emission factors for ${what} are stated on a different calorific basis than "${quoteCallerText(key.unit)}" (a fuel's kWh is billed on gross calorific value).`;
+        // Basis-neutral (ng-kwh-engine review): a fuel's billed kWh looks for a
+        // gross factor, a TR gas bill for a net one.
+        return `The emission factors for ${what} are stated on a different calorific basis than "${quoteCallerText(key.unit)}" needs here.`;
       default:
         return `No emission factor found for ${what}`;
     }

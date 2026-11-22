@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enReview from '../apps/web/messages/en/review.json';
+import enUnits from '../apps/web/messages/en/units.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
@@ -13,6 +14,7 @@ import {
   approveRecord,
   attachEvidence,
   bearer,
+  cleanupE2ELocations,
   cleanupTrInputsFixture,
   deleteRecordsAsService,
   getAccessToken,
@@ -42,7 +44,10 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => seedTrInputsFixture());
-test.afterAll(async () => cleanupTrInputsFixture());
+test.afterAll(async ({ request }) => {
+  await cleanupE2ELocations(request);
+  await cleanupTrInputsFixture();
+});
 
 /** The records a test imported, removed after it whatever its outcome. */
 const created: string[] = [];
@@ -54,11 +59,11 @@ const SUBSIDIARY_OPTION = 'TonyAI Logistics (TR)';
 const LOGISTICS = 'TonyAI Logistics';
 const EXPECTED_KG = 1000 * (E2E_TR_INPUTS.referenceNcv / E2E_TR_INPUTS.referenceGcv) * E2E_TR_INPUTS.gasFactor;
 
-const csv = (cvBasis: string, periodValue = 'Q1') =>
+const csv = (cvBasis: string, periodValue = 'Q1', locationId = '') =>
   Buffer.from(
     [
       'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason,cvBasis',
-      [SUB.logistics, '', String(E2E_TR_INPUTS_YEAR), 'quarterly', periodValue, 'Natural Gas', '1000', 'kWh', '', cvBasis].join(','),
+      [SUB.logistics, locationId, String(E2E_TR_INPUTS_YEAR), 'quarterly', periodValue, 'Natural Gas', '1000', 'kWh', '', cvBasis].join(','),
     ].join('\n'),
     'utf8',
   );
@@ -172,5 +177,77 @@ test('a voided net kWh bill is copied with its unit, quantity and basis, and mov
   await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
   await expect(page.getByTestId('gas-energy-basis')).toHaveCount(0);
   await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+});
+
+test('switching an imported kWh bill to Sm³ clears its figure and basis, and kWh stays on offer (ng-kwh-engine review)', async ({ page, request }) => {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const res = await postBulkImport(request, token, { buffer: csv('gross', 'Q3'), dryRun: 'false' });
+  expect(res.ok(), await res.text()).toBe(true);
+  const report = await res.json();
+  expect(report.errors).toEqual([]);
+  created.push(report.accepted[0].recordId as string);
+
+  await login(page, ENTRY_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_TR_INPUTS_YEAR));
+  await listOf(page).getByRole('button', { name: `Edit Q3 ${E2E_TR_INPUTS_YEAR} Natural Gas` }).click();
+  const value = page.getByPlaceholder(enDataEntry.activityValuePlaceholder);
+  await expect(value).toHaveValue('1000');
+
+  // 1,000 kWh is not 1,000 Sm³: the figure and the basis go, never priced as a volume.
+  const unit = page.getByRole('combobox', { name: enDataEntry.unit, exact: true });
+  await unit.click();
+  await page.getByRole('option', { name: enUnits.label.standard_cubic_metres, exact: true }).click();
+  await expect(page.getByText(enDataEntry.inputs.dimensionReset)).toBeVisible();
+  await expect(value).toHaveValue('');
+  await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+
+  // The record's own unit is still listed, so the change can be undone.
+  await unit.click();
+  await expect(page.getByRole('option', { name: 'kWh', exact: true })).toBeVisible();
+  await page.getByRole('option', { name: 'kWh', exact: true }).click();
+  await expect(unit).toHaveText('kWh');
+  // Undoing does not bring a basis back: none is shown, and nothing is priced until one is stated (qa-auditor N1).
+  await value.fill('1000');
+  await expect(page.getByTestId('gas-energy-basis')).toHaveCount(0);
+  await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+});
+
+test('a net kWh draft opened after its site was re-classified outside Türkiye asks for the gross figure, once (ng-kwh-engine review)', async ({ page, request }) => {
+  const admin = await getAccessToken(request, ADMIN_EMAIL);
+  const created_ = await request.post(`${API_BASE}/locations`, {
+    headers: bearer(admin),
+    data: { subsidiaryId: SUB.logistics, name: 'E2E ng-kwh re-classified site', geographyCode: 'TR' },
+  });
+  expect(created_.ok(), await created_.text()).toBe(true);
+  const site = (await created_.json()) as { id: string };
+
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const res = await postBulkImport(request, token, { buffer: csv('net', 'Q4', site.id), dryRun: 'false' });
+  expect(res.ok(), await res.text()).toBe(true);
+  const report = await res.json();
+  expect(report.errors).toEqual([]);
+  created.push(report.accepted[0].recordId as string);
+
+  // The site is re-classified after the draft was priced under the TR rules.
+  const moved = await request.patch(`${API_BASE}/locations/${site.id}`, { headers: bearer(admin), data: { geographyCode: 'UK' } });
+  expect(moved.ok(), await moved.text()).toBe(true);
+
+  await login(page, ENTRY_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_TR_INPUTS_YEAR));
+  await listOf(page).getByRole('button', { name: new RegExp(`^Edit Q4 ${E2E_TR_INPUTS_YEAR} Natural Gas`) }).click();
+
+  // Outside Türkiye the stored net figure would be priced as gross: cleared on opening, with its basis.
+  const value = page.getByPlaceholder(enDataEntry.activityValuePlaceholder);
+  await expect(page.getByText(enDataEntry.inputs.basisReset)).toBeVisible();
+  await expect(value).toHaveValue('');
+  await expect(page.getByTestId('gas-energy-basis')).toHaveCount(0);
+  // Typing the gross figure does not set it off again.
+  await value.fill('1109.7');
+  await expect(value).toHaveValue('1109.7');
+  await expect(page.getByText(enDataEntry.inputs.basisReset)).toHaveCount(1);
 });
 

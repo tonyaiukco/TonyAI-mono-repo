@@ -140,19 +140,39 @@ export function copyKeepsOwnUnit(
 }
 
 /**
- * Whether a move must clear the quantity (ng-kwh-engine): a TR natural gas
- * bill on the NET basis leaving the TR rules (another subsidiary or site, or a
- * copy into one) while still in kWh or MWh. Outside them an energy bill is
- * priced as gross and no basis is sent, so the net figure would be priced as
- * if it were gross. A gross figure is what the target prices, so it stays.
+ * Whether the form holds a net figure where nothing prices it as net
+ * (ng-kwh-engine): a natural gas bill in kWh or MWh carrying the NET basis
+ * while the record is not under the TR rules' energy path. Outside them an
+ * energy bill is priced as gross and no basis is sent, so the figure would be
+ * priced as if it were gross. A state, not a move: it holds however the form
+ * got there, by a move, an opened draft whose site's geography changed since,
+ * or a copy into another subsidiary (review of the change). A gross figure is
+ * what the target prices, so it stays.
  */
 export function clearsNetEnergyQuantity(
-  previous: RecordInputMode,
-  next: RecordInputMode,
+  category: string,
+  mode: RecordInputMode,
   unit: string,
   cvBasis: CvBasis | null,
 ): boolean {
-  return previous === "natural_gas_energy" && next !== "natural_gas_energy" && isGasEnergyUnit(unit) && cvBasis === "net";
+  return category === "Natural Gas" && mode !== "natural_gas_energy" && isGasEnergyUnit(unit) && cvBasis === "net";
+}
+
+/** The natural gas units of a volume reading. */
+function isGasVolumeUnit(unit: string): boolean {
+  return unit === "standard_cubic_metres" || unit === "cubic_metres";
+}
+
+/**
+ * Whether a unit change must clear the quantity (ng-kwh-engine): a natural gas
+ * record moved between an energy unit (kWh, MWh) and a volume (Sm³, m³). The
+ * figure is not the same number in the other dimension, about ten times apart,
+ * and an energy bill's basis means nothing for a volume. Any other change
+ * keeps it, as before.
+ */
+export function unitChangeClearsQuantity(category: string, previous: string, next: string): boolean {
+  if (category !== "Natural Gas" || previous === next) return false;
+  return (isGasEnergyUnit(previous) && isGasVolumeUnit(next)) || (isGasVolumeUnit(previous) && isGasEnergyUnit(next));
 }
 
 // --- Refrigerants (D7) --------------------------------------------------------

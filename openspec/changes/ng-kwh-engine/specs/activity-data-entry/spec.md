@@ -55,7 +55,7 @@ When Data Entry opens, or copies, a TR natural gas record in kWh or MWh, it SHAL
 - **THEN** no `cvBasis` is sent
 
 ### Requirement: A net energy figure leaving the TR rules is entered again
-When a TR natural gas record in kWh or MWh with `cvBasis` `net` moves to a subsidiary or site outside the TR rules, Data Entry SHALL clear the quantity and its basis and ask for the quantity again, because those rules price an energy bill as gross. It SHALL NOT send the net quantity for pricing as gross, nor price a figure entered afterwards as net. A gross figure SHALL be kept.
+Whenever Data Entry holds a natural gas record in kWh or MWh with `cvBasis` `net` under a subsidiary or site outside the TR rules, however it got there (moved, opened after its site's geography changed, or copied there), it SHALL clear the quantity and its basis and ask for the quantity again, because those rules price an energy bill as gross. It SHALL NOT price a net figure as gross, nor a figure entered afterwards as net. A gross figure SHALL be kept.
 
 #### Scenario: A net draft moved to a UK site
 - **WHEN** a user moves a TR natural gas draft of 1,000 kWh with `cvBasis` `net` to a UK site
@@ -65,6 +65,26 @@ When a TR natural gas record in kWh or MWh with `cvBasis` `net` moves to a subsi
 - **WHEN** the same draft holds `cvBasis` `gross`
 - **THEN** the quantity is kept and priced as a gross kWh figure, and no basis is sent
 
+#### Scenario: A draft opened after its site was re-classified
+- **WHEN** a TR net kWh draft is opened after its site's geography was changed to UK
+- **THEN** the quantity and the basis are cleared on opening, and a notice asks for the bill's gross figure
+
+#### Scenario: A voided net bill copied into a UK subsidiary's form state
+- **WHEN** a voided net kWh record is copied and the copy is placed under a UK subsidiary
+- **THEN** the quantity and the basis are cleared, as for a move
+
 #### Scenario: Back to Türkiye after the figure was entered again
 - **WHEN** the user enters the gross figure on the UK site and moves the draft back to the TR subsidiary
 - **THEN** no basis is shown or sent, and the figure is not priced until a basis is stated, never as net
+
+### Requirement: A natural gas unit change between energy and volume clears the quantity
+When a natural gas record's unit changes between an energy unit (kWh, MWh) and a volume (Sm³, m³), Data Entry SHALL clear the quantity and any calorific basis and ask for the quantity in the new unit. An opened or copied record's own unit SHALL stay listed while the form is on the record's own type, so the unit can be picked again; doing so SHALL NOT bring back a basis, which is stated again before the record is priced.
+
+#### Scenario: An imported kWh bill switched to Sm³
+- **WHEN** a user opens an imported TR natural gas draft of 1,000 kWh and picks Sm³
+- **THEN** the quantity and the basis are cleared with a notice, nothing is priced as 1,000 Sm³, and kWh is still offered in the unit list; picking kWh again brings back no basis, and nothing is priced
+
+#### Scenario: A change within one dimension
+- **WHEN** a user changes Sm³ to m³, or kWh to MWh
+- **THEN** the quantity is kept, as before
+

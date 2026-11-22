@@ -212,7 +212,8 @@
       "gross": "Brüt",
       "stored": "Kayıtta saklandığı gibi."
     },
-    "basisReset": "Bu miktar net ısıl değer esasındaydı. Türkiye kuralları dışında enerji faturası brüt olarak fiyatlanır; faturadaki brüt miktarı girin."
+    "basisReset": "Bu miktar net ısıl değer esasındaydı. Türkiye kuralları dışında enerji faturası brüt olarak fiyatlanır; faturadaki brüt miktarı girin.",
+    "dimensionReset": "Miktar temizlendi: enerji miktarı ile gaz hacmi aynı sayı değildir. Miktarı yeni birimle girin."
   },
   "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",
   "selectAllLoaded": "Yüklenen {count} kaydın tümünü seç",

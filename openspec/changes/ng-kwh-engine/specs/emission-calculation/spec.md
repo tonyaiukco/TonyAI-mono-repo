@@ -130,7 +130,7 @@ A TR natural gas record in kWh or MWh with `cvBasis` `gross` SHALL be multiplied
 
 #### Scenario: A report discloses the step
 - **WHEN** a report lists a gross bill and a net bill priced by the same factor
-- **THEN** the gross bill's calculation inputs name the gross-to-net ratio, and the factor appendix gives the gross bills a line of their own, so the step is neither hidden nor stated for the net bill
+- **THEN** the gross bill's calculation inputs name the gross-to-net ratio, and the factor appendix gives each set of conversion steps a line of its own (net and gross, kWh and MWh), in whatever order the records come, so no step is hidden or lent to another record
 
 #### Scenario: A ratio that would raise the quantity
 - **WHEN** the factor's release holds a `reference_ncv` that is not below its `reference_gcv`

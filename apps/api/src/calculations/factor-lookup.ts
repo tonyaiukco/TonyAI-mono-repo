@@ -137,9 +137,16 @@ async function candidates(
     take: FACTOR_CANDIDATE_CAP + 1,
   });
   // A direct-only lookup (ng-kwh-engine) reads factors alone: it prices no
-  // conversion, so it queries none. One query needs no shared snapshot.
+  // conversion, so it queries none. Still in a REPEATABLE READ batch of its
+  // own (review of the change): Prisma reads a factor and its release in two
+  // statements, and a withdrawal committed between them would drop the factor
+  // the first one chose.
   if (directOnly) {
-    const factors = await factorQuery;
+    const [factors] = snapshot
+      ? [await factorQuery]
+      : await prisma.$transaction([factorQuery], {
+          isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        });
     if (factors.length > FACTOR_CANDIDATE_CAP) throw overCap(key);
     return { factors, conversions: [] };
   }

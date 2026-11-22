@@ -116,7 +116,8 @@ describe('lookupFactorPath — a direct-only lookup (ng-kwh-engine)', () => {
     expect(result.ok && result.factor.id).toBe('gas-net');
     expect(result.ok && result.conversion).toBeNull();
     expect(root.unitConversion.findMany).not.toHaveBeenCalled();
-    expect(root.$transaction).not.toHaveBeenCalled();
+    // One query, still in its own REPEATABLE READ batch: a factor and its release are two statements.
+    expect(root.$transaction).toHaveBeenCalledWith([expect.anything()], { isolationLevel: 'RepeatableRead' });
   });
 
   it('queries no conversion in the diagnostic pass of a refusal either', async () => {

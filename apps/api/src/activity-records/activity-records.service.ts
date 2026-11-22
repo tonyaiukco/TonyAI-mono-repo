@@ -27,6 +27,7 @@ import {
   RecordNotRecallableError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
+  ActivityValueReentryRequiredError,
   ActivityTypeSlotConflictError,
   SnapshotImmutableError,
   recordTriggerCode,
@@ -426,6 +427,35 @@ type ResolvedRecordFields =
 type ActivityRecordAuditSnapshot = Omit<ActivityRecordDTO, ResolvedRecordFields> & {
   [K in ResolvedRecordFields]?: never;
 };
+
+/** A natural gas bill in kWh or MWh on the NET basis (ng-kwh-engine). */
+function isNetEnergyBill(category: string, unit: string, parameters: unknown): boolean {
+  return (
+    category === 'Natural Gas' &&
+    (unit === 'kWh' || unit === 'MWh') &&
+    normalizeRecordParameters(parameters) !== null &&
+    (normalizeRecordParameters(parameters) as { cvBasis?: unknown }).cvBasis === 'net'
+  );
+}
+
+/**
+ * Whether an update would carry a stored NET bill's quantity somewhere it may
+ * not be read as net (ng-kwh-engine review): another site (whose geography may
+ * price an energy bill as gross), another category or unit, or another basis.
+ */
+export function inheritsNetBillQuantityElsewhere(
+  existing: { category: string; activityUnit: string; locationId: string | null; parameters: unknown },
+  next: { category: string; activityUnit: string; locationId: string | null; parameters: unknown },
+): boolean {
+  if (!isNetEnergyBill(existing.category, existing.activityUnit, existing.parameters)) return false;
+  // Compared by their stored spelling: a caller's `kwh` is the stored `kWh`.
+  const nextUnit = typeof next.activityUnit === 'string' ? storedUnit(next.activityUnit) : next.activityUnit;
+  return (
+    next.locationId !== existing.locationId ||
+    !isNetEnergyBill(next.category, nextUnit, next.parameters) ||
+    nextUnit !== storedUnit(existing.activityUnit)
+  );
+}
 
 @Injectable()
 export class ActivityRecordsService {
@@ -1276,6 +1306,13 @@ export class ActivityRecordsService {
     // them by sending null, as with the activity type above.
     const parameters = ((dto.parameters !== undefined ? dto.parameters : existing.parameters) ?? null) as RecordParameters | null;
     assertRecordParameters(category, parameters);
+    // A stored net bill keeps its quantity only where it is still read as one
+    // (ng-kwh-engine review): moved to another site or unit, or given another
+    // basis, its inherited figure could be priced as gross or as a volume.
+    // `== null`: the DTO lets an explicit null through, and it inherits the stored figure too (security-rls re-review).
+    if (dto.activityValue == null && inheritsNetBillQuantityElsewhere(existing, { category, activityUnit, locationId, parameters })) {
+      throw new ActivityValueReentryRequiredError();
+    }
 
     const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;
     const periodValue = requireCanonicalPeriodValue(

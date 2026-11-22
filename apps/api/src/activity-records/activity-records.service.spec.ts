@@ -16,7 +16,7 @@ import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
   mayEditRecord,
 } from '@tonyai/shared-types';
 import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
-import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere } from './activity-records.service';
+import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsNetBillQuantityElsewhere } from './activity-records.service';
 import {
   CALCULATION_STALE_MESSAGE,
   CalculationStaleError,
@@ -5476,3 +5476,31 @@ describe('recordTriggerCode', () => {
     expect(recordTriggerCode(new Error('code: "TA001"'))).toBeNull();
   });
 });
+
+describe('a stored net bill\'s quantity is re-entered where it would be read otherwise (ng-kwh-engine review)', () => {
+  const net = { category: 'Natural Gas', activityUnit: 'kWh', locationId: 'site-tr', parameters: { cvBasis: 'net' } };
+  it.each([
+    ['another site, its geography unknown here', { ...net, locationId: 'site-uk' }, true],
+    ['the whole subsidiary instead of its site', { ...net, locationId: null }, true],
+    ['a volume unit', { ...net, activityUnit: 'standard_cubic_metres', parameters: null }, true],
+    ['MWh instead of kWh', { ...net, activityUnit: 'MWh' }, true],
+    ['the basis dropped', { ...net, parameters: null }, true],
+    ['the basis changed to gross', { ...net, parameters: { cvBasis: 'gross' } }, true],
+    ['another category', { ...net, category: 'Electricity', parameters: null }, true],
+    ['nothing that changes how it is read', { ...net }, false],
+    ['the same unit in another spelling', { ...net, activityUnit: 'kwh' }, false],
+    ['MWh in another spelling', { ...net, activityUnit: 'mwh' }, true],
+    ['the basis sent as {}', { ...net, parameters: {} }, true],
+    ['the basis sent as null', { ...net, parameters: { cvBasis: null } }, true],
+  ] as const)('%s: %s', (_case, next, refused) => {
+    expect(inheritsNetBillQuantityElsewhere(net, next)).toBe(refused);
+  });
+
+  it('never applies to a gross bill, a volume reading or another category', () => {
+    const moved = { locationId: 'site-uk' };
+    expect(inheritsNetBillQuantityElsewhere({ ...net, parameters: { cvBasis: 'gross' } }, { ...net, ...moved, parameters: null })).toBe(false);
+    expect(inheritsNetBillQuantityElsewhere({ ...net, activityUnit: 'standard_cubic_metres', parameters: null }, { ...net, ...moved })).toBe(false);
+    expect(inheritsNetBillQuantityElsewhere({ ...net, category: 'Electricity', parameters: null }, { ...net, ...moved })).toBe(false);
+  });
+});
+
