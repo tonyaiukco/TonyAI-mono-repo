@@ -215,7 +215,7 @@
       "derivedNet": "≈ {net} {unit} net üzerinden fiyatlanır: × {ratio} ({ncv} / {gcv} kcal/Sm³), {publisher} {edition} sürümünün referans oranı{status}."
     },
     "basisReset": "Bu miktar net ısıl değer esasındaydı. Türkiye kuralları dışında enerji faturası brüt olarak fiyatlanır; faturadaki brüt miktarı girin.",
-    "recalculatedOnSave": "Siz düzenlerken faktör sürümü değişti. Şimdi gösterilen değerler kaydedilen değerlerdir.",
+    "recalculatedOnSave": "Siz düzenlerken faktör sürümü değişti. Değerler güncel sürümle yeniden hesaplanıyor.",
     "unitChangeReset": "Miktar temizlendi: bir birim için girilen sayı başka bir birimde aynı sayı değildir. Miktarı yeni birimle girin.",
     "categoryReset": "Kategoriyle birlikte miktar temizlendi: yeni kategori için miktarı girin."
   },

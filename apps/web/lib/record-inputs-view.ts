@@ -277,6 +277,32 @@ export function calculationRevised(shown: ActivityCalculationSnapshot | null, sa
   );
 }
 
+/** What a successful save does to the preview on screen. */
+export type SavedCalculationEffect = "keep" | "refresh" | "revised";
+
+/**
+ * What the preview on screen needs once a save answers (ng-kwh-form review).
+ * The save is priced by the API with the release in force at that moment, and
+ * its answer may come after the form moved on: the preview still pending or
+ * refused (nothing shown), or already redone for a figure typed since. So the
+ * answer never overwrites the screen: it only asks whether the screen is right.
+ * - `revised`: the preview on screen cites other releases than the saved
+ *   record; a fresh preview is asked for, and the user told.
+ * - `refresh`: no preview is shown (pending, or refused earlier); a fresh one is
+ *   asked for, which also clears an old refusal the new release no longer gives.
+ * - `keep`: the preview on screen already cites the saved record's releases.
+ * A fresh preview prices the inputs on the form NOW, never the saved ones, and
+ * the page's own guard drops any older answer, so a late save cannot put one
+ * figure's total beside another figure's quantity.
+ */
+export function savedCalculationEffect(
+  shown: ActivityCalculationSnapshot | null,
+  saved: ActivityCalculationSnapshot | null | undefined,
+): SavedCalculationEffect {
+  if (calculationRevised(shown, saved)) return "revised";
+  return shown === null ? "refresh" : "keep";
+}
+
 /**
  * Whether a unit change must clear a bill's calorific basis (ng-kwh-engine):
  * a move between an energy unit (kWh, MWh) and a volume (Sm³, m³), where the

@@ -63,7 +63,7 @@ import {
   basisAfterUnitChange,
   previewedNetSource,
   unitCategoryAfterReset,
-  calculationRevised,
+  savedCalculationEffect,
   type FormResetReason,
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
@@ -324,6 +324,13 @@ function DataEntryPageInner() {
 
   // Preview
   const [preview, setPreview] = useState<ActivityCalculationSnapshot | null>(null);
+  // The preview on screen NOW, for a save's answer that arrives after the form moved on.
+  const previewRef = useRef<ActivityCalculationSnapshot | null>(null);
+  useEffect(() => {
+    previewRef.current = preview;
+  }, [preview]);
+  // Bumped when a save asks for a fresh preview (`savedCalculationEffect`).
+  const [previewNonce, setPreviewNonce] = useState(0);
   // The failed call itself, not its sentence: the sentence is chosen at render,
   // so a language switch re-words a refusal already on screen (independent
   // review P3-3).
@@ -1102,6 +1109,7 @@ function DataEntryPageInner() {
     subsidiaryId,
     effectiveGeography,
     parametersKey,
+    previewNonce,
   ]);
 
   // --- TR calculation inputs (LP4-02 PR4) ----------------------------------
@@ -1525,15 +1533,17 @@ function DataEntryPageInner() {
   }
 
   /**
-   * The saved record's own calculation replaces the preview when it was priced
-   * on other releases than the preview (ng-kwh-form review): a release sealed
-   * between the two leaves the form on the edition it read, and the inputs are
-   * unchanged, so no new preview would be asked for. Said, never silent.
+   * A save answered (ng-kwh-form review): the API priced it with the release in
+   * force then, and the form may have moved on meanwhile, so the answer is never
+   * written over the screen. It only decides whether a fresh preview of the
+   * inputs on the form now is asked for (`savedCalculationEffect`); the preview
+   * effect's own guard drops any older answer. Said when the edition changed.
    */
   function showSavedCalculation(rec: ActivityRecordDTO) {
-    if (!calculationRevised(preview, rec.calculation)) return;
-    setPreview(rec.calculation);
-    toast.info(t("inputs.recalculatedOnSave"));
+    const effect = savedCalculationEffect(previewRef.current, rec.calculation);
+    if (effect === "keep") return;
+    if (effect === "revised") toast.info(t("inputs.recalculatedOnSave"));
+    setPreviewNonce((n) => n + 1);
   }
 
   async function handleSaveDraft() {

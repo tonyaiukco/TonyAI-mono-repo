@@ -31,6 +31,7 @@ import {
   unitCategoryAfterReset,
   previewedNetSource,
   calculationRevised,
+  savedCalculationEffect,
   unitChangeClearsQuantity,
   leakRateOf,
   leakRatePercent,
@@ -462,6 +463,31 @@ describe('the net source a preview offers (ng-kwh-form review)', () => {
     ['a snapshot of an older schema', snapshot({ snapshotSchema: 2 })],
   ])('is nothing for %s', (_case, preview) => {
     expect(previewedNetSource(preview as never)).toBeNull();
+  });
+});
+
+describe('what a save\'s answer does to the preview on screen (ng-kwh-form review)', () => {
+  const snapshot = (factorReleaseId: string) => ({
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1, factorRelease: { id: factorReleaseId }, conversion: null, parameterRows: [],
+  }) as never;
+  it.each([
+    ['the preview on screen is on the saved record\'s release', snapshot('b'), snapshot('b'), 'keep'],
+    ['the preview on screen is on an earlier release', snapshot('a'), snapshot('b'), 'revised'],
+    // Clicked while the preview was pending, or after it was refused: nothing is shown to compare.
+    ['no preview is on screen (pending or refused)', null, snapshot('b'), 'refresh'],
+    ['no preview is on screen and the save was not calculated', null, { snapshotSchema: 3 }, 'refresh'],
+    ['a preview is on screen and the save was not calculated', snapshot('a'), { snapshotSchema: 3 }, 'keep'],
+  ])('%s: %s', (_case, shown, saved, effect) => {
+    expect(savedCalculationEffect(shown as never, saved as never)).toBe(effect);
+  });
+
+  it('never carries the saved figures: its answer is a verdict, so a late one cannot overwrite a newer preview', () => {
+    // The user typed 2,000 after saving 1,000; the preview for 2,000 (on release b) is on screen when the save answers.
+    const forNewFigure = snapshot('b');
+    const savedForOldFigure = snapshot('b');
+    expect(savedCalculationEffect(forNewFigure, savedForOldFigure)).toBe('keep');
+    // On an earlier release the screen is redone, not replaced by the saved 1,000.
+    expect(savedCalculationEffect(snapshot('a'), savedForOldFigure)).toBe('revised');
   });
 });
 
