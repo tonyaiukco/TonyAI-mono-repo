@@ -198,18 +198,18 @@ describe('the basis a unit change leaves (ng-kwh-engine, third review)', () => {
 });
 
 describe('the unit the next record starts on after a reset (ng-kwh-form review)', () => {
+  // The rule asks the form's own input mode, so it holds for a TR gas bill and for nothing else.
   it.each([
-    ['kWh', 'Natural Gas'],
-    ['MWh', 'Natural Gas'],
-  ] as const)('lets go of a bill\'s %s, so the next record is narrowed to its category\'s first unit', (unit, category) => {
-    expect(unitCategoryAfterReset(unit, category)).toBe('');
-  });
-  it.each([
-    ['standard_cubic_metres', 'Natural Gas'],
-    ['cubic_metres', 'Natural Gas'],
-    ['litres', 'Diesel'],
-  ] as const)('keeps %s with its category', (unit, category) => {
-    expect(unitCategoryAfterReset(unit, category)).toBe(category);
+    ['a TR gas bill in kWh', 'Natural Gas', 'TR', 'kWh', ''],
+    ['a TR gas bill in MWh', 'Natural Gas', 'TR', 'MWh', ''],
+    ['a TR gas reading in m3', 'Natural Gas', 'TR', 'cubic_metres', 'Natural Gas'],
+    ['TR electricity in MWh', 'Electricity', 'TR', 'MWh', 'Electricity'],
+    ['TR electricity in kWh', 'Electricity', 'TR', 'kWh', 'Electricity'],
+    ['gas in kWh outside the TR rules', 'Natural Gas', 'GB', 'kWh', 'Natural Gas'],
+    ['gas in MWh outside the TR rules', 'Natural Gas', 'GB', 'MWh', 'Natural Gas'],
+    ['TR refrigerants', 'Refrigerants', 'TR', 'kg', 'Refrigerants'],
+  ] as const)('%s: the unit counts as chosen for %j afterwards', (_case, category, geography, unit, expected) => {
+    expect(unitCategoryAfterReset(recordInputMode(category, geography, unit), category)).toBe(expected);
   });
 });
 
@@ -389,6 +389,12 @@ describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
     // 8,000 / 10,000 = 0.8 from the preview's rows; the reference's 8,250 / 9,155 is not shown.
     for (const part of ['800 kWh', '0.8', '8,000', '10,000', 'preview-edition']) expect(html).toContain(part);
     for (const part of ['901.15', '9,155', 'test-edition']) expect(html).not.toContain(part);
+  });
+
+  it('shows no derived figure once the preview was refused, though the reference read still holds a ratio (ng-kwh-form review)', () => {
+    expect(render('en', { basis: 'gross', quantity: 1000 })).toContain('gas-energy-derived-net');
+    expect(render('en', { basis: 'gross', quantity: 1000, priceRefused: true })).not.toContain('gas-energy-derived-net');
+    expect(render('en', { basis: 'gross', quantity: 1000, priceRefused: true, previewed: previewedNetSource(PREVIEWED) })).not.toContain('gas-energy-derived-net');
   });
 
   it('falls back to the reference read until a preview holds the rows', () => {

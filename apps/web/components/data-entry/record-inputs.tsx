@@ -189,6 +189,7 @@ export function CalorificBasisChoice({
   unit,
   reference,
   previewed = null,
+  priceRefused = false,
   issue,
   onChange,
 }: {
@@ -204,6 +205,14 @@ export function CalorificBasisChoice({
    * them (ng-kwh-form review).
    */
   previewed?: NetSource | null;
+  /**
+   * The calculation refused the bill (a release without its GCV, no factor): no
+   * derived figure is shown then, and the reference read, which may still hold
+   * the ratio of an edition that no longer applies, does not stand in. It holds
+   * until a later preview succeeds. A first preview still pending, with no
+   * refusal before it, is not a refusal and keeps the figure shown (ng-kwh-form review).
+   */
+  priceRefused?: boolean;
   issue: "basis_missing" | null;
   onChange: (basis: CvBasis) => void;
 }) {
@@ -215,7 +224,8 @@ export function CalorificBasisChoice({
     (reference.status === "ready" && reference.data.release
       ? { release: reference.data.release, parameters: reference.data.parameters }
       : null);
-  const derived = basis === "gross" && quantity !== null && source ? derivedNetQuantity(quantity, source.parameters) : null;
+  const derived =
+    basis === "gross" && quantity !== null && source && !priceRefused ? derivedNetQuantity(quantity, source.parameters) : null;
   const release = source?.release ?? null;
   return (
     <div className="space-y-3 rounded-lg border p-4" data-testid="gas-energy-basis">

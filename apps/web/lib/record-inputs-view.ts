@@ -246,13 +246,14 @@ export function basisAfterUnitChange(
 
 /**
  * The category a unit counts as chosen for once the form is reset for the next
- * record (ng-kwh-form review). A kWh or MWh a bill was entered in is not the
- * next record's choice: it is let go (empty), so the unit counts as carried
- * over and the next TR gas record starts on its first unit, m³, as a new one
- * does. Any other unit stays with its category, as before.
+ * record (ng-kwh-form review). A TR gas bill's kWh or MWh is not the next
+ * record's choice: it is let go (empty), so the unit counts as carried over and
+ * the next TR gas record starts on its first unit, m³, as a new one does. It
+ * asks the form's input mode, never the unit alone: Electricity's MWh is a
+ * real choice and stays, as does any unit outside the TR gas bill.
  */
-export function unitCategoryAfterReset(unit: string, unitCategory: string): string {
-  return isGasEnergyUnit(unit) ? "" : unitCategory;
+export function unitCategoryAfterReset(mode: RecordInputMode, unitCategory: string): string {
+  return mode === "natural_gas_energy" ? "" : unitCategory;
 }
 
 /**

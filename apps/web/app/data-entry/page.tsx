@@ -1368,9 +1368,9 @@ function DataEntryPageInner() {
     setCopying(false);
     setOwnUnit(null);
     setOwnBasis(null);
-    // The next record does not inherit a bill's kWh or MWh: it is narrowed to
-    // the category's first unit, m³ under the TR rules (ng-kwh-form review).
-    setUnitCategory((c) => unitCategoryAfterReset(activityUnit, c));
+    // The next record does not inherit a TR gas bill's kWh or MWh: it is narrowed
+    // to the category's first unit, m³ (ng-kwh-form review). Other units stay.
+    setUnitCategory((c) => unitCategoryAfterReset(inputMode, c));
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
@@ -2158,6 +2158,8 @@ function DataEntryPageInner() {
                       unit={activityUnit}
                       reference={reference}
                       previewed={previewedNetSource(preview)}
+                      // A refused price leaves no derived figure, whatever the reference read holds.
+                      priceRefused={previewError !== null}
                       issue={gasEnergyProblem}
                       // The figure is the bill's; the basis says how to read it, so it stays.
                       onChange={(cvBasis) => setGasInputs((prev) => ({ ...prev, cvBasis }))}
