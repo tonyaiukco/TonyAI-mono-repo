@@ -3577,6 +3577,9 @@ export const MARINE_GAS_OIL_ACTIVITY_TYPE = 'marine_gas_oil';
 /** The units a TR marine gas oil record is offered: a Bunker Delivery Note's mass. */
 export const MARINE_GAS_OIL_UNITS = Object.freeze(['kg', 'tonnes'] as const);
 
+/** The units TR natural gas is offered in, in the order Data Entry lists them. */
+export const TR_NATURAL_GAS_UNITS = Object.freeze(['cubic_metres', 'standard_cubic_metres', 'kWh', 'MWh'] as const);
+
 /**
  * The activity types Data Entry offers a NEW record (LP4-02
  * PR4). Under the TR rules a Mobile Combustion record names one of the five
@@ -3595,10 +3598,9 @@ export function offeredActivityTypes(category: string, geographyCode: string | n
 /**
  * The units Data Entry offers a NEW record (LP4-02 PR4, D11): the category's
  * own (`unitsForCategory`), narrowed under the TR rules to what the engine
- * prices there. TR natural gas is offered as a volume, Sm³ or metered m³: the
- * engine also prices a bill in kWh or MWh with its stated `cvBasis`
- * (`ng-kwh-engine`), which the form offers once it can ask for that basis
- * (`ng-kwh-form`); a TR vehicle mode is per litre, and TR marine
+ * prices there. TR natural gas is offered as a metered m³ or Sm³ reading, then
+ * as a bill in kWh or MWh, which the form prices on the `cvBasis` the author
+ * states (`ng-kwh-form`); a TR vehicle mode is per litre, and TR marine
  * gas oil a mass, kg or tonnes (`activityType` names which one is chosen).
  */
 export function unitsForRecord(
@@ -3609,7 +3611,11 @@ export function unitsForRecord(
   const units = unitsForCategory(category);
   if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return units;
   const only = (values: readonly string[]) => units.filter((u) => values.includes(u.value));
-  if (category === 'Natural Gas') return only(['standard_cubic_metres', 'cubic_metres']);
+  if (category === 'Natural Gas') {
+    // In TR_NATURAL_GAS_UNITS' order: the volumes first, so a new record still
+    // starts on m³ (ng-kwh-form, Decision 1).
+    return TR_NATURAL_GAS_UNITS.flatMap((value) => units.filter((u) => u.value === value));
+  }
   if (category === 'Mobile Combustion') {
     if (activityType !== MARINE_GAS_OIL_ACTIVITY_TYPE) return only(['litres']);
     // In MARINE_GAS_OIL_UNITS' order, so kg is the one a new record starts on.
@@ -3632,8 +3638,9 @@ export interface ReleaseParameterDTO {
 
 /**
  * The parameters a TR calculation of one lookup would read (LP4-02 PR4):
- * the conversion's release for natural gas, the factor's for a refrigerant,
- * resolved by the engine's own lookup. `release` is null, with no parameters,
+ * the conversion's release for a natural gas volume, the factor's for a gas
+ * bill in kWh or MWh (`ng-kwh-form`) and for a refrigerant, resolved by the
+ * engine's own lookup. `release` is null, with no parameters,
  * where no path resolves or the TR rules do not apply, so a form holds no
  * value of its own: 8,250 and a leak rate come from here, never a constant.
  */
@@ -3648,6 +3655,13 @@ export interface ReleaseParametersQuery {
   activityType?: string;
   geographyCode: string;
   year: number;
+  /**
+   * The record's unit (`ng-kwh-form`). Natural gas in kWh or MWh resolves the
+   * net factor as a bill's calculation does, and answers with that factor's
+   * release; no unit, m³ or Sm³ keeps the Sm³ conversion's release, and any
+   * other unit answers no release.
+   */
+  unit?: string;
 }
 
 /** A status a calculation may resolve from — `withdrawn` never counts as coverage. */

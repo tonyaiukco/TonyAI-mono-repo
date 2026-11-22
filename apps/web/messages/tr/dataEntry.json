@@ -210,9 +210,12 @@
       "title": "Faturanın ısıl değer esası",
       "net": "Net",
       "gross": "Brüt",
-      "stored": "Kayıtta saklandığı gibi."
+      "help": "Faturanız hangisini kullandığını belirtir: brüt üst ısıl değer, net alt ısıl değerdir.",
+      "missing": "Miktarın hesaplanıp kaydedilebilmesi için faturanın ısıl değer esasını seçin: net veya brüt.",
+      "derivedNet": "≈ {net} {unit} net üzerinden fiyatlanır: × {ratio} ({ncv} / {gcv} kcal/Sm³), {publisher} {edition} sürümünün referans oranı{status}."
     },
     "basisReset": "Bu miktar net ısıl değer esasındaydı. Türkiye kuralları dışında enerji faturası brüt olarak fiyatlanır; faturadaki brüt miktarı girin.",
+    "recalculatedOnSave": "Siz düzenlerken faktör sürümü değişti. Değerler güncel sürümle yeniden hesaplanıyor.",
     "unitChangeReset": "Miktar temizlendi: bir birim için girilen sayı başka bir birimde aynı sayı değildir. Miktarı yeni birimle girin.",
     "categoryReset": "Kategoriyle birlikte miktar temizlendi: yeni kategori için miktarı girin."
   },

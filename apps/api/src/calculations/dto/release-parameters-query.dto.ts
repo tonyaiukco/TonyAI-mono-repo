@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
-import { CATEGORIES, GEOGRAPHY_CODES } from '@tonyai/shared-types';
+import { ACTIVITY_UNITS, CATEGORIES, GEOGRAPHY_CODES } from '@tonyai/shared-types';
 import type { Category, GeographyCode } from '@tonyai/shared-types';
 import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../activity-type';
 
@@ -28,4 +28,10 @@ export class ReleaseParametersQueryDto {
   @Min(2000)
   @Max(2100)
   year!: number;
+
+  /** The record's unit (ng-kwh-form): a gas bill's reads its factor's release. */
+  @IsOptional()
+  @IsString()
+  @IsIn(ACTIVITY_UNITS.map((u) => u.value))
+  unit?: string;
 }

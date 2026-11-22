@@ -52,7 +52,7 @@ import { checkActivityParse, formatNumber } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import { ContextNumberField } from "@/components/data-entry/context-number-field";
-import { EquipmentLines, NaturalGasInputs, StoredCalorificBasis, type ReferenceState } from "@/components/data-entry/record-inputs";
+import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, type ReferenceState } from "@/components/data-entry/record-inputs";
 import {
   NO_GAS_INPUTS,
   equipmentIssue,
@@ -61,9 +61,14 @@ import {
   clearsNetEnergyQuantity,
   copyKeepsOwnUnit,
   basisAfterUnitChange,
+  previewedNetSource,
+  unitCategoryAfterReset,
+  savedCalculationEffect,
+  type FormResetReason,
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
+  gasEnergyIssue,
   gasInputsIssue,
   gasParameters,
   linesFromRecord,
@@ -280,6 +285,12 @@ function DataEntryPageInner() {
   const activity = useDecimalInput();
   const activityValue = activity.text;
   const [activityUnit, setActivityUnit] = useState("kWh");
+  // The category the unit was chosen for: by the user, as a record's own, or
+  // as a category's first unit. A unit carried over from another category is
+  // replaced by the new one's first, once the geography is known, so a new TR
+  // gas record starts on m³ even though kWh, the form's starting unit, is
+  // offered there (ng-kwh-form). A geography change alone keeps the unit.
+  const [unitCategory, setUnitCategory] = useState<string>("Electricity");
 
   // Optional context (demo extras)
   const [context, setContext] = useState<ContextValues>({});
@@ -313,6 +324,13 @@ function DataEntryPageInner() {
 
   // Preview
   const [preview, setPreview] = useState<ActivityCalculationSnapshot | null>(null);
+  // The preview on screen NOW, for a save's answer that arrives after the form moved on.
+  const previewRef = useRef<ActivityCalculationSnapshot | null>(null);
+  useEffect(() => {
+    previewRef.current = preview;
+  }, [preview]);
+  // Bumped when a save asks for a fresh preview (`savedCalculationEffect`).
+  const [previewNonce, setPreviewNonce] = useState(0);
   // The failed call itself, not its sentence: the sentence is chosen at render,
   // so a language switch re-words a refusal already on screen (independent
   // review P3-3).
@@ -569,6 +587,8 @@ function DataEntryPageInner() {
   const referenceRows = reference.status === "ready" ? reference.data.parameters : [];
   const defaultNcv = referenceValue(referenceRows, "reference_ncv");
   const gasProblem = inputMode === "natural_gas" ? gasInputsIssue(gasInputs, activityUnit, defaultNcv) : null;
+  // A bill's basis has no default: nothing is previewed or saved until it is chosen (ng-kwh-form).
+  const gasEnergyProblem = gasEnergyIssue(gasInputs, inputMode);
   // Only the fields on screen: the correction factor's field is gone in Sm³.
   const gasRefused =
     inputMode === "natural_gas" &&
@@ -605,6 +625,7 @@ function DataEntryPageInner() {
     activityTypeChosen &&
     quantityReady &&
     gasProblem === null &&
+    gasEnergyProblem === null &&
     !gasRefused;
 
   const contextSet = contextFieldSet(category);
@@ -1088,6 +1109,7 @@ function DataEntryPageInner() {
     subsidiaryId,
     effectiveGeography,
     parametersKey,
+    previewNonce,
   ]);
 
   // --- TR calculation inputs (LP4-02 PR4) ----------------------------------
@@ -1096,15 +1118,17 @@ function DataEntryPageInner() {
   // and a gas's leak rates come from the release in force, read through the
   // engine's own lookup, so the form never holds 8,250 or a rate itself (D2).
   const referenceGas = refrigerantMode ? activityType : "";
+  // A bill reads its FACTOR's release, the one its gross ratio comes from (ng-kwh-form).
+  const referenceUnit = inputMode === "natural_gas_energy" ? activityUnit : "";
   useEffect(() => {
-    // A bill's energy reads no release value on the form (ng-kwh-engine).
-    if (inputMode === null || inputMode === "natural_gas_energy" || effectiveGeography === null) return;
+    if (inputMode === null || effectiveGeography === null) return;
     let active = true;
     setReference({ status: "loading" });
     api
       .releaseParameters({
         category,
         ...(referenceGas ? { activityType: referenceGas } : {}),
+        ...(referenceUnit ? { unit: referenceUnit } : {}),
         geographyCode: effectiveGeography,
         year: reportingYear,
       })
@@ -1119,7 +1143,7 @@ function DataEntryPageInner() {
     return () => {
       active = false;
     };
-  }, [inputMode, category, referenceGas, effectiveGeography, reportingYear, stableErrorToast]);
+  }, [inputMode, category, referenceGas, referenceUnit, effectiveGeography, reportingYear, stableErrorToast]);
 
   // A new record moved under the TR rules (a site picked, a category chosen
   // by a link) may hold a unit or type they do not offer: picked again rather
@@ -1131,7 +1155,9 @@ function DataEntryPageInner() {
   useEffect(() => {
     if (onOwnType) return;
     const units = unitsForRecord(category, effectiveGeography, activityType);
-    if (units.length > 0 && !units.some((u) => u.value === activityUnit)) {
+    const carriedOver = unitCategory !== category && effectiveGeography !== null;
+    if (carriedOver) setUnitCategory(category);
+    if (units.length > 0 && (!units.some((u) => u.value === activityUnit) || (carriedOver && units[0].value !== activityUnit))) {
       setActivityUnit(units[0].value);
       // A bill's basis means nothing for the volume it is narrowed to (qa-auditor N3).
       if (unitChangeClearsBasis(activityUnit, units[0].value)) {
@@ -1146,7 +1172,7 @@ function DataEntryPageInner() {
       setActivityType("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, effectiveGeography, onOwnType, activityUnit, activityType]);
+  }, [category, effectiveGeography, onOwnType, activityUnit, activityType, unitCategory]);
 
   // The capacity method is annual (D7): a new TR refrigerant record is filed
   // on the year. An opened one keeps its own period; the preview names the
@@ -1189,6 +1215,7 @@ function DataEntryPageInner() {
   function handleUnitChange(next: string) {
     const previous = activityUnit;
     setActivityUnit(next);
+    setUnitCategory(category);
     // The record's own basis comes back with its own energy unit, so a unit picked by mistake can be undone.
     setGasInputs((prev) => ({ ...prev, cvBasis: basisAfterUnitChange(previous, next, prev.cvBasis, { unit: ownUnit, cvBasis: ownBasis }) }));
     if (unitChangeClearsQuantity(previous, next) && activity.text.trim() !== "") {
@@ -1273,6 +1300,7 @@ function DataEntryPageInner() {
     setActivityType(rec.activityType ?? "");
     activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
+    setUnitCategory(rec.category);
     setOwnUnit(rec.activityUnit);
     setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
     setContext((rec.input as ContextValues | null) ?? {});
@@ -1343,13 +1371,17 @@ function DataEntryPageInner() {
     setConfirmRemoveAll(false);
   }
 
-  function resetForm() {
+  function resetForm(reason: FormResetReason = "other") {
     beginFormSession();
     setContextOpen(false);
     clearEditChoices();
     setCopying(false);
     setOwnUnit(null);
     setOwnBasis(null);
+    // After a submit the next record does not inherit a TR gas bill's kWh or MWh:
+    // it is narrowed to the category's first unit, m³ (ng-kwh-form review). Any
+    // other reset, a subsidiary change included, keeps the unit the target offers.
+    setUnitCategory((c) => unitCategoryAfterReset(inputMode, c, reason));
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
@@ -1500,6 +1532,20 @@ function DataEntryPageInner() {
     }
   }
 
+  /**
+   * A save answered (ng-kwh-form review): the API priced it with the release in
+   * force then, and the form may have moved on meanwhile, so the answer is never
+   * written over the screen. It only decides whether a fresh preview of the
+   * inputs on the form now is asked for (`savedCalculationEffect`); the preview
+   * effect's own guard drops any older answer. Said when the edition changed.
+   */
+  function showSavedCalculation(rec: ActivityRecordDTO) {
+    const effect = savedCalculationEffect(previewRef.current, rec.calculation);
+    if (effect === "keep") return;
+    if (effect === "revised") toast.info(t("inputs.recalculatedOnSave"));
+    setPreviewNonce((n) => n + 1);
+  }
+
   async function handleSaveDraft() {
     setSaving("draft");
     // Read once, for use after the awaits. `movingTo` is a per-render const so
@@ -1533,6 +1579,7 @@ function DataEntryPageInner() {
       setOwnUnit(rec.activityUnit);
       setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
       setVerdict(verdictOf(rec));
+      showSavedCalculation(rec);
       if (wasEditing) {
         // A first period has no history: its flag is the typo ceiling, and the
         // history sentence would be untrue (BUG-R2-07 tier 3, qa-auditor P2).
@@ -1605,6 +1652,7 @@ function DataEntryPageInner() {
       setOwnUnit(rec.activityUnit);
       setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
       setVerdict(verdictOf(rec));
+      showSavedCalculation(rec);
       // A file that did not upload: the record stays a draft, the vault lists
       // the file with Retry, and nothing is submitted (BUG-R2-05).
       if (failed.length > 0) {
@@ -1643,7 +1691,7 @@ function DataEntryPageInner() {
       toast.success(
         wasMoving ? t("movedSubmitted", { entity: entityPhrase(rec, t) }) : t("submitted"),
       );
-      resetForm();
+      resetForm("submitted");
       await refreshRecords(subsidiaryId);
     } catch (e) {
       showSaveError(e, wasMoving);
@@ -1730,6 +1778,7 @@ function DataEntryPageInner() {
       setActivityType(values.activityType);
       activity.setValue(values.activityValue);
       setActivityUnit(values.activityUnit);
+      setUnitCategory(values.category);
       setOwnUnit(values.activityUnit);
       setOwnBasis(gasInputsFromRecord(values.parameters).cvBasis);
       setContext((values.input as ContextValues | null) ?? {});
@@ -2129,7 +2178,20 @@ function DataEntryPageInner() {
                     const note = conversionNote(preview, previewing || !hasValidInput || !!previewError, locale, t, sealDates);
                     return note ? <p className="mt-2 text-xs text-muted-foreground" data-testid="conversion-note">{note}</p> : null;
                   })()}
-                  {inputMode === "natural_gas_energy" && <StoredCalorificBasis basis={gasInputs.cvBasis} />}
+                  {inputMode === "natural_gas_energy" && (
+                    <CalorificBasisChoice
+                      basis={gasInputs.cvBasis}
+                      quantity={valueCheck.ok ? valueCheck.value : null}
+                      unit={activityUnit}
+                      reference={reference}
+                      previewed={previewedNetSource(preview)}
+                      // A refused price leaves no derived figure, whatever the reference read holds.
+                      priceRefused={previewError !== null}
+                      issue={gasEnergyProblem}
+                      // The figure is the bill's; the basis says how to read it, so it stays.
+                      onChange={(cvBasis) => setGasInputs((prev) => ({ ...prev, cvBasis }))}
+                    />
+                  )}
                   {inputMode === "natural_gas" && (
                     <NaturalGasInputs
                       unit={activityUnit}
@@ -2448,7 +2510,7 @@ function DataEntryPageInner() {
                       variant="ghost"
                       size="sm"
                       className="h-7 px-2"
-                      onClick={resetForm}
+                      onClick={() => resetForm()}
                     >
                       {t("startNewRecord")}
                     </Button>

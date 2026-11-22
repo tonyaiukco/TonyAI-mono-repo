@@ -2,9 +2,12 @@ import {
   ACTIVITY_VALUE_MAX,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   isCvBasis,
+  isProvenanceSnapshot,
   usesTrCalculationRules,
+  type ActivityCalculationSnapshot,
   type CvBasis,
   type EquipmentType,
+  type FactorReleaseSnapshot,
   type LeakRateChoice,
   type Locale,
   type NaturalGasRecordParameters,
@@ -41,8 +44,7 @@ export function recordInputMode(category: string, geographyCode: string | null, 
   if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return null;
   if (category === "Refrigerants") return "refrigerant";
   if (category === "Natural Gas" && (unit === "standard_cubic_metres" || unit === "cubic_metres")) return "natural_gas";
-  // A bill's energy (ng-kwh-engine): the form carries its stored basis, and
-  // shows it read-only until `ng-kwh-form` lets the author choose it.
+  // A bill's energy: the author states its calorific basis (ng-kwh-form).
   if (category === "Natural Gas" && isGasEnergyUnit(unit)) return "natural_gas_energy";
   return null;
 }
@@ -54,7 +56,7 @@ export interface GasInputs {
   ncv: number | null;
   billedGcv: number | null;
   volumeCorrectionFactor: number | null;
-  /** A bill's calorific basis, as stored on the record (ng-kwh-engine). */
+  /** A bill's calorific basis, as chosen or stored on the record (ng-kwh-engine, ng-kwh-form). */
   cvBasis: CvBasis | null;
 }
 
@@ -97,6 +99,55 @@ export function gasInputsIssue(inputs: GasInputs, unit: string, referenceNcv: nu
   if (editedNcv(inputs, referenceNcv) !== null && inputs.billedGcv !== null) return "ncv_and_gcv";
   if (unit === "cubic_metres" && inputs.volumeCorrectionFactor === null) return "volume_correction_required";
   return null;
+}
+
+/**
+ * Why a natural gas bill cannot be sent yet, or null (ng-kwh-form): its basis
+ * has no default, so nothing is previewed or saved until the author states it.
+ */
+export function gasEnergyIssue(inputs: GasInputs, mode: RecordInputMode): "basis_missing" | null {
+  return mode === "natural_gas_energy" && inputs.cvBasis === null ? "basis_missing" : null;
+}
+
+/**
+ * A gross bill's net quantity, in its own unit, and the ratio that derives it
+ * (ng-kwh-form): `reference_ncv / reference_gcv` of the release the bill's
+ * factor sits in, the rows its calculation reads. Null when the release cannot
+ * give a ratio below 1; no default stands in, the calculation's refusal speaks.
+ */
+export function derivedNetQuantity(
+  quantity: number,
+  rows: readonly ReleaseParameterDTO[],
+): { ratio: number; net: number; ncv: number; gcv: number } | null {
+  const ncv = referenceValue(rows, "reference_ncv");
+  const gcv = referenceValue(rows, "reference_gcv");
+  if (ncv === null || gcv === null || !(ncv > 0) || !(gcv > 0)) return null;
+  const ratio = ncv / gcv;
+  if (!(ratio < 1)) return null;
+  return { ratio, net: quantity * ratio, ncv, gcv };
+}
+
+/** The release and parameters a gross bill's net figure is read from. */
+export interface NetSource {
+  release: FactorReleaseSnapshot;
+  parameters: readonly ReleaseParameterDTO[];
+}
+
+/**
+ * The release and NCV/GCV a successful preview priced a gross bill on, or null
+ * (ng-kwh-form review). The form's own reference read and the preview resolve
+ * the factor's release in two requests, so a release sealed between them could
+ * leave the net figure shown beside the bill on one edition and the price on
+ * another. The figure shown is read from the preview's own rows, the ones the
+ * price used; the reference read stands in only until a preview holds them. A
+ * net or non-bill preview reads no ratio, so it yields null.
+ */
+export function previewedNetSource(preview: ActivityCalculationSnapshot | null): NetSource | null {
+  if (!isProvenanceSnapshot(preview) || preview.snapshotSchema !== 3) return null;
+  if (referenceValue(preview.parameterRows, "reference_ncv") === null || referenceValue(preview.parameterRows, "reference_gcv") === null) {
+    return null;
+  }
+  return { release: preview.factorRelease, parameters: preview.parameterRows };
 }
 
 /** A stored record's natural gas inputs, for the form. */
@@ -176,9 +227,12 @@ export function unitChangeClearsQuantity(previous: string, next: string): boolea
 /**
  * The calorific basis a unit change leaves on the form (ng-kwh-engine
  * reviews): the record's own stored basis when the user picks its own energy
- * unit again, so undoing a unit change works; none after a move between
- * energy and volume; otherwise the current one. The figure is asked for again
- * either way (`unitChangeClearsQuantity`).
+ * unit again after a detour that cleared it (a volume unit), so undoing that
+ * move works; none after a move between energy and volume; otherwise the
+ * current one. Between kWh and MWh the basis the user holds stays, even back
+ * onto the record's own unit: it was never cleared, and a stored net must not
+ * overwrite a gross the user chose (ng-kwh-form review). The figure is asked
+ * for again either way (`unitChangeClearsQuantity`).
  */
 export function basisAfterUnitChange(
   previous: string,
@@ -186,8 +240,67 @@ export function basisAfterUnitChange(
   current: CvBasis | null,
   own: { unit: string | null; cvBasis: CvBasis | null },
 ): CvBasis | null {
-  if (next === own.unit && isGasEnergyUnit(next) && own.cvBasis !== null) return own.cvBasis;
+  if (next === own.unit && isGasEnergyUnit(next) && !isGasEnergyUnit(previous) && own.cvBasis !== null) return own.cvBasis;
   return unitChangeClearsBasis(previous, next) ? null : current;
+}
+
+/** Why the form is reset: a record was submitted, or anything else (a subsidiary change, a copy, a failed cancel). */
+export type FormResetReason = "submitted" | "other";
+
+/**
+ * The category a unit counts as chosen for once the form is reset
+ * (ng-kwh-form review). After a SUBMIT, a TR gas bill's kWh or MWh is not the
+ * next record's choice: it is let go (empty), so the unit counts as carried
+ * over and the next TR gas record starts on its first unit, m³, as a new one
+ * does. It asks the form's input mode, never the unit alone (Electricity's MWh
+ * is a real choice and stays), and never any other reason: a subsidiary or site
+ * change keeps a unit the target offers, as the design says, so TR MWh moved to
+ * a UK subsidiary stays MWh.
+ */
+export function unitCategoryAfterReset(mode: RecordInputMode, unitCategory: string, reason: FormResetReason): string {
+  return reason === "submitted" && mode === "natural_gas_energy" ? "" : unitCategory;
+}
+
+/**
+ * Whether a saved record was calculated on other releases than the preview the
+ * form shows (ng-kwh-form review). The API prices a save with the release in
+ * force at that moment, so one sealed after the preview leaves the form's net
+ * figure and total on the edition it read while the saved record cites another.
+ * True only when both are factor-backed snapshots and the factor's or the
+ * conversion's release differs; the saved snapshot is then what the form shows.
+ */
+export function calculationRevised(shown: ActivityCalculationSnapshot | null, saved: ActivityCalculationSnapshot | null | undefined): boolean {
+  if (!isProvenanceSnapshot(shown) || !isProvenanceSnapshot(saved)) return false;
+  return (
+    shown.factorRelease.id !== saved.factorRelease.id ||
+    (shown.conversion?.release.id ?? null) !== (saved.conversion?.release.id ?? null)
+  );
+}
+
+/** What a successful save does to the preview on screen. */
+export type SavedCalculationEffect = "keep" | "refresh" | "revised";
+
+/**
+ * What the preview on screen needs once a save answers (ng-kwh-form review).
+ * The save is priced by the API with the release in force at that moment, and
+ * its answer may come after the form moved on: the preview still pending or
+ * refused (nothing shown), or already redone for a figure typed since. So the
+ * answer never overwrites the screen: it only asks whether the screen is right.
+ * - `revised`: the preview on screen cites other releases than the saved
+ *   record; a fresh preview is asked for, and the user told.
+ * - `refresh`: no preview is shown (pending, or refused earlier); a fresh one is
+ *   asked for, which also clears an old refusal the new release no longer gives.
+ * - `keep`: the preview on screen already cites the saved record's releases.
+ * A fresh preview prices the inputs on the form NOW, never the saved ones, and
+ * the page's own guard drops any older answer, so a late save cannot put one
+ * figure's total beside another figure's quantity.
+ */
+export function savedCalculationEffect(
+  shown: ActivityCalculationSnapshot | null,
+  saved: ActivityCalculationSnapshot | null | undefined,
+): SavedCalculationEffect {
+  if (calculationRevised(shown, saved)) return "revised";
+  return shown === null ? "refresh" : "keep";
 }
 
 /**

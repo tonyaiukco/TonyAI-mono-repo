@@ -18,6 +18,7 @@ import {
   isRecordableWithoutFactor,
   normalizeRecordParameters,
   recordActivityTypesFor,
+  TR_NATURAL_GAS_UNITS,
   usesTrCalculationRules,
   yearPolicyOf,
 } from '@tonyai/shared-types';
@@ -232,8 +233,9 @@ export class CalculationsService {
 
   /**
    * The release parameters a TR calculation of this lookup would read (LP4-02
-   * PR4, D2): the natural gas chain's from the Sm³ conversion's release, the
-   * capacity method's from the gas factor's, chosen by the engine's own lookup
+   * PR4, D2): the natural gas chain's from the Sm³ conversion's release, a gas
+   * bill's in kWh or MWh from its net factor's (ng-kwh-form), the capacity
+   * method's from the gas factor's, chosen by the engine's own lookup
    * so the form shows what the engine would price with. Empty where the TR
    * rules do not apply or no path resolves; the preview names that refusal.
    */
@@ -244,6 +246,11 @@ export class CalculationsService {
     if (!gas && query.category !== 'Refrigerants') return none;
     const recordType = query.activityType ?? null;
     if (!isRecordActivityTypeAllowed(query.category, recordType)) return none;
+    // A gas bill in kWh or MWh resolves as its calculation does: the net factor
+    // directly, no conversion, its ratio from the FACTOR's release (ng-kwh-form).
+    const energyBill = gas && (query.unit === 'kWh' || query.unit === 'MWh');
+    // Therms and GJ are refused by the TR engine, so nothing would read a release.
+    if (gas && !energyBill && query.unit !== undefined && !TR_NATURAL_GAS_UNITS.some((u) => u === query.unit)) return none;
     const path = await this.lookupFactorPath(
       {
         category: query.category,
@@ -251,10 +258,13 @@ export class CalculationsService {
         geographyCode: query.geographyCode,
         reportingYear: query.year,
       },
-      gas ? 'standard_cubic_metres' : 'kg',
+      energyBill ? (query.unit as string) : gas ? 'standard_cubic_metres' : 'kg',
+      undefined,
+      energyBill ? 'net' : undefined,
     );
     if (!path.ok) return none;
-    const release = gas ? path.conversion?.release : path.factor.release;
+    if (energyBill && (path.conversion !== null || path.factor.calorificBasis !== 'net')) return none;
+    const release = gas && !energyBill ? path.conversion?.release : path.factor.release;
     if (!release) return none;
     const rows = await readReleaseParameters(this.prisma, release.id);
     return {

@@ -2205,6 +2205,84 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       expect(prisma.factorParameter.findMany).not.toHaveBeenCalled();
     });
 
+    describe('a gas bill in kWh or MWh reads its factor\'s release (ng-kwh-form)', () => {
+      // The factor and the Sm³ conversion in different releases, with different ratios.
+      const own = () => {
+        const factorRelease = makeRelease({ status: 'authoritative' });
+        useFactor(prisma, makeFactor({
+          release: factorRelease, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025, scope: 1,
+          normalizedUnit: 'kWh', calorificBasis: 'net', factorValue: 0.20215548,
+        }));
+        prisma.library.parameters = [
+          ...prisma.library.parameters,
+          { ...parameter('reference_ncv', null, 9000, 'kcal/Sm3'), releaseId: factorRelease.id },
+          { ...parameter('reference_gcv', null, 10000, 'kcal/Sm3'), releaseId: factorRelease.id },
+        ];
+        return factorRelease;
+      };
+      const ratioOf = (rows: { key: string; value: number }[]) =>
+        rows.find((p) => p.key === 'reference_ncv')!.value / rows.find((p) => p.key === 'reference_gcv')!.value;
+
+      it.each(['kWh', 'MWh'])('%s answers with the factor\'s release, not the conversion\'s', async (unit) => {
+        const factorRelease = own();
+        const result = await engine.releaseParameters({ ...query, unit });
+        expect(result.release?.id).toBe(factorRelease.id);
+        expect(ratioOf(result.parameters)).toBeCloseTo(0.9, 12);
+        expect(prisma.factorParameter.findMany.mock.calls[0][0].where.releaseId).toBe(factorRelease.id);
+      });
+
+      it.each([['no unit', undefined], ['Sm³', 'standard_cubic_metres'], ['m³', 'cubic_metres']])(
+        '%s still answers with the Sm³ conversion\'s release',
+        async (_case, unit) => {
+          own();
+          const result = await engine.releaseParameters({ ...query, ...(unit ? { unit } : {}) });
+          expect(result.release?.id).toBe(release.id);
+          expect(ratioOf(result.parameters)).toBeCloseTo(8250 / 9155, 12);
+        },
+      );
+
+      it('shows the ratio the calculation of the same bill applies', async () => {
+        own();
+        const shown = ratioOf((await engine.releaseParameters({ ...query, unit: 'kWh' })).parameters);
+        const priced = (await engine.compute({ ...gas, unit: 'kWh', value: 1000, parameters: { cvBasis: 'gross' } } as never)) as CalculationResultV3;
+        expect(priced.parameters.find((p) => p.name === 'grossToNetRatio')?.value).toBeCloseTo(shown, 12);
+      });
+
+      it.each([
+        ['UK natural gas in kWh', { ...query, geographyCode: 'UK', unit: 'kWh' }],
+        ['TR therms, which the TR rules refuse', { ...query, unit: 'therms' }],
+        ['TR GJ', { ...query, unit: 'gj' }],
+      ])('answers %s with no release and no value', async (_case, asked) => {
+        own();
+        expect(await engine.releaseParameters(asked)).toEqual({ release: null, parameters: [] });
+        expect(prisma.factorParameter.findMany).not.toHaveBeenCalled();
+      });
+
+      it('answers no release should the lookup ever hand a bill a conversion or a gross factor', async () => {
+        // The direct-only lookup never does; the endpoint still refuses what the engine would.
+        const real = engine.lookupFactorPath.bind(engine);
+        const stub = (mutate: (path: Record<string, unknown>) => Record<string, unknown>) =>
+          vi.spyOn(engine, 'lookupFactorPath').mockImplementation(async (...args) => {
+            const path = await real(...args);
+            return (path.ok ? mutate(path as never) : path) as never;
+          });
+        stub((path) => ({ ...path, conversion: prisma.library.conversions[0] }));
+        expect(await engine.releaseParameters({ ...query, unit: 'kWh' })).toEqual({ release: null, parameters: [] });
+        vi.restoreAllMocks();
+        stub((path) => ({ ...path, factor: { ...(path.factor as object), calorificBasis: 'gross' } }));
+        expect(await engine.releaseParameters({ ...query, unit: 'kWh' })).toEqual({ release: null, parameters: [] });
+        vi.restoreAllMocks();
+      });
+
+      it('answers no release when only a gross factor covers the bill', async () => {
+        useFactor(prisma, makeFactor({
+          release, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025, scope: 1,
+          normalizedUnit: 'kWh', calorificBasis: 'gross', factorValue: 0.18,
+        }));
+        expect(await engine.releaseParameters({ ...query, unit: 'kWh' })).toEqual({ release: null, parameters: [] });
+      });
+    });
+
     it('never reads a placeholder where placeholders are refused', async () => {
       const strict = new CalculationsService(prisma as unknown as PrismaService, { allowPlaceholders: false });
       prisma.library.conversions[0] = makeConversion({

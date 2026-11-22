@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { EquipmentLines, NaturalGasInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
+import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
 import { checkDecimal, parseLocaleDecimal } from '@/lib/i18n/number';
 import { MESSAGES } from '@/messages';
 
@@ -10,14 +10,17 @@ import {
   ACTIVITY_VALUE_MAX,
   STANDARD_REFERENCE_CONDITIONS,
   offeredActivityTypes,
+  unitsForCategory,
   unitsForRecord,
   type ReleaseParameterDTO,
 } from '@/lib/types';
 import {
   NO_GAS_INPUTS,
+  derivedNetQuantity,
   equipmentIssue,
   equipmentParameters,
   equipmentTotal,
+  gasEnergyIssue,
   gasInputsFromRecord,
   gasInputsIssue,
   gasParameters,
@@ -25,6 +28,10 @@ import {
   copyKeepsOwnUnit,
   unitChangeClearsBasis,
   basisAfterUnitChange,
+  unitCategoryAfterReset,
+  previewedNetSource,
+  calculationRevised,
+  savedCalculationEffect,
   unitChangeClearsQuantity,
   leakRateOf,
   leakRatePercent,
@@ -78,9 +85,11 @@ describe('which inputs a record takes (D11)', () => {
     expect(recordInputMode('Fugitive Gas', 'TR', 'standard_cubic_metres')).toBeNull();
   });
 
-  it('offers TR natural gas in Sm³ and m³ only, and a TR vehicle mode in litres', () => {
-    expect(new Set(unitsForRecord('Natural Gas', 'TR').map((u) => u.value))).toEqual(new Set(['cubic_metres', 'standard_cubic_metres']));
-    expect(unitsForRecord('Natural Gas', 'UK').map((u) => u.value)).toContain('kWh');
+  it('offers TR natural gas as a volume first, then as a bill, and a TR vehicle mode in litres', () => {
+    // m³ first: the unit a new TR gas record starts on (ng-kwh-form, Decision 1).
+    expect(unitsForRecord('Natural Gas', 'TR').map((u) => u.value)).toEqual(['cubic_metres', 'standard_cubic_metres', 'kWh', 'MWh']);
+    // Outside the TR rules the category's whole list, unchanged.
+    expect(unitsForRecord('Natural Gas', 'UK')).toEqual(unitsForCategory('Natural Gas'));
     expect(unitsForRecord('Mobile Combustion', 'TR').map((u) => u.value)).toEqual(['litres']);
     expect(unitsForRecord('Fuel', 'TR').map((u) => u.value)).toContain('kg');
     expect(unitsForRecord('Fugitive Gas', 'TR').map((u) => u.value)).toEqual(['standard_cubic_metres']);
@@ -137,10 +146,6 @@ describe('a bill\'s stored calorific basis (ng-kwh-engine)', () => {
     expect(gasParameters(both, 'kWh', 8250)).toEqual({ cvBasis: 'gross' });
   });
 
-  it('still offers a new TR natural gas record Sm³ and m³ only, until ng-kwh-form', () => {
-    expect(new Set(unitsForRecord('Natural Gas', 'TR').map((u) => u.value))).toEqual(new Set(['cubic_metres', 'standard_cubic_metres']));
-  });
-
   it.each([
     ['a net bill outside the TR rules (moved, a site re-classified, or copied there)', 'Natural Gas', null, 'kWh', 'net', true],
     ['a net MWh bill outside the TR rules', 'Natural Gas', null, 'MWh', 'net', true],
@@ -178,6 +183,63 @@ describe('the basis a unit change leaves (ng-kwh-engine, third review)', () => {
     expect(basisAfterUnitChange('standard_cubic_metres', 'MWh', null, own)).toBeNull();
     expect(basisAfterUnitChange('standard_cubic_metres', 'kWh', null, { unit: 'kWh', cvBasis: null })).toBeNull();
     expect(basisAfterUnitChange('standard_cubic_metres', 'kWh', null, { unit: null, cvBasis: null })).toBeNull();
+  });
+  it('keeps the basis the user chose across kWh and MWh, even back onto the record\'s own unit (ng-kwh-form review)', () => {
+    // A stored NET draft in kWh: the user picks gross, goes to MWh and back to kWh.
+    const net = { unit: 'kWh', cvBasis: 'net' as const };
+    const inMwh = basisAfterUnitChange('kWh', 'MWh', 'gross', net);
+    expect(inMwh).toBe('gross');
+    expect(basisAfterUnitChange('MWh', 'kWh', inMwh, net)).toBe('gross');
+    // The reverse: an own MWh record, left for kWh and returned to.
+    expect(basisAfterUnitChange('kWh', 'MWh', 'gross', { unit: 'MWh', cvBasis: 'net' })).toBe('gross');
+  });
+  it('still restores the stored basis after a detour through a volume unit', () => {
+    const net = { unit: 'kWh', cvBasis: 'net' as const };
+    expect(basisAfterUnitChange('cubic_metres', 'kWh', null, net)).toBe('net');
+  });
+});
+
+describe('the unit the next record starts on after a reset (ng-kwh-form review)', () => {
+  // The rule asks the form's input mode and the reason: a submit lets a TR gas bill's unit go, nothing else does.
+  it.each([
+    ['a submitted TR gas bill in kWh', 'Natural Gas', 'TR', 'kWh', 'submitted', ''],
+    ['a submitted TR gas bill in MWh', 'Natural Gas', 'TR', 'MWh', 'submitted', ''],
+    ['a submitted TR gas reading in m3', 'Natural Gas', 'TR', 'cubic_metres', 'submitted', 'Natural Gas'],
+    ['submitted TR electricity in MWh', 'Electricity', 'TR', 'MWh', 'submitted', 'Electricity'],
+    ['submitted TR electricity in kWh', 'Electricity', 'TR', 'kWh', 'submitted', 'Electricity'],
+    ['submitted gas in kWh outside the TR rules', 'Natural Gas', 'GB', 'kWh', 'submitted', 'Natural Gas'],
+    ['submitted gas in MWh outside the TR rules', 'Natural Gas', 'GB', 'MWh', 'submitted', 'Natural Gas'],
+    ['submitted TR refrigerants', 'Refrigerants', 'TR', 'kg', 'submitted', 'Refrigerants'],
+    // A subsidiary change (and a copy, a failed cancel) is not a submit: the unit the target offers stays.
+    ['a TR gas bill in MWh whose subsidiary changes', 'Natural Gas', 'TR', 'MWh', 'other', 'Natural Gas'],
+    ['a TR gas bill in kWh whose subsidiary changes', 'Natural Gas', 'TR', 'kWh', 'other', 'Natural Gas'],
+  ] as const)('%s: the unit counts as chosen for %j afterwards', (_case, category, geography, unit, reason, expected) => {
+    expect(unitCategoryAfterReset(recordInputMode(category, geography, unit), category, reason)).toBe(expected);
+  });
+
+  it('leaves MWh on the list of a UK gas record, so a TR bill moved there keeps it (design: a geography change alone keeps the unit)', () => {
+    expect(unitsForRecord('Natural Gas', 'GB').map((u) => u.value)).toContain('MWh');
+  });
+});
+
+describe('a save priced on other releases than the preview (ng-kwh-form review)', () => {
+  const snapshot = (factorReleaseId: string, conversionReleaseId: string | null = null) => ({
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1,
+    factorRelease: { id: factorReleaseId },
+    conversion: conversionReleaseId === null ? null : { release: { id: conversionReleaseId } },
+    parameterRows: [],
+  }) as never;
+  it.each([
+    ['the same releases', snapshot('a'), snapshot('a'), false],
+    ['the same releases with a conversion', snapshot('a', 'c'), snapshot('a', 'c'), false],
+    ['another factor release', snapshot('a'), snapshot('b'), true],
+    ['another conversion release', snapshot('a', 'c'), snapshot('a', 'd'), true],
+    ['a conversion that appeared', snapshot('a'), snapshot('a', 'c'), true],
+    ['no preview to correct', null, snapshot('b'), false],
+    ['a saved record that was not calculated', snapshot('a'), { snapshotSchema: 3 }, false],
+    ['a record saved with no calculation', snapshot('a'), null, false],
+  ])('%s: revised is %s', (_case, shown, saved, revised) => {
+    expect(calculationRevised(shown as never, saved as never)).toBe(revised);
   });
 });
 
@@ -272,6 +334,160 @@ describe('refrigerant equipment lines (D7)', () => {
     expect(linesFromRecord({ equipment: [{ equipmentType: 'chiller', capacityKg: 5, refillKg: 0, leakRateChoice: 'alternative' }] }, id))
       .toEqual([{ id: 'id-1', equipmentType: 'chiller', capacityKg: 5, refillKg: 0, leakRateChoice: 'alternative' }]);
     expect(linesFromRecord(null, id)).toEqual([newEquipmentLine('id-2')]);
+  });
+});
+
+describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
+  it('holds a bill without a basis back from preview and save, and nothing else', () => {
+    expect(gasEnergyIssue(NO_GAS_INPUTS, 'natural_gas_energy')).toBe('basis_missing');
+    expect(gasEnergyIssue({ ...NO_GAS_INPUTS, cvBasis: 'net' }, 'natural_gas_energy')).toBeNull();
+    expect(gasEnergyIssue({ ...NO_GAS_INPUTS, cvBasis: 'gross' }, 'natural_gas_energy')).toBeNull();
+    expect(gasEnergyIssue(NO_GAS_INPUTS, 'natural_gas')).toBeNull();
+    expect(gasEnergyIssue(NO_GAS_INPUTS, null)).toBeNull();
+  });
+
+  it('derives a gross bill\'s net quantity from the release\'s own 8,250 / 9,155, never 0.9', () => {
+    const derived = derivedNetQuantity(1000, ROWS);
+    expect(derived?.ratio).toBeCloseTo(8250 / 9155, 12);
+    expect(derived?.net).toBeCloseTo(901.147, 3);
+    expect(derived?.ratio).not.toBe(0.9);
+    expect(derivedNetQuantity(2, ROWS)?.net).toBeCloseTo(1.802294, 6);
+  });
+
+  it.each([
+    ['no reference GCV', [param('reference_ncv', null, 8250)]],
+    ['no reference NCV', [param('reference_gcv', null, 9155)]],
+    ['no rows at all', []],
+    ['a zero GCV', [param('reference_ncv', null, 8250), param('reference_gcv', null, 0)]],
+    ['a negative GCV', [param('reference_ncv', null, 8250), param('reference_gcv', null, -9155)]],
+    ['a negative NCV', [param('reference_ncv', null, -8250), param('reference_gcv', null, 9155)]],
+    ['an NCV not below the GCV', [param('reference_ncv', null, 9155), param('reference_gcv', null, 8250)]],
+    ['an equal NCV and GCV', [param('reference_ncv', null, 9155), param('reference_gcv', null, 9155)]],
+  ])('derives nothing, and invents no ratio, with %s', (_case, rows) => {
+    expect(derivedNetQuantity(1000, rows)).toBeNull();
+  });
+
+  const render = (locale: 'en' | 'tr', props: object) =>
+    renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale],
+      children: createElement(CalorificBasisChoice, {
+        basis: null, quantity: null, unit: 'kWh', reference: READY, issue: null, onChange: () => {}, ...props,
+      } as never),
+    }));
+  const checked = (html: string) => [...html.matchAll(/<button[^>]*role="radio"[^>]*aria-checked="true"[^>]*value="([a-z]+)"/g)].map((m) => m[1]);
+
+  it.each(['en', 'tr'] as const)('%s offers net and gross with neither chosen, and says what is missing', (locale) => {
+    const html = render(locale, { issue: 'basis_missing' });
+    const copy = MESSAGES[locale].dataEntry.inputs.cvBasis;
+    expect(html).toContain(copy.net);
+    expect(html).toContain(copy.gross);
+    expect(html).toContain(copy.help);
+    expect(html).toContain(copy.missing.replace(/'/g, '&#x27;'));
+    expect(html).toContain('aria-required="true"');
+    expect(html.match(/role="radio"/g)).toHaveLength(2);
+    expect(html).not.toContain('aria-checked="true"');
+  });
+
+  it('selects a stored basis', () => {
+    expect(render('en', { basis: 'gross' })).toMatch(/aria-checked="true"[^>]*value="gross"|value="gross"[^>]*aria-checked="true"/);
+    expect(checked(render('en', { basis: 'net' }))).not.toContain('gross');
+  });
+
+  it.each([
+    ['en', 'kWh', 1000, '901.15 kWh', '0.901147', '8,250', '9,155'],
+    ['tr', 'kWh', 1000, '901,15 kWh', '0,901147', '8.250', '9.155'],
+    ['en', 'MWh', 2, '1.8023 MWh', '0.901147', '8,250', '9,155'],
+  ] as const)('%s shows a gross %s bill\'s net figure and its ratio, with the release named', (locale, unit, quantity, net, ratio, ncv, gcv) => {
+    const html = render(locale, { basis: 'gross', quantity, unit });
+    expect(html).toContain('data-testid="gas-energy-derived-net"');
+    for (const part of [net, ratio, ncv, gcv, 'Display fixture', 'test-edition']) expect(html).toContain(part);
+    expect(html).toContain(MESSAGES[locale].dataEntry.inputs.notAuthoritative.trim());
+  });
+
+  // A preview priced on another edition than the form's own reference read (a release sealed between the two requests).
+  const PREVIEWED = {
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1,
+    factorRelease: { ...READY.data.release, id: 'r-preview', edition: 'preview-edition' },
+    parameterRows: [
+      { ...param('reference_ncv', null, 8000), releaseId: 'r-preview', edition: 'preview-edition', id: 'p1' },
+      { ...param('reference_gcv', null, 10000), releaseId: 'r-preview', edition: 'preview-edition', id: 'p2' },
+    ],
+  } as never;
+
+  it('shows the net figure and ratio of the edition the preview priced, not the reference read (ng-kwh-form review)', () => {
+    const html = render('en', { basis: 'gross', quantity: 1000, previewed: previewedNetSource(PREVIEWED) });
+    // 8,000 / 10,000 = 0.8 from the preview's rows; the reference's 8,250 / 9,155 is not shown.
+    for (const part of ['800 kWh', '0.8', '8,000', '10,000', 'preview-edition']) expect(html).toContain(part);
+    for (const part of ['901.15', '9,155', 'test-edition']) expect(html).not.toContain(part);
+  });
+
+  it('shows no derived figure once the preview was refused, though the reference read still holds a ratio (ng-kwh-form review)', () => {
+    expect(render('en', { basis: 'gross', quantity: 1000 })).toContain('gas-energy-derived-net');
+    expect(render('en', { basis: 'gross', quantity: 1000, priceRefused: true })).not.toContain('gas-energy-derived-net');
+    expect(render('en', { basis: 'gross', quantity: 1000, priceRefused: true, previewed: previewedNetSource(PREVIEWED) })).not.toContain('gas-energy-derived-net');
+  });
+
+  it('falls back to the reference read until a preview holds the rows', () => {
+    const html = render('en', { basis: 'gross', quantity: 1000, previewed: previewedNetSource(null) });
+    expect(html).toContain('901.15 kWh');
+    expect(html).toContain('test-edition');
+  });
+
+  it.each([
+    ['a net bill', { basis: 'net', quantity: 1000 }],
+    ['no basis yet', { quantity: 1000 }],
+    ['no quantity yet', { basis: 'gross' }],
+    ['a release still loading', { basis: 'gross', quantity: 1000, reference: { status: 'loading' } }],
+    ['a failed release read', { basis: 'gross', quantity: 1000, reference: { status: 'failed' } }],
+    ['a release without its GCV', { basis: 'gross', quantity: 1000, reference: { ...READY, data: { ...READY.data, parameters: [param('reference_ncv', null, 8250)] } } }],
+  ])('shows no derived figure for %s', (_case, props) => {
+    expect(render('en', props)).not.toContain('gas-energy-derived-net');
+  });
+});
+
+describe('the net source a preview offers (ng-kwh-form review)', () => {
+  const snapshot = (over: object = {}) => ({
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1, factorRelease: READY.status === 'ready' ? READY.data.release : null,
+    parameterRows: [param('reference_ncv', null, 8250), param('reference_gcv', null, 9155)], ...over,
+  }) as never;
+  it('is the preview\'s own release and NCV/GCV rows', () => {
+    const source = previewedNetSource(snapshot());
+    expect(source?.release.id).toBe('r');
+    expect(source && derivedNetQuantity(1000, source.parameters)?.ratio).toBeCloseTo(8250 / 9155, 9);
+  });
+  it.each([
+    ['no preview', null],
+    ['an uncalculated preview', { snapshotSchema: 3 }],
+    ['a net bill\'s preview, which reads no ratio', snapshot({ parameterRows: [] })],
+    ['a preview without its GCV', snapshot({ parameterRows: [param('reference_ncv', null, 8250)] })],
+    ['a snapshot of an older schema', snapshot({ snapshotSchema: 2 })],
+  ])('is nothing for %s', (_case, preview) => {
+    expect(previewedNetSource(preview as never)).toBeNull();
+  });
+});
+
+describe('what a save\'s answer does to the preview on screen (ng-kwh-form review)', () => {
+  const snapshot = (factorReleaseId: string) => ({
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1, factorRelease: { id: factorReleaseId }, conversion: null, parameterRows: [],
+  }) as never;
+  it.each([
+    ['the preview on screen is on the saved record\'s release', snapshot('b'), snapshot('b'), 'keep'],
+    ['the preview on screen is on an earlier release', snapshot('a'), snapshot('b'), 'revised'],
+    // Clicked while the preview was pending, or after it was refused: nothing is shown to compare.
+    ['no preview is on screen (pending or refused)', null, snapshot('b'), 'refresh'],
+    ['no preview is on screen and the save was not calculated', null, { snapshotSchema: 3 }, 'refresh'],
+    ['a preview is on screen and the save was not calculated', snapshot('a'), { snapshotSchema: 3 }, 'keep'],
+  ])('%s: %s', (_case, shown, saved, effect) => {
+    expect(savedCalculationEffect(shown as never, saved as never)).toBe(effect);
+  });
+
+  it('never carries the saved figures: its answer is a verdict, so a late one cannot overwrite a newer preview', () => {
+    // The user typed 2,000 after saving 1,000; the preview for 2,000 (on release b) is on screen when the save answers.
+    const forNewFigure = snapshot('b');
+    const savedForOldFigure = snapshot('b');
+    expect(savedCalculationEffect(forNewFigure, savedForOldFigure)).toBe('keep');
+    // On an earlier release the screen is redone, not replaced by the saved 1,000.
+    expect(savedCalculationEffect(snapshot('a'), savedForOldFigure)).toBe('revised');
   });
 });
 
