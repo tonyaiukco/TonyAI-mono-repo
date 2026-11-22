@@ -2,6 +2,16 @@ import { describe, it, expect } from 'vitest';
 import {
   isProvenanceSnapshot,
   normalizeRecordParameters,
+  GENERATION_TOPOLOGIES,
+  ACCEPTED_GENERATION_TOPOLOGIES,
+  SELF_GENERATION_SOURCES,
+  SELF_GENERATION_KEYS,
+  isGenerationTopology,
+  isAcceptedGenerationTopology,
+  isSelfGenerationSource,
+  recordParameterShape,
+  selfGenerationIssue,
+  type ElectricityRecordParameters,
   API_ERROR_PARAMS,
   API_ERROR_SENTENCE_SELECTORS,
   API_ERROR_STATUS,
@@ -1049,7 +1059,13 @@ describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', 
   it('registers input as the parameters_required refusal\'s sentence selector (ng-kwh-engine)', () => {
     expect(API_ERROR_PARAMS.parameters_required).toEqual(['input']);
     expect(API_ERROR_SENTENCE_SELECTORS.parameters_required).toBe('input');
-    expect([...PARAMETERS_REQUIRED_INPUTS]).toEqual(['equipment', 'cvBasis']);
+    expect([...PARAMETERS_REQUIRED_INPUTS]).toEqual([
+      'equipment',
+      'cvBasis',
+      'generationTopology',
+      'selfGenerationSource',
+      'selfGeneratedKwh',
+    ]);
   });
 });
 
@@ -1357,6 +1373,116 @@ describe('normalizeRecordParameters (LP4-02, D11)', () => {
   it('keeps equipment lines as they are', () => {
     const equipment = [{ equipmentType: 'chiller', capacityKg: 0, refillKg: 1, leakRateChoice: 'default' }];
     expect(normalizeRecordParameters({ equipment })).toEqual({ equipment });
+  });
+});
+
+describe('self-generation value lists (self-gen-model)', () => {
+  it('names three topologies, accepts A only, and names four sources, each frozen', () => {
+    expect([...GENERATION_TOPOLOGIES]).toEqual(['A', 'B', 'C']);
+    expect([...ACCEPTED_GENERATION_TOPOLOGIES]).toEqual(['A']);
+    expect([...SELF_GENERATION_SOURCES]).toEqual(['solar', 'wind', 'natural_gas_chp', 'diesel_generator']);
+    expect([...SELF_GENERATION_KEYS]).toEqual([
+      'generationTopology',
+      'selfGenerationSource',
+      'selfGeneratedKwh',
+      'exportedToGridKwh',
+      'facilityConsumptionKwh',
+    ]);
+    for (const list of [GENERATION_TOPOLOGIES, ACCEPTED_GENERATION_TOPOLOGIES, SELF_GENERATION_SOURCES, SELF_GENERATION_KEYS]) {
+      expect(Object.isFrozen(list)).toBe(true);
+    }
+  });
+
+  it('guards each list by exact membership', () => {
+    for (const t of ['A', 'B', 'C']) expect(isGenerationTopology(t)).toBe(true);
+    for (const t of ['a', 'D', '', null, 1, undefined]) expect(isGenerationTopology(t)).toBe(false);
+    expect(isAcceptedGenerationTopology('A')).toBe(true);
+    for (const t of ['B', 'C', 'a', null]) expect(isAcceptedGenerationTopology(t)).toBe(false);
+    for (const s of SELF_GENERATION_SOURCES) expect(isSelfGenerationSource(s)).toBe(true);
+    for (const s of ['biogas', 'Solar', '', null, 0]) expect(isSelfGenerationSource(s)).toBe(false);
+  });
+});
+
+describe('recordParameterShape (self-gen-model)', () => {
+  it('answers a shape for Natural Gas, Refrigerants and Electricity, and null for every other category', () => {
+    expect(recordParameterShape('Natural Gas')).toBe('natural_gas');
+    expect(recordParameterShape('Refrigerants')).toBe('refrigerant');
+    expect(recordParameterShape('Electricity')).toBe('electricity');
+    for (const category of CATEGORIES.filter((c) => !['Natural Gas', 'Refrigerants', 'Electricity'].includes(c))) {
+      expect(recordParameterShape(category)).toBeNull();
+    }
+    for (const category of ['', 'electricity', 'Unknown']) expect(recordParameterShape(category)).toBeNull();
+  });
+});
+
+describe('selfGenerationIssue (self-gen-model)', () => {
+  const full: ElectricityRecordParameters = {
+    generationTopology: 'A',
+    selfGenerationSource: 'solar',
+    selfGeneratedKwh: 400_000,
+    exportedToGridKwh: 50_000,
+    facilityConsumptionKwh: 1_000_000,
+  };
+
+  it('reads null, undefined, {} and an all-null block as no block, with no issue', () => {
+    expect(selfGenerationIssue(null)).toBeNull();
+    expect(selfGenerationIssue(undefined)).toBeNull();
+    expect(selfGenerationIssue({})).toBeNull();
+    expect(
+      selfGenerationIssue({
+        generationTopology: null,
+        selfGenerationSource: null,
+        selfGeneratedKwh: null,
+        exportedToGridKwh: null,
+        facilityConsumptionKwh: null,
+      }),
+    ).toBeNull();
+  });
+
+  it('accepts a full block and a block with the three required fields only', () => {
+    expect(selfGenerationIssue(full)).toBeNull();
+    expect(selfGenerationIssue({ generationTopology: 'A', selfGenerationSource: 'wind', selfGeneratedKwh: 0 })).toBeNull();
+  });
+
+  it('names the first missing required field, in the stated order', () => {
+    expect(selfGenerationIssue({ exportedToGridKwh: 1 })).toEqual({ code: 'parameters_required', input: 'generationTopology' });
+    expect(selfGenerationIssue({ selfGenerationSource: 'solar', selfGeneratedKwh: 1 })).toEqual({
+      code: 'parameters_required',
+      input: 'generationTopology',
+    });
+    expect(selfGenerationIssue({ generationTopology: 'A', selfGeneratedKwh: 400_000 })).toEqual({
+      code: 'parameters_required',
+      input: 'selfGenerationSource',
+    });
+    expect(selfGenerationIssue({ generationTopology: 'A', selfGenerationSource: 'wind' })).toEqual({
+      code: 'parameters_required',
+      input: 'selfGeneratedKwh',
+    });
+    expect(selfGenerationIssue({ ...full, selfGenerationSource: null })).toEqual({
+      code: 'parameters_required',
+      input: 'selfGenerationSource',
+    });
+    // A missing field outranks a topology that is not accepted.
+    expect(selfGenerationIssue({ generationTopology: 'B', selfGenerationSource: 'solar' })).toEqual({
+      code: 'parameters_required',
+      input: 'selfGeneratedKwh',
+    });
+  });
+
+  it('refuses topology B and C as not applicable', () => {
+    expect(selfGenerationIssue({ ...full, generationTopology: 'B' })).toEqual({ code: 'parameters_not_applicable' });
+    expect(selfGenerationIssue({ ...full, generationTopology: 'C' })).toEqual({ code: 'parameters_not_applicable' });
+    // An unaccepted topology outranks exports above the generation.
+    expect(selfGenerationIssue({ ...full, generationTopology: 'C', exportedToGridKwh: 500_000 })).toEqual({
+      code: 'parameters_not_applicable',
+    });
+  });
+
+  it('refuses exports above the generation, and accepts exports equal to or below it', () => {
+    expect(selfGenerationIssue({ ...full, exportedToGridKwh: 400_001 })).toEqual({ code: 'record_parameters_invalid' });
+    expect(selfGenerationIssue({ ...full, exportedToGridKwh: 400_000 })).toBeNull();
+    expect(selfGenerationIssue({ ...full, exportedToGridKwh: 0 })).toBeNull();
+    expect(selfGenerationIssue({ ...full, exportedToGridKwh: null })).toBeNull();
   });
 });
 

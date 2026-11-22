@@ -45,7 +45,7 @@ export function AcceptedRows({ rows }: { rows: BulkUploadAcceptedRow[] }) {
               <td className="p-2">{tCategory(row.category)}</td>
               <td className="p-2">{bulkActivityLabel(row.activityType, t)}</td>
               <td className="p-2 text-right font-mono tabular-nums" data-testid="bulk-read-amount">{readAmountLabel(row, locale)}</td>
-              <td className="p-2" data-testid="bulk-read-inputs">{readInputsLabel(row.parameters, locale, t)}</td>
+              <td className="p-2" data-testid="bulk-read-inputs">{readInputsLabel(row.category, row.parameters, locale, t)}</td>
             </tr>
           ))}
         </tbody>

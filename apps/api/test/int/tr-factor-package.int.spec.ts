@@ -123,6 +123,49 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
     expect(Math.abs(kwh.kgCo2e - sm3.kgCo2e) / sm3.kgCo2e).toBeLessThan(0.005);
   });
 
+  // self-gen-model (UAT round 3, spec v2.5 §2; Decisions 2026-11-20 D5, D6, D8):
+  // a self-generation block is never priced; Scope 2 is the grid import × the
+  // year's grid factor, location-based.
+  const within = (actual: number, expected: number) => expect(Math.abs(actual - expected) / expected).toBeLessThan(0.005);
+  const SEALED_EDITION = 'TONYAI-EF-TR-UK-2026.11-AR6-SEALED';
+
+  it('GV-SG-1: 600,000 kWh imported beside 400,000 kWh of solar is 260,400 kg in Scope 2', async () => {
+    const block = {
+      generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000, facilityConsumptionKwh: 1_000_000,
+    } as const;
+    const result = await priced(tr({ value: 600_000, parameters: block }));
+    within(result.kgCo2e, 260_400);
+    expect(result.scope).toBe(2);
+    expect(result.scope2Method).toBe('location');
+    expect(result.factorRelease).toMatchObject({ status: 'authoritative', edition: SEALED_EDITION });
+    expect(result.parameters).toEqual([
+      { name: 'selfGeneratedKwh', value: 400_000, origin: 'user' },
+      { name: 'facilityConsumptionKwh', value: 1_000_000, origin: 'user' },
+    ]);
+    // Equal to the same record without the block.
+    const plain = await priced(tr({ value: 600_000 }));
+    expect(result.kgCo2e).toBe(plain.kgCo2e);
+    expect(result.factorId).toBe(plain.factorId);
+  });
+
+  it('GV-SG-2: a gas CHP site as two records, 260,400 kg (Scope 2) + 969,167 kg (Scope 1) = 1,229,567 kg', async () => {
+    // v2.5 states no generated kWh for GV-SG-2, and the block requires one:
+    // 400,000 kWh is this test's own value. It is never priced.
+    const electricity = await priced(tr({
+      value: 600_000,
+      parameters: { generationTopology: 'A', selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 400_000 },
+    }));
+    const gas = await priced(tr({ category: 'Natural Gas', value: 500_000, unit: 'standard_cubic_metres' }));
+    within(electricity.kgCo2e, 260_400);
+    within(gas.kgCo2e, 969_167);
+    within(electricity.kgCo2e + gas.kgCo2e, 1_229_567);
+    expect(electricity.scope).toBe(2);
+    expect(gas.scope).toBe(1);
+    for (const result of [electricity, gas]) {
+      expect(result.factorRelease).toMatchObject({ status: 'authoritative', edition: SEALED_EDITION });
+    }
+  });
+
   it('shows a gas bill the factor release\'s 8,250 / 9,155, the ratio its calculation applies (ng-kwh-form)', async () => {
     const shown = await engine.releaseParameters({ category: 'Natural Gas', geographyCode: 'TR', year: 2025, unit: 'kWh' });
     const value = (key: string) => shown.parameters.find((p) => p.key === key)?.value;

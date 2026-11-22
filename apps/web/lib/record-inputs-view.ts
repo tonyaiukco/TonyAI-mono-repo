@@ -3,9 +3,12 @@ import {
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   isCvBasis,
   isProvenanceSnapshot,
+  normalizeRecordParameters,
+  recordParameterShape,
   usesTrCalculationRules,
   type ActivityCalculationSnapshot,
   type CvBasis,
+  type ElectricityRecordParameters,
   type EquipmentType,
   type FactorReleaseSnapshot,
   type LeakRateChoice,
@@ -41,11 +44,14 @@ export function isGasEnergyUnit(unit: string): boolean {
  * the API refuses parameters there (`parameters_not_applicable`).
  */
 export function recordInputMode(category: string, geographyCode: string | null, unit: string): RecordInputMode {
+  // The category decides the shape (`recordParameterShape`); Electricity's
+  // self-generation block has no fields on the form yet (self-gen-model).
+  const shape = recordParameterShape(category);
   if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return null;
-  if (category === "Refrigerants") return "refrigerant";
-  if (category === "Natural Gas" && (unit === "standard_cubic_metres" || unit === "cubic_metres")) return "natural_gas";
+  if (shape === "refrigerant") return "refrigerant";
+  if (shape === "natural_gas" && (unit === "standard_cubic_metres" || unit === "cubic_metres")) return "natural_gas";
   // A bill's energy: the author states its calorific basis (ng-kwh-form).
-  if (category === "Natural Gas" && isGasEnergyUnit(unit)) return "natural_gas_energy";
+  if (shape === "natural_gas" && isGasEnergyUnit(unit)) return "natural_gas_energy";
   return null;
 }
 
@@ -150,8 +156,12 @@ export function previewedNetSource(preview: ActivityCalculationSnapshot | null):
   return { release: preview.factorRelease, parameters: preview.parameterRows };
 }
 
-/** A stored record's natural gas inputs, for the form. */
-export function gasInputsFromRecord(parameters: unknown): GasInputs {
+/**
+ * A stored record's natural gas inputs, for the form; none for a record of
+ * another category, whose parameters are another shape (self-gen-model).
+ */
+export function gasInputsFromRecord(category: string, parameters: unknown): GasInputs {
+  if (recordParameterShape(category) !== "natural_gas") return NO_GAS_INPUTS;
   const stored = (parameters ?? {}) as NaturalGasRecordParameters;
   return {
     ncv: stored.ncvKcalPerSm3 ?? null,
@@ -159,6 +169,35 @@ export function gasInputsFromRecord(parameters: unknown): GasInputs {
     volumeCorrectionFactor: stored.volumeCorrectionFactor ?? null,
     cvBasis: isCvBasis(stored.cvBasis) ? stored.cvBasis : null,
   };
+}
+
+/**
+ * A stored Electricity record's self-generation block, as stored, or null for
+ * any other record and for a block with nothing in it (self-gen-model). Data
+ * Entry carries it unchanged through every preview and save while the record
+ * stays Electricity; the form shows no field for it yet (`self-gen-form`).
+ */
+export function selfGenerationFromRecord(record: {
+  category: string;
+  parameters?: unknown;
+}): ElectricityRecordParameters | null {
+  if (recordParameterShape(record.category) !== "electricity") return null;
+  if (normalizeRecordParameters(record.parameters) === null) return null;
+  return { ...(record.parameters as ElectricityRecordParameters) };
+}
+
+/**
+ * The self-generation block a preview or save sends: the opened or copied
+ * record's own block while the form's category is Electricity, none otherwise
+ * (self-gen-model). It belongs to the record, not to the form's category, so a
+ * category picked by mistake and undone does not erase it (`qa-auditor`
+ * review), and a unit or subsidiary change keeps it.
+ */
+export function selfGenerationToSend(
+  category: string,
+  own: ElectricityRecordParameters | null,
+): ElectricityRecordParameters | null {
+  return recordParameterShape(category) === "electricity" ? own : null;
 }
 
 /** The source of a copy of a voided record, as `onOwnType` reads it (ng-kwh-engine). */

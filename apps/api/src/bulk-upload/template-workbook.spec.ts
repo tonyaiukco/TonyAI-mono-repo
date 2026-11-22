@@ -12,6 +12,7 @@ import {
   CATEGORY_UNITS,
   PERIOD_VALUES,
   REPORTING_PERIODS,
+  SELF_GENERATION_KEYS,
 } from '@tonyai/shared-types';
 import { buildTemplateWorkbook, type TemplateEntities } from './template-workbook';
 import { parseRows } from './parse-rows';
@@ -402,6 +403,15 @@ describe('buildTemplateWorkbook — calculation inputs (LP4-02 PR4)', () => {
     // ng-kwh-engine: the basis column names its two values and the units that require it.
     expect(text).toMatch(/cvBasis \| Natural Gas in kWh or MWh.*net or gross.*Required for kWh and MWh/);
     expect(text).not.toMatch(/8[,.]?250|9[,.]?155/);
+  });
+
+  it('offers no self-generation column: the pilot imports Electricity as plain grid records (self-gen-model)', async () => {
+    const workbook = await load(await buildTemplateWorkbook(ENTITIES));
+    const header = (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1).map(String);
+    for (const key of SELF_GENERATION_KEYS) {
+      expect(BULK_UPLOAD_COLUMNS as readonly string[]).not.toContain(key);
+      expect(header).not.toContain(key);
+    }
   });
 
   it.each([

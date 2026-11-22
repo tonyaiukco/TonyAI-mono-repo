@@ -17,10 +17,15 @@ import {
   CV_BASES,
   EQUIPMENT_TYPES,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
+  GENERATION_TOPOLOGIES,
   LEAK_RATE_CHOICES,
+  SELF_GENERATION_SOURCES,
+  recordParameterShape,
   type CvBasis,
   type EquipmentType,
+  type GenerationTopology,
   type LeakRateChoice,
+  type SelfGenerationSource,
 } from '@tonyai/shared-types';
 
 /** The bounds of the shape CHECK, so a figure it refuses is a 400, never a 500. */
@@ -60,6 +65,43 @@ class NaturalGasParametersDto {
   @IsOptional()
   @IsIn(CV_BASES)
   cvBasis?: CvBasis | null;
+}
+
+/**
+ * Electricity's self-generation block (self-gen-model, design 3): each field's
+ * type and range, and the named values. Topologies `B` and `C` pass here; the
+ * engine refuses them (`parameters_not_applicable`), as it names a missing
+ * required field (`parameters_required`) and refuses exports above the
+ * generation (`selfGenerationIssue`). Every kWh field is kWh whatever the
+ * record's unit. `null` is an absent field, as in the shape CHECK.
+ */
+class ElectricityParametersDto {
+  @IsOptional()
+  @IsIn(GENERATION_TOPOLOGIES)
+  generationTopology?: GenerationTopology | null;
+
+  @IsOptional()
+  @IsIn(SELF_GENERATION_SOURCES)
+  selfGenerationSource?: SelfGenerationSource | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(CALORIFIC_MAX)
+  selfGeneratedKwh?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(CALORIFIC_MAX)
+  exportedToGridKwh?: number | null;
+
+  /** Above zero, from the CHECK's floor up: a facility that consumed nothing has no balance to check. */
+  @IsOptional()
+  @IsNumber()
+  @Min(CALORIFIC_MIN)
+  @Max(CALORIFIC_MAX)
+  facilityConsumptionKwh?: number | null;
 }
 
 /** One equipment line (D3, D7). A mass may be zero, but not both. */
@@ -117,23 +159,27 @@ function fieldIssues<T extends object>(Dto: ClassConstructor<T>, value: object):
  * What is wrong with `value` as a `category` record's parameters (D3), empty
  * when nothing is. The one rule both callers ask: the DTO, for a request that
  * names its category, and the service, against the effective category of every
- * write.
+ * write. The category decides the shape (`recordParameterShape`).
  */
 export function recordParametersIssues(category: string, value: unknown): string[] {
   if (value === null || value === undefined) return [];
   if (typeof value !== 'object' || Array.isArray(value)) return ['parameters must be an object or null'];
 
-  if (category === 'Natural Gas') {
-    const { dto, issues } = fieldIssues(NaturalGasParametersDto, value);
-    if (dto.ncvKcalPerSm3 != null && dto.billedGcvKcalPerSm3 != null) {
-      issues.push('ncvKcalPerSm3 and billedGcvKcalPerSm3 are mutually exclusive: provide at most one');
+  switch (recordParameterShape(category)) {
+    case 'natural_gas': {
+      const { dto, issues } = fieldIssues(NaturalGasParametersDto, value);
+      if (dto.ncvKcalPerSm3 != null && dto.billedGcvKcalPerSm3 != null) {
+        issues.push('ncvKcalPerSm3 and billedGcvKcalPerSm3 are mutually exclusive: provide at most one');
+      }
+      return issues;
     }
-    return issues;
+    case 'refrigerant':
+      return refrigerantIssues(value);
+    case 'electricity':
+      return fieldIssues(ElectricityParametersDto, value).issues;
+    default:
+      return [`${category} does not accept record parameters`];
   }
-  if (category === 'Refrigerants') {
-    return refrigerantIssues(value);
-  }
-  return [`${category} does not accept record parameters`];
 }
 
 /**
@@ -160,13 +206,17 @@ class ValidRecordParametersConstraint implements ValidatorConstraintInterface {
   }
 }
 
-/** The record's `parameters` hold to its category's rule (`recordParametersIssues`). */
+/**
+ * The record's `parameters` hold to its category's rule (`recordParametersIssues`).
+ * A body whose only failure is its parameters answers `record_parameters_invalid`,
+ * the code the service's own check throws (self-gen-model, design 3).
+ */
 export function IsValidRecordParameters(validationOptions?: ValidationOptions) {
   return function (object: object, propertyName: string) {
     registerDecorator({
       target: object.constructor,
       propertyName,
-      options: validationOptions,
+      options: { context: { code: 'record_parameters_invalid' }, ...validationOptions },
       constraints: [],
       validator: ValidRecordParametersConstraint,
     });

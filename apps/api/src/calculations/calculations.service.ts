@@ -18,6 +18,7 @@ import {
   isRecordableWithoutFactor,
   normalizeRecordParameters,
   recordActivityTypesFor,
+  recordParameterShape,
   TR_NATURAL_GAS_UNITS,
   usesTrCalculationRules,
   yearPolicyOf,
@@ -68,6 +69,7 @@ import {
   snapshotParameterRow,
   type NaturalGasChain,
 } from './tr-rules';
+import { assertSelfGeneration, selfGenerationInputs } from './self-generation';
 import { FACTOR_POLICY, type FactorPolicy } from './factor-policy';
 import {
   blockedUnitReason,
@@ -404,12 +406,16 @@ export class CalculationsService {
         : input.category === 'Refrigerants'
           ? 'refrigerant'
           : null;
-    if (parameters !== null && trRule === null) {
+    // An Electricity record's self-generation block is accepted in every
+    // geography, checked here and never priced (self-gen-model, design 4).
+    const isElectricity = recordParameterShape(input.category) === 'electricity';
+    if (parameters !== null && trRule === null && !isElectricity) {
       throw new CalculationInputError(
         'parameters_not_applicable',
         `${input.category} in ${input.geographyCode} takes no record parameters.`,
       );
     }
+    const selfGeneration = isElectricity && parameters !== null ? assertSelfGeneration(parameters) : null;
     const coverage: CoverageKey = {
       category: input.category,
       activityType: factorActivityTypeFor(input.category, recordType),
@@ -581,6 +587,8 @@ export class CalculationsService {
     } else {
       priced = normalize(input.value, input.unit, input.category, conversion);
     }
+    // The block is echoed, never priced: the figure above is the grid import's (design 5).
+    if (selfGeneration !== null) inputs = selfGenerationInputs(selfGeneration);
     const { normalizedValue, normalizedUnit, conversionApplied, conversionFactor, conversionBasis } = priced;
     // The resolver chose this path for this unit; arriving anywhere else is a
     // defect in the engine, not something to price through.

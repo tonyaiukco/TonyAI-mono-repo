@@ -187,6 +187,31 @@ describe('buildIssuanceHtml', () => {
   });
 });
 
+describe('an Electricity self-generation block in the issued document (self-gen-model, design 5)', () => {
+  const v3 = (parameters: { name: string; value: number; origin: 'user' }[]) =>
+    ({ ...priced(1), snapshotSchema: 3, parameters, parameterRows: [], refrigerantTerms: null }) as unknown as ReturnType<typeof priced>;
+  const withCalculation = (calculation: ReturnType<typeof priced>) =>
+    datasetOf({ records: fullYear().map((r) => (r.category === 'Electricity' ? { ...r, calculation } : r)) });
+
+  it.each(['en', 'tr'] as const)('%s renders the same ledger and appendix with the block as without it', (language) => {
+    const plain = html(withCalculation(v3([])), { language });
+    const withBlock = html(withCalculation(v3([
+      { name: 'selfGeneratedKwh', value: 400000, origin: 'user' },
+      { name: 'exportedToGridKwh', value: 50000, origin: 'user' },
+      { name: 'facilityConsumptionKwh', value: 1000000, origin: 'user' },
+    ])), { language });
+    // The dataset's fingerprint hashes the snapshots, so it differs, as it must;
+    // every rendered word, the ledger's inputs and the appendix included, does not.
+    const unfingerprinted = (page: string) => page.replace(/sha256:[0-9a-f]{64}/g, 'sha256:…');
+    expect(withBlock).not.toBe(plain);
+    expect(unfingerprinted(withBlock)).toBe(unfingerprinted(plain));
+  });
+
+  it('keeps the renderer version', () => {
+    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v5');
+  });
+});
+
 describe('the issuance catalogues', () => {
   it('hold the same keys and the same ICU arguments in both languages, translated', () => {
     expect(Object.keys(tr).sort()).toEqual(Object.keys(en).sort());

@@ -3393,6 +3393,18 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     expect(report.accepted[0]).toMatchObject({ row: 2, lineRows: [2, 3], activityValue: 30.5, parameters: dto.parameters });
   });
 
+  it('imports an Electricity row as a plain grid record, with no parameters (self-gen-model)', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(line({
+      category: 'Electricity', activityType: '', activityValue: '600000', activityUnit: 'kWh',
+      reportingPeriod: 'monthly', periodValue: 'January', equipmentType: '', capacityKg: '', refillKg: '',
+    })), DRY);
+    expect(report.errors).toEqual([]);
+    expect(records.previewCreate).toHaveBeenCalledTimes(1);
+    expect(records.previewCreate.mock.calls[0][1].parameters ?? null).toBeNull();
+    expect(report.accepted[0]).toMatchObject({ category: 'Electricity', activityValue: 600000, parameters: null });
+  });
+
   it('keeps a record of one line as a record of one row, and accepts a refill alone', async () => {
     const { records, service } = build();
     const report = await service.import(dataEntry(), file(line({ capacityKg: '0', refillKg: '2' })), DRY);

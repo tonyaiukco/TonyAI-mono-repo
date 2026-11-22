@@ -121,4 +121,17 @@ describe('the inputs read (LP4-02 PR4)', () => {
     // A volume row's echo is unchanged: no basis.
     expect(volume).not.toContain(MESSAGES[locale].dataEntry.bulkColumns.cvBasis);
   });
+
+  it.each(['en', 'tr'] as const)('%s reads an Electricity block as no gas or equipment inputs (self-gen-model)', (locale) => {
+    const electricity: BulkUploadAcceptedRow = {
+      ...gas, row: 6, category: 'Electricity', activityUnit: 'kWh', activityValue: 600_000,
+      parameters: { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000 },
+    };
+    const html = renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale], children: createElement(AcceptedRows, { rows: [electricity, gas] }),
+    }));
+    const [block, volume] = inputs(html);
+    expect(block).toBe('');
+    expect(volume).toContain(MESSAGES[locale].dataEntry.bulkColumns.ncvKcalPerSm3);
+  });
 });

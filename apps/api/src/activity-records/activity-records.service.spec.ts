@@ -833,6 +833,96 @@ describe('ActivityRecordsService — the engine reads the effective parameters a
   });
 });
 
+describe('ActivityRecordsService — an Electricity self-generation block (self-gen-model)', () => {
+  const BLOCK = { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400000, exportedToGridKwh: null } as const;
+  const stored = (over: Partial<ActivityRecord> = {}) => ({
+    ...makeRecord({
+      id: 'rec-sg', subsidiaryId: 'sub-1', createdBy: 'user-entry', category: 'Electricity', activityUnit: 'kWh',
+      parameters: BLOCK as never, ...over,
+    }),
+    _count: { evidenceLinks: 0 },
+    location: null,
+  });
+  const lastInput = (calc: ReturnType<typeof build>['calc']) => calc.compute.mock.calls.at(-1)![0];
+  const updatedData = (prisma: ReturnType<typeof build>['prisma']) =>
+    prisma.activityRecord.update.mock.calls[0][0].data as Record<string, unknown>;
+  const editing = (row: ReturnType<typeof stored>) => {
+    const built = build(2);
+    built.prisma.activityRecord.findUnique.mockResolvedValue(row);
+    built.prisma.activityRecord.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      ...row,
+      ...data,
+      parameters: data.parameters === Prisma.DbNull ? null : data.parameters ?? row.parameters,
+    }));
+    return built;
+  };
+
+  beforeEach(() => {
+    audit.record.mockClear();
+  });
+
+  it('a create with a block stores it as sent, null field included, prices with it and audits it', async () => {
+    const { prisma, calc, service } = build(2);
+    prisma.activityRecord.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      ...makeRecord({ id: 'rec-new', subsidiaryId: 'sub-1' }),
+      ...data,
+      _count: { evidenceLinks: 0 },
+      location: null,
+    }));
+
+    const dto = await service.create(dataEntry(), {
+      subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
+      category: 'Electricity', activityValue: 600000, activityUnit: 'kWh', parameters: BLOCK,
+    } as never);
+
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.parameters).toEqual(BLOCK);
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.parameters).toHaveProperty('exportedToGridKwh', null);
+    expect(lastInput(calc)).toMatchObject({ category: 'Electricity', parameters: BLOCK });
+    expect(dto.parameters).toEqual(BLOCK);
+    expect((audit.record.mock.calls[0][1].diff as any).after.parameters).toEqual(BLOCK);
+  });
+
+  it('a PATCH that omits parameters keeps the stored block, and prices with it', async () => {
+    const { prisma, calc, service } = editing(stored());
+    await service.update(dataEntry(), 'rec-sg', { activityValue: 550000 });
+    expect(updatedData(prisma)).not.toHaveProperty('parameters');
+    expect(lastInput(calc)).toMatchObject({ value: 550000, parameters: BLOCK });
+  });
+
+  it('a PATCH that changes the block recalculates with the new one, and audits both sides', async () => {
+    const { prisma, calc, service } = editing(stored());
+    const next = { ...BLOCK, selfGeneratedKwh: 450000, exportedToGridKwh: 10000 };
+    await service.update(dataEntry(), 'rec-sg', { parameters: next });
+    expect(calc.compute).toHaveBeenCalledTimes(1);
+    expect(lastInput(calc)).toMatchObject({ parameters: next });
+    expect(updatedData(prisma).parameters).toEqual(next);
+    expect(updatedData(prisma).calculation).toEqual(calc.snapshot);
+    const diff = audit.record.mock.calls[0][1].diff as any;
+    expect(diff.before.parameters).toEqual(BLOCK);
+    expect(diff.after.parameters).toEqual(next);
+  });
+
+  it('refuses moving the record to another category with its block, and accepts it with parameters: null', async () => {
+    const { prisma, service } = editing(stored());
+    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas' }))
+      .rejects.toMatchObject({ code: 'record_parameters_invalid' });
+    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: BLOCK } as never))
+      .rejects.toMatchObject({ code: 'record_parameters_invalid' });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+
+    await service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: null });
+    expect(updatedData(prisma).category).toBe('Natural Gas');
+    expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
+  });
+
+  it('refuses another category\'s fields on an Electricity edit, before anything is written', async () => {
+    const { prisma, service } = editing(stored());
+    await expect(service.update(dataEntry(), 'rec-sg', { parameters: { cvBasis: 'net' } as never }))
+      .rejects.toMatchObject({ code: 'record_parameters_invalid' });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('ActivityRecordsService — locationName: read-only, never audited', () => {
   const located = { ...CREATE_DTO, locationId: 'loc-1' };
 

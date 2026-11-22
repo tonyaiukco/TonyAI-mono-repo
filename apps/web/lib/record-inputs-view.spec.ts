@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
 import { checkDecimal, parseLocaleDecimal } from '@/lib/i18n/number';
 import { MESSAGES } from '@/messages';
+import { copyPrefill } from '@/lib/record-edit-view';
 
 import {
   ACTIVITY_VALUE_MAX,
@@ -22,6 +23,8 @@ import {
   equipmentTotal,
   gasEnergyIssue,
   gasInputsFromRecord,
+  selfGenerationFromRecord,
+  selfGenerationToSend,
   gasInputsIssue,
   gasParameters,
   clearsNetEnergyQuantity,
@@ -69,6 +72,13 @@ const READY: ReferenceState = {
 };
 const line = (over: Partial<EquipmentLineDraft> = {}): EquipmentLineDraft => ({ ...newEquipmentLine('l1'), equipmentType: 'chiller', capacityKg: 20, ...over });
 
+const SELF_GENERATION_BLOCK = Object.freeze({
+  generationTopology: 'A',
+  selfGenerationSource: 'solar',
+  selfGeneratedKwh: 400_000,
+  facilityConsumptionKwh: 1_000_000,
+} as const);
+
 describe('which inputs a record takes (D11)', () => {
   it('asks for them only under the TR rules, for natural gas in a volume and for refrigerants', () => {
     expect(recordInputMode('Natural Gas', 'TR', 'standard_cubic_metres')).toBe('natural_gas');
@@ -83,6 +93,11 @@ describe('which inputs a record takes (D11)', () => {
     expect(recordInputMode('Refrigerants', 'UK', 'kg')).toBeNull();
     expect(recordInputMode('Refrigerants', null, 'kg')).toBeNull();
     expect(recordInputMode('Fugitive Gas', 'TR', 'standard_cubic_metres')).toBeNull();
+    // Electricity's block has no fields on the form yet, in any unit or geography (self-gen-model).
+    for (const unit of ['kWh', 'MWh']) {
+      expect(recordInputMode('Electricity', 'TR', unit)).toBeNull();
+      expect(recordInputMode('Electricity', 'UK', unit)).toBeNull();
+    }
   });
 
   it('offers TR natural gas as a volume first, then as a bill, and a TR vehicle mode in litres', () => {
@@ -128,15 +143,15 @@ describe('which inputs a record takes (D11)', () => {
 
 describe('a bill\'s stored calorific basis (ng-kwh-engine)', () => {
   it('round-trips a stored basis from the record to what the form sends', () => {
-    const opened = gasInputsFromRecord({ cvBasis: 'gross' });
+    const opened = gasInputsFromRecord('Natural Gas', { cvBasis: 'gross' });
     expect(opened.cvBasis).toBe('gross');
     expect(gasParameters(opened, 'kWh', 8250)).toEqual({ cvBasis: 'gross' });
-    expect(gasParameters(gasInputsFromRecord({ cvBasis: 'net' }), 'MWh', 8250)).toEqual({ cvBasis: 'net' });
+    expect(gasParameters(gasInputsFromRecord('Natural Gas', { cvBasis: 'net' }), 'MWh', 8250)).toEqual({ cvBasis: 'net' });
   });
 
   it('sends nothing for a bill without a basis, so the API names the missing choice', () => {
     expect(gasParameters(NO_GAS_INPUTS, 'kWh', 8250)).toBeNull();
-    expect(gasInputsFromRecord({ cvBasis: 'lower' }).cvBasis).toBeNull();
+    expect(gasInputsFromRecord('Natural Gas', { cvBasis: 'lower' }).cvBasis).toBeNull();
   });
 
   it('never sends a basis on a volume reading, nor a volume input on a bill', () => {
@@ -281,9 +296,17 @@ describe('natural gas inputs (D5)', () => {
   it('reads the default from the release, and opens a stored record as it was saved', () => {
     expect(referenceValue(ROWS, 'reference_ncv')).toBe(8250);
     expect(referenceValue([], 'reference_ncv')).toBeNull();
-    expect(gasInputsFromRecord({ billedGcvKcalPerSm3: 9300 })).toEqual({ ncv: null, billedGcv: 9300, volumeCorrectionFactor: null, cvBasis: null });
-    expect(gasInputsFromRecord(null)).toEqual(NO_GAS_INPUTS);
+    expect(gasInputsFromRecord('Natural Gas', { billedGcvKcalPerSm3: 9300 })).toEqual({ ncv: null, billedGcv: 9300, volumeCorrectionFactor: null, cvBasis: null });
+    expect(gasInputsFromRecord('Natural Gas', null)).toEqual(NO_GAS_INPUTS);
   });
+
+  it('reads no gas inputs from an Electricity record, whatever its parameters hold (self-gen-model)', () => {
+    expect(gasInputsFromRecord('Electricity', SELF_GENERATION_BLOCK)).toEqual(NO_GAS_INPUTS);
+    // Even keys that look like gas inputs are not read off another category.
+    expect(gasInputsFromRecord('Electricity', { cvBasis: 'net' })).toEqual(NO_GAS_INPUTS);
+    expect(gasInputsFromRecord('Refrigerants', { equipment: [] })).toEqual(NO_GAS_INPUTS);
+  });
+
 
   it('reads a Turkish 8078,67 as 8,078.67, and refuses an ambiguous separator', () => {
     const read = (text: string) => checkDecimal(parseLocaleDecimal(text, 'tr'), 'positive', 1e300);
@@ -573,5 +596,52 @@ describe('the input fields as rendered', () => {
     const html = render('en', EquipmentLines, equipment([line()]));
     expect(html).not.toContain('data-testid="equipment-rate"');
     expect(html).toContain(`aria-label="${MESSAGES.en.dataEntry.inputs.leakRate} 1"`);
+  });
+});
+
+describe('selfGenerationFromRecord (self-gen-model)', () => {
+  it('returns an Electricity record\'s stored block unchanged, as a copy', () => {
+    const parameters = { ...SELF_GENERATION_BLOCK, exportedToGridKwh: null };
+    const block = selfGenerationFromRecord({ category: 'Electricity', parameters });
+    expect(block).toEqual(parameters);
+    expect(block).not.toBe(parameters);
+    expect(selfGenerationFromRecord({ category: 'Electricity', parameters: SELF_GENERATION_BLOCK })).toEqual(SELF_GENERATION_BLOCK);
+  });
+
+  it('returns null for a plain grid record, an all-null block and any other category', () => {
+    expect(selfGenerationFromRecord({ category: 'Electricity', parameters: null })).toBeNull();
+    expect(selfGenerationFromRecord({ category: 'Electricity' })).toBeNull();
+    expect(selfGenerationFromRecord({ category: 'Electricity', parameters: {} })).toBeNull();
+    expect(
+      selfGenerationFromRecord({ category: 'Electricity', parameters: { generationTopology: null, selfGeneratedKwh: null } }),
+    ).toBeNull();
+    expect(selfGenerationFromRecord({ category: 'Natural Gas', parameters: { cvBasis: 'net' } })).toBeNull();
+    expect(selfGenerationFromRecord({ category: 'Natural Gas', parameters: SELF_GENERATION_BLOCK })).toBeNull();
+  });
+});
+
+describe('selfGenerationToSend (self-gen-model, qa-auditor review)', () => {
+  it('sends the record\'s own block while the category is Electricity, whatever the unit or geography', () => {
+    expect(selfGenerationToSend('Electricity', SELF_GENERATION_BLOCK)).toBe(SELF_GENERATION_BLOCK);
+    expect(selfGenerationToSend('Electricity', null)).toBeNull();
+  });
+
+  it('sends none for any other category, and the block comes back with Electricity', () => {
+    for (const category of ['Natural Gas', 'Refrigerants', 'Fuel', 'Water']) {
+      expect(selfGenerationToSend(category, SELF_GENERATION_BLOCK), category).toBeNull();
+    }
+    // A category picked by mistake and undone: the own block is still the record's.
+    const own = selfGenerationFromRecord({ category: 'Electricity', parameters: SELF_GENERATION_BLOCK });
+    expect(selfGenerationToSend('Natural Gas', own)).toBeNull();
+    expect(selfGenerationToSend('Electricity', own)).toEqual(SELF_GENERATION_BLOCK);
+  });
+
+  it('carries a copied voided record\'s block through the copy\'s prefill', () => {
+    const copied = copyPrefill({
+      subsidiaryId: 's', locationId: null, reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q4',
+      category: 'Electricity', activityType: null, activityValue: 600000, activityUnit: 'kWh', input: null,
+      parameters: { ...SELF_GENERATION_BLOCK },
+    });
+    expect(selfGenerationToSend(copied.category, selfGenerationFromRecord(copied))).toEqual(SELF_GENERATION_BLOCK);
   });
 });

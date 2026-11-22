@@ -11,6 +11,7 @@ import {
   EXPLANATION_MAX_LENGTH,
   PERIOD_VALUE_MAX_LENGTH,
 } from '@tonyai/shared-types';
+import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from '../../common/coded-validation.pipe';
 import { CreateActivityRecordDto } from './create-activity-record.dto';
 import { UpdateActivityRecordDto } from './update-activity-record.dto';
 
@@ -490,8 +491,90 @@ describe.each(DTOS)('%s — parameters (LP4-02, D3, D7)', (_name, Dto) => {
   });
 
   it('refuses parameters for categories that take none', () => {
-    expect(refused({ category: 'Electricity', parameters: { ncvKcalPerSm3: 1 } })).toContain('parameters');
     expect(refused({ category: 'Fuel', activityType: 'diesel', parameters: { equipment: [line()] } })).toContain('parameters');
+    expect(refused({ category: 'Water', parameters: { selfGeneratedKwh: 1 } })).toContain('parameters');
+  });
+
+  // self-gen-model: Electricity's self-generation block (design 3).
+  const block = (over: Record<string, unknown> = {}) => ({
+    generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000, ...over,
+  });
+  const electricity = (parameters: unknown) => ({ category: 'Electricity', parameters });
+
+  it('accepts a valid self-generation block and a block of nulls on Electricity', () => {
+    for (const parameters of [
+      block(),
+      block({ exportedToGridKwh: 50_000, facilityConsumptionKwh: 1_000_000 }),
+      block({ selfGeneratedKwh: 0, exportedToGridKwh: 0, selfGenerationSource: 'diesel_generator' }),
+      block({ exportedToGridKwh: null, facilityConsumptionKwh: null }),
+      { generationTopology: null, selfGenerationSource: null, selfGeneratedKwh: null, exportedToGridKwh: null, facilityConsumptionKwh: null },
+      {},
+    ]) {
+      expect(refused(electricity(parameters)), JSON.stringify(parameters)).not.toContain('parameters');
+    }
+  });
+
+  it('leaves the block rules to the engine: topology B and C, a missing field, exports above generation', () => {
+    for (const parameters of [
+      block({ generationTopology: 'B' }),
+      block({ generationTopology: 'C' }),
+      { generationTopology: 'A', selfGeneratedKwh: 1 },
+      { exportedToGridKwh: 1 },
+      block({ exportedToGridKwh: 500_000 }),
+    ]) {
+      expect(refused(electricity(parameters)), JSON.stringify(parameters)).not.toContain('parameters');
+    }
+  });
+
+  it.each([
+    ['an unknown source', block({ selfGenerationSource: 'biogas' })],
+    ['an unknown topology', block({ generationTopology: 'D' })],
+    ['a negative generation', block({ selfGeneratedKwh: -1 })],
+    ['negative exports', block({ exportedToGridKwh: -1 })],
+    ['a facility consumption of 0', block({ facilityConsumptionKwh: 0 })],
+    ['a generation as a string number', block({ selfGeneratedKwh: '400000' })],
+    ['a key the block does not define', block({ avoidedKgCo2e: 1 })],
+    ['a gas key', { ncvKcalPerSm3: 1 }],
+    ['a gas key beside a block', block({ cvBasis: 'net' })],
+    ['an equipment list', { equipment: [line()] }],
+  ])('refuses %s on Electricity', (_what, parameters) => {
+    expect(refused(electricity(parameters))).toContain('parameters');
+  });
+});
+
+describe.each(DTOS)('%s — a refused block answers record_parameters_invalid through the real pipe (self-gen-model)', (name, Dto) => {
+  const pipe = new CodedValidationPipe(GLOBAL_VALIDATION_OPTIONS);
+  const codeOf = async (parameters: unknown) => {
+    try {
+      await pipe.transform({ ...VALID[name], parameters }, { type: 'body', metatype: Dto as never });
+      return null;
+    } catch (e) {
+      return (e as { getResponse(): { code: string } }).getResponse().code;
+    }
+  };
+
+  it.each([
+    ['an unknown source', { generationTopology: 'A', selfGenerationSource: 'biogas', selfGeneratedKwh: 1 }],
+    ['a negative generation', { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: -1 }],
+    ['a gas key', { ncvKcalPerSm3: 8250 }],
+  ])('%s', async (_what, parameters) => {
+    expect(await codeOf(parameters)).toBe('record_parameters_invalid');
+  });
+
+  it('admits a valid block', async () => {
+    expect(await codeOf({ generationTopology: 'A', selfGenerationSource: 'wind', selfGeneratedKwh: 10 })).toBeNull();
+  });
+
+  it('stays validation_failed when another field is refused too', async () => {
+    try {
+      await pipe.transform(
+        { ...VALID[name], activityValue: -1, parameters: { ncvKcalPerSm3: 1 } },
+        { type: 'body', metatype: Dto as never },
+      );
+      expect.unreachable();
+    } catch (e) {
+      expect((e as { getResponse(): { code: string } }).getResponse().code).toBe('validation_failed');
+    }
   });
 });
 

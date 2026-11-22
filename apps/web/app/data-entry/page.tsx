@@ -68,6 +68,8 @@ import {
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
+  selfGenerationFromRecord,
+  selfGenerationToSend,
   gasEnergyIssue,
   gasInputsIssue,
   gasParameters,
@@ -167,6 +169,7 @@ import type {
   FactorCoverageDTO,
   LocationDTO,
   RecordParameters,
+  ElectricityRecordParameters,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -317,6 +320,11 @@ function DataEntryPageInner() {
   const lineSeq = useRef(0);
   const nextLineId = useCallback(() => `line-${(lineSeq.current += 1)}`, []);
   const [equipment, setEquipment] = useState<EquipmentLineDraft[]>(() => [newEquipmentLine("line-0")]);
+  // The opened or copied record's own self-generation block, sent unchanged
+  // while the category is Electricity (`selfGenerationToSend`); the form shows
+  // no field for it yet, and without it every save would erase it
+  // (self-gen-model, design 6). Set and cleared with `ownBasis`.
+  const [ownSelfGeneration, setOwnSelfGeneration] = useState<ElectricityRecordParameters | null>(null);
   const [inputsEpoch, setInputsEpoch] = useState(0);
   useEffect(() => setRefusedGasInputs(new Set()), [inputsEpoch]);
   // The release parameters the inputs default to (D2): never a constant here.
@@ -598,7 +606,7 @@ function DataEntryPageInner() {
       ? gasParameters(gasInputs, activityUnit, defaultNcv)
       : refrigerantMode && equipmentProblem === null
         ? equipmentParameters(equipment)
-        : null;
+        : selfGenerationToSend(category, ownSelfGeneration);
   // One string for the preview's dependencies: a new object each render is not a change.
   const parametersKey = JSON.stringify(recordParameters);
   // Mirrors the API's `activity_type_required`: a typed category's record
@@ -1224,9 +1232,11 @@ function DataEntryPageInner() {
     }
   }
 
-  function resetInputs(parameters: unknown = null) {
-    setGasInputs(gasInputsFromRecord(parameters));
-    setEquipment(linesFromRecord(parameters, nextLineId));
+  /** The inputs set to a record's stored parameters, read by its category; empty with none. */
+  function resetInputs(category: string | null = null, parameters: unknown = null) {
+    const stored = category === null ? null : parameters;
+    setGasInputs(gasInputsFromRecord(category ?? "", stored));
+    setEquipment(linesFromRecord(stored, nextLineId));
     setInputsEpoch((n) => n + 1);
   }
 
@@ -1302,11 +1312,12 @@ function DataEntryPageInner() {
     setActivityUnit(rec.activityUnit);
     setUnitCategory(rec.category);
     setOwnUnit(rec.activityUnit);
-    setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
+    setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
+    setOwnSelfGeneration(selfGenerationFromRecord(rec));
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
     if (hasContextValue(rec.input)) setContextOpen(true);
-    resetInputs(rec.parameters);
+    resetInputs(rec.category, rec.parameters);
     setVerdict(verdictOf(rec));
     setVarianceReason(rec.varianceReason ?? "");
     setPreviewError(null);
@@ -1351,6 +1362,7 @@ function DataEntryPageInner() {
     setEditingTuple(null);
     setOwnUnit(null);
     setOwnBasis(null);
+    setOwnSelfGeneration(null);
     toast.info(t("nowEnteringNew"));
   }, [
     editingId,
@@ -1378,6 +1390,7 @@ function DataEntryPageInner() {
     setCopying(false);
     setOwnUnit(null);
     setOwnBasis(null);
+    setOwnSelfGeneration(null);
     // After a submit the next record does not inherit a TR gas bill's kWh or MWh:
     // it is narrowed to the category's first unit, m³ (ng-kwh-form review). Any
     // other reset, a subsidiary change included, keeps the unit the target offers.
@@ -1577,7 +1590,8 @@ function DataEntryPageInner() {
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
-      setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
+      setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
+      setOwnSelfGeneration(selfGenerationFromRecord(rec));
       setVerdict(verdictOf(rec));
       showSavedCalculation(rec);
       if (wasEditing) {
@@ -1650,7 +1664,8 @@ function DataEntryPageInner() {
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
-      setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
+      setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
+      setOwnSelfGeneration(selfGenerationFromRecord(rec));
       setVerdict(verdictOf(rec));
       showSavedCalculation(rec);
       // A file that did not upload: the record stays a draft, the vault lists
@@ -1780,11 +1795,12 @@ function DataEntryPageInner() {
       setActivityUnit(values.activityUnit);
       setUnitCategory(values.category);
       setOwnUnit(values.activityUnit);
-      setOwnBasis(gasInputsFromRecord(values.parameters).cvBasis);
+      setOwnBasis(gasInputsFromRecord(values.category, values.parameters).cvBasis);
+      setOwnSelfGeneration(selfGenerationFromRecord(values));
       setContext((values.input as ContextValues | null) ?? {});
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
-      resetInputs(values.parameters);
+      resetInputs(values.category, values.parameters);
       toast.info(t("copy.loaded"));
       return true;
     } catch (e) {

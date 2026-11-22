@@ -158,7 +158,10 @@
       "ceiling": "Bu değerin karşılaştırılacak kullanılabilir bir geçmişi yok ve kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma gerekçesi ekleyin."
     },
     "parameters_required": {
-      "cvBasis": "Bu enerji miktarının faturadaki net mi yoksa brüt ısıl değere mi dayandığını belirtin."
+      "cvBasis": "Bu enerji miktarının faturadaki net mi yoksa brüt ısıl değere mi dayandığını belirtin.",
+      "generationTopology": "Tesisin kendi üretiminin şebeke sayacına göre nerede olduğunu belirtin.",
+      "selfGenerationSource": "Tesisin kendi üretiminin kaynağını belirtin: güneş, rüzgâr, doğal gaz kojenerasyonu ya da dizel jeneratör.",
+      "selfGeneratedKwh": "Tesisin bu dönemde kendi ürettiği elektriği kWh olarak belirtin."
     }
   },
   "bulkOutcomes": {

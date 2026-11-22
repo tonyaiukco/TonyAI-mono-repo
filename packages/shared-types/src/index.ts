@@ -2640,9 +2640,16 @@ export interface CalculationRefusalBody {
 }
 
 /** Which required input a `parameters_required` refusal names (`params.input`,
- *  a sentence selector): a refrigerant's equipment lines, or a natural gas
- *  energy bill's calorific basis (`ng-kwh-engine`). */
-export const PARAMETERS_REQUIRED_INPUTS = Object.freeze(['equipment', 'cvBasis'] as const);
+ *  a sentence selector): a refrigerant's equipment lines, a natural gas
+ *  energy bill's calorific basis (`ng-kwh-engine`), or a self-generation
+ *  block's topology, source or generated kWh (`self-gen-model`). */
+export const PARAMETERS_REQUIRED_INPUTS = Object.freeze([
+  'equipment',
+  'cvBasis',
+  'generationTopology',
+  'selfGenerationSource',
+  'selfGeneratedKwh',
+] as const);
 export type ParametersRequiredInput = (typeof PARAMETERS_REQUIRED_INPUTS)[number];
 
 // ---------------------------------------------------------------------------
@@ -3532,10 +3539,123 @@ export interface RefrigerantRecordParameters {
 }
 
 /**
- * Union of all category-specific record parameters (D3).
- * Each category that requires per-record inputs has its own shape.
+ * Where a facility's own generation sits against its grid meter (spec v2.5 §2,
+ * Decisions 2026-11-20 D5): `A` behind the meter, `B` and `C` named but not
+ * accepted until LP7-09 (`self-gen-model`).
  */
-export type RecordParameters = NaturalGasRecordParameters | RefrigerantRecordParameters;
+export const GENERATION_TOPOLOGIES = Object.freeze(['A', 'B', 'C'] as const);
+export type GenerationTopology = (typeof GENERATION_TOPOLOGIES)[number];
+
+export function isGenerationTopology(value: unknown): value is GenerationTopology {
+  return typeof value === 'string' && (GENERATION_TOPOLOGIES as readonly string[]).includes(value);
+}
+
+/** The topologies a self-generation block is accepted with today: `A` only. */
+export const ACCEPTED_GENERATION_TOPOLOGIES = Object.freeze(['A'] as const satisfies readonly GenerationTopology[]);
+export type AcceptedGenerationTopology = (typeof ACCEPTED_GENERATION_TOPOLOGIES)[number];
+
+export function isAcceptedGenerationTopology(value: unknown): value is AcceptedGenerationTopology {
+  return typeof value === 'string' && (ACCEPTED_GENERATION_TOPOLOGIES as readonly string[]).includes(value);
+}
+
+/** What a facility's own generation runs on (`self-gen-model`). */
+export const SELF_GENERATION_SOURCES = Object.freeze(['solar', 'wind', 'natural_gas_chp', 'diesel_generator'] as const);
+export type SelfGenerationSource = (typeof SELF_GENERATION_SOURCES)[number];
+
+export function isSelfGenerationSource(value: unknown): value is SelfGenerationSource {
+  return typeof value === 'string' && (SELF_GENERATION_SOURCES as readonly string[]).includes(value);
+}
+
+/**
+ * Per-record parameters for Electricity: the optional self-generation block
+ * (`self-gen-model`). All or nothing: when any field is present, the topology,
+ * the source and the generated kWh are required. Every kWh field is kWh
+ * whatever the record's unit. The block is never priced: Scope 2 stays the
+ * record's value (the grid import) × the year's grid factor. A null field is
+ * an absent one, at every layer.
+ */
+export interface ElectricityRecordParameters {
+  generationTopology?: GenerationTopology | null;
+  selfGenerationSource?: SelfGenerationSource | null;
+  /** kWh generated on site; 0 or more. */
+  selfGeneratedKwh?: number | null;
+  /** kWh of the generation exported to the grid; 0 up to `selfGeneratedKwh`. */
+  exportedToGridKwh?: number | null;
+  /** The facility's total consumption in kWh; above 0. */
+  facilityConsumptionKwh?: number | null;
+}
+
+/** The keys of a self-generation block, in their stated order. */
+export const SELF_GENERATION_KEYS = Object.freeze([
+  'generationTopology',
+  'selfGenerationSource',
+  'selfGeneratedKwh',
+  'exportedToGridKwh',
+  'facilityConsumptionKwh',
+] as const satisfies readonly (keyof ElectricityRecordParameters)[]);
+
+/**
+ * Union of all category-specific record parameters (D3).
+ * Each category that takes per-record inputs has its own shape; the record's
+ * category tells which (`recordParameterShape`), never the keys present.
+ */
+export type RecordParameters =
+  | NaturalGasRecordParameters
+  | RefrigerantRecordParameters
+  | ElectricityRecordParameters;
+
+/** The parameter shape a category takes (`recordParameterShape`). */
+export type RecordParameterShape = 'natural_gas' | 'refrigerant' | 'electricity';
+
+/**
+ * Which parameter shape a `category` record takes, or null when it takes none.
+ * The one category list the DTO, the engine guard and the web read
+ * (`self-gen-model`, design 2).
+ */
+export function recordParameterShape(category: string): RecordParameterShape | null {
+  switch (category) {
+    case 'Natural Gas':
+      return 'natural_gas';
+    case 'Refrigerants':
+      return 'refrigerant';
+    case 'Electricity':
+      return 'electricity';
+    default:
+      return null;
+  }
+}
+
+/** The first problem with a self-generation block (`selfGenerationIssue`). */
+export type SelfGenerationIssue =
+  | {
+      code: 'parameters_required';
+      input: Extract<ParametersRequiredInput, 'generationTopology' | 'selfGenerationSource' | 'selfGeneratedKwh'>;
+    }
+  | { code: 'parameters_not_applicable' }
+  | { code: 'record_parameters_invalid' };
+
+/**
+ * The first problem with an Electricity record's self-generation block, or null
+ * when there is none (`self-gen-model`, design 3). A null field is an absent
+ * one, and a block with nothing left is no block. The order is fixed: a
+ * missing topology, source, then generated kWh; a topology other than `A`;
+ * exports above the generation. Field types and ranges are the DTO's rule.
+ */
+export function selfGenerationIssue(
+  parameters: ElectricityRecordParameters | null | undefined,
+): SelfGenerationIssue | null {
+  if (parameters === null || parameters === undefined) return null;
+  const present = SELF_GENERATION_KEYS.filter((key) => parameters[key] !== null && parameters[key] !== undefined);
+  if (present.length === 0) return null;
+  if (parameters.generationTopology == null) return { code: 'parameters_required', input: 'generationTopology' };
+  if (parameters.selfGenerationSource == null) return { code: 'parameters_required', input: 'selfGenerationSource' };
+  if (parameters.selfGeneratedKwh == null) return { code: 'parameters_required', input: 'selfGeneratedKwh' };
+  if (!isAcceptedGenerationTopology(parameters.generationTopology)) return { code: 'parameters_not_applicable' };
+  if (parameters.exportedToGridKwh != null && parameters.exportedToGridKwh > parameters.selfGeneratedKwh) {
+    return { code: 'record_parameters_invalid' };
+  }
+  return null;
+}
 
 /**
  * Stored parameters as the engine and K11 read them: a null field is an absent
@@ -4221,8 +4341,10 @@ export interface ActivityRecordDTO {
   input: Record<string, unknown> | null;
   /**
    * Per-record calculation parameters (LP4-02, D3). Category-specific typed
-   * inputs: Natural Gas uses calorific value overrides and volume correction;
-   * Refrigerants use equipment type, refill and leak rate choice.
+   * inputs, read by the record's category (`recordParameterShape`): Natural Gas
+   * uses calorific value overrides, volume correction or a bill's `cvBasis`;
+   * Refrigerants use equipment type, refill and leak rate choice; Electricity
+   * may carry a self-generation block, never priced (`self-gen-model`).
    * Stored and audited from LP4-02 PR2; the engine and K11's staleness read them
    * from PR3.
    */

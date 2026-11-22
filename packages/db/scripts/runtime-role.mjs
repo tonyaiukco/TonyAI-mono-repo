@@ -1026,8 +1026,9 @@ export const INTEGRITY_CHECKS = Object.freeze([
   // LP4-02 (33): what a record says, held for every writer at the door.
   ['activity_records', 'activity_records_activity_value_check', 'eeef9e2c8cf6539c36909ac41432c40a'],
   // LP4-02 (D3): per-record calculation parameters shape; ng-kwh-engine adds
-  // Natural Gas's `cvBasis` (20261120120000_ng_kwh_cv_basis).
-  ['activity_records', 'activity_records_parameters_check', '7946cf0893f9074ce9a94983791bf002'],
+  // Natural Gas's `cvBasis` (20261120120000_ng_kwh_cv_basis); self-gen-model
+  // adds Electricity's self-generation block (20261123120000_self_gen_model).
+  ['activity_records', 'activity_records_parameters_check', 'b8f7f38691fa5472f24cf07e8a9751bb'],
   ['activity_records', 'activity_records_period_value_check', 'd15080e375207c7ca22a5777c479af8b'],
   ['activity_records', 'activity_records_scope_check', '8cae4f533cf776fdcef2cf79f1fcf834'],
   ['emission_factors', 'emission_factors_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],

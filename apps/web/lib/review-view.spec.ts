@@ -115,6 +115,10 @@ describe('the review sheet\'s calorific basis (ng-kwh-engine)', () => {
     expect(reviewCalorificBasis(record('Natural Gas', null))).toBeNull();
     expect(reviewCalorificBasis(record('Natural Gas', { cvBasis: null }))).toBeNull();
     expect(reviewCalorificBasis(record('Electricity', { cvBasis: 'net' }))).toBeNull();
+    // A self-generation block is no gas basis (self-gen-model).
+    expect(
+      reviewCalorificBasis(record('Electricity', { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000 })),
+    ).toBeNull();
   });
 
   it.each([
