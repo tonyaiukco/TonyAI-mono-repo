@@ -233,8 +233,9 @@ export class CalculationsService {
 
   /**
    * The release parameters a TR calculation of this lookup would read (LP4-02
-   * PR4, D2): the natural gas chain's from the Sm³ conversion's release, the
-   * capacity method's from the gas factor's, chosen by the engine's own lookup
+   * PR4, D2): the natural gas chain's from the Sm³ conversion's release, a gas
+   * bill's in kWh or MWh from its net factor's (ng-kwh-form), the capacity
+   * method's from the gas factor's, chosen by the engine's own lookup
    * so the form shows what the engine would price with. Empty where the TR
    * rules do not apply or no path resolves; the preview names that refusal.
    */

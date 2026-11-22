@@ -298,6 +298,8 @@ describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
     ['no reference NCV', [param('reference_gcv', null, 9155)]],
     ['no rows at all', []],
     ['a zero GCV', [param('reference_ncv', null, 8250), param('reference_gcv', null, 0)]],
+    ['a negative GCV', [param('reference_ncv', null, 8250), param('reference_gcv', null, -9155)]],
+    ['a negative NCV', [param('reference_ncv', null, -8250), param('reference_gcv', null, 9155)]],
     ['an NCV not below the GCV', [param('reference_ncv', null, 9155), param('reference_gcv', null, 8250)]],
     ['an equal NCV and GCV', [param('reference_ncv', null, 9155), param('reference_gcv', null, 9155)]],
   ])('derives nothing, and invents no ratio, with %s', (_case, rows) => {

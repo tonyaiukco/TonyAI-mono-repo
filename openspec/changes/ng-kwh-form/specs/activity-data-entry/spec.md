@@ -8,7 +8,7 @@ For a TR natural gas record in Sm³, the form SHALL show NCV prefilled with 8,25
 - **THEN** the record stores 8,100 as user-entered, and the preview's conversion note shows it
 
 #### Scenario: A new TR gas record offers kWh and MWh
-- **WHEN** a user starts a new TR natural gas record
+- **WHEN** a user starts a new TR natural gas record from a fresh form, a category change or a link
 - **THEN** the unit list offers m³, Sm³, kWh and MWh, and the form starts on m³ as before
 
 #### Scenario: A bill in kWh needs its basis

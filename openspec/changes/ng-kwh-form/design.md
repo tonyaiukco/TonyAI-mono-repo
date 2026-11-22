@@ -45,7 +45,12 @@ See `proposal.md` (Why) and `ng-kwh-engine/design.md` (Decision 6, Non-Goals). C
 `unitsForRecord` returns TR natural gas in a fixed order: m³, Sm³, kWh, MWh. It builds that order explicitly, as the MGO branch already does, instead of filtering `ACTIVITY_UNITS`.
 
 - A new record starts on m³, as today. Nothing changes for the users and e2e flows that enter volumes.
-- **Found during apply: order alone is not enough.** The form starts on Electricity in kWh, and a category change kept any unit the new category offers. Once kWh is in the TR gas list, picking Natural Gas, or arriving by a dashboard link, would keep kWh. The page therefore tracks whether the unit was picked (`unitPicked`): by the user, or as an opened or copied record's own. A unit nobody picked follows the first unit offered, and a category change resets the flag, so a new category's unit is chosen afresh. Kept from before: a picked unit the geography does not offer is narrowed, and a figure is cleared whenever its unit changes. Changed outside TR gas: a picked unit no longer carries over a category change (UK Electricity in MWh → Natural Gas now starts on kWh). The category change already clears the figure, so no number is lost.
+- **Found during apply: order alone is not enough.** The form starts on Electricity in kWh, and a category change kept any unit the new category offers. Once kWh is in the TR gas list, picking Natural Gas, or arriving by a dashboard link, would keep kWh.
+  - The page therefore records the category a unit was chosen for (`unitCategory`): by the user, as an opened or copied record's own, or as a category's first unit.
+  - A unit carried over from another category is replaced by the new category's first unit, once the geography is known.
+  - A geography change alone (a site or subsidiary) keeps the unit exactly as before. An unchosen m³ on a new TR record moved to a UK site stays m³, and TR marine gas oil on kg moved to the UK stays on kg (`architect` review of a first, boolean version, which re-defaulted on any geography change).
+  - **Changed outside TR gas:** a unit no longer carries over a category change. For example, UK Electricity in MWh → Natural Gas now starts on kWh. The category change already clears the figure, so no number is lost.
+  - **Kept:** *New* after an opened record keeps that record's category and unit, as it always has (an Sm³ record carried Sm³ before this change). After an opened kWh bill, New therefore offers kWh with an empty basis choice, which holds the save until a basis is chosen (`security-rls` and `architect` note; not changed, by the pre-pilot rule).
 - An opened or copied kWh record keeps its unit through the existing own-unit and copy-tuple rules. kWh is now also in the TR list, so a UK kWh copy moved to TR keeps its unit and its figure. With no basis, it then waits for one.
 - **Alternative: kWh first, because Turkish bills quote kWh.** Rejected for this change. It would silently change the default of every new TR gas record, and that is the owner's call, not a side effect. It is a one-line swap if the owner wants it.
 
@@ -104,7 +109,7 @@ The e2e spec's round-trip assertion (`natural-gas-energy-bill.spec.ts`, the `gas
 
 The e2e fixture's ratio is 0.9, so the release ratio is proven elsewhere:
 - **Web spec:** `derivedNetQuantity` with rows 8,250 / 9,155 gives 901.147 for 1,000. Missing, zero, inverted (≥ 1) or absent rows give `null`.
-- **Service spec:** the kWh read returns the factor's release (Decision 3).
+- **Service spec:** the kWh read returns the factor's release (Decision 3). It is the only test that can tell the factor's release from the conversion's: on the TR package both are one release, so the int assertion that ties the endpoint's release to the priced one cannot (`qa-auditor` review).
 - **`tr-factor-package.int.spec.ts`:** on the real TR release, the kWh read for 2025 returns `reference_ncv` 8,250 and `reference_gcv` 9,155.
 - **Local live check:** on the real release, a form-entered 1,000 kWh gross shows 901.15 kWh net and saves at 182.17 kg. 1 MWh gross gives 182.17 kg, and 1,000 kWh net gives 202.16 kg (GV-NG-kWh-A/B; C is unchanged from the engine).
 - **e2e (fixture ratio 0.9, factor 0.2):** 1,000 kWh gross shows 900 kWh net and saves at 180.00 kg. Net saves at 200.00 kg. 1 MWh gross gives 180.00 kg. Without a basis, the save stays disabled and nothing is sent.

@@ -3658,7 +3658,8 @@ export interface ReleaseParametersQuery {
   /**
    * The record's unit (`ng-kwh-form`). Natural gas in kWh or MWh resolves the
    * net factor as a bill's calculation does, and answers with that factor's
-   * release; any other unit, or none, keeps the Sm³ conversion's release.
+   * release; no unit, m³ or Sm³ keeps the Sm³ conversion's release, and any
+   * other unit answers no release.
    */
   unit?: string;
 }

@@ -33,6 +33,8 @@
   - 1,000 kWh net saves at 202.16 kg (GV-NG-kWh-A/B, within ±0.5%);
   - no horizontal scroll.
 
+  Result (2026-11-23): every 1280 px check passed in EN and TR (182.17 / 182.17 / 202.16 kg, keyboard selection, no horizontal scroll). The 375 px checks could not be made: the app shell squeezes Data Entry at that width with or without this change (Open questions). Unticked until the owner accepts that exception.
+
 ## 4. e2e
 
 - [x] 4.1 `e2e/natural-gas-energy-bill.spec.ts` (via the `e2e-flow` skill; locks checked per the lane rule). Form-created cases on the TR fixture (ratio 0.9, factor 0.2):
@@ -47,7 +49,7 @@
 ## 5. Verification, review and status
 
 - [x] 5.1 Full local gate: `pnpm typecheck`, lint (0 errors), `pnpm build`, `pnpm test` (api, shared-types, db, web). Verify: all green, with counts recorded for the status entry.
-- [ ] 5.2 Fresh-eyes review before the PR: `security-rls`, `qa-auditor` and `architect` in parallel, each on its own `git archive` copy, only one seat running `test:int`. Probes:
+- [x] 5.2 Fresh-eyes review before the PR: `security-rls`, `qa-auditor` and `architect` in parallel, each on its own `git archive` copy, only one seat running `test:int`. Probes:
   - can a kWh record reach the API without a basis from the form;
   - can the shown ratio differ from the applied one;
   - did the default unit move;
@@ -55,7 +57,7 @@
   - are the DTO and contract surface consistent.
 
   Verify: every blocker is fixed and re-reviewed. Non-blocking findings go under Open questions.
-- [ ] 5.3 `docs/roadmap_docs/project_status_roadmap_phases.md`: a Current status entry (moving the oldest to Archive if an eleventh), Next up item 4, and the LP4-06 card (`ng-kwh-form` ticked; the done-when met) and ledger row. The BUG-04 label question goes under Open questions. Verify: no other status file was touched, and the entry links the PR.
+- [x] 5.3 `docs/roadmap_docs/project_status_roadmap_phases.md`: a Current status entry (moving the oldest to Archive if an eleventh), Next up item 4, and the LP4-06 card and ledger row (the card's `ng-kwh-form` box is ticked when the PR merges, in the archive change). The BUG-04 label question goes under Open questions. Verify: no other status file was touched, and the entry links the PR.
 
 ## Workflow follow-up
 

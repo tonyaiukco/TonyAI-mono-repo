@@ -281,10 +281,12 @@ function DataEntryPageInner() {
   const activity = useDecimalInput();
   const activityValue = activity.text;
   const [activityUnit, setActivityUnit] = useState("kWh");
-  // Whether the unit is one the user picked, or a record's own: a unit nobody
-  // picked follows the first one offered, so a new TR gas record starts on m³
-  // even though kWh, the form's starting unit, is offered there (ng-kwh-form).
-  const [unitPicked, setUnitPicked] = useState(false);
+  // The category the unit was chosen for: by the user, as a record's own, or
+  // as a category's first unit. A unit carried over from another category is
+  // replaced by the new one's first, once the geography is known, so a new TR
+  // gas record starts on m³ even though kWh, the form's starting unit, is
+  // offered there (ng-kwh-form). A geography change alone keeps the unit.
+  const [unitCategory, setUnitCategory] = useState<string>("Electricity");
 
   // Optional context (demo extras)
   const [context, setContext] = useState<ContextValues>({});
@@ -1141,7 +1143,9 @@ function DataEntryPageInner() {
   useEffect(() => {
     if (onOwnType) return;
     const units = unitsForRecord(category, effectiveGeography, activityType);
-    if (units.length > 0 && (!units.some((u) => u.value === activityUnit) || (!unitPicked && units[0].value !== activityUnit))) {
+    const carriedOver = unitCategory !== category && effectiveGeography !== null;
+    if (carriedOver) setUnitCategory(category);
+    if (units.length > 0 && (!units.some((u) => u.value === activityUnit) || (carriedOver && units[0].value !== activityUnit))) {
       setActivityUnit(units[0].value);
       // A bill's basis means nothing for the volume it is narrowed to (qa-auditor N3).
       if (unitChangeClearsBasis(activityUnit, units[0].value)) {
@@ -1156,7 +1160,7 @@ function DataEntryPageInner() {
       setActivityType("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, effectiveGeography, onOwnType, activityUnit, activityType, unitPicked]);
+  }, [category, effectiveGeography, onOwnType, activityUnit, activityType, unitCategory]);
 
   // The capacity method is annual (D7): a new TR refrigerant record is filed
   // on the year. An opened one keeps its own period; the preview names the
@@ -1199,7 +1203,7 @@ function DataEntryPageInner() {
   function handleUnitChange(next: string) {
     const previous = activityUnit;
     setActivityUnit(next);
-    setUnitPicked(true);
+    setUnitCategory(category);
     // The record's own basis comes back with its own energy unit, so a unit picked by mistake can be undone.
     setGasInputs((prev) => ({ ...prev, cvBasis: basisAfterUnitChange(previous, next, prev.cvBasis, { unit: ownUnit, cvBasis: ownBasis }) }));
     if (unitChangeClearsQuantity(previous, next) && activity.text.trim() !== "") {
@@ -1284,7 +1288,7 @@ function DataEntryPageInner() {
     setActivityType(rec.activityType ?? "");
     activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
-    setUnitPicked(true);
+    setUnitCategory(rec.category);
     setOwnUnit(rec.activityUnit);
     setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
     setContext((rec.input as ContextValues | null) ?? {});
@@ -1742,7 +1746,7 @@ function DataEntryPageInner() {
       setActivityType(values.activityType);
       activity.setValue(values.activityValue);
       setActivityUnit(values.activityUnit);
-      setUnitPicked(true);
+      setUnitCategory(values.category);
       setOwnUnit(values.activityUnit);
       setOwnBasis(gasInputsFromRecord(values.parameters).cvBasis);
       setContext((values.input as ContextValues | null) ?? {});
@@ -1909,8 +1913,6 @@ function DataEntryPageInner() {
                           toast.info(t("inputs.categoryReset"));
                         }
                         setCategory(next);
-                        // A new category's unit is chosen afresh: kWh of electricity is not kWh of gas.
-                        if (next !== category) setUnitPicked(false);
                         setContext({});
                         setContextEpoch((n) => n + 1);
                         resetInputs();

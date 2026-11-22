@@ -2258,6 +2258,22 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
         expect(prisma.factorParameter.findMany).not.toHaveBeenCalled();
       });
 
+      it('answers no release should the lookup ever hand a bill a conversion or a gross factor', async () => {
+        // The direct-only lookup never does; the endpoint still refuses what the engine would.
+        const real = engine.lookupFactorPath.bind(engine);
+        const stub = (mutate: (path: Record<string, unknown>) => Record<string, unknown>) =>
+          vi.spyOn(engine, 'lookupFactorPath').mockImplementation(async (...args) => {
+            const path = await real(...args);
+            return (path.ok ? mutate(path as never) : path) as never;
+          });
+        stub((path) => ({ ...path, conversion: prisma.library.conversions[0] }));
+        expect(await engine.releaseParameters({ ...query, unit: 'kWh' })).toEqual({ release: null, parameters: [] });
+        vi.restoreAllMocks();
+        stub((path) => ({ ...path, factor: { ...(path.factor as object), calorificBasis: 'gross' } }));
+        expect(await engine.releaseParameters({ ...query, unit: 'kWh' })).toEqual({ release: null, parameters: [] });
+        vi.restoreAllMocks();
+      });
+
       it('answers no release when only a gross factor covers the bill', async () => {
         useFactor(prisma, makeFactor({
           release, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025, scope: 1,
