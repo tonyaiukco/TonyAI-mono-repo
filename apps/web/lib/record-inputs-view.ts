@@ -1,7 +1,9 @@
 import {
   ACTIVITY_VALUE_MAX,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
+  isCvBasis,
   usesTrCalculationRules,
+  type CvBasis,
   type EquipmentType,
   type LeakRateChoice,
   type Locale,
@@ -17,8 +19,17 @@ import { formatNumber } from "@/lib/i18n/number";
  * field rules are specified here and the page only renders them.
  */
 
-/** The inputs a record takes: the TR rules' natural gas chain or capacity method (D11), or none. */
-export type RecordInputMode = "natural_gas" | "refrigerant" | null;
+/**
+ * The inputs a record takes: the TR rules' natural gas chain or capacity
+ * method (D11), a TR natural gas bill's calorific basis (ng-kwh-engine), or
+ * none.
+ */
+export type RecordInputMode = "natural_gas" | "natural_gas_energy" | "refrigerant" | null;
+
+/** The units a TR natural gas bill states its energy in (ng-kwh-engine). */
+export function isGasEnergyUnit(unit: string): boolean {
+  return unit === "kWh" || unit === "MWh";
+}
 
 /**
  * Which inputs the form shows. Keyed on geography as the engine is: a TR
@@ -30,6 +41,9 @@ export function recordInputMode(category: string, geographyCode: string | null, 
   if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return null;
   if (category === "Refrigerants") return "refrigerant";
   if (category === "Natural Gas" && (unit === "standard_cubic_metres" || unit === "cubic_metres")) return "natural_gas";
+  // A bill's energy (ng-kwh-engine): the form carries its stored basis, and
+  // shows it read-only until `ng-kwh-form` lets the author choose it.
+  if (category === "Natural Gas" && isGasEnergyUnit(unit)) return "natural_gas_energy";
   return null;
 }
 
@@ -40,9 +54,11 @@ export interface GasInputs {
   ncv: number | null;
   billedGcv: number | null;
   volumeCorrectionFactor: number | null;
+  /** A bill's calorific basis, as stored on the record (ng-kwh-engine). */
+  cvBasis: CvBasis | null;
 }
 
-export const NO_GAS_INPUTS: GasInputs = Object.freeze({ ncv: null, billedGcv: null, volumeCorrectionFactor: null });
+export const NO_GAS_INPUTS: GasInputs = Object.freeze({ ncv: null, billedGcv: null, volumeCorrectionFactor: null, cvBasis: null });
 
 /** A release's reference value (`reference_ncv`, `reference_gcv`), or null when it holds none. */
 export function referenceValue(rows: readonly ReleaseParameterDTO[], key: "reference_ncv" | "reference_gcv"): number | null {
@@ -60,6 +76,9 @@ export function editedNcv(inputs: GasInputs, referenceNcv: number | null): numbe
 
 /** What a natural gas record sends (D3): only what was entered, null when nothing was. */
 export function gasParameters(inputs: GasInputs, unit: string, referenceNcv: number | null): NaturalGasRecordParameters | null {
+  // A bill sends exactly its basis; with none stored, nothing, and the API
+  // answers `parameters_required` naming it (ng-kwh-engine).
+  if (isGasEnergyUnit(unit)) return inputs.cvBasis !== null ? { cvBasis: inputs.cvBasis } : null;
   const parameters: NaturalGasRecordParameters = {};
   const ncv = editedNcv(inputs, referenceNcv);
   if (ncv !== null) parameters.ncvKcalPerSm3 = ncv;
@@ -87,7 +106,97 @@ export function gasInputsFromRecord(parameters: unknown): GasInputs {
     ncv: stored.ncvKcalPerSm3 ?? null,
     billedGcv: stored.billedGcvKcalPerSm3 ?? null,
     volumeCorrectionFactor: stored.volumeCorrectionFactor ?? null,
+    cvBasis: isCvBasis(stored.cvBasis) ? stored.cvBasis : null,
   };
+}
+
+/** The source of a copy of a voided record, as `onOwnType` reads it (ng-kwh-engine). */
+export interface CopySource {
+  category: string;
+  activityType: string | null;
+  /** The geography the source was priced under; null when its snapshot says none. */
+  geography: string | null;
+}
+
+/**
+ * Whether a copy still keeps its source's own unit and type listed (ng-kwh-engine):
+ * on the source's category and type, under the geography it was priced in. A
+ * copy moved across the TR rules is narrowed like a new record, as before,
+ * rather than carrying a unit or type the new geography does not price.
+ */
+export function copyKeepsOwnUnit(
+  source: CopySource | null,
+  category: string,
+  activityType: string,
+  geography: string | null,
+): boolean {
+  return (
+    source !== null &&
+    source.category === category &&
+    (source.activityType ?? "") === activityType &&
+    source.geography !== null &&
+    source.geography === geography
+  );
+}
+
+/**
+ * Whether the form holds a net figure where nothing prices it as net
+ * (ng-kwh-engine): a natural gas bill in kWh or MWh carrying the NET basis
+ * while the record is not under the TR rules' energy path. Outside them an
+ * energy bill is priced as gross and no basis is sent, so the figure would be
+ * priced as if it were gross. A state, not a move: it holds however the form
+ * got there, by a move, an opened draft whose site's geography changed since,
+ * or a copy into another subsidiary (review of the change). A gross figure is
+ * what the target prices, so it stays.
+ */
+export function clearsNetEnergyQuantity(
+  category: string,
+  mode: RecordInputMode,
+  unit: string,
+  cvBasis: CvBasis | null,
+): boolean {
+  return category === "Natural Gas" && mode !== "natural_gas_energy" && isGasEnergyUnit(unit) && cvBasis === "net";
+}
+
+/** The natural gas units of a volume reading. */
+function isGasVolumeUnit(unit: string): boolean {
+  return unit === "standard_cubic_metres" || unit === "cubic_metres";
+}
+
+/**
+ * Whether a unit the user picks must clear the quantity (ng-kwh-engine
+ * reviews): any change, in any category. A figure entered for one unit is not
+ * the same number in another, kWh against MWh (×1,000) as much as kWh against
+ * Sm³, so the form asks for it again rather than carry it over.
+ */
+export function unitChangeClearsQuantity(previous: string, next: string): boolean {
+  return previous !== next;
+}
+
+/**
+ * The calorific basis a unit change leaves on the form (ng-kwh-engine
+ * reviews): the record's own stored basis when the user picks its own energy
+ * unit again, so undoing a unit change works; none after a move between
+ * energy and volume; otherwise the current one. The figure is asked for again
+ * either way (`unitChangeClearsQuantity`).
+ */
+export function basisAfterUnitChange(
+  previous: string,
+  next: string,
+  current: CvBasis | null,
+  own: { unit: string | null; cvBasis: CvBasis | null },
+): CvBasis | null {
+  if (next === own.unit && isGasEnergyUnit(next) && own.cvBasis !== null) return own.cvBasis;
+  return unitChangeClearsBasis(previous, next) ? null : current;
+}
+
+/**
+ * Whether a unit change must clear a bill's calorific basis (ng-kwh-engine):
+ * a move between an energy unit (kWh, MWh) and a volume (Sm³, m³), where the
+ * basis means nothing. kWh to MWh keeps it: the same bill, another scale.
+ */
+export function unitChangeClearsBasis(previous: string, next: string): boolean {
+  return (isGasEnergyUnit(previous) && isGasVolumeUnit(next)) || (isGasVolumeUnit(previous) && isGasEnergyUnit(next));
 }
 
 // --- Refrigerants (D7) --------------------------------------------------------

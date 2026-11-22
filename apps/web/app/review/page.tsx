@@ -64,7 +64,7 @@ import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
-import { waitingLabel } from "@/lib/review-view";
+import { reviewCalorificBasis, waitingLabel } from "@/lib/review-view";
 import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -659,6 +659,16 @@ export default function ReviewPage() {
                   {formatNumber(selected.activityValue, locale)}{" "}
                   {unitSymbol(selected.activityUnit)}
                 </span>
+                {/* A gas bill's stated basis, read-only, to check against the bill (ng-kwh-engine). */}
+                {(() => {
+                  const basis = reviewCalorificBasis(selected);
+                  return basis === null ? null : (
+                    <>
+                      <span className="text-muted-foreground">{t("sheet.calorificBasis")}</span>
+                      <span className="col-span-2" data-testid="review-calorific-basis">{t(`sheet.calorificBasisValue.${basis}`)}</span>
+                    </>
+                  );
+                })()}
                 <span className="text-muted-foreground">{t("sheet.emissions")}</span>
                 <span className="col-span-2 font-mono">
                   {isCalculated(selected.calculation) ? (

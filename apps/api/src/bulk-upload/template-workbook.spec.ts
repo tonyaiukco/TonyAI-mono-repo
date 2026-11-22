@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import ExcelJS from 'exceljs';
 import {
   BULK_EQUIPMENT_COLUMNS,
-  BULK_GAS_PARAMETER_COLUMNS,
+  BULK_GAS_INPUT_COLUMNS,
   BULK_UPLOAD_COLUMNS,
+  CV_BASES,
   EQUIPMENT_TYPES,
   LEAK_RATE_CHOICES,
   BULK_UPLOAD_MAX_ROWS,
@@ -397,13 +398,16 @@ describe('buildTemplateWorkbook — calculation inputs (LP4-02 PR4)', () => {
     workbook.worksheets[1].eachRow((row) => lines.push((row.values as unknown[]).slice(1).map(String).join(' | ')));
     const text = lines.join('\n');
     for (const column of BULK_EQUIPMENT_COLUMNS) expect(text).toContain(`${column} | `);
-    for (const column of BULK_GAS_PARAMETER_COLUMNS) expect(text).toContain(`${column} | `);
+    for (const column of BULK_GAS_INPUT_COLUMNS) expect(text).toContain(`${column} | `);
+    // ng-kwh-engine: the basis column names its two values and the units that require it.
+    expect(text).toMatch(/cvBasis \| Natural Gas in kWh or MWh.*net or gross.*Required for kWh and MWh/);
     expect(text).not.toMatch(/8[,.]?250|9[,.]?155/);
   });
 
   it.each([
     ['equipmentType', EQUIPMENT_TYPES],
     ['leakRateChoice', LEAK_RATE_CHOICES],
+    ['cvBasis', CV_BASES],
   ])('offers %s as a closed list', async (column, values) => {
     const workbook = await load(await buildTemplateWorkbook(ENTITIES));
     const index = BULK_UPLOAD_COLUMNS.indexOf(column as (typeof BULK_UPLOAD_COLUMNS)[number]);

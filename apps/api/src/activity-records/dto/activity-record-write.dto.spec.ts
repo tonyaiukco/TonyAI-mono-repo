@@ -426,7 +426,11 @@ describe.each(DTOS)('%s — parameters (LP4-02, D3, D7)', (_name, Dto) => {
   });
 
   it('accepts valid Natural Gas parameters', () => {
-    for (const parameters of [{ ncvKcalPerSm3: 8100 }, { billedGcvKcalPerSm3: 9349.174 }, { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 }]) {
+    for (const parameters of [
+      { ncvKcalPerSm3: 8100 }, { billedGcvKcalPerSm3: 9349.174 }, { ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 },
+      // ng-kwh-engine: an energy bill's basis, and an explicit null as an absent one.
+      { cvBasis: 'net' }, { cvBasis: 'gross' }, { cvBasis: null }, { cvBasis: null, ncvKcalPerSm3: 8100 },
+    ]) {
       expect(refused({ category: 'Natural Gas', parameters })).not.toContain('parameters');
     }
   });
@@ -443,6 +447,10 @@ describe.each(DTOS)('%s — parameters (LP4-02, D3, D7)', (_name, Dto) => {
     ['ncvKcalPerSm3', '8250'],
     ['ncvKcalPerSm3', 1e301],
     ['ncvKcalPerSm3', 1e-301],
+    ['cvBasis', 'lower'],
+    ['cvBasis', 'NET'],
+    ['cvBasis', 1],
+    ['cvBasis', true],
   ])('refuses Natural Gas %s of %s', (field, value) => {
     expect(refused({ category: 'Natural Gas', parameters: { [field]: value } })).toContain('parameters');
   });

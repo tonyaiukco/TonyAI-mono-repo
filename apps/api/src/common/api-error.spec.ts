@@ -20,6 +20,7 @@ import {
 } from '@tonyai/shared-types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  ActivityValueReentryRequiredError,
   ActivityTypeSlotConflictError,
   CalculationStaleError,
   CreateRoleRefusedError,
@@ -109,6 +110,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
     new CodedValidationPipe(GLOBAL_VALIDATION_OPTIONS).createExceptionFactory()(
       validateSync(plainToInstance(UpdateActivityRecordDto, { activityValue: ACTIVITY_VALUE_MAX * 2 })),
     ) as HttpException,
+  activity_value_reentry_required: () => new ActivityValueReentryRequiredError(),
   invalid_id: () => {
     try {
       new ParseUuidParamPipe().transform('nope');

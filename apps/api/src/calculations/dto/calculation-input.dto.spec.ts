@@ -263,3 +263,16 @@ describe('CalculationInputDto — activityType (LP3-03)', () => {
     }
   });
 });
+
+describe('a natural gas bill\'s calorific basis on the preview (ng-kwh-engine)', () => {
+  const gas = { ...VALID, category: 'Natural Gas', geographyCode: 'TR', unit: 'kWh' };
+
+  it.each([{ cvBasis: 'net' }, { cvBasis: 'gross' }, { cvBasis: null }])('passes %o', (parameters) => {
+    expect(constraintsOn({ ...gas, parameters }, 'parameters')).toEqual([]);
+  });
+
+  it.each([{ cvBasis: 'lower' }, { cvBasis: 'NET' }, { cvBasis: 1 }, { cvBasis: 'net', gwp: 1 }])('refuses %o', (parameters) => {
+    expect(constraintsOn({ ...gas, parameters }, 'parameters')).not.toEqual([]);
+  });
+});
+

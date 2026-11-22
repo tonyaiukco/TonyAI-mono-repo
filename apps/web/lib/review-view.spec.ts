@@ -1,5 +1,6 @@
+import { MESSAGES } from '@/messages';
 import { describe, it, expect, vi } from 'vitest';
-import { daysSince, waitingLabel as waitingLabelWith } from './review-view';
+import { reviewCalorificBasis, daysSince, waitingLabel as waitingLabelWith } from './review-view';
 import { copyFor } from '@/lib/i18n/testing';
 
 const waitingLabel = (iso: string | null, now?: number) => waitingLabelWith(iso, copyFor('review'), now);
@@ -99,3 +100,29 @@ describe('waitingLabel', () => {
  * number was right and the list order argued with it, which is worse than both
  * being consistently less useful — a reviewer acts on the order.
  */
+
+describe('the review sheet\'s calorific basis (ng-kwh-engine)', () => {
+  const record = (category: string, parameters: unknown) =>
+    ({ category, parameters }) as Parameters<typeof reviewCalorificBasis>[0];
+
+  it('shows the basis a TR natural gas bill carries', () => {
+    expect(reviewCalorificBasis(record('Natural Gas', { cvBasis: 'gross' }))).toBe('gross');
+    expect(reviewCalorificBasis(record('Natural Gas', { cvBasis: 'net' }))).toBe('net');
+  });
+
+  it('shows nothing for a volume reading, a record without parameters, or another category', () => {
+    expect(reviewCalorificBasis(record('Natural Gas', { ncvKcalPerSm3: 8100 }))).toBeNull();
+    expect(reviewCalorificBasis(record('Natural Gas', null))).toBeNull();
+    expect(reviewCalorificBasis(record('Natural Gas', { cvBasis: null }))).toBeNull();
+    expect(reviewCalorificBasis(record('Electricity', { cvBasis: 'net' }))).toBeNull();
+  });
+
+  it.each([
+    ['en', 'Calorific basis', 'Gross'],
+    ['tr', 'Isıl değer esası', 'Brüt'],
+  ] as const)('names it in %s', (locale, label, gross) => {
+    expect(MESSAGES[locale].review.sheet.calorificBasis).toBe(label);
+    expect(MESSAGES[locale].review.sheet.calorificBasisValue.gross).toBe(gross);
+  });
+});
+

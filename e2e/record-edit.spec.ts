@@ -125,6 +125,9 @@ test('Edit mode re-files the same record — category and period — after the e
   await expect(band).toBeVisible();
 
   await pickByFieldLabel(page, 'Category', 'Water');
+  // Another category reads the figure as something else, so it is asked for again (ng-kwh-engine review).
+  await expect(page.getByPlaceholder('e.g. 45000')).toHaveValue('');
+  await page.getByPlaceholder('e.g. 45000').fill('3');
   await pickByFieldLabel(page, 'Value', 'November');
   // In Edit mode the form never drops the record (the opened-record guard's toast).
   await expect(page.getByText(/Now entering a new record/)).toHaveCount(0);

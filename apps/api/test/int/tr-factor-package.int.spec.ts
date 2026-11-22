@@ -67,6 +67,10 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
     ['Natural gas, default NCV', tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres' }), 193.83],
     // QA's UAT round 1 golden vector: the NCV typed by the user, not derived (0.1404 t).
     ['Natural gas, user-edited NCV', tr({ category: 'Natural Gas', value: 73.953, unit: 'standard_cubic_metres', parameters: { ncvKcalPerSm3: 8080 } }), 140.39],
+    // ng-kwh-engine (UAT round 3, spec v2.5 §1; Decisions 2026-11-20 D2): a bill in kWh or MWh on its stated basis.
+    ['GV-NG-kWh-A, 1,000 kWh net', tr({ category: 'Natural Gas', value: 1000, unit: 'kWh', parameters: { cvBasis: 'net' } }), 202.16],
+    ['GV-NG-kWh-C, 958.83 kWh net = golden value 5', tr({ category: 'Natural Gas', value: 958.83, unit: 'kWh', parameters: { cvBasis: 'net' } }), 193.83],
+    ['1 MWh gross', tr({ category: 'Natural Gas', value: 1, unit: 'MWh', parameters: { cvBasis: 'gross' } }), 182.17],
     ['On-road petrol', tr({ category: 'Mobile Combustion', activityType: 'on_road_petrol', value: 15973.75, unit: 'litres' }), 36864.62],
     ['On-road diesel', tr({ category: 'Mobile Combustion', activityType: 'on_road_diesel', value: 3784.51, unit: 'litres' }), 10090.24],
     ['Leakage', tr({ category: 'Fugitive Gas', value: 84783.36, unit: 'standard_cubic_metres' }), 1632467.22],
@@ -97,6 +101,26 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
       parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' }] },
     }));
     expect(fm200.refrigerantTerms).toEqual([expect.objectContaining({ leakRate: 0.02, leakRateChoice: 'default' })]);
+  });
+
+  it('GV-NG-kWh-B: 1,000 kWh gross is 182.17 kg to ±0.01 kg, by the release\'s own 8,250 / 9,155 (ng-kwh-engine, D2)', async () => {
+    const result = await priced(tr({ category: 'Natural Gas', value: 1000, unit: 'kWh', parameters: { cvBasis: 'gross' } }));
+    expect(Math.abs(result.kgCo2e - 182.17)).toBeLessThanOrEqual(0.01);
+    expect(result.kgCo2e).toBeGreaterThanOrEqual(181.0);
+    expect(result.kgCo2e).toBeLessThanOrEqual(182.8);
+    expect(result.parameters).toEqual([{ name: 'grossToNetRatio', value: 8250 / 9155, origin: 'derived' }]);
+    expect(result.parameterRows.map((r) => [r.key, r.value, r.edition])).toEqual([
+      ['reference_ncv', 8250, 'TONYAI-EF-TR-UK-2026.11-AR6-SEALED'],
+      ['reference_gcv', 9155, 'TONYAI-EF-TR-UK-2026.11-AR6-SEALED'],
+    ]);
+    expect(result.conversion).toBeNull();
+    // 1 MWh gross to the same ±0.01 kg: a wrong gas row (the CO2-only one) passes ±0.5% (qa-auditor N3).
+    const mwh = await priced(tr({ category: 'Natural Gas', value: 1, unit: 'MWh', parameters: { cvBasis: 'gross' } }));
+    expect(Math.abs(mwh.kgCo2e - 182.17)).toBeLessThanOrEqual(0.01);
+    // GV-NG-kWh-C against golden value 5 itself, not only its figure.
+    const kwh = await priced(tr({ category: 'Natural Gas', value: 958.83, unit: 'kWh', parameters: { cvBasis: 'net' } }));
+    const sm3 = await priced(tr({ category: 'Natural Gas', value: 100, unit: 'standard_cubic_metres' }));
+    expect(Math.abs(kwh.kgCo2e - sm3.kgCo2e) / sm3.kgCo2e).toBeLessThan(0.005);
   });
 
   it('refuses a billed GCV outside the ŞİD range the release carries (task 5.5)', async () => {

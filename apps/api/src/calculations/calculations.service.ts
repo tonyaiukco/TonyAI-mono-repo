@@ -14,6 +14,7 @@ import {
   factorActivityTypeFor,
   isInvoiceTracked,
   isRecordActivityTypeAllowed,
+  isCvBasis,
   isRecordableWithoutFactor,
   normalizeRecordParameters,
   recordActivityTypesFor,
@@ -23,10 +24,13 @@ import {
 import type {
   ActivityCalculationSnapshot,
   CalculationInput,
+  CalorificBasis,
   CalculationResultV3,
   Category,
   CoverageKey,
+  CvBasis,
   EmissionFactorDetailDTO,
+  ParametersRequiredInput,
   EmissionFactorDTO,
   FactorCoverageDTO,
   FactorCoverageEntry,
@@ -56,7 +60,13 @@ import {
 } from './factor-lookup';
 import type { CaptureSnapshot } from '../common/capture-snapshot';
 import { NUMBER_TOLERANCE } from './snapshot-staleness';
-import { capacityMethod, naturalGasChain, snapshotParameterRow } from './tr-rules';
+import {
+  capacityMethod,
+  naturalGasChain,
+  naturalGasEnergyChain,
+  snapshotParameterRow,
+  type NaturalGasChain,
+} from './tr-rules';
 import { FACTOR_POLICY, type FactorPolicy } from './factor-policy';
 import {
   blockedUnitReason,
@@ -86,6 +96,9 @@ function conversionSnapshot(conversion: ConversionRow): UnitConversionSnapshot {
     release: releaseSnapshot(conversion.release),
   };
 }
+
+/** The natural gas inputs of a volume reading, refused on an energy bill (ng-kwh-engine). */
+const VOLUME_GAS_INPUTS = ['ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor'] as const;
 
 @Injectable()
 export class CalculationsService {
@@ -273,8 +286,9 @@ export class CalculationsService {
     key: FactorLookupKey,
     inputUnit: string,
     snapshot?: CaptureSnapshot,
+    directBasis?: Exclude<CalorificBasis, 'not_applicable'>,
   ): Promise<FactorLookupResult> {
-    return lookupFactorPath(this.prisma, this.policy, key, inputUnit, snapshot);
+    return lookupFactorPath(this.prisma, this.policy, key, inputUnit, snapshot, directBasis);
   }
 
   /** The lookup, in words. The activity is named only when the record named one. */
@@ -295,7 +309,9 @@ export class CalculationsService {
       case 'no_conversion':
         return `The emission factor for ${what} is quoted in another unit, and no sourced conversion from "${quoteCallerText(key.unit)}" to it is loaded.`;
       case 'calorific_basis_mismatch':
-        return `The emission factors for ${what} are stated on a different calorific basis than "${quoteCallerText(key.unit)}" (a fuel's kWh is billed on gross calorific value).`;
+        // Basis-neutral (ng-kwh-engine review): a fuel's billed kWh looks for a
+        // gross factor, a TR gas bill for a net one.
+        return `The emission factors for ${what} are stated on a different calorific basis than "${quoteCallerText(key.unit)}" needs here.`;
       default:
         return `No emission factor found for ${what}`;
     }
@@ -395,9 +411,12 @@ export class CalculationsService {
     const typedLookup = recordType !== null;
     const gasInputs = trRule === 'natural_gas' ? (parameters as NaturalGasRecordParameters | null) : null;
     const volumeCorrection = gasInputs?.volumeCorrectionFactor ?? null;
-    if (trRule === 'natural_gas') this.assertTrGasUnit(unit, volumeCorrection, coverage);
+    // A TR gas bill in kWh or MWh states its basis (ng-kwh-engine); null for a volume reading.
+    const energyBasis = trRule === 'natural_gas' ? this.assertTrGasUnit(unit, gasInputs, coverage) : null;
     if (trRule === 'refrigerant') this.assertRefrigerantInputs(input, parameters as RefrigerantRecordParameters | null);
-    const lookupUnit = trRule === 'natural_gas' ? 'standard_cubic_metres' : unit;
+    // An energy bill is priced against the net factor directly: no conversion
+    // is looked up, read or priced (ng-kwh-engine; D2, D3).
+    const lookupUnit = trRule === 'natural_gas' && energyBasis === null ? 'standard_cubic_metres' : unit;
     // Resolved BEFORE normalization: when there is no factor there is nothing
     // to normalise TOWARDS, and the factorless Water branch below must freeze
     // the reading exactly as entered.
@@ -409,6 +428,8 @@ export class CalculationsService {
         reportingYear: coverage.reportingYear,
       },
       lookupUnit,
+      undefined,
+      energyBasis !== null ? 'net' : undefined,
     );
 
     if (!resolution.ok) {
@@ -483,7 +504,24 @@ export class CalculationsService {
     let parameterRows: SnapshotParameterRow[] = [];
     let refrigerantTerms: RefrigerantTerm[] | null = null;
     let priced: NormalizationResult;
-    if (trRule === 'natural_gas') {
+    if (trRule === 'natural_gas' && energyBasis !== null) {
+      // The direct-only lookup resolves a net factor with no conversion, or
+      // refuses; anything else here would price a gross factor or a step.
+      if (conversion !== null || factor.calorificBasis !== 'net') {
+        throw new NoEmissionFactorError(this.coverageMessage('calorific_basis_mismatch', coverage, typedLookup), {
+          code: 'calorific_basis_mismatch',
+          coverage,
+        });
+      }
+      // The ratio is read from the FACTOR's release, never a conversion's.
+      const chain = naturalGasEnergyChain(
+        energyBasis,
+        energyBasis === 'gross' ? await readReleaseParameters(this.prisma, factor.release.id) : [],
+      );
+      inputs = chain.inputs;
+      parameterRows = chain.rowsUsed.map(snapshotParameterRow);
+      priced = this.pricedNetEnergy(input.value, unit, input.category, chain);
+    } else if (trRule === 'natural_gas') {
       if (conversion === null) {
         throw new NoEmissionFactorError(this.coverageMessage('no_conversion', coverage, typedLookup), {
           code: 'no_conversion',
@@ -521,7 +559,7 @@ export class CalculationsService {
       priced = { ...steps, conversionFactor: wholeMultiplier };
     } else if (trRule === 'refrigerant') {
       if (parameters === null) {
-        throw new CalculationInputError('parameters_required', 'A refrigerant record in Türkiye lists its equipment: type, capacity and refill.');
+        throw new CalculationInputError('parameters_required', 'A refrigerant record in Türkiye lists its equipment: type, capacity and refill.', { input: 'equipment' satisfies ParametersRequiredInput });
       }
       const method = capacityMethod(
         parameters as RefrigerantRecordParameters,
@@ -593,16 +631,47 @@ export class CalculationsService {
   }
 
   /**
-   * Which units a TR natural gas record may be in (D5, D11), whatever rows the
-   * library holds. A bill's kWh is gross and the TR factor is net, so it is the
-   * Sm³ or the metered m³ that is priced.
+   * The TR natural gas units and their inputs (D5, D11; ng-kwh-engine), asked
+   * before the library is, whatever rows it holds. A volume reading (Sm³, or
+   * metered m³ with its correction factor) answers null; an energy bill in kWh
+   * or MWh answers its stated basis. Inputs that do not apply to the unit are
+   * named before an input it lacks, so a record with both mistakes hears of the
+   * wrong one first. Therms and GJ stay refused.
    */
-  private assertTrGasUnit(unit: string, volumeCorrection: number | null, coverage: CoverageKey): void {
+  private assertTrGasUnit(unit: string, gasInputs: NaturalGasRecordParameters | null, coverage: CoverageKey): CvBasis | null {
+    const rawBasis = gasInputs?.cvBasis ?? null;
+    if (rawBasis !== null && !isCvBasis(rawBasis)) {
+      throw new CalculationInputError('record_parameters_invalid', 'A calorific basis is net or gross.');
+    }
+    const volumeCorrection = gasInputs?.volumeCorrectionFactor ?? null;
+    if (unit === 'kWh' || unit === 'MWh') {
+      const volumeInputs = VOLUME_GAS_INPUTS.filter((name) => (gasInputs?.[name] ?? null) !== null);
+      if (volumeInputs.length > 0) {
+        throw new CalculationInputError(
+          'parameters_not_applicable',
+          `A natural gas bill in ${unit} takes no ${volumeInputs.join(' or ')}: those are inputs of a volume reading.`,
+        );
+      }
+      if (rawBasis === null) {
+        throw new CalculationInputError(
+          'parameters_required',
+          `A natural gas bill in ${unit} in Türkiye states its calorific basis, net or gross.`,
+          { input: 'cvBasis' satisfies ParametersRequiredInput },
+        );
+      }
+      return rawBasis;
+    }
+    if (rawBasis !== null && (unit === 'standard_cubic_metres' || unit === 'cubic_metres')) {
+      throw new CalculationInputError(
+        'parameters_not_applicable',
+        'A natural gas reading in Sm³ or m³ takes no calorific basis: its NCV, or its billed GCV, states it.',
+      );
+    }
     if (unit === 'standard_cubic_metres') {
       if (volumeCorrection !== null) {
         throw new CalculationInputError('parameters_not_applicable', 'Standard cubic metres take no volume correction factor.');
       }
-      return;
+      return null;
     }
     if (unit === 'cubic_metres') {
       if (volumeCorrection === null) {
@@ -611,12 +680,43 @@ export class CalculationsService {
           coverage,
         });
       }
-      return;
+      return null;
     }
     throw new NoEmissionFactorError(
-      'Natural gas in Türkiye is priced on the net calorific basis, and a bill states energy on the gross one. Enter the volume in Sm³ or m³.',
+      "Natural gas in Türkiye is priced on the net calorific basis. Enter the volume in Sm³ or m³, or the energy in kWh or MWh with the bill's calorific basis.",
       { code: 'calorific_basis_mismatch', coverage },
     );
+  }
+
+  /**
+   * An energy bill's net kWh (ng-kwh-engine): MWh to kWh by definition, then
+   * the chain's gross-to-net ratio. `conversionFactor` is the whole multiplier
+   * from the entered unit, `conversionBasis` names each step, and the snapshot
+   * cites no conversion row, because none was read.
+   */
+  private pricedNetEnergy(value: number, unit: string, category: string, chain: NaturalGasChain): NormalizationResult {
+    const steps = normalize(value, unit, category, null);
+    const bases = [
+      ...(steps.conversionBasis ? [steps.conversionBasis] : []),
+      ...(chain.multiplier !== 1
+        ? [
+            'gross to net calorific basis × reference_ncv / reference_gcv of the factor\'s release ' +
+              `(${chain.rowsUsed.map((r) => r.value).join(' / ')})`,
+          ]
+        : []),
+    ];
+    const wholeMultiplier = (steps.conversionFactor ?? 1) * chain.multiplier;
+    if (!Number.isFinite(wholeMultiplier) || wholeMultiplier <= 0) {
+      throw new CalculationInputError('record_parameters_invalid', 'These calculation inputs are too extreme to calculate with.');
+    }
+    if (bases.length === 0) return steps;
+    return {
+      normalizedValue: steps.normalizedValue * chain.multiplier,
+      normalizedUnit: steps.normalizedUnit,
+      conversionApplied: true,
+      conversionFactor: wholeMultiplier,
+      conversionBasis: bases.join(' Then: '),
+    };
   }
 
   /** The capacity method's inputs (D7, D11), asked before the library is. */

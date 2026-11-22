@@ -16,7 +16,7 @@ import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
   mayEditRecord,
 } from '@tonyai/shared-types';
 import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
-import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere } from './activity-records.service';
+import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsQuantityElsewhere } from './activity-records.service';
 import {
   CALCULATION_STALE_MESSAGE,
   CalculationStaleError,
@@ -787,7 +787,8 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
 
-    await service.update(dataEntry(), 'rec-p', { category: 'Electricity', parameters: null });
+    // The quantity sent too: a kWh gas bill re-filed without it is asked for it (ng-kwh-engine review).
+    await service.update(dataEntry(), 'rec-p', { category: 'Electricity', parameters: null, activityValue: 100 });
     expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
   });
 });
@@ -5476,3 +5477,48 @@ describe('recordTriggerCode', () => {
     expect(recordTriggerCode(new Error('code: "TA001"'))).toBeNull();
   });
 });
+
+describe('a stored net bill\'s quantity is re-entered where it would be read otherwise (ng-kwh-engine review)', () => {
+  const net = { category: 'Natural Gas', activityUnit: 'kWh', locationId: 'site-tr', parameters: { cvBasis: 'net' } };
+  it.each([
+    ['another site, its geography unknown here', { ...net, locationId: 'site-uk' }, true],
+    ['the whole subsidiary instead of its site', { ...net, locationId: null }, true],
+    ['a volume unit', { ...net, activityUnit: 'standard_cubic_metres', parameters: null }, true],
+    ['MWh instead of kWh', { ...net, activityUnit: 'MWh' }, true],
+    ['the basis dropped', { ...net, parameters: null }, true],
+    ['the basis changed to gross', { ...net, parameters: { cvBasis: 'gross' } }, true],
+    ['another category', { ...net, category: 'Electricity', parameters: null }, true],
+    ['nothing that changes how it is read', { ...net }, false],
+    ['the same unit in another spelling', { ...net, activityUnit: 'kwh' }, false],
+    ['MWh in another spelling', { ...net, activityUnit: 'mwh' }, true],
+    ['the basis sent as {}', { ...net, parameters: {} }, true],
+    ['the basis sent as null', { ...net, parameters: { cvBasis: null } }, true],
+  ] as const)('%s: %s', (_case, next, refused) => {
+    expect(inheritsQuantityElsewhere(net, next)).toBe(refused);
+  });
+
+  it('lets a gross bill, a volume reading or another category move site or basis, on the same unit and category', () => {
+    const gross = { ...net, parameters: { cvBasis: 'gross' } };
+    expect(inheritsQuantityElsewhere(gross, { ...gross, locationId: 'site-uk', parameters: null })).toBe(false);
+    const volume = { ...net, activityUnit: 'standard_cubic_metres', parameters: null };
+    expect(inheritsQuantityElsewhere(volume, { ...volume, locationId: 'site-uk' })).toBe(false);
+    const grid = { ...net, category: 'Electricity', parameters: null };
+    expect(inheritsQuantityElsewhere(grid, { ...grid, locationId: 'site-uk' })).toBe(false);
+  });
+
+  it.each([
+    ['a gross bill to MWh (×1,000)', { ...net, parameters: { cvBasis: 'gross' } }, { activityUnit: 'MWh' }],
+    ['a gross bill to Sm³ with its basis cleared', { ...net, parameters: { cvBasis: 'gross' } }, { activityUnit: 'standard_cubic_metres', parameters: null }],
+    ['a gross bill re-filed as Water', { ...net, parameters: { cvBasis: 'gross' } }, { category: 'Water', activityUnit: 'cubic_metres', parameters: null }],
+  ] as const)('asks for the quantity of %s, whatever its basis (second review)', (_case, stored, change) => {
+    expect(inheritsQuantityElsewhere(stored, { ...stored, ...change })).toBe(true);
+  });
+
+  it('keeps the API\'s inheritance for every other record, as before', () => {
+    const grid = { ...net, category: 'Electricity', parameters: null };
+    expect(inheritsQuantityElsewhere(grid, { ...grid, activityUnit: 'MWh' })).toBe(false);
+    const volume = { ...net, activityUnit: 'cubic_metres', parameters: null };
+    expect(inheritsQuantityElsewhere(volume, { ...volume, category: 'Water' })).toBe(false);
+  });
+});
+

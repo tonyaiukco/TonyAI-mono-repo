@@ -2,7 +2,8 @@ import { isProvenanceSnapshot, type ActivityCalculationSnapshot, type EquipmentT
 
 /**
  * A record's calculation inputs as a report prints them (LP4-02 PR5, task
- * 5.3): a natural gas record's own NCV beside the row's generic basis, and a
+ * 5.3): a natural gas record's own NCV beside the row's generic basis, a gross
+ * energy bill's gross-to-net ratio (ng-kwh-engine), and a
  * refrigerant's terms beside its total capacity, whose activity value is not
  * the mass priced (D7). Read from the snapshot alone, so a report says what
  * the figure was computed from, never what the library holds now. Empty for a
@@ -18,6 +19,7 @@ export type CalculationInputsKey =
   | 'inputsOriginDerived'
   | 'inputsBilledGcv'
   | 'inputsVolume'
+  | 'inputsGrossToNet'
   | 'inputsLine'
   | `inputsEquipment_${EquipmentType}`;
 
@@ -52,6 +54,10 @@ export function calculationInputs(calculation: unknown, words: CalculationInputs
       parts.push(words.text('inputsBilledGcv', { value: entered(input.value) }));
     } else if (input.name === 'volumeCorrectionFactor') {
       parts.push(words.text('inputsVolume', { value: entered(input.value) }));
+    } else if (input.name === 'grossToNetRatio') {
+      // A gross energy bill's reduction to net (ng-kwh-engine), by the factor
+      // release's own reference values: a methodology step the reader must see.
+      parts.push(words.text('inputsGrossToNet', { value: derived(input.value) }));
     }
   }
   for (const term of snapshot.refrigerantTerms ?? []) {

@@ -27,6 +27,7 @@ import {
   RecordNotRecallableError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
+  ActivityValueReentryRequiredError,
   ActivityTypeSlotConflictError,
   SnapshotImmutableError,
   recordTriggerCode,
@@ -426,6 +427,41 @@ type ResolvedRecordFields =
 type ActivityRecordAuditSnapshot = Omit<ActivityRecordDTO, ResolvedRecordFields> & {
   [K in ResolvedRecordFields]?: never;
 };
+
+/** A natural gas bill in kWh or MWh on the NET basis (ng-kwh-engine). */
+function isNetEnergyBill(category: string, unit: string, parameters: unknown): boolean {
+  return (
+    category === 'Natural Gas' &&
+    (unit === 'kWh' || unit === 'MWh') &&
+    normalizeRecordParameters(parameters) !== null &&
+    (normalizeRecordParameters(parameters) as { cvBasis?: unknown }).cvBasis === 'net'
+  );
+}
+
+/** A natural gas bill in kWh or MWh, on either basis (ng-kwh-engine). */
+function isGasEnergyBill(category: string, unit: string): boolean {
+  return category === 'Natural Gas' && (unit === 'kWh' || unit === 'MWh');
+}
+
+/**
+ * Whether an update would carry a stored natural gas bill's quantity (kWh or
+ * MWh) somewhere it no longer means the same thing (ng-kwh-engine reviews):
+ * another unit or category, on either basis (1,000 kWh read as 1,000 MWh or as
+ * a volume), and, for a NET bill, another site (whose geography may price an
+ * energy bill as gross) or another basis. Other records keep the API's
+ * inheritance as before (Open questions).
+ */
+export function inheritsQuantityElsewhere(
+  existing: { category: string; activityUnit: string; locationId: string | null; parameters: unknown },
+  next: { category: string; activityUnit: string; locationId: string | null; parameters: unknown },
+): boolean {
+  // Compared by their stored spelling: a caller's `kwh` is the stored `kWh`.
+  const nextUnit = typeof next.activityUnit === 'string' ? storedUnit(next.activityUnit) : next.activityUnit;
+  if (!isGasEnergyBill(existing.category, storedUnit(existing.activityUnit))) return false;
+  if (nextUnit !== storedUnit(existing.activityUnit) || next.category !== existing.category) return true;
+  if (!isNetEnergyBill(existing.category, existing.activityUnit, existing.parameters)) return false;
+  return next.locationId !== existing.locationId || !isNetEnergyBill(next.category, nextUnit, next.parameters);
+}
 
 @Injectable()
 export class ActivityRecordsService {
@@ -1317,6 +1353,16 @@ export class ActivityRecordsService {
       // category is the opposite of that case.
       dto.activityUnit !== undefined || category !== existing.category,
     );
+    // A natural gas bill's inherited figure is kept only where it still means
+    // the same thing (ng-kwh-engine reviews): a new unit or category reads it
+    // at another scale or meaning (1,000 kWh as 1,000 MWh or as a volume), and
+    // a stored NET bill moved to another site or basis could be priced as gross.
+    // Asked after the scope, lock and calculation checks, so their answers keep
+    // their order; before any write. `== null`: the DTO lets an explicit null
+    // through, and it inherits the stored figure too.
+    if (dto.activityValue == null && inheritsQuantityElsewhere(existing, { category, activityUnit, locationId, parameters })) {
+      throw new ActivityValueReentryRequiredError();
+    }
 
     const verdict = await this.detectAnomalyFor(calculation, {
       subsidiaryId: existing.subsidiaryId,

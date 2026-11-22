@@ -70,6 +70,7 @@
     "ncvKcalPerSm3": "Net calorific value",
     "billedGcvKcalPerSm3": "Billed gross calorific value",
     "volumeCorrectionFactor": "Volume correction factor",
+    "cvBasis": "Calorific basis",
     "equipmentType": "Equipment type",
     "capacityKg": "Installed capacity (kg)",
     "refillKg": "Refilled (kg)",
@@ -204,7 +205,16 @@
       "default": "default rate",
       "alternative": "alternative rate"
     },
-    "marineGasOilScope": "Marine gas oil covers vessels your company owns or operates (Scope 1), including a bareboat charter it operates. Leave out vessels you charter but do not operate (voyage or time charter) and third-party shipping: they are Scope 3, outside this inventory. Enter the mass on the Bunker Delivery Note, in kg or tonnes."
+    "marineGasOilScope": "Marine gas oil covers vessels your company owns or operates (Scope 1), including a bareboat charter it operates. Leave out vessels you charter but do not operate (voyage or time charter) and third-party shipping: they are Scope 3, outside this inventory. Enter the mass on the Bunker Delivery Note, in kg or tonnes.",
+    "cvBasis": {
+      "title": "Calorific basis of the bill",
+      "net": "Net",
+      "gross": "Gross",
+      "stored": "As stored on the record."
+    },
+    "basisReset": "This figure was on the net calorific basis. Outside Türkiye's rules an energy bill is priced as gross, so enter the bill's gross figure.",
+    "unitChangeReset": "The quantity was cleared: a figure entered for one unit is not the same number in another. Enter it in the new unit.",
+    "categoryReset": "The quantity was cleared with the category: enter it for the new category."
   },
   "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",
   "selectAllLoaded": "Select all {count} loaded",
@@ -402,6 +412,7 @@
     "notAuthoritative": "Placeholder — not authoritative (factor or conversion)",
     "scopeLine": "Scope {scope} · {kg} kgCO₂e",
     "unitConverted": "Unit converted from {from} to {to} before applying the factor.",
+    "grossToNet": "A gross energy figure, reduced to net by the factor release's reference ratio (× {ratio}) before the factor is applied.",
     "invoiceRequired": "You can still save and submit this entry. An invoice is required before it can be submitted, since without an emission factor the invoice is the only record of what was consumed.",
     "invoiceCompleteness": "Recorded against a facility for a single month, it also counts towards that facility's invoice completeness — which is measured from the invoice, not from the calculated figure."
   },

@@ -1577,6 +1577,234 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
   describe('natural gas', () => {
     const within = (actual: number, expected: number) => expect(Math.abs(actual - expected) / expected).toBeLessThan(0.005);
 
+    // ng-kwh-engine task 3.6: the Sm³ path's whole output, captured from the
+    // engine before the energy path was added. Any change to the volume branch's
+    // inputs, rows or conversion would make every open TR gas draft stale.
+    describe('snapshot stability of the volume path (ng-kwh-engine)', () => {
+      // The fixture ids count across the file, so they follow test order; the
+      // shape and every value besides them is the contract.
+      const stable = (result: unknown) =>
+        JSON.parse(JSON.stringify(result), (_key, value: unknown) =>
+          typeof value === 'string' && /^(release|factor|conversion)-\d+$/.test(value) ? value.replace(/\d+$/, 'N') : value,
+        );
+
+      it('golden value 5\'s snapshot is unchanged', async () => {
+        expect(stable(await engine.compute(gas))).toMatchInlineSnapshot(`
+          {
+            "activityType": "natural_gas",
+            "calorificBasis": "net",
+            "category": "Natural Gas",
+            "conversion": {
+              "basis": "calculation_logic.md §2.1 prototype assumption, NOT a sourced factor.",
+              "calorificBasis": "net",
+              "dataYear": 2025,
+              "fromUnit": "standard_cubic_metres",
+              "id": "conversion-N",
+              "multiplier": 9.588333,
+              "referenceConditions": null,
+              "release": {
+                "edition": "2024.1",
+                "gwpSet": null,
+                "id": "release-N",
+                "licence": null,
+                "ordinal": 202401,
+                "publishedAt": null,
+                "publisher": "TonyAI prototype",
+                "sourceUrl": null,
+                "status": "authoritative",
+                "title": "Prototype demo emission factors",
+              },
+              "toUnit": "kWh",
+            },
+            "conversionApplied": true,
+            "conversionBasis": "calculation_logic.md §2.1 prototype assumption, NOT a sourced factor.",
+            "conversionFactor": 9.588333,
+            "dataYear": 2025,
+            "factorId": "factor-N",
+            "factorRelease": {
+              "edition": "2024.1",
+              "gwpSet": null,
+              "id": "release-N",
+              "licence": null,
+              "ordinal": 202401,
+              "publishedAt": null,
+              "publisher": "TonyAI prototype",
+              "sourceUrl": null,
+              "status": "authoritative",
+              "title": "Prototype demo emission factors",
+            },
+            "factorUnit": "kgCO2e/kWh",
+            "factorValue": 0.20215548,
+            "gas": "CO2e",
+            "gasCoverage": "all_ghg",
+            "geographyCode": "TR",
+            "inputUnit": "standard_cubic_metres",
+            "inputValue": 100,
+            "kgCo2e": 193.833406001484,
+            "methodology": "location-based",
+            "normalizedUnit": "kWh",
+            "normalizedValue": 958.8333,
+            "parameterRows": [
+              {
+                "edition": "2024.1",
+                "equipmentType": null,
+                "id": "reference_ncv-none-true",
+                "isDefault": true,
+                "key": "reference_ncv",
+                "releaseId": "release-N",
+                "source": "SPEC FIXTURE",
+                "unit": "kcal/Sm3",
+                "value": 8250,
+              },
+            ],
+            "parameters": [
+              {
+                "name": "ncvKcalPerSm3",
+                "origin": "default",
+                "value": 8250,
+              },
+            ],
+            "refrigerantTerms": null,
+            "reportingYear": 2025,
+            "scope": 1,
+            "scope2Method": "not_applicable",
+            "snapshotSchema": 3,
+            "source": "calculation_logic.md §3",
+            "tCo2e": 0.19383340600148402,
+            "version": "2024.1",
+            "yearPolicy": "exact",
+          }
+        `);
+      });
+
+      it('golden value 4\'s snapshot is unchanged', async () => {
+        expect(stable(await engine.compute({ ...gas, value: 73.953103, parameters: { billedGcvKcalPerSm3: 9349.174 } }))).toMatchInlineSnapshot(`
+          {
+            "activityType": "natural_gas",
+            "calorificBasis": "net",
+            "category": "Natural Gas",
+            "conversion": {
+              "basis": "calculation_logic.md §2.1 prototype assumption, NOT a sourced factor.",
+              "calorificBasis": "net",
+              "dataYear": 2025,
+              "fromUnit": "standard_cubic_metres",
+              "id": "conversion-N",
+              "multiplier": 9.588333,
+              "referenceConditions": null,
+              "release": {
+                "edition": "2024.1",
+                "gwpSet": null,
+                "id": "release-N",
+                "licence": null,
+                "ordinal": 202401,
+                "publishedAt": null,
+                "publisher": "TonyAI prototype",
+                "sourceUrl": null,
+                "status": "authoritative",
+                "title": "Prototype demo emission factors",
+              },
+              "toUnit": "kWh",
+            },
+            "conversionApplied": true,
+            "conversionBasis": "calculation_logic.md §2.1 prototype assumption, NOT a sourced factor.",
+            "conversionFactor": 9.389192207425667,
+            "dataYear": 2025,
+            "factorId": "factor-N",
+            "factorRelease": {
+              "edition": "2024.1",
+              "gwpSet": null,
+              "id": "release-N",
+              "licence": null,
+              "ordinal": 202401,
+              "publishedAt": null,
+              "publisher": "TonyAI prototype",
+              "sourceUrl": null,
+              "status": "authoritative",
+              "title": "Prototype demo emission factors",
+            },
+            "factorUnit": "kgCO2e/kWh",
+            "factorValue": 0.20215548,
+            "gas": "CO2e",
+            "gasCoverage": "all_ghg",
+            "geographyCode": "TR",
+            "inputUnit": "standard_cubic_metres",
+            "inputValue": 73.953103,
+            "kgCo2e": 140.36865855431827,
+            "methodology": "location-based",
+            "normalizedUnit": "kWh",
+            "normalizedValue": 694.3598984025477,
+            "parameterRows": [
+              {
+                "edition": "2024.1",
+                "equipmentType": null,
+                "id": "reference_ncv-none-true",
+                "isDefault": true,
+                "key": "reference_ncv",
+                "releaseId": "release-N",
+                "source": "SPEC FIXTURE",
+                "unit": "kcal/Sm3",
+                "value": 8250,
+              },
+              {
+                "edition": "2024.1",
+                "equipmentType": null,
+                "id": "reference_gcv-none-true",
+                "isDefault": true,
+                "key": "reference_gcv",
+                "releaseId": "release-N",
+                "source": "SPEC FIXTURE",
+                "unit": "kcal/Sm3",
+                "value": 9155,
+              },
+              {
+                "edition": "2024.1",
+                "equipmentType": null,
+                "id": "billed_gcv_min-none-true",
+                "isDefault": true,
+                "key": "billed_gcv_min",
+                "releaseId": "release-N",
+                "source": "SPEC FIXTURE",
+                "unit": "kcal/Sm3",
+                "value": 8100,
+              },
+              {
+                "edition": "2024.1",
+                "equipmentType": null,
+                "id": "billed_gcv_max-none-true",
+                "isDefault": true,
+                "key": "billed_gcv_max",
+                "releaseId": "release-N",
+                "source": "SPEC FIXTURE",
+                "unit": "kcal/Sm3",
+                "value": 10427,
+              },
+            ],
+            "parameters": [
+              {
+                "name": "billedGcvKcalPerSm3",
+                "origin": "user",
+                "value": 9349.174,
+              },
+              {
+                "name": "ncvKcalPerSm3",
+                "origin": "derived",
+                "value": 8078.654862985756,
+              },
+            ],
+            "refrigerantTerms": null,
+            "reportingYear": 2025,
+            "scope": 1,
+            "scope2Method": "not_applicable",
+            "snapshotSchema": 3,
+            "source": "calculation_logic.md §3",
+            "tCo2e": 0.14036865855431827,
+            "version": "2024.1",
+            "yearPolicy": "exact",
+          }
+        `);
+      });
+    });
+
     it('golden value 5: the default NCV, the row\'s multiplier, its origin recorded', async () => {
       const result = (await engine.compute(gas)) as CalculationResultV3;
       within(result.kgCo2e, 193.83);
@@ -1615,9 +1843,131 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
       expect(await code({ ...gas, unit: 'cubic_metres' })).toBe('no_conversion');
     });
 
-    it.each(['kWh', 'MWh'])('refuses %s, stated on the gross basis, with a factor present', async (unit) => {
-      useFactor(prisma, makeFactor({ release: makeRelease(), category: 'Natural Gas', activityType: 'natural_gas', reportingYear: 2025, scope: 1, normalizedUnit: 'kWh', calorificBasis: 'gross' }));
-      expect(await code({ ...gas, unit })).toBe('calorific_basis_mismatch');
+    describe('an energy bill in kWh or MWh (ng-kwh-engine; Decisions 2026-11-20 D2, D3)', () => {
+      const bill = (unit: string, cvBasis: unknown, value = 1000, extra: Record<string, unknown> = {}) =>
+        ({ ...gas, unit, value, parameters: { cvBasis, ...extra } }) as Parameters<CalculationsService['compute']>[0];
+      const refusal = (input: Parameters<CalculationsService['compute']>[0]) =>
+        engine.compute(input).then(
+          () => null,
+          (e: { code?: string; getResponse?: () => unknown }) => ({ code: e.code, body: e.getResponse?.() as { params?: unknown } }),
+        );
+      const near = (actual: number, expected: number, tolerance: number) =>
+        expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
+
+      it('GV-NG-kWh-A: 1,000 kWh net is priced against the net factor, as entered', async () => {
+        const result = (await engine.compute(bill('kWh', 'net'))) as CalculationResultV3;
+        within(result.kgCo2e, 202.16);
+        expect(result.conversion).toBeNull();
+        expect(result.conversionApplied).toBe(false);
+        expect(result.parameters).toEqual([]);
+        expect(result.parameterRows).toEqual([]);
+        expect(result.calorificBasis).toBe('net');
+        // Net reads no release row at all.
+        expect(prisma.factorParameter.findMany).not.toHaveBeenCalled();
+      });
+
+      it('GV-NG-kWh-B: 1,000 kWh gross is reduced by 8,250 / 9,155 first', async () => {
+        const result = (await engine.compute(bill('kWh', 'gross'))) as CalculationResultV3;
+        near(result.normalizedValue, 901.147, 0.001);
+        near(result.kgCo2e, 182.17, 0.01);
+        // Inside v2.5's own band, which a ratio of 0.9 (181.94 kg) also meets.
+        expect(result.kgCo2e).toBeGreaterThanOrEqual(181.0);
+        expect(result.kgCo2e).toBeLessThanOrEqual(182.8);
+        expect(result.parameters).toEqual([{ name: 'grossToNetRatio', value: 8250 / 9155, origin: 'derived' }]);
+        expect(result.parameterRows.map((r) => [r.key, r.value])).toEqual([['reference_ncv', 8250], ['reference_gcv', 9155]]);
+        expect(result.conversion).toBeNull();
+        expect(result.conversionFactor).toBeCloseTo(8250 / 9155, 12);
+        expect(result.conversionBasis).toMatch(/reference_ncv \/ reference_gcv/);
+      });
+
+      it('1 MWh gross is the same 182.17 kg, MWh to kWh first', async () => {
+        const result = (await engine.compute(bill('MWh', 'gross', 1))) as CalculationResultV3;
+        near(result.kgCo2e, 182.17, 0.01);
+        expect(result.conversionFactor).toBeCloseTo(1000 * (8250 / 9155), 9);
+        expect(result.conversionBasis).toMatch(/1 MWh = 1,000 kWh.*Then: gross to net/);
+      });
+
+      it('GV-NG-kWh-C: 958.83 kWh net equals golden value 5 (100 Sm³) within ±0.5%', async () => {
+        const kwh = (await engine.compute(bill('kWh', 'net', 958.83))) as CalculationResultV3;
+        const sm3 = (await engine.compute(gas)) as CalculationResultV3;
+        within(kwh.kgCo2e, 193.83);
+        within(kwh.kgCo2e, sm3.kgCo2e);
+      });
+
+      it('needs no Sm³ conversion, and reads none', async () => {
+        prisma.library.conversions = [];
+        expect(((await engine.compute(bill('kWh', 'net'))) as CalculationResultV3).kgCo2e).toBeGreaterThan(0);
+        expect(prisma.unitConversion.findMany).not.toHaveBeenCalled();
+        expect(await code(gas)).toBe('no_conversion');
+      });
+
+      it('refuses both bases when only a gross factor resolves', async () => {
+        useFactor(prisma, makeFactor({ release, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025, scope: 1, normalizedUnit: 'kWh', calorificBasis: 'gross' }));
+        expect(await code(bill('kWh', 'net'))).toBe('calorific_basis_mismatch');
+        expect(await code(bill('MWh', 'gross', 1))).toBe('calorific_basis_mismatch');
+        expect(prisma.unitConversion.findMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses a bill without its basis as an input refusal that names it, not a coverage gap', async () => {
+        for (const input of [{ ...gas, unit: 'kWh', value: 1000 }, bill('kWh', null), bill('MWh', undefined, 1)]) {
+          const r = await refusal(input);
+          expect(r?.code).toBe('parameters_required');
+          expect(r?.body.params).toEqual({ input: 'cvBasis' });
+        }
+      });
+
+      it.each([
+        ['an NCV', { ncvKcalPerSm3: 8100 }],
+        ['a billed GCV', { billedGcvKcalPerSm3: 9349.174 }],
+        ['a volume correction factor', { volumeCorrectionFactor: 0.97 }],
+      ])('refuses %s on a bill, with its basis or without', async (_what, extra) => {
+        expect(await code(bill('kWh', 'gross', 1000, extra))).toBe('parameters_not_applicable');
+        expect(await code({ ...gas, unit: 'kWh', value: 1000, parameters: extra })).toBe('parameters_not_applicable');
+      });
+
+      it('refuses a basis on a volume reading', async () => {
+        expect(await code({ ...gas, parameters: { cvBasis: 'net' } })).toBe('parameters_not_applicable');
+        expect(await code({ ...gas, unit: 'cubic_metres', parameters: { cvBasis: 'gross', volumeCorrectionFactor: 0.97 } })).toBe('parameters_not_applicable');
+      });
+
+      it('refuses a basis outside the TR rules, and prices a UK bill without one as before', async () => {
+        const uk = makeFactor({ release, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'UK', reportingYear: 2025, scope: 1, normalizedUnit: 'kWh', calorificBasis: 'gross', factorValue: 0.18 });
+        useFactor(prisma, uk);
+        expect(await code({ ...bill('kWh', 'net'), geographyCode: 'UK' })).toBe('parameters_not_applicable');
+        const priced = (await engine.compute({ ...gas, geographyCode: 'UK', unit: 'kWh', value: 1000 })) as CalculationResultV3;
+        expect(priced.kgCo2e).toBeCloseTo(180, 9);
+      });
+
+      it.each(['therms', 'gj'])('keeps refusing %s', async (unit) => {
+        expect(await code(bill(unit, 'gross'))).toBe('calorific_basis_mismatch');
+        expect(await code({ ...gas, unit })).toBe('calorific_basis_mismatch');
+      });
+
+      it('refuses a basis that is not net or gross, should one reach the engine', async () => {
+        expect(await code(bill('kWh', 'lower'))).toBe('record_parameters_invalid');
+      });
+
+      it('answers a gross bill whose release lacks a reference value as a library defect; net is still priced', async () => {
+        prisma.library.parameters = [parameter('reference_ncv', null, 8250, 'kcal/Sm3')];
+        expect(await code(bill('kWh', 'gross'))).toBe('parameter_missing');
+        expect(await code(bill('kWh', 'net'))).toBeNull();
+      });
+
+      it('reads the ratio from the factor\'s release, not a conversion\'s', async () => {
+        const own = makeRelease({ status: 'authoritative' });
+        useFactor(prisma, makeFactor({ release: own, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025, scope: 1, normalizedUnit: 'kWh', calorificBasis: 'net', factorValue: 0.20215548 }));
+        prisma.library.parameters = [
+          { ...parameter('reference_ncv', null, 9000, 'kcal/Sm3'), releaseId: own.id },
+          { ...parameter('reference_gcv', null, 10000, 'kcal/Sm3'), releaseId: own.id },
+          // The conversion's release still holds the package's values; they must not be read.
+          parameter('reference_ncv', null, 8250, 'kcal/Sm3'),
+          parameter('reference_gcv', null, 9155, 'kcal/Sm3'),
+        ];
+        const result = (await engine.compute(bill('kWh', 'gross'))) as CalculationResultV3;
+        expect(prisma.factorParameter.findMany.mock.calls[0][0].where.releaseId).toBe(own.id);
+        expect(result.parameters[0].value).toBeCloseTo(0.9, 12);
+        near(result.kgCo2e, 900 * 0.20215548, 1e-9);
+      });
     });
 
     it('refuses a correction factor on Sm³, and parameters off the TR rules', async () => {

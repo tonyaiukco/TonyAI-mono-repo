@@ -38,10 +38,45 @@ function reference(rows: readonly ReleaseParameter[], key: string): ReleaseParam
 }
 
 export interface NaturalGasChain {
-  /** kWh per Sm³: the row's own when no input overrides it (D5). */
+  /** kWh per Sm³: the row's own when no input overrides it (D5); for an
+   *  energy bill, net kWh per billed kWh (ng-kwh-engine). */
   multiplier: number;
   inputs: SnapshotInput[];
   rowsUsed: ReleaseParameter[];
+}
+
+/** The derived input a gross energy record echoes (ng-kwh-engine). */
+export const GROSS_TO_NET_RATIO_INPUT = 'grossToNetRatio';
+
+/**
+ * A TR natural gas energy bill's chain (ng-kwh-engine; Decisions 2026-11-20
+ * D2, D3): the multiplier from the bill's kWh to the net kWh the factor
+ * prices. `net` is 1, reads no row and echoes nothing. `gross` is the factor
+ * release's own `reference_ncv / reference_gcv` (8,250 / 9,155 on the loaded
+ * releases), echoed as a derived input, both rows cited. No billed GCV, NCV
+ * or volume correction enters (D3). A ratio that is not strictly between 0
+ * and 1 would leave net at or above gross: a library defect, priced never.
+ */
+export function naturalGasEnergyChain(
+  cvBasis: 'net' | 'gross',
+  rows: readonly ReleaseParameter[],
+): NaturalGasChain {
+  if (cvBasis === 'net') return { multiplier: 1, inputs: [], rowsUsed: [] };
+  const ncv = reference(rows, 'reference_ncv');
+  const gcv = reference(rows, 'reference_gcv');
+  const ratio = ncv.value / gcv.value;
+  if (!Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) {
+    throw new FactorLibraryConflictError(
+      'parameter_missing',
+      `The factor release's reference_ncv (${ncv.value}) and reference_gcv (${gcv.value}) give no gross-to-net ratio ` +
+        'between 0 and 1, which this calculation reads.',
+    );
+  }
+  return {
+    multiplier: ratio,
+    inputs: [{ name: GROSS_TO_NET_RATIO_INPUT, value: ratio, origin: 'derived' }],
+    rowsUsed: [ncv, gcv],
+  };
 }
 
 /**

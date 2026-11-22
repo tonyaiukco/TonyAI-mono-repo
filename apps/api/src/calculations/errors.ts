@@ -4,6 +4,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
+  type ApiErrorParams,
   type CalculationRefusalBody,
   type CalculationRefusalCode,
   type CoverageKey,
@@ -64,13 +65,20 @@ export const LIBRARY_REFUSAL_CODES: readonly LibraryRefusalCode[] = ['ambiguous_
  * not know or cannot calculate, a unit or activity type the category does not
  * have, or a typed category's new record naming no activity type. The body
  * carries the machine-readable `code` (`CalculationRefusalBody`); `message`
- * stays the sentence every existing reader shows.
+ * stays the sentence every existing reader shows. `params` are the code's
+ * registered ones (`API_ERROR_PARAMS`): `parameters_required` names its input.
  */
 export class CalculationInputError extends BadRequestException {
   readonly code: InputRefusalCode;
 
-  constructor(code: InputRefusalCode, message: string) {
-    super({ statusCode: 400, error: 'Bad Request', message, code } satisfies CalculationRefusalBody);
+  constructor(code: InputRefusalCode, message: string, params?: ApiErrorParams) {
+    super({
+      statusCode: 400,
+      error: 'Bad Request',
+      message,
+      code,
+      ...(params ? { params } : {}),
+    } satisfies CalculationRefusalBody);
     this.code = code;
   }
 }

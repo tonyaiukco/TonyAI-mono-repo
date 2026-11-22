@@ -877,6 +877,37 @@ describe('resolveFactorPath', () => {
     );
   });
 
+  describe('a direct-only lookup on a stated basis (ng-kwh-engine)', () => {
+    const direct = (inputUnit: string, factors: F[], conversions: C[] = [], directBasis = 'net' as const) =>
+      resolveFactorPath({ category: 'Natural Gas', inputUnit, factors, conversions, allowPlaceholders: false, directBasis });
+    const net = factor('kwh-net', 'kWh', 'net');
+    const gross = factor('kwh-gross', 'kWh', 'gross');
+
+    it('prices net energy against the net factor, directly, in kWh and MWh', () => {
+      expect(picked(direct('kWh', [net, gross]))).toEqual(['kwh-net', null]);
+      expect(picked(direct('MWh', [net]))).toEqual(['kwh-net', null]);
+    });
+
+    it('still refuses a library that holds only the other basis', () => {
+      expect(picked(direct('kWh', [gross]))).toBe('calorific_basis_mismatch');
+    });
+
+    it('builds no conversion path, whatever conversions it is handed', () => {
+      // A factor reachable only through an on-basis conversion: a default
+      // lookup takes that path; a direct-only one must not.
+      const smToKwh = conversion('sm3-kwh-net', 'standard_cubic_metres', 'kWh', 'net');
+      expect(picked(resolve('Natural Gas', 'standard_cubic_metres', [net], [smToKwh]))).toEqual(['kwh-net', 'sm3-kwh-net']);
+      expect(picked(direct('standard_cubic_metres', [net], [smToKwh]))).toBe('no_factor');
+      // With a direct factor present, the handed conversions change nothing.
+      expect(picked(direct('kWh', [net], [smToKwh]))).toEqual(['kwh-net', null]);
+    });
+
+    it('leaves the default basis alone when the field is absent', () => {
+      expect(picked(resolve('Natural Gas', 'kWh', [net, gross]))).toEqual(['kwh-gross', null]);
+      expect(directCalorificBasisFor('Natural Gas', 'kWh')).toBe('gross');
+    });
+  });
+
   const grid = (id: string, scope2Method: string, ordinal = 1): F => ({
     ...factor(id, 'kWh', 'not_applicable', 'authoritative', 'P', ordinal),
     scope2Method,

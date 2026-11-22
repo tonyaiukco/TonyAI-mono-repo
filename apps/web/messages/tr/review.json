@@ -31,6 +31,11 @@
     "subsidiary": "Bağlı şirket",
     "entity": "Raporlama birimi",
     "activity": "Faaliyet",
+    "calorificBasis": "Isıl değer esası",
+    "calorificBasisValue": {
+      "net": "Net",
+      "gross": "Brüt"
+    },
     "emissions": "Emisyonlar",
     "factor": "Faktör",
     "factorSource": "{source} v{version}",

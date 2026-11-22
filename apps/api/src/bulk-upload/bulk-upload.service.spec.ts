@@ -3357,7 +3357,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
   const INPUT_HEADER = [
     'subsidiaryId', 'locationId', 'reportingYear', 'reportingPeriod', 'periodValue', 'category', 'activityType',
     'activityValue', 'activityUnit', 'varianceReason', 'ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor',
-    'equipmentType', 'capacityKg', 'refillKg', 'leakRateChoice',
+    'cvBasis', 'equipmentType', 'capacityKg', 'refillKg', 'leakRateChoice',
   ] as const;
   type Cells = Partial<Record<(typeof INPUT_HEADER)[number], string>>;
   const line = (over: Cells = {}) => {
@@ -3436,6 +3436,8 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     ['neither a capacity nor a refill', { capacityKg: '0', refillKg: '0' }, 'capacityKg'],
     ['an unknown leak rate choice', { leakRateChoice: 'lowest' }, 'leakRateChoice'],
     ['a gas input on a refrigerant line', { ncvKcalPerSm3: '8100' }, 'ncvKcalPerSm3'],
+    // ng-kwh-engine: the basis column is a gas input too, never silently dropped.
+    ['a calorific basis on a refrigerant line', { cvBasis: 'net' }, 'cvBasis'],
   ])('refuses %s on its own cell', async (_case, over, column) => {
     const { service } = build();
     const report = await service.import(dataEntry(), file(line(over as Cells)), DRY);
@@ -3502,6 +3504,60 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     const report = await service.import(dataEntry(), file(gasRow(over as Cells)), DRY);
     expect(report.errors).toEqual([expect.objectContaining({ row: 2, column, code: 'invalid' })]);
     expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  describe('a bill in kWh or MWh and its calorific basis (ng-kwh-engine)', () => {
+    const billRow = (over: Cells = {}) => gasRow({ activityUnit: 'kWh', activityValue: '1000', ...over });
+
+    it('reads the basis in any letter case, sends it lower-case, and echoes it', async () => {
+      const { records, service } = build();
+      const report = await service.import(dataEntry(), file(
+        billRow({ cvBasis: 'GROSS' }),
+        billRow({ periodValue: 'February', activityUnit: 'MWh', activityValue: '1', cvBasis: ' Net ' }),
+      ), DRY);
+      expect(report.errors).toEqual([]);
+      expect(records.previewCreate.mock.calls.map(([, dto]) => dto.parameters)).toEqual([{ cvBasis: 'gross' }, { cvBasis: 'net' }]);
+      expect(report.accepted.map((a) => a.parameters)).toEqual([{ cvBasis: 'gross' }, { cvBasis: 'net' }]);
+    });
+
+    it('reads a missing basis as the engine\'s input refusal, `invalid` with its sentence, never `no_factor`', async () => {
+      const { prisma, records, service } = build();
+      const sentence = 'A natural gas bill in kWh in Türkiye states its calorific basis, net or gross.';
+      records.previewCreate.mockRejectedValue(new CalculationInputError('parameters_required', sentence, { input: 'cvBasis' }));
+      const report = await service.import(dataEntry(), file(billRow()), DRY);
+      expect(records.previewCreate.mock.calls[0][1].parameters).toBeUndefined();
+      expect(report.errors).toEqual([{ row: 2, column: null, code: 'invalid', message: sentence }]);
+      expect(prisma.importBatch.create).not.toHaveBeenCalled();
+      expect(records.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a basis that is not net or gross', { cvBasis: 'brut' }],
+      ['a basis given as a number', { cvBasis: '1' }],
+    ])('refuses %s on its own cell, naming both values', async (_case, over) => {
+      const { records, service } = build();
+      const report = await service.import(dataEntry(), file(billRow(over as Cells)), DRY);
+      expect(report.errors).toEqual([expect.objectContaining({ row: 2, column: 'cvBasis', code: 'invalid' })]);
+      expect(report.errors[0].message).toMatch(/net or gross/);
+      expect(records.previewCreate).not.toHaveBeenCalled();
+    });
+
+    it('refuses a basis on an Electricity row, as any gas input there', async () => {
+      const { records, service } = build();
+      const report = await service.import(dataEntry(), file(gasRow({ category: 'Electricity', activityUnit: 'kWh', cvBasis: 'net' })), DRY);
+      expect(report.errors).toEqual([expect.objectContaining({ row: 2, column: 'cvBasis', code: 'invalid' })]);
+      expect(records.previewCreate).not.toHaveBeenCalled();
+    });
+
+    it('writes the basis on the import, and nothing on the dry run', async () => {
+      const { prisma, records, service } = build();
+      const dry = await service.import(dataEntry(), file(billRow({ cvBasis: 'gross' })), DRY);
+      expect(dry.errors).toEqual([]);
+      expect(records.create).not.toHaveBeenCalled();
+      expect(prisma.importBatch.create).not.toHaveBeenCalled();
+      await service.import(dataEntry(), file(billRow({ cvBasis: "gross" })), NOTHING);
+      expect(records.create.mock.calls[0][1].parameters).toEqual({ cvBasis: 'gross' });
+    });
   });
 
   it('passes a row with no inputs as before, its parameters null', async () => {

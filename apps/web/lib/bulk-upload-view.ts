@@ -209,14 +209,17 @@ export function readAmountLabel(row: Pick<BulkUploadAcceptedRow, 'activityValue'
 }
 
 type InputsKey =
-  | `bulkColumns.${'ncvKcalPerSm3' | 'billedGcvKcalPerSm3' | 'volumeCorrectionFactor' | 'capacityKg' | 'refillKg'}`
+  | `bulkColumns.${'ncvKcalPerSm3' | 'billedGcvKcalPerSm3' | 'volumeCorrectionFactor' | 'cvBasis' | 'capacityKg' | 'refillKg'}`
+  | `inputs.cvBasis.${'net' | 'gross'}`
   | `equipmentTypes.${keyof typeof enEntry.equipmentTypes}`
   | `inputs.choice.${keyof typeof enEntry.inputs.choice}`;
 
 /**
  * An accepted row's calculation inputs as the server read them (LP4-02 PR4,
  * D15): each Natural Gas value, or each equipment line with its masses and
- * rate choice, in the user's locale. Empty when the row carries none.
+ * rate choice, in the user's locale. A bill's calorific basis comes first, as
+ * a word, so the user checks net or gross before importing (ng-kwh-engine).
+ * Empty when the row carries none.
  */
 export function readInputsLabel(
   parameters: BulkUploadAcceptedRow['parameters'],
@@ -237,10 +240,13 @@ export function readInputsLabel(
       })
       .join('; ');
   }
-  return (['ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor'] as const)
+  const basis = parameters.cvBasis === 'net' || parameters.cvBasis === 'gross'
+    ? [`${translate('bulkColumns.cvBasis')}: ${translate(`inputs.cvBasis.${parameters.cvBasis}`)}`]
+    : [];
+  const figures = (['ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor'] as const)
     .filter((key) => parameters[key] !== undefined && parameters[key] !== null)
-    .map((key) => `${translate(`bulkColumns.${key}`)} ${amount(parameters[key] as number)}`)
-    .join('; ');
+    .map((key) => `${translate(`bulkColumns.${key}`)} ${amount(parameters[key] as number)}`);
+  return [...basis, ...figures].join('; ');
 }
 
 export interface IssueGroup {

@@ -82,6 +82,16 @@ describe('a record\'s calculation inputs in a report (LP4-02 PR5, task 5.3)', ()
     expect(calculationInputs(billed, words('tr', ISSUANCE_CATALOGUES.tr))).toBe(calculationInputs(billed, words('tr')));
   });
 
+  it.each([
+    ['en', REPORT_CATALOGUES.en, 'gross to net ×0.901147'],
+    ['tr', REPORT_CATALOGUES.tr, 'brütten nete ×0,901147'],
+    ['en', ISSUANCE_CATALOGUES.en, 'gross to net ×0.901147'],
+    ['tr', ISSUANCE_CATALOGUES.tr, 'brütten nete ×0,901147'],
+  ] as const)('%s names a gross energy bill\'s gross-to-net ratio, to six digits (ng-kwh-engine)', (locale, catalogue, expected) => {
+    const gross = v3({ parameters: [{ name: 'grossToNetRatio', value: 8250 / 9155, origin: 'derived' }] });
+    expect(calculationInputs(gross, words(locale, catalogue))).toContain(expected);
+  });
+
   it('is empty for a snapshot that carries no inputs', () => {
     expect(calculationInputs(v3({}), words('en'))).toBe('');
     expect(calculationInputs({ snapshotSchema: 2, tCo2e: 1 }, words('en'))).toBe('');

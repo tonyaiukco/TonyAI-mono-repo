@@ -208,6 +208,24 @@ export class ApprovalEvidenceMissingError extends BadRequestException {
   }
 }
 
+/**
+ * An update to a stored natural gas bill in kWh or MWh that would keep its
+ * quantity where it no longer means the same thing, and sends none
+ * (ng-kwh-engine reviews): a new unit or category on either basis, or, for a
+ * NET bill, a new site or basis. The inherited figure would be read at another
+ * scale or meaning, or as gross.
+ */
+export class ActivityValueReentryRequiredError extends BadRequestException {
+  constructor() {
+    super(
+      errorBody(
+        'activity_value_reentry_required',
+        'Send the quantity again: it was entered for this record\'s current unit and category (and, for a net energy bill, its site and calorific basis).',
+      ),
+    );
+  }
+}
+
 /** An anomalous figure with no variance reason. */
 export class VarianceReasonRequiredError extends BadRequestException {
   constructor(readonly basis: VarianceBasis = 'history') {

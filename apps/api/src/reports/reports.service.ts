@@ -637,7 +637,12 @@ export class ReportsService {
       }
       const calc = (r.calculation ?? {}) as Snapshot;
       const provenance = isProvenanceSnapshot(snapshot) ? snapshot : null;
-      const pathKey = `${calc.factorId}|${provenance?.conversion?.id ?? ''}`;
+      // Keyed on the steps actually taken too (ng-kwh-engine review): records
+      // that share a factor and a conversion row (or none) can still differ in
+      // their steps, kWh against MWh's ×1,000, a net bill against a gross one's
+      // reduction. One line per path, so the appendix never lends one record's
+      // steps to another.
+      const pathKey = `${calc.factorId}|${provenance?.conversion?.id ?? ''}|${calc.conversionBasis ?? ''}`;
       if (calc.factorId && !factorByPath.has(pathKey)) {
         factorByPath.set(pathKey, {
           category: r.category,
@@ -812,12 +817,15 @@ export class ReportsService {
     const s4 = wb.addWorksheet(v.text('sheetFactors'));
     // The three LP3-03 columns are appended, never inserted (this file's rule
     // for every artifact a reader may parse by position).
-    s4.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version', 'Activity type', 'Release', 'Standing'].map((l) => v.label(l)));
+    // `Conversion` appended last (ng-kwh-engine review): one factor's lines
+    // differ by their conversion steps (kWh against MWh, net against gross),
+    // and without it they read as duplicates.
+    s4.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version', 'Activity type', 'Release', 'Standing', 'Conversion'].map((l) => v.label(l)));
     for (const f of data.factors) {
       s4.addRow([
         v.category(f.category), f.geographyCode, f.factorValue, f.factorUnit, f.methodology, f.source, f.version,
         f.activityType ? v.activityType({ category: f.category, activityType: f.activityType }) : '',
-        f.release, f.standing,
+        f.release, f.standing, f.conversionBasis ?? '',
       ]);
     }
 

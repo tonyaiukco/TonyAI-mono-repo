@@ -42,6 +42,44 @@
 > 7. **Claude Code orchestrates; Codex implements assigned tasks** *(owner decision 2026-11-07, after L10 closed; it replaces the Codex single-tool mode of 2026-10-28, which itself replaced the two-tool mode of 2026-09-27)*. **Claude Code** is the orchestrator and planner: it defines, sequences and does the work itself, assigning a task to Codex in the Assignment ledger **only when the owner explicitly asks** (owner, 2026-11-07), reviews Codex's PRs, and is **this file's only writer**, updating it in the same PR as its own work and recording Codex's merged PRs. **Codex** takes over only the tasks the owner has Claude Code hand to it: it implements them on its own branch and PR, follows `AGENTS.md`, does not edit this file, and puts its status (what changed, evidence, open items) in its PR description for Claude Code to record. The owner reviews and merges every PR.
 
 ## Current status — as of 2026-11-20
+- **UAT ROUND 3, CHANGE 3 (LP4-06, D2–D3): TR NATURAL GAS IN kWh OR MWh IS PRICED ON ITS STATED CALORIFIC BASIS, BUILT, PR PENDING (Claude Code; OpenSpec [`ng-kwh-engine`](../../openspec/changes/ng-kwh-engine/design.md), branch `feat/ng-kwh-engine`; 2026-11-20).** One migration (`20261120120000_ng_kwh_cv_basis`, expand-only); API, shared-types and web.
+  - **What:**
+    - A TR gas bill in kWh or MWh carries `cvBasis` (`net` | `gross`). `net` is priced against the TR net factor directly. `gross` is first × `reference_ncv / reference_gcv` of the **factor's** release (0.901147), echoed as `grossToNetRatio` (derived) with both rows cited. No conversion row is read: `resolveFactorPath` / `lookupFactorPath` take a direct-only `directBasis`, set only by this path.
+    - Missing basis → 400 `parameters_required` (`params.input`, a sentence selector: `cvBasis` / `equipment`). Sm³ inputs on a bill, or a basis on Sm³/m³ → 400 `parameters_not_applicable`. A gross-only factor → 422 `calorific_basis_mismatch`. A missing row, or a ratio outside (0,1) → 409 `parameter_missing`. Therms and GJ are still 422.
+    - The parameters CHECK admits `cvBasis` (`net`, `gross`, JSON null = absent at every layer), and `INTEGRITY_CHECKS` is re-pinned.
+    - Bulk upload: a `cvBasis` column (any case, a template dropdown, refused on other categories and on refrigerant lines), echoed in the dry run.
+    - Data Entry: an opened or copied kWh record keeps its unit, quantity and basis, shown read-only. A net bill moved outside TR loses its figure and its basis. A gross bill's preview names the ratio.
+    - The review sheet shows the basis. Reports name the ratio and give gross bills their own appendix line; the renderers are `-v5`.
+    - Snapshot schema stays 3, and Sm³/m³ snapshots are unchanged (inline snapshots captured before the change).
+  - **Measured locally:** typecheck, lint (0 errors, the 3 earlier warnings), build; unit tests api 3,951, shared-types 512, db 251, web 1,329. `test:int` for `tr-factor-package` 19, `calculation-staleness` 26, `record-write-guards` 65, `runtime-role` 99. e2e `natural-gas-energy-bill` 2, and 37 neighbours, all with CI's `RATE_*_PER_MINUTE` overrides; the local defaults answer 429 to the UI (Open questions). Live API on the real release: 1,000 kWh gross → 182.1718 kg.
+  - **Review (three seats):** no blocker.
+    - `security-rls` verified the CHECK (expand-only, fail-closed, smuggling refused, md5 matches), the 404-before-library order, and `directBasis` having one caller.
+    - `qa-auditor` recomputed the golden vectors, ran the old engine against the snapshots, and killed 8 of 8 mutations. It found two web defects, now fixed: a net basis restored after a round trip outside TR (data integrity), and a copy tuple that ignored geography.
+    - `architect` found the report disclosure gap, a spec sentence and an untested selector, all fixed. The rest is under Open questions.
+  - **Owner's branch review (2026-11-21), all fixed:**
+    - a kWh bill switched to Sm³ kept its figure: energy↔volume now clears it, and the own unit stays listed;
+    - a net figure could be read as gross on an opened re-classified draft, a copy, or an API update without the quantity: the form checks a state, and the API answers `activity_value_reentry_required` (400, a new code);
+    - the appendix merged kWh and MWh steps: it now keys on the steps;
+    - the direct-only read kept its REPEATABLE READ batch;
+    - the basis-mismatch copy is basis-neutral;
+    - the design's database claim is narrowed, and the rollout window is documented.
+
+    A re-review (`security-rls`, `qa-auditor`) found no blocker. Its fixes:
+    - an `activityValue: null` bypass of the re-entry rule;
+    - the own-unit list after a save;
+    - an e2e case for a re-classified site.
+
+    After all fixes: api 3,966, web 1,336, int 210, e2e 35.
+  - **Owner's re-review (2026-11-22), all fixed:**
+    - the API asks for a gas bill's quantity again on a unit or category change on either basis (a gross kWh → MWh was inherited ×1,000);
+    - Data Entry clears the figure on any unit or category change;
+    - a site the page has not loaded holds the preview and the save until it is read;
+    - the re-entry check follows the 404 and 409 checks;
+    - Excel's factor sheet names each line's conversion;
+    - picking the record's own energy unit again restores its stored basis, so a unit change can be undone.
+
+    After: api 3,971, web 1,338, int 210, e2e 48 plus a re-run of 34.
+  - **Next:** the owner opens the PR and merges. `ng-kwh-form` (LP4-06, the second change) follows.
 - **UAT ROUND 3, CHANGE 2 (D4): COVERAGE REFUSALS ANSWER HTTP 422, MERGED AS [PR #338](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/338) (merge `863185e`), DEPLOYED (`ci72-1`, 0 migrations), ARCHIVED as `openspec/changes/archive/2026-11-20-calc-refusal-422/`, which syncs `emission-calculation` (Claude Code; OpenSpec `calc-refusal-422`, branch `fix/calc-refusal-422`; 2026-11-20; Decisions 2026-11-20 D4, v2.4 §1.1).** API contract change; no migration.
   - **What:** `no_factor`, `placeholder_refused`, `no_conversion` and `calorific_basis_mismatch` answer 422 (`CALCULATION_REFUSAL_STATUS`; `NoEmissionFactorError` now extends `UnprocessableEntityException`, both in one commit, because the error filter drops a code thrown at a status the registry does not give it). The refusal status unions are `400 | 409 | 422`. Input refusals stay 400, library conflicts 409, and an unreachable subsidiary, location or record the plain 404. Bulk submit maps a raw coverage or library error to `calculation_stale`, never `not_found`. `docs/api/endpoints.md` states the statuses.
   - **Measured locally:** typecheck, lint (0 errors), build; unit tests api 3,893, shared-types 506, db 251, web 1,300. Mutations: the map alone reverted fails 6 tests, the class alone 7, the bulk-submit branch removed 3. `HttpExceptionFilter` answers each coverage code with 422, its code and coverage, at warn, with no Sentry report. `test:int`: 31 of 34 files pass, `factor-model`'s foreign-subsidiary 404 included; the other 3 are rate-limited locally exactly as on `main` (Open questions). Live API: own subsidiary, UK electricity 2031 → 422 `no_factor` with `coverage`; an unknown subsidiary → 404 `subsidiary_not_found`.
@@ -105,36 +143,6 @@
     - The P2s are fixed or decided by the owner: the erratum over a supplement. The 4% and 2% rates for CO2 go to external review.
     - The owner's review round 1 found three P2s, all fixed: Submit takes only "clean" rows, so an unsaved newer value never lets the stored one through; a gas change keeps today's identity band and its file keep or remove choice; a row whose figure is out of date after an erratum is marked and re-saved unchanged (K11).
   - **Next:** `uat2-review-shows-gas`, a pre-pilot change; it is done (#326). Change 5's second hosted query is recorded in its entry (open 0, committed 1).
-- **UAT ROUND 2 TEAM DECISIONS, CHANGE 5 OF 6 (K4-3a, BUG-R2-07 TIER 3), MERGED AS [PR #322](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/322) (merge `42457e9`), DEPLOYED (`ci56-1`), ARCHIVED as `openspec/changes/archive/2026-11-13-uat2-anomaly-typo-ceiling/`, which modifies 3 requirements in `anomaly-check` and adds 10 (Claude Code; OpenSpec `uat2-anomaly-typo-ceiling`, branch `feat/uat2-anomaly-typo-ceiling`; 2026-11-13; Decisions 2026-11-12 and 2026-11-13).**
-  - **Shipped:**
-    - **A typo ceiling wherever history cannot judge a record:** a first period, or earlier periods averaging zero.
-      - Ceilings: Electricity 1,000,000 kWh; Natural Gas 250,000 Sm³ (metered m³ × the record's own volume correction factor) or 2,500,000 kWh; Mobile Combustion 100,000 L or 100,000 kg (marine gas oil 1,000 t); Fugitive Gas 200,000 Sm³; Fuel 100,000 L or 150,000 kg; Refrigerants 500 kg capacity per equipment line, and a refill per line above 125% of its capacity, capped at 500 kg.
-      - Other units reach these ceilings through exact definitional multipliers.
-      - Strictly above the ceiling, the record is flagged and submit needs a variance reason (`variance_reason_required`, `params.basis = 'ceiling'`).
-    - **No migration.** A ceiling flag is the stored flag beside a count of 0 or an average of 0, and its basis is derived.
-    - **Every surface names it:** screens (TR/EN), reports and CSV, the matrix (amber, counted as checked), the bulk import warning and bulk submit.
-    - **Operator tools:** `anomaly:probe` holds an SQL copy, pinned by parity specs. Verdicts scored before the ceilings are a known difference (section 2c), only while their stored count and average are the ones history gives.
-    - **BUG-R2-07 is fully met;** QA retests ANOM-11 to ANOM-18.
-  - **Measured locally:**
-    - typecheck and build clean;
-    - unit tests: shared-types 506, db 251, web 1,287, api 3,884;
-    - integration: 1,140/1,140;
-    - Playwright `anomaly-typo-ceiling` and `anomaly-short-history`: green.
-
-    CI, Integration and QA deploy are green on the merge.
-  - **Review:**
-    - `architect`, `security-rls` and `qa-auditor`, then a re-review of the refill delta: no P1, P2s fixed.
-    - The owner's review round:
-      - K1, a zero average falls back to the ceiling;
-      - K2, m³ × factor;
-      - K3, a line is one equipment type;
-      - the kept-verdict and recompute-printout P2s.
-    - A re-review found the probe's `pre_ceiling` NULL gap; it is fixed and tested.
-    - Remaining P3s are under Open questions ("First-period typo ceiling follow-ups").
-  - **Hosted QA count** (owner, read-only query from the change's `design.md`):
-    - **Before merge:** open 0, committed 1 (Emre Test Holding, Refrigerants, kept as a known difference).
-    - **After the deploy (`ci56-1`):** open 0, committed 1, the same record as before (the owner, 2026-11-13). Nothing new was written above a ceiling between the two runs.
-  - **Deployed:** the merge's own push deployed QA (run 43415468580, green), 0 migrations, revision `ci56-1`. Change 6 followed (#324).
 
 ## Next up
 
@@ -145,7 +153,7 @@
 3. **Done:** the correctness package is merged, deployed as `ci24-1` and `storage-verify` re-pinned. Re-pin after each image-affecting deploy that becomes a release candidate (proposed rule).
 4. **After D05:** any form or factor its sources need, then LP4-02's done-when. External review of the billed-GCV correction and LNG NCV; an erratum edition if rejected. The MGO values (Decisions 2026-11-10 (second)) join that external review.
    **UAT round 2:** MGO is done (#296); K3, the evidence gate for every Scope 1–2 category (BUG-R2-02), is done (#298). Record edit (BUG-R2-03) is done (#300, deployed with #301, archived). The anomaly short-history check (BUG-R2-07 tier 2) is done (#303, deployed as `ci37-1`, archived); BUG-R2-07 is fully met since change 5 (#322). The UI quick fixes (BUG-R2-06, R2-09 legend, R2-12) are done (#305, deployed as `ci39-1`, archived); QA retests them. The Data Entry layout (BUG-R2-05) is done (#307, deployed as `ci41-1`, archived); QA retests it. The team answered K1, K2, K4, K5 and S1–S3 (Decisions 2026-11-12); they ship as six OpenSpec changes, in this order: (1) `uat2-team-decisions-copy` (tier names, the first-period anomaly notice, refrigerant evidence guidance, the package seal date on screen) — **done** (#313, deployed as `ci47-1`, archived); (2) `uat2-user-access-clarity` (BUG-R2-01, multi-subsidiary assignment made visible) — **done** (#316, deployed as `ci50-1`, archived); (3) `uat2-consultant-approval` (K2; with it, evidence became author-only, owner option A) — **done** (#318, deployed as `ci52-1`, archived); (4) `uat2-standalone-default-subsidiary` (K1; every new organisation gets a default subsidiary, from the operator CLI and from self-service registration) — **done** (#320, deployed as `ci54-1`, archived); (5) `uat2-anomaly-typo-ceiling` (K4-3a, option B, with the owner's refill, zero-average and m³ × factor decisions of 2026-11-13) — **done** (#322, deployed as `ci56-1`, archived; QA retests BUG-R2-07); (6) `uat2-refrigerant-multigas-design` (K5-B, a design only) — **done** (#324, archived; the build is LP7-07); (7) `uat2-review-shows-gas` (the gas on the review queue and sheet for every typed category, a pre-pilot exception; Decisions 2026-11-13 (second) and (third)) — **done** (#326, deployed as `ci60-1`, archived; QA retested). UAT round 2's planned changes are complete; LP7-07 waits for G6. The S1 QA operation (reject and resubmit the 7 pending records with evidence, then a staged D04 run) starts after change 1 deploys.
-   **UAT round 3 (spec v2.5; Decisions 2026-11-20, [`uat3-decisions`](../../openspec/changes/archive/2026-11-20-uat3-decisions/design.md)):** rounds 1 and 2 are shipped apart from the D9 remnants, S1's QA run and the parked items (BUG-05/R2-10 maps, R2-09 UK, K5-B = LP7-07, S2's source date = LP7-08). Five changes follow, in this order: (1) `uat3-ui-polish` (D9) — **done** (#337, `ci71-1`, archived); (2) `calc-refusal-422` (D4) — **done** (#338, `ci72-1`, archived); (3) `ng-kwh-engine`, then (4) `ng-kwh-form` (LP4-06); (5) `self-gen-model`, then (6) `self-gen-form` (LP4-07). Each calculation-path change gets the `security-rls` and `qa-auditor` pass; the shared-types and Prisma ones add `architect`.
+   **UAT round 3 (spec v2.5; Decisions 2026-11-20, [`uat3-decisions`](../../openspec/changes/archive/2026-11-20-uat3-decisions/design.md)):** rounds 1 and 2 are shipped apart from the D9 remnants, S1's QA run and the parked items (BUG-05/R2-10 maps, R2-09 UK, K5-B = LP7-07, S2's source date = LP7-08). Five changes follow, in this order: (1) `uat3-ui-polish` (D9) — **done** (#337, `ci71-1`, archived); (2) `calc-refusal-422` (D4) — **done** (#338, `ci72-1`, archived); (3) `ng-kwh-engine` — **built** (branch `feat/ng-kwh-engine`, PR pending); then (4) `ng-kwh-form` (LP4-06); (5) `self-gen-model`, then (6) `self-gen-form` (LP4-07). Each calculation-path change gets the `security-rls` and `qa-auditor` pass; the shared-types and Prisma ones add `architect`.
 5. **LP2-04, QA part in progress** (`tonyai.io`; Decisions 2026-11-09, second): [PR #294](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/294) merged; the owner's cutover (runbook 11) is complete and accepted (2026-11-10). LP2-04 production is deferred by the owner. **Trial DB+Storage restore** in an isolated Supabase project, early December; LP5-03's final numbers wait until after G4.
 6. **G4, target 2027-01-03:** refresh `uat_round3.md` for the candidate; on hosted, the pilot examples, the final UI/export pass, leaving and reset across roles; QA round 2; UAT round 3's sections 10 and 11.
 7. **LP5 and the pen-test** (G5, 01-22), then the pilot on 02-01, fallback 02-15.
@@ -253,7 +261,7 @@ One row per task card (states and columns defined in B3.4). Owner and reserved a
 | LP4-03 | DONE | Claude Code (Codex lane, Decisions 2026-10-15; plan 2026-10-24, K1–K13; PR C D1–D10) | `d90438a` → `3618f66` (#211, PR A); `3618f66` → `bcc6f07` (#212, PR B); `bcc6f07` → `5a7cab2` (#214, PR C) | `feat/lp4-03-consistent-reports` (#211), `feat/lp4-03-web-screens` (#212), `feat/lp4-03-boundary-editor` (#214) — merged | — (every slot released at #214's merge) | LP1-01, LP1-02, LP3-02, LP3-04 (all integrated) | All three PRs INTEGRATED — #211, #212 and #214 merged 2026-10-24; on `main` @ `5a7cab2` CI green (run 40115936331; Integration not triggered: web only); `e2e.yml` green on `main` since (run 42359449905, `d2a5f9b`). **DONE 2026-10-24.** Correctness package (2026-11-09): a counted final on the real TR releases reconciles across dataset, PDF, workbook and CSV; on hosted it is G4's pass |
 | LP4-04 | IN_PROGRESS | Codex; Claude Code for the first slice and slice 2 (Codex lane, Decisions 2026-10-24: K1, M9) | `84abcdb` → `e129176` (#165); `3d2ee03` → `3b580df` (#208, first slice); `cc74bd7` → `e668bbd` (#217, slice 2 PR A); `e668bbd` → `5e192a9` (#220, slice 2 PR B); `5e192a9` → `d8e6a8b` (#222, slice 2 PR C) | `feat/lp4-04-factor-web-consumers` (#165), `feat/lp4-04-bulk-read-values` (#208), `feat/lp4-04-localise-screens` (#217, slice 2 PR A), `feat/lp4-04-localise-dashboard` (#220, slice 2 PR B), `feat/lp4-04-localise-admin` (#222, slice 2 PR C) — merged, deleted | Released at #222's merge — slice 2 PR C's: the shared-types slot (its own first commit, rule 2 waived — M3: 46 domain codes, `SUBSIDIARY_STATUSES`, `SubsidiarySummaryDTO.blockerCounts`, `entityLabel`'s words, two JSDoc pins); the API's throw sites (`subsidiaries`, `locations`, `period-locks`, `targets`, `intensity`, `evidence`, `activity-records`, `bulk-upload`, `common/api-error`) and their specs; the web's Subsidiaries (`app/subsidiaries/**`, `components/subsidiaries/**`), Review, Audit, `lib/{subsidiaries,audit,review,void,bulk-upload,bulk-submit}-view.ts`, `lib/{vocabulary,i18n/{errors,hooks,message-keys}}.ts`, Data Entry's typed keys, the dashboard's status words, the EN/TR catalogues; the seed (`viewer@tonyai.local`); `docs/uat/uat_round3.md`; `e2e/{admin-screens-turkish,audit-trail}.spec.ts`, `e2e/helpers.ts`; README, CLAUDE.md's seed-user line, the `localise-ui` skill; no `api.ts` change, no migration | LP3-01 to start; LP4-01/02/03 to finish | #165 and #208 INTEGRATED. **Slice 2 (M1–M10): PR A INTEGRATED (#217); PR B INTEGRATED (#220)** (dashboard, Emissions, targets, intensity); **PR C INTEGRATED (#222)** (Subsidiaries, Review, Audit, the API codes, `docs/uat/uat_round3.md`, the `executive_viewer` seed user; Decisions 2026-10-25, P1–P11). **The card's first box is done** (the owner approved the Turkish review of PR A–C's sheets, Decisions 2026-10-25); left: the second and fourth boxes (Turkish numeric cases verified in UAT round 3; its run on the merged build with executive-viewer coverage and the refreshed dispositions) and the Done-when; D24's external reviewer stays open #260/b4cfe2c records the agent UAT round3 pre-pass (358passed/1failed/8waiting/2notrun/1owner decision); named sections10/11 and short hosted re-run after future L10 remain open. **G4 audit (2026-11-09):** `docs/uat/uat_round3.md` still describes an older candidate and UK; it needs the TR inputs (NCV, GCV, equipment) and refreshed dispositions before the hosted run |
 | LP4-05 | IN_PROGRESS | Codex (from 2026-10-09, the one-tool week over); Claude Code for PR C (Codex lane, Decisions 2026-10-15; 2026-10-23) | `f3f0ac8` → `0e12361` (#157, PR A); `f6bd1dc` → `da312d4` (#160, PR B); `d27aed7` → `d90438a` (#209, PR C) | `feat/lp4-05-contract` (#157, merged, deleted); `feat/lp4-05-runtime-limits` (#160, merged); `feat/lp4-05-bounded-reads` (#209, PR C, Claude Code, merged 2026-10-24 — no Codex PR C work existed, owner 2026-10-23) | throttling, record pagination (+ its consumers), Dockerfiles; PR A's and PR B's slots released at their merges (PR B took no shared or migration slot; its narrow audit/evidence/bulk/UI/README reservations released); PR C's slots (the migration `20261023120000_lp4_05_keyset_indexes`, `apps/web/lib/api.ts`, README, `infra/config/runtime-limits.json` + `infra/runbooks/03-deploy.md`) released at its merge | LP2-02, LP1-01/02 | PR A (#157) and PR B (#160) INTEGRATED — recorded under rule 7 (Current status); PR C (#209, bounded reads, Claude Code; Decisions 2026-10-23, K1–K12) INTEGRATED — merged 2026-10-24 as `d90438a`, `e2e.yml` 140/140 on it (run 40092073049); its follow-up (17), the analytics budgets, closed by LP4-03 PR A (K11). Web security headers done by the correctness package; enforcing the CSP's resource directives follows QA round 2 (Open questions). Not DONE: load acceptance on Azure, capacity qualification and F13's evidence belong to LP5-03; `fix/preview-mutation-permit` (#202, merged as `0f0bb9a` 2026-10-22, Claude Code): the read-only live preview takes no mutation permit — the nightly e2e failure of run 39744796913 (Current status) |
-| LP4-06 | BACKLOG | Claude Code | — | — | — | `uat3-decisions` (D2–D4); `calc-refusal-422` (done, #338) | Build `ng-kwh-engine`, then `ng-kwh-form` (Decisions 2026-11-20) |
+| LP4-06 | IN_PROGRESS | Claude Code | `26db565` → — | `feat/ng-kwh-engine` | engine, bulk, Data Entry, review sheet, reports; one migration | `uat3-decisions` (D2–D4); `calc-refusal-422` (done, #338) | `ng-kwh-engine` built and reviewed (three seats, no blocker); PR pending. Then `ng-kwh-form` (Decisions 2026-11-20) |
 | LP4-07 | BACKLOG | Claude Code | — | — | — | `uat3-decisions` (D5, D6, D8); after LP4-06 | Build `self-gen-model`, then `self-gen-form` (Decisions 2026-11-20) |
 | LP5-01 | BACKLOG | Codex (independent QA) | — | — | — | G1, G2, G3, G4 | — |
 | LP5-02 | BACKLOG | External vendor; Codex prepares + fixes | — | — | — | G1–G4 for the final assessment | Book the vendor now (long-lead 3) |
@@ -620,8 +628,11 @@ Every card states dependencies, suggested owner, edit area, deliverables and acc
 *(added 2026-11-20; Decisions 2026-11-20, D2–D4)*
 - **Depends on:** [`uat3-decisions`](../../openspec/changes/archive/2026-11-20-uat3-decisions/design.md) and `calc-refusal-422` (D4).
 - **Owner:** Claude Code. **Area:** the calculation engine (`tr-rules.ts`, `calculations.service.ts`), `NaturalGasRecordParameters` with its DTO and parameters CHECK migration, the bulk-upload template, Data Entry's natural gas inputs, TR/EN catalogues.
-- [ ] `ng-kwh-engine`: TR natural gas in kWh or MWh carries a required `cvBasis` (missing → `parameters_required`, 400; also a bulk gas column); net is priced directly against the net factor, gross first × `reference_ncv / reference_gcv` from the factor's release; no billed GCV, NCV or volume correction on a kWh record; golden vectors GV-NG-kWh-A (202.16 kg), B (182.17 kg ± 0.01 kg) and C (193.83 kg, against the live spec's golden value 5).
-- [ ] `ng-kwh-form`: TR natural gas offers kWh; choosing it shows a required NET / GROSS choice, and GROSS shows the derived net kWh and the ratio before save; e2e.
+- [x] `ng-kwh-engine` (built 2026-11-20, PR pending): TR natural gas in kWh or MWh carries a required `cvBasis` (missing → `parameters_required`, 400; also a bulk gas column); net is priced directly against the net factor, gross first × `reference_ncv / reference_gcv` from the factor's release; no billed GCV, NCV or volume correction on a kWh record; golden vectors GV-NG-kWh-A (202.16 kg), B (182.17 kg ± 0.01 kg) and C (193.83 kg, against the live spec's golden value 5).
+- [ ] `ng-kwh-form`: TR natural gas offers kWh; choosing it shows a required NET / GROSS choice, and GROSS shows the derived net kWh and the ratio before save; e2e. It also:
+  - adds kWh and MWh to `unitsForRecord`;
+  - turns the read-only `natural_gas_energy` line into the choice;
+  - makes `GET /factors/parameters` resolve the energy path (`kWh`, `directBasis: 'net'`) and the factor's release for the ratio preview (`architect` review of `ng-kwh-engine`).
 - **Done when:** the design's draft requirements are spec requirements and the golden vectors pass within ±0.5%.
 
 #### LP4-07 — Self-generation behind the meter, Case A (UAT round 3, spec v2.5 §2)
@@ -1595,6 +1606,22 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 ### Open questions
 
 **UAT round 3 follow-ups (2026-11-20, [`uat3-decisions`](../../openspec/changes/archive/2026-11-20-uat3-decisions/design.md)):**
+
+- **`ng-kwh-engine` review notes (filed per the pre-pilot rule):**
+  - **A net figure moved off TR through the API** (`security-rls`): a PATCH that drops `cvBasis` and moves a net kWh record to a UK site prices the net figure as gross, about 10% low. Only Data Entry clears it. The server could refuse that move unless the value is entered again.
+  - **The ratio has no plausibility band:** it must only lie strictly between 0 and 1, and a sealed release with a wrong `reference_ncv` would misprice gross bills. A loader rule on the pair (for example 0.85–0.95) would catch it.
+  - **An edition carrying the TR net gas factor must also carry `reference_ncv` and `reference_gcv`:** without them, gross bills refuse with 409. Add this to the factor-release checklist (`factor-release-import` skill).
+  - **The CHECK migration's DROP/ADD window:** the same pattern as `20261106120000`, harmless at current sizes.
+  - **"Typed natural gas inputs are bounded" wording:** on a kWh or MWh record, `parameters_not_applicable` answers before a range code. The requirement could say "on a record in Sm³ or m³".
+  - **`cvBasis` on therms or GJ** answers 422 `calorific_basis_mismatch`, not `parameters_not_applicable`. It fails closed; the spec does not cover the case.
+  - **Older TR kWh drafts, or copies, without a basis** now open in the energy mode, and their refusal asks for net or gross with no control to give it until `ng-kwh-form`. Committed seed records are frozen.
+  - **Bulk row messages are English in the Turkish UI:** the panel prints each row issue's server sentence (`bulk-upload-panel.tsx`, `IssueItem`), the new `cvBasis` refusals as every other. A localised row message needs a code or a selector per cell issue (owner's branch review, 2026-11-21).
+  - **The API's inherited quantity outside natural gas bills:** a PATCH changing only the unit or category of any other record (kWh → MWh electricity, litres → gallons) keeps the stored number. The re-entry rule covers natural gas bills in kWh/MWh only, because widening it broke callers that re-file by category alone (`ng-kwh-engine` third review). Data Entry clears the figure on any unit or category change.
+  - **`PATCH /activity-records/:id {activityUnit: null}` answers 500:** the DTO lets null through and `storedUnit(null)` throws. Nothing is written. This predates `ng-kwh-engine` (security-rls re-review).
+  - **The re-entry rule's scope:**
+    - it guards only a stored NET bill; a gross bill switched to net by the API, or a non-TR kWh record moved to TR with `cvBasis: 'net'`, keeps its figure, because the caller states the basis;
+    - Data Entry's net check needs the site in the loaded location list; a missing site falls back to the subsidiary's geography (narrow; security-rls note).
+  - **Local e2e and the rate limiter:** UI flows against the local API answer 429 at the default `RATE_*_PER_MINUTE`. Run e2e with CI's overrides (`.github/workflows/e2e.yml`).
 
 - **Report copy still counts (`uat3-ui-polish`, filed per the pre-pilot rule):** the issued report's withdrawn note (`apps/api/src/reports/i18n/tr.json` `withdrawnNote`, "…sayılmazlar"; en `restatementListed`, "counts towards no figure") keeps the counting phrasing. The widened `record-lifecycle` wording requirement names the dashboard, Emissions, the void dialog and bulk upload, not reports. Changing it means a report renderer version bump.
 - **`bulk-upload-panel` is order-dependent locally:** "a non-evidence import offers the submit button, and it moves the records" times out waiting for `bulk-upload-input` when the whole file runs against `pnpm dev`, on `main` (`a9fbd00d`) as on `feat/uat3-ui-polish`. It passes alone on both. Not yet seen in CI, whose nightly ran red for another reason until #335.
@@ -2621,6 +2648,37 @@ The team memo's "rejected → draft" is today's `rejected` state, which the auth
   3. **Two branches can add the same name to one file, and git will not say so.** `main` grew its own `quoteCallerText` while this branch rewrote the file around another; the merge produced a file with two functions of that name, no conflict marker, and a compile error nobody would have seen in a diff of the conflicts. Read a merged file's exports, not only its conflict count.
 
 ## Archive — superseded status entries
+
+- **UAT ROUND 2 TEAM DECISIONS, CHANGE 5 OF 6 (K4-3a, BUG-R2-07 TIER 3), MERGED AS [PR #322](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/322) (merge `42457e9`), DEPLOYED (`ci56-1`), ARCHIVED as `openspec/changes/archive/2026-11-13-uat2-anomaly-typo-ceiling/`, which modifies 3 requirements in `anomaly-check` and adds 10 (Claude Code; OpenSpec `uat2-anomaly-typo-ceiling`, branch `feat/uat2-anomaly-typo-ceiling`; 2026-11-13; Decisions 2026-11-12 and 2026-11-13).**
+  - **Shipped:**
+    - **A typo ceiling wherever history cannot judge a record:** a first period, or earlier periods averaging zero.
+      - Ceilings: Electricity 1,000,000 kWh; Natural Gas 250,000 Sm³ (metered m³ × the record's own volume correction factor) or 2,500,000 kWh; Mobile Combustion 100,000 L or 100,000 kg (marine gas oil 1,000 t); Fugitive Gas 200,000 Sm³; Fuel 100,000 L or 150,000 kg; Refrigerants 500 kg capacity per equipment line, and a refill per line above 125% of its capacity, capped at 500 kg.
+      - Other units reach these ceilings through exact definitional multipliers.
+      - Strictly above the ceiling, the record is flagged and submit needs a variance reason (`variance_reason_required`, `params.basis = 'ceiling'`).
+    - **No migration.** A ceiling flag is the stored flag beside a count of 0 or an average of 0, and its basis is derived.
+    - **Every surface names it:** screens (TR/EN), reports and CSV, the matrix (amber, counted as checked), the bulk import warning and bulk submit.
+    - **Operator tools:** `anomaly:probe` holds an SQL copy, pinned by parity specs. Verdicts scored before the ceilings are a known difference (section 2c), only while their stored count and average are the ones history gives.
+    - **BUG-R2-07 is fully met;** QA retests ANOM-11 to ANOM-18.
+  - **Measured locally:**
+    - typecheck and build clean;
+    - unit tests: shared-types 506, db 251, web 1,287, api 3,884;
+    - integration: 1,140/1,140;
+    - Playwright `anomaly-typo-ceiling` and `anomaly-short-history`: green.
+
+    CI, Integration and QA deploy are green on the merge.
+  - **Review:**
+    - `architect`, `security-rls` and `qa-auditor`, then a re-review of the refill delta: no P1, P2s fixed.
+    - The owner's review round:
+      - K1, a zero average falls back to the ceiling;
+      - K2, m³ × factor;
+      - K3, a line is one equipment type;
+      - the kept-verdict and recompute-printout P2s.
+    - A re-review found the probe's `pre_ceiling` NULL gap; it is fixed and tested.
+    - Remaining P3s are under Open questions ("First-period typo ceiling follow-ups").
+  - **Hosted QA count** (owner, read-only query from the change's `design.md`):
+    - **Before merge:** open 0, committed 1 (Emre Test Holding, Refrigerants, kept as a known difference).
+    - **After the deploy (`ci56-1`):** open 0, committed 1, the same record as before (the owner, 2026-11-13). Nothing new was written above a ceiling between the two runs.
+  - **Deployed:** the merge's own push deployed QA (run 43415468580, green), 0 migrations, revision `ci56-1`. Change 6 followed (#324).
 
 - **UAT ROUND 2 TEAM DECISIONS, CHANGE 4 OF 6 (K1), MERGED AS [PR #320](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/320) (merge `9fcc26b`), DEPLOYED (`ci54-1`), ARCHIVED as `openspec/changes/archive/2026-11-13-uat2-standalone-default-subsidiary/`, which adds 7 requirements to `organisation-hierarchy` and modifies 3 in `self-service-registration` (Claude Code; OpenSpec `uat2-standalone-default-subsidiary`, branch `feat/uat2-standalone-default-subsidiary`; 2026-11-13; Decisions 2026-11-12, K1).**
   - **Shipped:**

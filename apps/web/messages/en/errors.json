@@ -39,6 +39,7 @@
     "internal_error": "Something went wrong on our side. Try again, and report it if it persists.",
     "invalid_id": "That link or id is not valid.",
     "activity_value_too_large": "The activity value is too large: enter at most 1,000,000,000,000.",
+    "activity_value_reentry_required": "Enter the quantity again: it was entered for the record's previous unit or category (or, for a net energy bill, its previous site or calorific basis).",
     "evidence_required": "{category} requires at least one evidence file before submitting.",
     "approval_evidence_missing": "This {category} record has no evidence file. Reject it so its author can attach one and submit it again.",
     "variance_reason_required": "This value deviates significantly from the historical average — add a variance comment before submitting.",
@@ -82,7 +83,7 @@
     "ambiguous_factor": "The emission factor library holds two equally ranked factors for this entry. An administrator must resolve it.",
     "factor_scope_mismatch": "The emission factor found for this entry is filed under another scope. An administrator must correct the library.",
     "no_conversion": "No sourced unit conversion covers this entry yet.",
-    "calorific_basis_mismatch": "A unit conversion exists, but on a different calorific basis than the emission factor.",
+    "calorific_basis_mismatch": "The emission factor is stated on a different calorific basis than this unit needs.",
     "invitation_not_found": "This account has no invitation to re-send.",
     "registration_unavailable": "Registration is not available.",
     "registration_code_invalid": "The registration code is not valid. Check the code you were given.",
@@ -155,6 +156,9 @@
   "variants": {
     "variance_reason_required": {
       "ceiling": "This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting."
+    },
+    "parameters_required": {
+      "cvBasis": "State whether this energy figure is on the bill's net or gross calorific basis."
     }
   },
   "bulkOutcomes": {

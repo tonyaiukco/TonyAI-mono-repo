@@ -70,6 +70,7 @@
     "ncvKcalPerSm3": "Alt ısıl değer",
     "billedGcvKcalPerSm3": "Faturadaki üst ısıl değer",
     "volumeCorrectionFactor": "Hacim düzeltme katsayısı",
+    "cvBasis": "Isıl değer esası",
     "equipmentType": "Ekipman türü",
     "capacityKg": "Kurulu kapasite (kg)",
     "refillKg": "Dolum (kg)",
@@ -204,7 +205,16 @@
       "default": "varsayılan oran",
       "alternative": "alternatif oran"
     },
-    "marineGasOilScope": "Deniz motorini, şirketinizin sahip olduğu veya işlettiği gemileri kapsar (Kapsam 1); işlettiğiniz çıplak (bareboat) kiralama gemiler de buna dahildir. Kiraladığınız ama işletmediğiniz gemileri (sefer veya süre kiralaması) ve üçüncü taraf deniz taşımacılığını eklemeyin: bunlar Kapsam 3'tür ve bu envanterin dışındadır. Yakıt teslim belgesindeki (Bunker Delivery Note) kütleyi kg veya ton olarak girin."
+    "marineGasOilScope": "Deniz motorini, şirketinizin sahip olduğu veya işlettiği gemileri kapsar (Kapsam 1); işlettiğiniz çıplak (bareboat) kiralama gemiler de buna dahildir. Kiraladığınız ama işletmediğiniz gemileri (sefer veya süre kiralaması) ve üçüncü taraf deniz taşımacılığını eklemeyin: bunlar Kapsam 3'tür ve bu envanterin dışındadır. Yakıt teslim belgesindeki (Bunker Delivery Note) kütleyi kg veya ton olarak girin.",
+    "cvBasis": {
+      "title": "Faturanın ısıl değer esası",
+      "net": "Net",
+      "gross": "Brüt",
+      "stored": "Kayıtta saklandığı gibi."
+    },
+    "basisReset": "Bu miktar net ısıl değer esasındaydı. Türkiye kuralları dışında enerji faturası brüt olarak fiyatlanır; faturadaki brüt miktarı girin.",
+    "unitChangeReset": "Miktar temizlendi: bir birim için girilen sayı başka bir birimde aynı sayı değildir. Miktarı yeni birimle girin.",
+    "categoryReset": "Kategoriyle birlikte miktar temizlendi: yeni kategori için miktarı girin."
   },
   "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",
   "selectAllLoaded": "Yüklenen {count} kaydın tümünü seç",
@@ -402,6 +412,7 @@
     "notAuthoritative": "Yer tutucu — yetkili değil (faktör veya dönüşüm)",
     "scopeLine": "Kapsam {scope} · {kg} kgCO₂e",
     "unitConverted": "Faktör uygulanmadan önce birim {from} biriminden {to} birimine dönüştürüldü.",
+    "grossToNet": "Brüt enerji miktarı, faktör uygulanmadan önce faktör sürümünün referans oranıyla (× {ratio}) nete indirildi.",
     "invoiceRequired": "Bu kaydı yine de kaydedip gönderebilirsiniz. Gönderilmeden önce bir fatura gereklidir; emisyon faktörü olmadığından tüketilen miktarın tek kaydı faturadır.",
     "invoiceCompleteness": "Tek bir ay için bir tesise kaydedildiğinde, o tesisin fatura tamlığına da sayılır — tamlık hesaplanan değerden değil, faturadan ölçülür."
   },

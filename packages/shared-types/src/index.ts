@@ -2557,7 +2557,9 @@ export const CALCULATION_REFUSAL_CODES = [
   'reporting_period_not_annual',
   /** A refrigerant record whose value is not the sum of its equipment capacities. */
   'equipment_sum_mismatch',
-  /** A TR refrigerant record with no equipment lines. */
+  /** A TR record without an input its rule requires: a refrigerant record
+   *  with no equipment lines, or a natural gas record in kWh or MWh with no
+   *  `cvBasis`. `params.input` says which (a sentence selector). */
   'parameters_required',
   /** Parameters off the TR rules, or an input that does not apply to this unit. */
   'parameters_not_applicable',
@@ -2633,7 +2635,15 @@ export interface CalculationRefusalBody {
   message: string;
   code: CalculationRefusalCode;
   coverage?: CoverageKey;
+  /** `parameters_required`'s sentence selector (`input`), as `API_ERROR_PARAMS` declares. */
+  params?: ApiErrorParams;
 }
+
+/** Which required input a `parameters_required` refusal names (`params.input`,
+ *  a sentence selector): a refrigerant's equipment lines, or a natural gas
+ *  energy bill's calorific basis (`ng-kwh-engine`). */
+export const PARAMETERS_REQUIRED_INPUTS = Object.freeze(['equipment', 'cvBasis'] as const);
+export type ParametersRequiredInput = (typeof PARAMETERS_REQUIRED_INPUTS)[number];
 
 // ---------------------------------------------------------------------------
 // Error codes and the error body (LP3-01)
@@ -2689,6 +2699,11 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
    *  only refusal (with others it stays `validation_failed`). No params: the
    *  catalogue states the bound, and a spec pins it to the constant. */
   activity_value_too_large: 400,
+  /** ng-kwh-engine: an update that changes a record's unit or category, or a
+   *  stored NET natural gas bill's site or basis, without sending the quantity
+   *  again: the stored figure would be read at another scale or meaning, or as
+   *  gross. No params. */
+  activity_value_reentry_required: 400,
   /** params: `category` (canonical, from `CATEGORIES`). */
   evidence_required: 400,
   /** K3: approving a record of an evidence-required category with no file
@@ -2917,6 +2932,8 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     /** `basis` (`VarianceBasis`): a SENTENCE SELECTOR, see
      *  `API_ERROR_SENTENCE_SELECTORS`. */
     variance_reason_required: Object.freeze(['basis']),
+    /** `input` (`ParametersRequiredInput`): a SENTENCE SELECTOR. */
+    parameters_required: Object.freeze(['input']),
     period_locked: Object.freeze(['period', 'year']),
     location_in_boundary: Object.freeze(['count']),
     location_has_records: Object.freeze(['count']),
@@ -2959,11 +2976,14 @@ export function varianceBasisOf(verdict: AnomalyVerdict): VarianceBasis {
  * named inside one — the one exception to `API_ERROR_PARAMS` being "the names a
  * sentence uses". A client reads `errors.variants.<code>.<value>` for a value
  * that has a sentence of its own, and the code's own sentence otherwise; no
- * catalogue sentence names a selector. Only `variance_reason_required`'s
- * `basis` today: a first period has no historical average to deviate from.
+ * catalogue sentence names a selector. `variance_reason_required`'s `basis`
+ * (a first period has no historical average to deviate from) and
+ * `parameters_required`'s `input` (the code's own sentence is the
+ * refrigerant's; a gas energy bill's missing basis has its own).
  */
 export const API_ERROR_SENTENCE_SELECTORS: Readonly<Partial<Record<ApiErrorCode, string>>> = Object.freeze({
   variance_reason_required: 'basis',
+  parameters_required: 'input',
 });
 
 export type ApiErrorParams = Readonly<Record<string, string | number>>;
@@ -3167,6 +3187,14 @@ export function resolveFactorPath<
   factors: readonly F[];
   conversions: readonly C[];
   allowPlaceholders: boolean;
+  /**
+   * A direct-only lookup on this basis (`ng-kwh-engine`): a factor must be in
+   * the record's base unit and on this basis, and no conversion path is built,
+   * whatever `conversions` holds. Set only by the TR natural gas energy path,
+   * whose net bill basis `directCalorificBasisFor` cannot know (it treats a
+   * fuel's billed energy as gross). Absent, the basis is the default one.
+   */
+  directBasis?: Exclude<CalorificBasis, 'not_applicable'>;
 }): FactorPathResolution<F, C> {
   const refuse = (
     code: Extract<FactorPathResolution<F, C>, { ok: false }>['code'],
@@ -3174,7 +3202,8 @@ export function resolveFactorPath<
   const dimension = unitDimensionOf(input.inputUnit);
   if (dimension === undefined) return refuse('unit_unknown');
   const base = DIMENSION_BASE_UNIT[dimension];
-  const directBasis = directCalorificBasisFor(input.category, input.inputUnit);
+  const directOnly = input.directBasis !== undefined;
+  const directBasis = input.directBasis ?? directCalorificBasisFor(input.category, input.inputUnit);
   const targets = CONVERSION_TARGETS[dimension] ?? [];
   const method = scope2MethodFor(input.category);
 
@@ -3195,6 +3224,7 @@ export function resolveFactorPath<
       }
       continue;
     }
+    if (directOnly) continue;
     const target = unitDimensionOf(factor.normalizedUnit);
     const order = target === undefined ? -1 : targets.indexOf(target);
     if (order < 0 || DIMENSION_BASE_UNIT[target!] !== factor.normalizedUnit) continue;
@@ -3450,9 +3480,24 @@ export const LEAK_RATE_CHOICES = Object.freeze(['default', 'alternative'] as con
 export type LeakRateChoice = (typeof LEAK_RATE_CHOICES)[number];
 
 /**
+ * The calorific basis a TR natural gas energy bill states (UAT round 3,
+ * Decisions 2026-11-20 D2): `net` is priced as entered; `gross` is first
+ * multiplied by the factor release's `reference_ncv / reference_gcv`.
+ */
+export const CV_BASES = Object.freeze(['net', 'gross'] as const satisfies readonly CalorificBasis[]);
+export type CvBasis = (typeof CV_BASES)[number];
+
+export function isCvBasis(value: unknown): value is CvBasis {
+  return typeof value === 'string' && (CV_BASES as readonly string[]).includes(value);
+}
+
+/**
  * Per-record parameters for Natural Gas (D3).
  * - `ncvKcalPerSm3` and `billedGcvKcalPerSm3` are mutually exclusive.
  * - `volumeCorrectionFactor` is required when the record's unit is m³.
+ * - `cvBasis` is required on a TR record in kWh or MWh, and refused on Sm³
+ *   or m³, where the three volume inputs apply instead (`ng-kwh-engine`).
+ *   A null field is an absent one, at every layer.
  */
 export interface NaturalGasRecordParameters {
   /** Net calorific value override (kcal/Sm³). Mutually exclusive with billedGcvKcalPerSm3. */
@@ -3461,6 +3506,8 @@ export interface NaturalGasRecordParameters {
   billedGcvKcalPerSm3?: number | null;
   /** Volume correction factor for metered m³. Required when unit is m³. */
   volumeCorrectionFactor?: number | null;
+  /** The basis of an energy bill (kWh or MWh): `net` or `gross`. */
+  cvBasis?: CvBasis | null;
 }
 
 /** One equipment type's line on a refrigerant record (D3, D7). */
@@ -3548,8 +3595,10 @@ export function offeredActivityTypes(category: string, geographyCode: string | n
 /**
  * The units Data Entry offers a NEW record (LP4-02 PR4, D11): the category's
  * own (`unitsForCategory`), narrowed under the TR rules to what the engine
- * prices there. TR natural gas is a volume, Sm³ or metered m³, because a bill's
- * kWh is gross and is refused; a TR vehicle mode is per litre, and TR marine
+ * prices there. TR natural gas is offered as a volume, Sm³ or metered m³: the
+ * engine also prices a bill in kWh or MWh with its stated `cvBasis`
+ * (`ng-kwh-engine`), which the form offers once it can ask for that basis
+ * (`ng-kwh-form`); a TR vehicle mode is per litre, and TR marine
  * gas oil a mass, kg or tonnes (`activityType` names which one is chosen).
  */
 export function unitsForRecord(
@@ -6188,6 +6237,12 @@ export const BULK_UPLOAD_COLUMNS = [
   'billedGcvKcalPerSm3',
   'volumeCorrectionFactor',
   /**
+   * Natural Gas in kWh or MWh (`ng-kwh-engine`): the bill's calorific basis,
+   * `net` or `gross` in any letter case. Required on a TR row in an energy
+   * unit, refused on every other row.
+   */
+  'cvBasis',
+  /**
    * Refrigerants: one row per equipment line (D7). Rows naming the same
    * entity, period and gas are one record, whose quantity is the sum of their
    * `capacityKg`, so their `activityValue` stays blank. `leakRateChoice` is
@@ -6201,11 +6256,21 @@ export const BULK_UPLOAD_COLUMNS = [
 
 export type BulkUploadColumn = (typeof BULK_UPLOAD_COLUMNS)[number];
 
-/** The Natural Gas input columns, named as the record's parameters are. */
+/** The Natural Gas numeric input columns, named as the record's parameters are. */
 export const BULK_GAS_PARAMETER_COLUMNS = Object.freeze([
   'ncvKcalPerSm3',
   'billedGcvKcalPerSm3',
   'volumeCorrectionFactor',
+] as const satisfies readonly BulkUploadColumn[]);
+
+/** The Natural Gas basis column: text (`net` / `gross`), not a number. */
+export const BULK_GAS_BASIS_COLUMN = 'cvBasis' as const satisfies BulkUploadColumn;
+
+/** Every Natural Gas input column, numeric and basis: what a row of another
+ *  category, or a refrigerant equipment line, must leave blank. */
+export const BULK_GAS_INPUT_COLUMNS = Object.freeze([
+  ...BULK_GAS_PARAMETER_COLUMNS,
+  BULK_GAS_BASIS_COLUMN,
 ] as const satisfies readonly BulkUploadColumn[]);
 
 /** The columns of one refrigerant equipment line. */

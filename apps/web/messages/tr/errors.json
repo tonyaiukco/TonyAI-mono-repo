@@ -40,6 +40,7 @@
     "internal_error": "Bizim tarafımızda bir sorun oluştu. Yeniden deneyin; sürerse bildirin.",
     "invalid_id": "Bu bağlantı ya da kimlik geçerli değil.",
     "activity_value_too_large": "Faaliyet değeri çok büyük: en fazla 1.000.000.000.000 girin.",
+    "activity_value_reentry_required": "Miktarı yeniden girin: kaydın önceki birimi veya kategorisi (net enerji faturasında önceki konumu veya ısıl değer esası) için girilmişti.",
     "evidence_required": "{category} kategorisindeki bir kayıt gönderilmeden önce en az bir kanıt dosyası eklenmelidir.",
     "approval_evidence_missing": "Bu {category} kaydında kanıt dosyası yok. Yazarının dosya ekleyip yeniden gönderebilmesi için kaydı reddedin.",
     "variance_reason_required": "Bu değer geçmiş ortalamadan belirgin biçimde sapıyor — göndermeden önce bir sapma açıklaması ekleyin.",
@@ -82,7 +83,7 @@
     "ambiguous_factor": "Emisyon faktörü kütüphanesinde bu giriş için eşit önceliğe sahip iki faktör var. Bir yöneticinin bunu çözmesi gerekir.",
     "factor_scope_mismatch": "Bu giriş için bulunan emisyon faktörü başka bir kapsam altında kayıtlı. Bir yöneticinin kütüphaneyi düzeltmesi gerekir.",
     "no_conversion": "Bu giriş için henüz kaynağı belirtilmiş bir birim dönüşümü yok.",
-    "calorific_basis_mismatch": "Bir birim dönüşümü var, ancak emisyon faktöründen farklı bir ısıl değer esasına dayanıyor.",
+    "calorific_basis_mismatch": "Emisyon faktörü, bu birimin gerektirdiğinden farklı bir ısıl değer esasına dayanıyor.",
     "invitation_not_found": "Bu hesabın yeniden gönderilecek bir daveti yok.",
     "registration_unavailable": "Kayıt şu anda kullanılamıyor.",
     "registration_code_invalid": "Kayıt kodu geçerli değil. Size verilen kodu kontrol edin.",
@@ -155,6 +156,9 @@
   "variants": {
     "variance_reason_required": {
       "ceiling": "Bu değerin karşılaştırılacak kullanılabilir bir geçmişi yok ve kategorisi için makul üst sınırın üstünde — kanıt dokümanını ve birimi kontrol edin, göndermeden önce bir sapma gerekçesi ekleyin."
+    },
+    "parameters_required": {
+      "cvBasis": "Bu enerji miktarının faturadaki net mi yoksa brüt ısıl değere mi dayandığını belirtin."
     }
   },
   "bulkOutcomes": {

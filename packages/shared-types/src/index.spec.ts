@@ -3,6 +3,7 @@ import {
   isProvenanceSnapshot,
   normalizeRecordParameters,
   API_ERROR_PARAMS,
+  API_ERROR_SENTENCE_SELECTORS,
   API_ERROR_STATUS,
   CATEGORY_SCOPE_MAP,
   CATEGORY_UNITS,
@@ -67,6 +68,9 @@ import {
   type UncalculatedSnapshot,
   BULK_EQUIPMENT_COLUMNS,
   BULK_GAS_PARAMETER_COLUMNS,
+  BULK_GAS_BASIS_COLUMN,
+  BULK_GAS_INPUT_COLUMNS,
+  PARAMETERS_REQUIRED_INPUTS,
   BULK_UPLOAD_COLUMNS,
   BULK_UPLOAD_REQUIRED_COLUMNS,
   BULK_UPLOAD_ERROR_CODES,
@@ -1041,6 +1045,12 @@ describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', 
   it('registers basis as the variance refusal\'s param', () => {
     expect(API_ERROR_PARAMS.variance_reason_required).toEqual(['basis']);
   });
+
+  it('registers input as the parameters_required refusal\'s sentence selector (ng-kwh-engine)', () => {
+    expect(API_ERROR_PARAMS.parameters_required).toEqual(['input']);
+    expect(API_ERROR_SENTENCE_SELECTORS.parameters_required).toBe('input');
+    expect([...PARAMETERS_REQUIRED_INPUTS]).toEqual(['equipment', 'cvBasis']);
+  });
 });
 
 describe('anomalyNotEvaluated', () => {
@@ -1080,6 +1090,7 @@ describe('bulk upload — the column contract', () => {
       'ncvKcalPerSm3',
       'billedGcvKcalPerSm3',
       'volumeCorrectionFactor',
+      'cvBasis',
       'equipmentType',
       'capacityKg',
       'refillKg',
@@ -1099,8 +1110,14 @@ describe('bulk upload — the column contract', () => {
     // category takes none, and absent from an older template.
     expect(optional).toEqual([
       'locationId', 'activityType', 'varianceReason',
-      ...BULK_GAS_PARAMETER_COLUMNS, ...BULK_EQUIPMENT_COLUMNS,
+      ...BULK_GAS_INPUT_COLUMNS, ...BULK_EQUIPMENT_COLUMNS,
     ]);
+  });
+
+  it('keeps the basis column out of the numeric gas list, and in the full one (ng-kwh-engine)', () => {
+    expect(BULK_GAS_PARAMETER_COLUMNS).not.toContain(BULK_GAS_BASIS_COLUMN);
+    expect([...BULK_GAS_INPUT_COLUMNS]).toEqual([...BULK_GAS_PARAMETER_COLUMNS, 'cvBasis']);
+    expect(BULK_UPLOAD_COLUMNS).toContain(BULK_GAS_BASIS_COLUMN);
   });
 
   it('keeps errors and warnings disjoint', () => {

@@ -103,6 +103,47 @@ describe('CaptureSnapshot.open', () => {
   });
 });
 
+describe('lookupFactorPath — a direct-only lookup (ng-kwh-engine)', () => {
+  const GAS: FactorLookupKey = { category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'TR', reportingYear: 2025 };
+  const gasFactor = (calorificBasis: string): FactorRow => ({
+    ...factor('authoritative'), id: `gas-${calorificBasis}`, category: 'Natural Gas', activityType: 'natural_gas',
+    scope: 1, scope2Method: scope2MethodFor('Natural Gas'), calorificBasis, normalizedUnit: 'kWh',
+  } as FactorRow);
+
+  it('prices net energy against the net factor and queries no conversion', async () => {
+    const root = rootClient([gasFactor('net')]);
+    const result = await lookupFactorPath(asPrisma(root), REFUSE_PLACEHOLDERS, GAS, 'kWh', undefined, 'net');
+    expect(result.ok && result.factor.id).toBe('gas-net');
+    expect(result.ok && result.conversion).toBeNull();
+    expect(root.unitConversion.findMany).not.toHaveBeenCalled();
+    // One query, still in its own REPEATABLE READ batch: a factor and its release are two statements.
+    expect(root.$transaction).toHaveBeenCalledWith([expect.anything()], { isolationLevel: 'RepeatableRead' });
+  });
+
+  it('queries no conversion in the diagnostic pass of a refusal either', async () => {
+    const root = rootClient([gasFactor('gross')]);
+    const result = await lookupFactorPath(asPrisma(root), REFUSE_PLACEHOLDERS, GAS, 'kWh', undefined, 'net');
+    expect(result).toEqual({ ok: false, code: 'calorific_basis_mismatch' });
+    // Both passes ran: the pricing one and the diagnostic one.
+    expect(root.emissionFactor.findMany).toHaveBeenCalledTimes(2);
+    expect(root.unitConversion.findMany).not.toHaveBeenCalled();
+  });
+
+  it('queries no conversion inside a caller\'s snapshot', async () => {
+    const tx = transaction([gasFactor('net')], 'repeatable read');
+    const snapshot = await CaptureSnapshot.open(asTx(tx));
+    const result = await lookupFactorPath(asPrisma(rootClient()), REFUSE_PLACEHOLDERS, GAS, 'kWh', snapshot, 'net');
+    expect(result.ok).toBe(true);
+    expect(tx.unitConversion.findMany).not.toHaveBeenCalled();
+  });
+
+  it('still queries conversions when no basis is given', async () => {
+    const root = rootClient([gasFactor('net')]);
+    expect(await lookupFactorPath(asPrisma(root), REFUSE_PLACEHOLDERS, GAS, 'kWh')).toEqual({ ok: false, code: 'calorific_basis_mismatch' });
+    expect(root.unitConversion.findMany).toHaveBeenCalled();
+  });
+});
+
 describe('lookupFactorPath', () => {
   it('reads in a batch of its own with no snapshot — the engine\'s path', async () => {
     const root = rootClient([factor('authoritative')]);

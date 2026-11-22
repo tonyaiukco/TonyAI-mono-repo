@@ -222,6 +222,14 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
     ['a refill past the activity value bound', () => equipment(line({ refillKg: 1e13 }))],
     ["another category's fields", () => refrigerant({ ncvKcalPerSm3: 8250 })],
     ['parameters on a category that takes none', () => recordInput(tenant, { periodValue: 'August', parameters: { ncvKcalPerSm3: 1 } })],
+    // ng-kwh-engine: the calorific basis is the string net or gross, or JSON null.
+    ['a basis that is neither net nor gross', () => gas({ cvBasis: 'lower' })],
+    ['a basis in capitals, which the API lower-cases first', () => gas({ cvBasis: 'NET' })],
+    ['a basis as a number', () => gas({ cvBasis: 1 })],
+    ['a basis as a boolean', () => gas({ cvBasis: true })],
+    ['a basis as an object', () => gas({ cvBasis: { value: 'net' } })],
+    ['a basis as a list', () => gas({ cvBasis: ['net'] })],
+    ['a basis on another category', () => refrigerant({ equipment: [line()], cvBasis: 'net' })],
   ])('refuses %s, as the owner too (23514)', async (_what, data) => {
     const e = await failure(withRollback(owner, (tx) => tx.activityRecord.create({ data: data() })));
     expect(sqlstateOf(e)).toBe('23514');
@@ -244,11 +252,17 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
       await tx.activityRecord.create({ data: gas({ ncvKcalPerSm3: 8100, volumeCorrectionFactor: 0.97 }, 'August') });
       await tx.activityRecord.create({ data: gas({ billedGcvKcalPerSm3: 9000, ncvKcalPerSm3: null }, 'September') });
       await tx.activityRecord.create({ data: gas({}, 'October') });
+      // ng-kwh-engine: net, gross and an explicit null (an absent basis).
+      await tx.activityRecord.create({ data: gas({ cvBasis: 'net' }, 'November') });
+      await tx.activityRecord.create({ data: gas({ cvBasis: 'gross' }, 'December') });
+      await tx.activityRecord.create({ data: gas({ cvBasis: null, ncvKcalPerSm3: 8100 }, 'July') });
       await tx.activityRecord.create({ data: equipment(line(), line({ equipmentType: 'refrigerator', capacityKg: 0, refillKg: 2, leakRateChoice: 'default' })) });
       await tx.activityRecord.create({ data: recordInput(tenant, { periodValue: 'August' }) });
-      return tx.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId, periodValue: { in: ['August', 'September', 'October'] } } });
+      return tx.activityRecord.count({
+        where: { subsidiaryId: tenant.subsidiaryId, periodValue: { in: ['July', 'August', 'September', 'October', 'November', 'December'] } },
+      });
     });
-    expect(accepted).toBe(5);
+    expect(accepted).toBe(8);
   });
 
   it('freezes them with the other inputs once a record is committed (TA001), the owner included', async () => {
