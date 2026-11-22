@@ -215,6 +215,7 @@
       "derivedNet": "Priced on ≈ {net} {unit} net: × {ratio} ({ncv} / {gcv} kcal/Sm³), the reference ratio of {publisher} {edition}{status}."
     },
     "basisReset": "This figure was on the net calorific basis. Outside Türkiye's rules an energy bill is priced as gross, so enter the bill's gross figure.",
+    "recalculatedOnSave": "The factor edition changed while you were editing. The figures now shown are the ones saved.",
     "unitChangeReset": "The quantity was cleared: a figure entered for one unit is not the same number in another. Enter it in the new unit.",
     "categoryReset": "The quantity was cleared with the category: enter it for the new category."
   },

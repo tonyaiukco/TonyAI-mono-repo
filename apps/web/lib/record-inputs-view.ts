@@ -244,16 +244,37 @@ export function basisAfterUnitChange(
   return unitChangeClearsBasis(previous, next) ? null : current;
 }
 
+/** Why the form is reset: a record was submitted, or anything else (a subsidiary change, a copy, a failed cancel). */
+export type FormResetReason = "submitted" | "other";
+
 /**
- * The category a unit counts as chosen for once the form is reset for the next
- * record (ng-kwh-form review). A TR gas bill's kWh or MWh is not the next
- * record's choice: it is let go (empty), so the unit counts as carried over and
- * the next TR gas record starts on its first unit, m³, as a new one does. It
- * asks the form's input mode, never the unit alone: Electricity's MWh is a
- * real choice and stays, as does any unit outside the TR gas bill.
+ * The category a unit counts as chosen for once the form is reset
+ * (ng-kwh-form review). After a SUBMIT, a TR gas bill's kWh or MWh is not the
+ * next record's choice: it is let go (empty), so the unit counts as carried
+ * over and the next TR gas record starts on its first unit, m³, as a new one
+ * does. It asks the form's input mode, never the unit alone (Electricity's MWh
+ * is a real choice and stays), and never any other reason: a subsidiary or site
+ * change keeps a unit the target offers, as the design says, so TR MWh moved to
+ * a UK subsidiary stays MWh.
  */
-export function unitCategoryAfterReset(mode: RecordInputMode, unitCategory: string): string {
-  return mode === "natural_gas_energy" ? "" : unitCategory;
+export function unitCategoryAfterReset(mode: RecordInputMode, unitCategory: string, reason: FormResetReason): string {
+  return reason === "submitted" && mode === "natural_gas_energy" ? "" : unitCategory;
+}
+
+/**
+ * Whether a saved record was calculated on other releases than the preview the
+ * form shows (ng-kwh-form review). The API prices a save with the release in
+ * force at that moment, so one sealed after the preview leaves the form's net
+ * figure and total on the edition it read while the saved record cites another.
+ * True only when both are factor-backed snapshots and the factor's or the
+ * conversion's release differs; the saved snapshot is then what the form shows.
+ */
+export function calculationRevised(shown: ActivityCalculationSnapshot | null, saved: ActivityCalculationSnapshot | null | undefined): boolean {
+  if (!isProvenanceSnapshot(shown) || !isProvenanceSnapshot(saved)) return false;
+  return (
+    shown.factorRelease.id !== saved.factorRelease.id ||
+    (shown.conversion?.release.id ?? null) !== (saved.conversion?.release.id ?? null)
+  );
 }
 
 /**

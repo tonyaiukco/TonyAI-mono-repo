@@ -63,6 +63,8 @@ import {
   basisAfterUnitChange,
   previewedNetSource,
   unitCategoryAfterReset,
+  calculationRevised,
+  type FormResetReason,
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
@@ -1361,16 +1363,17 @@ function DataEntryPageInner() {
     setConfirmRemoveAll(false);
   }
 
-  function resetForm() {
+  function resetForm(reason: FormResetReason = "other") {
     beginFormSession();
     setContextOpen(false);
     clearEditChoices();
     setCopying(false);
     setOwnUnit(null);
     setOwnBasis(null);
-    // The next record does not inherit a TR gas bill's kWh or MWh: it is narrowed
-    // to the category's first unit, m³ (ng-kwh-form review). Other units stay.
-    setUnitCategory((c) => unitCategoryAfterReset(inputMode, c));
+    // After a submit the next record does not inherit a TR gas bill's kWh or MWh:
+    // it is narrowed to the category's first unit, m³ (ng-kwh-form review). Any
+    // other reset, a subsidiary change included, keeps the unit the target offers.
+    setUnitCategory((c) => unitCategoryAfterReset(inputMode, c, reason));
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
@@ -1521,6 +1524,18 @@ function DataEntryPageInner() {
     }
   }
 
+  /**
+   * The saved record's own calculation replaces the preview when it was priced
+   * on other releases than the preview (ng-kwh-form review): a release sealed
+   * between the two leaves the form on the edition it read, and the inputs are
+   * unchanged, so no new preview would be asked for. Said, never silent.
+   */
+  function showSavedCalculation(rec: ActivityRecordDTO) {
+    if (!calculationRevised(preview, rec.calculation)) return;
+    setPreview(rec.calculation);
+    toast.info(t("inputs.recalculatedOnSave"));
+  }
+
   async function handleSaveDraft() {
     setSaving("draft");
     // Read once, for use after the awaits. `movingTo` is a per-render const so
@@ -1554,6 +1569,7 @@ function DataEntryPageInner() {
       setOwnUnit(rec.activityUnit);
       setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
       setVerdict(verdictOf(rec));
+      showSavedCalculation(rec);
       if (wasEditing) {
         // A first period has no history: its flag is the typo ceiling, and the
         // history sentence would be untrue (BUG-R2-07 tier 3, qa-auditor P2).
@@ -1626,6 +1642,7 @@ function DataEntryPageInner() {
       setOwnUnit(rec.activityUnit);
       setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
       setVerdict(verdictOf(rec));
+      showSavedCalculation(rec);
       // A file that did not upload: the record stays a draft, the vault lists
       // the file with Retry, and nothing is submitted (BUG-R2-05).
       if (failed.length > 0) {
@@ -1664,7 +1681,7 @@ function DataEntryPageInner() {
       toast.success(
         wasMoving ? t("movedSubmitted", { entity: entityPhrase(rec, t) }) : t("submitted"),
       );
-      resetForm();
+      resetForm("submitted");
       await refreshRecords(subsidiaryId);
     } catch (e) {
       showSaveError(e, wasMoving);
@@ -2483,7 +2500,7 @@ function DataEntryPageInner() {
                       variant="ghost"
                       size="sm"
                       className="h-7 px-2"
-                      onClick={resetForm}
+                      onClick={() => resetForm()}
                     >
                       {t("startNewRecord")}
                     </Button>

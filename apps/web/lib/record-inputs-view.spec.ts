@@ -30,6 +30,7 @@ import {
   basisAfterUnitChange,
   unitCategoryAfterReset,
   previewedNetSource,
+  calculationRevised,
   unitChangeClearsQuantity,
   leakRateOf,
   leakRatePercent,
@@ -198,18 +199,46 @@ describe('the basis a unit change leaves (ng-kwh-engine, third review)', () => {
 });
 
 describe('the unit the next record starts on after a reset (ng-kwh-form review)', () => {
-  // The rule asks the form's own input mode, so it holds for a TR gas bill and for nothing else.
+  // The rule asks the form's input mode and the reason: a submit lets a TR gas bill's unit go, nothing else does.
   it.each([
-    ['a TR gas bill in kWh', 'Natural Gas', 'TR', 'kWh', ''],
-    ['a TR gas bill in MWh', 'Natural Gas', 'TR', 'MWh', ''],
-    ['a TR gas reading in m3', 'Natural Gas', 'TR', 'cubic_metres', 'Natural Gas'],
-    ['TR electricity in MWh', 'Electricity', 'TR', 'MWh', 'Electricity'],
-    ['TR electricity in kWh', 'Electricity', 'TR', 'kWh', 'Electricity'],
-    ['gas in kWh outside the TR rules', 'Natural Gas', 'GB', 'kWh', 'Natural Gas'],
-    ['gas in MWh outside the TR rules', 'Natural Gas', 'GB', 'MWh', 'Natural Gas'],
-    ['TR refrigerants', 'Refrigerants', 'TR', 'kg', 'Refrigerants'],
-  ] as const)('%s: the unit counts as chosen for %j afterwards', (_case, category, geography, unit, expected) => {
-    expect(unitCategoryAfterReset(recordInputMode(category, geography, unit), category)).toBe(expected);
+    ['a submitted TR gas bill in kWh', 'Natural Gas', 'TR', 'kWh', 'submitted', ''],
+    ['a submitted TR gas bill in MWh', 'Natural Gas', 'TR', 'MWh', 'submitted', ''],
+    ['a submitted TR gas reading in m3', 'Natural Gas', 'TR', 'cubic_metres', 'submitted', 'Natural Gas'],
+    ['submitted TR electricity in MWh', 'Electricity', 'TR', 'MWh', 'submitted', 'Electricity'],
+    ['submitted TR electricity in kWh', 'Electricity', 'TR', 'kWh', 'submitted', 'Electricity'],
+    ['submitted gas in kWh outside the TR rules', 'Natural Gas', 'GB', 'kWh', 'submitted', 'Natural Gas'],
+    ['submitted gas in MWh outside the TR rules', 'Natural Gas', 'GB', 'MWh', 'submitted', 'Natural Gas'],
+    ['submitted TR refrigerants', 'Refrigerants', 'TR', 'kg', 'submitted', 'Refrigerants'],
+    // A subsidiary change (and a copy, a failed cancel) is not a submit: the unit the target offers stays.
+    ['a TR gas bill in MWh whose subsidiary changes', 'Natural Gas', 'TR', 'MWh', 'other', 'Natural Gas'],
+    ['a TR gas bill in kWh whose subsidiary changes', 'Natural Gas', 'TR', 'kWh', 'other', 'Natural Gas'],
+  ] as const)('%s: the unit counts as chosen for %j afterwards', (_case, category, geography, unit, reason, expected) => {
+    expect(unitCategoryAfterReset(recordInputMode(category, geography, unit), category, reason)).toBe(expected);
+  });
+
+  it('leaves MWh on the list of a UK gas record, so a TR bill moved there keeps it (design: a geography change alone keeps the unit)', () => {
+    expect(unitsForRecord('Natural Gas', 'GB').map((u) => u.value)).toContain('MWh');
+  });
+});
+
+describe('a save priced on other releases than the preview (ng-kwh-form review)', () => {
+  const snapshot = (factorReleaseId: string, conversionReleaseId: string | null = null) => ({
+    snapshotSchema: 3, factorId: 'f1', tCo2e: 1,
+    factorRelease: { id: factorReleaseId },
+    conversion: conversionReleaseId === null ? null : { release: { id: conversionReleaseId } },
+    parameterRows: [],
+  }) as never;
+  it.each([
+    ['the same releases', snapshot('a'), snapshot('a'), false],
+    ['the same releases with a conversion', snapshot('a', 'c'), snapshot('a', 'c'), false],
+    ['another factor release', snapshot('a'), snapshot('b'), true],
+    ['another conversion release', snapshot('a', 'c'), snapshot('a', 'd'), true],
+    ['a conversion that appeared', snapshot('a'), snapshot('a', 'c'), true],
+    ['no preview to correct', null, snapshot('b'), false],
+    ['a saved record that was not calculated', snapshot('a'), { snapshotSchema: 3 }, false],
+    ['a record saved with no calculation', snapshot('a'), null, false],
+  ])('%s: revised is %s', (_case, shown, saved, revised) => {
+    expect(calculationRevised(shown as never, saved as never)).toBe(revised);
   });
 });
 
