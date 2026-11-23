@@ -1,4 +1,4 @@
-import { unitSymbol, isProvenanceSnapshot, type ActivityCalculationSnapshot, type Locale } from '@/lib/types';
+import { GROSS_TO_NET_RATIO_INPUT, unitSymbol, isProvenanceSnapshot, type ActivityCalculationSnapshot, type Locale } from '@/lib/types';
 import { formatNumber } from '@/lib/i18n/number';
 import { formatSealDate, sealDateFor, type SealDates } from '@/lib/release-seal-view';
 import en from '@/messages/en/dataEntry.json';
@@ -20,7 +20,7 @@ const DIGITS = { maximumSignificantDigits: 15 } as const;
  */
 export function grossToNetRatioOf(snapshot: ActivityCalculationSnapshot | null): number | null {
   if (!isProvenanceSnapshot(snapshot) || !('parameters' in snapshot)) return null;
-  return snapshot.parameters.find((p) => p.name === 'grossToNetRatio' && p.origin === 'derived')?.value ?? null;
+  return snapshot.parameters.find((p) => p.name === GROSS_TO_NET_RATIO_INPUT && p.origin === 'derived')?.value ?? null;
 }
 
 /** Describe the sourced step actually returned by the current preview. */

@@ -1,4 +1,5 @@
 import {
+  GROSS_TO_NET_RATIO_INPUT,
   KWH_PER_KCAL,
   type NaturalGasRecordParameters,
   type RefrigerantEquipmentLine,
@@ -44,9 +45,6 @@ export interface NaturalGasChain {
   inputs: SnapshotInput[];
   rowsUsed: ReleaseParameter[];
 }
-
-/** The derived input a gross energy record echoes (ng-kwh-engine). */
-export const GROSS_TO_NET_RATIO_INPUT = 'grossToNetRatio';
 
 /**
  * A TR natural gas energy bill's chain (ng-kwh-engine; Decisions 2026-11-20

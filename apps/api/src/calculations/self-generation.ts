@@ -1,4 +1,7 @@
 import {
+  EXPORTED_TO_GRID_KWH_INPUT,
+  FACILITY_CONSUMPTION_KWH_INPUT,
+  SELF_GENERATED_KWH_INPUT,
   SELF_GENERATION_KEYS,
   isGenerationTopology,
   isSelfGenerationSource,
@@ -14,11 +17,6 @@ import { CalculationInputError } from './errors';
  * Scope 2 stays the record's value (the grid import) × the year's grid
  * factor, location-based, in any geography.
  */
-
-/** The snapshot input names: each is its parameter key, in this fixed order. */
-export const SELF_GENERATED_KWH_INPUT = 'selfGeneratedKwh' satisfies keyof ElectricityRecordParameters;
-export const EXPORTED_TO_GRID_KWH_INPUT = 'exportedToGridKwh' satisfies keyof ElectricityRecordParameters;
-export const FACILITY_CONSUMPTION_KWH_INPUT = 'facilityConsumptionKwh' satisfies keyof ElectricityRecordParameters;
 
 /** The shape CHECK's bounds (`20261123120000_self_gen_model`), the DTO's too. */
 const KWH_FLOOR = 1e-300;

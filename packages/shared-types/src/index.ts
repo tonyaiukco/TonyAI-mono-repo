@@ -3658,6 +3658,114 @@ export function selfGenerationIssue(
 }
 
 /**
+ * The snapshot input names a self-generation block echoes (`self-gen-model`,
+ * design 5): each is its parameter key, written in this order, origin `user`.
+ * Defined here, beside the type they are keys of, for the engine and any
+ * reader (`self-gen-form`, design 9).
+ */
+export const SELF_GENERATED_KWH_INPUT = 'selfGeneratedKwh' satisfies keyof ElectricityRecordParameters;
+export const EXPORTED_TO_GRID_KWH_INPUT = 'exportedToGridKwh' satisfies keyof ElectricityRecordParameters;
+export const FACILITY_CONSUMPTION_KWH_INPUT = 'facilityConsumptionKwh' satisfies keyof ElectricityRecordParameters;
+
+/** The derived input a gross TR natural gas energy bill echoes (ng-kwh-engine). */
+export const GROSS_TO_NET_RATIO_INPUT = 'grossToNetRatio';
+
+/**
+ * How far a record's grid import may sit from the import its self-generation
+ * block implies before the energy balance warns: 5% of the expected import
+ * (Decisions 2026-11-20, D6). A methodology value, not a tuning knob.
+ */
+export const ENERGY_BALANCE_TOLERANCE = 0.05;
+
+/** The energy balance of an Electricity record with a facility consumption (`selfGenerationBalance`). */
+export interface SelfGenerationBalance {
+  /** The record's quantity, in kWh. */
+  importKwh: number;
+  /** Facility consumption − generation + exports, in kWh; may be zero or less. */
+  expectedImportKwh: number;
+  /** Whether the gap is worth a warning. A warning never blocks anything. */
+  warns: boolean;
+}
+
+/**
+ * The energy balance of an Electricity record (D6; `self-gen-form`, design 5),
+ * or null when nothing can be checked: no block, no facility consumption, no
+ * generated kWh, no quantity, or a unit with no route to kWh. It warns when
+ * the import differs from the expected import by MORE than 5% of the expected
+ * import, or when the expected import is zero or less and the import is above
+ * zero. Data Entry and the review sheet both read it; nothing stores it.
+ */
+export function selfGenerationBalance(
+  importValue: number | null | undefined,
+  importUnit: string | null | undefined,
+  block: ElectricityRecordParameters | null | undefined,
+): SelfGenerationBalance | null {
+  if (block === null || block === undefined) return null;
+  const consumption = block.facilityConsumptionKwh;
+  const generated = block.selfGeneratedKwh;
+  if (consumption == null || generated == null) return null;
+  if (importValue == null || !Number.isFinite(importValue) || !importUnit) return null;
+  if (!Object.hasOwn(CEILING_UNIT_MULTIPLIERS, importUnit)) return null;
+  const route = CEILING_UNIT_MULTIPLIERS[importUnit];
+  if (route.base !== 'kWh') return null;
+  const importKwh = importValue * route.multiplier;
+  const expectedImportKwh = consumption - generated + (block.exportedToGridKwh ?? 0);
+  const warns =
+    expectedImportKwh <= 0
+      ? importKwh > 0
+      : Math.abs(importKwh - expectedImportKwh) > expectedImportKwh * ENERGY_BALANCE_TOLERANCE;
+  return { importKwh, expectedImportKwh, warns };
+}
+
+/**
+ * The record a fuel-sourced generation's fuel is entered as (D5): a category,
+ * and the activity type within it, or null for any record of the category.
+ */
+export interface GenerationFuelRecordKind {
+  category: Category;
+  activityType: string | null;
+}
+
+/**
+ * Which fuel record each self-generation source needs (D5), or null for a
+ * renewable source. CHP gas is part of the site's Natural Gas record, which
+ * stores no activity type; a generator's diesel is the site's Fuel record for
+ * diesel. Mobile Combustion never counts: a generator is stationary.
+ */
+export const SELF_GENERATION_FUEL_RECORDS: Readonly<Record<SelfGenerationSource, GenerationFuelRecordKind | null>> =
+  Object.freeze({
+    solar: null,
+    wind: null,
+    natural_gas_chp: Object.freeze({ category: 'Natural Gas', activityType: null }),
+    diesel_generator: Object.freeze({ category: 'Fuel', activityType: 'diesel' }),
+  });
+
+/**
+ * The fuel record a record's self-generation block needs (D5), or null: not an
+ * Electricity record, no block, or a renewable source.
+ */
+export function generationFuelRecordFor(record: {
+  category: string;
+  parameters?: unknown;
+}): GenerationFuelRecordKind | null {
+  if (recordParameterShape(record.category) !== 'electricity') return null;
+  const block = normalizeRecordParameters(record.parameters) as ElectricityRecordParameters | null;
+  const source = block?.selfGenerationSource;
+  return isSelfGenerationSource(source) ? SELF_GENERATION_FUEL_RECORDS[source] : null;
+}
+
+/**
+ * Whether a fuel-sourced Electricity record's fuel record exists (D5;
+ * `ActivityRecordDTO.generationFuelRecord`).
+ */
+export const GENERATION_FUEL_RECORD_STATES = Object.freeze(['present', 'missing'] as const);
+export type GenerationFuelRecordState = (typeof GENERATION_FUEL_RECORD_STATES)[number];
+
+export function isGenerationFuelRecordState(value: unknown): value is GenerationFuelRecordState {
+  return typeof value === 'string' && (GENERATION_FUEL_RECORD_STATES as readonly string[]).includes(value);
+}
+
+/**
  * Stored parameters as the engine and K11 read them: a null field is an absent
  * one, and an object with nothing left is no parameters at all.
  */
@@ -4496,6 +4604,16 @@ export interface ActivityRecordDTO {
   importBatchId: string | null;
   /** Number of evidence files linked to this record (FR §4.1). */
   evidenceCount: number;
+  /**
+   * For an Electricity record whose self-generation block names a fuel source,
+   * whether the fuel's own record exists (D5; `self-gen-form`, design 6):
+   * `present` when a record that is not voided, of the same subsidiary and
+   * location (none included) and the same reporting year, is of the kind
+   * `SELF_GENERATION_FUEL_RECORDS` names; `missing` otherwise. Null for every
+   * other record. Resolved at read time on every answer, never stored, never
+   * audited; a notice, never a block.
+   */
+  generationFuelRecord: GenerationFuelRecordState | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -4539,8 +4657,9 @@ export type UpdateActivityRecordInput = Partial<
    * `1802e22e`). An edit of a record changed since is refused with
    * `record_changed` (409) and writes nothing. Data Entry sends it on every
    * edit. Absent, nothing is compared, except that an edit changing or
-   * removing a stored self-generation block, which no screen shows yet, must
-   * name it: a tab opened before that block existed cannot see it.
+   * removing a stored self-generation block must name it: a client that names
+   * no version, such as a tab still running the JavaScript from before a
+   * deploy or a script, cannot be shown to have read the block it changes.
    */
   seenUpdatedAt?: string;
 };

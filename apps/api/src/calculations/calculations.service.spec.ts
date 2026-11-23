@@ -21,7 +21,7 @@ import {
 } from '@tonyai/shared-types';
 import { CalculationsService, FACTOR_CANDIDATE_CAP } from './calculations.service';
 import type { ElectricityRecordParameters } from '@tonyai/shared-types';
-import { EXPORTED_TO_GRID_KWH_INPUT, FACILITY_CONSUMPTION_KWH_INPUT, SELF_GENERATED_KWH_INPUT } from './self-generation';
+import { EXPORTED_TO_GRID_KWH_INPUT, FACILITY_CONSUMPTION_KWH_INPUT, SELF_GENERATED_KWH_INPUT } from '@tonyai/shared-types';
 import { CALLER_TEXT_QUOTE_MAX_LENGTH } from '../common/caller-text';
 import { PrismaService } from '../prisma/prisma.service';
 import {

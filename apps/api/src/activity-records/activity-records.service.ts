@@ -51,6 +51,7 @@ import {
   type ActivityCalculationSnapshot,
   DEFAULT_ACTIVITY_RECORD_SORT,
   type ActivityRecordDTO,
+  type GenerationFuelRecordState,
   type ActivityRecordListMetadataDTO,
   type ActivityRecordPageItemDTO,
   type AuditAction,
@@ -68,6 +69,7 @@ import {
   REPORTING_PERIODS,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { generationFuelRecords } from './generation-fuel-records';
 import { quoteCallerText } from '../common/caller-text';
 import {
   actorDisplayName,
@@ -432,7 +434,8 @@ type ResolvedRecordFields =
   | 'locationName'
   | 'createdByName'
   | 'reviewedByName'
-  | 'voidedByName';
+  | 'voidedByName'
+  | 'generationFuelRecord';
 
 /**
  * The record's persisted columns, and a compile error for anything resolved.
@@ -572,6 +575,7 @@ export class ActivityRecordsService {
     r: ActivityRecord & { location?: { name: string } | null },
     evidenceCount = 0,
     actors: Map<string, ResolvedProfile>,
+    fuelRecords: Map<string, GenerationFuelRecordState>,
   ): ActivityRecordDTO {
     return {
       ...this.toAuditSnapshot(r, evidenceCount),
@@ -588,7 +592,23 @@ export class ActivityRecordsService {
       createdByName: actorDisplayName(r.createdBy, actors),
       reviewedByName: actorDisplayName(r.reviewedBy, actors),
       voidedByName: actorDisplayName(r.voidedBy, actors),
+      // Required for the same reason as the names: the review sheet replaces
+      // its record with a write's answer, so a field only the list filled would
+      // vanish when the reviewer starts the review (self-gen-form, design 6).
+      generationFuelRecord: fuelRecords.get(r.id) ?? null,
     };
+  }
+
+  /**
+   * Whether each fuel-sourced Electricity record among `records` has its fuel
+   * record (D5): one query for all of them, none when no record names a fuel
+   * source, inside the caller's accessible set.
+   */
+  private fuelRecordsFor(
+    user: RequestUser,
+    records: readonly ActivityRecord[],
+  ): Promise<Map<string, GenerationFuelRecordState>> {
+    return generationFuelRecords(this.prisma, user.accessibleSubsidiaryIds, records);
   }
 
   /**
@@ -1038,13 +1058,14 @@ export class ActivityRecordsService {
     // One query each for the page's lock flags and its actors, never one per row.
     const locked = await closedRecordIds(this.prisma, page);
     const actors = await this.actorsFor(user, page);
+    const fuelRecords = await this.fuelRecordsFor(user, page);
     return toCursorPage(
       rows,
       limit,
       sort,
       binding,
       (r) => sort.keys.map((k) => r[k.field as 'createdAt' | 'submittedAt' | 'id']),
-      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors), periodLocked: locked.has(r.id) }),
+      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors, fuelRecords), periodLocked: locked.has(r.id) }),
     );
   }
 
@@ -1070,11 +1091,12 @@ export class ActivityRecordsService {
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    const [evidenceCount, actors] = await Promise.all([
+    const [evidenceCount, actors, fuelRecords] = await Promise.all([
       this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } }),
       this.actorsFor(user, [record]),
+      this.fuelRecordsFor(user, [record]),
     ]);
-    return this.toDTO(record, evidenceCount, actors);
+    return this.toDTO(record, evidenceCount, actors, fuelRecords);
   }
 
   /**
@@ -1297,7 +1319,7 @@ export class ActivityRecordsService {
       }
       throw asLostRace(e);
     }
-    return this.toDTO(created, 0, await this.actorsFor(user, [created]));
+    return this.toDTO(created, 0, await this.actorsFor(user, [created]), await this.fuelRecordsFor(user, [created]));
   }
 
   async update(
@@ -1331,9 +1353,10 @@ export class ActivityRecordsService {
     // Refused rather than cleared when a record moves category: the user clears
     // them by sending null, as with the activity type above.
     const parameters = ((dto.parameters !== undefined ? dto.parameters : existing.parameters) ?? null) as RecordParameters | null;
-    // A stored self-generation block is shown on no screen yet: an edit that
-    // would change or remove it must name the version it was made on, so a tab
-    // that never saw the block cannot erase it (self-gen-model review).
+    // An edit that would change or remove a stored self-generation block must
+    // name the version it was made on: a client that names none, such as a tab
+    // from before the self-gen-model deploy or a script, cannot be shown to
+    // have read the block, and must not erase it (self-gen-model review).
     if (dto.seenUpdatedAt === undefined && holdsSelfGeneration(existing) && !sameParameters(existing.parameters, parameters)) {
       throw new EditVersionRequiredError();
     }
@@ -1527,6 +1550,7 @@ export class ActivityRecordsService {
       updated,
       evidenceCount,
       await this.actorsFor(user, [updated]),
+      await this.fuelRecordsFor(user, [updated]),
     );
   }
 
@@ -1973,7 +1997,12 @@ export class ActivityRecordsService {
 
   /** The response for a committed write: resolved actor names, after the transaction. */
   private async writtenDTO(user: RequestUser, row: WrittenRecord): Promise<ActivityRecordDTO> {
-    return this.toDTO(row, row._count.evidenceLinks, await this.actorsFor(user, [row]));
+    return this.toDTO(
+      row,
+      row._count.evidenceLinks,
+      await this.actorsFor(user, [row]),
+      await this.fuelRecordsFor(user, [row]),
+    );
   }
 
   /**
