@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { ActivityRecordStatus, type Prisma } from '@tonyai/db';
 import type { RequestUser } from '../../src/auth/auth.types';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
+import { attachEvidence, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
 import { lifecycleServices } from './services';
 
 /**
@@ -204,5 +204,50 @@ describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
     const rows = await owner.auditLog.findMany({ where: { entityId: chp.id } });
     expect(rows.length).toBe(before + 1);
     expect(JSON.stringify(rows.map((r) => r.diff))).not.toContain('generationFuelRecord');
+  });
+});
+
+describe('the fuel-record read belongs to the write (outside review of 833db34c)', () => {
+  const INJECTED = 'injected fuel-record read failure';
+  /** The runtime client, with the fuel lookup's query failing and every other query untouched. */
+  const failingFuelRead = () =>
+    runtime.$extends({
+      query: {
+        activityRecord: {
+          async findMany({ args, query }) {
+            const a = args as { select?: { activityType?: boolean }; where?: { status?: { not?: string } } };
+            if (a.select?.activityType === true && a.where?.status?.not === 'voided') throw new Error(INJECTED);
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaService;
+
+  it('a submit whose answer cannot be read is rolled back whole: the record stays a draft, no audit row', async () => {
+    // Created through the service, so its snapshot is the engine's own (K11 at submit).
+    const chp = await s.records.create(tenant.users.dataEntry, {
+      subsidiaryId: tenant.subsidiaryId, locationId: site, reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1',
+      category: 'Electricity', activityValue: 5000, activityUnit: 'kWh', parameters: block('natural_gas_chp'),
+    } as never);
+    await attachEvidence(owner, tenant, [chp.id]);
+    const before = await owner.auditLog.count({ where: { entityId: chp.id } });
+
+    await expect(lifecycleServices(failingFuelRead()).records.submit(tenant.users.dataEntry, chp.id)).rejects.toThrow(INJECTED);
+
+    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: chp.id } })).status).toBe(ActivityRecordStatus.draft);
+    expect(await owner.auditLog.count({ where: { entityId: chp.id } })).toBe(before);
+    // The same submit, with the read working, commits.
+    expect((await s.records.submit(tenant.users.dataEntry, chp.id)).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('a create whose answer cannot be read writes nothing', async () => {
+    const failing = lifecycleServices(failingFuelRead());
+    await expect(
+      failing.records.create(tenant.users.dataEntry, {
+        subsidiaryId: tenant.subsidiaryId, locationId: site, reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q2',
+        category: 'Electricity', activityValue: 5000, activityUnit: 'kWh', parameters: block('natural_gas_chp'),
+      } as never),
+    ).rejects.toThrow(INJECTED);
+    expect(await owner.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId, periodValue: 'Q2' } })).toBe(0);
   });
 });

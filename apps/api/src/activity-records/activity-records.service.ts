@@ -245,6 +245,14 @@ type WrittenRecord = ActivityRecord & {
   location: { name: string } | null;
 };
 
+/**
+ * A committed write and its fuel-record state, read inside the write's own
+ * transaction (self-gen-form, outside review): a failure of that read rolls
+ * back the write and its audit row with it, so a caller (bulk submit) never
+ * counts as failed a write that committed.
+ */
+type FuelResolved = { fuelRecords: Map<string, GenerationFuelRecordState> };
+
 const WRITTEN_RECORD_INCLUDE = {
   _count: { select: { evidenceLinks: true } },
   location: { select: { name: true } },
@@ -609,6 +617,15 @@ export class ActivityRecordsService {
     records: readonly ActivityRecord[],
   ): Promise<Map<string, GenerationFuelRecordState>> {
     return generationFuelRecords(this.prisma, user.accessibleSubsidiaryIds, records);
+  }
+
+  /** The same, for a write's answer, read on the write's own transaction (`FuelResolved`). */
+  private fuelRecordsIn(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    records: readonly ActivityRecord[],
+  ): Promise<Map<string, GenerationFuelRecordState>> {
+    return generationFuelRecords(tx, user.accessibleSubsidiaryIds, records);
   }
 
   /**
@@ -1254,7 +1271,7 @@ export class ActivityRecordsService {
       periodValue,
     };
 
-    let created: ActivityRecord & { location: { name: string } | null };
+    let created: ActivityRecord & { location: { name: string } | null } & FuelResolved;
     try {
       created = await this.prisma.$transaction(async (tx) => {
         // A create has no row to lock, so the period lock is the whole of its
@@ -1300,7 +1317,7 @@ export class ActivityRecordsService {
           { after: this.toAuditSnapshot(row) },
           tx,
         );
-        return row;
+        return Object.assign(row, { fuelRecords: await this.fuelRecordsIn(tx, user, [row]) });
       }, LIFECYCLE_TX);
     } catch (e) {
       // Unique constraint (subsidiary, location, year, period, periodValue,
@@ -1319,7 +1336,7 @@ export class ActivityRecordsService {
       }
       throw asLostRace(e);
     }
-    return this.toDTO(created, 0, await this.actorsFor(user, [created]), await this.fuelRecordsFor(user, [created]));
+    return this.toDTO(created, 0, await this.actorsFor(user, [created]), created.fuelRecords);
   }
 
   async update(
@@ -1471,7 +1488,7 @@ export class ActivityRecordsService {
     const detachIds = [...new Set(dto.detachEvidenceIds ?? [])];
     const changesCategory = category !== existing.category;
 
-    let updated: WrittenRecord;
+    let updated: WrittenRecord & FuelResolved;
     let evidenceCount: number;
     let removedFiles: { id: string; storagePath: string }[];
     try {
@@ -1522,7 +1539,11 @@ export class ActivityRecordsService {
             },
             tx,
           );
-          return { row, evidenceCount: count, removedFiles: gone };
+          return {
+            row: Object.assign(row, { fuelRecords: await this.fuelRecordsIn(tx, user, [row]) }),
+            evidenceCount: count,
+            removedFiles: gone,
+          };
         },
         moves ? [target] : [],
       ));
@@ -1546,12 +1567,7 @@ export class ActivityRecordsService {
     }
     // Only the files that went with the commit; their rows are already gone.
     await this.evidence.removeBlobs(removedFiles.map((f) => f.storagePath));
-    return this.toDTO(
-      updated,
-      evidenceCount,
-      await this.actorsFor(user, [updated]),
-      await this.fuelRecordsFor(user, [updated]),
-    );
+    return this.toDTO(updated, evidenceCount, await this.actorsFor(user, [updated]), updated.fuelRecords);
   }
 
   async remove(
@@ -1996,13 +2012,8 @@ export class ActivityRecordsService {
   }
 
   /** The response for a committed write: resolved actor names, after the transaction. */
-  private async writtenDTO(user: RequestUser, row: WrittenRecord): Promise<ActivityRecordDTO> {
-    return this.toDTO(
-      row,
-      row._count.evidenceLinks,
-      await this.actorsFor(user, [row]),
-      await this.fuelRecordsFor(user, [row]),
-    );
+  private async writtenDTO(user: RequestUser, row: WrittenRecord & FuelResolved): Promise<ActivityRecordDTO> {
+    return this.toDTO(row, row._count.evidenceLinks, await this.actorsFor(user, [row]), row.fuelRecords);
   }
 
   /**
@@ -2023,7 +2034,7 @@ export class ActivityRecordsService {
       reviewNote?: string | null;
       voidReason?: string;
     } = {},
-  ): Promise<WrittenRecord> {
+  ): Promise<WrittenRecord & FuelResolved> {
     // A review outcome records WHO decided and WHEN, so the reviewer screen
     // does not have to reconstruct it from the audit log.
     const isReviewOutcome =
@@ -2104,6 +2115,6 @@ export class ActivityRecordsService {
       },
       tx,
     );
-    return updated;
+    return Object.assign(updated, { fuelRecords: await this.fuelRecordsIn(tx, user, [updated]) });
   }
 }
