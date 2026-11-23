@@ -88,6 +88,8 @@
 
 - [x] 7.2 Review of `001d6f1c`, four P2 and three P3: the review sheet's decisions wait for its read, a record no longer pending leaves the queue, a newer submission clears the reason and re-reads the files, a failed read offers Retry; the section's fields are hidden, not unmounted, with no source; a field reports its reading after a language switch; a submit answered after another record was opened is told by name and leaves that record alone; an exact 5% of a small difference of large figures does not warn; the 409 re-read e2e waits for a read after the refusal. Verify: e2e `electricity-self-generation` 24/24, five page mutants each failing its test, the shared-types and web suites, the whole local e2e suite and `test:int`.
 
+- [x] 7.3 Review of `b8b0d78b`, four P2 and three P3: start review names the submission it saw (`StartReviewInput`, API and web) and a refusal re-reads the record; a review answer updates only the sheet opening it was sent from; a files page belongs to the list it was asked for; a 404 read takes the record out of the queue; a form moved off its record starts a new session; a late submit's toast names the company and type; the balance's slack is the operands' storage error only. Verify: API unit and DTO specs; e2e `electricity-self-generation` 29/29, five mutants (one in the API) each failing its test; the whole local e2e suite, `test:int` and the unit suites.
+
 ## Workflow follow-up
 
 - Open the PR from `feat/self-gen-form` when the owner asks; the owner merges.

@@ -196,6 +196,10 @@ When a block states the facility consumption, Data Entry SHALL compare the recor
 - **WHEN** a record of 525,000 kWh states 900,000 kWh of consumption and 400,000 generated kWh
 - **THEN** no warning is shown
 
+#### Scenario: A real gap between large figures
+- **WHEN** a record states 1,000,000,000 kWh of consumption, 1,000,000,000 generated kWh and 0.001 exported kWh, and an import of 0.001051 kWh
+- **THEN** the warning is shown
+
 #### Scenario: Small figures keep their digits
 - **WHEN** a warning compares an import of 0.004 kWh with an expected 0.003 kWh
 - **THEN** it names 0.004 and 0.003 kWh, never figures rounded to 0
@@ -249,3 +253,7 @@ When an edit on Data Entry is refused as `record_changed`, the form SHALL say th
 #### Scenario: A submit answered after another record was opened
 - **WHEN** the submit of one draft is answered after the user opened another record
 - **THEN** the outcome is shown naming the first record, and the record now open keeps what the user typed
+
+#### Scenario: A submit answered after the form moved to another period
+- **WHEN** the submit of one draft is answered after the user moved the form to another period, starting a new record
+- **THEN** the outcome is shown naming the first record with its company, and the new record keeps what the user typed

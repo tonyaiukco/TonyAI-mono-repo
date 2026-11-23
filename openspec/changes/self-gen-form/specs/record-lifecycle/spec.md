@@ -83,6 +83,22 @@ When a record's `generationFuelRecord` is `missing`, the review sheet SHALL show
 - **WHEN** the sheet's read finds the record no longer pending
 - **THEN** the sheet closes, the reviewer is told, and the queue is read again
 
+#### Scenario: A record resubmitted while the sheet is open
+- **WHEN** a reviewer types a reason, the author recalls the record and submits it again, and the reviewer then starts the review
+- **THEN** the start is refused with `record_changed`, and the sheet reads the record again with an empty reason
+
+#### Scenario: A review answer from an earlier opening
+- **WHEN** a reviewer starts the review, closes the sheet and opens the same record again, and the first answer arrives before the new opening's read
+- **THEN** the new opening still waits for its own read, and acts on what that read says
+
+#### Scenario: A page of files from an earlier list
+- **WHEN** more files were asked for, and the list started again before that page answered
+- **THEN** the page is not added to the list
+
+#### Scenario: A record gone since the queue was read
+- **WHEN** the sheet's read answers that the record is not found
+- **THEN** the sheet closes, the reviewer is told, and no Retry is offered
+
 #### Scenario: A record submitted again since the queue was read
 - **WHEN** the sheet's read finds a newer submission than the queue row's
 - **THEN** the reason starts empty and the files are read again, so no decision goes out on the earlier submission's
