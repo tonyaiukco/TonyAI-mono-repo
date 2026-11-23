@@ -1,4 +1,5 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { test, expect, type APIRequestContext, type Page, type Route } from '@playwright/test';
 import enCategories from '../apps/web/messages/en/categories.json';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
@@ -8,6 +9,7 @@ import {
   APPROVER_EMAIL,
   E2E_PERIOD,
   E2E_YEAR,
+  EVIDENCE_FIXTURE,
   SUB,
   approveRecord,
   attachEvidence,
@@ -363,4 +365,130 @@ test('a plain grid record is saved with no parameters, as before', async ({ page
   const saved = await read(request, token, id);
   expect(saved).toMatchObject({ category: 'Electricity', parameters: null });
   expect(saved.calculation.parameters).toEqual([]);
+});
+
+// --- The version through the save's file uploads and a late refusal (review of 078ca233) ---
+
+/** A new whole-company Electricity record on the form, in the lane's period, not saved. */
+async function newGridRecord(page: Page, periodValue = PERIOD, value = '5000') {
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.category, enCategories.Electricity);
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_YEAR));
+  await pickByFieldLabel(page, enDataEntry.period, enPeriods.granularity.quarterly);
+  await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values[periodValue as 'Q4']);
+  await pickUnit(page, 'kWh');
+  await quantity(page).fill(value);
+}
+
+const pdf = (name: string) => ({ name, mimeType: 'application/pdf', buffer: readFileSync(EVIDENCE_FIXTURE) });
+const EVIDENCE_ROUTE = '**/api/v1/activity-records/*/evidence';
+
+test('an edit made elsewhere while the save uploads its files is not overwritten by the next save', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  await newGridRecord(page);
+  await page.getByTestId('evidence-vault-input').setInputFiles([pdf('sample-invoice.pdf')]);
+
+  // While the file uploads, another client corrects the quantity.
+  let editedElsewhere = false;
+  const editDuringUpload = async (route: Route) => {
+    if (route.request().method() === 'POST' && !editedElsewhere) {
+      editedElsewhere = true;
+      const id = new URL(route.request().url()).pathname.split('/').at(-2)!;
+      await patchElsewhere(request, token, id, { activityValue: 5500 });
+    }
+    return route.fallback();
+  };
+  await page.route(EVIDENCE_ROUTE, editDuringUpload);
+  const { response } = await save(page, 'POST');
+  const id = (await response.json()).id as string;
+  created.push(id);
+  await expect(page.getByText(enDataEntry.draftSaved, { exact: true })).toBeVisible();
+  await page.unroute(EVIDENCE_ROUTE, editDuringUpload);
+  expect(editedElsewhere).toBe(true);
+
+  // The form still shows 5,000 and names the version its own save returned: refused, 5,500 stays.
+  await expect(quantity(page)).toHaveValue('5000');
+  await quantity(page).fill('5100');
+  await expectStaleSave(page);
+  expect(await read(request, token, id)).toMatchObject({ activityValue: 5500, evidenceCount: 1 });
+});
+
+test('a refusal answered after another record was opened leaves that record on the form', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const first = await draftWithBlock(request, token);
+  const otherRes = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.trading, locationId: null, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD,
+      periodValue: 'Q3', category: 'Electricity', activityValue: 7000, activityUnit: 'kWh', varianceReason: null,
+    },
+  });
+  expect(otherRes.status(), await otherRes.text()).toBe(201);
+  const other = (await otherRes.json()).id as string;
+  created.push(other);
+
+  await openDraft(page);
+  await patchElsewhere(request, token, first, { activityValue: 5500 });
+
+  // The first record's save is answered late, after the second record is open.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const lateAnswer = async (route: Route) => {
+    if (route.request().method() === 'PATCH') await gate;
+    return route.fallback();
+  };
+  await page.route(`**/api/v1/activity-records/${first}`, lateAnswer);
+  await quantity(page).fill('5300');
+  const refused = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().endsWith(`/activity-records/${first}`));
+  await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
+
+  await listOf(page).getByRole('button', { name: new RegExp(`^Edit Q3 ${E2E_YEAR} Electricity`) }).click();
+  await expect(quantity(page)).toHaveValue('7000');
+  await quantity(page).fill('7100');
+  release();
+  expect((await refused).status()).toBe(409);
+  await page.unroute(`**/api/v1/activity-records/${first}`, lateAnswer);
+
+  // No reload of the first record: the second keeps what the user typed.
+  const reread = page.waitForRequest((r) => r.method() === 'GET' && r.url().endsWith(`/activity-records/${first}`), { timeout: 2000 }).catch(() => null);
+  expect(await reread).toBeNull();
+  await expect(quantity(page)).toHaveValue('7100');
+  expect(await read(request, token, first)).toMatchObject({ activityValue: 5500 });
+});
+
+test('after a refusal the form still lists a file that did not upload, and still waits on it before submit', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  await newGridRecord(page);
+  await page.getByTestId('evidence-vault-input').setInputFiles([pdf('sample-invoice.pdf'), pdf('second.pdf')]);
+
+  // The first file uploads; the second does not.
+  let uploads = 0;
+  const secondFails = async (route: Route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    uploads += 1;
+    return uploads === 1
+      ? route.fallback()
+      : route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'storage down' }) });
+  };
+  await page.route(EVIDENCE_ROUTE, secondFails);
+  const { response } = await save(page, 'POST');
+  const id = (await response.json()).id as string;
+  created.push(id);
+  const failed = page.getByTestId('evidence-failed-uploads');
+  await expect(failed).toContainText('second.pdf');
+  await page.unroute(EVIDENCE_ROUTE, secondFails);
+
+  // Another client edits; the form's next save is refused and reads the record again.
+  await patchElsewhere(request, token, id, { activityValue: 5500 });
+  await quantity(page).fill('5100');
+  await expectStaleSave(page);
+  await expect(quantity(page)).toHaveValue('5500');
+
+  // The failed file is still listed, and the submit still waits for a decision on it.
+  await expect(failed).toContainText('second.pdf');
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
+  await expect(page.getByText(enDataEntry.heldEvidence.resolveFailed)).toBeVisible();
+  expect(await read(request, token, id)).toMatchObject({ status: 'draft', evidenceCount: 1 });
 });

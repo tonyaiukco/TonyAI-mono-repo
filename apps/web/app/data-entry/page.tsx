@@ -1502,7 +1502,7 @@ function DataEntryPageInner() {
     });
   }
 
-  function showSaveError(e: unknown, moving: boolean) {
+  function showSaveError(e: unknown, moving: boolean, session: number) {
     // The record's files changed under the band (one was uploaded elsewhere):
     // read them again so the next confirmation names them all.
     if (e instanceof ApiError && (e.code === "evidence_detach_required" || e.code === "evidence_not_found")) {
@@ -1510,7 +1510,11 @@ function DataEntryPageInner() {
     }
     const { title, description } = saveErrorDescription(e, moving, describeError, t);
     toast.error(title, description ? { description } : undefined);
-    if (e instanceof ApiError && e.code === "record_changed") void reloadAfterLostRace();
+    // Only while the form is still on the record that was saved: a refusal
+    // answered after the user opened another record leaves that one alone.
+    if (e instanceof ApiError && e.code === "record_changed" && formSessions.isCurrent(session) && editingId) {
+      void reloadAfterLostRace(editingId);
+    }
   }
 
   /**
@@ -1518,13 +1522,15 @@ function DataEntryPageInner() {
    * (`record_changed`, self-gen-model review): the form and the list read the
    * record again as stored, with its version, so the user sees what is there
    * now and the next save is made on it. Typed changes are not kept: they were
-   * made on values that no longer stand.
+   * made on values that no longer stand. Files that failed to upload to this
+   * record stay listed with Retry, so the submit still waits for the user's
+   * decision on them (review of `078ca233`).
    */
-  async function reloadAfterLostRace() {
-    const id = editingId;
-    if (!id) return;
+  async function reloadAfterLostRace(id: string) {
     const wasEdit = editMode;
+    const keptFailures = failedUploads !== null && failedUploads.recordId === id ? failedUploads : null;
     const session = beginFormSession();
+    if (keptFailures) setFailedUploads(keptFailures);
     void refreshRecords(subsidiaryId);
     try {
       const rec = await api.getActivityRecord(id);
@@ -1583,7 +1589,12 @@ function DataEntryPageInner() {
     // The vault re-reads the record's files when it next mounts.
     setEvidenceVersion((v) => v + 1);
     try {
-      return { rec: await api.getActivityRecord(rec.id), failed };
+      // Only the file count is read again. Every other field, the version
+      // included, stays the save's own answer, the values on screen: a re-read
+      // version could carry another client's edit made during the upload, and
+      // the next save would then overwrite it unrefused (review of `078ca233`).
+      const fresh = await api.getActivityRecord(rec.id);
+      return { rec: { ...rec, evidenceCount: fresh.evidenceCount }, failed };
     } catch {
       // Only the client's mirror of the gate reads this; the API decides.
       return { rec: { ...rec, evidenceCount: rec.evidenceCount + out.uploaded.length }, failed };
@@ -1669,7 +1680,7 @@ function DataEntryPageInner() {
       );
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      showSaveError(e, wasMoving);
+      showSaveError(e, wasMoving, session);
     } finally {
       setSaving(null);
     }
@@ -1756,7 +1767,7 @@ function DataEntryPageInner() {
       resetForm("submitted");
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      showSaveError(e, wasMoving);
+      showSaveError(e, wasMoving, session);
     } finally {
       setSaving(null);
     }
