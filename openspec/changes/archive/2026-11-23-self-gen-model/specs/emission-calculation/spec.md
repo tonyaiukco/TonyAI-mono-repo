@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Calculations write the new snapshot, and TR rules follow geography
-Every new calculation SHALL write the new snapshot version. A draft or submitted record holding a calculated older version SHALL read as stale until it is saved again. The TR natural gas and refrigerant rules SHALL apply by the record's geography, whatever rows a release holds. Parameters on a record outside those rules SHALL be refused, except the self-generation block of an Electricity record, which SHALL be accepted in any geography. A release a TR rule reads that lacks the parameter SHALL be answered as a library defect, not priced.
+Every new calculation SHALL write the new snapshot version. A draft or submitted record calculated on an older version SHALL read as stale until saved again. The TR natural gas and refrigerant rules SHALL apply by the record's geography, whatever a release holds. Parameters on a record outside those rules SHALL be refused, except an Electricity record's self-generation block, accepted in any geography. A TR rule's release lacking the parameter SHALL be answered as a library defect, never priced.
 
 #### Scenario: A draft from before the new snapshot
 - **WHEN** a draft with a calculated older snapshot is submitted
