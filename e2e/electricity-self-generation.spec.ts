@@ -3,10 +3,12 @@ import { test, expect, type APIRequestContext, type Page, type Route } from '@pl
 import enCategories from '../apps/web/messages/en/categories.json';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
+import enReview from '../apps/web/messages/en/review.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
   APPROVER_EMAIL,
+  CONSULTANT_EMAIL,
   E2E_PERIOD,
   E2E_YEAR,
   EVIDENCE_FIXTURE,
@@ -14,6 +16,7 @@ import {
   approveRecord,
   attachEvidence,
   bearer,
+  createCommittedRecord,
   deleteRecordsAsService,
   getAccessToken,
   login,
@@ -21,24 +24,32 @@ import {
 } from './helpers';
 
 /**
- * UAT round 3, LP4-07 (`self-gen-model`; Decisions 2026-11-20 D5, D6, D8): an
- * Electricity record may carry a self-generation block, which the form does
- * not show yet (`self-gen-form`). Data Entry must carry a stored block through
- * every save while the record stays Electricity, or the first web edit would
- * erase it with no error. An edit saved as Electricity sends no parameters,
- * so the server keeps the block it holds at the save, including one corrected
- * or added by another client after the form opened (review of `2c427ed8`); a
- * preview and a copy of a voided record send the record's own block; a move
- * to another category drops it; a new grid record still sends no parameters.
+ * UAT round 3, LP4-07 (`self-gen-model`, then `self-gen-form`; Decisions
+ * 2026-11-20 D5, D6, D8): an Electricity record may carry a self-generation
+ * block, which Data Entry shows and edits and the review sheet shows.
+ *
+ * The form sends what it shows: every Electricity save, an edit included,
+ * sends the section's block, or none when no source is chosen. What keeps a
+ * stale form from writing an older block over a newer one is the version each
+ * edit names (`seenUpdatedAt`): a block corrected or added by another client
+ * after the form opened it is refused as `record_changed`, and the form reads
+ * the record again. A move to another category drops the block, and says so
+ * first; a category picked by mistake and undone keeps it. The section holds
+ * the preview and the save until the block is valid, reminds of the fuel
+ * record for a fuel source, and warns on an energy balance gap without
+ * blocking. The review sheet shows the block, a missing fuel record and a
+ * balance gap, and blocks nothing.
  *
  * The block is geography-free and never priced, so the lane is a UK one, where
  * the seed prices Electricity and Natural Gas in kWh on every CI run.
  *
- * Lane: `SUB.trading` (UK) / quarterly `E2E_YEAR` / Q4, drafts only. The
- * block's drafts sit at the Manchester Office site, which no other spec
- * writes: `review-queue.spec` commits Trading's whole-company Natural Gas Q4
- * and never deletes it, so moving a whole-company draft to Natural Gas would
- * collide with it whenever that file ran first. The plain grid draft is
+ * Lane: `SUB.trading` (UK) / quarterly `E2E_YEAR` / Q4 (and Q3 for a second
+ * record), drafts, plus one submitted record for the review sheet. The block's
+ * records sit at the Manchester Office site, which no other spec writes and
+ * the seed holds nothing at, so its fuel record is missing until a test makes
+ * one: `review-queue.spec` commits Trading's whole-company Natural Gas Q4 and
+ * never deletes it, so moving a whole-company draft to Natural Gas would
+ * collide with it whenever that file ran first. The plain grid drafts are
  * whole-company Electricity Q4, which no other spec writes. `gates.spec` locks
  * only Trading's Q1. Every record is deleted after its test.
  */
@@ -150,6 +161,27 @@ async function pickUnit(page: Page, unit: string) {
   await expect(unitSelect).toHaveText(unit);
 }
 
+const SG = enDataEntry.inputs.selfGeneration;
+const sourceSelect = (page: Page) => page.getByTestId('self-generation-source');
+const generated = (page: Page) => page.locator('#input-self-generated');
+const exported = (page: Page) => page.locator('#input-self-exported');
+const facility = (page: Page) => page.locator('#input-self-facility');
+const saveDraftButton = (page: Page) => page.getByRole('button', { name: enDataEntry.saveDraft, exact: true });
+const removalNotice = (page: Page) => page.getByTestId('self-generation-removal-notice');
+
+async function pickSource(page: Page, source: keyof typeof SG.sources) {
+  await sourceSelect(page).click();
+  await page.getByRole('option', { name: SG.sources[source], exact: true }).click();
+  await expect(sourceSelect(page)).toHaveText(SG.sources[source]);
+}
+
+/** Whether the page asks for a preview within `ms`: the debounce is 400 ms. */
+const previewWithin = (page: Page, ms = 1500) =>
+  page
+    .waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/calculations/preview'), { timeout: ms })
+    .then(() => true)
+    .catch(() => false);
+
 test('a stored block survives a quantity edit and a move to MWh on Data Entry', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token);
@@ -158,12 +190,17 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   const opened = await read(request, token, id);
   const preview = previewWithBlock(page);
   await openDraft(page);
-  // The preview sends the opened record's block; it changes no figure.
+  // The section shows the stored block.
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
+  await expect(generated(page)).toHaveValue(/^4,?000$/);
+  await expect(exported(page)).toHaveValue('500');
+  await expect(facility(page)).toHaveValue(/^9,?000$/);
+  // The preview sends the block on the form; it changes no figure.
   expect((await preview).postDataJSON().parameters).toEqual(BLOCK);
   await quantity(page).fill('5200');
   const first = (await save(page, 'PATCH')).body;
-  // An edit saved as Electricity leaves the block to the server, and names the version it opened.
-  expect(first).not.toHaveProperty('parameters');
+  // An edit sends the block the form shows, and names the version it opened.
+  expect(first.parameters).toEqual(BLOCK);
   expect(first.seenUpdatedAt).toBe(opened.updatedAt);
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   const afterFirst = await read(request, token, id);
@@ -181,7 +218,7 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   await expect(quantity(page)).toHaveValue('');
   await quantity(page).fill('5.2');
   const second = (await save(page, 'PATCH')).body;
-  expect(second).not.toHaveProperty('parameters');
+  expect(second.parameters).toEqual(BLOCK);
   // The first save's toast may still be on screen beside this one.
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   const saved = await read(request, token, id);
@@ -196,25 +233,32 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   ]);
 });
 
-test('a category picked by mistake and undone keeps the block; a move to Natural Gas sends none', async ({ page, request }) => {
+test('a category picked by mistake and undone keeps the block; a move to Natural Gas says it removes it, and does', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token);
 
-  // Natural Gas, then Electricity again: the record's own block comes back (qa-auditor review).
+  // Natural Gas, then Electricity again: the notice comes and goes, and the section shows the block as it was.
   await openDraft(page);
+  await expect(removalNotice(page)).toHaveCount(0);
   await pickByFieldLabel(page, enDataEntry.category, enCategories['Natural Gas']);
+  await expect(removalNotice(page)).toHaveText(SG.removalNotice);
+  await expect(page.getByTestId('self-generation')).toHaveCount(0);
   await pickByFieldLabel(page, enDataEntry.category, enCategories.Electricity);
+  await expect(removalNotice(page)).toHaveCount(0);
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
+  await expect(generated(page)).toHaveValue(/^4,?000$/);
   await expect(quantity(page)).toHaveValue('');
   await pickUnit(page, 'kWh');
   await quantity(page).fill('5100');
   const undone = (await save(page, 'PATCH')).body;
   expect(undone).toMatchObject({ category: 'Electricity' });
-  expect(undone).not.toHaveProperty('parameters');
+  expect(undone.parameters).toEqual(BLOCK);
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   expect(await read(request, token, id)).toMatchObject({ category: 'Electricity', activityValue: 5100, parameters: BLOCK });
 
   await editButton(page).click();
   await pickByFieldLabel(page, enDataEntry.category, enCategories['Natural Gas']);
+  await expect(removalNotice(page)).toBeVisible();
   await expect(quantity(page)).toHaveValue('');
   await pickUnit(page, 'kWh');
   await quantity(page).fill('5000');
@@ -235,15 +279,19 @@ test('a save on a version changed by another client is refused, and the correcte
 
   await quantity(page).fill('5300');
   const body = await expectStaleSave(page);
-  expect(body).not.toHaveProperty('parameters');
+  // The form sent the block it showed, the older one: the version refused it.
+  expect(body.parameters).toEqual(BLOCK);
   expect(await read(request, token, id)).toMatchObject({ activityValue: 5000, parameters: corrected });
+  // Data Entry's own sentence: the record changed after the form opened it.
+  await expect(page.getByText(enDataEntry.recordChanged, { exact: true })).toBeVisible();
 
-  // The refusal reads the record again as stored, with its version; the save made on it keeps the block.
+  // The refusal reads the record again as stored, with its version; the save made on it sends the corrected block.
   await expect(quantity(page)).toHaveValue('5000');
+  await expect(generated(page)).toHaveValue(/^5,?000$/);
   await expect(page.getByTestId('edit-mode-band')).toBeVisible();
   await quantity(page).fill('5300');
   const again = (await save(page, 'PATCH')).body;
-  expect(again).not.toHaveProperty('parameters');
+  expect(again.parameters).toEqual(corrected);
   const saved = await read(request, token, id);
   expect(saved).toMatchObject({ activityValue: 5300, parameters: corrected });
   expect(saved.calculation.parameters).toContainEqual({ name: 'selfGeneratedKwh', value: 5000, origin: 'user' });
@@ -257,8 +305,11 @@ test('a block added by another client to a draft opened without one is not erase
   await patchElsewhere(request, token, id, { parameters: BLOCK });
 
   await quantity(page).fill('5300');
-  await expectStaleSave(page);
+  const body = await expectStaleSave(page);
+  expect(body.parameters ?? null).toBeNull();
   expect(await read(request, token, id)).toMatchObject({ activityValue: 5000, parameters: BLOCK });
+  // Read again, the form shows the block it did not know of.
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
 });
 
 test('a Natural Gas draft another client turned into Electricity with a block is not erased by the save', async ({ page, request }) => {
@@ -334,6 +385,9 @@ test('a voided record copied to a new draft keeps its block', async ({ page, req
   await listOf(page).getByRole('button', { name: new RegExp(`^Copy ${PERIOD} ${E2E_YEAR} Electricity`) }).click();
   await expect(page.getByText(enDataEntry.copy.loaded)).toBeVisible();
   expect((await preview).postDataJSON().parameters).toEqual(BLOCK);
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
+  // A copy creates: there is no stored block for a category move to remove.
+  await expect(removalNotice(page)).toHaveCount(0);
 
   const { body, response } = await save(page, 'POST');
   expect(response.status()).toBe(201);
@@ -353,6 +407,9 @@ test('a plain grid record is saved with no parameters, as before', async ({ page
   await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values[PERIOD]);
   await pickUnit(page, 'kWh');
   await quantity(page).fill('5000');
+  // The section opens on no source and asks nothing more.
+  await expect(sourceSelect(page)).toHaveText(SG.sources.none);
+  await expect(generated(page)).toHaveCount(0);
 
   const { body, response } = await save(page, 'POST');
   expect(response.status()).toBe(201);
@@ -491,4 +548,161 @@ test('after a refusal the form still lists a file that did not upload, and still
   await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
   await expect(page.getByText(enDataEntry.heldEvidence.resolveFailed)).toBeVisible();
   expect(await read(request, token, id)).toMatchObject({ status: 'draft', evidenceCount: 1 });
+});
+
+// --- The section on the form (self-gen-form) ---
+
+test('a block entered on the form is held until it is valid, then saved with topology A', async ({ page, request }) => {
+  await newGridRecord(page);
+  await expect(saveDraftButton(page)).toBeEnabled();
+
+  // A source without its generation: nothing is previewed or saved, and the section says why.
+  const previewed = previewWithin(page);
+  await pickSource(page, 'solar');
+  await expect(page.getByText(SG.caseA, { exact: true })).toBeVisible();
+  await expect(page.getByText(SG.importStatement, { exact: true })).toBeVisible();
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.generated_missing);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  expect(await previewed).toBe(false);
+
+  // Exports above the generation are held too; equal exports are not.
+  await generated(page).fill('4000');
+  await exported(page).fill('5000');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.exported_above_generated);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  await exported(page).fill('4000');
+  await expect(page.getByTestId('self-generation-issue')).toHaveCount(0);
+  await expect(saveDraftButton(page)).toBeEnabled();
+
+  const { body, response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  const id = (await response.json()).id as string;
+  created.push(id);
+  const sent = { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 4000, exportedToGridKwh: 4000 };
+  expect(body.parameters).toEqual(sent);
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  expect(await read(request, token, id)).toMatchObject({ parameters: sent, generationFuelRecord: null });
+});
+
+test('an opened block is corrected on the form, then removed, and the figure never moves', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  const before = (await read(request, token, id)).calculation.kgCo2e as number;
+
+  await openDraft(page);
+  await generated(page).fill('4500');
+  const corrected = (await save(page, 'PATCH')).body;
+  expect(corrected.parameters).toEqual({ ...BLOCK, selfGeneratedKwh: 4500 });
+  await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
+  const saved = await read(request, token, id);
+  expect(saved.parameters).toEqual({ ...BLOCK, selfGeneratedKwh: 4500 });
+  expect(saved.calculation.kgCo2e).toBeCloseTo(before, 9);
+
+  // No source: a plain grid record again.
+  await editButton(page).click();
+  await pickSource(page, 'none');
+  await expect(generated(page)).toHaveCount(0);
+  const removed = (await save(page, 'PATCH')).body;
+  expect(removed.parameters ?? null).toBeNull();
+  await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
+  const plain = await read(request, token, id);
+  expect(plain.parameters).toBeNull();
+  expect(plain.calculation.kgCo2e).toBeCloseTo(before, 9);
+  expect(plain.calculation.parameters).toEqual([]);
+});
+
+test('a fuel source reminds of the fuel record, and the record saves without one', async ({ page, request }) => {
+  await newGridRecord(page);
+  await pickSource(page, 'diesel_generator');
+  await expect(page.getByTestId('self-generation-reminder')).toHaveText(SG.reminder.diesel_generator);
+  await pickSource(page, 'solar');
+  await expect(page.getByTestId('self-generation-reminder')).toHaveCount(0);
+  await pickSource(page, 'natural_gas_chp');
+  await expect(page.getByTestId('self-generation-reminder')).toHaveText(SG.reminder.natural_gas_chp);
+  await generated(page).fill('3000');
+
+  const { response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  const id = (await response.json()).id as string;
+  created.push(id);
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  // Whole company: no whole-company gas record in the lane's year.
+  expect(await read(request, token, id)).toMatchObject({
+    parameters: { selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 3000 },
+  });
+});
+
+test('an energy balance gap warns with both figures, and the record still saves', async ({ page }) => {
+  await newGridRecord(page);
+  await pickSource(page, 'solar');
+  await generated(page).fill('4000');
+  // 9,000 − 4,000 = 5,000 kWh expected, 5,000 imported: balanced.
+  await facility(page).fill('9000');
+  await expect(page.getByTestId('self-generation-balance')).toHaveCount(0);
+  // 8,000 − 4,000 = 4,000 kWh expected against 5,000: 25% off.
+  await facility(page).fill('8000');
+  const balance = page.getByTestId('self-generation-balance');
+  await expect(balance).toContainText('5,000 kWh');
+  await expect(balance).toContainText('4,000 kWh');
+  await expect(saveDraftButton(page)).toBeEnabled();
+
+  const { response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  created.push((await response.json()).id as string);
+});
+
+// --- The review sheet (self-gen-form) ---
+
+test('the review sheet shows a CHP block, notes a missing gas record and a balance gap, and still lets the record be approved', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.trading,
+    locationId: MANCHESTER_OFFICE,
+    category: 'Electricity',
+    periodValue: PERIOD,
+    activityValue: 5000,
+    parameters: { generationTopology: 'A', selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 4000, facilityConsumptionKwh: 8000 },
+  });
+  created.push(id);
+  expect((await read(request, token, id)).generationFuelRecord).toBe('missing');
+
+  const RS = enReview.sheet.selfGeneration;
+  const fuelNotice = (page: Page) => page.getByRole('dialog').getByTestId('review-self-generation-fuel-missing');
+  const openSheet = async () => {
+    await page.goto('/review');
+    await page.locator('table tbody tr').filter({ hasText: 'Manchester Office' }).filter({ hasText: enCategories.Electricity }).click();
+    await expect(page.getByRole('dialog').getByTestId('review-self-generation-source')).toHaveText(RS.sources.natural_gas_chp);
+  };
+
+  // A consultant reviews a record the admin entered.
+  await login(page, CONSULTANT_EMAIL);
+  await openSheet();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByTestId('review-self-generation-generated')).toHaveText('4,000 kWh');
+  await expect(dialog.getByTestId('review-self-generation-facility')).toHaveText('8,000 kWh');
+  await expect(dialog.getByTestId('review-self-generation-exported')).toHaveCount(0);
+  await expect(fuelNotice(page)).toHaveText(
+    RS.fuelMissing.natural_gas_chp.replace('{year}', String(E2E_YEAR)).replace('{site}', 'Manchester Office'),
+  );
+  await expect(dialog.getByTestId('review-self-generation-balance')).toContainText('4,000 kWh');
+
+  // A review step answers the record with its fuel state, so the notice stays; nothing is blocked.
+  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  await expect(fuelNotice(page)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
+
+  // A gas draft at the same site, in another quarter of the year, is the fuel record.
+  const gas = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.trading, locationId: MANCHESTER_OFFICE, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD,
+      periodValue: 'Q3', category: 'Natural Gas', activityValue: 1000, activityUnit: 'kWh', varianceReason: null, parameters: null,
+    },
+  });
+  expect(gas.status(), await gas.text()).toBe(201);
+  created.push((await gas.json()).id as string);
+  await page.keyboard.press('Escape');
+  await openSheet();
+  await expect(fuelNotice(page)).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByTestId('review-self-generation-balance')).toBeVisible();
 });
