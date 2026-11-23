@@ -199,6 +199,16 @@ export function formatReadAmount(value: number, locale: Locale): string {
   return `${value < 0 ? "-" : ""}${grouped}${frac === undefined ? "" : decimal + frac}`;
 }
 
+/**
+ * A figure the screen computed (an energy balance), shown with every digit it
+ * holds up to 12 significant ones: no fraction cap that would show 0.004 kWh
+ * as 0, and no floating-point tail (1.1 − 0.1 shows as 1, not
+ * 1.0000000000000002). Separators as `formatReadAmount` writes them.
+ */
+export function formatComputedAmount(value: number, locale: Locale): string {
+  return Number.isFinite(value) ? formatReadAmount(Number(value.toPrecision(12)), locale) : String(value);
+}
+
 /** The range a field accepts, on top of the grammar. */
 export type DecimalRule = "positive" | "non_negative";
 

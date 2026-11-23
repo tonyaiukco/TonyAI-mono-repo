@@ -343,11 +343,15 @@ function DataEntryPageInner() {
   // category move then says, before the save, that it removes it (design 8).
   // Set and cleared with `ownBasis`.
   const [openedWithSelfGeneration, setOpenedWithSelfGeneration] = useState(false);
+  // The section's own epoch: it moves only when the section is filled from a
+  // record or emptied, never on a category change, so the fields keep what was
+  // typed, a figure they could not read included, through a category change
+  // and back (outside review of 833db34c: a refused "500," came back empty and
+  // the save then dropped the stored exports).
+  const [selfGenerationEpoch, setSelfGenerationEpoch] = useState(0);
   const [inputsEpoch, setInputsEpoch] = useState(0);
-  useEffect(() => {
-    setRefusedGasInputs(new Set());
-    setRefusedSelfGeneration(new Set());
-  }, [inputsEpoch]);
+  useEffect(() => setRefusedGasInputs(new Set()), [inputsEpoch]);
+  useEffect(() => setRefusedSelfGeneration(new Set()), [selfGenerationEpoch]);
   // The release parameters the inputs default to (D2): never a constant here.
   const [reference, setReference] = useState<ReferenceState>({ status: "loading" });
 
@@ -1350,6 +1354,7 @@ function DataEntryPageInner() {
     setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
     setOpenedWithSelfGeneration(selfGenerationFromRecord(rec) !== null);
     setSelfGeneration(selfGenerationFormFromRecord(rec));
+    setSelfGenerationEpoch((n) => n + 1);
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
     if (hasContextValue(rec.input)) setContextOpen(true);
@@ -1431,6 +1436,7 @@ function DataEntryPageInner() {
     setOwnBasis(null);
     setOpenedWithSelfGeneration(false);
     setSelfGeneration(EMPTY_SELF_GENERATION_FORM);
+    setSelfGenerationEpoch((n) => n + 1);
     // After a submit the next record does not inherit a TR gas bill's kWh or MWh:
     // it is narrowed to the category's first unit, m³ (ng-kwh-form review). Any
     // other reset, a subsidiary change included, keeps the unit the target offers.
@@ -1732,6 +1738,10 @@ function DataEntryPageInner() {
     const wasMoving = movingTo !== null;
     const session = formSessions.current();
     const held = editingId ? [] : heldFiles;
+    // Set once the save has committed and the submit is sent: a refusal from
+    // then on is the submit's, and the draft it leaves is saved (outside review
+    // of 833db34c), so it never gets the save's "your changes were not saved".
+    let submitting: string | null = null;
     try {
       const saved = await persist();
       if (!saved) return;
@@ -1790,6 +1800,7 @@ function DataEntryPageInner() {
         await refreshRecords(subsidiaryId);
         return;
       }
+      submitting = rec.id;
       await api.submitActivityRecord(rec.id);
       // Announced here too. Submitting a moved record re-attributes it just as
       // a draft save does, and saying nothing made the two paths disagree about
@@ -1800,7 +1811,15 @@ function DataEntryPageInner() {
       resetForm("submitted");
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      showSaveError(e, wasMoving, session);
+      if (submitting === null) {
+        showSaveError(e, wasMoving, session);
+      } else if (formSessions.isCurrent(session)) {
+        // The draft is saved; the submit was refused. A record changed in
+        // between is read again, so the next submit is made on it.
+        errorToast(e);
+        if (e instanceof ApiError && e.code === "record_changed") void reloadAfterLostRace(submitting);
+        else void refreshRecords(subsidiaryId);
+      }
     } finally {
       setSaving(null);
     }
@@ -1890,6 +1909,7 @@ function DataEntryPageInner() {
       // A copy is a new record: it creates, so no stored block is removed.
       setOpenedWithSelfGeneration(false);
       setSelfGeneration(selfGenerationFormFromRecord(values));
+      setSelfGenerationEpoch((n) => n + 1);
       setContext((values.input as ContextValues | null) ?? {});
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
@@ -2343,12 +2363,13 @@ function DataEntryPageInner() {
                       onRemove={(id) => setEquipment((prev) => prev.filter((line) => line.id !== id))}
                     />
                   )}
-                  {recordParameterShape(category) === "electricity" && (
+                  {/* Hidden, not unmounted, off Electricity: its fields keep their text (design 8). */}
+                  <div hidden={recordParameterShape(category) !== "electricity"}>
                     <SelfGenerationInputs
                       form={selfGeneration}
                       issue={selfGenerationProblem}
                       balance={selfGenerationEnergyBalance}
-                      epoch={inputsEpoch}
+                      epoch={selfGenerationEpoch}
                       onChange={(next, field, refused) => {
                         setSelfGeneration((prev) => ({ ...prev, ...next }));
                         if (field === null) return;
@@ -2361,7 +2382,7 @@ function DataEntryPageInner() {
                         });
                       }}
                     />
-                  )}
+                  </div>
                 </CardContent>
               </Card>
 

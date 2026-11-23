@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { checkDecimal, formatNumber, parseLocaleDecimal, typedValue, type DecimalRule } from "@/lib/i18n/number";
+import { checkDecimal, formatComputedAmount, formatNumber, parseLocaleDecimal, typedValue, type DecimalRule } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import {
   derivedNetQuantity,
@@ -537,7 +537,7 @@ export function SelfGenerationInputs({
   const locale = useLocale();
   const reminder = selfGenerationReminder(form.source);
   const invalidField = issue ? ISSUE_FIELD[issue] : null;
-  const kwh = (value: number) => formatNumber(value, locale, { maximumFractionDigits: 2 });
+  const kwh = (value: number) => formatComputedAmount(value, locale);
   return (
     <div className="space-y-4 rounded-lg border p-4" data-testid="self-generation">
       <div>

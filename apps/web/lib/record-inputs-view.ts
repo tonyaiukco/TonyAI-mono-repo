@@ -246,6 +246,9 @@ export function selfGenerationBlock(category: string, form: SelfGenerationForm):
   return block;
 }
 
+/** The smallest facility consumption the API and the shape CHECK accept. */
+const SELF_GENERATION_FACILITY_FLOOR_KWH = 1e-300;
+
 /** Why the section holds the preview and the save, each with its own sentence. */
 export type SelfGenerationFormIssue =
   | "unreadable"
@@ -272,7 +275,8 @@ export function selfGenerationFormIssue(
   if (unreadable) return "unreadable";
   if (form.generatedKwh !== null && form.generatedKwh < 0) return "generated_negative";
   if (form.exportedKwh !== null && form.exportedKwh < 0) return "exported_negative";
-  if (form.facilityKwh !== null && form.facilityKwh <= 0) return "facility_not_positive";
+  // The API's floor (1e-300, the shape CHECK's): below it is no consumption (outside review of 833db34c).
+  if (form.facilityKwh !== null && form.facilityKwh < SELF_GENERATION_FACILITY_FLOOR_KWH) return "facility_not_positive";
   const issue = selfGenerationIssue(block);
   if (issue === null) return null;
   // The form sends the topology and the source itself, so the only input the

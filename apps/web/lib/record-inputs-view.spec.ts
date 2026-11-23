@@ -715,6 +715,7 @@ describe('the self-generation section (self-gen-form, design 1, 3 and 4)', () =>
     expect(issue({ facilityKwh: 0 })).toBe('facility_not_positive');
     expect(issue({ facilityKwh: -5 })).toBe('facility_not_positive');
     expect(issue({ facilityKwh: 1e-300 })).toBeNull();
+    expect(issue({ facilityKwh: 1e-301 })).toBe('facility_not_positive');
     expect(issue({ generatedKwh: null })).toBe('generated_missing');
     expect(issue({ generatedKwh: null, exportedKwh: 5 })).toBe('generated_missing');
     expect(issue({ exportedKwh: 500_000 })).toBe('exported_above_generated');
@@ -797,5 +798,9 @@ describe('SelfGenerationInputs (self-gen-form)', () => {
     expect(tr).toContain('600.000 kWh');
     expect(tr).toContain('500.000 kWh');
     expect(render('en', { form: solar, balance: { ...gap, warns: false } })).not.toContain('data-testid="self-generation-balance"');
+    // Small figures keep their digits (outside review): 0.004 against 0.003 is not "0 against 0".
+    const tiny = render('en', { form: solar, balance: { importKwh: 0.004, expectedImportKwh: 0.003, warns: true } });
+    expect(tiny).toContain('0.004 kWh');
+    expect(tiny).toContain('0.003 kWh');
   });
 });

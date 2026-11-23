@@ -3677,6 +3677,10 @@ export const GROSS_TO_NET_RATIO_INPUT = 'grossToNetRatio';
  */
 export const ENERGY_BALANCE_TOLERANCE = 0.05;
 
+/** The relative slack below which a gap counts as exactly 5%: floating point
+ *  would otherwise warn at 1.05 kWh against 1 kWh (outside review of 833db34c). */
+const ENERGY_BALANCE_ROUNDING = 1e-9;
+
 /** The energy balance of an Electricity record with a facility consumption (`selfGenerationBalance`). */
 export interface SelfGenerationBalance {
   /** The record's quantity, in kWh. */
@@ -3713,7 +3717,8 @@ export function selfGenerationBalance(
   const warns =
     expectedImportKwh <= 0
       ? importKwh > 0
-      : Math.abs(importKwh - expectedImportKwh) > expectedImportKwh * ENERGY_BALANCE_TOLERANCE;
+      : Math.abs(importKwh - expectedImportKwh) >
+        expectedImportKwh * ENERGY_BALANCE_TOLERANCE * (1 + ENERGY_BALANCE_ROUNDING);
   return { importKwh, expectedImportKwh, warns };
 }
 

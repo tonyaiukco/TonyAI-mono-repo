@@ -63,7 +63,7 @@ import {
 import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
-import { formatNumber } from "@/lib/i18n/number";
+import { formatComputedAmount, formatNumber, formatReadAmount } from "@/lib/i18n/number";
 import { reviewCalorificBasis, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
 import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
@@ -132,6 +132,28 @@ export default function ReviewPage() {
   useEffect(() => {
     selectedId.current = selected?.id ?? null;
   }, [selected]);
+  // The sheet reads its record again when it opens (self-gen-form, outside
+  // review of 833db34c): a queue row is as old as the queue, and the record's
+  // read-time facts, such as whether its fuel record exists, may have changed
+  // since. A write's answer is newer than that read, so it bumps the sequence
+  // and a read answered after it is dropped.
+  const sheetRead = useRef(0);
+  const openRecord = (row: ActivityRecordDTO) => {
+    const seq = (sheetRead.current += 1);
+    setSelected(row);
+    setReason("");
+    api
+      .getActivityRecord(row.id)
+      .then((fresh) => {
+        if (sheetRead.current !== seq || selectedId.current !== row.id) return;
+        setSelected(fresh);
+        setRows((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)));
+      })
+      .catch((err) => {
+        // The row stays on screen; the reviewer is told it could not be read again.
+        if (sheetRead.current === seq && selectedId.current === row.id) showError(err);
+      });
+  };
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -348,6 +370,7 @@ export default function ReviewPage() {
       // Only while the sheet still shows this record: one the reviewer closed,
       // or moved on from, is not reopened by a late answer (Codex P2-2).
       if (selectedId.current === record.id) {
+        sheetRead.current += 1;
         setSelected(stillPending ? updated : null);
         if (!stillPending) setReason("");
       }
@@ -497,10 +520,7 @@ export default function ReviewPage() {
                           <TableRow
                             key={row.id}
                             className="cursor-pointer"
-                            onClick={() => {
-                              setSelected(row);
-                              setReason("");
-                            }}
+                            onClick={() => openRecord(row)}
                           >
                             <TableCell className="text-sm">
                               {subsidiaryName(row.subsidiaryId)}
@@ -673,7 +693,8 @@ export default function ReviewPage() {
                 {(() => {
                   const own = reviewSelfGeneration(selected);
                   if (own === null) return null;
-                  const kwh = (value: number) => `${formatNumber(value, locale, { maximumFractionDigits: 2 })} ${unitSymbol("kWh")}`;
+                  // Stored as typed: every digit, never rounded away (outside review of 833db34c).
+                  const kwh = (value: number) => `${formatReadAmount(value, locale)} ${unitSymbol("kWh")}`;
                   return (
                     <>
                       <span className="text-muted-foreground">{t("sheet.selfGeneration.source")}</span>
@@ -794,7 +815,7 @@ export default function ReviewPage() {
               {(() => {
                 const own = reviewSelfGeneration(selected);
                 if (own === null) return null;
-                const kwh = (value: number) => formatNumber(value, locale, { maximumFractionDigits: 2 });
+                const kwh = (value: number) => formatComputedAmount(value, locale);
                 return (
                   <>
                     {own.fuelMissing && (

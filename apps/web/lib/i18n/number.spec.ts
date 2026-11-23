@@ -6,6 +6,7 @@ import {
   checkDecimal,
   endsWithPendingSeparator,
   formatReadAmount,
+  formatComputedAmount,
   parseYearInput,
   formatDecimalInput,
   formatNumber,
@@ -386,5 +387,16 @@ describe("formatReadAmount — a bulk preview's amount (D15)", () => {
         expect(formatReadAmount(value, locale)).toBe(formatNumber(value, locale, { maximumFractionDigits: 3 }));
       }
     }
+  });
+});
+
+describe("formatComputedAmount — a figure the screen computed (self-gen-form)", () => {
+  it("keeps small digits and drops a floating-point tail, in both languages", () => {
+    expect(formatComputedAmount(0.004, "en")).toBe("0.004");
+    expect(formatComputedAmount(1.1 - 0.1, "en")).toBe("1");
+    expect(formatComputedAmount(4250, "tr")).toBe("4.250");
+    expect(formatComputedAmount(1234567.25, "en")).toBe("1,234,567.25");
+    expect(formatComputedAmount(-100000, "tr")).toBe("-100.000");
+    expect(formatComputedAmount(0.1 + 0.2, "tr")).toBe("0,3");
   });
 });
