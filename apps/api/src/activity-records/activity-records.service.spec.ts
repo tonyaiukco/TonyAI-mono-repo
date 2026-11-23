@@ -5804,3 +5804,39 @@ describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design
     expect(lookups(prisma)).toHaveLength(0);
   });
 });
+
+describe('ActivityRecordsService — start review names the submission it saw (self-gen-form, outside review of b8b0d78b)', () => {
+  const SUBMITTED_AT = new Date('2026-11-20T10:00:00.000Z');
+  function submittedRecord(prisma: PrismaMock) {
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-sr', status: ActivityRecordStatus.submitted, submittedAt: SUBMITTED_AT }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-sr', status: data.status, submittedAt: SUBMITTED_AT }),
+      _count: { evidenceLinks: 0 },
+    }));
+  }
+
+  beforeEach(() => {
+    audit.record.mockClear();
+  });
+
+  it('refuses a resubmitted record as record_changed, writing nothing', async () => {
+    const { prisma, service } = build();
+    submittedRecord(prisma);
+    await expect(service.startReview(consultant(), 'rec-sr', '2026-11-19T10:00:00.000Z')).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'record_changed' }),
+    });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('takes the submission it saw into review, and compares nothing when none is named', async () => {
+    const { prisma, service } = build();
+    submittedRecord(prisma);
+    expect((await service.startReview(consultant(), 'rec-sr', SUBMITTED_AT.toISOString())).status).toBe(
+      ActivityRecordStatus.under_review,
+    );
+    expect((await service.startReview(consultant(), 'rec-sr')).status).toBe(ActivityRecordStatus.under_review);
+  });
+});

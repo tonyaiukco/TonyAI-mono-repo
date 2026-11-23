@@ -3681,10 +3681,16 @@ export const ENERGY_BALANCE_TOLERANCE = 0.05;
  *  would otherwise warn at 1.05 kWh against 1 kWh (outside review of 833db34c). */
 const ENERGY_BALANCE_ROUNDING = 1e-9;
 
-/** Units of rounding allowed per operand's magnitude: a small expected import
- *  from two large figures (1,000,000.1 − 1,000,000) loses digits in the
- *  subtraction itself (outside review of 001d6f1c). */
-const ENERGY_BALANCE_ULPS = 8;
+/**
+ * Half a unit in the last place of `x`: how far a typed decimal can sit from
+ * the double that stores it. A small expected import from two large figures
+ * (1,000,000.1 − 1,000,000) carries their storage error whole (outside review
+ * of 001d6f1c); figures stored exactly (1,000,000,000) carry none, so a real
+ * 5.1% gap between them still warns (outside review of b8b0d78b).
+ */
+function halfUlp(x: number): number {
+  return x === 0 || !Number.isFinite(x) ? 0 : 2 ** (Math.floor(Math.log2(Math.abs(x))) - 53);
+}
 
 /** The energy balance of an Electricity record with a facility consumption (`selfGenerationBalance`). */
 export interface SelfGenerationBalance {
@@ -3720,9 +3726,9 @@ export function selfGenerationBalance(
   const importKwh = importValue * route.multiplier;
   const exported = block.exportedToGridKwh ?? 0;
   const expectedImportKwh = consumption - generated + exported;
-  // What the operands' own rounding can move the gap by, so an exact 5% reads as 5%.
-  const rounding =
-    ENERGY_BALANCE_ULPS * Number.EPSILON * Math.max(Math.abs(consumption), Math.abs(generated), Math.abs(exported), Math.abs(importKwh));
+  // What the operands' storage can move the gap by, on both sides of the
+  // comparison, so an exact 5% reads as 5% and nothing more is forgiven.
+  const rounding = 2 * (halfUlp(consumption) + halfUlp(generated) + halfUlp(exported) + halfUlp(importKwh));
   const warns =
     expectedImportKwh <= 0
       ? importKwh > 0
@@ -4701,6 +4707,15 @@ export interface ApproveInput {
    * a record that has no submission time.
    */
   seenSubmittedAt: string | null;
+}
+
+/**
+ * Body of POST /activity-records/:id/review (self-gen-form, outside review of
+ * `b8b0d78b`): the submission the reviewer took into review, compared as
+ * `ApproveInput.seenSubmittedAt` is. Optional: absent, nothing is compared.
+ */
+export interface StartReviewInput {
+  seenSubmittedAt?: string | null;
 }
 
 /**

@@ -987,3 +987,181 @@ test('the review sheet holds its decisions until it has read the record, and dro
   await expect(dialog).toHaveCount(0);
   await page.unroute(RECORD);
 });
+
+// --- Outside review of b8b0d78b: the sheet's openings, its files, and a form moved off its record ---
+
+/** A submitted solar record at the site, for the review sheet's cases. */
+async function submittedAtSite(request: APIRequestContext, token: string, periodValue = PERIOD) {
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.trading,
+    locationId: MANCHESTER_OFFICE,
+    category: 'Electricity',
+    periodValue,
+    activityValue: 1000,
+    parameters: { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400 },
+  });
+  created.push(id);
+  return id;
+}
+const siteRow = (page: Page) =>
+  page.locator('table tbody tr').filter({ hasText: 'Manchester Office' }).filter({ hasText: enCategories.Electricity });
+
+test('start review names the submission it saw, so a reason typed for it never meets a newer one', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  await siteRow(page).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
+  await dialog.locator('#review-reason').fill('The 1,000 kWh does not match the bill');
+
+  // The author recalls it, corrects it to 8,000 kWh and submits it again.
+  expect((await request.post(`${API_BASE}/activity-records/${id}/recall`, { headers: bearer(token) })).ok()).toBe(true);
+  await patchElsewhere(request, token, id, { activityValue: 8000 });
+  expect((await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(token) })).ok()).toBe(true);
+
+  const answered = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
+  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  const response = await answered;
+  expect(response.status()).toBe(409);
+  expect(response.request().postDataJSON()).toEqual({ seenSubmittedAt: expect.any(String) });
+  // The sheet reads the record again: the newer submission, with an empty reason.
+  await expect(dialog).toContainText('8,000');
+  await expect(dialog.locator('#review-reason')).toHaveValue('');
+  expect((await read(request, token, id)).status).toBe('submitted');
+});
+
+test('a review step answered after the sheet was closed and opened again leaves the new opening alone', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  const dialog = page.getByRole('dialog');
+  await siteRow(page).click();
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const REVIEW = `**/api/v1/activity-records/${id}/review`;
+  await page.route(REVIEW, async (route) => {
+    await gate;
+    return route.fallback();
+  });
+  const reviewed = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
+  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+
+  // Opened again, its read says the record is decided: the sheet closes.
+  const RECORD = `**/api/v1/activity-records/${id}`;
+  await page.route(RECORD, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    return route.fulfill({ response, json: { ...(await response.json()), status: 'approved' } });
+  });
+  await siteRow(page).click();
+  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+
+  // The first opening's answer arrives now, and does not open the sheet again.
+  release();
+  expect((await reviewed).ok()).toBe(true);
+  await page.waitForTimeout(500);
+  await expect(dialog).toHaveCount(0);
+  await page.unroute(REVIEW);
+  await page.unroute(RECORD);
+});
+
+test('a page of files answered after the list started again is not added to it', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let firstPages = 0;
+  const file = (fileName: string, n: number) => ({
+    id: `00000000-0000-4000-8000-00000000000${n}`, subsidiaryId: SUB.trading, fileName, mimeType: 'application/pdf', sizeBytes: 4,
+    uploadedBy: '00000000-0000-4000-8000-0000000000f2', createdAt: new Date().toISOString(),
+    linkedRecords: [{ id, category: 'Electricity', reportingYear: E2E_YEAR, periodValue: PERIOD, locationName: 'Manchester Office', status: 'submitted' }],
+  });
+  await page.route((url) => url.pathname.endsWith(`/activity-records/${id}/evidence`), async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    if (cursor) {
+      await gate;
+      return route.fulfill({ json: { items: [file('earlier-page-two.pdf', 2)], limit: 50, nextCursor: null } });
+    }
+    firstPages += 1;
+    if (firstPages === 1) return route.fulfill({ json: { items: [file('earlier-page-one.pdf', 1)], limit: 50, nextCursor: 'c1' } });
+    return route.continue();
+  });
+
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  const dialog = page.getByRole('dialog');
+  await siteRow(page).click();
+  await expect(dialog.getByText('earlier-page-one.pdf')).toBeVisible();
+  const continuation = page.waitForRequest((r) => new URL(r.url()).searchParams.get('cursor') === 'c1');
+  await dialog.getByTestId('review-evidence-load-more').click();
+  await continuation;
+
+  // The list starts again (closed and opened), then the earlier page answers.
+  await page.keyboard.press('Escape');
+  await siteRow(page).click();
+  await expect(dialog.getByText('sample-invoice.pdf')).toBeVisible();
+  release();
+  await page.waitForTimeout(500);
+  await expect(dialog.getByText('earlier-page-two.pdf')).toHaveCount(0);
+  await expect(dialog.getByText('earlier-page-one.pdf')).toHaveCount(0);
+});
+
+test('a record gone since the queue was read leaves it, with no Retry', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  const RECORD = `**/api/v1/activity-records/${id}`;
+  await page.route(RECORD, (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ statusCode: 404, code: 'record_not_found', message: 'x' }) })
+      : route.fallback(),
+  );
+  await siteRow(page).click();
+  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('review-sheet-read-failed')).toHaveCount(0);
+  await page.unroute(RECORD);
+});
+
+test('a submit answered after the form moved to another period leaves the new record alone', async ({ page }) => {
+  await newGridRecord(page, PERIOD, '5000');
+  await page.getByTestId('evidence-vault-input').setInputFiles([pdf('sample-invoice.pdf')]);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const SUBMIT_ROUTE = '**/api/v1/activity-records/*/submit';
+  await page.route(SUBMIT_ROUTE, async (route) => {
+    await gate;
+    return route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ statusCode: 409, code: 'record_changed', message: 'changed' }),
+    });
+  });
+  const createdAnswer = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+  const submitSent = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/submit'));
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
+  created.push((await (await createdAnswer).json()).id as string);
+  await submitSent;
+
+  // Another period: the form now enters a new record, and the user types it.
+  await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values.Q3);
+  await expect(page.getByText(enDataEntry.nowEnteringNew)).toBeVisible();
+  await quantity(page).fill('7100');
+  release();
+
+  const toast = page.locator('[data-sonner-toast]').filter({ hasText: enErrors.codes.record_changed });
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText(`${SUBSIDIARY_OPTION.replace(' (UK)', '')}`);
+  await page.unroute(SUBMIT_ROUTE);
+  await page.waitForTimeout(500);
+  await expect(quantity(page)).toHaveValue('7100');
+});

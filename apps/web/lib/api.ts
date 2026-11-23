@@ -5,6 +5,7 @@ import type {
   ReleaseParametersQuery,
   ActivityRecordDTO,
   ApproveInput,
+  StartReviewInput,
   CaptureReportDatasetRequest,
   CreateInventoryBoundaryRequest,
   InventoryBoundaryVersionDTO,
@@ -603,9 +604,10 @@ export const api = {
   // super_admin review, reject and approve; nobody approves their own record,
   // D01) are enforced by the API — the UI hides
   // what a role cannot do, it does not decide it.
-  reviewActivityRecord: (id: string) =>
+  reviewActivityRecord: (id: string, body: StartReviewInput = {}) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/review`, {
       method: "POST",
+      body: JSON.stringify(body),
     }),
 
   approveActivityRecord: (id: string, body: ApproveInput) =>

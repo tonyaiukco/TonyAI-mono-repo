@@ -1555,6 +1555,12 @@ describe('selfGenerationBalance (self-gen-form, D6)', () => {
     expect(selfGenerationBalance(0.2, 'kWh', large)?.warns).toBe(true);
   });
 
+  it('still warns on a real 5.1% gap between figures stored exactly, however large (outside review)', () => {
+    const exact = block({ facilityConsumptionKwh: 1_000_000_000, selfGeneratedKwh: 1_000_000_000, exportedToGridKwh: 0.001 });
+    expect(selfGenerationBalance(0.001051, 'kWh', exact)).toMatchObject({ expectedImportKwh: 0.001, warns: true });
+    expect(selfGenerationBalance(0.00105, 'kWh', exact)?.warns).toBe(false);
+  });
+
   it('adds the exports to the expected import, so a netted bill figure warns', () => {
     expect(selfGenerationBalance(600_000, 'kWh', block({ exportedToGridKwh: 100_000 }))).toEqual({
       importKwh: 600_000,

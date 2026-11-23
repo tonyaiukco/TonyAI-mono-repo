@@ -1398,6 +1398,9 @@ function DataEntryPageInner() {
       locationId,
     });
     if (!movedOff) return;
+    // A new record now: answers still due for the record left behind (a save,
+    // a submit) belong to it, not to this form (outside review of b8b0d78b).
+    beginFormSession();
     setEditingId(null);
     setEditingVersion(null);
     setEditingCreatedBy(null);
@@ -1725,6 +1728,23 @@ function DataEntryPageInner() {
     }
   }
 
+  /**
+   * A record named in a toast told after the form moved on (outside review of
+   * b8b0d78b): its company, then what, when and where, and its type where the
+   * category has types to tell apart.
+   */
+  function recordNamed(rec: ActivityRecordDTO): string {
+    const implicit = CATEGORY_ACTIVITY_TYPES[rec.category as Category]?.implicit;
+    const type = rec.activityType && rec.activityType !== implicit ? activityLabel(rec.category, rec.activityType, t) : null;
+    return [
+      subsidiaries.find((s) => s.id === rec.subsidiaryId)?.legalName ?? null,
+      recordLabel({ ...rec, locationName: rec.locationName ?? null }, recordWords),
+      type,
+    ]
+      .filter((part): part is string => !!part)
+      .join(" · ");
+  }
+
   async function handleSubmit() {
     // Check before persist: an admin may save another author's edits but not submit them.
     if (!canSubmit) return;
@@ -1806,7 +1826,7 @@ function DataEntryPageInner() {
       // naming the record, and the form they are on now is left alone
       // (outside review of 001d6f1c).
       if (!formSessions.isCurrent(session)) {
-        toast.success(t("submitted"), { description: recordLabel({ ...rec, locationName: rec.locationName ?? null }, recordWords) });
+        toast.success(t("submitted"), { description: recordNamed(rec) });
         void refreshRecords(subsidiaryId);
         return;
       }
@@ -1830,7 +1850,7 @@ function DataEntryPageInner() {
       } else {
         // The user is on another record now: the refusal is still told, naming
         // the record that stays a draft, and that form is left alone.
-        toast.error(describeError(e).title, { description: recordLabel({ ...submitting, locationName: submitting.locationName ?? null }, recordWords) });
+        toast.error(describeError(e).title, { description: recordNamed(submitting) });
         void refreshRecords(subsidiaryId);
       }
     } finally {

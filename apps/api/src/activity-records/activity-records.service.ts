@@ -1777,7 +1777,14 @@ export class ActivityRecordsService {
    * Marks that a reviewer is actively looking at it; approve/reject remain the
    * only exits. Same reviewer RBAC + period-lock gate as approve/reject.
    */
-  async startReview(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
+  /**
+   * `seenSubmittedAt`, when named, is the submission the reviewer is looking
+   * at: one recalled and resubmitted since is refused as `record_changed`, so
+   * a reason typed for it never reaches the newer one (self-gen-form, outside
+   * review of `b8b0d78b`). Optional, unlike a decision's: a client that names
+   * none still takes the record into review, which decides nothing.
+   */
+  async startReview(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
       throw new ForbiddenException(
@@ -1795,6 +1802,7 @@ export class ActivityRecordsService {
             ),
           );
         }
+        assertSameSubmission(record, seenSubmittedAt);
       });
       await this.assertPeriodNotLocked(periodOf(record), tx);
       return this.transition(tx, user, record, ActivityRecordStatus.under_review);
