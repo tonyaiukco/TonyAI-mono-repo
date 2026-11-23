@@ -566,6 +566,9 @@ export class SubsidiariesService {
   ): Promise<void> {
     const locations = await tx.location.findMany({ where: { subsidiaryId: id } });
     for (const location of locations) {
+      // False when a concurrent `DELETE /locations/:id` removed the site after
+      // the list was read: it is cleared all the same, and its audit row is
+      // that request's (Codex review of #350 P2).
       await this.locations.deleteLocationForTrustedParent(tx, user, location);
     }
   }
@@ -587,7 +590,10 @@ export class SubsidiariesService {
       // the counts run. Without it the guard is a time-of-check read, and the
       // loser is not an error — the FK cascades the newcomer away silently,
       // which is the exact loss this whole guard exists to prevent.
-      await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR UPDATE`;
+      const [locked] = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR UPDATE`;
+      // Deleted by a concurrent request while this one waited for the lock:
+      // the answer it would get now, not a 500 (pre-pilot defects).
+      if (!locked) throw new ResourceNotFoundError('subsidiary_not_found');
       // Guard first. It refuses on anything that must survive — including a
       // location that holds records — so by the time the clear runs, every
       // remaining location is provably record-free.

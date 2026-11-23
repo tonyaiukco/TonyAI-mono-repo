@@ -90,6 +90,7 @@ import {
   REPORTING_CONTEXT_API_PATHS, REPORTING_CONTEXT_KEYS, GROUP_INTENSITY_METRICS,
   isReportingContext, matchesReportingContext,
 } from "@tonyai/shared-types";
+import { endingSessionHere } from "./session-watch";
 import { getSupabaseBrowserClient } from "./supabase";
 
 // Preserve the old import path; shared-types is the canonical definition.
@@ -254,6 +255,9 @@ let endingSession = false;
 function endSession(reason: "account_disabled" | "session_revoked"): void {
   if (endingSession || typeof window === "undefined") return;
   endingSession = true;
+  // This tab leaves for the reason's page itself: the session watcher must not
+  // send it to the plain sign-in page first.
+  endingSessionHere(true);
   void getSupabaseBrowserClient()
     .auth.signOut({ scope: "local" })
     .catch(() => undefined)

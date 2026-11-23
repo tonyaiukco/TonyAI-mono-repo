@@ -64,7 +64,6 @@ import { api, ApiError } from '@/lib/api';
 import { anomalyStatement, isFirstPeriodRecord } from '@/lib/anomaly-view';
 import { factorReleaseId, formatSealDate, sealDateFor } from '@/lib/release-seal-view';
 import { useReleaseSealDates } from '@/lib/use-release-seal-dates';
-import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
@@ -97,6 +96,7 @@ import { TargetsPanel } from '@/components/emissions/targets-panel';
 import { LoadMoreButton } from '@/components/ui/load-more-button';
 import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { IntensityPanel } from '@/components/emissions/intensity-panel';
+import { useSignOut } from "@/lib/use-sign-out";
 
 // Scope colours (aligned with the rest of the design system).
 const SCOPE_COLORS = {
@@ -191,6 +191,7 @@ function EmissionsAnalysisPageInner() {
   }, [describeFailure]);
   const showError = useCallback((e: unknown) => showErrorToast(latestDescribe.current(e)), []);
   const router = useRouter();
+  const signOut = useSignOut();
   const { user, setUser } = useAuthStore();
   const tContext = useTranslations('reportingContext');
   // LP3-02 N1: the one reporting selection, carried in the URL. Summary,
@@ -437,9 +438,7 @@ function EmissionsAnalysisPageInner() {
   }, [context]);
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
-    router.push('/login');
-    router.refresh();
+    await signOut();
   }
 
   /** Close the drawer without carrying a half-typed reason to the next record. */

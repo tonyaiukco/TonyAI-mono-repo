@@ -7,6 +7,7 @@ import { useTranslations } from "use-intl";
 import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { signInFailureKey } from "@/lib/auth-view";
+import { acceptOwnInvitation } from "@/lib/invitation-acceptance";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/auth/password-input";
@@ -20,7 +21,10 @@ import {
 } from "@/components/ui/card";
 import { Leaf } from "lucide-react";
 import { toast } from "sonner";
-import { useReportingContextStore } from "@/lib/store";
+import { useAuthStore, useReportingContextStore } from "@/lib/store";
+
+/** How long sign-in waits for the invitation acceptance before going on. */
+const SIGN_IN_ACCEPT_WAIT_MS = 5_000;
 
 // `useSearchParams` needs a Suspense boundary for the page to prerender.
 export default function LoginPage() {
@@ -74,8 +78,8 @@ function LoginForm() {
     setLoading(true);
     const supabase = getSupabaseBrowserClient();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
     if (error) {
+      setLoading(false);
       // Supabase's own sentence is English and names internals; the catalogue
       // words the two outcomes a person can act on.
       toast.error(t(signInFailureKey(error.code)));
@@ -84,6 +88,12 @@ function LoginForm() {
     toast.success(t("signIn.success"));
     // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
     useReportingContextStore.getState().clear();
+    // …and the previous person's role, until the new one is read (pre-pilot defects).
+    useAuthStore.getState().clear();
+    // An invitation whose acceptance never got through closes now (Codex review
+    // of #350). Waited for, but never for long: a hung API must not hold the
+    // sign-in (`security-rls` re-review); the call goes on and is bound to this user.
+    await Promise.race([acceptOwnInvitation(), new Promise((resolve) => setTimeout(resolve, SIGN_IN_ACCEPT_WAIT_MS))]);
     router.push("/");
     router.refresh();
   }

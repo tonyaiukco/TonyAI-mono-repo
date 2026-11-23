@@ -33,10 +33,16 @@ export const useReportingContextStore = create<ReportingContextState>((set) => (
 
 /** A Supabase auth event in this tab — including another tab's sign-in or
  * sign-out on the shared session — drops a remembered selection that belongs
- * to anyone but the session's user (`security-rls` P3-3). */
+ * to anyone but the session's user (`security-rls` P3-3), and the signed-in
+ * user too when the session ends or is now someone else's (pre-pilot defects). */
 export function forgetOnSessionChange(event: string, sessionUserId: string | undefined): void {
   const { remembered, clear } = useReportingContextStore.getState();
   if (remembered && (event === "SIGNED_OUT" || sessionUserId !== remembered.userId)) clear();
+  const auth = useAuthStore.getState();
+  // A session with no user (signed out, or none at start) is not this user's either.
+  if (auth.user && (event === "SIGNED_OUT" || sessionUserId !== auth.user.id)) {
+    auth.clear();
+  }
 }
 
 /** The remembered context, only for the user it belongs to. */

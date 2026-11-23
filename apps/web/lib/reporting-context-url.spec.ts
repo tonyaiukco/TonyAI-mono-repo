@@ -9,7 +9,7 @@ import {
   reportingContextQuery,
   resolveReportingContext,
 } from './reporting-context-url';
-import { forgetOnSessionChange, rememberedContextFor, useReportingContextStore } from './store';
+import { forgetOnSessionChange, rememberedContextFor, useAuthStore, useReportingContextStore } from './store';
 
 const SUB = '22222222-2222-2222-2222-222222222201';
 const OTHER = '22222222-2222-2222-2222-222222222202';
@@ -220,6 +220,26 @@ describe('the remembered selection and the session', () => {
       useReportingContextStore.getState().remember('user-a', { year: 2027, subsidiaryId: SUB });
       forgetOnSessionChange(event, user);
       expect(useReportingContextStore.getState().remembered, `${event} ${user}`).toBeNull();
+    }
+  });
+});
+
+describe('the signed-in user goes with the session (pre-pilot defects)', () => {
+  const user = { id: 'user-a', role: 'data_entry' } as never;
+
+  it('is cleared on a sign-out, here or in another tab, and when the session is now someone else\'s', () => {
+    for (const [event, sessionUser] of [['SIGNED_OUT', undefined], ['SIGNED_IN', 'user-b'], ['INITIAL_SESSION', undefined]] as const) {
+      useAuthStore.getState().setUser(user);
+      forgetOnSessionChange(event, sessionUser);
+      expect(useAuthStore.getState().user, `${event} ${sessionUser}`).toBeNull();
+    }
+  });
+
+  it("stays through the session's own refreshes", () => {
+    for (const event of ['INITIAL_SESSION', 'TOKEN_REFRESHED', 'SIGNED_IN', 'USER_UPDATED']) {
+      useAuthStore.getState().setUser(user);
+      forgetOnSessionChange(event, 'user-a');
+      expect(useAuthStore.getState().user, event).not.toBeNull();
     }
   });
 });

@@ -3,6 +3,7 @@ import { InvitationStatus } from '@tonyai/db';
 import type { UserRole, UserSummaryDTO } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { AccessAdminService, type InviteMember } from '../auth/access-admin.service';
+import { AccountDisabledError } from '../auth/access-errors';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthSyncService } from './auth-sync.service';
@@ -68,9 +69,23 @@ export class UserLifecycleService {
    * whatever state it was left in, is accepted — audited as theirs. The guard
    * has already refused a disabled account. A no-op for an account with no
    * open invitation (seeded ones, or a second call).
+   *
+   * The guard's check is a read before the transaction: a disable that commits
+   * in between revokes the invitation, and this update would reopen it as
+   * accepted on a disabled account. So the profile row is locked first — a
+   * disable updates that row before it revokes, so the two serialise; `NO KEY`
+   * is enough for that and leaves inserts that reference the profile alone — and the
+   * account is checked again under the lock. A re-enabled account still
+   * accepts (Codex review of #350 P2).
    */
   async accept(user: RequestUser): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
+      const [profile] = await tx.$queryRaw<{ disabled_at: Date | null; offboarded_at: Date | null }[]>`
+        SELECT p.disabled_at, o.offboarded_at
+          FROM profiles p LEFT JOIN organisations o ON o.id = p.organisation_id
+         WHERE p.id = ${user.id}::uuid
+           FOR NO KEY UPDATE OF p`;
+      if (!profile || profile.disabled_at || profile.offboarded_at) throw new AccountDisabledError();
       const { count } = await tx.invitation.updateMany({
         where: { profileId: user.id, status: { not: InvitationStatus.accepted } },
         data: {

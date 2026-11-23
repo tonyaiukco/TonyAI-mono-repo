@@ -654,6 +654,22 @@ describe('SubsidiariesService', () => {
       expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(false);
     });
 
+    it('a location a concurrent delete removed during the sweep counts as cleared: the subsidiary still goes (Codex review of #350)', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      countLocations(prisma, { total: 2 });
+      const gone = makeLocation({ id: 'loc-gone', subsidiaryId: 'sub-1' });
+      const kept = makeLocation({ id: 'loc-kept', subsidiaryId: 'sub-1' });
+      prisma.txClient.location.findMany.mockResolvedValue([gone, kept]);
+      locations.deleteLocationForTrustedParent.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+      await expect(service.remove(user, 'sub-1')).resolves.toEqual({ id: 'sub-1', deleted: true });
+      expect(locations.deleteLocationForTrustedParent.mock.calls.map((c) => c[2])).toEqual([gone, kept]);
+      expect(prisma.txClient.subsidiary.delete).toHaveBeenCalledWith({ where: { id: 'sub-1' } });
+    });
+
     it('a record-free location does NOT block — the delete clears it, audited', async () => {
       // It used to. The refusal existed because the FK cascade destroyed
       // locations unaudited; writing a row each removes the objection, and PR 3
@@ -894,6 +910,19 @@ describe('SubsidiariesService', () => {
 
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('answers 404, not a 500, when a concurrent delete wins while it waits for the row lock (pre-pilot defects)', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      // The other request committed its delete: the lock reads back no row.
+      prisma.$queryRaw.mockResolvedValueOnce([]);
+
+      await expect(service.remove(user, 'sub-1')).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'subsidiary_not_found' }),
+      });
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
     });
 
     it('does NOT tell the caller a reviewable record is permanent', async () => {

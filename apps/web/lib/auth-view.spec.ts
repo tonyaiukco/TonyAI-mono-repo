@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  acceptInvitationQuietly,
   EMPTY_REGISTRATION_FORM,
   isPublicPath,
   isSignedOutOnlyPath,
@@ -148,5 +149,59 @@ describe('the registration form (self-service registration)', () => {
     expect(registrationFailure({ status: 400, code: 'validation_failed' })).toBe('other');
     expect(registrationFailure(new TypeError('Failed to fetch'))).toBe('other');
     expect(registrationFailure(null)).toBe('other');
+  });
+});
+
+describe('acceptInvitationQuietly (pre-pilot defects)', () => {
+  const noWait = vi.fn(async () => undefined);
+  const failing = (status?: number) => Object.assign(new Error('x'), status === undefined ? {} : { status });
+
+  it('accepts on the first try', async () => {
+    const accept = vi.fn(async () => undefined);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait })).toBe(true);
+    expect(accept).toHaveBeenCalledTimes(1);
+  });
+
+  it('repeats a transient failure, a 5xx or a network error, until it goes through', async () => {
+    const accept = vi.fn().mockRejectedValueOnce(failing(503)).mockRejectedValueOnce(failing(429)).mockResolvedValue(undefined);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait })).toBe(true);
+    expect(accept).toHaveBeenCalledTimes(3);
+  });
+
+  it('repeats a network error with no status', async () => {
+    const accept = vi.fn().mockRejectedValueOnce(failing()).mockResolvedValue(undefined);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait })).toBe(true);
+    expect(accept).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops at once on a refusal a repeat cannot change', async () => {
+    for (const status of [400, 401, 403, 404]) {
+      const accept = vi.fn().mockRejectedValue(failing(status));
+      expect(await acceptInvitationQuietly(accept, { wait: noWait }), String(status)).toBe(false);
+      expect(accept).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('gives up after three attempts by default, waiting longer each time, and never throws', async () => {
+    const accept = vi.fn().mockRejectedValue(failing(500));
+    const wait = vi.fn(async () => undefined);
+    expect(await acceptInvitationQuietly(accept, { wait })).toBe(false);
+    expect(accept).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[500], [1000]]);
+  });
+
+  it('asks before every repeat whether the same person is signed in, and stops when not', async () => {
+    const accept = vi.fn().mockRejectedValue(failing(503));
+    const stillSame = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait, stillSame })).toBe(false);
+    expect(accept).toHaveBeenCalledTimes(2);
+    expect(stillSame).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not ask before the first attempt', async () => {
+    const accept = vi.fn(async () => undefined);
+    const stillSame = vi.fn(async () => false);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait, stillSame })).toBe(true);
+    expect(stillSame).not.toHaveBeenCalled();
   });
 });

@@ -12,7 +12,6 @@ import {
   Paperclip,
   ShieldAlert,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
@@ -47,7 +46,6 @@ import { anomalyStatement, isFirstPeriodRecord } from "@/lib/anomaly-view";
 import { factorReleaseId, formatSealDate, sealDateFor } from "@/lib/release-seal-view";
 import { useReleaseSealDates } from "@/lib/use-release-seal-dates";
 import { useAuthStore } from "@/lib/store";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   entityLabel,
   isCalculated,
@@ -72,6 +70,7 @@ import {
   notCalculatedReason,
 } from "@/lib/calculation-display";
 import { cn } from "@/lib/utils";
+import { useSignOut } from "@/lib/use-sign-out";
 
 const ANY = "__any__";
 
@@ -104,7 +103,7 @@ export default function ReviewPage() {
   const locale = useLocale();
   // The package seal date beside the release behind a figure (UAT round 2, S2).
   const sealDates = useReleaseSealDates();
-  const router = useRouter();
+  const signOut = useSignOut();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const [rows, setRows] = useState<ActivityRecordDTO[]>([]);
@@ -367,9 +366,7 @@ export default function ReviewPage() {
   }
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
-    router.push("/login");
-    router.refresh();
+    await signOut();
   }
 
   async function openEvidence(id: string) {

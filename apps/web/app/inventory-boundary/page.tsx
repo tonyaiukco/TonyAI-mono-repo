@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
 import { CheckCircle2, CopyPlus, FilePlus2, Info, Trash2 } from "lucide-react";
@@ -46,7 +45,6 @@ import {
   type VersionState,
 } from "@/lib/inventory-boundary-view";
 import { useAuthStore } from "@/lib/store";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   LOCALE_FORMAT_TAGS,
   PERIOD_VALUES,
@@ -58,6 +56,7 @@ import {
   type SubsidiaryDTO,
 } from "@/lib/types";
 import { useReportingContext } from "@/lib/use-reporting-context";
+import { useSignOut } from "@/lib/use-sign-out";
 
 const STATE_STYLES: Record<VersionState, string> = {
   open: "bg-blue-500/15 text-blue-700 border-blue-500/30",
@@ -101,7 +100,7 @@ function InventoryBoundaryScreen() {
   const tContext = useTranslations("reportingContext");
   const tPeriods = useTranslations("periods");
   const locale = useLocale() as Locale;
-  const router = useRouter();
+  const signOut = useSignOut();
   const errorToast = useErrorToast();
   const { user, setUser } = useAuthStore();
   const contextView = useReportingContext();
@@ -353,8 +352,7 @@ function InventoryBoundaryScreen() {
   }
 
   const handleLogout = async () => {
-    await getSupabaseBrowserClient().auth.signOut();
-    router.push("/login");
+    await signOut();
   };
 
   const undeclared = detail ? undeclaredSubsidiaries(detail, subsidiaries) : [];

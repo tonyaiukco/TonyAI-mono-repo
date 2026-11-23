@@ -1,5 +1,6 @@
 {
   "signOut": "Çıkış yap",
+  "signOutFailed": "Çıkış yapılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
   "metadata": {
     "title": "TonyAI - Kurumsal Sürdürülebilirlik Veri Platformu",
     "description": "Karbon muhasebesi ve ESG raporlaması için profesyonel veri yönetim platformu"

@@ -45,7 +45,6 @@ import {
 import { Building2, CheckCircle2, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
@@ -59,6 +58,7 @@ import type {
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { geographyLabel } from "@/lib/vocabulary";
+import { useSignOut } from "@/lib/use-sign-out";
 
 const statusClass: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30",
@@ -84,6 +84,7 @@ export default function SubsidiariesPage() {
   const locale = useLocale();
   const showError = useErrorToast();
   const router = useRouter();
+  const signOut = useSignOut();
   const { user, setUser } = useAuthStore();
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
   const [locations, setLocations] = useState<LocationDTO[]>([]);
@@ -237,9 +238,7 @@ export default function SubsidiariesPage() {
   }
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
-    router.push("/login");
-    router.refresh();
+    await signOut();
   }
 
   return (

@@ -89,6 +89,17 @@ test.describe('self-service registration', () => {
 
     const invitation = await registrationInvitePath(request, email);
     test.info().annotations.push({ type: 'invitation link', description: `from ${invitation.from}` });
+    // The API refuses every acceptance while Auth works: the confirm step's
+    // three tries and the password step's three all fail, and the invitation
+    // stays open. The next sign-in closes it (pre-pilot defects; Codex review
+    // of #350).
+    let acceptCalls = 0;
+    await page.route('**/api/v1/invitations/accept', (route) => {
+      acceptCalls += 1;
+      return acceptCalls <= 6
+        ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ statusCode: 503, message: 'unavailable' }) })
+        : route.fallback();
+    });
     await page.goto(invitation.path);
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.waitForURL('**/auth/set-password**');
@@ -96,6 +107,18 @@ test.describe('self-service registration', () => {
     await page.locator('#repeat-password').fill(password);
     await page.getByRole('button', { name: 'Save the password', exact: true }).click();
     await page.waitForURL((url) => url.pathname === '/');
+    // Three tries on the confirm step, then three on the password step.
+    expect(acceptCalls).toBe(6);
+    expect((await registeredAccount(email))?.invitationStatus).toBe('sent');
+
+    await page.getByTestId('sign-out').click();
+    await page.waitForURL('**/login');
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.waitForURL((url) => url.pathname === '/');
+    expect(acceptCalls).toBe(7);
+    await page.unroute('**/api/v1/invitations/accept');
 
     // Signed in as the first administrator of the new organisation, with the invitation closed.
     const token = await getAccessToken(request, email, password);

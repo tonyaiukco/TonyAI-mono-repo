@@ -11,8 +11,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PasswordInput } from "@/components/auth/password-input";
 import { Label } from "@/components/ui/label";
 import { MIN_PASSWORD_LENGTH, passwordProblem, setPasswordFailureKey } from "@/lib/auth-view";
+import { acceptOwnInvitation } from "@/lib/invitation-acceptance";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
-import { useReportingContextStore } from "@/lib/store";
+import { useAuthStore, useReportingContextStore } from "@/lib/store";
 
 /**
  * The second step of an emailed link (LP4-01): `/auth/confirm` signed the
@@ -49,11 +50,16 @@ export function SetPasswordForm() {
       toast.error(t(setPasswordFailureKey(error.code), { min: MIN_PASSWORD_LENGTH }));
       return;
     }
+    // The confirm step's acceptance may not have gone through: asked again, a
+    // no-op when it did (pre-pilot defects).
+    await acceptOwnInvitation();
     // Whoever asked for the reset link may not be the only one holding a session.
     if (flow === "recovery") await supabase.auth.signOut({ scope: "others" }).catch(() => undefined);
     toast.success(t("setPassword.saved"));
     // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
     useReportingContextStore.getState().clear();
+    // …and the previous person's role, until the new one is read (pre-pilot defects).
+    useAuthStore.getState().clear();
     router.replace("/");
     router.refresh();
   }

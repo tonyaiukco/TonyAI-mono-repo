@@ -33,7 +33,6 @@ import {
   Search,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { useRecordWords, useStableErrorToast } from '@/lib/i18n/hooks';
@@ -56,6 +55,7 @@ import type {
   SubsidiaryDTO,
   TrackingMatrixDTO,
 } from '@/lib/types';
+import { useSignOut } from "@/lib/use-sign-out";
 
 const statusClass: Record<string, string> = {
   active: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30',
@@ -75,6 +75,7 @@ export default function CarbonDashboard() {
 function CarbonDashboardInner() {
   const tRoles = useTranslations('users');
   const router = useRouter();
+  const signOut = useSignOut();
   const { user, setUser } = useAuthStore();
   // LP3-02 N1: the one reporting selection, carried in the URL.
   const tContext = useTranslations('reportingContext');
@@ -340,9 +341,7 @@ function CarbonDashboardInner() {
   };
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
-    router.push('/login');
-    router.refresh();
+    await signOut();
   }
 
   return (

@@ -7,6 +7,7 @@ import { SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AuditService } from '../../src/audit/audit.service';
 import { AccessAdminService, lockTenantAdmin } from '../../src/auth/access-admin.service';
+import { AccountDisabledError } from '../../src/auth/access-errors';
 import type { RequestUser } from '../../src/auth/auth.types';
 import { MailService, type MailConfig, type MailTransport } from '../../src/mail/mail.service';
 import { OnboardingOperator, OperatorRefusal } from '../../src/onboarding/onboarding-operator';
@@ -101,6 +102,17 @@ async function bannedInAuth(id: string): Promise<boolean> {
   const { data } = await admin.getUserById(id);
   const until = (data.user as { banned_until?: string | null } | null)?.banned_until;
   return Boolean(until && new Date(until) > new Date());
+}
+
+/** Waits until some session is queued on a row lock — the operation under test is blocked behind the holder's transaction. */
+async function queuedOnRowLock(timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const [{ n }] = await owner.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype IN ('transactionid', 'tuple')`;
+    if (n > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('nothing queued on a row lock');
 }
 
 /** Waits until some session is queued on an advisory lock — the operation under test is blocked behind the holder. */
@@ -848,6 +860,41 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     await holder.auth.setSession(session.data.session!);
     expect((await holder.auth.updateUser({ password: 'their-own-pass-123' })).error).toBeNull();
     expect((await browser().auth.signInWithPassword({ email: created.email, password: 'their-own-pass-123' })).error).toBeNull();
+  });
+
+  it('an acceptance that waited on a disable is refused, and the invitation stays revoked (Codex review of #350)', async () => {
+    // The guard passed before the disable committed. Held after the disable
+    // locked the profile and before it revoked the invitation: without the
+    // acceptance's own lock and recheck, the acceptance ran straight through,
+    // the revoke then found nothing open, and a disabled account was left with
+    // an accepted invitation and an audited acceptance.
+    const created = await invite(inbox().transport);
+    const invitee = await asRequestUser(created.id);
+    const hold = holdBefore(runtime, 'Invitation', 'updateMany');
+    const disabling = new AccessAdminService(hold.client, new AuditService(hold.client)).disableMember(A.users.superAdmin, created.id);
+    await hold.reached();
+    const accepting = services(null).lifecycle.accept(invitee).then(() => 'accepted' as const, (e: unknown) => e);
+    await Promise.race([queuedOnRowLock(), accepting]);
+    hold.release();
+    await disabling;
+    expect(await accepting).toBeInstanceOf(AccountDisabledError);
+    const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
+    expect(invitation.status).toBe(InvitationStatus.revoked);
+    expect(await owner.auditLog.count({ where: { entityId: created.id, action: 'accept' } })).toBe(0);
+  });
+
+  it('a disabled account accepts nothing; once re-enabled, its invitation is accepted', async () => {
+    const created = await invite(inbox().transport);
+    const invitee = await asRequestUser(created.id);
+    await services(null).lifecycle.disable(A.users.superAdmin, created.id);
+    await expect(services(null).lifecycle.accept(invitee)).rejects.toBeInstanceOf(AccountDisabledError);
+    expect((await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } })).status).toBe(InvitationStatus.revoked);
+
+    await services(null).lifecycle.enable(A.users.superAdmin, created.id);
+    await services(null).lifecycle.accept(invitee);
+    const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
+    expect(invitation).toMatchObject({ status: InvitationStatus.accepted, revokedAt: null });
+    expect(await owner.auditLog.count({ where: { entityId: created.id, action: 'accept' } })).toBe(1);
   });
 
   it('a reset link accepts an invitation its owner never opened, and closes it', async () => {

@@ -45,6 +45,9 @@ import { IsValidRecordParameters } from './record-parameters.dto';
  * subsidiaries (that would break tenant scoping and the calc snapshot's
  * geography). `scope`/`calculation` are re-derived server-side on any change.
  */
+// Absent means "keep the stored value"; null is refused (400), never read as
+// absent, for every field whose column cannot be null — `@ValidateIf` rather
+// than `@IsOptional`, which lets null through to a 500 (pre-pilot defects).
 export class UpdateActivityRecordDto {
   // Re-target the reporting entity while the record is editable. `null` detaches
   // it back to subsidiary-level; omitted leaves it unchanged. (The service
@@ -56,13 +59,13 @@ export class UpdateActivityRecordDto {
   @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
   locationId?: string | null;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsInt()
   @Min(2000)
   @Max(2100)
   reportingYear?: number;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @IsIn(REPORTING_PERIODS as readonly string[])
   reportingPeriod?: ReportingPeriod;
@@ -71,13 +74,13 @@ export class UpdateActivityRecordDto {
   // period lock matchable — `canonicalPeriodValue` is, on both write paths —
   // it is the refusal that happens before the DTO pipeline and the vocabulary
   // lookup, whose 400 echoes the value back. See PERIOD_VALUE_MAX_LENGTH.
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @MinLength(1)
   @MaxLength(PERIOD_VALUE_MAX_LENGTH)
   periodValue?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @IsIn(CATEGORIES as readonly string[])
   category?: Category;
@@ -92,7 +95,7 @@ export class UpdateActivityRecordDto {
   activityType?: string | null;
 
   // ACTIVITY_VALUE_MAX: the bound the database CHECK holds every writer to.
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsNumber()
   @Min(0)
   @Max(ACTIVITY_VALUE_MAX, codedConstraint('activity_value_too_large'))
@@ -105,7 +108,7 @@ export class UpdateActivityRecordDto {
   // typed here — the service stores the vocabulary's canonical spelling
   // (`storedUnit`) and the snapshot keeps this one as `inputUnit` until the
   // record is next edited.
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsActivityUnit()
   @IsString()
   @Transform(storableUnit)
