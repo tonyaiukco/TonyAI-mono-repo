@@ -1547,6 +1547,14 @@ describe('selfGenerationBalance (self-gen-form, D6)', () => {
     expect(selfGenerationBalance(1.05, 'kWh', block({ facilityConsumptionKwh: 1, selfGeneratedKwh: 0 }))?.warns).toBe(false);
   });
 
+  it('holds exactly 5% when the expected import is a small difference of large figures (outside review)', () => {
+    const large = block({ facilityConsumptionKwh: 1_000_000.1, selfGeneratedKwh: 1_000_000 });
+    expect(selfGenerationBalance(0.105, 'kWh', large)?.warns).toBe(false);
+    expect(selfGenerationBalance(0.095, 'kWh', large)?.warns).toBe(false);
+    expect(selfGenerationBalance(0.106, 'kWh', large)?.warns).toBe(true);
+    expect(selfGenerationBalance(0.2, 'kWh', large)?.warns).toBe(true);
+  });
+
   it('adds the exports to the expected import, so a netted bill figure warns', () => {
     expect(selfGenerationBalance(600_000, 'kWh', block({ exportedToGridKwh: 100_000 }))).toEqual({
       importKwh: 600_000,

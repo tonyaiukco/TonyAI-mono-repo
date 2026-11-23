@@ -138,20 +138,44 @@ export default function ReviewPage() {
   // since. A write's answer is newer than that read, so it bumps the sequence
   // and a read answered after it is dropped.
   const sheetRead = useRef(0);
+  // Decisions wait for that read (outside review of 001d6f1c): a reason typed
+  // against the row could otherwise go out with a newer submission's
+  // `seenSubmittedAt`, and a decision could be offered on a record no longer
+  // pending or on an unconfirmed fuel notice.
+  const [sheetState, setSheetState] = useState<"reading" | "ready" | "failed">("ready");
   const openRecord = (row: ActivityRecordDTO) => {
     const seq = (sheetRead.current += 1);
     setSelected(row);
     setReason("");
+    setSheetState("reading");
     api
       .getActivityRecord(row.id)
       .then((fresh) => {
         if (sheetRead.current !== seq || selectedId.current !== row.id) return;
+        if (!(PENDING_REVIEW_STATUSES as readonly string[]).includes(fresh.status)) {
+          // Decided elsewhere since the queue was read: it leaves the queue.
+          setRows((prev) => prev.filter((r) => r.id !== fresh.id));
+          setSelected(null);
+          setReason("");
+          setSheetState("ready");
+          toast.info(t("sheet.noLongerPending"));
+          void loadRef.current({ quiet: true });
+          return;
+        }
+        // Submitted again since the queue was read: what was typed and the
+        // files shown belong to the earlier submission.
+        if (fresh.submittedAt !== row.submittedAt) {
+          setReason("");
+          setEvidenceRetry((n) => n + 1);
+        }
         setSelected(fresh);
         setRows((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)));
+        setSheetState("ready");
       })
       .catch((err) => {
-        // The row stays on screen; the reviewer is told it could not be read again.
-        if (sheetRead.current === seq && selectedId.current === row.id) showError(err);
+        if (sheetRead.current !== seq || selectedId.current !== row.id) return;
+        setSheetState("failed");
+        showError(err);
       });
   };
   const [reason, setReason] = useState("");
@@ -376,6 +400,7 @@ export default function ReviewPage() {
       // or moved on from, is not reopened by a late answer (Codex P2-2).
       if (selectedId.current === record.id) {
         sheetRead.current += 1;
+        setSheetState("ready");
         setSelected(stillPending ? updated : null);
         if (!stillPending) setReason("");
       }
@@ -973,6 +998,7 @@ export default function ReviewPage() {
                 </label>
                 <Textarea
                   id="review-reason"
+                  disabled={sheetState !== "ready"}
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder={t("sheet.reasonPlaceholder")}
@@ -983,11 +1009,24 @@ export default function ReviewPage() {
                 </p>
               </div>
 
+              {sheetState === "reading" && (
+                <p className="text-xs text-muted-foreground" role="status" data-testid="review-sheet-reading">
+                  {t("sheet.reading")}
+                </p>
+              )}
+              {sheetState === "failed" && (
+                <p className="text-xs text-red-600" role="status" data-testid="review-sheet-read-failed">
+                  {t("sheet.readFailed")}{" "}
+                  <button type="button" className="underline" onClick={() => openRecord(selected)}>
+                    {t("retry")}
+                  </button>
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {canReview && selected.status === "submitted" && (
                   <Button
                     variant="outline"
-                    disabled={busy}
+                    disabled={busy || sheetState !== "ready"}
                     onClick={() => act("review", selected)}
                   >
                     {t("sheet.startReview")}
@@ -996,7 +1035,7 @@ export default function ReviewPage() {
                 {canReview && (
                   <Button
                     variant="destructive"
-                    disabled={busy || !reason.trim()}
+                    disabled={busy || sheetState !== "ready" || !reason.trim()}
                     onClick={() => act("reject", selected)}
                   >
                     {t("sheet.reject")}
@@ -1004,7 +1043,7 @@ export default function ReviewPage() {
                 )}
                 {canApprove && (
                   <Button
-                    disabled={busy}
+                    disabled={busy || sheetState !== "ready"}
                     onClick={() => act("approve", selected)}
                   >
                     {t("sheet.approve")}

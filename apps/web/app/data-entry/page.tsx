@@ -131,7 +131,7 @@ import { FactorCoverageLegend } from "@/components/data-entry/factor-coverage-le
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { RecentImports } from "@/components/data-entry/recent-imports";
 import { RecordsTable, type AttachRequest } from "@/components/data-entry/records-table";
-import { attachableRecords, refrigerantShortcut } from "@/lib/evidence-view";
+import { attachableRecords, recordLabel, refrigerantShortcut } from "@/lib/evidence-view";
 import { factorReleaseId, formatSealDate, sealDateFor, type SealDates } from "@/lib/release-seal-view";
 import { useReleaseSealDates } from "@/lib/use-release-seal-dates";
 import {
@@ -1741,7 +1741,7 @@ function DataEntryPageInner() {
     // Set once the save has committed and the submit is sent: a refusal from
     // then on is the submit's, and the draft it leaves is saved (outside review
     // of 833db34c), so it never gets the save's "your changes were not saved".
-    let submitting: string | null = null;
+    let submitting: ActivityRecordDTO | null = null;
     try {
       const saved = await persist();
       if (!saved) return;
@@ -1800,8 +1800,16 @@ function DataEntryPageInner() {
         await refreshRecords(subsidiaryId);
         return;
       }
-      submitting = rec.id;
+      submitting = rec;
       await api.submitActivityRecord(rec.id);
+      // Answered after the user opened another record: the outcome is told,
+      // naming the record, and the form they are on now is left alone
+      // (outside review of 001d6f1c).
+      if (!formSessions.isCurrent(session)) {
+        toast.success(t("submitted"), { description: recordLabel({ ...rec, locationName: rec.locationName ?? null }, recordWords) });
+        void refreshRecords(subsidiaryId);
+        return;
+      }
       // Announced here too. Submitting a moved record re-attributes it just as
       // a draft save does, and saying nothing made the two paths disagree about
       // an action with the same consequence.
@@ -1817,8 +1825,13 @@ function DataEntryPageInner() {
         // The draft is saved; the submit was refused. A record changed in
         // between is read again, so the next submit is made on it.
         errorToast(e);
-        if (e instanceof ApiError && e.code === "record_changed") void reloadAfterLostRace(submitting);
+        if (e instanceof ApiError && e.code === "record_changed") void reloadAfterLostRace(submitting.id);
         else void refreshRecords(subsidiaryId);
+      } else {
+        // The user is on another record now: the refusal is still told, naming
+        // the record that stays a draft, and that form is left alone.
+        toast.error(describeError(e).title, { description: recordLabel({ ...submitting, locationName: submitting.locationName ?? null }, recordWords) });
+        void refreshRecords(subsidiaryId);
       }
     } finally {
       setSaving(null);

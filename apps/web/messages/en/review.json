@@ -78,7 +78,10 @@
     "startReview": "Start review",
     "reject": "Reject",
     "approve": "Approve",
-    "selfApproval": "You cannot approve a record you entered."
+    "selfApproval": "You cannot approve a record you entered.",
+    "reading": "Reading the record as it stands now…",
+    "readFailed": "The record could not be read again, so the decision waits.",
+    "noLongerPending": "This record is no longer waiting for review."
   },
   "toast": {
     "reviewed": "Taken into review",

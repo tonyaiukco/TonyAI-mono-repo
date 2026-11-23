@@ -764,7 +764,8 @@ describe('SelfGenerationInputs (self-gen-form)', () => {
   it('asks for a source and nothing more while none is chosen', () => {
     const html = render('en', {});
     expect(html).toContain('data-testid="self-generation-source"');
-    expect(html).not.toContain('id="input-self-generated"');
+    // The fields stay mounted, hidden, so typed text survives None and back (outside review).
+    expect(html).toMatch(/<div[^>]*hidden=""[^>]*data-testid="self-generation-fields"/);
     expect(html).not.toContain(escaped(copy('en').caseA));
   });
 
@@ -772,6 +773,7 @@ describe('SelfGenerationInputs (self-gen-form)', () => {
     for (const locale of ['en', 'tr'] as const) {
       const html = render(locale, { form: solar });
       for (const id of ['input-self-generated', 'input-self-exported', 'input-self-facility']) expect(html).toContain(`id="${id}"`);
+      expect(html).not.toMatch(/<div[^>]*hidden=""[^>]*data-testid="self-generation-fields"/);
       expect(html).toContain(escaped(copy(locale).caseA));
       expect(html).toContain(escaped(copy(locale).importStatement));
       expect(html).not.toContain('data-testid="self-generation-reminder"');

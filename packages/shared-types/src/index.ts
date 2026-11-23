@@ -3681,6 +3681,11 @@ export const ENERGY_BALANCE_TOLERANCE = 0.05;
  *  would otherwise warn at 1.05 kWh against 1 kWh (outside review of 833db34c). */
 const ENERGY_BALANCE_ROUNDING = 1e-9;
 
+/** Units of rounding allowed per operand's magnitude: a small expected import
+ *  from two large figures (1,000,000.1 − 1,000,000) loses digits in the
+ *  subtraction itself (outside review of 001d6f1c). */
+const ENERGY_BALANCE_ULPS = 8;
+
 /** The energy balance of an Electricity record with a facility consumption (`selfGenerationBalance`). */
 export interface SelfGenerationBalance {
   /** The record's quantity, in kWh. */
@@ -3713,12 +3718,16 @@ export function selfGenerationBalance(
   const route = CEILING_UNIT_MULTIPLIERS[importUnit];
   if (route.base !== 'kWh') return null;
   const importKwh = importValue * route.multiplier;
-  const expectedImportKwh = consumption - generated + (block.exportedToGridKwh ?? 0);
+  const exported = block.exportedToGridKwh ?? 0;
+  const expectedImportKwh = consumption - generated + exported;
+  // What the operands' own rounding can move the gap by, so an exact 5% reads as 5%.
+  const rounding =
+    ENERGY_BALANCE_ULPS * Number.EPSILON * Math.max(Math.abs(consumption), Math.abs(generated), Math.abs(exported), Math.abs(importKwh));
   const warns =
     expectedImportKwh <= 0
       ? importKwh > 0
       : Math.abs(importKwh - expectedImportKwh) >
-        expectedImportKwh * ENERGY_BALANCE_TOLERANCE * (1 + ENERGY_BALANCE_ROUNDING);
+        expectedImportKwh * ENERGY_BALANCE_TOLERANCE * (1 + ENERGY_BALANCE_ROUNDING) + rounding;
   return { importKwh, expectedImportKwh, warns };
 }
 

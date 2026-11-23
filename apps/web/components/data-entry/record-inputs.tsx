@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { AlertTriangle, Info, Plus, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "use-intl";
 import { DecimalNote } from "@/components/i18n/decimal-note";
@@ -99,6 +99,16 @@ function ParameterNumberField({
     onChange(stored, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // A language switch re-reads the text (`useDecimalInput`, during render): the
+  // form is told what it reads now, or a figure refused in one language and
+  // read in the other would leave the save held (outside review of 001d6f1c).
+  const reportedLocale = useRef(input.locale);
+  useEffect(() => {
+    if (reportedLocale.current === input.locale) return;
+    reportedLocale.current = input.locale;
+    onChange(check.ok ? check.value : null, !check.ok && check.reason !== "empty");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input.locale]);
   return (
     <div className="space-y-1.5">
       {info ? (
@@ -567,43 +577,54 @@ export function SelfGenerationInputs({
         <>
           <p className="text-xs text-muted-foreground" data-testid="self-generation-case-a">{t("caseA")}</p>
           <p className="text-xs text-muted-foreground" data-testid="self-generation-import">{t("importStatement")}</p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <ParameterNumberField
-              key={`${epoch}:self-generated`}
-              id="input-self-generated"
-              label={t("generated")}
-              stored={form.generatedKwh}
-              rule="non_negative"
-              max={SELF_GENERATION_KWH_MAX}
-              invalid={invalidField === "generatedKwh"}
-              onChange={(value, refused) => onChange({ generatedKwh: value }, "generatedKwh", refused)}
-            />
-            <ParameterNumberField
-              key={`${epoch}:self-exported`}
-              id="input-self-exported"
-              label={t("exported")}
-              stored={form.exportedKwh}
-              rule="non_negative"
-              max={SELF_GENERATION_KWH_MAX}
-              help={t("exportedHelp")}
-              invalid={invalidField === "exportedKwh"}
-              onChange={(value, refused) => onChange({ exportedKwh: value }, "exportedKwh", refused)}
-            />
-            <ParameterNumberField
-              key={`${epoch}:self-facility`}
-              id="input-self-facility"
-              label={t("facility")}
-              stored={form.facilityKwh}
-              // Zero is read, so the section can say the consumption must be
-              // above zero or left empty (its own sentence), rather than that
-              // the figure could not be read (qa-auditor review).
-              rule="non_negative"
-              max={SELF_GENERATION_KWH_MAX}
-              help={t("facilityHelp")}
-              invalid={invalidField === "facilityKwh"}
-              onChange={(value, refused) => onChange({ facilityKwh: value }, "facilityKwh", refused)}
-            />
-          </div>
+        </>
+      )}
+      {/* Hidden, not unmounted, with no source: the fields keep their text, a
+          figure they could not read included, through None and back (outside
+          review of 001d6f1c). With no source no block is sent, whatever they hold. */}
+      <div
+        className={form.source === null ? "hidden" : "grid grid-cols-1 gap-4 sm:grid-cols-3"}
+        hidden={form.source === null}
+        data-testid="self-generation-fields"
+      >
+        <ParameterNumberField
+          key={`${epoch}:self-generated`}
+          id="input-self-generated"
+          label={t("generated")}
+          stored={form.generatedKwh}
+          rule="non_negative"
+          max={SELF_GENERATION_KWH_MAX}
+          invalid={invalidField === "generatedKwh"}
+          onChange={(value, refused) => onChange({ generatedKwh: value }, "generatedKwh", refused)}
+        />
+        <ParameterNumberField
+          key={`${epoch}:self-exported`}
+          id="input-self-exported"
+          label={t("exported")}
+          stored={form.exportedKwh}
+          rule="non_negative"
+          max={SELF_GENERATION_KWH_MAX}
+          help={t("exportedHelp")}
+          invalid={invalidField === "exportedKwh"}
+          onChange={(value, refused) => onChange({ exportedKwh: value }, "exportedKwh", refused)}
+        />
+        <ParameterNumberField
+          key={`${epoch}:self-facility`}
+          id="input-self-facility"
+          label={t("facility")}
+          stored={form.facilityKwh}
+          // Zero is read, so the section can say the consumption must be
+          // above zero or left empty (its own sentence), rather than that
+          // the figure could not be read (qa-auditor review).
+          rule="non_negative"
+          max={SELF_GENERATION_KWH_MAX}
+          help={t("facilityHelp")}
+          invalid={invalidField === "facilityKwh"}
+          onChange={(value, refused) => onChange({ facilityKwh: value }, "facilityKwh", refused)}
+        />
+      </div>
+      {form.source !== null && (
+        <>
           {issue && (
             <p className="text-xs text-amber-700" role="status" data-testid="self-generation-issue">
               {t(`issues.${issue}`)}

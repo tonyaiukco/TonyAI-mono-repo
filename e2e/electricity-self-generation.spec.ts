@@ -424,7 +424,7 @@ test('a plain grid record is saved with no parameters, as before', async ({ page
   await quantity(page).fill('5000');
   // The section opens on no source and asks nothing more.
   await expect(sourceSelect(page)).toHaveText(SG.sources.none);
-  await expect(generated(page)).toHaveCount(0);
+  await expect(generated(page)).toBeHidden();
 
   const { body, response } = await save(page, 'POST');
   expect(response.status()).toBe(201);
@@ -637,7 +637,7 @@ test('an opened block is corrected on the form, then removed, and the figure nev
   // No source: a plain grid record again.
   await editButton(page).click();
   await pickSource(page, 'none');
-  await expect(generated(page)).toHaveCount(0);
+  await expect(generated(page)).toBeHidden();
   const removed = (await save(page, 'PATCH')).body;
   expect(removed.parameters ?? null).toBeNull();
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
@@ -831,12 +831,20 @@ test('a submit refused after its save says what the submit met, and the draft st
     }),
   );
   const createdAnswer = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
-  // The form reads the saved draft again, so the next submit is made on it.
-  const reread = page.waitForRequest((r) => r.method() === 'GET' && /\/activity-records\/[0-9a-f-]{36}$/.test(new URL(r.url()).pathname));
+  // The order of what the page did: the upload's own read comes before the
+  // submit, so only a read after the refusal proves the form read it again
+  // (outside review of 001d6f1c).
+  const events: string[] = [];
+  page.on('response', (r) => {
+    if (r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/submit')) events.push('submit-refused');
+  });
+  page.on('request', (r) => {
+    if (r.method() === 'GET' && /\/activity-records\/[0-9a-f-]{36}$/.test(new URL(r.url()).pathname)) events.push('read');
+  });
   await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
   const id = (await (await createdAnswer).json()).id as string;
   created.push(id);
-  expect(new URL((await reread).url()).pathname.endsWith(`/activity-records/${id}`)).toBe(true);
+  await expect.poll(() => events.lastIndexOf('read') > events.indexOf('submit-refused') && events.includes('submit-refused')).toBe(true);
 
   // The submit's own sentence, never the save's "your changes were not saved".
   await expect(page.getByText(enErrors.codes.record_changed, { exact: true })).toBeVisible();
@@ -845,4 +853,137 @@ test('a submit refused after its save says what the submit met, and the draft st
   const token = await getAccessToken(request, ADMIN_EMAIL);
   expect(await read(request, token, id)).toMatchObject({ status: 'draft', activityValue: 5000, evidenceCount: 1 });
   await expect(quantity(page)).toHaveValue('5000');
+});
+
+test('a figure the form could not read survives a source of None and back', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  await openDraft(page);
+  await exported(page).fill('500,');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+  await pickSource(page, 'none');
+  await expect(exported(page)).toBeHidden();
+  await pickSource(page, 'solar');
+  await expect(exported(page)).toHaveValue('500,');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  expect((await read(request, token, id)).parameters).toEqual(BLOCK);
+});
+
+test('a figure refused in one language and read in the other no longer holds the save', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  try {
+    await newGridRecord(page);
+    await pickSource(page, 'solar');
+    // English reads "0,500" as nothing it accepts; Turkish reads it as 0.5.
+    await generated(page).fill('0,500');
+    await generated(page).blur();
+    await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+    await page.locator('[role="group"] button[lang="tr"]').click();
+    await expect(page.getByTestId('self-generation-issue')).toHaveCount(0);
+    const answered = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+    await page.getByRole('button', { name: trDataEntry.saveDraft, exact: true }).click();
+    const response = await answered;
+    expect(response.status(), await response.text()).toBe(201);
+    created.push((await response.json()).id as string);
+    expect(response.request().postDataJSON().parameters).toMatchObject({ selfGeneratedKwh: 0.5 });
+  } finally {
+    const res = await request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: 'en' } });
+    expect(res.status()).toBe(200);
+  }
+});
+
+test('a submit answered after another record was opened is told by name, and leaves that record alone', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const otherRes = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.trading, locationId: null, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD,
+      periodValue: 'Q3', category: 'Electricity', activityValue: 7000, activityUnit: 'kWh', varianceReason: null,
+    },
+  });
+  expect(otherRes.status(), await otherRes.text()).toBe(201);
+  created.push((await otherRes.json()).id as string);
+
+  await newGridRecord(page, PERIOD, '5000');
+  await page.getByTestId('evidence-vault-input').setInputFiles([pdf('sample-invoice.pdf')]);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const SUBMIT_ROUTE = '**/api/v1/activity-records/*/submit';
+  await page.route(SUBMIT_ROUTE, async (route) => {
+    await gate;
+    return route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ statusCode: 409, code: 'record_changed', message: 'changed' }),
+    });
+  });
+  const createdAnswer = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+  const submitSent = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/submit'));
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
+  created.push((await (await createdAnswer).json()).id as string);
+  await submitSent;
+
+  // The user opens the other draft and types while the submit is answered.
+  await listOf(page).getByRole('button', { name: new RegExp(`^Edit Q3 ${E2E_YEAR} Electricity`) }).click();
+  await expect(quantity(page)).toHaveValue('7000');
+  await quantity(page).fill('7100');
+  release();
+
+  const toast = page.locator('[data-sonner-toast]').filter({ hasText: enErrors.codes.record_changed });
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText(`${enCategories.Electricity} · ${enPeriods.values[PERIOD]} ${E2E_YEAR}`);
+  await page.unroute(SUBMIT_ROUTE);
+  await expect(quantity(page)).toHaveValue('7100');
+});
+
+test('the review sheet holds its decisions until it has read the record, and drops one no longer pending', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.trading,
+    locationId: MANCHESTER_OFFICE,
+    category: 'Electricity',
+    periodValue: PERIOD,
+    activityValue: 5000,
+    parameters: { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 4000 },
+  });
+  created.push(id);
+  const RECORD = `**/api/v1/activity-records/${id}`;
+  const row = () => page.locator('table tbody tr').filter({ hasText: 'Manchester Office' }).filter({ hasText: enCategories.Electricity });
+  const dialog = page.getByRole('dialog');
+  const approve = dialog.getByRole('button', { name: enReview.sheet.approve, exact: true });
+
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+
+  // A read that fails: the decisions wait, and Retry reads it again.
+  let failNext = true;
+  await page.route(RECORD, (route) =>
+    route.request().method() === 'GET' && failNext
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ statusCode: 500, message: 'x' }) })
+      : route.fallback(),
+  );
+  await row().click();
+  await expect(dialog.getByTestId('review-sheet-read-failed')).toBeVisible();
+  await expect(approve).toBeDisabled();
+  await expect(dialog.locator('#review-reason')).toBeDisabled();
+  failNext = false;
+  await dialog.getByTestId('review-sheet-read-failed').getByRole('button').click();
+  await expect(approve).toBeEnabled();
+  await page.unroute(RECORD);
+  await page.keyboard.press('Escape');
+
+  // A record decided elsewhere since the queue was read leaves it.
+  await page.route(RECORD, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    return route.fulfill({ response, json: { ...body, status: 'approved' } });
+  });
+  await row().click();
+  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
+  // The sheet closes; the queue is read again (from the server, which this
+  // test did not change, so the row itself comes back).
+  await expect(dialog).toHaveCount(0);
+  await page.unroute(RECORD);
 });
