@@ -68,6 +68,10 @@ When the category changes in Edit mode, the form SHALL clear the activity type, 
 - **WHEN** the author changes an Electricity draft with a solar block to Natural Gas and back to Electricity in Edit mode
 - **THEN** the quantity is cleared with a notice, and the self-generation section shows the source and the kWh fields as they were
 
+#### Scenario: A figure the form could not read survives a detour
+- **WHEN** the author types "500," as the exported kWh of such a draft, changes the category to Natural Gas and back, and enters the quantity again
+- **THEN** the field still reads "500,", the section still says the figure could not be read, and nothing is saved until it is corrected
+
 ## ADDED Requirements
 
 ### Requirement: Electricity shows a self-generation section that opens by source
@@ -131,6 +135,10 @@ While a source is chosen, Data Entry SHALL NOT preview or save the record until 
 - **WHEN** a user enters 0 as the facility consumption
 - **THEN** nothing is saved, and the section says the consumption must be above zero or left empty
 
+#### Scenario: A facility consumption below the API's floor
+- **WHEN** a user enters a facility consumption above zero but below 1e-300 kWh
+- **THEN** nothing is saved, and the section says the consumption must be above zero or left empty
+
 #### Scenario: No source chosen
 - **WHEN** a user leaves the source at none
 - **THEN** the section holds nothing back, and the record is previewed and saved as a plain grid record
@@ -180,6 +188,10 @@ When a block states the facility consumption, Data Entry SHALL compare the recor
 - **WHEN** a record of 525,000 kWh states 900,000 kWh of consumption and 400,000 generated kWh
 - **THEN** no warning is shown
 
+#### Scenario: Small figures keep their digits
+- **WHEN** a warning compares an import of 0.004 kWh with an expected 0.003 kWh
+- **THEN** it names 0.004 and 0.003 kWh, never figures rounded to 0
+
 #### Scenario: A netted bill figure
 - **WHEN** a record of 600,000 kWh states 1,000,000 kWh of consumption, 400,000 generated kWh and 100,000 exported kWh
 - **THEN** the expected import is 700,000 kWh and the warning is shown
@@ -221,3 +233,7 @@ When an edit on Data Entry is refused as `record_changed`, the form SHALL say th
 #### Scenario: The message in Turkish
 - **WHEN** a user whose language is Turkish gets that refusal
 - **THEN** the message is shown in Turkish
+
+#### Scenario: A submit refused after its save
+- **WHEN** Submit for review saves the draft and the submit that follows is refused as `record_changed`
+- **THEN** the message is the submit's, never that the changes were not saved, the draft stays saved, and the form reads it again

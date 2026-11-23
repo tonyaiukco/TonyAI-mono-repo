@@ -48,6 +48,10 @@ Every read of a record and every answer to a write SHALL carry `generationFuelRe
 - **WHEN** an Electricity record names `diesel_generator` and the same site and year hold a Fuel record of type diesel
 - **THEN** the record reads `present`; a Mobile Combustion record for diesel alone leaves it `missing`
 
+#### Scenario: The read fails after a write
+- **WHEN** a submit's record is written and audited, and reading its fuel-record state then fails
+- **THEN** the submit is refused as a whole: the record keeps its earlier status and no audit row is written
+
 #### Scenario: A renewable source
 - **WHEN** an Electricity record's block names solar or wind, or the record has no block
 - **THEN** its `generationFuelRecord` is null
@@ -70,6 +74,10 @@ When a record's `generationFuelRecord` is `missing`, the review sheet SHALL show
 #### Scenario: The notice after a review step
 - **WHEN** the reviewer starts the review of such a record and the sheet stays open
 - **THEN** the notice is still shown
+
+#### Scenario: The fuel record appears while the queue is open
+- **WHEN** the queue was read before the site's Natural Gas record was entered, and the reviewer then opens the sheet without reloading the page
+- **THEN** the sheet shows no such notice
 
 ### Requirement: The review sheet notes an energy balance gap
 When a block states the facility consumption, the review sheet SHALL show a notice under the rule Data Entry applies: the import, in kWh, differs from consumption − generation + exports by more than 5% of that expected import, or the expected import is zero or less while the import is above zero. The notice SHALL name both figures and SHALL NOT block any review action.

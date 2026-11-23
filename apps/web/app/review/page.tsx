@@ -261,14 +261,19 @@ export default function ReviewPage() {
   }, [setUser]);
 
   // Evidence is fetched per record, on open: a reviewer approving a figure
-  // without being able to open the invoice behind it is rubber-stamping.
+  // without being able to open the invoice behind it is rubber-stamping. Keyed
+  // on the record's id and an explicit retry, never on the record object: the
+  // sheet's own re-read of the record on open (self-gen-form) and a review
+  // step's answer replace the object without changing the files.
+  const selectedRecordId = selected?.id ?? null;
+  const [evidenceRetry, setEvidenceRetry] = useState(0);
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedRecordId) return;
     setEvidence(null);
     setEvidenceCursor(null);
     setEvidenceError(false);
     let cancelled = false;
-    readEvidencePage(selected.id)
+    readEvidencePage(selectedRecordId)
       .then((page) => {
         if (cancelled) return;
         setEvidence(page.items);
@@ -282,7 +287,7 @@ export default function ReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selectedRecordId, evidenceRetry]);
 
   async function loadMoreEvidence() {
     if (!selected || !evidenceCursor) return;
@@ -908,7 +913,7 @@ export default function ReviewPage() {
                     <button
                       type="button"
                       className="underline"
-                      onClick={() => setSelected({ ...selected })}
+                      onClick={() => setEvidenceRetry((n) => n + 1)}
                     >
                       {t("retry")}
                     </button>

@@ -80,7 +80,7 @@ A missing topology or source cannot occur: the form adds the topology, and no so
 
 - Expected import = `facilityConsumptionKwh − selfGeneratedKwh + (exportedToGridKwh ?? 0)`.
 - The import goes to kWh through `CEILING_UNIT_MULTIPLIERS`, whose parity with the API's normaliser an API spec already pins.
-- It warns when `|import − expected| > expected × ENERGY_BALANCE_TOLERANCE` (0.05, an exported constant), or when `expected ≤ 0` and `import > 0`. The comparison is strict, so exactly 5% does not warn; a spec pins the boundary.
+- It warns when `|import − expected| > expected × ENERGY_BALANCE_TOLERANCE` (0.05, an exported constant), or when `expected ≤ 0` and `import > 0`. The comparison is strict, so exactly 5% does not warn; a spec pins the boundary. A relative slack of 1e-9 keeps floating point from tipping an exact 5% (1.05 kWh against 1.1 − 0.1) into a warning (outside review of `833db34c`).
 
 Data Entry calls it with the form's quantity, unit and block; the review sheet with the record's. Both print the two figures with the locale's number format.
 
@@ -98,7 +98,7 @@ Data Entry calls it with the form's quantity, unit and block; the review sheet w
 - `locationId` is matched as stored, null to null: a whole-company Electricity record looks for a whole-company fuel record (D5: "the same location, including none").
 - Every branch carries the record's own `subsidiaryId`, and the query also carries `subsidiaryId IN accessibleSubsidiaryIds`. The records were loaded through the same scope, so the second filter changes no result; it keeps the rule that no query runs without the accessible set.
 
-**The callers.** `toDTO` takes the state as an argument, as it takes the evidence count. `listPage` resolves the whole page in the one query; the single read, create, update and the status transition resolve their one record. The field joins `ResolvedRecordFields`, so the audit snapshot cannot carry it.
+**The callers.** `toDTO` takes the state as an argument, as it takes the evidence count. `listPage` resolves the whole page in the one query and the single read its one record. A write (create, update, every status transition) resolves its record inside its own transaction, on the transaction's client, after its audit row: a failure of that read rolls the write back with it. *(Outside review of `833db34c`: read after the commit, a failure answered a committed submit as failed, and bulk submit audited it as failed.)* The field joins `ResolvedRecordFields`, so the audit snapshot cannot carry it.
 
 - **Why on every answer and not on the list item only:** the review sheet replaces its record with the answer to a review step. A field present on the list and absent on that answer would make the notice vanish when the reviewer starts the review.
 - **Why not a dedicated endpoint:** D5 names a field on the record read, and the sheet has no single-record request to hang another one on.
@@ -107,13 +107,17 @@ Data Entry calls it with the form's quantity, unit and block; the review sheet w
 
 ### 7. The review sheet reads the block from `parameters`
 
-`review-view.ts` gets `reviewSelfGeneration(record)`, which returns the block's display values for an Electricity record with a normalised block, else null, as `reviewCalorificBasis` does for the basis. The sheet prints the lines in its label and value grid, and the two notices in its existing notice style, below the anomaly notice. The fuel notice names the fuel record through the shared map and the record's site and year.
+`review-view.ts` gets `reviewSelfGeneration(record)`, which returns the block's display values for an Electricity record with a normalised block, else null, as `reviewCalorificBasis` does for the basis. The sheet prints the lines in its label and value grid, and the two notices in its existing notice style, below the anomaly notice. The fuel notice names the fuel record through the shared map and the record's site and year. Stored kWh are shown with every digit (`formatReadAmount`), the balance's computed figures to 12 significant digits (`formatComputedAmount`).
+
+*(Outside review of `833db34c`.)* The sheet opens on the queue row, then reads the record again (`GET /activity-records/:id`): the row is as old as the queue, and whether the fuel record exists may have changed since. A review step's answer is newer than that read, so it bumps a sequence and a read answered after it is dropped.
 
 - **Why `parameters` and not the snapshot inputs:** the source and the topology live only in `parameters`, and the commit freeze protects them once the record is submitted for approval.
 
 ### 8. A category move says what it removes
 
 In Edit mode, when the opened record held a block and the category's shape is no longer `electricity`, the page shows one line beside the category (amber, `role="status"`, as the location-move notice is). It goes when the category returns to Electricity. The section's state is not cleared by a category change, so the fields come back as they were; this is the behaviour `self-gen-model` already tested for the hidden block, now visible.
+
+*(Outside review of `833db34c`.)* The section is hidden, not unmounted, off Electricity, and has its own epoch, moved only when it is filled from a record or emptied. A field keeps its text, one it could not read included, through a category change and back; mounted afresh, a refused "500," came back empty and unrefused, and the save then dropped the stored exports.
 
 - **Why a notice and not a confirmation dialog:** the save that removes the block is made on the current version, by the author, and the audit row keeps the block in its `before`. The gap the review found was that no screen showed what was lost.
 
@@ -126,6 +130,8 @@ The web still does not read the three self-generation names: it reads the block 
 ### 10. `record_changed` gets a Data Entry sentence
 
 `saveErrorDescription` gains a case for `record_changed` and `SaveErrorKey` a key for it, in the `dataEntry` catalogue (EN and TR, `localise-ui`). The sentence says three things: the record was changed after the form opened it; the changes on the form were not saved; the form is reading the record again. It does not promise what the form will show, because the toast is raised before the reload answers and the reload closes the record when it is no longer editable. The generic `errors.codes.record_changed` sentence stays for the other screens, where the race it describes is the real one.
+
+*(Outside review of `833db34c`.)* Submit for review saves, then submits in a second request. A refusal of that second request is the submit's: the draft is saved, so it gets the generic sentence, and a `record_changed` there reads the saved record again (`reloadAfterLostRace`, with the record's id from the save, since the form's state has not caught up).
 
 ### 11. Comments that say no screen shows the block
 
