@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FactorLibraryConflictError } from './errors';
-import { GROSS_TO_NET_RATIO_INPUT, naturalGasEnergyChain } from './tr-rules';
+import { GROSS_TO_NET_RATIO_INPUT } from '@tonyai/shared-types';
+import { naturalGasEnergyChain } from './tr-rules';
 
 /**
  * The TR natural gas energy chain (ng-kwh-engine; Decisions 2026-11-20 D2,

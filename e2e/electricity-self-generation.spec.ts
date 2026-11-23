@@ -3,10 +3,16 @@ import { test, expect, type APIRequestContext, type Page, type Route } from '@pl
 import enCategories from '../apps/web/messages/en/categories.json';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
+import enErrors from '../apps/web/messages/en/errors.json';
+import enReview from '../apps/web/messages/en/review.json';
+import trCategories from '../apps/web/messages/tr/categories.json';
+import trDataEntry from '../apps/web/messages/tr/dataEntry.json';
+import trPeriods from '../apps/web/messages/tr/periods.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
   APPROVER_EMAIL,
+  CONSULTANT_EMAIL,
   E2E_PERIOD,
   E2E_YEAR,
   EVIDENCE_FIXTURE,
@@ -14,6 +20,7 @@ import {
   approveRecord,
   attachEvidence,
   bearer,
+  createCommittedRecord,
   deleteRecordsAsService,
   getAccessToken,
   login,
@@ -21,24 +28,32 @@ import {
 } from './helpers';
 
 /**
- * UAT round 3, LP4-07 (`self-gen-model`; Decisions 2026-11-20 D5, D6, D8): an
- * Electricity record may carry a self-generation block, which the form does
- * not show yet (`self-gen-form`). Data Entry must carry a stored block through
- * every save while the record stays Electricity, or the first web edit would
- * erase it with no error. An edit saved as Electricity sends no parameters,
- * so the server keeps the block it holds at the save, including one corrected
- * or added by another client after the form opened (review of `2c427ed8`); a
- * preview and a copy of a voided record send the record's own block; a move
- * to another category drops it; a new grid record still sends no parameters.
+ * UAT round 3, LP4-07 (`self-gen-model`, then `self-gen-form`; Decisions
+ * 2026-11-20 D5, D6, D8): an Electricity record may carry a self-generation
+ * block, which Data Entry shows and edits and the review sheet shows.
+ *
+ * The form sends what it shows: every Electricity save, an edit included,
+ * sends the section's block, or none when no source is chosen. What keeps a
+ * stale form from writing an older block over a newer one is the version each
+ * edit names (`seenUpdatedAt`): a block corrected or added by another client
+ * after the form opened it is refused as `record_changed`, and the form reads
+ * the record again. A move to another category drops the block, and says so
+ * first; a category picked by mistake and undone keeps it. The section holds
+ * the preview and the save until the block is valid, reminds of the fuel
+ * record for a fuel source, and warns on an energy balance gap without
+ * blocking. The review sheet shows the block, a missing fuel record and a
+ * balance gap, and blocks nothing.
  *
  * The block is geography-free and never priced, so the lane is a UK one, where
  * the seed prices Electricity and Natural Gas in kWh on every CI run.
  *
- * Lane: `SUB.trading` (UK) / quarterly `E2E_YEAR` / Q4, drafts only. The
- * block's drafts sit at the Manchester Office site, which no other spec
- * writes: `review-queue.spec` commits Trading's whole-company Natural Gas Q4
- * and never deletes it, so moving a whole-company draft to Natural Gas would
- * collide with it whenever that file ran first. The plain grid draft is
+ * Lane: `SUB.trading` (UK) / quarterly `E2E_YEAR` / Q4 (and Q3 for a second
+ * record), drafts, plus one submitted record for the review sheet. The block's
+ * records sit at the Manchester Office site, which no other spec writes and
+ * the seed holds nothing at, so its fuel record is missing until a test makes
+ * one: `review-queue.spec` commits Trading's whole-company Natural Gas Q4 and
+ * never deletes it, so moving a whole-company draft to Natural Gas would
+ * collide with it whenever that file ran first. The plain grid drafts are
  * whole-company Electricity Q4, which no other spec writes. `gates.spec` locks
  * only Trading's Q1. Every record is deleted after its test.
  */
@@ -150,6 +165,38 @@ async function pickUnit(page: Page, unit: string) {
   await expect(unitSelect).toHaveText(unit);
 }
 
+const SG = enDataEntry.inputs.selfGeneration;
+const sourceSelect = (page: Page) => page.getByTestId('self-generation-source');
+const generated = (page: Page) => page.locator('#input-self-generated');
+const exported = (page: Page) => page.locator('#input-self-exported');
+const facility = (page: Page) => page.locator('#input-self-facility');
+const saveDraftButton = (page: Page) => page.getByRole('button', { name: enDataEntry.saveDraft, exact: true });
+const removalNotice = (page: Page) => page.getByTestId('self-generation-removal-notice');
+
+async function pickSource(page: Page, source: keyof typeof SG.sources) {
+  await sourceSelect(page).click();
+  await page.getByRole('option', { name: SG.sources[source], exact: true }).click();
+  await expect(sourceSelect(page)).toHaveText(SG.sources[source]);
+}
+
+/**
+ * Whether the page asks, within `ms`, for a preview carrying a self-generation
+ * block: the debounce is 400 ms. A late preview of the plain record typed
+ * before the source was chosen carries none, so it cannot answer for the
+ * section (outside review of 833db34c).
+ */
+const previewWithin = (page: Page, ms = 1500) =>
+  page
+    .waitForRequest(
+      (r) =>
+        r.method() === 'POST' &&
+        new URL(r.url()).pathname.endsWith('/calculations/preview') &&
+        (r.postDataJSON() as { parameters?: { selfGenerationSource?: unknown } | null }).parameters?.selfGenerationSource !== undefined,
+      { timeout: ms },
+    )
+    .then(() => true)
+    .catch(() => false);
+
 test('a stored block survives a quantity edit and a move to MWh on Data Entry', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token);
@@ -158,12 +205,17 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   const opened = await read(request, token, id);
   const preview = previewWithBlock(page);
   await openDraft(page);
-  // The preview sends the opened record's block; it changes no figure.
+  // The section shows the stored block.
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
+  await expect(generated(page)).toHaveValue(/^4,?000$/);
+  await expect(exported(page)).toHaveValue('500');
+  await expect(facility(page)).toHaveValue(/^9,?000$/);
+  // The preview sends the block on the form; it changes no figure.
   expect((await preview).postDataJSON().parameters).toEqual(BLOCK);
   await quantity(page).fill('5200');
   const first = (await save(page, 'PATCH')).body;
-  // An edit saved as Electricity leaves the block to the server, and names the version it opened.
-  expect(first).not.toHaveProperty('parameters');
+  // An edit sends the block the form shows, and names the version it opened.
+  expect(first.parameters).toEqual(BLOCK);
   expect(first.seenUpdatedAt).toBe(opened.updatedAt);
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   const afterFirst = await read(request, token, id);
@@ -181,7 +233,7 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   await expect(quantity(page)).toHaveValue('');
   await quantity(page).fill('5.2');
   const second = (await save(page, 'PATCH')).body;
-  expect(second).not.toHaveProperty('parameters');
+  expect(second.parameters).toEqual(BLOCK);
   // The first save's toast may still be on screen beside this one.
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   const saved = await read(request, token, id);
@@ -196,25 +248,32 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   ]);
 });
 
-test('a category picked by mistake and undone keeps the block; a move to Natural Gas sends none', async ({ page, request }) => {
+test('a category picked by mistake and undone keeps the block; a move to Natural Gas says it removes it, and does', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token);
 
-  // Natural Gas, then Electricity again: the record's own block comes back (qa-auditor review).
+  // Natural Gas, then Electricity again: the notice comes and goes, and the section shows the block as it was.
   await openDraft(page);
+  await expect(removalNotice(page)).toHaveCount(0);
   await pickByFieldLabel(page, enDataEntry.category, enCategories['Natural Gas']);
+  await expect(removalNotice(page)).toHaveText(SG.removalNotice);
+  await expect(page.getByTestId('self-generation')).toBeHidden();
   await pickByFieldLabel(page, enDataEntry.category, enCategories.Electricity);
+  await expect(removalNotice(page)).toHaveCount(0);
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
+  await expect(generated(page)).toHaveValue(/^4,?000$/);
   await expect(quantity(page)).toHaveValue('');
   await pickUnit(page, 'kWh');
   await quantity(page).fill('5100');
   const undone = (await save(page, 'PATCH')).body;
   expect(undone).toMatchObject({ category: 'Electricity' });
-  expect(undone).not.toHaveProperty('parameters');
+  expect(undone.parameters).toEqual(BLOCK);
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   expect(await read(request, token, id)).toMatchObject({ category: 'Electricity', activityValue: 5100, parameters: BLOCK });
 
   await editButton(page).click();
   await pickByFieldLabel(page, enDataEntry.category, enCategories['Natural Gas']);
+  await expect(removalNotice(page)).toBeVisible();
   await expect(quantity(page)).toHaveValue('');
   await pickUnit(page, 'kWh');
   await quantity(page).fill('5000');
@@ -235,15 +294,19 @@ test('a save on a version changed by another client is refused, and the correcte
 
   await quantity(page).fill('5300');
   const body = await expectStaleSave(page);
-  expect(body).not.toHaveProperty('parameters');
+  // The form sent the block it showed, the older one: the version refused it.
+  expect(body.parameters).toEqual(BLOCK);
   expect(await read(request, token, id)).toMatchObject({ activityValue: 5000, parameters: corrected });
+  // Data Entry's own sentence: the record changed after the form opened it.
+  await expect(page.getByText(enDataEntry.recordChanged, { exact: true })).toBeVisible();
 
-  // The refusal reads the record again as stored, with its version; the save made on it keeps the block.
+  // The refusal reads the record again as stored, with its version; the save made on it sends the corrected block.
   await expect(quantity(page)).toHaveValue('5000');
+  await expect(generated(page)).toHaveValue(/^5,?000$/);
   await expect(page.getByTestId('edit-mode-band')).toBeVisible();
   await quantity(page).fill('5300');
   const again = (await save(page, 'PATCH')).body;
-  expect(again).not.toHaveProperty('parameters');
+  expect(again.parameters).toEqual(corrected);
   const saved = await read(request, token, id);
   expect(saved).toMatchObject({ activityValue: 5300, parameters: corrected });
   expect(saved.calculation.parameters).toContainEqual({ name: 'selfGeneratedKwh', value: 5000, origin: 'user' });
@@ -257,8 +320,11 @@ test('a block added by another client to a draft opened without one is not erase
   await patchElsewhere(request, token, id, { parameters: BLOCK });
 
   await quantity(page).fill('5300');
-  await expectStaleSave(page);
+  const body = await expectStaleSave(page);
+  expect(body.parameters ?? null).toBeNull();
   expect(await read(request, token, id)).toMatchObject({ activityValue: 5000, parameters: BLOCK });
+  // Read again, the form shows the block it did not know of.
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
 });
 
 test('a Natural Gas draft another client turned into Electricity with a block is not erased by the save', async ({ page, request }) => {
@@ -334,6 +400,9 @@ test('a voided record copied to a new draft keeps its block', async ({ page, req
   await listOf(page).getByRole('button', { name: new RegExp(`^Copy ${PERIOD} ${E2E_YEAR} Electricity`) }).click();
   await expect(page.getByText(enDataEntry.copy.loaded)).toBeVisible();
   expect((await preview).postDataJSON().parameters).toEqual(BLOCK);
+  await expect(sourceSelect(page)).toHaveText(SG.sources.solar);
+  // A copy creates: there is no stored block for a category move to remove.
+  await expect(removalNotice(page)).toHaveCount(0);
 
   const { body, response } = await save(page, 'POST');
   expect(response.status()).toBe(201);
@@ -353,6 +422,9 @@ test('a plain grid record is saved with no parameters, as before', async ({ page
   await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values[PERIOD]);
   await pickUnit(page, 'kWh');
   await quantity(page).fill('5000');
+  // The section opens on no source and asks nothing more.
+  await expect(sourceSelect(page)).toHaveText(SG.sources.none);
+  await expect(generated(page)).toBeHidden();
 
   const { body, response } = await save(page, 'POST');
   expect(response.status()).toBe(201);
@@ -491,4 +563,614 @@ test('after a refusal the form still lists a file that did not upload, and still
   await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
   await expect(page.getByText(enDataEntry.heldEvidence.resolveFailed)).toBeVisible();
   expect(await read(request, token, id)).toMatchObject({ status: 'draft', evidenceCount: 1 });
+});
+
+// --- The section on the form (self-gen-form) ---
+
+test('a block entered on the form is held until it is valid, then saved with topology A', async ({ page, request }) => {
+  await newGridRecord(page);
+  await expect(saveDraftButton(page)).toBeEnabled();
+
+  // A source without its generation: nothing is previewed or saved, and the section says why.
+  const previewed = previewWithin(page);
+  await pickSource(page, 'solar');
+  await expect(page.getByText(SG.caseA, { exact: true })).toBeVisible();
+  await expect(page.getByText(SG.importStatement, { exact: true })).toBeVisible();
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.generated_missing);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  expect(await previewed).toBe(false);
+
+  // Exports above the generation are held too; equal exports are not.
+  await generated(page).fill('4000');
+  await exported(page).fill('5000');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.exported_above_generated);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  await exported(page).fill('4000');
+  await expect(page.getByTestId('self-generation-issue')).toHaveCount(0);
+  await expect(saveDraftButton(page)).toBeEnabled();
+
+  // A facility consumption of zero has its own sentence; left empty, nothing is held.
+  await facility(page).fill('0');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.facility_not_positive);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  await facility(page).fill('');
+  await expect(saveDraftButton(page)).toBeEnabled();
+
+  const { body, response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  const id = (await response.json()).id as string;
+  created.push(id);
+  const sent = { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 4000, exportedToGridKwh: 4000 };
+  expect(body.parameters).toEqual(sent);
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  expect(await read(request, token, id)).toMatchObject({ parameters: sent, generationFuelRecord: null });
+});
+
+test('a plant that generated nothing is previewed and saved', async ({ page, request }) => {
+  await newGridRecord(page);
+  await pickSource(page, 'wind');
+  await generated(page).fill('0');
+  await expect(page.getByTestId('self-generation-issue')).toHaveCount(0);
+  const { body, response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  const id = (await response.json()).id as string;
+  created.push(id);
+  expect(body.parameters).toEqual({ generationTopology: 'A', selfGenerationSource: 'wind', selfGeneratedKwh: 0 });
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  expect((await read(request, token, id)).parameters).toEqual(body.parameters);
+});
+
+test('an opened block is corrected on the form, then removed, and the figure never moves', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  const before = (await read(request, token, id)).calculation.kgCo2e as number;
+
+  await openDraft(page);
+  await generated(page).fill('4500');
+  const corrected = (await save(page, 'PATCH')).body;
+  expect(corrected.parameters).toEqual({ ...BLOCK, selfGeneratedKwh: 4500 });
+  await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
+  const saved = await read(request, token, id);
+  expect(saved.parameters).toEqual({ ...BLOCK, selfGeneratedKwh: 4500 });
+  expect(saved.calculation.kgCo2e).toBeCloseTo(before, 9);
+
+  // No source: a plain grid record again.
+  await editButton(page).click();
+  await pickSource(page, 'none');
+  await expect(generated(page)).toBeHidden();
+  const removed = (await save(page, 'PATCH')).body;
+  expect(removed.parameters ?? null).toBeNull();
+  await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
+  const plain = await read(request, token, id);
+  expect(plain.parameters).toBeNull();
+  expect(plain.calculation.kgCo2e).toBeCloseTo(before, 9);
+  expect(plain.calculation.parameters).toEqual([]);
+});
+
+test('a fuel source reminds of the fuel record, and the record saves without one', async ({ page, request }) => {
+  await newGridRecord(page);
+  await pickSource(page, 'diesel_generator');
+  await expect(page.getByTestId('self-generation-reminder')).toHaveText(SG.reminder.diesel_generator);
+  await pickSource(page, 'solar');
+  await expect(page.getByTestId('self-generation-reminder')).toHaveCount(0);
+  await pickSource(page, 'natural_gas_chp');
+  await expect(page.getByTestId('self-generation-reminder')).toHaveText(SG.reminder.natural_gas_chp);
+  await generated(page).fill('3000');
+
+  const { response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  const id = (await response.json()).id as string;
+  created.push(id);
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  // Whole company: no whole-company gas record in the lane's year.
+  expect(await read(request, token, id)).toMatchObject({
+    parameters: { selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 3000 },
+  });
+});
+
+/** The figure of the next preview the page receives. */
+const nextPreviewFigure = (page: Page) =>
+  page
+    .waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/calculations/preview'))
+    .then(async (r) => (await r.json()).kgCo2e as number);
+
+test('an energy balance gap warns with both figures, exports never move the figure, and the record still saves', async ({ page }) => {
+  await newGridRecord(page);
+  await pickSource(page, 'solar');
+  const withoutExports = nextPreviewFigure(page);
+  await generated(page).fill('4000');
+  const plainFigure = await withoutExports;
+  // D8: exports never offset the grid import's figure.
+  const withExports = nextPreviewFigure(page);
+  await exported(page).fill('1000');
+  expect(await withExports).toBe(plainFigure);
+  await exported(page).fill('');
+  // 9,000 − 4,000 = 5,000 kWh expected, 5,000 imported: balanced.
+  await facility(page).fill('9000');
+  await expect(page.getByTestId('self-generation-balance')).toHaveCount(0);
+  // 8,000 − 4,000 = 4,000 kWh expected against 5,000: 25% off.
+  await facility(page).fill('8000');
+  const balance = page.getByTestId('self-generation-balance');
+  await expect(balance).toContainText('5,000 kWh');
+  await expect(balance).toContainText('4,000 kWh');
+  await expect(saveDraftButton(page)).toBeEnabled();
+
+  const { response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  created.push((await response.json()).id as string);
+});
+
+// --- The review sheet (self-gen-form) ---
+
+test('the review sheet shows a CHP block, notes a missing gas record and a balance gap, and still lets the record be approved', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.trading,
+    locationId: MANCHESTER_OFFICE,
+    category: 'Electricity',
+    periodValue: PERIOD,
+    activityValue: 5000,
+    parameters: { generationTopology: 'A', selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 4000, facilityConsumptionKwh: 8000 },
+  });
+  created.push(id);
+  expect((await read(request, token, id)).generationFuelRecord).toBe('missing');
+
+  const RS = enReview.sheet.selfGeneration;
+  const fuelNotice = (page: Page) => page.getByRole('dialog').getByTestId('review-self-generation-fuel-missing');
+  const openSheet = async (navigate = true) => {
+    if (navigate) await page.goto('/review');
+    await page.locator('table tbody tr').filter({ hasText: 'Manchester Office' }).filter({ hasText: enCategories.Electricity }).click();
+    await expect(page.getByRole('dialog').getByTestId('review-self-generation-source')).toHaveText(RS.sources.natural_gas_chp);
+  };
+
+  // A consultant reviews a record the admin entered.
+  await login(page, CONSULTANT_EMAIL);
+  await openSheet();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByTestId('review-self-generation-generated')).toHaveText('4,000 kWh');
+  await expect(dialog.getByTestId('review-self-generation-facility')).toHaveText('8,000 kWh');
+  await expect(dialog.getByTestId('review-self-generation-exported')).toHaveCount(0);
+  await expect(fuelNotice(page)).toHaveText(
+    RS.fuelMissing.natural_gas_chp.replace('{year}', String(E2E_YEAR)).replace('{site}', 'Manchester Office'),
+  );
+  await expect(dialog.getByTestId('review-self-generation-balance')).toContainText('4,000 kWh');
+
+  // A review step answers the record with its fuel state, so the notice stays; nothing is blocked.
+  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  await expect(fuelNotice(page)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
+
+  // A gas draft at the same site, in another quarter of the year, is the fuel record.
+  const gas = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.trading, locationId: MANCHESTER_OFFICE, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD,
+      periodValue: 'Q3', category: 'Natural Gas', activityValue: 1000, activityUnit: 'kWh', varianceReason: null, parameters: null,
+    },
+  });
+  expect(gas.status(), await gas.text()).toBe(201);
+  created.push((await gas.json()).id as string);
+  // Reopened on the same page, whose queue was read before the gas record
+  // existed: the sheet reads the record again (outside review of 833db34c).
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await openSheet(false);
+  await expect(fuelNotice(page)).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByTestId('review-self-generation-balance')).toBeVisible();
+});
+
+test('the section reads decimals in the user\'s language', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const language = (value: 'tr' | 'en') =>
+    request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: value } });
+  expect((await language('tr')).status()).toBe(200);
+  try {
+    await login(page, ADMIN_EMAIL);
+    await page.goto('/data-entry');
+    await pickByFieldLabel(page, trDataEntry.subsidiary, SUBSIDIARY_OPTION);
+    await pickByFieldLabel(page, trDataEntry.category, trCategories.Electricity);
+    await pickByFieldLabel(page, trDataEntry.reportingYear, String(E2E_YEAR));
+    await pickByFieldLabel(page, trDataEntry.period, trPeriods.granularity.quarterly);
+    await pickByFieldLabel(page, trDataEntry.periodValue, trPeriods.values[PERIOD]);
+    const unitSelect = page.getByRole('combobox', { name: trDataEntry.unit, exact: true });
+    await unitSelect.click();
+    await page.getByRole('option', { name: 'kWh', exact: true }).click();
+    await page.getByPlaceholder(trDataEntry.activityValuePlaceholder).fill('5000');
+    await sourceSelect(page).click();
+    await page.getByRole('option', { name: trDataEntry.inputs.selfGeneration.sources.solar, exact: true }).click();
+    await generated(page).fill('4.000,5');
+    await exported(page).fill('250,25');
+
+    const answered = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+    await page.getByRole('button', { name: trDataEntry.saveDraft, exact: true }).click();
+    const response = await answered;
+    expect(response.status(), await response.text()).toBe(201);
+    created.push((await response.json()).id as string);
+    expect(response.request().postDataJSON().parameters).toEqual({
+      generationTopology: 'A',
+      selfGenerationSource: 'solar',
+      selfGeneratedKwh: 4000.5,
+      exportedToGridKwh: 250.25,
+    });
+  } finally {
+    expect((await language('en')).status()).toBe(200);
+  }
+});
+
+test('a figure the form could not read survives a category change and back, and holds the save', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  await openDraft(page);
+  await exported(page).fill('500,');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+
+  await pickByFieldLabel(page, enDataEntry.category, enCategories['Natural Gas']);
+  await pickByFieldLabel(page, enDataEntry.category, enCategories.Electricity);
+  await pickUnit(page, 'kWh');
+  await quantity(page).fill('5100');
+  // The text is still there and still refused: the save cannot drop the stored exports.
+  await expect(exported(page)).toHaveValue('500,');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+  await expect(saveDraftButton(page)).toBeDisabled();
+
+  await exported(page).fill('500');
+  const { body } = await save(page, 'PATCH');
+  expect(body.parameters).toEqual(BLOCK);
+  expect((await read(request, token, id)).parameters).toEqual(BLOCK);
+});
+
+test('a submit refused after its save says what the submit met, and the draft stays saved', async ({ page, request }) => {
+  await newGridRecord(page, PERIOD, '5000');
+  await page.getByTestId('evidence-vault-input').setInputFiles([pdf('sample-invoice.pdf')]);
+  const SUBMIT_ROUTE = '**/api/v1/activity-records/*/submit';
+  await page.route(SUBMIT_ROUTE, (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ statusCode: 409, code: 'record_changed', message: 'changed' }),
+    }),
+  );
+  const createdAnswer = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+  // The order of what the page did: the upload's own read comes before the
+  // submit, so only a read after the refusal proves the form read it again
+  // (outside review of 001d6f1c).
+  const events: string[] = [];
+  page.on('response', (r) => {
+    if (r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/submit')) events.push('submit-refused');
+  });
+  page.on('request', (r) => {
+    if (r.method() === 'GET' && /\/activity-records\/[0-9a-f-]{36}$/.test(new URL(r.url()).pathname)) events.push('read');
+  });
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
+  const id = (await (await createdAnswer).json()).id as string;
+  created.push(id);
+  await expect.poll(() => events.lastIndexOf('read') > events.indexOf('submit-refused') && events.includes('submit-refused')).toBe(true);
+
+  // The submit's own sentence, never the save's "your changes were not saved".
+  await expect(page.getByText(enErrors.codes.record_changed, { exact: true })).toBeVisible();
+  await expect(page.getByText(enDataEntry.recordChanged, { exact: true })).toHaveCount(0);
+  await page.unroute(SUBMIT_ROUTE);
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  expect(await read(request, token, id)).toMatchObject({ status: 'draft', activityValue: 5000, evidenceCount: 1 });
+  await expect(quantity(page)).toHaveValue('5000');
+});
+
+test('a figure the form could not read survives a source of None and back', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  await openDraft(page);
+  await exported(page).fill('500,');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+  await pickSource(page, 'none');
+  await expect(exported(page)).toBeHidden();
+  await pickSource(page, 'solar');
+  await expect(exported(page)).toHaveValue('500,');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  expect((await read(request, token, id)).parameters).toEqual(BLOCK);
+});
+
+test('a figure refused in one language and read in the other no longer holds the save', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  try {
+    await newGridRecord(page);
+    await pickSource(page, 'solar');
+    // English reads "0,500" as nothing it accepts; Turkish reads it as 0.5.
+    await generated(page).fill('0,500');
+    await generated(page).blur();
+    await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.unreadable);
+    await page.locator('[role="group"] button[lang="tr"]').click();
+    await expect(page.getByTestId('self-generation-issue')).toHaveCount(0);
+    const answered = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+    await page.getByRole('button', { name: trDataEntry.saveDraft, exact: true }).click();
+    const response = await answered;
+    expect(response.status(), await response.text()).toBe(201);
+    created.push((await response.json()).id as string);
+    expect(response.request().postDataJSON().parameters).toMatchObject({ selfGeneratedKwh: 0.5 });
+  } finally {
+    const res = await request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: 'en' } });
+    expect(res.status()).toBe(200);
+  }
+});
+
+test('a submit answered after another record was opened is told by name, and leaves that record alone', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const otherRes = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.trading, locationId: null, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD,
+      periodValue: 'Q3', category: 'Electricity', activityValue: 7000, activityUnit: 'kWh', varianceReason: null,
+    },
+  });
+  expect(otherRes.status(), await otherRes.text()).toBe(201);
+  created.push((await otherRes.json()).id as string);
+
+  await newGridRecord(page, PERIOD, '5000');
+  await page.getByTestId('evidence-vault-input').setInputFiles([pdf('sample-invoice.pdf')]);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const SUBMIT_ROUTE = '**/api/v1/activity-records/*/submit';
+  await page.route(SUBMIT_ROUTE, async (route) => {
+    await gate;
+    return route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ statusCode: 409, code: 'record_changed', message: 'changed' }),
+    });
+  });
+  const createdAnswer = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+  const submitSent = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/submit'));
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
+  created.push((await (await createdAnswer).json()).id as string);
+  await submitSent;
+
+  // The user opens the other draft and types while the submit is answered.
+  await listOf(page).getByRole('button', { name: new RegExp(`^Edit Q3 ${E2E_YEAR} Electricity`) }).click();
+  await expect(quantity(page)).toHaveValue('7000');
+  await quantity(page).fill('7100');
+  release();
+
+  const toast = page.locator('[data-sonner-toast]').filter({ hasText: enErrors.codes.record_changed });
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText(`${enCategories.Electricity} · ${enPeriods.values[PERIOD]} ${E2E_YEAR}`);
+  await page.unroute(SUBMIT_ROUTE);
+  await expect(quantity(page)).toHaveValue('7100');
+});
+
+test('the review sheet holds its decisions until it has read the record, and drops one no longer pending', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.trading,
+    locationId: MANCHESTER_OFFICE,
+    category: 'Electricity',
+    periodValue: PERIOD,
+    activityValue: 5000,
+    parameters: { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 4000 },
+  });
+  created.push(id);
+  const RECORD = `**/api/v1/activity-records/${id}`;
+  const row = () => page.locator('table tbody tr').filter({ hasText: 'Manchester Office' }).filter({ hasText: enCategories.Electricity });
+  const dialog = page.getByRole('dialog');
+  const approve = dialog.getByRole('button', { name: enReview.sheet.approve, exact: true });
+
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+
+  // A read that fails: the decisions wait, and Retry reads it again.
+  let failNext = true;
+  await page.route(RECORD, (route) =>
+    route.request().method() === 'GET' && failNext
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ statusCode: 500, message: 'x' }) })
+      : route.fallback(),
+  );
+  await row().click();
+  await expect(dialog.getByTestId('review-sheet-read-failed')).toBeVisible();
+  await expect(approve).toBeDisabled();
+  await expect(dialog.locator('#review-reason')).toBeDisabled();
+  failNext = false;
+  await dialog.getByTestId('review-sheet-read-failed').getByRole('button').click();
+  await expect(approve).toBeEnabled();
+  await page.unroute(RECORD);
+  await page.keyboard.press('Escape');
+
+  // A record decided elsewhere since the queue was read leaves it.
+  await page.route(RECORD, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    return route.fulfill({ response, json: { ...body, status: 'approved' } });
+  });
+  await row().click();
+  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
+  // The sheet closes; the queue is read again (from the server, which this
+  // test did not change, so the row itself comes back).
+  await expect(dialog).toHaveCount(0);
+  await page.unroute(RECORD);
+});
+
+// --- Outside review of b8b0d78b: the sheet's openings, its files, and a form moved off its record ---
+
+/** A submitted solar record at the site, for the review sheet's cases. */
+async function submittedAtSite(request: APIRequestContext, token: string, periodValue = PERIOD) {
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.trading,
+    locationId: MANCHESTER_OFFICE,
+    category: 'Electricity',
+    periodValue,
+    activityValue: 1000,
+    parameters: { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400 },
+  });
+  created.push(id);
+  return id;
+}
+const siteRow = (page: Page) =>
+  page.locator('table tbody tr').filter({ hasText: 'Manchester Office' }).filter({ hasText: enCategories.Electricity });
+
+test('start review names the submission it saw, so a reason typed for it never meets a newer one', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  await siteRow(page).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
+  await dialog.locator('#review-reason').fill('The 1,000 kWh does not match the bill');
+
+  // The author recalls it, corrects it to 8,000 kWh and submits it again.
+  expect((await request.post(`${API_BASE}/activity-records/${id}/recall`, { headers: bearer(token) })).ok()).toBe(true);
+  await patchElsewhere(request, token, id, { activityValue: 8000 });
+  expect((await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(token) })).ok()).toBe(true);
+
+  const answered = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
+  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  const response = await answered;
+  expect(response.status()).toBe(409);
+  expect(response.request().postDataJSON()).toEqual({ seenSubmittedAt: expect.any(String) });
+  // The sheet reads the record again: the newer submission, with an empty reason.
+  await expect(dialog).toContainText('8,000');
+  await expect(dialog.locator('#review-reason')).toHaveValue('');
+  expect((await read(request, token, id)).status).toBe('submitted');
+});
+
+test('a review step answered after the sheet was closed and opened again leaves the new opening alone', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  const dialog = page.getByRole('dialog');
+  await siteRow(page).click();
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const REVIEW = `**/api/v1/activity-records/${id}/review`;
+  await page.route(REVIEW, async (route) => {
+    await gate;
+    return route.fallback();
+  });
+  const reviewed = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
+  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+
+  // Opened again; its read is held, and the first opening's answer arrives
+  // before it (outside review of b8b0d78b: that answer took over the sheet and
+  // dropped this read).
+  let releaseRead!: () => void;
+  const readGate = new Promise<void>((resolve) => (releaseRead = resolve));
+  const RECORD = `**/api/v1/activity-records/${id}`;
+  await page.route(RECORD, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    await readGate;
+    const response = await route.fetch();
+    return route.fulfill({ response, json: { ...(await response.json()), status: 'approved' } });
+  });
+  const reading = page.waitForRequest((r) => r.method() === 'GET' && r.url().endsWith(`/activity-records/${id}`));
+  await siteRow(page).click();
+  await reading;
+  await expect(dialog.getByTestId('review-sheet-reading')).toBeVisible();
+  release();
+  expect((await reviewed).ok()).toBe(true);
+  // Still waiting for its own read: the decisions stay held.
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeDisabled();
+
+  // This opening's read says the record is decided: the sheet closes.
+  releaseRead();
+  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await page.unroute(REVIEW);
+  await page.unroute(RECORD);
+});
+
+test('a page of files answered after the list started again is not added to it', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let firstPages = 0;
+  const file = (fileName: string, n: number) => ({
+    id: `00000000-0000-4000-8000-00000000000${n}`, subsidiaryId: SUB.trading, fileName, mimeType: 'application/pdf', sizeBytes: 4,
+    uploadedBy: '00000000-0000-4000-8000-0000000000f2', createdAt: new Date().toISOString(),
+    linkedRecords: [{ id, category: 'Electricity', reportingYear: E2E_YEAR, periodValue: PERIOD, locationName: 'Manchester Office', status: 'submitted' }],
+  });
+  await page.route((url) => url.pathname.endsWith(`/activity-records/${id}/evidence`), async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    if (cursor) {
+      await gate;
+      return route.fulfill({ json: { items: [file('earlier-page-two.pdf', 2)], limit: 50, nextCursor: null } });
+    }
+    firstPages += 1;
+    if (firstPages === 1) return route.fulfill({ json: { items: [file('earlier-page-one.pdf', 1)], limit: 50, nextCursor: 'c1' } });
+    return route.continue();
+  });
+
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  const dialog = page.getByRole('dialog');
+  await siteRow(page).click();
+  await expect(dialog.getByText('earlier-page-one.pdf')).toBeVisible();
+  const continuation = page.waitForRequest((r) => new URL(r.url()).searchParams.get('cursor') === 'c1');
+  await dialog.getByTestId('review-evidence-load-more').click();
+  await continuation;
+
+  // The list starts again (closed and opened), then the earlier page answers.
+  await page.keyboard.press('Escape');
+  await siteRow(page).click();
+  await expect(dialog.getByText('sample-invoice.pdf')).toBeVisible();
+  release();
+  await page.waitForTimeout(500);
+  await expect(dialog.getByText('earlier-page-two.pdf')).toHaveCount(0);
+  await expect(dialog.getByText('earlier-page-one.pdf')).toHaveCount(0);
+});
+
+test('a record gone since the queue was read leaves it, with no Retry', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await submittedAtSite(request, token);
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  const RECORD = `**/api/v1/activity-records/${id}`;
+  await page.route(RECORD, (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ statusCode: 404, code: 'record_not_found', message: 'x' }) })
+      : route.fallback(),
+  );
+  await siteRow(page).click();
+  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('review-sheet-read-failed')).toHaveCount(0);
+  await page.unroute(RECORD);
+});
+
+test('a submit answered after the form moved to another period leaves the new record alone', async ({ page }) => {
+  await newGridRecord(page, PERIOD, '5000');
+  await page.getByTestId('evidence-vault-input').setInputFiles([pdf('sample-invoice.pdf')]);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const SUBMIT_ROUTE = '**/api/v1/activity-records/*/submit';
+  await page.route(SUBMIT_ROUTE, async (route) => {
+    await gate;
+    return route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ statusCode: 409, code: 'record_changed', message: 'changed' }),
+    });
+  });
+  const createdAnswer = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+  const submitSent = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/submit'));
+  await page.getByRole('button', { name: 'Submit for review', exact: true }).click();
+  created.push((await (await createdAnswer).json()).id as string);
+  await submitSent;
+
+  // Another period: the form now enters a new record, and the user types it.
+  await pickByFieldLabel(page, enDataEntry.periodValue, enPeriods.values.Q3);
+  await expect(page.getByText(enDataEntry.nowEnteringNew)).toBeVisible();
+  await quantity(page).fill('7100');
+  release();
+
+  const toast = page.locator('[data-sonner-toast]').filter({ hasText: enErrors.codes.record_changed });
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText(`${SUBSIDIARY_OPTION.replace(' (UK)', '')}`);
+  await page.unroute(SUBMIT_ROUTE);
+  await page.waitForTimeout(500);
+  await expect(quantity(page)).toHaveValue('7100');
 });

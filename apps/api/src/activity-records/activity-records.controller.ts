@@ -16,7 +16,7 @@ import { ActivityRecordsService, SUBMISSION_NOT_NAMED, type SeenSubmission } fro
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { RejectActivityRecordDto } from './dto/reject-activity-record.dto';
-import { ApproveActivityRecordDto } from './dto/approve-activity-record.dto';
+import { ApproveActivityRecordDto, StartReviewActivityRecordDto } from './dto/approve-activity-record.dto';
 import { VoidActivityRecordDto } from './dto/void-activity-record.dto';
 import {
   ActivityRecordFiltersQueryDto,
@@ -102,8 +102,12 @@ export class ActivityRecordsController {
   /** Take a submitted record into review (FR §6.3) — reviewer roles only. */
   @Post(':id/review')
   @HttpCode(HttpStatus.OK)
-  startReview(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
-    return this.service.startReview(user, id);
+  startReview(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUuidParamPipe) id: string,
+    @Body() dto: StartReviewActivityRecordDto = {},
+  ) {
+    return this.service.startReview(user, id, dto?.seenSubmittedAt);
   }
 
   @Post(':id/approve')

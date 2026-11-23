@@ -63,8 +63,8 @@ import {
 import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
-import { formatNumber } from "@/lib/i18n/number";
-import { reviewCalorificBasis, waitingLabel } from "@/lib/review-view";
+import { formatComputedAmount, formatNumber, formatReadAmount } from "@/lib/i18n/number";
+import { reviewCalorificBasis, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
 import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -132,6 +132,67 @@ export default function ReviewPage() {
   useEffect(() => {
     selectedId.current = selected?.id ?? null;
   }, [selected]);
+  // The sheet reads its record again when it opens (self-gen-form, outside
+  // review of 833db34c): a queue row is as old as the queue, and the record's
+  // read-time facts, such as whether its fuel record exists, may have changed
+  // since. A write's answer is newer than that read, so it bumps the sequence
+  // and a read answered after it is dropped.
+  const sheetRead = useRef(0);
+  // Decisions wait for that read (outside review of 001d6f1c): a reason typed
+  // against the row could otherwise go out with a newer submission's
+  // `seenSubmittedAt`, and a decision could be offered on a record no longer
+  // pending or on an unconfirmed fuel notice.
+  const [sheetState, setSheetState] = useState<"reading" | "ready" | "failed">("ready");
+  // Each opening of the sheet is a session; a review step's answer updates only
+  // the opening it was sent from, so a late answer from an earlier opening of
+  // the same record cannot overrule this one's read (outside review of b8b0d78b).
+  const sheetSession = useRef(0);
+  const openRecord = (row: ActivityRecordDTO) => {
+    sheetSession.current += 1;
+    const seq = (sheetRead.current += 1);
+    setSelected(row);
+    setReason("");
+    setSheetState("reading");
+    api
+      .getActivityRecord(row.id)
+      .then((fresh) => {
+        if (sheetRead.current !== seq || selectedId.current !== row.id) return;
+        if (!(PENDING_REVIEW_STATUSES as readonly string[]).includes(fresh.status)) {
+          // Decided elsewhere since the queue was read: it leaves the queue.
+          setRows((prev) => prev.filter((r) => r.id !== fresh.id));
+          setSelected(null);
+          setReason("");
+          setSheetState("ready");
+          toast.info(t("sheet.noLongerPending"));
+          void loadRef.current({ quiet: true });
+          return;
+        }
+        // Submitted again since the queue was read: what was typed and the
+        // files shown belong to the earlier submission.
+        if (fresh.submittedAt !== row.submittedAt) {
+          setReason("");
+          setEvidenceRetry((n) => n + 1);
+        }
+        setSelected(fresh);
+        setRows((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)));
+        setSheetState("ready");
+      })
+      .catch((err) => {
+        if (sheetRead.current !== seq || selectedId.current !== row.id) return;
+        // Gone (deleted, or out of reach now): it leaves the queue, no Retry.
+        if (err instanceof ApiError && err.status === 404) {
+          setRows((prev) => prev.filter((r) => r.id !== row.id));
+          setSelected(null);
+          setReason("");
+          setSheetState("ready");
+          toast.info(t("sheet.noLongerPending"));
+          void loadRef.current({ quiet: true });
+          return;
+        }
+        setSheetState("failed");
+        showError(err);
+      });
+  };
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -239,14 +300,24 @@ export default function ReviewPage() {
   }, [setUser]);
 
   // Evidence is fetched per record, on open: a reviewer approving a figure
-  // without being able to open the invoice behind it is rubber-stamping.
+  // without being able to open the invoice behind it is rubber-stamping. Keyed
+  // on the record's id and an explicit retry, never on the record object: the
+  // sheet's own re-read of the record on open (self-gen-form) and a review
+  // step's answer replace the object without changing the files.
+  const selectedRecordId = selected?.id ?? null;
+  const [evidenceRetry, setEvidenceRetry] = useState(0);
+  // Which list of files the pages on screen belong to: a continuation page
+  // answered after the list started again (another record, a newer
+  // submission, a retry) is dropped, never appended (outside review of b8b0d78b).
+  const evidenceGen = useRef(0);
   useEffect(() => {
-    if (!selected) return;
+    evidenceGen.current += 1;
+    if (!selectedRecordId) return;
     setEvidence(null);
     setEvidenceCursor(null);
     setEvidenceError(false);
     let cancelled = false;
-    readEvidencePage(selected.id)
+    readEvidencePage(selectedRecordId)
       .then((page) => {
         if (cancelled) return;
         setEvidence(page.items);
@@ -260,31 +331,33 @@ export default function ReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selectedRecordId, evidenceRetry]);
 
   async function loadMoreEvidence() {
     if (!selected || !evidenceCursor) return;
     const recordId = selected.id;
+    const gen = evidenceGen.current;
+    const current = () => evidenceGen.current === gen && selectedId.current === recordId;
     try {
       const page = await readEvidencePage(recordId, evidenceCursor);
-      // The sheet may have moved to another record while this page loaded.
-      if (selectedId.current !== recordId) return;
+      // The sheet may have moved to another record, or its list started again, while this page loaded.
+      if (!current()) return;
       setEvidence((prev) => appendById(prev ?? [], page.items));
       setEvidenceCursor(page.nextCursor);
     } catch (e) {
-      if (selectedId.current !== recordId) return;
+      if (!current()) return;
       showError(e);
       if (!isStaleCursor(e)) return;
       // A cursor refused after a deployment: the files start again from their
       // first page, for the record still open (Codex P2-3).
       try {
         const first = await readEvidencePage(recordId);
-        if (selectedId.current !== recordId) return;
+        if (!current()) return;
         setEvidenceError(false);
         setEvidence(first.items);
         setEvidenceCursor(first.nextCursor);
       } catch {
-        if (selectedId.current !== recordId) return;
+        if (!current()) return;
         // The error state's Retry reloads the record; no stale cursor is left
         // behind a second "load more" (Codex P3 on the re-check).
         setEvidenceCursor(null);
@@ -322,10 +395,13 @@ export default function ReviewPage() {
     record: ActivityRecordDTO,
   ) {
     setBusy(true);
+    const session = sheetSession.current;
     try {
       const updated =
         verb === "review"
-          ? await api.reviewActivityRecord(record.id)
+          ? // The submission on screen: one resubmitted since is refused, so a
+            // reason typed for it never meets the newer one (outside review).
+            await api.reviewActivityRecord(record.id, { seenSubmittedAt: record.submittedAt })
           : verb === "approve"
             ? // The submission the reviewer is looking at (BUG-R2-03): an author
               // may since have recalled, edited and resubmitted it, and then
@@ -345,11 +421,19 @@ export default function ReviewPage() {
           ? prev.map((r) => (r.id === updated.id ? updated : r))
           : prev.filter((r) => r.id !== updated.id),
       );
-      // Only while the sheet still shows this record: one the reviewer closed,
-      // or moved on from, is not reopened by a late answer (Codex P2-2).
-      if (selectedId.current === record.id) {
+      // Only while the sheet still shows the opening this was sent from: one
+      // the reviewer closed, moved on from, or opened again, is not touched by
+      // a late answer (Codex P2-2; outside review of b8b0d78b).
+      if (sheetSession.current === session && selectedId.current === record.id) {
+        sheetRead.current += 1;
+        setSheetState("ready");
         setSelected(stillPending ? updated : null);
         if (!stillPending) setReason("");
+        // Not the submission the reason and files were for: both start again.
+        else if (updated.submittedAt !== record.submittedAt) {
+          setReason("");
+          setEvidenceRetry((n) => n + 1);
+        }
       }
       // The queue moved: its size and its first page are read again — for the
       // selection on screen now — and the cursor chain starts over.
@@ -364,6 +448,9 @@ export default function ReviewPage() {
       showError(e);
       if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
         void loadRef.current();
+        // The record moved under this opening: read it again, so what is
+        // typed and shown belongs to the submission it holds now.
+        if (sheetSession.current === session && selectedId.current === record.id) openRecord(record);
       }
     } finally {
       setBusy(false);
@@ -497,10 +584,7 @@ export default function ReviewPage() {
                           <TableRow
                             key={row.id}
                             className="cursor-pointer"
-                            onClick={() => {
-                              setSelected(row);
-                              setReason("");
-                            }}
+                            onClick={() => openRecord(row)}
                           >
                             <TableCell className="text-sm">
                               {subsidiaryName(row.subsidiaryId)}
@@ -628,6 +712,7 @@ export default function ReviewPage() {
         open={!!selected}
         onOpenChange={(open) => {
           if (!open) {
+            sheetSession.current += 1;
             setSelected(null);
             setReason("");
           }
@@ -666,6 +751,35 @@ export default function ReviewPage() {
                     <>
                       <span className="text-muted-foreground">{t("sheet.calorificBasis")}</span>
                       <span className="col-span-2" data-testid="review-calorific-basis">{t(`sheet.calorificBasisValue.${basis}`)}</span>
+                    </>
+                  );
+                })()}
+                {/* The record's own generation behind the meter, read-only (self-gen-form). */}
+                {(() => {
+                  const own = reviewSelfGeneration(selected);
+                  if (own === null) return null;
+                  // Stored as typed: every digit, never rounded away (outside review of 833db34c).
+                  const kwh = (value: number) => `${formatReadAmount(value, locale)} ${unitSymbol("kWh")}`;
+                  return (
+                    <>
+                      <span className="text-muted-foreground">{t("sheet.selfGeneration.source")}</span>
+                      <span className="col-span-2" data-testid="review-self-generation-source">
+                        {t(`sheet.selfGeneration.sources.${own.source}`)}
+                      </span>
+                      <span className="text-muted-foreground">{t("sheet.selfGeneration.generated")}</span>
+                      <span className="col-span-2 font-mono" data-testid="review-self-generation-generated">{kwh(own.generatedKwh)}</span>
+                      {own.exportedKwh !== null && (
+                        <>
+                          <span className="text-muted-foreground">{t("sheet.selfGeneration.exported")}</span>
+                          <span className="col-span-2 font-mono" data-testid="review-self-generation-exported">{kwh(own.exportedKwh)}</span>
+                        </>
+                      )}
+                      {own.facilityKwh !== null && (
+                        <>
+                          <span className="text-muted-foreground">{t("sheet.selfGeneration.facility")}</span>
+                          <span className="col-span-2 font-mono" data-testid="review-self-generation-facility">{kwh(own.facilityKwh)}</span>
+                        </>
+                      )}
                     </>
                   );
                 })()}
@@ -762,6 +876,47 @@ export default function ReviewPage() {
                 </div>
               )}
 
+              {/* Self-generation notices (self-gen-form; D5, D6): neither blocks a review action. */}
+              {(() => {
+                const own = reviewSelfGeneration(selected);
+                if (own === null) return null;
+                const kwh = (value: number) => formatComputedAmount(value, locale);
+                return (
+                  <>
+                    {own.fuelMissing && (
+                      <div
+                        className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900"
+                        role="status"
+                        data-testid="review-self-generation-fuel-missing"
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                        <span>
+                          {t(`sheet.selfGeneration.fuelMissing.${own.fuelMissing}`, {
+                            site: selected.locationName ?? t("sheet.selfGeneration.wholeCompany"),
+                            year: String(selected.reportingYear),
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {own.balance?.warns && (
+                      <div
+                        className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900"
+                        role="status"
+                        data-testid="review-self-generation-balance"
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                        <span>
+                          {t("sheet.selfGeneration.balance", {
+                            imported: kwh(own.balance.importKwh),
+                            expected: kwh(own.balance.expectedImportKwh),
+                          })}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
               {selected.anomalyFlag && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-1">
                   <p className="flex items-center gap-2 font-medium text-amber-800">
@@ -818,7 +973,7 @@ export default function ReviewPage() {
                     <button
                       type="button"
                       className="underline"
-                      onClick={() => setSelected({ ...selected })}
+                      onClick={() => setEvidenceRetry((n) => n + 1)}
                     >
                       {t("retry")}
                     </button>
@@ -878,6 +1033,7 @@ export default function ReviewPage() {
                 </label>
                 <Textarea
                   id="review-reason"
+                  disabled={sheetState !== "ready"}
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder={t("sheet.reasonPlaceholder")}
@@ -888,11 +1044,24 @@ export default function ReviewPage() {
                 </p>
               </div>
 
+              {sheetState === "reading" && (
+                <p className="text-xs text-muted-foreground" role="status" data-testid="review-sheet-reading">
+                  {t("sheet.reading")}
+                </p>
+              )}
+              {sheetState === "failed" && (
+                <p className="text-xs text-red-600" role="status" data-testid="review-sheet-read-failed">
+                  {t("sheet.readFailed")}{" "}
+                  <button type="button" className="underline" onClick={() => openRecord(selected)}>
+                    {t("retry")}
+                  </button>
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {canReview && selected.status === "submitted" && (
                   <Button
                     variant="outline"
-                    disabled={busy}
+                    disabled={busy || sheetState !== "ready"}
                     onClick={() => act("review", selected)}
                   >
                     {t("sheet.startReview")}
@@ -901,7 +1070,7 @@ export default function ReviewPage() {
                 {canReview && (
                   <Button
                     variant="destructive"
-                    disabled={busy || !reason.trim()}
+                    disabled={busy || sheetState !== "ready" || !reason.trim()}
                     onClick={() => act("reject", selected)}
                   >
                     {t("sheet.reject")}
@@ -909,7 +1078,7 @@ export default function ReviewPage() {
                 )}
                 {canApprove && (
                   <Button
-                    disabled={busy}
+                    disabled={busy || sheetState !== "ready"}
                     onClick={() => act("approve", selected)}
                   >
                     {t("sheet.approve")}

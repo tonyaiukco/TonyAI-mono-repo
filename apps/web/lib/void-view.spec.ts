@@ -107,6 +107,7 @@ const record = (over: Partial<ActivityRecordDTO> = {}): ActivityRecordDTO => ({
   voidedByName: null,
   voidedAt: null,
   evidenceCount: 1,
+  generationFuelRecord: null,
   createdAt: '2026-02-01T00:00:00.000Z',
   updatedAt: '2026-02-01T00:00:00.000Z',
   ...over,

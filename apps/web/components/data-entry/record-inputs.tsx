@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
-import { Info, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { AlertTriangle, Info, Plus, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "use-intl";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { checkDecimal, formatNumber, parseLocaleDecimal, typedValue, type DecimalRule } from "@/lib/i18n/number";
+import { checkDecimal, formatComputedAmount, formatNumber, parseLocaleDecimal, typedValue, type DecimalRule } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import {
   derivedNetQuantity,
@@ -20,11 +20,15 @@ import {
   leakRatePercent,
   offersAlternative,
   referenceValue,
+  selfGenerationReminder,
   type EquipmentIssue,
   type EquipmentLineDraft,
   type GasInputs,
   type GasInputsIssue,
   type NetSource,
+  type SelfGenerationField,
+  type SelfGenerationForm,
+  type SelfGenerationFormIssue,
 } from "@/lib/record-inputs-view";
 import {
   ACTIVITY_VALUE_MAX,
@@ -32,11 +36,14 @@ import {
   VOLUME_CORRECTION_FACTOR_MAX,
   VOLUME_CORRECTION_FACTOR_MIN,
   CV_BASES,
+  SELF_GENERATION_SOURCES,
   isCvBasis,
+  isSelfGenerationSource,
   type CvBasis,
   type EquipmentType,
   type LeakRateChoice,
   type ReleaseParametersDTO,
+  type SelfGenerationBalance,
 } from "@/lib/types";
 
 /** The release parameters the inputs default to, as the page loaded them. */
@@ -65,6 +72,7 @@ function ParameterNumberField({
   disabled,
   help,
   info,
+  invalid = false,
   onChange,
 }: {
   id: string;
@@ -77,6 +85,8 @@ function ParameterNumberField({
   /** An explanation behind an ⓘ beside the label, opened by click or Enter
    *  (UAT round 2, BUG-R2-06): what the field is, beyond its one help line. */
   info?: { label: string; content: ReactNode };
+  /** A rule across fields this one breaks (exports above the generation): marked as its own refusal is. */
+  invalid?: boolean;
   onChange: (value: number | null, refused: boolean) => void;
 }) {
   const locale = useLocale();
@@ -89,6 +99,16 @@ function ParameterNumberField({
     onChange(stored, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // A language switch re-reads the text (`useDecimalInput`, during render): the
+  // form is told what it reads now, or a figure refused in one language and
+  // read in the other would leave the save held (outside review of 001d6f1c).
+  const reportedLocale = useRef(input.locale);
+  useEffect(() => {
+    if (reportedLocale.current === input.locale) return;
+    reportedLocale.current = input.locale;
+    onChange(check.ok ? check.value : null, !check.ok && check.reason !== "empty");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input.locale]);
   return (
     <div className="space-y-1.5">
       {info ? (
@@ -115,7 +135,7 @@ function ParameterNumberField({
         autoComplete="off"
         value={input.text}
         disabled={disabled}
-        aria-invalid={input.text.trim() !== "" && !check.ok && !input.typing}
+        aria-invalid={invalid || (input.text.trim() !== "" && !check.ok && !input.typing)}
         aria-describedby={`${id}-note`}
         onBlur={input.blur}
         onChange={(e) => {
@@ -484,6 +504,154 @@ export function EquipmentLines({
       </div>
       <p className="text-xs text-muted-foreground">{t("annualOnly")}</p>
       {issue && <p className="text-xs text-amber-700" role="status">{t(`equipmentIssues.${issue}`)}</p>}
+    </div>
+  );
+}
+
+/** The upper bound of a self-generation kWh field (the shape CHECK's and the DTO's). */
+const SELF_GENERATION_KWH_MAX = 1e300;
+
+/** The field each of the section's issues concerns, marked invalid on screen; none for an unread field, which marks itself. */
+const ISSUE_FIELD: Record<SelfGenerationFormIssue, SelfGenerationField | null> = {
+  unreadable: null,
+  generated_missing: "generatedKwh",
+  generated_negative: "generatedKwh",
+  exported_negative: "exportedKwh",
+  exported_above_generated: "exportedKwh",
+  facility_not_positive: "facilityKwh",
+};
+
+/**
+ * An Electricity record's own generation behind the meter (self-gen-form; D5,
+ * D6, D8), in any geography. Opens by source: with none, nothing more is asked
+ * and the record is a plain grid record; with one, the generated kWh
+ * (required), the exported and the facility consumption kWh (optional), the
+ * Case A statement, the import statement, the fuel reminder for a fuel source,
+ * and the energy balance warning when the consumption is given. Neither the
+ * reminder nor the warning holds anything back; the issue does.
+ */
+export function SelfGenerationInputs({
+  form,
+  issue,
+  balance,
+  epoch,
+  onChange,
+}: {
+  form: SelfGenerationForm;
+  issue: SelfGenerationFormIssue | null;
+  balance: SelfGenerationBalance | null;
+  epoch: number;
+  onChange: (next: Partial<SelfGenerationForm>, field: SelfGenerationField | null, refused: boolean) => void;
+}) {
+  const t = useTranslations("dataEntry.inputs.selfGeneration");
+  const locale = useLocale();
+  const reminder = selfGenerationReminder(form.source);
+  const invalidField = issue ? ISSUE_FIELD[issue] : null;
+  const kwh = (value: number) => formatComputedAmount(value, locale);
+  return (
+    <div className="space-y-4 rounded-lg border p-4" data-testid="self-generation">
+      <div>
+        <p className="text-sm font-medium">{t("title")}</p>
+        <p className="text-xs text-muted-foreground">{t("help")}</p>
+      </div>
+      <div className="space-y-1.5 sm:max-w-xs">
+        <Label htmlFor="self-generation-source">{t("source")}</Label>
+        <Select
+          value={form.source ?? "none"}
+          onValueChange={(value) => onChange({ source: isSelfGenerationSource(value) ? value : null }, null, false)}
+        >
+          <SelectTrigger id="self-generation-source" data-testid="self-generation-source">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">{t("sources.none")}</SelectItem>
+            {SELF_GENERATION_SOURCES.map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(`sources.${value}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {form.source !== null && (
+        <>
+          <p className="text-xs text-muted-foreground" data-testid="self-generation-case-a">{t("caseA")}</p>
+          <p className="text-xs text-muted-foreground" data-testid="self-generation-import">{t("importStatement")}</p>
+        </>
+      )}
+      {/* Hidden, not unmounted, with no source: the fields keep their text, a
+          figure they could not read included, through None and back (outside
+          review of 001d6f1c). With no source no block is sent, whatever they hold. */}
+      <div
+        className={form.source === null ? "hidden" : "grid grid-cols-1 gap-4 sm:grid-cols-3"}
+        hidden={form.source === null}
+        data-testid="self-generation-fields"
+      >
+        <ParameterNumberField
+          key={`${epoch}:self-generated`}
+          id="input-self-generated"
+          label={t("generated")}
+          stored={form.generatedKwh}
+          rule="non_negative"
+          max={SELF_GENERATION_KWH_MAX}
+          invalid={invalidField === "generatedKwh"}
+          onChange={(value, refused) => onChange({ generatedKwh: value }, "generatedKwh", refused)}
+        />
+        <ParameterNumberField
+          key={`${epoch}:self-exported`}
+          id="input-self-exported"
+          label={t("exported")}
+          stored={form.exportedKwh}
+          rule="non_negative"
+          max={SELF_GENERATION_KWH_MAX}
+          help={t("exportedHelp")}
+          invalid={invalidField === "exportedKwh"}
+          onChange={(value, refused) => onChange({ exportedKwh: value }, "exportedKwh", refused)}
+        />
+        <ParameterNumberField
+          key={`${epoch}:self-facility`}
+          id="input-self-facility"
+          label={t("facility")}
+          stored={form.facilityKwh}
+          // Zero is read, so the section can say the consumption must be
+          // above zero or left empty (its own sentence), rather than that
+          // the figure could not be read (qa-auditor review).
+          rule="non_negative"
+          max={SELF_GENERATION_KWH_MAX}
+          help={t("facilityHelp")}
+          invalid={invalidField === "facilityKwh"}
+          onChange={(value, refused) => onChange({ facilityKwh: value }, "facilityKwh", refused)}
+        />
+      </div>
+      {form.source !== null && (
+        <>
+          {issue && (
+            <p className="text-xs text-amber-700" role="status" data-testid="self-generation-issue">
+              {t(`issues.${issue}`)}
+            </p>
+          )}
+          {reminder && (
+            <p
+              className="flex items-start gap-1.5 rounded-lg bg-secondary/60 p-2.5 text-xs"
+              role="note"
+              data-testid="self-generation-reminder"
+            >
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              {t(`reminder.${reminder}`)}
+            </p>
+          )}
+          {balance?.warns && (
+            <p
+              className="flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-900"
+              role="status"
+              data-testid="self-generation-balance"
+            >
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              {t("balance", { imported: kwh(balance.importKwh), expected: kwh(balance.expectedImportKwh) })}
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }

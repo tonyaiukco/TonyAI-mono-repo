@@ -1,6 +1,17 @@
 import { formatNumber } from '@/lib/i18n/number';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
-import { isCvBasis, recordParameterShape, type ActivityRecordDTO, type CvBasis } from '@/lib/types';
+import {
+  isCvBasis,
+  isSelfGenerationSource,
+  normalizeRecordParameters,
+  recordParameterShape,
+  selfGenerationBalance,
+  type ActivityRecordDTO,
+  type CvBasis,
+  type ElectricityRecordParameters,
+  type SelfGenerationBalance,
+  type SelfGenerationSource,
+} from '@/lib/types';
 
 /**
  * The calorific basis a TR natural gas bill states (ng-kwh-engine), for the
@@ -11,6 +22,46 @@ export function reviewCalorificBasis(record: Pick<ActivityRecordDTO, 'category' 
   if (recordParameterShape(record.category) !== 'natural_gas' || record.parameters === null) return null;
   const basis = (record.parameters as { cvBasis?: unknown }).cvBasis;
   return isCvBasis(basis) ? basis : null;
+}
+
+/** An Electricity record's self-generation block as the review sheet shows it (self-gen-form, design 7). */
+export interface ReviewSelfGeneration {
+  source: SelfGenerationSource;
+  generatedKwh: number;
+  exportedKwh: number | null;
+  facilityKwh: number | null;
+  /** The energy balance (D6), or null when the block states no facility consumption. */
+  balance: SelfGenerationBalance | null;
+  /** The fuel record a fuel source needs and the read found none of (D5), or null. */
+  fuelMissing: 'natural_gas_chp' | 'diesel_generator' | null;
+}
+
+/**
+ * The self-generation block an Electricity record carries, read-only, for the
+ * review sheet: read from the record's `parameters`, where the source lives
+ * and the commit freeze protects it, never from its snapshot. Null for any
+ * other record, a plain grid record and a block of nulls.
+ */
+export function reviewSelfGeneration(
+  record: Pick<ActivityRecordDTO, 'category' | 'parameters' | 'activityValue' | 'activityUnit' | 'generationFuelRecord'>,
+): ReviewSelfGeneration | null {
+  if (recordParameterShape(record.category) !== 'electricity') return null;
+  const block = normalizeRecordParameters(record.parameters) as ElectricityRecordParameters | null;
+  if (block === null) return null;
+  const source = block.selfGenerationSource;
+  if (!isSelfGenerationSource(source) || typeof block.selfGeneratedKwh !== 'number') return null;
+  const balance = selfGenerationBalance(record.activityValue, record.activityUnit, block);
+  return {
+    source,
+    generatedKwh: block.selfGeneratedKwh,
+    exportedKwh: block.exportedToGridKwh ?? null,
+    facilityKwh: block.facilityConsumptionKwh ?? null,
+    balance,
+    fuelMissing:
+      record.generationFuelRecord === 'missing' && (source === 'natural_gas_chp' || source === 'diesel_generator')
+        ? source
+        : null,
+  };
 }
 
 /**

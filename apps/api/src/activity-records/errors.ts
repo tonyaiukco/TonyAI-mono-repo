@@ -172,9 +172,11 @@ export const EDIT_VERSION_REQUIRED_MESSAGE =
 /**
  * An edit that would change or remove a stored self-generation block without
  * naming the version the editor read (`seenUpdatedAt`, self-gen-model review of
- * `1802e22e`). No screen shows the block yet, so a tab opened before it was
- * stored, or one still running the JavaScript from before the deploy, would
- * send `parameters: null` and erase it unseen. `record_changed` on purpose, as
+ * `1802e22e`). A client that names no version cannot be shown to have read the
+ * block: a tab still running the JavaScript from before the `self-gen-model`
+ * deploy sends `parameters: null` on every Electricity save and would erase it
+ * unseen, and a script may hold an older copy. Data Entry names its version on
+ * every edit since. `record_changed` on purpose, as
  * `ReviewVersionRequiredError`: every client words it as "reload and try again".
  */
 export class EditVersionRequiredError extends ConflictException {

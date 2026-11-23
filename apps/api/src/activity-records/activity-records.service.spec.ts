@@ -5699,3 +5699,144 @@ describe('a stored net bill\'s quantity is re-entered where it would be read oth
   });
 });
 
+
+describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design 6)', () => {
+  const CHP = { generationTopology: 'A', selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 400000 } as const;
+  const chpRecord = (over: Partial<ActivityRecord> = {}) =>
+    makeRecord({
+      id: 'rec-chp', subsidiaryId: 'sub-1', locationId: 'loc-1', reportingYear: 2026, createdBy: 'user-entry',
+      category: 'Electricity', activityUnit: 'kWh', parameters: CHP as never, ...over,
+    });
+  /** True for the fuel lookup's query, and for no other `findMany` the service runs. */
+  const isFuelLookup = (args: any) => args?.select?.activityType === true && args?.where?.status?.not === 'voided';
+  /** The fuel lookup answers `rows`; every other `findMany` keeps answering `[]`. */
+  function fuelRows(prisma: PrismaMock, rows: unknown[]) {
+    prisma.activityRecord.findMany.mockImplementation(async (args: any) => (isFuelLookup(args) ? rows : []));
+  }
+  const gasAtSite = { subsidiaryId: 'sub-1', locationId: 'loc-1', reportingYear: 2026, category: 'Natural Gas', activityType: null };
+  const lookups = (prisma: PrismaMock) => prisma.activityRecord.findMany.mock.calls.filter(([a]: any) => isFuelLookup(a));
+
+  beforeEach(() => {
+    audit.record.mockClear();
+  });
+
+  it('a page resolves every row in one lookup, and a plain row reads null', async () => {
+    const { prisma, service } = build();
+    const rows = [
+      { ...chpRecord({ id: 'a' }), _count: { evidenceLinks: 0 }, location: null },
+      { ...chpRecord({ id: 'b', locationId: 'loc-2' }), _count: { evidenceLinks: 0 }, location: null },
+      { ...makeRecord({ id: 'c', category: 'Electricity' }), _count: { evidenceLinks: 0 }, location: null },
+    ];
+    prisma.activityRecord.findMany.mockImplementation(async (args: any) => (isFuelLookup(args) ? [gasAtSite] : rows));
+    const page = await service.listPage(dataEntry(), {});
+    expect(page.items.map((r) => [r.id, r.generationFuelRecord])).toEqual([
+      ['a', 'present'],
+      ['b', 'missing'],
+      ['c', null],
+    ]);
+    expect(lookups(prisma)).toHaveLength(1);
+    expect((lookups(prisma)[0][0] as any).where.subsidiaryId).toEqual({ in: ['sub-1'] });
+  });
+
+  it('a single read resolves its record', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue({ ...chpRecord(), location: null });
+    fuelRows(prisma, []);
+    expect((await service.get(dataEntry(), 'rec-chp')).generationFuelRecord).toBe('missing');
+    fuelRows(prisma, [gasAtSite]);
+    expect((await service.get(dataEntry(), 'rec-chp')).generationFuelRecord).toBe('present');
+  });
+
+  it('a create answers the state and never audits it', async () => {
+    const { prisma, service } = build(2);
+    prisma.location.findUnique.mockResolvedValue({ id: 'loc-1', subsidiaryId: 'sub-1', geographyCode: 'TR' });
+    prisma.activityRecord.create.mockImplementation(async ({ data }: any) => ({
+      ...chpRecord({ id: 'rec-new' }),
+      ...data,
+      _count: { evidenceLinks: 0 },
+      location: null,
+    }));
+    fuelRows(prisma, [gasAtSite]);
+    const dto = await service.create(dataEntry(), {
+      subsidiaryId: 'sub-1', locationId: 'loc-1', reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1',
+      category: 'Electricity', activityValue: 600000, activityUnit: 'kWh', parameters: CHP,
+    } as never);
+    expect(dto.generationFuelRecord).toBe('present');
+    const diff = audit.record.mock.calls[0][1].diff as any;
+    expect(Object.keys(diff.after).sort()).toEqual(PERSISTED_KEYS);
+  });
+
+  it('an update answers the state and audits neither side with it', async () => {
+    const { prisma, service } = build(2);
+    const row = { ...chpRecord(), _count: { evidenceLinks: 0 }, location: null };
+    prisma.location.findUnique.mockResolvedValue({ id: 'loc-1', subsidiaryId: 'sub-1', geographyCode: 'TR' });
+    prisma.activityRecord.findUnique.mockResolvedValue(row);
+    prisma.activityRecord.update.mockImplementation(async ({ data }: any) => ({ ...row, ...data }));
+    fuelRows(prisma, []);
+    const dto = await service.update(dataEntry(), 'rec-chp', { activityValue: 550000 });
+    expect(dto.generationFuelRecord).toBe('missing');
+    const diff = audit.record.mock.calls[0][1].diff as any;
+    expect(Object.keys(diff.before).sort()).toEqual(PERSISTED_KEYS);
+    expect(Object.keys(diff.after).sort()).toEqual(PERSISTED_KEYS);
+  });
+
+  it('a review step answers the state, so the sheet keeps its notice', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(chpRecord({ status: ActivityRecordStatus.submitted }));
+    prisma.activityRecord.update.mockImplementation(async ({ data }: any) => ({
+      ...chpRecord({ status: data.status }),
+      _count: { evidenceLinks: 0 },
+    }));
+    fuelRows(prisma, []);
+    const dto = await service.startReview(consultant(), 'rec-chp');
+    expect(dto.status).toBe(ActivityRecordStatus.under_review);
+    expect(dto.generationFuelRecord).toBe('missing');
+  });
+
+  it('a solar record asks nothing', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue({
+      ...chpRecord({ parameters: { ...CHP, selfGenerationSource: 'solar' } as never }),
+      location: null,
+    });
+    fuelRows(prisma, [gasAtSite]);
+    expect((await service.get(dataEntry(), 'rec-chp')).generationFuelRecord).toBeNull();
+    expect(lookups(prisma)).toHaveLength(0);
+  });
+});
+
+describe('ActivityRecordsService — start review names the submission it saw (self-gen-form, outside review of b8b0d78b)', () => {
+  const SUBMITTED_AT = new Date('2026-11-20T10:00:00.000Z');
+  function submittedRecord(prisma: PrismaMock) {
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-sr', status: ActivityRecordStatus.submitted, submittedAt: SUBMITTED_AT }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-sr', status: data.status, submittedAt: SUBMITTED_AT }),
+      _count: { evidenceLinks: 0 },
+    }));
+  }
+
+  beforeEach(() => {
+    audit.record.mockClear();
+  });
+
+  it('refuses a resubmitted record as record_changed, writing nothing', async () => {
+    const { prisma, service } = build();
+    submittedRecord(prisma);
+    await expect(service.startReview(consultant(), 'rec-sr', '2026-11-19T10:00:00.000Z')).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'record_changed' }),
+    });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('takes the submission it saw into review, and compares nothing when none is named', async () => {
+    const { prisma, service } = build();
+    submittedRecord(prisma);
+    expect((await service.startReview(consultant(), 'rec-sr', SUBMITTED_AT.toISOString())).status).toBe(
+      ActivityRecordStatus.under_review,
+    );
+    expect((await service.startReview(consultant(), 'rec-sr')).status).toBe(ActivityRecordStatus.under_review);
+  });
+});

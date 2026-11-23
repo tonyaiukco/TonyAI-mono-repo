@@ -54,6 +54,7 @@
   "duplicateAdvice": "Open it from Previous submissions to continue it.",
   "duplicateAdviceMoving": "The record has not been moved, and stays where it is.",
   "saveFailedServer": "Could not save — the server failed to process this record. Try again, and report it if it persists.",
+  "recordChanged": "This record was changed after this form opened it, so your changes were not saved. The form is reading the record again.",
   "previewTitle": "Live emissions preview",
   "previewPrompt": "Pick a subsidiary and category, then enter an activity value to see a live tCO₂e estimate.",
   "bulkColumns": {
@@ -213,6 +214,39 @@
       "help": "Your bill states which one it uses: gross is the upper calorific value, net the lower.",
       "missing": "Choose the bill's calorific basis, net or gross, before the figure can be calculated or saved.",
       "derivedNet": "Priced on ≈ {net} {unit} net: × {ratio} ({ncv} / {gcv} kcal/Sm³), the reference ratio of {publisher} {edition}{status}."
+    },
+    "selfGeneration": {
+      "title": "Own generation behind the meter",
+      "help": "Only if the site also generates electricity itself. Leave it at None for a plain grid supply.",
+      "source": "Source of the site's own generation",
+      "sources": {
+        "none": "None",
+        "solar": "Solar",
+        "wind": "Wind",
+        "natural_gas_chp": "Natural gas CHP",
+        "diesel_generator": "Diesel generator"
+      },
+      "caseA": "This records generation behind the same meter as the grid import (Case A): the site uses it before it reaches the grid meter. A plant on a meter of its own cannot be recorded yet.",
+      "importStatement": "The quantity above is the electricity imported from the grid, as the meter's import register reads. Do not enter a netted figure (import minus export).",
+      "generated": "Generated on site (kWh)",
+      "exported": "Exported to the grid (kWh)",
+      "exportedHelp": "Optional. Part of the generation; it never reduces the record's figure.",
+      "facility": "Facility consumption (kWh)",
+      "facilityHelp": "Optional. The site's total use; when given, the energy balance is checked.",
+      "issues": {
+        "unreadable": "A self-generation figure could not be read. Correct it before the record can be calculated or saved.",
+        "generated_missing": "Enter the kWh generated on site, or set the source to None, before the record can be calculated or saved.",
+        "generated_negative": "The kWh generated on site cannot be negative.",
+        "exported_negative": "The kWh exported to the grid cannot be negative.",
+        "exported_above_generated": "The kWh exported to the grid cannot exceed the kWh generated on site.",
+        "facility_not_positive": "The facility consumption must be above zero, or left empty."
+      },
+      "reminder": {
+        "natural_gas_chp": "Enter the CHP unit's gas as part of this site's Natural Gas record for the same year. This record does not count it.",
+        "diesel_generator": "Enter the generator's fuel as this site's Fuel record for diesel for the same year. This record does not count it."
+      },
+      "balance": "Energy balance: the grid import is {imported} kWh, but consumption − generation + exports gives {expected} kWh. Check the figures against the bills. This is a warning only.",
+      "removalNotice": "Saving as another category removes this record's self-generation details."
     },
     "basisReset": "This figure was on the net calorific basis. Outside Türkiye's rules an energy bill is priced as gross, so enter the bill's gross figure.",
     "recalculatedOnSave": "The factor edition changed while you were editing. The figures are being calculated again on the current edition.",

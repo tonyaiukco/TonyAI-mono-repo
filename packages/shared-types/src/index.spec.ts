@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   isProvenanceSnapshot,
+  CATEGORY_ACTIVITY_TYPES,
+  ENERGY_BALANCE_TOLERANCE,
+  GENERATION_FUEL_RECORD_STATES,
+  SELF_GENERATION_FUEL_RECORDS,
+  generationFuelRecordFor,
+  isGenerationFuelRecordState,
+  selfGenerationBalance,
   normalizeRecordParameters,
   GENERATION_TOPOLOGIES,
   ACCEPTED_GENERATION_TOPOLOGIES,
@@ -1492,5 +1499,157 @@ describe('isProvenanceSnapshot (LP4-02, D11)', () => {
     expect(isProvenanceSnapshot({ ...figure, snapshotSchema: 2 } as never)).toBe(true);
     expect(isProvenanceSnapshot({ ...figure, snapshotSchema: 3 } as never)).toBe(true);
     expect(isProvenanceSnapshot(figure as never)).toBe(false);
+  });
+});
+
+describe('selfGenerationBalance (self-gen-form, D6)', () => {
+  const block = (over: Partial<ElectricityRecordParameters> = {}): ElectricityRecordParameters => ({
+    generationTopology: 'A',
+    selfGenerationSource: 'solar',
+    selfGeneratedKwh: 400_000,
+    facilityConsumptionKwh: 1_000_000,
+    ...over,
+  });
+
+  it('holds the 5% tolerance', () => {
+    expect(ENERGY_BALANCE_TOLERANCE).toBe(0.05);
+  });
+
+  it('does not warn on a balanced record', () => {
+    expect(selfGenerationBalance(600_000, 'kWh', block())).toEqual({
+      importKwh: 600_000,
+      expectedImportKwh: 600_000,
+      warns: false,
+    });
+  });
+
+  it('warns on a gap above 5% and names both figures', () => {
+    expect(selfGenerationBalance(600_000, 'kWh', block({ facilityConsumptionKwh: 900_000 }))).toEqual({
+      importKwh: 600_000,
+      expectedImportKwh: 500_000,
+      warns: true,
+    });
+  });
+
+  it('does not warn at exactly 5%, on either side, and warns just past it', () => {
+    const at = block({ facilityConsumptionKwh: 900_000 });
+    expect(selfGenerationBalance(525_000, 'kWh', at)?.warns).toBe(false);
+    expect(selfGenerationBalance(475_000, 'kWh', at)?.warns).toBe(false);
+    expect(selfGenerationBalance(525_001, 'kWh', at)?.warns).toBe(true);
+    expect(selfGenerationBalance(474_999, 'kWh', at)?.warns).toBe(true);
+  });
+
+  it('holds exactly 5% with fractional figures, where floating point would tip it (outside review)', () => {
+    const small = block({ facilityConsumptionKwh: 1.1, selfGeneratedKwh: 0.1 });
+    expect(selfGenerationBalance(1.05, 'kWh', small)?.warns).toBe(false);
+    expect(selfGenerationBalance(0.95, 'kWh', small)?.warns).toBe(false);
+    expect(selfGenerationBalance(1.0501, 'kWh', small)?.warns).toBe(true);
+    expect(selfGenerationBalance(1.05, 'kWh', block({ facilityConsumptionKwh: 1, selfGeneratedKwh: 0 }))?.warns).toBe(false);
+  });
+
+  it('holds exactly 5% when the expected import is a small difference of large figures (outside review)', () => {
+    const large = block({ facilityConsumptionKwh: 1_000_000.1, selfGeneratedKwh: 1_000_000 });
+    expect(selfGenerationBalance(0.105, 'kWh', large)?.warns).toBe(false);
+    expect(selfGenerationBalance(0.095, 'kWh', large)?.warns).toBe(false);
+    expect(selfGenerationBalance(0.106, 'kWh', large)?.warns).toBe(true);
+    expect(selfGenerationBalance(0.2, 'kWh', large)?.warns).toBe(true);
+  });
+
+  it('still warns on a real 5.1% gap between figures stored exactly, however large (outside review)', () => {
+    const exact = block({ facilityConsumptionKwh: 1_000_000_000, selfGeneratedKwh: 1_000_000_000, exportedToGridKwh: 0.001 });
+    expect(selfGenerationBalance(0.001051, 'kWh', exact)).toMatchObject({ expectedImportKwh: 0.001, warns: true });
+    expect(selfGenerationBalance(0.00105, 'kWh', exact)?.warns).toBe(false);
+  });
+
+  it('adds the exports to the expected import, so a netted bill figure warns', () => {
+    expect(selfGenerationBalance(600_000, 'kWh', block({ exportedToGridKwh: 100_000 }))).toEqual({
+      importKwh: 600_000,
+      expectedImportKwh: 700_000,
+      warns: true,
+    });
+  });
+
+  it('reads a record in MWh as kWh', () => {
+    expect(selfGenerationBalance(600, 'MWh', block())).toEqual({
+      importKwh: 600_000,
+      expectedImportKwh: 600_000,
+      warns: false,
+    });
+  });
+
+  it('warns when the generation exceeds the consumption and anything is imported', () => {
+    const over = block({ facilityConsumptionKwh: 300_000 });
+    expect(selfGenerationBalance(50_000, 'kWh', over)).toEqual({
+      importKwh: 50_000,
+      expectedImportKwh: -100_000,
+      warns: true,
+    });
+    expect(selfGenerationBalance(0, 'kWh', over)?.warns).toBe(false);
+  });
+
+  it('at an expected import of exactly 0, warns on any import and not on none', () => {
+    const zero = block({ facilityConsumptionKwh: 400_000 });
+    expect(selfGenerationBalance(0, 'kWh', zero)).toEqual({ importKwh: 0, expectedImportKwh: 0, warns: false });
+    expect(selfGenerationBalance(1, 'kWh', zero)?.warns).toBe(true);
+  });
+
+  it('checks nothing without a block, a facility consumption, a generation, a quantity or a kWh route', () => {
+    expect(selfGenerationBalance(600_000, 'kWh', null)).toBeNull();
+    expect(selfGenerationBalance(600_000, 'kWh', undefined)).toBeNull();
+    expect(selfGenerationBalance(600_000, 'kWh', block({ facilityConsumptionKwh: null }))).toBeNull();
+    expect(selfGenerationBalance(600_000, 'kWh', block({ facilityConsumptionKwh: undefined }))).toBeNull();
+    expect(selfGenerationBalance(600_000, 'kWh', block({ selfGeneratedKwh: null }))).toBeNull();
+    expect(selfGenerationBalance(null, 'kWh', block())).toBeNull();
+    expect(selfGenerationBalance(undefined, 'kWh', block())).toBeNull();
+    expect(selfGenerationBalance(Number.NaN, 'kWh', block())).toBeNull();
+    expect(selfGenerationBalance(600_000, '', block())).toBeNull();
+    expect(selfGenerationBalance(600_000, null, block())).toBeNull();
+    expect(selfGenerationBalance(600_000, 'litres', block())).toBeNull();
+    expect(selfGenerationBalance(600_000, 'furlongs', block())).toBeNull();
+    expect(selfGenerationBalance(600_000, '__proto__', block())).toBeNull();
+    expect(selfGenerationBalance(600_000, 'constructor', block())).toBeNull();
+  });
+});
+
+describe('the fuel record a self-generation source needs (self-gen-form, D5)', () => {
+  it('maps every source, a fuel source to a real category and type, a renewable one to none', () => {
+    expect(Object.keys(SELF_GENERATION_FUEL_RECORDS).sort()).toEqual([...SELF_GENERATION_SOURCES].sort());
+    expect(SELF_GENERATION_FUEL_RECORDS.solar).toBeNull();
+    expect(SELF_GENERATION_FUEL_RECORDS.wind).toBeNull();
+    expect(SELF_GENERATION_FUEL_RECORDS.natural_gas_chp).toEqual({ category: 'Natural Gas', activityType: null });
+    expect(SELF_GENERATION_FUEL_RECORDS.diesel_generator).toEqual({ category: 'Fuel', activityType: 'diesel' });
+    for (const kind of Object.values(SELF_GENERATION_FUEL_RECORDS)) {
+      if (kind === null) continue;
+      expect(CATEGORIES).toContain(kind.category);
+      if (kind.activityType !== null) {
+        expect(CATEGORY_ACTIVITY_TYPES[kind.category]?.types.map((t) => t.value)).toContain(kind.activityType);
+      }
+    }
+    expect(Object.isFrozen(SELF_GENERATION_FUEL_RECORDS)).toBe(true);
+  });
+
+  it('names the fuel record of a fuel-sourced Electricity record only', () => {
+    const electricity = (selfGenerationSource: unknown) => ({
+      category: 'Electricity',
+      parameters: { generationTopology: 'A', selfGenerationSource, selfGeneratedKwh: 1 },
+    });
+    expect(generationFuelRecordFor(electricity('natural_gas_chp'))).toEqual({ category: 'Natural Gas', activityType: null });
+    expect(generationFuelRecordFor(electricity('diesel_generator'))).toEqual({ category: 'Fuel', activityType: 'diesel' });
+    expect(generationFuelRecordFor(electricity('solar'))).toBeNull();
+    expect(generationFuelRecordFor(electricity('wind'))).toBeNull();
+    expect(generationFuelRecordFor(electricity('biogas'))).toBeNull();
+    expect(generationFuelRecordFor(electricity(null))).toBeNull();
+    expect(generationFuelRecordFor({ category: 'Electricity', parameters: null })).toBeNull();
+    expect(generationFuelRecordFor({ category: 'Electricity' })).toBeNull();
+    // The category decides, never the keys.
+    expect(
+      generationFuelRecordFor({ category: 'Natural Gas', parameters: { selfGenerationSource: 'natural_gas_chp' } }),
+    ).toBeNull();
+  });
+
+  it('lists the two states with a guard', () => {
+    expect(GENERATION_FUEL_RECORD_STATES).toEqual(['present', 'missing']);
+    for (const s of GENERATION_FUEL_RECORD_STATES) expect(isGenerationFuelRecordState(s)).toBe(true);
+    for (const s of ['Present', 'none', '', null, 0]) expect(isGenerationFuelRecordState(s)).toBe(false);
   });
 });

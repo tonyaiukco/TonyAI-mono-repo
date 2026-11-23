@@ -2,11 +2,11 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
-import { ApproveActivityRecordDto } from './approve-activity-record.dto';
+import { ApproveActivityRecordDto, StartReviewActivityRecordDto } from './approve-activity-record.dto';
 import { RejectActivityRecordDto } from './reject-activity-record.dto';
 
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true };
-const errorsOf = (Dto: typeof ApproveActivityRecordDto | typeof RejectActivityRecordDto, body: Record<string, unknown>) =>
+const errorsOf = (Dto: typeof ApproveActivityRecordDto | typeof RejectActivityRecordDto | typeof StartReviewActivityRecordDto, body: Record<string, unknown>) =>
   validateSync(plainToInstance(Dto, body) as object, PIPE_OPTIONS);
 
 describe('seenSubmittedAt — the submission a decision is about (BUG-R2-03 review)', () => {
@@ -23,5 +23,15 @@ describe('seenSubmittedAt — the submission a decision is about (BUG-R2-03 revi
 
   it.each(['yesterday', '2026-13-40T00:00:00Z', 42])('refuses %s', (value) => {
     expect(errorsOf(ApproveActivityRecordDto, { seenSubmittedAt: value }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('seenSubmittedAt on start review (self-gen-form)', () => {
+  it('is optional, takes an ISO timestamp or null, and refuses anything else or another key', () => {
+    expect(errorsOf(StartReviewActivityRecordDto, {})).toHaveLength(0);
+    expect(errorsOf(StartReviewActivityRecordDto, { seenSubmittedAt: '2026-11-10T09:00:00.000Z' })).toHaveLength(0);
+    expect(errorsOf(StartReviewActivityRecordDto, { seenSubmittedAt: null })).toHaveLength(0);
+    expect(errorsOf(StartReviewActivityRecordDto, { seenSubmittedAt: 'yesterday' }).length).toBeGreaterThan(0);
+    expect(errorsOf(StartReviewActivityRecordDto, { reviewNote: 'x' }).length).toBeGreaterThan(0);
   });
 });

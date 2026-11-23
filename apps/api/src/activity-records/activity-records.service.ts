@@ -51,6 +51,7 @@ import {
   type ActivityCalculationSnapshot,
   DEFAULT_ACTIVITY_RECORD_SORT,
   type ActivityRecordDTO,
+  type GenerationFuelRecordState,
   type ActivityRecordListMetadataDTO,
   type ActivityRecordPageItemDTO,
   type AuditAction,
@@ -68,6 +69,7 @@ import {
   REPORTING_PERIODS,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { generationFuelRecords } from './generation-fuel-records';
 import { quoteCallerText } from '../common/caller-text';
 import {
   actorDisplayName,
@@ -242,6 +244,14 @@ type WrittenRecord = ActivityRecord & {
   _count: { evidenceLinks: number };
   location: { name: string } | null;
 };
+
+/**
+ * A committed write and its fuel-record state, read inside the write's own
+ * transaction (self-gen-form, outside review): a failure of that read rolls
+ * back the write and its audit row with it, so a caller (bulk submit) never
+ * counts as failed a write that committed.
+ */
+type FuelResolved = { fuelRecords: Map<string, GenerationFuelRecordState> };
 
 const WRITTEN_RECORD_INCLUDE = {
   _count: { select: { evidenceLinks: true } },
@@ -432,7 +442,8 @@ type ResolvedRecordFields =
   | 'locationName'
   | 'createdByName'
   | 'reviewedByName'
-  | 'voidedByName';
+  | 'voidedByName'
+  | 'generationFuelRecord';
 
 /**
  * The record's persisted columns, and a compile error for anything resolved.
@@ -572,6 +583,7 @@ export class ActivityRecordsService {
     r: ActivityRecord & { location?: { name: string } | null },
     evidenceCount = 0,
     actors: Map<string, ResolvedProfile>,
+    fuelRecords: Map<string, GenerationFuelRecordState>,
   ): ActivityRecordDTO {
     return {
       ...this.toAuditSnapshot(r, evidenceCount),
@@ -588,7 +600,32 @@ export class ActivityRecordsService {
       createdByName: actorDisplayName(r.createdBy, actors),
       reviewedByName: actorDisplayName(r.reviewedBy, actors),
       voidedByName: actorDisplayName(r.voidedBy, actors),
+      // Required for the same reason as the names: the review sheet replaces
+      // its record with a write's answer, so a field only the list filled would
+      // vanish when the reviewer starts the review (self-gen-form, design 6).
+      generationFuelRecord: fuelRecords.get(r.id) ?? null,
     };
+  }
+
+  /**
+   * Whether each fuel-sourced Electricity record among `records` has its fuel
+   * record (D5): one query for all of them, none when no record names a fuel
+   * source, inside the caller's accessible set.
+   */
+  private fuelRecordsFor(
+    user: RequestUser,
+    records: readonly ActivityRecord[],
+  ): Promise<Map<string, GenerationFuelRecordState>> {
+    return generationFuelRecords(this.prisma, user.accessibleSubsidiaryIds, records);
+  }
+
+  /** The same, for a write's answer, read on the write's own transaction (`FuelResolved`). */
+  private fuelRecordsIn(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    records: readonly ActivityRecord[],
+  ): Promise<Map<string, GenerationFuelRecordState>> {
+    return generationFuelRecords(tx, user.accessibleSubsidiaryIds, records);
   }
 
   /**
@@ -1038,13 +1075,14 @@ export class ActivityRecordsService {
     // One query each for the page's lock flags and its actors, never one per row.
     const locked = await closedRecordIds(this.prisma, page);
     const actors = await this.actorsFor(user, page);
+    const fuelRecords = await this.fuelRecordsFor(user, page);
     return toCursorPage(
       rows,
       limit,
       sort,
       binding,
       (r) => sort.keys.map((k) => r[k.field as 'createdAt' | 'submittedAt' | 'id']),
-      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors), periodLocked: locked.has(r.id) }),
+      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors, fuelRecords), periodLocked: locked.has(r.id) }),
     );
   }
 
@@ -1070,11 +1108,12 @@ export class ActivityRecordsService {
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    const [evidenceCount, actors] = await Promise.all([
+    const [evidenceCount, actors, fuelRecords] = await Promise.all([
       this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } }),
       this.actorsFor(user, [record]),
+      this.fuelRecordsFor(user, [record]),
     ]);
-    return this.toDTO(record, evidenceCount, actors);
+    return this.toDTO(record, evidenceCount, actors, fuelRecords);
   }
 
   /**
@@ -1232,7 +1271,7 @@ export class ActivityRecordsService {
       periodValue,
     };
 
-    let created: ActivityRecord & { location: { name: string } | null };
+    let created: ActivityRecord & { location: { name: string } | null } & FuelResolved;
     try {
       created = await this.prisma.$transaction(async (tx) => {
         // A create has no row to lock, so the period lock is the whole of its
@@ -1278,7 +1317,7 @@ export class ActivityRecordsService {
           { after: this.toAuditSnapshot(row) },
           tx,
         );
-        return row;
+        return Object.assign(row, { fuelRecords: await this.fuelRecordsIn(tx, user, [row]) });
       }, LIFECYCLE_TX);
     } catch (e) {
       // Unique constraint (subsidiary, location, year, period, periodValue,
@@ -1297,7 +1336,7 @@ export class ActivityRecordsService {
       }
       throw asLostRace(e);
     }
-    return this.toDTO(created, 0, await this.actorsFor(user, [created]));
+    return this.toDTO(created, 0, await this.actorsFor(user, [created]), created.fuelRecords);
   }
 
   async update(
@@ -1331,9 +1370,10 @@ export class ActivityRecordsService {
     // Refused rather than cleared when a record moves category: the user clears
     // them by sending null, as with the activity type above.
     const parameters = ((dto.parameters !== undefined ? dto.parameters : existing.parameters) ?? null) as RecordParameters | null;
-    // A stored self-generation block is shown on no screen yet: an edit that
-    // would change or remove it must name the version it was made on, so a tab
-    // that never saw the block cannot erase it (self-gen-model review).
+    // An edit that would change or remove a stored self-generation block must
+    // name the version it was made on: a client that names none, such as a tab
+    // from before the self-gen-model deploy or a script, cannot be shown to
+    // have read the block, and must not erase it (self-gen-model review).
     if (dto.seenUpdatedAt === undefined && holdsSelfGeneration(existing) && !sameParameters(existing.parameters, parameters)) {
       throw new EditVersionRequiredError();
     }
@@ -1448,7 +1488,7 @@ export class ActivityRecordsService {
     const detachIds = [...new Set(dto.detachEvidenceIds ?? [])];
     const changesCategory = category !== existing.category;
 
-    let updated: WrittenRecord;
+    let updated: WrittenRecord & FuelResolved;
     let evidenceCount: number;
     let removedFiles: { id: string; storagePath: string }[];
     try {
@@ -1499,7 +1539,11 @@ export class ActivityRecordsService {
             },
             tx,
           );
-          return { row, evidenceCount: count, removedFiles: gone };
+          return {
+            row: Object.assign(row, { fuelRecords: await this.fuelRecordsIn(tx, user, [row]) }),
+            evidenceCount: count,
+            removedFiles: gone,
+          };
         },
         moves ? [target] : [],
       ));
@@ -1523,11 +1567,7 @@ export class ActivityRecordsService {
     }
     // Only the files that went with the commit; their rows are already gone.
     await this.evidence.removeBlobs(removedFiles.map((f) => f.storagePath));
-    return this.toDTO(
-      updated,
-      evidenceCount,
-      await this.actorsFor(user, [updated]),
-    );
+    return this.toDTO(updated, evidenceCount, await this.actorsFor(user, [updated]), updated.fuelRecords);
   }
 
   async remove(
@@ -1737,7 +1777,14 @@ export class ActivityRecordsService {
    * Marks that a reviewer is actively looking at it; approve/reject remain the
    * only exits. Same reviewer RBAC + period-lock gate as approve/reject.
    */
-  async startReview(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
+  /**
+   * `seenSubmittedAt`, when named, is the submission the reviewer is looking
+   * at: one recalled and resubmitted since is refused as `record_changed`, so
+   * a reason typed for it never reaches the newer one (self-gen-form, outside
+   * review of `b8b0d78b`). Optional, unlike a decision's: a client that names
+   * none still takes the record into review, which decides nothing.
+   */
+  async startReview(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
       throw new ForbiddenException(
@@ -1755,6 +1802,7 @@ export class ActivityRecordsService {
             ),
           );
         }
+        assertSameSubmission(record, seenSubmittedAt);
       });
       await this.assertPeriodNotLocked(periodOf(record), tx);
       return this.transition(tx, user, record, ActivityRecordStatus.under_review);
@@ -1972,8 +2020,8 @@ export class ActivityRecordsService {
   }
 
   /** The response for a committed write: resolved actor names, after the transaction. */
-  private async writtenDTO(user: RequestUser, row: WrittenRecord): Promise<ActivityRecordDTO> {
-    return this.toDTO(row, row._count.evidenceLinks, await this.actorsFor(user, [row]));
+  private async writtenDTO(user: RequestUser, row: WrittenRecord & FuelResolved): Promise<ActivityRecordDTO> {
+    return this.toDTO(row, row._count.evidenceLinks, await this.actorsFor(user, [row]), row.fuelRecords);
   }
 
   /**
@@ -1994,7 +2042,7 @@ export class ActivityRecordsService {
       reviewNote?: string | null;
       voidReason?: string;
     } = {},
-  ): Promise<WrittenRecord> {
+  ): Promise<WrittenRecord & FuelResolved> {
     // A review outcome records WHO decided and WHEN, so the reviewer screen
     // does not have to reconstruct it from the audit log.
     const isReviewOutcome =
@@ -2075,6 +2123,6 @@ export class ActivityRecordsService {
       },
       tx,
     );
-    return updated;
+    return Object.assign(updated, { fuelRecords: await this.fuelRecordsIn(tx, user, [updated]) });
   }
 }
