@@ -30,16 +30,16 @@
 
 ## 3. Data Entry: the section
 
-- [ ] 3.1 In `apps/web/lib/record-inputs-view.ts` add the section's form state type, its reading from a record, the block it sends and its issue (design 3 and 4); remove `selfGenerationToSend` and `editLeavesParametersToServer` with their specs; reword the three comments (design 11). Add specs for:
+- [x] 3.1 In `apps/web/lib/record-inputs-view.ts` add the section's form state type, its reading from a record, the block it sends and its issue (design 3 and 4); remove `selfGenerationToSend` and `editLeavesParametersToServer` with their specs; reword the three comments (design 11). Add specs for:
   - a round trip, record → form → block, for the three required fields only, optional fields null, and all five;
   - no source → null block; a source → topology `A` added;
   - each issue in the design's order: an unread field, a negative generation, a negative export, a facility consumption of 0, the generated kWh missing, exports above and equal to generation;
   - a block of nulls and a non-Electricity record read as an empty form.
 
   Verify: `pnpm --filter web test -- record-inputs-view` passes.
-- [ ] 3.2 Add the copy with the `localise-ui` skill, EN and TR, under `dataEntry.inputs.selfGeneration`: the section title, the source label and its five options, the three field labels with units, the Case A statement, the import statement (D8), one sentence per issue, the two fuel reminders, the balance warning with both figures as arguments, and the category-move notice. Verify: `apps/web/lib/i18n/messages.spec.ts` passes (key parity, arguments, nothing untranslated).
-- [ ] 3.3 Add `SelfGenerationInputs` to `apps/web/components/data-entry/record-inputs.tsx` (design 3): the source select, the three `ParameterNumberField`s keyed on the epoch, the two statements, the issue sentence (`role="status"`, `aria-invalid` on the field it concerns), the reminder for a fuel source and the balance warning. Give each a `data-testid`. Verify: typecheck passes; 3.6 and group 5 prove the behaviour.
-- [ ] 3.4 Wire the page (`apps/web/app/data-entry/page.tsx`, design 1, 2 and 4):
+- [x] 3.2 Add the copy with the `localise-ui` skill, EN and TR, under `dataEntry.inputs.selfGeneration`: the section title, the source label and its five options, the three field labels with units, the Case A statement, the import statement (D8), one sentence per issue, the two fuel reminders, the balance warning with both figures as arguments, and the category-move notice. Verify: `apps/web/lib/i18n/messages.spec.ts` passes (key parity, arguments, nothing untranslated).
+- [x] 3.3 Add `SelfGenerationInputs` to `apps/web/components/data-entry/record-inputs.tsx` (design 3): the source select, the three `ParameterNumberField`s keyed on the epoch, the two statements, the issue sentence (`role="status"`, `aria-invalid` on the field it concerns), the reminder for a fuel source and the balance warning. Give each a `data-testid`. Verify: typecheck passes; 3.6 and group 5 prove the behaviour.
+- [x] 3.4 Wire the page (`apps/web/app/data-entry/page.tsx`, design 1, 2 and 4):
   - one state for the section, filled in `fillForm` and the copy prefill, emptied in `resetForm`, kept through a category change;
   - `recordParameters` builds the block from it while the category's shape is `electricity`;
   - the edit body always carries `parameters`;
@@ -48,15 +48,15 @@
   - the component is mounted after `EquipmentLines`.
 
   Verify: typecheck and lint pass, and `grep -n "editLeavesParametersToServer\|selfGenerationToSend" apps/web` finds nothing.
-- [ ] 3.5 Add the category-move notice (design 8): keep whether the opened record held a block, and show the line in Edit mode while the category's shape is not `electricity`. Reword the `ownSelfGeneration` comment or remove it with the state it described. Verify: a view-level spec for the predicate (edit mode × stored block × category) passes.
-- [ ] 3.6 Add the `record_changed` case to `saveErrorDescription` and its key to `SaveErrorKey`, with the EN and TR sentence (design 10). Extend `record-lifecycle-view.spec.ts`: `record_changed` gets the Data Entry sentence, `record_duplicate` and a 5xx keep theirs, and any other code keeps the generic description. Verify: the web suite passes.
+- [x] 3.5 Add the category-move notice (design 8): keep whether the opened record held a block, and show the line in Edit mode while the category's shape is not `electricity`. Reword the `ownSelfGeneration` comment or remove it with the state it described. Verify: a view-level spec for the predicate (edit mode × stored block × category) passes.
+- [x] 3.6 Add the `record_changed` case to `saveErrorDescription` and its key to `SaveErrorKey`, with the EN and TR sentence (design 10). Extend `record-lifecycle-view.spec.ts`: `record_changed` gets the Data Entry sentence, `record_duplicate` and a 5xx keep theirs, and any other code keeps the generic description. Verify: the web suite passes.
 - [ ] 3.7 Check the section in the browser on capped, built servers (memory notes: never the full `pnpm dev` beside Docker), EN and TR at 1280 px: a source opens the fields; each issue sentence; the reminder for both fuel sources; the balance warning with figures in the locale's format; the notice on a category move and its removal; a save, a reopen and a removal of the block. Verify: a screenshot per state, and the saved block read back through the API.
 
 ## 4. Review sheet
 
-- [ ] 4.1 Add `reviewSelfGeneration(record)` to `apps/web/lib/review-view.ts` (design 7) with specs: an Electricity record with a block; one without; a block of nulls; a Natural Gas record whose parameters happen to hold other keys. Verify: `pnpm --filter web test -- review-view` passes.
-- [ ] 4.2 Add the copy with `localise-ui`, EN and TR, under `review.sheet.selfGeneration`: the line labels, the source values, the missing-fuel-record notice for each fuel record (with the site and year as arguments), and the balance notice with both figures. Verify: `messages.spec.ts` passes.
-- [ ] 4.3 Show the lines and the two notices in `apps/web/app/review/page.tsx`, each with a `data-testid`, without touching the review actions' enablement. Verify: typecheck passes; `git diff` shows no change to the approve, reject or start-review handlers or their `disabled` conditions.
+- [x] 4.1 Add `reviewSelfGeneration(record)` to `apps/web/lib/review-view.ts` (design 7) with specs: an Electricity record with a block; one without; a block of nulls; a Natural Gas record whose parameters happen to hold other keys. Verify: `pnpm --filter web test -- review-view` passes.
+- [x] 4.2 Add the copy with `localise-ui`, EN and TR, under `review.sheet.selfGeneration`: the line labels, the source values, the missing-fuel-record notice for each fuel record (with the site and year as arguments), and the balance notice with both figures. Verify: `messages.spec.ts` passes.
+- [x] 4.3 Show the lines and the two notices in `apps/web/app/review/page.tsx`, each with a `data-testid`, without touching the review actions' enablement. Verify: typecheck passes; `git diff` shows no change to the approve, reject or start-review handlers or their `disabled` conditions.
 
 ## 5. End to end
 

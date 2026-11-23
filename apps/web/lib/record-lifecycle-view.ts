@@ -28,7 +28,7 @@ export const isOwnRecordForApprover = (
   record: { createdBy: string } | null,
 ): boolean => !!user && !!record && mayApproveRecords(user) && record.createdBy === user.id;
 
-type SaveErrorKey = 'duplicateAdvice' | 'duplicateAdviceMoving' | 'saveFailedServer';
+type SaveErrorKey = 'duplicateAdvice' | 'duplicateAdviceMoving' | 'saveFailedServer' | 'recordChanged';
 
 /**
  * A failed save or submit on Data Entry, in the user's language.
@@ -37,6 +37,12 @@ type SaveErrorKey = 'duplicateAdvice' | 'duplicateAdviceMoving' | 'saveFailedSer
  * advice — decided by its code, `record_duplicate` (LP3-01). The regex on the
  * sentence it replaced matched any 409 whose text said "already exists", and a
  * reworded sentence would have silently dropped the advice.
+ *
+ * A save refused as `record_changed` gets Data Entry's own sentence
+ * (self-gen-form, design 10): the edit named an older version, so the record
+ * changed after the form opened it, not while the request ran, and the form
+ * then reads it again, dropping what was typed. The catalogue's generic
+ * sentence describes the race the other screens meet.
  */
 export function saveErrorDescription(
   error: unknown,
@@ -48,6 +54,7 @@ export function saveErrorDescription(
     const { title } = describe(error);
     return { title: `${title} ${t(moving ? 'duplicateAdviceMoving' : 'duplicateAdvice')}` };
   }
+  if (error instanceof ApiError && error.code === 'record_changed') return { title: t('recordChanged') };
   if (error instanceof ApiError && error.status >= 500) return { title: t('saveFailedServer') };
   return describe(error);
 }

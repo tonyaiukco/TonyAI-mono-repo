@@ -64,7 +64,7 @@ import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
-import { reviewCalorificBasis, waitingLabel } from "@/lib/review-view";
+import { reviewCalorificBasis, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
 import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -669,6 +669,34 @@ export default function ReviewPage() {
                     </>
                   );
                 })()}
+                {/* The record's own generation behind the meter, read-only (self-gen-form). */}
+                {(() => {
+                  const own = reviewSelfGeneration(selected);
+                  if (own === null) return null;
+                  const kwh = (value: number) => `${formatNumber(value, locale, { maximumFractionDigits: 2 })} ${unitSymbol("kWh")}`;
+                  return (
+                    <>
+                      <span className="text-muted-foreground">{t("sheet.selfGeneration.source")}</span>
+                      <span className="col-span-2" data-testid="review-self-generation-source">
+                        {t(`sheet.selfGeneration.sources.${own.source}`)}
+                      </span>
+                      <span className="text-muted-foreground">{t("sheet.selfGeneration.generated")}</span>
+                      <span className="col-span-2 font-mono" data-testid="review-self-generation-generated">{kwh(own.generatedKwh)}</span>
+                      {own.exportedKwh !== null && (
+                        <>
+                          <span className="text-muted-foreground">{t("sheet.selfGeneration.exported")}</span>
+                          <span className="col-span-2 font-mono" data-testid="review-self-generation-exported">{kwh(own.exportedKwh)}</span>
+                        </>
+                      )}
+                      {own.facilityKwh !== null && (
+                        <>
+                          <span className="text-muted-foreground">{t("sheet.selfGeneration.facility")}</span>
+                          <span className="col-span-2 font-mono" data-testid="review-self-generation-facility">{kwh(own.facilityKwh)}</span>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
                 <span className="text-muted-foreground">{t("sheet.emissions")}</span>
                 <span className="col-span-2 font-mono">
                   {isCalculated(selected.calculation) ? (
@@ -761,6 +789,47 @@ export default function ReviewPage() {
                   </p>
                 </div>
               )}
+
+              {/* Self-generation notices (self-gen-form; D5, D6): neither blocks a review action. */}
+              {(() => {
+                const own = reviewSelfGeneration(selected);
+                if (own === null) return null;
+                const kwh = (value: number) => formatNumber(value, locale, { maximumFractionDigits: 2 });
+                return (
+                  <>
+                    {own.fuelMissing && (
+                      <div
+                        className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900"
+                        role="status"
+                        data-testid="review-self-generation-fuel-missing"
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                        <span>
+                          {t(`sheet.selfGeneration.fuelMissing.${own.fuelMissing}`, {
+                            site: selected.locationName ?? t("sheet.selfGeneration.wholeCompany"),
+                            year: String(selected.reportingYear),
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {own.balance?.warns && (
+                      <div
+                        className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900"
+                        role="status"
+                        data-testid="review-self-generation-balance"
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                        <span>
+                          {t("sheet.selfGeneration.balance", {
+                            imported: kwh(own.balance.importKwh),
+                            expected: kwh(own.balance.expectedImportKwh),
+                          })}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {selected.anomalyFlag && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-1">

@@ -54,6 +54,7 @@
   "duplicateAdvice": "Devam etmek için kaydı “Previous submissions” listesinden açın.",
   "duplicateAdviceMoving": "Kayıt taşınmadı; olduğu yerde duruyor.",
   "saveFailedServer": "Kaydedilemedi — sunucu bu kaydı işleyemedi. Yeniden deneyin; sürerse bildirin.",
+  "recordChanged": "Bu kayıt, bu form açıldıktan sonra değiştirildi; bu yüzden değişiklikleriniz kaydedilmedi. Form kaydı yeniden okuyor.",
   "previewTitle": "Canlı emisyon önizlemesi",
   "previewPrompt": "Canlı tCO₂e tahmini görmek için bir bağlı şirket ve kategori seçip faaliyet değerini girin.",
   "bulkColumns": {
@@ -213,6 +214,39 @@
       "help": "Faturanız hangisini kullandığını belirtir: brüt üst ısıl değer, net alt ısıl değerdir.",
       "missing": "Miktarın hesaplanıp kaydedilebilmesi için faturanın ısıl değer esasını seçin: net veya brüt.",
       "derivedNet": "≈ {net} {unit} net üzerinden fiyatlanır: × {ratio} ({ncv} / {gcv} kcal/Sm³), {publisher} {edition} sürümünün referans oranı{status}."
+    },
+    "selfGeneration": {
+      "title": "Sayaç arkası öz üretim",
+      "help": "Yalnızca tesis elektriğin bir kısmını kendisi de üretiyorsa. Yalnızca şebekeden besleniyorsa Yok olarak bırakın.",
+      "source": "Tesisin öz üretim kaynağı",
+      "sources": {
+        "none": "Yok",
+        "solar": "Güneş",
+        "wind": "Rüzgâr",
+        "natural_gas_chp": "Doğal gaz kojenerasyonu",
+        "diesel_generator": "Dizel jeneratör"
+      },
+      "caseA": "Bu bölüm, şebekeden çekişle aynı sayacın arkasındaki üretimi kaydeder (Durum A): tesis ürettiği elektriği şebeke sayacına ulaşmadan kullanır. Kendi sayacı olan bir santral henüz kaydedilemez.",
+      "importStatement": "Yukarıdaki miktar, sayacın çekiş göstergesine göre şebekeden çekilen elektriktir. Mahsuplaşmış bir değer (çekiş eksi veriş) girmeyin.",
+      "generated": "Tesiste üretilen (kWh)",
+      "exported": "Şebekeye verilen (kWh)",
+      "exportedHelp": "İsteğe bağlı. Üretimin bir parçasıdır; kaydın değerini hiçbir zaman azaltmaz.",
+      "facility": "Tesis tüketimi (kWh)",
+      "facilityHelp": "İsteğe bağlı. Tesisin toplam tüketimi; girilirse enerji dengesi kontrol edilir.",
+      "issues": {
+        "unreadable": "Bir öz üretim değeri okunamadı. Kaydın hesaplanıp kaydedilebilmesi için düzeltin.",
+        "generated_missing": "Kaydın hesaplanıp kaydedilebilmesi için tesiste üretilen kWh değerini girin ya da kaynağı Yok olarak ayarlayın.",
+        "generated_negative": "Tesiste üretilen kWh negatif olamaz.",
+        "exported_negative": "Şebekeye verilen kWh negatif olamaz.",
+        "exported_above_generated": "Şebekeye verilen kWh, tesiste üretilen kWh değerini aşamaz.",
+        "facility_not_positive": "Tesis tüketimi sıfırdan büyük olmalı ya da boş bırakılmalıdır."
+      },
+      "reminder": {
+        "natural_gas_chp": "Kojenerasyon ünitesinin gazını, bu tesisin aynı yıla ait Doğal Gaz kaydına dahil ederek girin. Bu kayıt onu saymaz.",
+        "diesel_generator": "Jeneratörün yakıtını, bu tesisin aynı yıla ait dizel Yakıt kaydı olarak girin. Bu kayıt onu saymaz."
+      },
+      "balance": "Enerji dengesi: şebekeden çekiş {imported} kWh, ancak tüketim − üretim + veriş {expected} kWh ediyor. Değerleri faturalarla karşılaştırın. Bu yalnızca bir uyarıdır.",
+      "removalNotice": "Başka bir kategoride kaydetmek, bu kaydın öz üretim bilgilerini siler."
     },
     "basisReset": "Bu miktar net ısıl değer esasındaydı. Türkiye kuralları dışında enerji faturası brüt olarak fiyatlanır; faturadaki brüt miktarı girin.",
     "recalculatedOnSave": "Siz düzenlerken faktör sürümü değişti. Değerler güncel sürümle yeniden hesaplanıyor.",

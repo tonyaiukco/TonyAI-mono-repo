@@ -52,7 +52,13 @@ import { checkActivityParse, formatNumber } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import { ContextNumberField } from "@/components/data-entry/context-number-field";
-import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, type ReferenceState } from "@/components/data-entry/record-inputs";
+import {
+  CalorificBasisChoice,
+  EquipmentLines,
+  NaturalGasInputs,
+  SelfGenerationInputs,
+  type ReferenceState,
+} from "@/components/data-entry/record-inputs";
 import {
   NO_GAS_INPUTS,
   equipmentIssue,
@@ -68,9 +74,14 @@ import {
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
+  EMPTY_SELF_GENERATION_FORM,
+  selfGenerationBlock,
+  selfGenerationFormFromRecord,
+  selfGenerationFormIssue,
   selfGenerationFromRecord,
-  selfGenerationToSend,
-  editLeavesParametersToServer,
+  selfGenerationRemovalNotice,
+  type SelfGenerationField,
+  type SelfGenerationForm,
   gasEnergyIssue,
   gasInputsIssue,
   gasParameters,
@@ -148,6 +159,8 @@ import {
   unitsForCategory,
   unitsForRecord,
   UNSPECIFIED_ACTIVITY_TYPE,
+  recordParameterShape,
+  selfGenerationBalance,
   usesTrCalculationRules,
 } from "@/lib/types";
 import { appendById, readPages } from "@/lib/cursor-pages";
@@ -170,7 +183,6 @@ import type {
   FactorCoverageDTO,
   LocationDTO,
   RecordParameters,
-  ElectricityRecordParameters,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -321,13 +333,21 @@ function DataEntryPageInner() {
   const lineSeq = useRef(0);
   const nextLineId = useCallback(() => `line-${(lineSeq.current += 1)}`, []);
   const [equipment, setEquipment] = useState<EquipmentLineDraft[]>(() => [newEquipmentLine("line-0")]);
-  // The opened or copied record's own self-generation block, sent unchanged
-  // while the category is Electricity (`selfGenerationToSend`); the form shows
-  // no field for it yet, and without it every save would erase it
-  // (self-gen-model, design 6). Set and cleared with `ownBasis`.
-  const [ownSelfGeneration, setOwnSelfGeneration] = useState<ElectricityRecordParameters | null>(null);
+  // The self-generation section's fields (self-gen-form, design 1): what an
+  // Electricity save sends, an edit included. Filled from an opened or copied
+  // record, emptied by a reset, and kept through a category change and back
+  // (design 8), so a category picked by mistake and undone loses nothing.
+  const [selfGeneration, setSelfGeneration] = useState<SelfGenerationForm>(EMPTY_SELF_GENERATION_FORM);
+  const [refusedSelfGeneration, setRefusedSelfGeneration] = useState<ReadonlySet<SelfGenerationField>>(() => new Set());
+  // Whether the record open in Edit mode held a block when it was read: a
+  // category move then says, before the save, that it removes it (design 8).
+  // Set and cleared with `ownBasis`.
+  const [openedWithSelfGeneration, setOpenedWithSelfGeneration] = useState(false);
   const [inputsEpoch, setInputsEpoch] = useState(0);
-  useEffect(() => setRefusedGasInputs(new Set()), [inputsEpoch]);
+  useEffect(() => {
+    setRefusedGasInputs(new Set());
+    setRefusedSelfGeneration(new Set());
+  }, [inputsEpoch]);
   // The release parameters the inputs default to (D2): never a constant here.
   const [reference, setReference] = useState<ReferenceState>({ status: "loading" });
 
@@ -611,7 +631,15 @@ function DataEntryPageInner() {
       ? gasParameters(gasInputs, activityUnit, defaultNcv)
       : refrigerantMode && equipmentProblem === null
         ? equipmentParameters(equipment)
-        : selfGenerationToSend(category, ownSelfGeneration);
+        : selfGenerationBlock(category, selfGeneration);
+  // The section's block, held back while incomplete or out of bounds (design 4),
+  // and the energy balance it implies, which only warns (D6).
+  const selfGenerationProblem = selfGenerationFormIssue(category, selfGeneration, refusedSelfGeneration.size > 0);
+  const selfGenerationEnergyBalance = selfGenerationBalance(
+    valueCheck.ok ? valueCheck.value : null,
+    activityUnit,
+    selfGenerationBlock(category, selfGeneration),
+  );
   // One string for the preview's dependencies: a new object each render is not a change.
   const parametersKey = JSON.stringify(recordParameters);
   // Mirrors the API's `activity_type_required`: a typed category's record
@@ -639,7 +667,8 @@ function DataEntryPageInner() {
     quantityReady &&
     gasProblem === null &&
     gasEnergyProblem === null &&
-    !gasRefused;
+    !gasRefused &&
+    selfGenerationProblem === null;
 
   const contextSet = contextFieldSet(category);
 
@@ -1319,7 +1348,8 @@ function DataEntryPageInner() {
     setUnitCategory(rec.category);
     setOwnUnit(rec.activityUnit);
     setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
-    setOwnSelfGeneration(selfGenerationFromRecord(rec));
+    setOpenedWithSelfGeneration(selfGenerationFromRecord(rec) !== null);
+    setSelfGeneration(selfGenerationFormFromRecord(rec));
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
     if (hasContextValue(rec.input)) setContextOpen(true);
@@ -1369,7 +1399,9 @@ function DataEntryPageInner() {
     setEditingTuple(null);
     setOwnUnit(null);
     setOwnBasis(null);
-    setOwnSelfGeneration(null);
+    // A new record now: no stored block for a move to remove. The fields stay
+    // as typed, like every other field on the form.
+    setOpenedWithSelfGeneration(false);
     toast.info(t("nowEnteringNew"));
   }, [
     editingId,
@@ -1397,7 +1429,8 @@ function DataEntryPageInner() {
     setCopying(false);
     setOwnUnit(null);
     setOwnBasis(null);
-    setOwnSelfGeneration(null);
+    setOpenedWithSelfGeneration(false);
+    setSelfGeneration(EMPTY_SELF_GENERATION_FORM);
     // After a submit the next record does not inherit a TR gas bill's kWh or MWh:
     // it is narrowed to the category's first unit, m³ (ng-kwh-form review). Any
     // other reset, a subsidiary change included, keeps the unit the target offers.
@@ -1473,11 +1506,11 @@ function DataEntryPageInner() {
         varianceReason: variance,
         input: inputPayload,
         // Sent on every edit, null included: a record moved off the TR rules
-        // (another category or unit) clears what it no longer takes (D3).
-        // An Electricity record saved as Electricity sends none, so the API
-        // keeps the self-generation block stored NOW, never the one this form
-        // read when it opened (self-gen-model review).
-        ...(editLeavesParametersToServer(editingTuple?.category ?? null, category) ? {} : { parameters: recordParameters }),
+        // (another category or unit) clears what it no longer takes (D3), and
+        // an Electricity record sends the self-generation block the form
+        // shows, or none (self-gen-form, design 1). The version below keeps a
+        // form older than the stored record from writing over it.
+        parameters: recordParameters,
         // The version this form read: a record changed elsewhere since is
         // refused (409 `record_changed`), never overwritten.
         ...(editingVersion !== null ? { seenUpdatedAt: editingVersion } : {}),
@@ -1648,7 +1681,7 @@ function DataEntryPageInner() {
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
       setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
-      setOwnSelfGeneration(selfGenerationFromRecord(rec));
+      setOpenedWithSelfGeneration(selfGenerationFromRecord(rec) !== null);
       setVerdict(verdictOf(rec));
       showSavedCalculation(rec);
       if (wasEditing) {
@@ -1723,7 +1756,7 @@ function DataEntryPageInner() {
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
       setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
-      setOwnSelfGeneration(selfGenerationFromRecord(rec));
+      setOpenedWithSelfGeneration(selfGenerationFromRecord(rec) !== null);
       setVerdict(verdictOf(rec));
       showSavedCalculation(rec);
       // A file that did not upload: the record stays a draft, the vault lists
@@ -1854,7 +1887,9 @@ function DataEntryPageInner() {
       setUnitCategory(values.category);
       setOwnUnit(values.activityUnit);
       setOwnBasis(gasInputsFromRecord(values.category, values.parameters).cvBasis);
-      setOwnSelfGeneration(selfGenerationFromRecord(values));
+      // A copy is a new record: it creates, so no stored block is removed.
+      setOpenedWithSelfGeneration(false);
+      setSelfGeneration(selfGenerationFormFromRecord(values));
       setContext((values.input as ContextValues | null) ?? {});
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
@@ -2050,6 +2085,16 @@ function DataEntryPageInner() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {selfGenerationRemovalNotice(editMode, openedWithSelfGeneration, category) && (
+                      <p
+                        role="status"
+                        className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700"
+                        data-testid="self-generation-removal-notice"
+                      >
+                        <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                        <span>{t("inputs.selfGeneration.removalNotice")}</span>
+                      </p>
+                    )}
                   </Field>
 
                   {isTypedCategory && (
@@ -2296,6 +2341,25 @@ function DataEntryPageInner() {
                       }
                       onAdd={() => setEquipment((prev) => [...prev, newEquipmentLine(nextLineId())])}
                       onRemove={(id) => setEquipment((prev) => prev.filter((line) => line.id !== id))}
+                    />
+                  )}
+                  {recordParameterShape(category) === "electricity" && (
+                    <SelfGenerationInputs
+                      form={selfGeneration}
+                      issue={selfGenerationProblem}
+                      balance={selfGenerationEnergyBalance}
+                      epoch={inputsEpoch}
+                      onChange={(next, field, refused) => {
+                        setSelfGeneration((prev) => ({ ...prev, ...next }));
+                        if (field === null) return;
+                        setRefusedSelfGeneration((prev) => {
+                          if (prev.has(field) === refused) return prev;
+                          const out = new Set(prev);
+                          if (refused) out.add(field);
+                          else out.delete(field);
+                          return out;
+                        });
+                      }}
                     />
                   )}
                 </CardContent>

@@ -36,6 +36,25 @@
       "net": "Net",
       "gross": "Brüt"
     },
+    "selfGeneration": {
+      "title": "Öz üretim",
+      "source": "Kaynak",
+      "sources": {
+        "solar": "Güneş",
+        "wind": "Rüzgâr",
+        "natural_gas_chp": "Doğal gaz kojenerasyonu",
+        "diesel_generator": "Dizel jeneratör"
+      },
+      "generated": "Tesiste üretilen",
+      "exported": "Şebekeye verilen",
+      "facility": "Tesis tüketimi",
+      "wholeCompany": "şirketin tamamı",
+      "fuelMissing": {
+        "natural_gas_chp": "{site} için {year} yılına ait Doğal Gaz kaydı bulunamadı. Kojenerasyon ünitesinin gazı yalnızca orada sayılır; girildiğini kontrol edin.",
+        "diesel_generator": "{site} için {year} yılına ait dizel Yakıt kaydı bulunamadı. Jeneratörün yakıtı yalnızca orada sayılır; girildiğini kontrol edin."
+      },
+      "balance": "Enerji dengesi: şebekeden çekiş {imported} kWh, ancak tüketim − üretim + veriş {expected} kWh ediyor. Değerleri faturalarla karşılaştırın. Bu yalnızca bir uyarıdır."
+    },
     "emissions": "Emisyonlar",
     "factor": "Faktör",
     "factorSource": "{source} v{version}",

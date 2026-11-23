@@ -1,6 +1,6 @@
 import { MESSAGES } from '@/messages';
 import { describe, it, expect, vi } from 'vitest';
-import { reviewCalorificBasis, daysSince, waitingLabel as waitingLabelWith } from './review-view';
+import { reviewCalorificBasis, reviewSelfGeneration, daysSince, waitingLabel as waitingLabelWith } from './review-view';
 import { copyFor } from '@/lib/i18n/testing';
 
 const waitingLabel = (iso: string | null, now?: number) => waitingLabelWith(iso, copyFor('review'), now);
@@ -130,3 +130,77 @@ describe('the review sheet\'s calorific basis (ng-kwh-engine)', () => {
   });
 });
 
+
+describe('the review sheet\'s self-generation block (self-gen-form, design 7)', () => {
+  type Subject = Parameters<typeof reviewSelfGeneration>[0];
+  const record = (over: Partial<Subject> = {}): Subject => ({
+    category: 'Electricity',
+    activityValue: 600_000,
+    activityUnit: 'kWh',
+    generationFuelRecord: null,
+    parameters: { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000 },
+    ...over,
+  });
+
+  it('shows the source and the generation, and the optional figures only when given', () => {
+    expect(reviewSelfGeneration(record())).toEqual({
+      source: 'solar',
+      generatedKwh: 400_000,
+      exportedKwh: null,
+      facilityKwh: null,
+      balance: null,
+      fuelMissing: null,
+    });
+    const full = reviewSelfGeneration(
+      record({
+        parameters: {
+          generationTopology: 'A', selfGenerationSource: 'wind', selfGeneratedKwh: 400_000,
+          exportedToGridKwh: 50_000, facilityConsumptionKwh: 900_000,
+        },
+      }),
+    );
+    expect(full).toMatchObject({ source: 'wind', exportedKwh: 50_000, facilityKwh: 900_000 });
+  });
+
+  it('notes a balance gap under the Data Entry rule, in kWh whatever the unit', () => {
+    const gap = (facilityConsumptionKwh: number, activityValue = 600_000, activityUnit = 'kWh') =>
+      reviewSelfGeneration(
+        record({
+          activityValue,
+          activityUnit,
+          parameters: { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000, facilityConsumptionKwh },
+        }),
+      )?.balance;
+    expect(gap(900_000)).toEqual({ importKwh: 600_000, expectedImportKwh: 500_000, warns: true });
+    expect(gap(1_000_000)?.warns).toBe(false);
+    expect(gap(1_000_000, 600, 'MWh')?.warns).toBe(false);
+  });
+
+  it('notes a missing fuel record only for a fuel source the read found none for', () => {
+    const fuel = (source: string, state: Subject['generationFuelRecord']) =>
+      reviewSelfGeneration(
+        record({
+          generationFuelRecord: state,
+          parameters: { generationTopology: 'A', selfGenerationSource: source, selfGeneratedKwh: 1 } as never,
+        }),
+      )?.fuelMissing;
+    expect(fuel('natural_gas_chp', 'missing')).toBe('natural_gas_chp');
+    expect(fuel('diesel_generator', 'missing')).toBe('diesel_generator');
+    expect(fuel('natural_gas_chp', 'present')).toBeNull();
+    // An API from before this change answers no field: no notice, never a false one.
+    expect(fuel('natural_gas_chp', undefined as never)).toBeNull();
+    expect(fuel('solar', 'missing')).toBeNull();
+  });
+
+  it('shows nothing for a plain record, a block of nulls, or another category', () => {
+    expect(reviewSelfGeneration(record({ parameters: null }))).toBeNull();
+    expect(
+      reviewSelfGeneration(record({ parameters: { generationTopology: null, selfGenerationSource: null, selfGeneratedKwh: null } })),
+    ).toBeNull();
+    expect(
+      reviewSelfGeneration(
+        record({ category: 'Natural Gas', parameters: { selfGenerationSource: 'solar', selfGeneratedKwh: 1, cvBasis: 'net' } as never }),
+      ),
+    ).toBeNull();
+  });
+});

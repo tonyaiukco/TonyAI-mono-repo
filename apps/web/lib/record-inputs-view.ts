@@ -3,8 +3,10 @@ import {
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   isCvBasis,
   isProvenanceSnapshot,
+  isSelfGenerationSource,
   normalizeRecordParameters,
   recordParameterShape,
+  selfGenerationIssue,
   usesTrCalculationRules,
   type ActivityCalculationSnapshot,
   type CvBasis,
@@ -16,6 +18,7 @@ import {
   type NaturalGasRecordParameters,
   type RefrigerantRecordParameters,
   type ReleaseParameterDTO,
+  type SelfGenerationSource,
 } from "@/lib/types";
 import { formatNumber } from "@/lib/i18n/number";
 
@@ -44,8 +47,10 @@ export function isGasEnergyUnit(unit: string): boolean {
  * the API refuses parameters there (`parameters_not_applicable`).
  */
 export function recordInputMode(category: string, geographyCode: string | null, unit: string): RecordInputMode {
-  // The category decides the shape (`recordParameterShape`); Electricity's
-  // self-generation block has no fields on the form yet (self-gen-model).
+  // The category decides the shape (`recordParameterShape`). Electricity's
+  // self-generation block is no mode: it is geography-blind and changes no
+  // price, and a mode here means a TR pricing rule to its callers
+  // (`self-gen-form`, design 2); the page reads the shape for it.
   const shape = recordParameterShape(category);
   if (geographyCode === null || !usesTrCalculationRules(geographyCode)) return null;
   if (shape === "refrigerant") return "refrigerant";
@@ -174,8 +179,7 @@ export function gasInputsFromRecord(category: string, parameters: unknown): GasI
 /**
  * A stored Electricity record's self-generation block, as stored, or null for
  * any other record and for a block with nothing in it (self-gen-model). Data
- * Entry carries it unchanged through every preview and save while the record
- * stays Electricity; the form shows no field for it yet (`self-gen-form`).
+ * Entry reads it into the section's fields (`selfGenerationFormFromRecord`).
  */
 export function selfGenerationFromRecord(record: {
   category: string;
@@ -186,36 +190,108 @@ export function selfGenerationFromRecord(record: {
   return { ...(record.parameters as ElectricityRecordParameters) };
 }
 
+// --- Self-generation (self-gen-form; D5, D6, D8) --------------------------------
+
 /**
- * The self-generation block a preview or save sends: the opened or copied
- * record's own block while the form's category is Electricity, none otherwise
- * (self-gen-model). It belongs to the record, not to the form's category, so a
- * category picked by mistake and undone does not erase it (`qa-auditor`
- * review), and a unit or subsidiary change keeps it.
+ * The self-generation section as typed: no source means no block, and an empty
+ * kWh field is null. The topology is not a field: the section records Case A
+ * only, and the block it sends says so (design 3).
  */
-export function selfGenerationToSend(
-  category: string,
-  own: ElectricityRecordParameters | null,
-): ElectricityRecordParameters | null {
-  return recordParameterShape(category) === "electricity" ? own : null;
+export interface SelfGenerationForm {
+  source: SelfGenerationSource | null;
+  generatedKwh: number | null;
+  exportedKwh: number | null;
+  facilityKwh: number | null;
+}
+
+export const EMPTY_SELF_GENERATION_FORM: SelfGenerationForm = Object.freeze({
+  source: null,
+  generatedKwh: null,
+  exportedKwh: null,
+  facilityKwh: null,
+});
+
+/** The section's fields, keyed as the page tracks a field the user typed and the form could not read. */
+export type SelfGenerationField = "generatedKwh" | "exportedKwh" | "facilityKwh";
+
+/** An opened or copied record's block in the section's fields; empty for any other record. */
+export function selfGenerationFormFromRecord(record: { category: string; parameters?: unknown }): SelfGenerationForm {
+  const block = selfGenerationFromRecord(record);
+  if (block === null) return EMPTY_SELF_GENERATION_FORM;
+  return {
+    source: isSelfGenerationSource(block.selfGenerationSource) ? block.selfGenerationSource : null,
+    generatedKwh: block.selfGeneratedKwh ?? null,
+    exportedKwh: block.exportedToGridKwh ?? null,
+    facilityKwh: block.facilityConsumptionKwh ?? null,
+  };
 }
 
 /**
- * Whether an edit leaves the record's parameters to the server, sending none
- * (self-gen-model, review of `2c427ed8`): an Electricity record saved as
- * Electricity. The form shows no field for the self-generation block, so the
- * block it holds is only what it read when the record opened; sending it would
- * put back an older block over one corrected, added or removed by another
- * client since. With `parameters` omitted the API keeps and prices the block
- * stored at the moment of the save. A move to another category still sends
- * that category's parameters or null, which the API needs to clear the block.
+ * The block a preview or save sends for the section's fields (design 1): null
+ * unless the category is Electricity and a source is chosen; otherwise the
+ * fields given, with topology `A`, an empty optional field left out. Every
+ * Electricity save sends it, an edit included: what the form shows is what it
+ * writes, and the edit's version keeps a stale form from writing it over a
+ * newer block (`record_changed`).
  */
-export function editLeavesParametersToServer(storedCategory: string | null, category: string): boolean {
-  return (
-    storedCategory !== null &&
-    recordParameterShape(storedCategory) === "electricity" &&
-    recordParameterShape(category) === "electricity"
-  );
+export function selfGenerationBlock(category: string, form: SelfGenerationForm): ElectricityRecordParameters | null {
+  if (recordParameterShape(category) !== "electricity" || form.source === null) return null;
+  const block: ElectricityRecordParameters = {
+    generationTopology: "A",
+    selfGenerationSource: form.source,
+    selfGeneratedKwh: form.generatedKwh,
+  };
+  if (form.exportedKwh !== null) block.exportedToGridKwh = form.exportedKwh;
+  if (form.facilityKwh !== null) block.facilityConsumptionKwh = form.facilityKwh;
+  return block;
+}
+
+/** Why the section holds the preview and the save, each with its own sentence. */
+export type SelfGenerationFormIssue =
+  | "unreadable"
+  | "generated_missing"
+  | "generated_negative"
+  | "exported_negative"
+  | "exported_above_generated"
+  | "facility_not_positive";
+
+/**
+ * Why the section's block cannot be sent yet, or null (design 4): first a field
+ * the form could not read, a negative generation or export, or a facility
+ * consumption of zero or less (the API's own bounds); then the shared block
+ * rule, `selfGenerationIssue`, which the engine applies. No source: nothing to
+ * hold.
+ */
+export function selfGenerationFormIssue(
+  category: string,
+  form: SelfGenerationForm,
+  unreadable: boolean,
+): SelfGenerationFormIssue | null {
+  const block = selfGenerationBlock(category, form);
+  if (block === null) return null;
+  if (unreadable) return "unreadable";
+  if (form.generatedKwh !== null && form.generatedKwh < 0) return "generated_negative";
+  if (form.exportedKwh !== null && form.exportedKwh < 0) return "exported_negative";
+  if (form.facilityKwh !== null && form.facilityKwh <= 0) return "facility_not_positive";
+  const issue = selfGenerationIssue(block);
+  if (issue === null) return null;
+  // The form sends the topology and the source itself, so the only input the
+  // block can miss is the generation.
+  return issue.code === "record_parameters_invalid" ? "exported_above_generated" : "generated_missing";
+}
+
+/** The fuel record a fuel source needs, as the reminder names it; null for a renewable source. */
+export function selfGenerationReminder(source: SelfGenerationSource | null): "natural_gas_chp" | "diesel_generator" | null {
+  return source === "natural_gas_chp" || source === "diesel_generator" ? source : null;
+}
+
+/**
+ * Whether Edit mode says, before the save, that saving removes the record's
+ * self-generation details (design 8): the record opened held a block, and the
+ * category on the form is no longer Electricity.
+ */
+export function selfGenerationRemovalNotice(editMode: boolean, openedWithBlock: boolean, category: string): boolean {
+  return editMode && openedWithBlock && recordParameterShape(category) !== "electricity";
 }
 
 /** The source of a copy of a voided record, as `onOwnType` reads it (ng-kwh-engine). */

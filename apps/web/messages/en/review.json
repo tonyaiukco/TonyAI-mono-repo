@@ -36,6 +36,25 @@
       "net": "Net",
       "gross": "Gross"
     },
+    "selfGeneration": {
+      "title": "Own generation",
+      "source": "Source",
+      "sources": {
+        "solar": "Solar",
+        "wind": "Wind",
+        "natural_gas_chp": "Natural gas CHP",
+        "diesel_generator": "Diesel generator"
+      },
+      "generated": "Generated on site",
+      "exported": "Exported to the grid",
+      "facility": "Facility consumption",
+      "wholeCompany": "the whole company",
+      "fuelMissing": {
+        "natural_gas_chp": "No Natural Gas record of {year} was found for {site}. The CHP unit's gas is counted only there; check that it has been entered.",
+        "diesel_generator": "No Fuel record for diesel of {year} was found for {site}. The generator's fuel is counted only there; check that it has been entered."
+      },
+      "balance": "Energy balance: the grid import is {imported} kWh, but consumption − generation + exports gives {expected} kWh. Check the figures against the bills. This is a warning only."
+    },
     "emissions": "Emissions",
     "factor": "Factor",
     "factorSource": "{source} v{version}",

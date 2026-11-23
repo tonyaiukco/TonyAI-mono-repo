@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
+import { CalorificBasisChoice, EquipmentLines, NaturalGasInputs, SelfGenerationInputs, VolumeCorrectionInfo, type ReferenceState } from '@/components/data-entry/record-inputs';
 import { checkDecimal, parseLocaleDecimal } from '@/lib/i18n/number';
 import { MESSAGES } from '@/messages';
 import { copyPrefill } from '@/lib/record-edit-view';
@@ -24,8 +24,13 @@ import {
   gasEnergyIssue,
   gasInputsFromRecord,
   selfGenerationFromRecord,
-  selfGenerationToSend,
-  editLeavesParametersToServer,
+  EMPTY_SELF_GENERATION_FORM,
+  selfGenerationBlock,
+  selfGenerationFormFromRecord,
+  selfGenerationFormIssue,
+  selfGenerationReminder,
+  selfGenerationRemovalNotice,
+  type SelfGenerationForm,
   gasInputsIssue,
   gasParameters,
   clearsNetEnergyQuantity,
@@ -94,7 +99,7 @@ describe('which inputs a record takes (D11)', () => {
     expect(recordInputMode('Refrigerants', 'UK', 'kg')).toBeNull();
     expect(recordInputMode('Refrigerants', null, 'kg')).toBeNull();
     expect(recordInputMode('Fugitive Gas', 'TR', 'standard_cubic_metres')).toBeNull();
-    // Electricity's block has no fields on the form yet, in any unit or geography (self-gen-model).
+    // Electricity's block is no input mode, in any unit or geography: the page reads its shape (self-gen-form, design 2).
     for (const unit of ['kWh', 'MWh']) {
       expect(recordInputMode('Electricity', 'TR', unit)).toBeNull();
       expect(recordInputMode('Electricity', 'UK', unit)).toBeNull();
@@ -621,20 +626,71 @@ describe('selfGenerationFromRecord (self-gen-model)', () => {
   });
 });
 
-describe('selfGenerationToSend (self-gen-model, qa-auditor review)', () => {
-  it('sends the record\'s own block while the category is Electricity, whatever the unit or geography', () => {
-    expect(selfGenerationToSend('Electricity', SELF_GENERATION_BLOCK)).toBe(SELF_GENERATION_BLOCK);
-    expect(selfGenerationToSend('Electricity', null)).toBeNull();
+describe('the self-generation section (self-gen-form, design 1, 3 and 4)', () => {
+  const form = (over: Partial<SelfGenerationForm> = {}): SelfGenerationForm => ({
+    source: 'solar',
+    generatedKwh: 400_000,
+    exportedKwh: null,
+    facilityKwh: null,
+    ...over,
   });
 
-  it('sends none for any other category, and the block comes back with Electricity', () => {
-    for (const category of ['Natural Gas', 'Refrigerants', 'Fuel', 'Water']) {
-      expect(selfGenerationToSend(category, SELF_GENERATION_BLOCK), category).toBeNull();
+  it('round-trips every stored shape the CHECK accepts, record to form to block', () => {
+    const shapes = [
+      { generationTopology: 'A', selfGenerationSource: 'wind', selfGeneratedKwh: 0 },
+      { generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000, exportedToGridKwh: null, facilityConsumptionKwh: null },
+      { generationTopology: 'A', selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 400_000, exportedToGridKwh: 400_000, facilityConsumptionKwh: 1_000_000.5 },
+      { generationTopology: 'A', selfGenerationSource: 'diesel_generator', selfGeneratedKwh: 12.25, facilityConsumptionKwh: 1e-300 },
+    ];
+    for (const parameters of shapes) {
+      const sent = selfGenerationBlock('Electricity', selfGenerationFormFromRecord({ category: 'Electricity', parameters }));
+      // What the record holds, null fields being absent ones.
+      const held = Object.fromEntries(Object.entries(parameters).filter(([, v]) => v !== null));
+      expect(sent, JSON.stringify(parameters)).toEqual(held);
     }
-    // A category picked by mistake and undone: the own block is still the record's.
-    const own = selfGenerationFromRecord({ category: 'Electricity', parameters: SELF_GENERATION_BLOCK });
-    expect(selfGenerationToSend('Natural Gas', own)).toBeNull();
-    expect(selfGenerationToSend('Electricity', own)).toEqual(SELF_GENERATION_BLOCK);
+  });
+
+  it('reads a plain record, a block of nulls and any other category as an empty section', () => {
+    expect(selfGenerationFormFromRecord({ category: 'Electricity', parameters: null })).toEqual(EMPTY_SELF_GENERATION_FORM);
+    expect(
+      selfGenerationFormFromRecord({
+        category: 'Electricity',
+        parameters: { generationTopology: null, selfGenerationSource: null, selfGeneratedKwh: null },
+      }),
+    ).toEqual(EMPTY_SELF_GENERATION_FORM);
+    expect(selfGenerationFormFromRecord({ category: 'Natural Gas', parameters: SELF_GENERATION_BLOCK })).toEqual(
+      EMPTY_SELF_GENERATION_FORM,
+    );
+  });
+
+  it('sends no block without a source, and topology A with one', () => {
+    expect(selfGenerationBlock('Electricity', EMPTY_SELF_GENERATION_FORM)).toBeNull();
+    expect(selfGenerationBlock('Electricity', form({ source: null }))).toBeNull();
+    expect(selfGenerationBlock('Electricity', form())).toEqual({
+      generationTopology: 'A',
+      selfGenerationSource: 'solar',
+      selfGeneratedKwh: 400_000,
+    });
+    // An empty generation is sent as null, which the form holds back anyway.
+    expect(selfGenerationBlock('Electricity', form({ generatedKwh: null }))).toEqual({
+      generationTopology: 'A',
+      selfGenerationSource: 'solar',
+      selfGeneratedKwh: null,
+    });
+  });
+
+  it('sends no block for any other category, and the same block again with Electricity', () => {
+    const typed = form({ exportedKwh: 10, facilityKwh: 900_000 });
+    for (const category of ['Natural Gas', 'Refrigerants', 'Fuel', 'Water', '']) {
+      expect(selfGenerationBlock(category, typed), category).toBeNull();
+    }
+    expect(selfGenerationBlock('Electricity', typed)).toEqual({
+      generationTopology: 'A',
+      selfGenerationSource: 'solar',
+      selfGeneratedKwh: 400_000,
+      exportedToGridKwh: 10,
+      facilityConsumptionKwh: 900_000,
+    });
   });
 
   it('carries a copied voided record\'s block through the copy\'s prefill', () => {
@@ -643,21 +699,100 @@ describe('selfGenerationToSend (self-gen-model, qa-auditor review)', () => {
       category: 'Electricity', activityType: null, activityValue: 600000, activityUnit: 'kWh', input: null,
       parameters: { ...SELF_GENERATION_BLOCK },
     });
-    expect(selfGenerationToSend(copied.category, selfGenerationFromRecord(copied))).toEqual(SELF_GENERATION_BLOCK);
+    expect(selfGenerationBlock(copied.category, selfGenerationFormFromRecord(copied))).toEqual(SELF_GENERATION_BLOCK);
+  });
+
+  it('names each issue, in the stated order', () => {
+    const issue = (over: Partial<SelfGenerationForm>, unreadable = false) =>
+      selfGenerationFormIssue('Electricity', form(over), unreadable);
+    expect(issue({})).toBeNull();
+    expect(issue({ generatedKwh: 0 })).toBeNull();
+    expect(issue({}, true)).toBe('unreadable');
+    // An unread field outranks a missing one: the user typed something.
+    expect(issue({ generatedKwh: null }, true)).toBe('unreadable');
+    expect(issue({ generatedKwh: -1, exportedKwh: -1 })).toBe('generated_negative');
+    expect(issue({ exportedKwh: -1, facilityKwh: 0 })).toBe('exported_negative');
+    expect(issue({ facilityKwh: 0 })).toBe('facility_not_positive');
+    expect(issue({ facilityKwh: -5 })).toBe('facility_not_positive');
+    expect(issue({ facilityKwh: 1e-300 })).toBeNull();
+    expect(issue({ generatedKwh: null })).toBe('generated_missing');
+    expect(issue({ generatedKwh: null, exportedKwh: 5 })).toBe('generated_missing');
+    expect(issue({ exportedKwh: 500_000 })).toBe('exported_above_generated');
+    expect(issue({ exportedKwh: 400_000 })).toBeNull();
+    expect(issue({ exportedKwh: 399_999 })).toBeNull();
+  });
+
+  it('holds nothing back without a source or outside Electricity', () => {
+    expect(selfGenerationFormIssue('Electricity', form({ source: null, generatedKwh: -1 }), true)).toBeNull();
+    expect(selfGenerationFormIssue('Natural Gas', form({ generatedKwh: null }), true)).toBeNull();
+  });
+
+  it('reminds of the fuel record for a fuel source only', () => {
+    expect(selfGenerationReminder('natural_gas_chp')).toBe('natural_gas_chp');
+    expect(selfGenerationReminder('diesel_generator')).toBe('diesel_generator');
+    expect(selfGenerationReminder('solar')).toBeNull();
+    expect(selfGenerationReminder('wind')).toBeNull();
+    expect(selfGenerationReminder(null)).toBeNull();
+  });
+
+  it('says a category move removes the stored block only in Edit mode, off Electricity, for a record that held one', () => {
+    expect(selfGenerationRemovalNotice(true, true, 'Natural Gas')).toBe(true);
+    expect(selfGenerationRemovalNotice(true, true, '')).toBe(true);
+    expect(selfGenerationRemovalNotice(true, true, 'Electricity')).toBe(false);
+    expect(selfGenerationRemovalNotice(true, false, 'Natural Gas')).toBe(false);
+    expect(selfGenerationRemovalNotice(false, true, 'Natural Gas')).toBe(false);
   });
 });
 
-describe('editLeavesParametersToServer (self-gen-model, review of 2c427ed8)', () => {
-  it('leaves an Electricity record saved as Electricity to the server, which keeps the block it holds now', () => {
-    expect(editLeavesParametersToServer('Electricity', 'Electricity')).toBe(true);
+describe('SelfGenerationInputs (self-gen-form)', () => {
+  const render = (locale: 'en' | 'tr', props: object) =>
+    renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale],
+      children: createElement(SelfGenerationInputs, {
+        form: EMPTY_SELF_GENERATION_FORM, issue: null, balance: null, epoch: 0, onChange: () => {}, ...props,
+      } as never),
+    }));
+  const solar: SelfGenerationForm = { source: 'solar', generatedKwh: 400_000, exportedKwh: null, facilityKwh: null };
+  const copy = (locale: 'en' | 'tr') => MESSAGES[locale].dataEntry.inputs.selfGeneration;
+  /** A sentence as the static markup escapes it. */
+  const escaped = (text: string) => text.replace(/'/g, '&#x27;');
+
+  it('asks for a source and nothing more while none is chosen', () => {
+    const html = render('en', {});
+    expect(html).toContain('data-testid="self-generation-source"');
+    expect(html).not.toContain('id="input-self-generated"');
+    expect(html).not.toContain(escaped(copy('en').caseA));
   });
 
-  it('sends parameters for a new record, a move off Electricity, a move onto it, and every other category', () => {
-    expect(editLeavesParametersToServer(null, 'Electricity')).toBe(false);
-    expect(editLeavesParametersToServer('Electricity', 'Natural Gas')).toBe(false);
-    expect(editLeavesParametersToServer('Natural Gas', 'Electricity')).toBe(false);
-    for (const category of ['Natural Gas', 'Refrigerants', 'Fuel', 'Water']) {
-      expect(editLeavesParametersToServer(category, category), category).toBe(false);
+  it('opens the three kWh fields and both statements for a source', () => {
+    for (const locale of ['en', 'tr'] as const) {
+      const html = render(locale, { form: solar });
+      for (const id of ['input-self-generated', 'input-self-exported', 'input-self-facility']) expect(html).toContain(`id="${id}"`);
+      expect(html).toContain(escaped(copy(locale).caseA));
+      expect(html).toContain(escaped(copy(locale).importStatement));
+      expect(html).not.toContain('data-testid="self-generation-reminder"');
     }
+  });
+
+  it('reminds of the fuel record for a fuel source', () => {
+    expect(render('en', { form: { ...solar, source: 'natural_gas_chp' } })).toContain(escaped(copy('en').reminder.natural_gas_chp));
+    expect(render('tr', { form: { ...solar, source: 'diesel_generator' } })).toContain(escaped(copy('tr').reminder.diesel_generator));
+  });
+
+  it('says the issue and marks the field it concerns', () => {
+    const html = render('en', { form: { ...solar, exportedKwh: 500_000 }, issue: 'exported_above_generated' });
+    expect(html).toContain(escaped(copy('en').issues.exported_above_generated));
+    expect(html).toMatch(/id="input-self-exported"[^>]*aria-invalid="true"|aria-invalid="true"[^>]*id="input-self-exported"/);
+    expect(html).not.toMatch(/id="input-self-generated"[^>]*aria-invalid="true"|aria-invalid="true"[^>]*id="input-self-generated"/);
+  });
+
+  it('warns on a balance gap with both figures in the reader\'s format, and says nothing on a balanced one', () => {
+    const gap = { importKwh: 600_000, expectedImportKwh: 500_000, warns: true };
+    expect(render('en', { form: solar, balance: gap })).toContain('600,000 kWh');
+    const tr = render('tr', { form: solar, balance: gap });
+    expect(tr).toContain('data-testid="self-generation-balance"');
+    expect(tr).toContain('600.000 kWh');
+    expect(tr).toContain('500.000 kWh');
+    expect(render('en', { form: solar, balance: { ...gap, warns: false } })).not.toContain('data-testid="self-generation-balance"');
   });
 });

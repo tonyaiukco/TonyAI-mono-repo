@@ -75,11 +75,25 @@ describe('save errors on Data Entry (LP3-01: by code, in the user\'s language)',
     expect(save(new ApiError(duplicateMessage, 400), false, 'en').title).not.toContain('Previous submissions');
   });
 
-  it.each([
-    ['record_changed', MESSAGES.tr.errors.codes.record_changed],
-    ['snapshot_immutable', MESSAGES.tr.errors.codes.snapshot_immutable],
-  ] as const)('words %s by the catalogue', (code, expected) => {
-    expect(save(new ApiError('English sentence', 409, code), false, 'tr')).toEqual({ title: expected });
+  it('words snapshot_immutable by the catalogue', () => {
+    expect(save(new ApiError('English sentence', 409, 'snapshot_immutable'), false, 'tr')).toEqual({
+      title: MESSAGES.tr.errors.codes.snapshot_immutable,
+    });
+  });
+
+  it('says a record changed since the form opened it was not saved, never that it changed during the request (self-gen-form)', () => {
+    for (const locale of ['en', 'tr'] as const) {
+      for (const moving of [false, true]) {
+        expect(save(new ApiError('English sentence', 409, 'record_changed'), moving, locale)).toEqual({
+          title: MESSAGES[locale].dataEntry.recordChanged,
+        });
+      }
+    }
+    const en = save(new ApiError('x', 409, 'record_changed'), false, 'en').title;
+    expect(en).toContain('after this form opened it');
+    expect(en).toContain('were not saved');
+    expect(en).not.toContain('in progress');
+    expect(en).not.toBe(MESSAGES.en.errors.codes.record_changed);
   });
 
   it('a locked period names the period and year in the user\'s language', () => {
