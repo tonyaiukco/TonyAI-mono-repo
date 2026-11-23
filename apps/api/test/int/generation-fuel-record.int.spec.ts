@@ -131,13 +131,15 @@ describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
   });
 
   it('never reads another subsidiary, of the same organisation or another, even for a reader of both', async () => {
-    const chp = await electricity('natural_gas_chp');
+    // Whole company on every side, so only the subsidiary condition keeps the
+    // other subsidiaries' gas records out: a site is tied to one subsidiary by
+    // its foreign key, and would hide a dropped condition (security-rls review).
+    const chp = await electricity('natural_gas_chp', { locationId: null });
     const sister = await owner.subsidiary.create({
       data: { organisationId: tenant.organisationId, legalName: 'Int sister subsidiary', geographyCode: 'UK' },
     });
-    const sisterSite = await owner.location.create({ data: { subsidiaryId: sister.id, name: 'Int sister site', geographyCode: 'UK' } });
     await createRecord(owner, { ...tenant, subsidiaryId: sister.id }, {
-      category: 'Natural Gas', reportingPeriod: 'monthly', periodValue: 'January', locationId: sisterSite.id,
+      category: 'Natural Gas', reportingPeriod: 'monthly', periodValue: 'January', locationId: null,
       activityValue: 1, activityUnit: 'cubic_metres',
     });
     other = await createTenant();
