@@ -78,6 +78,12 @@
 - [x] 5.3 Spawn `security-rls`, `qa-auditor` and `architect` in parallel on the branch diff, each in its own tree, with self-contained prompts. Ask what each verified. Fix correctness, security and data-integrity findings; file the rest under Open questions. Verify: each seat's report is summarised in the PR description.
 - [x] 5.4 Update `docs/roadmap_docs/project_status_roadmap_phases.md`: LP4-07 `IN_PROGRESS` with this change, Next up, and LP4-06 closed once #342's deployment is read on live QA. Verify: Part A, the ledger row and the LP4-07 card agree.
 
+## 6. Outside reviews of the pushed branch
+
+- [x] 6.1 Review of `2c427ed8`: an edit saved as Electricity sends no parameters (`editLeavesParametersToServer`); the engine checks raw keys before nulls are dropped; the exact bounds in the deltas and docs; e2e for the preview, a browser copy of a voided record, a corrected and an added block. Verify: both stale-form tests fail on a mutant that sends the opened block.
+- [x] 6.2 Review of `1802e22e` (owner: the broad version check): `seenUpdatedAt` on `UpdateActivityRecordInput` and its DTO; the service refuses an older version, and a block change that names none, as `record_changed` (design 9); Data Entry sends the version with every edit and reads the record again on `record_changed`; the rollback is forward only. Verify: service, DTO and e2e cases (a Natural Gas draft turned into Electricity elsewhere; a client that names no version) pass, and the whole local e2e suite passes.
+- [x] 6.3 Re-review the second design with `security-rls`, `qa-auditor` and `architect`, each in its own tree; fix correctness, security and data-integrity findings, file the rest. Verify: each seat's report is summarised in the planning file.
+
 ## Workflow follow-up
 
 - Open the PR on a `feat/self-gen-model` branch when the owner asks; the owner merges.

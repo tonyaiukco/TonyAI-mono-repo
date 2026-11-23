@@ -860,6 +860,8 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
   beforeEach(() => {
     audit.record.mockClear();
   });
+  // The version the editor read (seenUpdatedAt, review of 1802e22e).
+  const seen = (row: ReturnType<typeof stored>) => row.updatedAt.toISOString();
 
   it('a create with a block stores it as sent, null field included, prices with it and audits it', async () => {
     const { prisma, calc, service } = build(2);
@@ -890,9 +892,10 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
   });
 
   it('a PATCH that changes the block recalculates with the new one, and audits both sides', async () => {
-    const { prisma, calc, service } = editing(stored());
+    const row = stored();
+    const { prisma, calc, service } = editing(row);
     const next = { ...BLOCK, selfGeneratedKwh: 450000, exportedToGridKwh: 10000 };
-    await service.update(dataEntry(), 'rec-sg', { parameters: next });
+    await service.update(dataEntry(), 'rec-sg', { parameters: next, seenUpdatedAt: seen(row) });
     expect(calc.compute).toHaveBeenCalledTimes(1);
     expect(lastInput(calc)).toMatchObject({ parameters: next });
     expect(updatedData(prisma).parameters).toEqual(next);
@@ -903,23 +906,107 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
   });
 
   it('refuses moving the record to another category with its block, and accepts it with parameters: null', async () => {
-    const { prisma, service } = editing(stored());
-    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas' }))
+    const row = stored();
+    const { prisma, service } = editing(row);
+    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', seenUpdatedAt: seen(row) }))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
-    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: BLOCK } as never))
+    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: BLOCK, seenUpdatedAt: seen(row) } as never))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
 
-    await service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: null });
+    await service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: null, seenUpdatedAt: seen(row) });
     expect(updatedData(prisma).category).toBe('Natural Gas');
     expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
   });
 
   it('refuses another category\'s fields on an Electricity edit, before anything is written', async () => {
-    const { prisma, service } = editing(stored());
-    await expect(service.update(dataEntry(), 'rec-sg', { parameters: { cvBasis: 'net' } as never }))
+    const row = stored();
+    const { prisma, service } = editing(row);
+    await expect(service.update(dataEntry(), 'rec-sg', { parameters: { cvBasis: 'net' } as never, seenUpdatedAt: seen(row) }))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  describe('the version an edit names (seenUpdatedAt, review of 1802e22e)', () => {
+    it('refuses an edit made on an older version as record_changed, before anything is computed or written', async () => {
+      const row = stored();
+      const { prisma, calc, service } = editing(row);
+      const older = new Date(row.updatedAt.getTime() - 1000).toISOString();
+      await expect(service.update(dataEntry(), 'rec-sg', { activityValue: 5200, seenUpdatedAt: older }))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_changed' }) });
+      expect(calc.compute).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('applies to every record, a plain one too', async () => {
+      const row = stored({ parameters: null });
+      const { prisma, service } = editing(row);
+      await expect(service.update(dataEntry(), 'rec-sg', { activityValue: 1, seenUpdatedAt: '2000-01-01T00:00:00.000Z' }))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_changed' }) });
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts an edit made on the version stored, in any spelling of the instant', async () => {
+      const row = stored();
+      const { prisma, service } = editing(row);
+      const sameInstant = row.updatedAt.toISOString().replace('Z', '+00:00');
+      await service.update(dataEntry(), 'rec-sg', { activityValue: 5200, seenUpdatedAt: sameInstant });
+      expect(prisma.activityRecord.update).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['removes the block', { parameters: null }],
+      ['replaces it with a block of nulls', { parameters: { generationTopology: null, selfGenerationSource: null, selfGeneratedKwh: null } }],
+      ['changes it', { parameters: { ...BLOCK, selfGeneratedKwh: 1 } }],
+      ['moves the record to Natural Gas', { category: 'Natural Gas', parameters: null }],
+    ])('refuses an edit that names no version and %s, as record_changed', async (_what, change) => {
+      const { prisma, calc, service } = editing(stored());
+      await expect(service.update(dataEntry(), 'rec-sg', change as never))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_changed' }) });
+      expect(calc.compute).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('lets an edit that names no version through when it leaves the stored block as it is', async () => {
+      for (const change of [{ activityValue: 5200 }, { parameters: { ...BLOCK } }, { parameters: { ...BLOCK, facilityConsumptionKwh: null } }]) {
+        const { prisma, service } = editing(stored());
+        await service.update(dataEntry(), 'rec-sg', change as never);
+        expect(prisma.activityRecord.update, JSON.stringify(change)).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('answers a tenant, role or author refusal before a stale version, never 409 (security-rls, architect)', async () => {
+      const stale = '2000-01-01T00:00:00.000Z';
+      const cases: [string, RequestUser, string][] = [
+        ['another tenant', dataEntry({ accessibleSubsidiaryIds: ['sub-9'] }), 'record_not_found'],
+        ['an executive viewer', executiveViewer(), 'forbidden'],
+        ['a data entry user who is not the author', dataEntry({ id: 'user-other' }), 'record_author_forbidden'],
+        ['a super_admin who is not the author', superAdmin(), 'record_author_forbidden'],
+      ];
+      for (const [who, user, code] of cases) {
+        const { prisma, service } = editing(stored());
+        const refusal = await service.update(user, 'rec-sg', { parameters: null, seenUpdatedAt: stale }).catch((e) => e);
+        expect(errorCodeOf(refusal), who).not.toBe('record_changed');
+        if (code !== 'forbidden') expect(errorCodeOf(refusal), who).toBe(code);
+        else expect(refusal?.status ?? refusal?.getStatus?.(), who).toBe(403);
+        expect(prisma.activityRecord.update, who).not.toHaveBeenCalled();
+      }
+    });
+
+    it('asks no version of a record that holds no block', async () => {
+      const { prisma, service } = editing(stored({ parameters: null }));
+      await service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: null });
+      expect(prisma.activityRecord.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a client that names no version add a block to a record holding none, or a block of nulls (qa-auditor re-review)', async () => {
+      for (const storedParameters of [null, {}, { generationTopology: null, selfGeneratedKwh: null }]) {
+        const { prisma, service } = editing(stored({ parameters: storedParameters as never }));
+        await service.update(dataEntry(), 'rec-sg', { parameters: BLOCK });
+        expect(prisma.activityRecord.update, JSON.stringify(storedParameters)).toHaveBeenCalledTimes(1);
+      }
+    });
   });
 });
 

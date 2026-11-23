@@ -414,6 +414,10 @@ function DataEntryPageInner() {
   const deepLinkHandled = useRef(false);
   const [subsLoading, setSubsLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The open record's `updatedAt` as this form read or last saved it, sent as
+  // `seenUpdatedAt` with every edit: a record changed elsewhere since is
+  // refused as `record_changed` rather than overwritten (self-gen-model review).
+  const [editingVersion, setEditingVersion] = useState<string | null>(null);
   const [editingCreatedBy, setEditingCreatedBy] = useState<string | null>(null);
   const canSubmit = canSubmitEntry(user, editingId, editingCreatedBy);
   // Edit mode (BUG-R2-03): entered only by the Edit action. In it, a change of
@@ -1301,6 +1305,7 @@ function DataEntryPageInner() {
     clearEditChoices();
     setCopying(false);
     setEditingId(rec.id);
+    setEditingVersion(rec.updatedAt);
     setEditingCreatedBy(rec.createdBy);
     setSubsidiaryId(rec.subsidiaryId);
     setLocationId(rec.locationId ?? "");
@@ -1359,6 +1364,7 @@ function DataEntryPageInner() {
     });
     if (!movedOff) return;
     setEditingId(null);
+    setEditingVersion(null);
     setEditingCreatedBy(null);
     setEditingTuple(null);
     setOwnUnit(null);
@@ -1403,6 +1409,7 @@ function DataEntryPageInner() {
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
+    setEditingVersion(null);
     setEditingCreatedBy(null);
     setEditingTuple(null);
     setLocationId("");
@@ -1471,6 +1478,9 @@ function DataEntryPageInner() {
         // keeps the self-generation block stored NOW, never the one this form
         // read when it opened (self-gen-model review).
         ...(editLeavesParametersToServer(editingTuple?.category ?? null, category) ? {} : { parameters: recordParameters }),
+        // The version this form read: a record changed elsewhere since is
+        // refused (409 `record_changed`), never overwritten.
+        ...(editingVersion !== null ? { seenUpdatedAt: editingVersion } : {}),
         // The files the band says go (owner decision D1); the API refuses a
         // category change that leaves one attached.
         ...(editMode && plan.detachIds.length > 0 ? { detachEvidenceIds: plan.detachIds } : {}),
@@ -1500,6 +1510,37 @@ function DataEntryPageInner() {
     }
     const { title, description } = saveErrorDescription(e, moving, describeError, t);
     toast.error(title, description ? { description } : undefined);
+    if (e instanceof ApiError && e.code === "record_changed") void reloadAfterLostRace();
+  }
+
+  /**
+   * A save refused because the record changed since this form read it
+   * (`record_changed`, self-gen-model review): the form and the list read the
+   * record again as stored, with its version, so the user sees what is there
+   * now and the next save is made on it. Typed changes are not kept: they were
+   * made on values that no longer stand.
+   */
+  async function reloadAfterLostRace() {
+    const id = editingId;
+    if (!id) return;
+    const wasEdit = editMode;
+    const session = beginFormSession();
+    void refreshRecords(subsidiaryId);
+    try {
+      const rec = await api.getActivityRecord(id);
+      if (!formSessions.isCurrent(session)) return;
+      if (rec.status !== "draft" && rec.status !== "rejected") {
+        resetForm();
+        return;
+      }
+      fillForm(rec);
+      setEditMode(wasEdit);
+      if (wasEdit) setEditFilesVersion((v) => v + 1);
+    } catch (err) {
+      if (!formSessions.isCurrent(session)) return;
+      errorToast(err);
+      resetForm();
+    }
   }
 
   function toastFilesNotUploaded(files: readonly File[]) {
@@ -1590,6 +1631,7 @@ function DataEntryPageInner() {
       const wasEditing = editMode;
       afterEditSaved();
       setEditingId(rec.id);
+      setEditingVersion(rec.updatedAt);
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.
@@ -1664,6 +1706,7 @@ function DataEntryPageInner() {
       // Keep the saved record "current" so that if submit is blocked (evidence
       // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
+      setEditingVersion(rec.updatedAt);
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.

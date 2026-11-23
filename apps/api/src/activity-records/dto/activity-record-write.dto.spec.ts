@@ -578,6 +578,19 @@ describe.each(DTOS)('%s — a refused block answers record_parameters_invalid th
   });
 });
 
+describe('UpdateActivityRecordDto — seenUpdatedAt (self-gen-model review of 1802e22e)', () => {
+  it('accepts an ISO instant, and its absence', () => {
+    expect(parseExactly(UpdateActivityRecordDto, { seenUpdatedAt: '2026-11-23T10:00:00.123Z' })).toEqual([]);
+    expect(parseExactly(UpdateActivityRecordDto, {})).toEqual([]);
+  });
+
+  it('refuses anything that is not an ISO instant', () => {
+    for (const seenUpdatedAt of ['yesterday', '2026-13-01T00:00:00Z', 1, null, '']) {
+      expect(parseExactly(UpdateActivityRecordDto, { seenUpdatedAt }).map((e) => e.property), String(seenUpdatedAt)).toContain('seenUpdatedAt');
+    }
+  });
+});
+
 describe('UpdateActivityRecordDto — parameters with no category named', () => {
   it('leaves the category rule to the service, which knows the effective one', () => {
     expect(parseExactly(UpdateActivityRecordDto, { parameters: { ncvKcalPerSm3: 8500 } })).toEqual([]);

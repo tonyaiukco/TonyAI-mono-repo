@@ -22,6 +22,8 @@ This change is the model half of LP4-07. `self-gen-form` follows with the form, 
   - a missing topology, source or generated kWh → `parameters_required`, naming the input;
   - exports above generation, or a malformed field → `record_parameters_invalid`.
 - A request body whose only refused field is `parameters` answers `record_parameters_invalid` for every category (it answered `validation_failed`), the code the service's own check already throws.
+- Every edit MAY name the version it was made on (`seenUpdatedAt`, the record's `updatedAt`); an older version is refused with `record_changed` (409), and an edit that names none may not change or remove a stored block (also `record_changed`). Data Entry names it on every edit and reads the record again on `record_changed` (added in the review of `1802e22e`).
+- There is no rollback by images once the migration is applied (the QA rollback refuses to cross a migration); recovery is forward.
 - The snapshot echoes the three numeric fields with origin `user`. The snapshot schema stays 3, so no existing record goes stale.
 - The database CHECK on `activity_records.parameters` gains an Electricity branch (expand-only).
 - Data Entry keeps a stored block when an Electricity record is opened, edited or copied. Without this, every web edit would send `parameters: null` and erase it. The fields are not shown or editable yet; that is `self-gen-form`.
@@ -45,13 +47,14 @@ None.
   - MODIFIED *Calculations write the new snapshot, and TR rules follow geography*: an Electricity record's self-generation block is accepted in any geography.
   - ADDED requirements for the block's shape, its refusals, the unchanged Scope 2 figure and the snapshot echo.
 - `activity-data-entry`: ADDED *Data Entry keeps a stored self-generation block*.
+- `record-lifecycle`: ADDED *An edit is made on the version it names* (review of `1802e22e`).
 
 ## Impact
 
-- **Shared types** (`packages/shared-types`): `ElectricityRecordParameters` joins the `RecordParameters` union, with its value lists and a per-category parameter-shape resolver; three new `parameters_required` input selectors.
-- **API** (`apps/api`): `record-parameters.dto.ts`, the engine's parameter guard and snapshot in `calculations.service.ts`, the service's parameter assertion. No new endpoint and no new error code.
+- **Shared types** (`packages/shared-types`): `UpdateActivityRecordInput.seenUpdatedAt`, the version an edit is made on (review of `1802e22e`). `ElectricityRecordParameters` joins the `RecordParameters` union, with its value lists and a per-category parameter-shape resolver; three new `parameters_required` input selectors.
+- **API** (`apps/api`): `record-parameters.dto.ts`, the engine's parameter guard and snapshot in `calculations.service.ts` and `calculations/self-generation.ts`, the service's parameter assertion; `update-activity-record.dto.ts` (`seenUpdatedAt`) and the service's version checks (`EditVersionRequiredError`). No new endpoint and no new error code.
 - **Database** (`packages/db`): one migration redefining `activity_records_parameters_check`; its pinned md5 in `scripts/runtime-role.mjs` (`INTEGRITY_CHECKS`). No column, table or grant changes.
-- **Web** (`apps/web`): Data Entry's parameter wiring (carry only), readers that tell parameter shapes apart by key presence, three sentences in each of the TR and EN error catalogues.
+- **Web** (`apps/web`): Data Entry's parameter wiring (the record's own block for previews and copies; no parameters on an Electricity-to-Electricity edit), the edit version on every edit and a reload on `record_changed` (`reloadAfterLostRace`), readers that tell parameter shapes apart by key presence, three sentences in each of the TR and EN error catalogues.
 - **Docs**: `docs/api/endpoints.md`, `docs/architecture/data-model.md`, `docs/md_docs/calculation_logic.md`, and the planning file (LP4-07; LP4-06's closure).
 - **Review**: the change touches the calculation path and the shared-types contract, so `security-rls`, `qa-auditor` and `architect` review the diff before the PR opens.
 - **Deploy**: one expand-only migration. A pre-change API keeps working against the new CHECK.

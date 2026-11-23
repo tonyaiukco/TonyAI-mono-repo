@@ -4534,6 +4534,15 @@ export type UpdateActivityRecordInput = Partial<
    * linked only by uploading it.
    */
   detachEvidenceIds?: string[];
+  /**
+   * The record's `updatedAt` as the editor read it (self-gen-model review of
+   * `1802e22e`). An edit of a record changed since is refused with
+   * `record_changed` (409) and writes nothing. Data Entry sends it on every
+   * edit. Absent, nothing is compared, except that an edit changing or
+   * removing a stored self-generation block, which no screen shows yet, must
+   * name it: a tab opened before that block existed cannot see it.
+   */
+  seenUpdatedAt?: string;
 };
 
 /** Body of POST /activity-records/:id/reject — the reviewer's variance reason. */

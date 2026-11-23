@@ -94,9 +94,13 @@ const previewWithBlock = (page: Page) =>
     return body.parameters?.selfGeneratedKwh !== undefined;
   });
 
-/** Another client's edit of the same draft, through the API. */
+/** Another client's edit of the same draft, through the API, on the version it reads. */
 async function patchElsewhere(request: APIRequestContext, token: string, id: string, data: Record<string, unknown>) {
-  const res = await request.patch(`${API_BASE}/activity-records/${id}`, { headers: bearer(token), data });
+  const current = await read(request, token, id);
+  const res = await request.patch(`${API_BASE}/activity-records/${id}`, {
+    headers: bearer(token),
+    data: { ...data, seenUpdatedAt: current.updatedAt },
+  });
   expect(res.ok(), await res.text()).toBe(true);
 }
 
@@ -118,14 +122,23 @@ async function openDraft(page: Page) {
  * Clicks Save and returns the body the form sent, once the API has answered
  * it: a toast from an earlier save may still be on screen.
  */
-async function save(page: Page, method: 'POST' | 'PATCH') {
+async function save(page: Page, method: 'POST' | 'PATCH', expectOk = true) {
   const answered = page.waitForResponse(
     (r) => r.request().method() === method && /\/activity-records(\/[^/]+)?$/.test(new URL(r.url()).pathname),
   );
   await page.getByRole('button', { name: enDataEntry.saveDraft, exact: true }).click();
   const response = await answered;
-  expect(response.ok(), await response.text()).toBe(true);
+  if (expectOk) expect(response.ok(), await response.text()).toBe(true);
   return { body: response.request().postDataJSON() as Record<string, unknown>, response };
+}
+
+/** A save refused as a lost race: 409 `record_changed`, the version the form read named. */
+async function expectStaleSave(page: Page) {
+  const { body, response } = await save(page, 'PATCH', false);
+  expect(response.status()).toBe(409);
+  expect((await response.json()).code).toBe('record_changed');
+  expect(body.seenUpdatedAt).toEqual(expect.any(String));
+  return body;
 }
 
 async function pickUnit(page: Page, unit: string) {
@@ -140,16 +153,25 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   const id = await draftWithBlock(request, token);
   expect((await read(request, token, id)).parameters).toEqual(BLOCK);
 
+  const opened = await read(request, token, id);
   const preview = previewWithBlock(page);
   await openDraft(page);
   // The preview sends the opened record's block; it changes no figure.
   expect((await preview).postDataJSON().parameters).toEqual(BLOCK);
   await quantity(page).fill('5200');
   const first = (await save(page, 'PATCH')).body;
-  // An edit saved as Electricity leaves the block to the server.
+  // An edit saved as Electricity leaves the block to the server, and names the version it opened.
   expect(first).not.toHaveProperty('parameters');
+  expect(first.seenUpdatedAt).toBe(opened.updatedAt);
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
-  expect(await read(request, token, id)).toMatchObject({ activityValue: 5200, activityUnit: 'kWh', parameters: BLOCK });
+  const afterFirst = await read(request, token, id);
+  expect(afterFirst).toMatchObject({ activityValue: 5200, activityUnit: 'kWh', parameters: BLOCK });
+
+  // Saved again without reopening: the form names the version its own save returned (qa-auditor re-review).
+  await quantity(page).fill('5250');
+  const again = (await save(page, 'PATCH')).body;
+  expect(again.seenUpdatedAt).toBe(afterFirst.updatedAt);
+  expect(await read(request, token, id)).toMatchObject({ activityValue: 5250, parameters: BLOCK });
 
   // MWh: the quantity is asked for again; the block's kWh are not rescaled.
   await editButton(page).click();
@@ -201,7 +223,7 @@ test('a category picked by mistake and undone keeps the block; a move to Natural
   expect(await read(request, token, id)).toMatchObject({ category: 'Natural Gas', activityUnit: 'kWh', parameters: null });
 });
 
-test('a block corrected by another client while the form is open is kept by the save', async ({ page, request }) => {
+test('a save on a version changed by another client is refused, and the corrected block stays', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token);
   await openDraft(page);
@@ -210,14 +232,22 @@ test('a block corrected by another client while the form is open is kept by the 
   await patchElsewhere(request, token, id, { parameters: corrected });
 
   await quantity(page).fill('5300');
-  const { body } = await save(page, 'PATCH');
+  const body = await expectStaleSave(page);
   expect(body).not.toHaveProperty('parameters');
+  expect(await read(request, token, id)).toMatchObject({ activityValue: 5000, parameters: corrected });
+
+  // The refusal reads the record again as stored, with its version; the save made on it keeps the block.
+  await expect(quantity(page)).toHaveValue('5000');
+  await expect(page.getByTestId('edit-mode-band')).toBeVisible();
+  await quantity(page).fill('5300');
+  const again = (await save(page, 'PATCH')).body;
+  expect(again).not.toHaveProperty('parameters');
   const saved = await read(request, token, id);
   expect(saved).toMatchObject({ activityValue: 5300, parameters: corrected });
   expect(saved.calculation.parameters).toContainEqual({ name: 'selfGeneratedKwh', value: 5000, origin: 'user' });
 });
 
-test('a block added by another client to a draft opened without one is kept by the save', async ({ page, request }) => {
+test('a block added by another client to a draft opened without one is not erased by the save', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token, null);
   await openDraft(page);
@@ -225,9 +255,58 @@ test('a block added by another client to a draft opened without one is kept by t
   await patchElsewhere(request, token, id, { parameters: BLOCK });
 
   await quantity(page).fill('5300');
-  const { body } = await save(page, 'PATCH');
-  expect(body).not.toHaveProperty('parameters');
-  expect(await read(request, token, id)).toMatchObject({ activityValue: 5300, parameters: BLOCK });
+  await expectStaleSave(page);
+  expect(await read(request, token, id)).toMatchObject({ activityValue: 5000, parameters: BLOCK });
+});
+
+test('a Natural Gas draft another client turned into Electricity with a block is not erased by the save', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const res = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.trading, locationId: MANCHESTER_OFFICE, reportingYear: E2E_YEAR, reportingPeriod: E2E_PERIOD,
+      periodValue: PERIOD, category: 'Natural Gas', activityValue: 5000, activityUnit: 'kWh', varianceReason: null, parameters: null,
+    },
+  });
+  expect(res.status(), await res.text()).toBe(201);
+  const id = (await res.json()).id as string;
+  created.push(id);
+
+  // The form opens the Natural Gas draft.
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_YEAR));
+  await listOf(page).getByRole('button', { name: new RegExp(`^Edit ${PERIOD} ${E2E_YEAR} Natural Gas`) }).click();
+  await expect(page.getByTestId('edit-mode-band')).toBeVisible();
+
+  // Another client makes it Electricity with a block.
+  await patchElsewhere(request, token, id, { category: 'Electricity', activityValue: 5000, activityUnit: 'kWh', parameters: BLOCK });
+
+  // The form picks Electricity too and saves: its version is stale, so nothing is written.
+  await pickByFieldLabel(page, enDataEntry.category, enCategories.Electricity);
+  await pickUnit(page, 'kWh');
+  await quantity(page).fill('5300');
+  const body = await expectStaleSave(page);
+  expect(body.parameters ?? null).toBeNull();
+  expect(await read(request, token, id)).toMatchObject({ category: 'Electricity', activityValue: 5000, parameters: BLOCK });
+});
+
+test('an edit that names no version cannot change or remove a stored block, as a tab from before the deploy would', async ({ request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  const patch = (data: Record<string, unknown>) =>
+    request.patch(`${API_BASE}/activity-records/${id}`, { headers: bearer(token), data });
+
+  const erased = await patch({ activityValue: 5100, parameters: null });
+  expect(erased.status()).toBe(409);
+  expect((await erased.json()).code).toBe('record_changed');
+  expect(await read(request, token, id)).toMatchObject({ activityValue: 5000, parameters: BLOCK });
+
+  // An edit that leaves the block as it is goes through.
+  const kept = await patch({ activityValue: 5100 });
+  expect(kept.status(), await kept.text()).toBe(200);
+  expect(await read(request, token, id)).toMatchObject({ activityValue: 5100, parameters: BLOCK });
 });
 
 test('a voided record copied to a new draft keeps its block', async ({ page, request }) => {

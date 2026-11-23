@@ -166,6 +166,23 @@ export class RecordChangedError extends ConflictException {
   }
 }
 
+export const EDIT_VERSION_REQUIRED_MESSAGE =
+  'This page does not say which version of the record you saw, and the edit would change calculation inputs it does not show. Reload it, then save again.';
+
+/**
+ * An edit that would change or remove a stored self-generation block without
+ * naming the version the editor read (`seenUpdatedAt`, self-gen-model review of
+ * `1802e22e`). No screen shows the block yet, so a tab opened before it was
+ * stored, or one still running the JavaScript from before the deploy, would
+ * send `parameters: null` and erase it unseen. `record_changed` on purpose, as
+ * `ReviewVersionRequiredError`: every client words it as "reload and try again".
+ */
+export class EditVersionRequiredError extends ConflictException {
+  constructor() {
+    super(errorBody('record_changed', EDIT_VERSION_REQUIRED_MESSAGE));
+  }
+}
+
 export const REVIEW_VERSION_REQUIRED_MESSAGE =
   'This page does not say which submission you saw. Reload it to see the record as it stands, then decide again.';
 

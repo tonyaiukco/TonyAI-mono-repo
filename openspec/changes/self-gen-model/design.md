@@ -93,7 +93,7 @@ The inputs are `selfGeneratedKwh`, then `exportedToGridKwh` and `facilityConsump
 
 ### 6. Data Entry never erases or reverts the block; it does not show it
 
-The form shows no field for the block, so the only block it holds is the one it read when the record opened. It therefore never writes that block back over the stored one:
+The form shows no field for the block, so the only block it holds is the one it read when the record opened. It therefore never writes that block back over the stored one, and every edit names the version it was made on (decision 9):
 
 - **An edit saved as Electricity sends no `parameters`** (`editLeavesParametersToServer(storedCategory, category)`). The API then keeps, and prices with, the block stored at the moment of the save, including one corrected, added or removed by another client after the form opened.
 - **A save that moves the record to another category** sends that category's parameters or null, which the API needs: it refuses rather than clears another category's parameters.
@@ -101,8 +101,9 @@ The form shows no field for the block, so the only block it holds is the one it 
 - **A preview** sends the opened or copied record's block while the category is Electricity (`selfGenerationToSend`); the block changes no figure, so a stale block in a preview misprices nothing.
 
 - **Why now and not in `self-gen-form`:** between the two changes, an Electricity record with a block edited on the web would otherwise lose it on the first save, with no error.
-- *(Revised twice in review.)* The first version sent the opened block with every save and cleared it on a category change. `qa-auditor` found that a category picked by mistake and undone then erased the block; the block became the record's own. The outside review of `2c427ed8` found that sending it at all put back an older block over one corrected elsewhere, and erased one added elsewhere to a record opened without one: the server's lock check sees only changes made during the PATCH. Leaving the parameters of an Electricity-to-Electricity edit to the server removes both, with no new API contract. The alternative, a version the form sends and the API checks (409 when stale), would also cover the record's other fields, which are last-write-wins today; it is filed under Open questions.
+- *(Revised twice in review.)* The first version sent the opened block with every save and cleared it on a category change. `qa-auditor` found that a category picked by mistake and undone then erased the block; the block became the record's own. The outside review of `2c427ed8` found that sending it at all put back an older block over one corrected elsewhere, and erased one added elsewhere to a record opened without one: the server's lock check sees only changes made during the PATCH. Leaving the parameters of an Electricity-to-Electricity edit to the server removes both. The third review then found the cases it does not cover, and the owner chose the version check of decision 9, which covers every field.
 - **Alternative rejected (the first design's):** omitting `parameters` for every Electricity save, the moves included. A move away from Electricity must send null, or the API refuses it.
+- *(Third review, of `1802e22e`.)* Leaving the parameters to the server does not cover a record opened as another category: a Natural Gas draft another client turned into Electricity with a block, then picked as Electricity in the open form, sends `parameters: null` (the move the form sees) and erased the block. Nor does it cover a tab still running the JavaScript from before the deploy. Both are closed by decision 9, which the form follows: it sends `seenUpdatedAt` with every edit and, on `record_changed`, reads the record and the list again (`reloadAfterLostRace`); typed changes are not kept, since they were made on values that no longer stand.
 
 ### 7. Three sentences, no new code
 
@@ -113,6 +114,17 @@ The form shows no field for the block, so the only block it holds is the one it 
 `apps/api/test/int/tr-factor-package.int.spec.ts` holds GV-SG-1 and GV-SG-2 beside the existing vectors, on the loaded TR releases. The unit spec gets a TR 2025 Electricity fixture at 0.434 kgCO2e/kWh, labelled as a fixture that mirrors the ETKB row, for the guard, the snapshot and the blind-price table.
 
 v2.5 gives GV-SG-2 no generated kWh, and the block requires one. The test uses 400,000 kWh and says the value is its own.
+
+### 9. Every edit names its version; a block is never changed by a client that names none
+
+*(Added in the review of `1802e22e`, owner's choice of the broad version check.)* `UpdateActivityRecordInput.seenUpdatedAt` is the record's `updatedAt` as the editor read it, optional and an ISO instant (null refused). The service compares it with the record it loads, after the tenant, role, status and author checks (a non-author or another tenant never learns a version from a 409); the lock's `changedSince` then compares that record with the locked row, so the whole window from the page's read to the write is covered. A mismatch is `record_changed` (409), with nothing computed, written or audited.
+
+An edit that names no version is compared as before, with one exception: when the stored record holds a self-generation block and the edit's effective parameters differ from it (removed, replaced, emptied, or the record moved to another category), it is refused with `record_changed` (`EditVersionRequiredError`). No screen shows the block yet, so a client that names no version cannot have seen it.
+
+- **Why `record_changed` and no new code:** the precedent is `ReviewVersionRequiredError` (`seenSubmittedAt`, BUG-R2-03): every client, one from before the deploy included, already words it as "reload and try again", which is the remedy.
+- **Why the broad check (every field), not only the block:** Data Entry's edits were last-write-wins for every field; with a version, a second tab's stale save is refused instead of silently overwriting. Only edits and status transitions write the row (evidence links do not), so an upload in the open form does not make its version stale.
+- **Alternative rejected:** requiring the version on every edit. Scripts and older clients that touch no block keep working.
+
 
 ## Risks / Trade-offs
 
@@ -125,12 +137,8 @@ v2.5 gives GV-SG-2 no generated kWh, and the block requires one. The test uses 4
 ## Migration Plan
 
 1. The migration redefines the CHECK. It accepts a superset of what it accepted, so it is safe to apply before the API deploys, and a pre-change API keeps working against it.
-2. The API and the web deploy together, as usual.
-3. **Rollback: not safe by images alone once a block is stored** (outside review of `2c427ed8`). The previous web sends `parameters: null` on every Electricity save, and the previous API stores it, so the first ordinary edit of a draft or rejected record that holds a block erases the block and rewrites its calculation without the echo. Submitted, approved and locked records are frozen by the trigger and unaffected. Before redeploying the previous images:
-   - count the records at risk: `SELECT count(*) FROM activity_records WHERE category = 'Electricity' AND parameters IS NOT NULL AND status IN ('draft', 'rejected');`
-   - if the count is 0, redeploy the previous images; the CHECK stays (the old API refuses a block at its DTO, and a stored block is still valid data);
-   - if it is not 0, roll forward with a fix instead, or copy those rows' `id` and `parameters` out first and tell their authors not to edit them until a compatible version is back.
-   Rolling the CHECK itself back needs no Electricity record holding a block.
+2. The API and the web deploy together, the API first (`qa_autodeploy.py` rolls out `api`, then `web`): a web that sends `seenUpdatedAt` must never meet an API from before this change, which refuses the unknown field (`forbidNonWhitelisted`, 400). The deploy's own automatic rollback, on a failed verify or smoke, reverts both images in reverse order; a tab that loaded the new web meanwhile then gets a 400 on every edit until it reloads, and the previous web's window for erasing a block reopens until the fix is rolled forward.
+3. **No rollback by images: recovery is forward** (reviews of `2c427ed8` and `1802e22e`). The QA rollback refuses any target whose migration history differs from the live one (`infra/scripts/qa_autodeploy.py`, "Rollback would cross a migration"), so the images from before this change cannot be redeployed once `20261123120000_self_gen_model` is applied. That is also the safe answer: the previous web sends `parameters: null` on every Electricity save and the previous API stores it, so the first edit of any record that holds a block and is, or becomes, editable (a draft, a rejected record, a submitted record recalled, one under review rejected) would erase the block. A defect after the deploy is fixed by a release built on this change, which keeps the migration, the version check and the block. Rolling the CHECK itself back needs no Electricity record holding a block, and is not planned.
 
 No backfill and no data change. No record goes stale.
 

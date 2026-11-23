@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsISO8601,
   Matches,
   IsIn,
   IsInt,
@@ -12,6 +13,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import {
   ID_SHAPE_MESSAGE,
@@ -147,4 +149,12 @@ export class UpdateActivityRecordDto {
   @IsString({ each: true })
   @Matches(UUID_SHAPE, { each: true, message: ID_SHAPE_MESSAGE })
   detachEvidenceIds?: string[];
+
+  // self-gen-model review of `1802e22e`: the record's `updatedAt` as the editor
+  // read it. A record changed since is refused as `record_changed`; see
+  // `UpdateActivityRecordInput.seenUpdatedAt`.
+  // Absent is "no version named"; null is refused, not read as absent.
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsISO8601({ strict: true })
+  seenUpdatedAt?: string;
 }
