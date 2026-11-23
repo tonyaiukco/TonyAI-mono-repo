@@ -1,4 +1,10 @@
-import { isProvenanceSnapshot, type ActivityCalculationSnapshot, type EquipmentType, type Locale } from '@tonyai/shared-types';
+import {
+  GROSS_TO_NET_RATIO_INPUT,
+  isProvenanceSnapshot,
+  type ActivityCalculationSnapshot,
+  type EquipmentType,
+  type Locale,
+} from '@tonyai/shared-types';
 
 /**
  * A record's calculation inputs as a report prints them (LP4-02 PR5, task
@@ -54,7 +60,7 @@ export function calculationInputs(calculation: unknown, words: CalculationInputs
       parts.push(words.text('inputsBilledGcv', { value: entered(input.value) }));
     } else if (input.name === 'volumeCorrectionFactor') {
       parts.push(words.text('inputsVolume', { value: entered(input.value) }));
-    } else if (input.name === 'grossToNetRatio') {
+    } else if (input.name === GROSS_TO_NET_RATIO_INPUT) {
       // A gross energy bill's reduction to net (ng-kwh-engine), by the factor
       // release's own reference values: a methodology step the reader must see.
       parts.push(words.text('inputsGrossToNet', { value: derived(input.value) }));
