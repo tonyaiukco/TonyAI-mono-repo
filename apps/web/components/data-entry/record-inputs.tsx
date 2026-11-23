@@ -594,7 +594,10 @@ export function SelfGenerationInputs({
               id="input-self-facility"
               label={t("facility")}
               stored={form.facilityKwh}
-              rule="positive"
+              // Zero is read, so the section can say the consumption must be
+              // above zero or left empty (its own sentence), rather than that
+              // the figure could not be read (qa-auditor review).
+              rule="non_negative"
               max={SELF_GENERATION_KWH_MAX}
               help={t("facilityHelp")}
               invalid={invalidField === "facilityKwh"}

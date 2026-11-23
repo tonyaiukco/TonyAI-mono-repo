@@ -720,6 +720,9 @@ describe('the self-generation section (self-gen-form, design 1, 3 and 4)', () =>
     expect(issue({ exportedKwh: 500_000 })).toBe('exported_above_generated');
     expect(issue({ exportedKwh: 400_000 })).toBeNull();
     expect(issue({ exportedKwh: 399_999 })).toBeNull();
+    // Exports of zero are a valid statement, not a missing one.
+    expect(issue({ exportedKwh: 0 })).toBeNull();
+    expect(issue({ generatedKwh: 0, exportedKwh: 0 })).toBeNull();
   });
 
   it('holds nothing back without a source or outside Electricity', () => {

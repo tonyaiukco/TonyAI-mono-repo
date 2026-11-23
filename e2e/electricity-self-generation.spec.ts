@@ -4,6 +4,9 @@ import enCategories from '../apps/web/messages/en/categories.json';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
 import enReview from '../apps/web/messages/en/review.json';
+import trCategories from '../apps/web/messages/tr/categories.json';
+import trDataEntry from '../apps/web/messages/tr/dataEntry.json';
+import trPeriods from '../apps/web/messages/tr/periods.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
@@ -574,6 +577,13 @@ test('a block entered on the form is held until it is valid, then saved with top
   await expect(page.getByTestId('self-generation-issue')).toHaveCount(0);
   await expect(saveDraftButton(page)).toBeEnabled();
 
+  // A facility consumption of zero has its own sentence; left empty, nothing is held.
+  await facility(page).fill('0');
+  await expect(page.getByTestId('self-generation-issue')).toHaveText(SG.issues.facility_not_positive);
+  await expect(saveDraftButton(page)).toBeDisabled();
+  await facility(page).fill('');
+  await expect(saveDraftButton(page)).toBeEnabled();
+
   const { body, response } = await save(page, 'POST');
   expect(response.status()).toBe(201);
   const id = (await response.json()).id as string;
@@ -582,6 +592,20 @@ test('a block entered on the form is held until it is valid, then saved with top
   expect(body.parameters).toEqual(sent);
   const token = await getAccessToken(request, ADMIN_EMAIL);
   expect(await read(request, token, id)).toMatchObject({ parameters: sent, generationFuelRecord: null });
+});
+
+test('a plant that generated nothing is previewed and saved', async ({ page, request }) => {
+  await newGridRecord(page);
+  await pickSource(page, 'wind');
+  await generated(page).fill('0');
+  await expect(page.getByTestId('self-generation-issue')).toHaveCount(0);
+  const { body, response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  const id = (await response.json()).id as string;
+  created.push(id);
+  expect(body.parameters).toEqual({ generationTopology: 'A', selfGenerationSource: 'wind', selfGeneratedKwh: 0 });
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  expect((await read(request, token, id)).parameters).toEqual(body.parameters);
 });
 
 test('an opened block is corrected on the form, then removed, and the figure never moves', async ({ page, request }) => {
@@ -632,10 +656,23 @@ test('a fuel source reminds of the fuel record, and the record saves without one
   });
 });
 
-test('an energy balance gap warns with both figures, and the record still saves', async ({ page }) => {
+/** The figure of the next preview the page receives. */
+const nextPreviewFigure = (page: Page) =>
+  page
+    .waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/calculations/preview'))
+    .then(async (r) => (await r.json()).kgCo2e as number);
+
+test('an energy balance gap warns with both figures, exports never move the figure, and the record still saves', async ({ page }) => {
   await newGridRecord(page);
   await pickSource(page, 'solar');
+  const withoutExports = nextPreviewFigure(page);
   await generated(page).fill('4000');
+  const plainFigure = await withoutExports;
+  // D8: exports never offset the grid import's figure.
+  const withExports = nextPreviewFigure(page);
+  await exported(page).fill('1000');
+  expect(await withExports).toBe(plainFigure);
+  await exported(page).fill('');
   // 9,000 − 4,000 = 5,000 kWh expected, 5,000 imported: balanced.
   await facility(page).fill('9000');
   await expect(page.getByTestId('self-generation-balance')).toHaveCount(0);
@@ -705,4 +742,42 @@ test('the review sheet shows a CHP block, notes a missing gas record and a balan
   await openSheet();
   await expect(fuelNotice(page)).toHaveCount(0);
   await expect(page.getByRole('dialog').getByTestId('review-self-generation-balance')).toBeVisible();
+});
+
+test('the section reads decimals in the user\'s language', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const language = (value: 'tr' | 'en') =>
+    request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: value } });
+  expect((await language('tr')).status()).toBe(200);
+  try {
+    await login(page, ADMIN_EMAIL);
+    await page.goto('/data-entry');
+    await pickByFieldLabel(page, trDataEntry.subsidiary, SUBSIDIARY_OPTION);
+    await pickByFieldLabel(page, trDataEntry.category, trCategories.Electricity);
+    await pickByFieldLabel(page, trDataEntry.reportingYear, String(E2E_YEAR));
+    await pickByFieldLabel(page, trDataEntry.period, trPeriods.granularity.quarterly);
+    await pickByFieldLabel(page, trDataEntry.periodValue, trPeriods.values[PERIOD]);
+    const unitSelect = page.getByRole('combobox', { name: trDataEntry.unit, exact: true });
+    await unitSelect.click();
+    await page.getByRole('option', { name: 'kWh', exact: true }).click();
+    await page.getByPlaceholder(trDataEntry.activityValuePlaceholder).fill('5000');
+    await sourceSelect(page).click();
+    await page.getByRole('option', { name: trDataEntry.inputs.selfGeneration.sources.solar, exact: true }).click();
+    await generated(page).fill('4.000,5');
+    await exported(page).fill('250,25');
+
+    const answered = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/activity-records'));
+    await page.getByRole('button', { name: trDataEntry.saveDraft, exact: true }).click();
+    const response = await answered;
+    expect(response.status(), await response.text()).toBe(201);
+    created.push((await response.json()).id as string);
+    expect(response.request().postDataJSON().parameters).toEqual({
+      generationTopology: 'A',
+      selfGenerationSource: 'solar',
+      selfGeneratedKwh: 4000.5,
+      exportedToGridKwh: 250.25,
+    });
+  } finally {
+    expect((await language('en')).status()).toBe(200);
+  }
 });
