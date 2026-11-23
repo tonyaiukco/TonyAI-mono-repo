@@ -1053,21 +1053,30 @@ test('a review step answered after the sheet was closed and opened again leaves 
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
 
-  // Opened again, its read says the record is decided: the sheet closes.
+  // Opened again; its read is held, and the first opening's answer arrives
+  // before it (outside review of b8b0d78b: that answer took over the sheet and
+  // dropped this read).
+  let releaseRead!: () => void;
+  const readGate = new Promise<void>((resolve) => (releaseRead = resolve));
   const RECORD = `**/api/v1/activity-records/${id}`;
   await page.route(RECORD, async (route) => {
     if (route.request().method() !== 'GET') return route.fallback();
+    await readGate;
     const response = await route.fetch();
     return route.fulfill({ response, json: { ...(await response.json()), status: 'approved' } });
   });
+  const reading = page.waitForRequest((r) => r.method() === 'GET' && r.url().endsWith(`/activity-records/${id}`));
   await siteRow(page).click();
-  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
-  await expect(dialog).toHaveCount(0);
-
-  // The first opening's answer arrives now, and does not open the sheet again.
+  await reading;
+  await expect(dialog.getByTestId('review-sheet-reading')).toBeVisible();
   release();
   expect((await reviewed).ok()).toBe(true);
-  await page.waitForTimeout(500);
+  // Still waiting for its own read: the decisions stay held.
+  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeDisabled();
+
+  // This opening's read says the record is decided: the sheet closes.
+  releaseRead();
+  await expect(page.getByText(enReview.sheet.noLongerPending)).toBeVisible();
   await expect(dialog).toHaveCount(0);
   await page.unroute(REVIEW);
   await page.unroute(RECORD);
