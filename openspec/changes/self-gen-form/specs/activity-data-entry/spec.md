@@ -101,6 +101,14 @@ For an Electricity record, in any geography, Data Entry SHALL show a self-genera
 - **WHEN** a user whose language is Turkish types 4.000,5 as the generated kWh
 - **THEN** the form reads 4,000.5 kWh, as it reads the quantity
 
+#### Scenario: A language switch re-reads a field
+- **WHEN** a user types 0,500 as the generated kWh in English, where it is refused, and switches to Turkish
+- **THEN** the form reads 0.5 kWh and no longer holds the save
+
+#### Scenario: A figure the form could not read survives None and back
+- **WHEN** a user types "500," as the exported kWh, sets the source to none and back to solar
+- **THEN** the field still reads "500,", and nothing is saved until it is corrected
+
 ### Requirement: The self-generation section states the topology it records
 The section SHALL state that it records generation behind the same meter as the grid import (Case A), and that a plant on its own meter cannot be recorded yet. It SHALL offer no topology choice, and a block saved from the form SHALL carry topology `A`.
 
@@ -237,3 +245,7 @@ When an edit on Data Entry is refused as `record_changed`, the form SHALL say th
 #### Scenario: A submit refused after its save
 - **WHEN** Submit for review saves the draft and the submit that follows is refused as `record_changed`
 - **THEN** the message is the submit's, never that the changes were not saved, the draft stays saved, and the form reads it again
+
+#### Scenario: A submit answered after another record was opened
+- **WHEN** the submit of one draft is answered after the user opened another record
+- **THEN** the outcome is shown naming the first record, and the record now open keeps what the user typed

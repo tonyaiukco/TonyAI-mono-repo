@@ -57,7 +57,7 @@ The page shows the section when `recordParameterShape(category) === 'electricity
 ### 3. One component, one view model, the existing number field
 
 - `SelfGenerationInputs` joins `record-inputs.tsx`, mounted in the Activity card after `EquipmentLines`. It takes the form state, an `issue`, the balance result, the page's `epoch` and `onChange`, like its siblings.
-- The source is a select with a "none" entry first. The kWh fields use the file's `ParameterNumberField`, so they read decimals by the locale and remount on the epoch as the gas fields do.
+- The source is a select with a "none" entry first. The kWh fields use the file's `ParameterNumberField`, so they read decimals by the locale and remount on the epoch as the gas fields do. *(Outside review of `001d6f1c`.)* With no source the fields are hidden, not unmounted, so a figure typed and refused survives None and back; and a field reports what it reads after a language switch, which re-reads its text during render, so the form's gate never disagrees with the field.
 - `record-inputs-view.ts` gets the pure parts, each with specs: the form state's type, its reading from a record (replacing `selfGenerationFromRecord`'s caller, the function itself stays), the block the form would send, and the form's issue.
 - The topology is a sentence, not a control. D6 accepts only `A`, and a one-option control invites no decision. The sentence says what Case A is and that a plant on its own meter cannot be recorded yet, so an author with another arrangement stops instead of filing it as `A`.
 - **Alternative rejected:** a radio group with `B` and `C` disabled. It shows two options nobody can pick, and LP7-09 will define them properly.
@@ -80,7 +80,7 @@ A missing topology or source cannot occur: the form adds the topology, and no so
 
 - Expected import = `facilityConsumptionKwh − selfGeneratedKwh + (exportedToGridKwh ?? 0)`.
 - The import goes to kWh through `CEILING_UNIT_MULTIPLIERS`, whose parity with the API's normaliser an API spec already pins.
-- It warns when `|import − expected| > expected × ENERGY_BALANCE_TOLERANCE` (0.05, an exported constant), or when `expected ≤ 0` and `import > 0`. The comparison is strict, so exactly 5% does not warn; a spec pins the boundary. A relative slack of 1e-9 keeps floating point from tipping an exact 5% (1.05 kWh against 1.1 − 0.1) into a warning (outside review of `833db34c`).
+- It warns when `|import − expected| > expected × ENERGY_BALANCE_TOLERANCE` (0.05, an exported constant), or when `expected ≤ 0` and `import > 0`. The comparison is strict, so exactly 5% does not warn; a spec pins the boundary. A relative slack of 1e-9 keeps floating point from tipping an exact 5% (1.05 kWh against 1.1 − 0.1) into a warning (outside review of `833db34c`), and an absolute one of eight units of rounding of the largest operand covers an expected import that is a small difference of large figures (1,000,000.1 − 1,000,000; outside review of `001d6f1c`).
 
 Data Entry calls it with the form's quantity, unit and block; the review sheet with the record's. Both print the two figures with the locale's number format.
 
@@ -111,6 +111,8 @@ Data Entry calls it with the form's quantity, unit and block; the review sheet w
 
 *(Outside review of `833db34c`.)* The sheet opens on the queue row, then reads the record again (`GET /activity-records/:id`): the row is as old as the queue, and whether the fuel record exists may have changed since. A review step's answer is newer than that read, so it bumps a sequence and a read answered after it is dropped.
 
+*(Outside review of `001d6f1c`.)* The decisions wait for that read: the reason field and the three buttons are disabled while it runs, and a failed read says so and offers Retry. A record the read finds no longer pending leaves the queue, the sheet closes and the queue is read again. A record submitted again since the queue was read gets an empty reason and its files read again, so nothing typed or shown for the earlier submission goes out with the newer `seenSubmittedAt`. The sheet's evidence load is keyed on the record's id and an explicit retry, never on the record object.
+
 - **Why `parameters` and not the snapshot inputs:** the source and the topology live only in `parameters`, and the commit freeze protects them once the record is submitted for approval.
 
 ### 8. A category move says what it removes
@@ -130,6 +132,8 @@ The web still does not read the three self-generation names: it reads the block 
 ### 10. `record_changed` gets a Data Entry sentence
 
 `saveErrorDescription` gains a case for `record_changed` and `SaveErrorKey` a key for it, in the `dataEntry` catalogue (EN and TR, `localise-ui`). The sentence says three things: the record was changed after the form opened it; the changes on the form were not saved; the form is reading the record again. It does not promise what the form will show, because the toast is raised before the reload answers and the reload closes the record when it is no longer editable. The generic `errors.codes.record_changed` sentence stays for the other screens, where the race it describes is the real one.
+
+*(Outside review of `001d6f1c`.)* A submit answered after the user opened another record is still told, naming the record (`recordLabel`), success or refusal, and leaves the form the user is on alone: no reset, no reload.
 
 *(Outside review of `833db34c`.)* Submit for review saves, then submits in a second request. A refusal of that second request is the submit's: the draft is saved, so it gets the generic sentence, and a `record_changed` there reads the saved record again (`reloadAfterLostRace`, with the record's id from the save, since the form's state has not caught up).
 

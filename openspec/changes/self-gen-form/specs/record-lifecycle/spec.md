@@ -75,6 +75,18 @@ When a record's `generationFuelRecord` is `missing`, the review sheet SHALL show
 - **WHEN** the reviewer starts the review of such a record and the sheet stays open
 - **THEN** the notice is still shown
 
+#### Scenario: The decisions wait for the sheet's read
+- **WHEN** a reviewer opens the sheet and its read of the record has not answered, or failed
+- **THEN** the reason field and the review actions are disabled, and a failed read offers to read it again
+
+#### Scenario: A record decided elsewhere since the queue was read
+- **WHEN** the sheet's read finds the record no longer pending
+- **THEN** the sheet closes, the reviewer is told, and the queue is read again
+
+#### Scenario: A record submitted again since the queue was read
+- **WHEN** the sheet's read finds a newer submission than the queue row's
+- **THEN** the reason starts empty and the files are read again, so no decision goes out on the earlier submission's
+
 #### Scenario: The fuel record appears while the queue is open
 - **WHEN** the queue was read before the site's Natural Gas record was entered, and the reviewer then opens the sheet without reloading the page
 - **THEN** the sheet shows no such notice
