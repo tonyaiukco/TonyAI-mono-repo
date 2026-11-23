@@ -164,13 +164,25 @@ const FINAL_STATUSES = new Set([400, 401, 403, 404]);
  * safe. Swallowing one failed call left the invitation `sent`, and a re-send
  * then answered `email_unavailable` (pre-pilot defects). Answers whether the
  * acceptance went through.
+ *
+ * `stillSame` is asked before every repeat: each call carries the session's
+ * credentials as they are then, so a repeat after another tab signed someone
+ * else in would accept that person's invitation instead (Codex review of #350).
  */
 export async function acceptInvitationQuietly(
   accept: () => Promise<unknown>,
-  wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  attempts = 3,
+  {
+    wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    attempts = 3,
+    stillSame = async () => true,
+  }: {
+    wait?: (ms: number) => Promise<void>;
+    attempts?: number;
+    stillSame?: () => Promise<boolean>;
+  } = {},
 ): Promise<boolean> {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt > 1 && !(await stillSame())) return false;
     try {
       await accept();
       return true;

@@ -3,7 +3,6 @@
 import { useLocale, useTranslations } from "use-intl";
 import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
@@ -49,7 +48,7 @@ import {
   type Locale,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { signOutHere } from "@/lib/sign-out";
+import { useSignOut } from "@/lib/use-sign-out";
 
 const PAGE_SIZE = 25;
 
@@ -167,7 +166,7 @@ export default function AuditPage() {
   const actorWords: AuditActorWords = { system: t("system"), deleted: tCommon("actor.deleted") };
   /** A role as the trail names it; a retired one as stored. */
   const roleName = (role: string) => (isUserRole(role) ? tRoles(`roles.${role}`) : role);
-  const router = useRouter();
+  const signOut = useSignOut();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const [rows, setRows] = useState<AuditLogDTO[]>([]);
@@ -228,9 +227,7 @@ export default function AuditPage() {
   }, [setUser]);
 
   async function handleLogout() {
-    await signOutHere();
-    router.push("/login");
-    router.refresh();
+    await signOut();
   }
 
   // Client-side narrowing on top of the server filters: the server already

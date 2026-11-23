@@ -5,7 +5,7 @@ import { conversionNote, grossToNetRatioOf } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
@@ -190,7 +190,7 @@ import type { Messages } from "@/messages";
 import { geographyName } from "@/lib/vocabulary";
 import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
 import { copyPrefill, createFormSessions, describeEdit, evidencePlan, type EditIdentity } from "@/lib/record-edit-view";
-import { signOutHere } from "@/lib/sign-out";
+import { useSignOut } from "@/lib/use-sign-out";
 
 // --- Static option sets -----------------------------------------------------
 
@@ -261,7 +261,7 @@ export default function DataEntryPage() {
 
 function DataEntryPageInner() {
   const tRoles = useTranslations("users");
-  const router = useRouter();
+  const signOut = useSignOut();
   const searchParams = useSearchParams();
   const { user, setUser } = useAuthStore();
   const t = useTranslations("dataEntry");
@@ -1956,9 +1956,7 @@ function DataEntryPageInner() {
   }
 
   async function handleLogout() {
-    await signOutHere();
-    router.push("/login");
-    router.refresh();
+    await signOut();
   }
 
   const isBusy = saving !== null;

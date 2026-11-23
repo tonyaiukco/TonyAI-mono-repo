@@ -158,35 +158,50 @@ describe('acceptInvitationQuietly (pre-pilot defects)', () => {
 
   it('accepts on the first try', async () => {
     const accept = vi.fn(async () => undefined);
-    expect(await acceptInvitationQuietly(accept, noWait)).toBe(true);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait })).toBe(true);
     expect(accept).toHaveBeenCalledTimes(1);
   });
 
   it('repeats a transient failure, a 5xx or a network error, until it goes through', async () => {
     const accept = vi.fn().mockRejectedValueOnce(failing(503)).mockRejectedValueOnce(failing(429)).mockResolvedValue(undefined);
-    expect(await acceptInvitationQuietly(accept, noWait)).toBe(true);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait })).toBe(true);
     expect(accept).toHaveBeenCalledTimes(3);
   });
 
   it('repeats a network error with no status', async () => {
     const accept = vi.fn().mockRejectedValueOnce(failing()).mockResolvedValue(undefined);
-    expect(await acceptInvitationQuietly(accept, noWait)).toBe(true);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait })).toBe(true);
     expect(accept).toHaveBeenCalledTimes(2);
   });
 
   it('stops at once on a refusal a repeat cannot change', async () => {
     for (const status of [400, 401, 403, 404]) {
       const accept = vi.fn().mockRejectedValue(failing(status));
-      expect(await acceptInvitationQuietly(accept, noWait), String(status)).toBe(false);
+      expect(await acceptInvitationQuietly(accept, { wait: noWait }), String(status)).toBe(false);
       expect(accept).toHaveBeenCalledTimes(1);
     }
   });
 
-  it('gives up after the last attempt and never throws', async () => {
+  it('gives up after three attempts by default, waiting longer each time, and never throws', async () => {
     const accept = vi.fn().mockRejectedValue(failing(500));
     const wait = vi.fn(async () => undefined);
-    expect(await acceptInvitationQuietly(accept, wait, 3)).toBe(false);
+    expect(await acceptInvitationQuietly(accept, { wait })).toBe(false);
     expect(accept).toHaveBeenCalledTimes(3);
-    expect(wait).toHaveBeenCalledTimes(2);
+    expect(wait.mock.calls).toEqual([[500], [1000]]);
+  });
+
+  it('asks before every repeat whether the same person is signed in, and stops when not', async () => {
+    const accept = vi.fn().mockRejectedValue(failing(503));
+    const stillSame = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait, stillSame })).toBe(false);
+    expect(accept).toHaveBeenCalledTimes(2);
+    expect(stillSame).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not ask before the first attempt', async () => {
+    const accept = vi.fn(async () => undefined);
+    const stillSame = vi.fn(async () => false);
+    expect(await acceptInvitationQuietly(accept, { wait: noWait, stillSame })).toBe(true);
+    expect(stillSame).not.toHaveBeenCalled();
   });
 });

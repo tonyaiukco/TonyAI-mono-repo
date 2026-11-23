@@ -566,6 +566,9 @@ export class SubsidiariesService {
   ): Promise<void> {
     const locations = await tx.location.findMany({ where: { subsidiaryId: id } });
     for (const location of locations) {
+      // False when a concurrent `DELETE /locations/:id` removed the site after
+      // the list was read: it is cleared all the same, and its audit row is
+      // that request's (Codex review of #350 P2).
       await this.locations.deleteLocationForTrustedParent(tx, user, location);
     }
   }

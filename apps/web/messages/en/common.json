@@ -1,5 +1,6 @@
 {
   "signOut": "Sign out",
+  "signOutFailed": "Could not sign out. Check your connection and try again.",
   "metadata": {
     "title": "TonyAI - Enterprise Sustainability Data Platform",
     "description": "Professional data management platform for carbon accounting and ESG reporting"

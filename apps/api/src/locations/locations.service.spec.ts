@@ -259,6 +259,36 @@ describe('LocationsService', () => {
       await expect(service.remove(user, existing.id)).rejects.toMatchObject({
         response: expect.objectContaining({ code: 'location_not_found' }),
       });
+      // The winner wrote the delete's audit row; the loser writes none.
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    describe('deleteLocationForTrustedParent (Codex review of #350)', () => {
+      const gone = () =>
+        new Prisma.PrismaClientKnownRequestError('Record to delete does not exist.', { code: 'P2025', clientVersion: 'test' });
+
+      it('answers true and audits the row it deleted', async () => {
+        const location = makeLocation({ subsidiaryId: 'sub-1' });
+        prisma.txClient.location.delete.mockResolvedValue(location);
+        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeSuperAdmin(), location)).resolves.toBe(true);
+        expect(audit.record).toHaveBeenCalledTimes(1);
+      });
+
+      it('answers false, with no audit row and no error, for a row a concurrent delete removed first', async () => {
+        // The subsidiary sweep's case: its transaction must carry on, not roll back as a 500.
+        const location = makeLocation({ subsidiaryId: 'sub-1' });
+        prisma.txClient.location.delete.mockRejectedValue(gone());
+        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeSuperAdmin(), location)).resolves.toBe(false);
+        expect(audit.record).not.toHaveBeenCalled();
+      });
+
+      it.each(['P2003', 'P2034'])('passes any other failure through (%s)', async (code) => {
+        const location = makeLocation({ subsidiaryId: 'sub-1' });
+        const failure = new Prisma.PrismaClientKnownRequestError('another failure', { code, clientVersion: 'test' });
+        prisma.txClient.location.delete.mockRejectedValue(failure);
+        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeSuperAdmin(), location)).rejects.toBe(failure);
+        expect(audit.record).not.toHaveBeenCalled();
+      });
     });
 
     it('passes any other failure through unchanged, even with a record now at the site', async () => {

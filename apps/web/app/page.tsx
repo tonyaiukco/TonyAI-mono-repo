@@ -55,7 +55,7 @@ import type {
   SubsidiaryDTO,
   TrackingMatrixDTO,
 } from '@/lib/types';
-import { signOutHere } from "@/lib/sign-out";
+import { useSignOut } from "@/lib/use-sign-out";
 
 const statusClass: Record<string, string> = {
   active: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30',
@@ -75,6 +75,7 @@ export default function CarbonDashboard() {
 function CarbonDashboardInner() {
   const tRoles = useTranslations('users');
   const router = useRouter();
+  const signOut = useSignOut();
   const { user, setUser } = useAuthStore();
   // LP3-02 N1: the one reporting selection, carried in the URL.
   const tContext = useTranslations('reportingContext');
@@ -340,9 +341,7 @@ function CarbonDashboardInner() {
   };
 
   async function handleLogout() {
-    await signOutHere();
-    router.push('/login');
-    router.refresh();
+    await signOut();
   }
 
   return (

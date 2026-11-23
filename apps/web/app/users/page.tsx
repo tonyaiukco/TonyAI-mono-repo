@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
 import { AlertTriangle, Info, MoreHorizontal, ShieldAlert, UserPlus } from "lucide-react";
@@ -66,7 +65,7 @@ import {
   toggleSubsidiary,
 } from "@/lib/users-view";
 import { cn } from "@/lib/utils";
-import { signOutHere } from "@/lib/sign-out";
+import { useSignOut } from "@/lib/use-sign-out";
 
 const ROLES: readonly UserRole[] = USER_ROLES;
 
@@ -86,7 +85,7 @@ const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
 export default function UsersPage() {
   const t = useTranslations("users");
   const locale = useLocale() as Locale;
-  const router = useRouter();
+  const signOut = useSignOut();
   const errorToast = useErrorToast();
   const { user, setUser } = useAuthStore();
   const [users, setUsers] = useState<UserSummaryDTO[]>([]);
@@ -154,9 +153,7 @@ export default function UsersPage() {
   }
 
   async function handleLogout() {
-    await signOutHere();
-    router.push("/login");
-    router.refresh();
+    await signOut();
   }
 
   /** Runs one action on a member and puts the API's answer in its row. */

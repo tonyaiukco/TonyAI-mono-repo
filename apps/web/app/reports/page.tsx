@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { withdrawalNotice } from '@/lib/report-view';
 import { formatNumber } from '@/lib/i18n/number';
 import { useErrorToast } from '@/lib/i18n/hooks';
@@ -68,7 +68,7 @@ import type {
   ReportTemplate,
   SubsidiaryDTO,
 } from '@/lib/types';
-import { signOutHere } from "@/lib/sign-out";
+import { useSignOut } from "@/lib/use-sign-out";
 
 
 const SCOPE_COLORS = { scope1: '#34C759', scope2: '#007AFF', scope3: '#AF52DE' };
@@ -92,7 +92,7 @@ export default function ReportsPage() {
 }
 
 function ReportsPageInner() {
-  const router = useRouter();
+  const signOut = useSignOut();
   const { user, setUser } = useAuthStore();
   const tContext = useTranslations('reportingContext');
   const tCategory = useTranslations('categories');
@@ -213,9 +213,7 @@ function ReportsPageInner() {
   }
 
   async function handleLogout() {
-    await signOutHere();
-    router.push('/login');
-    router.refresh();
+    await signOut();
   }
 
   const canGenerate = !!user && user.role !== 'data_entry'; // permissions §"Generate and export reports"

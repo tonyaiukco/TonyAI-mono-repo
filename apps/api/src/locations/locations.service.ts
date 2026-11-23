@@ -302,13 +302,25 @@ export class LocationsService {
    *
    * Performs no authorisation and no record check: both callers do them first,
    * with different reasons and different messages.
+   *
+   * Answers false, writing no audit row, when the row is already gone: a
+   * concurrent `DELETE /locations/:id` removed it first. Prisma reports that
+   * as P2025 on the client side, with no SQL error, so the caller's
+   * transaction carries on. The standalone delete turns false into a 404; the
+   * subsidiary sweep counts the site as cleared (pre-pilot defects, Codex
+   * review of #350 P2).
    */
   async deleteLocationForTrustedParent(
     db: Prisma.TransactionClient,
     user: RequestUser,
     location: Location,
-  ): Promise<void> {
-    await db.location.delete({ where: { id: location.id } });
+  ): Promise<boolean> {
+    try {
+      await db.location.delete({ where: { id: location.id } });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') return false;
+      throw err;
+    }
     await this.audit.record(
       user,
       {
@@ -319,6 +331,7 @@ export class LocationsService {
       },
       db,
     );
+    return true;
   }
 
   async remove(
@@ -331,20 +344,19 @@ export class LocationsService {
     await this.assertNotDeclared(id);
     // Delete + audit in one transaction (see subsidiaries.remove).
     try {
-      await this.prisma.$transaction((tx) =>
-        this.deleteLocationForTrustedParent(tx, user, existing),
-      );
+      await this.prisma.$transaction(async (tx) => {
+        // Deleted by a concurrent request since it was read: the answer it
+        // would get now, not a 500 (pre-pilot defects).
+        if (!(await this.deleteLocationForTrustedParent(tx, user, existing))) {
+          throw new ResourceNotFoundError('location_not_found');
+        }
+      });
     } catch (err) {
       // A record filed here after the check above: the site's key is RESTRICT
       // (LP4-01), so the delete is refused rather than re-filing it at company
       // level. The same 409 as the check, with the count as it is now.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
         await this.assertNoRecords(id);
-      }
-      // Deleted by a concurrent request since it was read: the answer it would
-      // get now, not a 500 (pre-pilot defects).
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-        throw new ResourceNotFoundError('location_not_found');
       }
       // A boundary version declaring the site since the check: its guard
       // refuses the cascade (TA014, W9). The same 409 as the check — and a 409

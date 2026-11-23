@@ -7,8 +7,8 @@ import { useTranslations } from "use-intl";
 import { Leaf, LinkIcon, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { api } from "@/lib/api";
-import { parseEmailLink, type EmailLinkType, acceptInvitationQuietly } from "@/lib/auth-view";
+import { parseEmailLink, type EmailLinkType } from "@/lib/auth-view";
+import { acceptOwnInvitation } from "@/lib/invitation-acceptance";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 type State =
@@ -57,7 +57,7 @@ export function ConfirmEmailLink() {
     // repeated, and the set-password step asks again; it is not a reason to
     // stop, since the password still has to be chosen (a disabled account has
     // already been signed out by `lib/api.ts`).
-    await acceptInvitationQuietly(() => api.acceptInvitation());
+    await acceptOwnInvitation();
     router.replace(`/auth/set-password?flow=${type}`);
   }
 

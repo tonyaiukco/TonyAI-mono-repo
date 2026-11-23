@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { ReportingContext } from "@tonyai/shared-types";
-import { forgetOnSessionChange, rememberedContextFor, useAuthStore, useReportingContextStore } from "./store";
-import { getSupabaseBrowserClient } from "./supabase";
+import { rememberedContextFor, useAuthStore, useReportingContextStore } from "./store";
 import {
   parseReportingContextUrl,
   queryString,
@@ -30,15 +29,6 @@ export type ReportingContextView =
       /** The user's explicit way out: the default context (D06 year, all, unfiltered). */
       reset: () => void;
     };
-
-/** Subscribed once per tab, before anything is remembered: the remembered
- * selection never outlives the session it was made in. */
-let watchingSession = false;
-function watchSession(): void {
-  if (watchingSession) return;
-  watchingSession = true;
-  getSupabaseBrowserClient().auth.onAuthStateChange((event, session) => forgetOnSessionChange(event, session?.user.id));
-}
 
 /**
  * The one reporting context of an annual screen (LP3-02 N1), read from the
@@ -75,7 +65,8 @@ export function useReportingContext(): ReportingContextView {
   const key = resolution.ok ? reportingContextKey(resolution.context) : null;
 
   useEffect(() => {
-    watchSession();
+    // The remembered selection never outlives the session it was made in:
+    // the root layout's `SessionWatch` forgets it on every session change.
     if (!resolution.ok || key === null) return;
     const canonical = reportingContextQuery(resolution.context, params);
     if (canonical !== current) window.history.replaceState(null, "", `${pathname}?${canonical}`);
