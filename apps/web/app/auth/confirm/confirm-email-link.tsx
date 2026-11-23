@@ -8,7 +8,7 @@ import { Leaf, LinkIcon, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
-import { parseEmailLink, type EmailLinkType } from "@/lib/auth-view";
+import { parseEmailLink, type EmailLinkType, acceptInvitationQuietly } from "@/lib/auth-view";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 type State =
@@ -52,14 +52,12 @@ export function ConfirmEmailLink() {
       setState({ phase: "invalid", type });
       return;
     }
-    try {
-      // Marks an open invitation accepted — after a reset too, for an invitee
-      // who never used the invitation itself. A no-op otherwise.
-      await api.acceptInvitation();
-    } catch {
-      // Not a reason to stop: the password still has to be chosen, and a
-      // disabled account has already been signed out by `lib/api.ts`.
-    }
+    // Marks an open invitation accepted — after a reset too, for an invitee
+    // who never used the invitation itself. A no-op otherwise. A failure is
+    // repeated, and the set-password step asks again; it is not a reason to
+    // stop, since the password still has to be chosen (a disabled account has
+    // already been signed out by `lib/api.ts`).
+    await acceptInvitationQuietly(() => api.acceptInvitation());
     router.replace(`/auth/set-password?flow=${type}`);
   }
 

@@ -121,7 +121,6 @@ const verdictOf = (rec: {
   parameters: rec.parameters,
 });
 import { cn } from "@/lib/utils";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { parseReportingYearParam } from "@/lib/reporting-context-url";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
@@ -191,6 +190,7 @@ import type { Messages } from "@/messages";
 import { geographyName } from "@/lib/vocabulary";
 import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
 import { copyPrefill, createFormSessions, describeEdit, evidencePlan, type EditIdentity } from "@/lib/record-edit-view";
+import { signOutHere } from "@/lib/sign-out";
 
 // --- Static option sets -----------------------------------------------------
 
@@ -1956,7 +1956,7 @@ function DataEntryPageInner() {
   }
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push("/login");
     router.refresh();
   }

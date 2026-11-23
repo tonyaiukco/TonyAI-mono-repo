@@ -39,7 +39,6 @@ import { useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
 import type { RecordWords } from "@/lib/vocabulary";
 import { useAuthStore } from "@/lib/store";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
@@ -50,6 +49,7 @@ import {
   type Locale,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { signOutHere } from "@/lib/sign-out";
 
 const PAGE_SIZE = 25;
 
@@ -228,7 +228,7 @@ export default function AuditPage() {
   }, [setUser]);
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push("/login");
     router.refresh();
   }

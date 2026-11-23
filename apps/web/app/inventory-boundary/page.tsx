@@ -46,7 +46,6 @@ import {
   type VersionState,
 } from "@/lib/inventory-boundary-view";
 import { useAuthStore } from "@/lib/store";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   LOCALE_FORMAT_TAGS,
   PERIOD_VALUES,
@@ -58,6 +57,7 @@ import {
   type SubsidiaryDTO,
 } from "@/lib/types";
 import { useReportingContext } from "@/lib/use-reporting-context";
+import { signOutHere } from "@/lib/sign-out";
 
 const STATE_STYLES: Record<VersionState, string> = {
   open: "bg-blue-500/15 text-blue-700 border-blue-500/30",
@@ -353,7 +353,7 @@ function InventoryBoundaryScreen() {
   }
 
   const handleLogout = async () => {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push("/login");
   };
 

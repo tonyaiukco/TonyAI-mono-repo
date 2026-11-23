@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PasswordInput } from "@/components/auth/password-input";
 import { Label } from "@/components/ui/label";
-import { MIN_PASSWORD_LENGTH, passwordProblem, setPasswordFailureKey } from "@/lib/auth-view";
+import { MIN_PASSWORD_LENGTH, acceptInvitationQuietly, passwordProblem, setPasswordFailureKey } from "@/lib/auth-view";
+import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useReportingContextStore } from "@/lib/store";
 
@@ -49,6 +50,9 @@ export function SetPasswordForm() {
       toast.error(t(setPasswordFailureKey(error.code), { min: MIN_PASSWORD_LENGTH }));
       return;
     }
+    // The confirm step's acceptance may not have gone through: asked again, a
+    // no-op when it did (pre-pilot defects).
+    await acceptInvitationQuietly(() => api.acceptInvitation());
     // Whoever asked for the reset link may not be the only one holding a session.
     if (flow === "recovery") await supabase.auth.signOut({ scope: "others" }).catch(() => undefined);
     toast.success(t("setPassword.saved"));

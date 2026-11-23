@@ -47,7 +47,6 @@ import { anomalyStatement, isFirstPeriodRecord } from "@/lib/anomaly-view";
 import { factorReleaseId, formatSealDate, sealDateFor } from "@/lib/release-seal-view";
 import { useReleaseSealDates } from "@/lib/use-release-seal-dates";
 import { useAuthStore } from "@/lib/store";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   entityLabel,
   isCalculated,
@@ -72,6 +71,7 @@ import {
   notCalculatedReason,
 } from "@/lib/calculation-display";
 import { cn } from "@/lib/utils";
+import { signOutHere } from "@/lib/sign-out";
 
 const ANY = "__any__";
 
@@ -367,7 +367,7 @@ export default function ReviewPage() {
   }
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push("/login");
     router.refresh();
   }

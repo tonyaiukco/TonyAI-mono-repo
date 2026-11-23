@@ -110,7 +110,8 @@ export function createPrismaMock() {
     txClient: null as unknown as typeof mock,
     // The subsidiary delete locks its row (`SELECT … FOR UPDATE`) before
     // counting children, so the guard cannot be raced by a concurrent insert.
-    $queryRaw: vi.fn(),
+    // A row lock reads back the row it locked, as Postgres answers one that exists.
+    $queryRaw: vi.fn().mockResolvedValue([{ id: 'locked' }]),
     $transaction: vi.fn(),
   };
   mock.txClient = createTxClient(mock);

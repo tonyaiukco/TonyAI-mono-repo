@@ -345,6 +345,11 @@ export class LocationsService {
       // refuses the cascade (TA014, W9). The same 409 as the check — and a 409
       // still if that version is gone by the recount: the delete did not
       // happen either way (Codex's B9 review).
+      // Deleted by a concurrent request since it was read: the answer it would
+      // get now, not a 500 (pre-pilot defects).
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        throw new ResourceNotFoundError('location_not_found');
+      }
       if (boundaryGuardRefused(err)) {
         await this.assertNotDeclared(id);
         throw new ConflictException(

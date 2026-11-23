@@ -248,6 +248,19 @@ describe('LocationsService', () => {
       await expect(service.remove(user, existing.id)).rejects.toThrow(/1 activity record/);
     });
 
+    it('answers 404, not a 500, when a concurrent delete removed the site first (pre-pilot defects)', async () => {
+      const user = makeSuperAdmin();
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.txClient.location.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to delete does not exist.', { code: 'P2025', clientVersion: 'test' }),
+      );
+
+      await expect(service.remove(user, existing.id)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'location_not_found' }),
+      });
+    });
+
     it('passes any other failure through unchanged, even with a record now at the site', async () => {
       // Only the key's refusal means "a record arrived": an audit-insert or
       // connection failure must surface as itself, not as a 409 about records.

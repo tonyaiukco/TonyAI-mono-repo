@@ -337,6 +337,20 @@ describe('what each class lets you leave out', () => {
     expect(parseExactly(UpdateActivityRecordDto, { [field]: value })).toHaveLength(0);
   });
 
+  it.each(['reportingYear', 'reportingPeriod', 'periodValue', 'category', 'activityValue', 'activityUnit'])(
+    'refuses a PATCH that sets %s to null: the column cannot be null, and null is not "absent" (pre-pilot defects)',
+    (field) => {
+      expect(parseExactly(UpdateActivityRecordDto, { [field]: null }).map((e) => e.property)).toEqual([field]);
+    },
+  );
+
+  it.each(['locationId', 'activityType', 'input', 'parameters', 'varianceReason'])(
+    'still takes a PATCH that clears %s with null',
+    (field) => {
+      expect(parseExactly(UpdateActivityRecordDto, { [field]: null })).toHaveLength(0);
+    },
+  );
+
   it.each(['locationId', 'input', 'varianceReason'])(
     'creates a record without %s',
     (field) => {

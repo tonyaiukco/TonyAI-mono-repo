@@ -896,6 +896,19 @@ describe('SubsidiariesService', () => {
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
+    it('answers 404, not a 500, when a concurrent delete wins while it waits for the row lock (pre-pilot defects)', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      // The other request committed its delete: the lock reads back no row.
+      prisma.$queryRaw.mockResolvedValueOnce([]);
+
+      await expect(service.remove(user, 'sub-1')).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'subsidiary_not_found' }),
+      });
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
     it('does NOT tell the caller a reviewable record is permanent', async () => {
       // `submitted`/`under_review` look terminal and are not: a reviewer
       // rejects the record, it becomes deletable, and so does the subsidiary —

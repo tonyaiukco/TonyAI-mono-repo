@@ -46,7 +46,6 @@ import { isStaleCursor } from "@/lib/cursor-pages";
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { useAuthStore } from "@/lib/store";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   LOCALE_FORMAT_TAGS,
   SUPPORTED_LOCALES,
@@ -67,6 +66,7 @@ import {
   toggleSubsidiary,
 } from "@/lib/users-view";
 import { cn } from "@/lib/utils";
+import { signOutHere } from "@/lib/sign-out";
 
 const ROLES: readonly UserRole[] = USER_ROLES;
 
@@ -154,7 +154,7 @@ export default function UsersPage() {
   }
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push("/login");
     router.refresh();
   }

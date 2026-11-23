@@ -74,20 +74,14 @@ export class StorageService {
      *  "Şubat-Faturası.pdf" landed as "<uuid>-_ubat-Fatura_.pdf". */
     downloadAs?: string,
   ): Promise<string> {
-    const { data, error } = await this.client.storage
-      .from(bucket)
-      .createSignedUrl(
-        path,
-        expiresIn,
-        downloadAs ? { download: downloadAs } : undefined,
-      );
+    const { data, error } = await this.client.storage.from(bucket).createSignedUrl(path, expiresIn);
     if (isNotFound(error)) throw new StorageObjectMissingError(bucket, path);
     if (error || !data) {
       throw new InternalServerErrorException(
         `Failed to sign file URL: ${error?.message ?? 'unknown error'}`,
       );
     }
-    return data.signedUrl;
+    return downloadAs ? withDownloadName(data.signedUrl, downloadAs) : data.signedUrl;
   }
 
   /** The object's bytes — for verifying them against a stored hash, never for serving them. */
@@ -114,4 +108,19 @@ export class StorageService {
       );
     }
   }
+}
+
+/**
+ * A signed URL that downloads under `name`, the name encoded once. storage-js
+ * (2.108.2) encodes its own `download` option twice — `URLSearchParams`, then
+ * `encodeURI` over the whole URL — so "Şubat.pdf" came back as
+ * `%25C5%259Eubat.pdf` in the Content-Disposition and the browser saved
+ * "%C5%9Eubat.pdf" (measured on the local Storage, pre-pilot defects).
+ * Appended here instead, Storage answers `filename*=UTF-8''%C5%9Eubat.pdf`,
+ * which browsers save as "Şubat.pdf".
+ */
+export function withDownloadName(signedUrl: string, name: string): string {
+  const url = new URL(signedUrl);
+  url.searchParams.set('download', name);
+  return url.toString();
 }

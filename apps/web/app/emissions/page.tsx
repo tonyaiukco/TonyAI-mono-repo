@@ -64,7 +64,6 @@ import { api, ApiError } from '@/lib/api';
 import { anomalyStatement, isFirstPeriodRecord } from '@/lib/anomaly-view';
 import { factorReleaseId, formatSealDate, sealDateFor } from '@/lib/release-seal-view';
 import { useReleaseSealDates } from '@/lib/use-release-seal-dates';
-import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
@@ -97,6 +96,7 @@ import { TargetsPanel } from '@/components/emissions/targets-panel';
 import { LoadMoreButton } from '@/components/ui/load-more-button';
 import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { IntensityPanel } from '@/components/emissions/intensity-panel';
+import { signOutHere } from "@/lib/sign-out";
 
 // Scope colours (aligned with the rest of the design system).
 const SCOPE_COLORS = {
@@ -437,7 +437,7 @@ function EmissionsAnalysisPageInner() {
   }, [context]);
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push('/login');
     router.refresh();
   }

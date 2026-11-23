@@ -50,7 +50,6 @@ import {
 } from 'recharts';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { reportingContextKey } from '@/lib/reporting-context-url';
@@ -69,6 +68,7 @@ import type {
   ReportTemplate,
   SubsidiaryDTO,
 } from '@/lib/types';
+import { signOutHere } from "@/lib/sign-out";
 
 
 const SCOPE_COLORS = { scope1: '#34C759', scope2: '#007AFF', scope3: '#AF52DE' };
@@ -213,7 +213,7 @@ function ReportsPageInner() {
   }
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push('/login');
     router.refresh();
   }

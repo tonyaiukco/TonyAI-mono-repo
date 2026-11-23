@@ -33,7 +33,6 @@ import {
   Search,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { useRecordWords, useStableErrorToast } from '@/lib/i18n/hooks';
@@ -56,6 +55,7 @@ import type {
   SubsidiaryDTO,
   TrackingMatrixDTO,
 } from '@/lib/types';
+import { signOutHere } from "@/lib/sign-out";
 
 const statusClass: Record<string, string> = {
   active: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30',
@@ -340,7 +340,7 @@ function CarbonDashboardInner() {
   };
 
   async function handleLogout() {
-    await getSupabaseBrowserClient().auth.signOut();
+    await signOutHere();
     router.push('/login');
     router.refresh();
   }
