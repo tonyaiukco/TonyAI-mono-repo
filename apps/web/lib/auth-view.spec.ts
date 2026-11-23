@@ -163,9 +163,15 @@ describe('acceptInvitationQuietly (pre-pilot defects)', () => {
   });
 
   it('repeats a transient failure, a 5xx or a network error, until it goes through', async () => {
-    const accept = vi.fn().mockRejectedValueOnce(failing(503)).mockRejectedValueOnce(failing()).mockResolvedValue(undefined);
+    const accept = vi.fn().mockRejectedValueOnce(failing(503)).mockRejectedValueOnce(failing(429)).mockResolvedValue(undefined);
     expect(await acceptInvitationQuietly(accept, noWait)).toBe(true);
     expect(accept).toHaveBeenCalledTimes(3);
+  });
+
+  it('repeats a network error with no status', async () => {
+    const accept = vi.fn().mockRejectedValueOnce(failing()).mockResolvedValue(undefined);
+    expect(await acceptInvitationQuietly(accept, noWait)).toBe(true);
+    expect(accept).toHaveBeenCalledTimes(2);
   });
 
   it('stops at once on a refusal a repeat cannot change', async () => {

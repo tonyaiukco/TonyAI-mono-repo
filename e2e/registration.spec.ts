@@ -89,6 +89,15 @@ test.describe('self-service registration', () => {
 
     const invitation = await registrationInvitePath(request, email);
     test.info().annotations.push({ type: 'invitation link', description: `from ${invitation.from}` });
+    // The confirm step's acceptance fails every time it tries; the password
+    // step asks again, and the invitation still closes (pre-pilot defects).
+    let acceptCalls = 0;
+    await page.route('**/api/v1/invitations/accept', (route) => {
+      acceptCalls += 1;
+      return acceptCalls <= 3
+        ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ statusCode: 503, message: 'unavailable' }) })
+        : route.fallback();
+    });
     await page.goto(invitation.path);
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.waitForURL('**/auth/set-password**');
@@ -96,6 +105,9 @@ test.describe('self-service registration', () => {
     await page.locator('#repeat-password').fill(password);
     await page.getByRole('button', { name: 'Save the password', exact: true }).click();
     await page.waitForURL((url) => url.pathname === '/');
+    // Three tries on the confirm step, then the password step's own call.
+    expect(acceptCalls).toBe(4);
+    await page.unroute('**/api/v1/invitations/accept');
 
     // Signed in as the first administrator of the new organisation, with the invitation closed.
     const token = await getAccessToken(request, email, password);

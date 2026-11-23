@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { MIN_PASSWORD_LENGTH, acceptInvitationQuietly, passwordProblem, setPasswordFailureKey } from "@/lib/auth-view";
 import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
-import { useReportingContextStore } from "@/lib/store";
+import { useAuthStore, useReportingContextStore } from "@/lib/store";
 
 /**
  * The second step of an emailed link (LP4-01): `/auth/confirm` signed the
@@ -58,6 +58,8 @@ export function SetPasswordForm() {
     toast.success(t("setPassword.saved"));
     // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
     useReportingContextStore.getState().clear();
+    // …and the previous person's role, until the new one is read (pre-pilot defects).
+    useAuthStore.getState().clear();
     router.replace("/");
     router.refresh();
   }

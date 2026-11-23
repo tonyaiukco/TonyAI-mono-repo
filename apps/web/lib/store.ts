@@ -39,7 +39,8 @@ export function forgetOnSessionChange(event: string, sessionUserId: string | und
   const { remembered, clear } = useReportingContextStore.getState();
   if (remembered && (event === "SIGNED_OUT" || sessionUserId !== remembered.userId)) clear();
   const auth = useAuthStore.getState();
-  if (auth.user && (event === "SIGNED_OUT" || (sessionUserId !== undefined && sessionUserId !== auth.user.id))) {
+  // A session with no user (signed out, or none at start) is not this user's either.
+  if (auth.user && (event === "SIGNED_OUT" || sessionUserId !== auth.user.id)) {
     auth.clear();
   }
 }
