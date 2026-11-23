@@ -23,6 +23,23 @@ test('a sign-out in another tab takes a page opened directly on /users to sign-i
   await expect(users.getByText(ADMIN_EMAIL)).toHaveCount(0);
 });
 
+test('a page whose /me has not answered still follows a sign-out in another tab (Codex re-review of #350)', async ({ context, page }) => {
+  await login(page, ADMIN_EMAIL);
+  const users = await context.newPage();
+  let held = false;
+  // /me is held: the page knows no profile yet, only the session.
+  await users.route('**/api/v1/me', async () => {
+    held = true;
+  });
+  await users.goto('/users');
+  await expect.poll(() => held).toBe(true);
+
+  await page.getByTestId('sign-out').click();
+  await page.waitForURL('**/login');
+
+  await users.waitForURL('**/login');
+});
+
 test('a sign-out Auth cannot complete keeps the page and says so', async ({ page }) => {
   await login(page, ADMIN_EMAIL);
   // auth-js answers a failed logout call with an error and keeps the session.

@@ -47,7 +47,7 @@ export function ConfirmEmailLink() {
     if (state.phase !== "ready") return;
     const { tokenHash, type } = state;
     setState({ phase: "verifying", tokenHash, type });
-    const { error } = await getSupabaseBrowserClient().auth.verifyOtp({ token_hash: tokenHash, type });
+    const { data, error } = await getSupabaseBrowserClient().auth.verifyOtp({ token_hash: tokenHash, type });
     if (error) {
       setState({ phase: "invalid", type });
       return;
@@ -57,7 +57,7 @@ export function ConfirmEmailLink() {
     // repeated, and the set-password step asks again; it is not a reason to
     // stop, since the password still has to be chosen (a disabled account has
     // already been signed out by `lib/api.ts`).
-    await acceptOwnInvitation();
+    await acceptOwnInvitation(data.user?.id);
     router.replace(`/auth/set-password?flow=${type}`);
   }
 

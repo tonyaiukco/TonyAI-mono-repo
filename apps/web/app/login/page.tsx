@@ -23,9 +23,6 @@ import { Leaf } from "lucide-react";
 import { toast } from "sonner";
 import { useAuthStore, useReportingContextStore } from "@/lib/store";
 
-/** How long sign-in waits for the invitation acceptance before going on. */
-const SIGN_IN_ACCEPT_WAIT_MS = 5_000;
-
 // `useSearchParams` needs a Suspense boundary for the page to prerender.
 export default function LoginPage() {
   return (
@@ -77,7 +74,7 @@ function LoginForm() {
     const password = (elements.namedItem("password") as HTMLInputElement).value;
     setLoading(true);
     const supabase = getSupabaseBrowserClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setLoading(false);
       // Supabase's own sentence is English and names internals; the catalogue
@@ -91,9 +88,8 @@ function LoginForm() {
     // …and the previous person's role, until the new one is read (pre-pilot defects).
     useAuthStore.getState().clear();
     // An invitation whose acceptance never got through closes now (Codex review
-    // of #350). Waited for, but never for long: a hung API must not hold the
-    // sign-in (`security-rls` re-review); the call goes on and is bound to this user.
-    await Promise.race([acceptOwnInvitation(), new Promise((resolve) => setTimeout(resolve, SIGN_IN_ACCEPT_WAIT_MS))]);
+    // of #350); waited for `ACCEPT_WAIT_MS` at most.
+    await acceptOwnInvitation(data.user?.id);
     router.push("/");
     router.refresh();
   }

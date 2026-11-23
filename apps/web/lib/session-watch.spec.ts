@@ -25,6 +25,10 @@ describe('watchSession', () => {
     useAuthStore.getState().setUser({ id: 'user-a', role: 'super_admin' } as never);
     useReportingContextStore.getState().remember('user-a', { year: 2026 } as never);
     watchSession();
+    // Every test starts from a tab that has seen user A's session.
+    listener!('INITIAL_SESSION', { user: { id: 'user-a' } });
+    location.assign.mockReset();
+    location.reload.mockReset();
   });
 
   it('subscribes once per tab', () => {
@@ -54,6 +58,17 @@ describe('watchSession', () => {
     expect(location.reload).not.toHaveBeenCalled();
   });
 
+  it('follows the session on a page whose /me has not answered yet (Codex re-review of #350)', () => {
+    useAuthStore.getState().clear();
+    listener!('SIGNED_OUT', null);
+    expect(location.assign).toHaveBeenCalledWith('/login');
+
+    listener!('SIGNED_IN', { user: { id: 'user-a' } });
+    location.pathname = '/users';
+    listener!('SIGNED_IN', { user: { id: 'user-b' } });
+    expect(location.reload).toHaveBeenCalledTimes(1);
+  });
+
   it('only forgets while this tab ends its own session, and acts again once that is called off', () => {
     endingSessionHere(true);
     listener!('SIGNED_OUT', null);
@@ -61,7 +76,7 @@ describe('watchSession', () => {
     expect(location.assign).not.toHaveBeenCalled();
 
     endingSessionHere(false);
-    useAuthStore.getState().setUser({ id: 'user-a', role: 'super_admin' } as never);
+    listener!('SIGNED_IN', { user: { id: 'user-a' } });
     listener!('SIGNED_OUT', null);
     expect(location.assign).toHaveBeenCalledWith('/login');
   });

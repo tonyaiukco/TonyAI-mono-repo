@@ -44,18 +44,25 @@ export function SetPasswordForm() {
     if (found) return;
     setSaving(true);
     const supabase = getSupabaseBrowserClient();
-    const { error } = await supabase.auth.updateUser({ password });
+    const { data, error } = await supabase.auth.updateUser({ password });
     if (error) {
       setSaving(false);
       toast.error(t(setPasswordFailureKey(error.code), { min: MIN_PASSWORD_LENGTH }));
       return;
     }
-    // The confirm step's acceptance may not have gone through: asked again, a
-    // no-op when it did (pre-pilot defects).
-    await acceptOwnInvitation();
-    // Whoever asked for the reset link may not be the only one holding a session.
-    if (flow === "recovery") await supabase.auth.signOut({ scope: "others" }).catch(() => undefined);
+    // Whoever asked for the reset link may not be the only one holding a
+    // session. Asked first, before any bookkeeping can delay or lose it, and
+    // said when it did not go through (Codex review of #350).
+    if (flow === "recovery") {
+      const { error: othersError } = await supabase.auth
+        .signOut({ scope: "others" })
+        .catch((failure: unknown) => ({ error: failure }));
+      if (othersError) toast.warning(t("setPassword.othersNotSignedOut"));
+    }
     toast.success(t("setPassword.saved"));
+    // The confirm step's acceptance may not have gone through: asked again, a
+    // no-op when it did (pre-pilot defects); waited for `ACCEPT_WAIT_MS` at most.
+    await acceptOwnInvitation(data.user?.id);
     // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
     useReportingContextStore.getState().clear();
     // …and the previous person's role, until the new one is read (pre-pilot defects).

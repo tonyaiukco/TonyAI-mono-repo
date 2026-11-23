@@ -125,9 +125,17 @@ describe('the session wiring', () => {
   it.each(['app/auth/confirm/confirm-email-link.tsx', 'app/auth/set-password/set-password-form.tsx', 'app/login/page.tsx'])(
     '%s accepts the invitation through acceptOwnInvitation',
     (file) => {
-      expect(read(file)).toMatch(/await (Promise\.race\(\[)?acceptOwnInvitation\(\)/);
+      // With the subject the Auth operation returned, never a later session read.
+      expect(read(file)).toMatch(/await acceptOwnInvitation\(data\.user\?\.id\);/);
     },
   );
+
+  it('a recovery asks Auth to end the other sessions before the acceptance, and says when it could not', () => {
+    const source = read('app/auth/set-password/set-password-form.tsx');
+    expect(source.indexOf('signOut({ scope: "others" })')).toBeGreaterThan(-1);
+    expect(source.indexOf('signOut({ scope: "others" })')).toBeLessThan(source.indexOf('await acceptOwnInvitation('));
+    expect(source).toMatch(/if \(othersError\) toast\.warning\(t\("setPassword\.othersNotSignedOut"\)\)/);
+  });
 
   it('the API client marks its own session end before signing out', () => {
     const source = read('lib/api.ts');

@@ -189,19 +189,4 @@ describe('acceptInvitationQuietly (pre-pilot defects)', () => {
     expect(accept).toHaveBeenCalledTimes(3);
     expect(wait.mock.calls).toEqual([[500], [1000]]);
   });
-
-  it('asks before every repeat whether the same person is signed in, and stops when not', async () => {
-    const accept = vi.fn().mockRejectedValue(failing(503));
-    const stillSame = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
-    expect(await acceptInvitationQuietly(accept, { wait: noWait, stillSame })).toBe(false);
-    expect(accept).toHaveBeenCalledTimes(2);
-    expect(stillSame).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not ask before the first attempt', async () => {
-    const accept = vi.fn(async () => undefined);
-    const stillSame = vi.fn(async () => false);
-    expect(await acceptInvitationQuietly(accept, { wait: noWait, stillSame })).toBe(true);
-    expect(stillSame).not.toHaveBeenCalled();
-  });
 });
