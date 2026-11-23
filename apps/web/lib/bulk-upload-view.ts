@@ -2,8 +2,11 @@ import { deadlineSummary, type DeadlineTranslator } from './bulk-submit-view';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
+  recordParameterShape,
   unitSymbol,
   type Locale,
+  type NaturalGasRecordParameters,
+  type RefrigerantRecordParameters,
 } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
@@ -219,9 +222,11 @@ type InputsKey =
  * D15): each Natural Gas value, or each equipment line with its masses and
  * rate choice, in the user's locale. A bill's calorific basis comes first, as
  * a word, so the user checks net or gross before importing (ng-kwh-engine).
- * Empty when the row carries none.
+ * Empty when the row carries none. The row's category tells the parameters'
+ * shape (`recordParameterShape`), never the keys present (self-gen-model).
  */
 export function readInputsLabel(
+  category: string,
   parameters: BulkUploadAcceptedRow['parameters'],
   locale: Locale,
   translate: (key: InputsKey) => string,
@@ -229,8 +234,9 @@ export function readInputsLabel(
   // `== null`: a server before LP4-02 PR4 sends none at all.
   if (parameters == null) return '';
   const amount = (value: number) => formatReadAmount(value, locale);
-  if ('equipment' in parameters) {
-    return parameters.equipment
+  const shape = recordParameterShape(category);
+  if (shape === 'refrigerant') {
+    return (parameters as RefrigerantRecordParameters).equipment
       .map((line) => {
         const type = Object.hasOwn(enEntry.equipmentTypes, line.equipmentType)
           ? translate(`equipmentTypes.${line.equipmentType as keyof typeof enEntry.equipmentTypes}`)
@@ -240,12 +246,15 @@ export function readInputsLabel(
       })
       .join('; ');
   }
-  const basis = parameters.cvBasis === 'net' || parameters.cvBasis === 'gross'
-    ? [`${translate('bulkColumns.cvBasis')}: ${translate(`inputs.cvBasis.${parameters.cvBasis}`)}`]
+  // Bulk upload takes no self-generation block; any other shape reads as nothing.
+  if (shape !== 'natural_gas') return '';
+  const gas = parameters as NaturalGasRecordParameters;
+  const basis = gas.cvBasis === 'net' || gas.cvBasis === 'gross'
+    ? [`${translate('bulkColumns.cvBasis')}: ${translate(`inputs.cvBasis.${gas.cvBasis}`)}`]
     : [];
   const figures = (['ncvKcalPerSm3', 'billedGcvKcalPerSm3', 'volumeCorrectionFactor'] as const)
-    .filter((key) => parameters[key] !== undefined && parameters[key] !== null)
-    .map((key) => `${translate(`bulkColumns.${key}`)} ${amount(parameters[key] as number)}`);
+    .filter((key) => gas[key] !== undefined && gas[key] !== null)
+    .map((key) => `${translate(`bulkColumns.${key}`)} ${amount(gas[key] as number)}`);
   return [...basis, ...figures].join('; ');
 }
 

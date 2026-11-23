@@ -81,6 +81,18 @@ describe("parameters_required names the missing input (ng-kwh-engine)", () => {
     expect(describe_(e, "tr").title).toBe(MESSAGES.tr.errors.variants.parameters_required.cvBasis);
   });
 
+  it("asks a self-generation block for each missing input by name, in both languages (self-gen-model)", () => {
+    for (const input of ["generationTopology", "selfGenerationSource", "selfGeneratedKwh"] as const) {
+      const e = new ApiError("API 400", 400, "parameters_required", { input });
+      for (const locale of ["en", "tr"] as const) {
+        const sentence = MESSAGES[locale].errors.variants.parameters_required[input];
+        expect(sentence, `${locale}: ${input}`).toBeTruthy();
+        expect(describe_(e, locale).title, `${locale}: ${input}`).toBe(sentence);
+        expect(describe_(e, locale).title).not.toBe(MESSAGES[locale].errors.codes.parameters_required);
+      }
+    }
+  });
+
   it("keeps the refrigerant's equipment sentence for its own input", () => {
     const e = new ApiError("API 400", 400, "parameters_required", { input: "equipment" });
     expect(describe_(e, "en").title).toBe(MESSAGES.en.errors.codes.parameters_required);

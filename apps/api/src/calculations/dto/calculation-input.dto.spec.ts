@@ -276,3 +276,38 @@ describe('a natural gas bill\'s calorific basis on the preview (ng-kwh-engine)',
   });
 });
 
+
+describe('an Electricity self-generation block on the preview (self-gen-model)', () => {
+  const electricity = { ...VALID, category: 'Electricity', geographyCode: 'TR', unit: 'kWh' };
+  const block = (over: Record<string, unknown> = {}) => ({
+    generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000, ...over,
+  });
+
+  it.each([
+    block(),
+    block({ exportedToGridKwh: 400_000, facilityConsumptionKwh: 1_000_000 }),
+    { generationTopology: null, selfGenerationSource: null, selfGeneratedKwh: null },
+    // The engine's refusals, not the DTO's.
+    block({ generationTopology: 'B' }),
+  ])('passes %o', (parameters) => {
+    expect(constraintsOn({ ...electricity, parameters }, 'parameters')).toEqual([]);
+  });
+
+  it('passes a block outside TR: it is geography-free', () => {
+    expect(constraintsOn({ ...electricity, geographyCode: 'UK', parameters: block() }, 'parameters')).toEqual([]);
+  });
+
+  it.each([
+    block({ selfGenerationSource: 'biogas' }),
+    block({ selfGeneratedKwh: -1 }),
+    block({ selfGeneratedKwh: '400000' }),
+    block({ gwp: 1 }),
+    { ncvKcalPerSm3: 8250 },
+  ])('refuses %o', (parameters) => {
+    expect(constraintsOn({ ...electricity, parameters }, 'parameters')).not.toEqual([]);
+  });
+
+  it('still refuses parameters on a category with no shape', () => {
+    expect(constraintsOn({ ...electricity, category: 'Water', unit: 'cubic_metres', parameters: block() }, 'parameters')).not.toEqual([]);
+  });
+});

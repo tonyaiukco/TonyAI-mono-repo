@@ -190,6 +190,12 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
     equipmentType: 'chiller', capacityKg: 10, refillKg: 0, leakRateChoice: 'alternative', ...over,
   });
   const equipment = (...lines: unknown[]) => refrigerant({ equipment: lines });
+  // self-gen-model: an Electricity record's self-generation block.
+  const electricity = (parameters: unknown, periodValue = 'August') =>
+    recordInput(tenant, { category: 'Electricity', periodValue, parameters: parameters as Prisma.InputJsonValue });
+  const block = (over: Record<string, unknown> = {}) => ({
+    generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400000, ...over,
+  });
 
   it.each([
     ['both calorific values', () => gas({ ncvKcalPerSm3: 8250, billedGcvKcalPerSm3: 9155 })],
@@ -221,7 +227,7 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
     ['a capacity past the activity value bound', () => equipment(line({ capacityKg: 1e13 }))],
     ['a refill past the activity value bound', () => equipment(line({ refillKg: 1e13 }))],
     ["another category's fields", () => refrigerant({ ncvKcalPerSm3: 8250 })],
-    ['parameters on a category that takes none', () => recordInput(tenant, { periodValue: 'August', parameters: { ncvKcalPerSm3: 1 } })],
+    ['parameters on a category that takes none', () => recordInput(tenant, { category: 'Water', periodValue: 'August', parameters: { ncvKcalPerSm3: 1 } })],
     // ng-kwh-engine: the calorific basis is the string net or gross, or JSON null.
     ['a basis that is neither net nor gross', () => gas({ cvBasis: 'lower' })],
     ['a basis in capitals, which the API lower-cases first', () => gas({ cvBasis: 'NET' })],
@@ -230,6 +236,25 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
     ['a basis as an object', () => gas({ cvBasis: { value: 'net' } })],
     ['a basis as a list', () => gas({ cvBasis: ['net'] })],
     ['a basis on another category', () => refrigerant({ equipment: [line()], cvBasis: 'net' })],
+    // self-gen-model: the Electricity branch holds only what the engine accepts.
+    ['topology B, which waits for LP7-09', () => electricity(block({ generationTopology: 'B' }))],
+    ['topology C, which waits for LP7-09', () => electricity(block({ generationTopology: 'C' }))],
+    ['a topology as a number', () => electricity(block({ generationTopology: 1 }))],
+    ['an unknown source', () => electricity(block({ selfGenerationSource: 'biogas' }))],
+    ['a block without a source', () => electricity(block({ selfGenerationSource: null }))],
+    ['a block without a topology', () => electricity(block({ generationTopology: undefined }))],
+    ['a block without the generation', () => electricity(block({ selfGeneratedKwh: null }))],
+    ['exports stated alone', () => electricity({ exportedToGridKwh: 10 })],
+    ['a negative generation', () => electricity(block({ selfGeneratedKwh: -1 }))],
+    ['a generation as text', () => electricity(block({ selfGeneratedKwh: '400000' }))],
+    ['exports above the generation', () => electricity(block({ exportedToGridKwh: 400001 }))],
+    ['negative exports', () => electricity(block({ exportedToGridKwh: -1 }))],
+    ['exports as text', () => electricity(block({ exportedToGridKwh: '1' }))],
+    ['a facility consumption of 0', () => electricity(block({ facilityConsumptionKwh: 0 }))],
+    ['a key the block does not define', () => electricity(block({ avoidedKgCo2e: 1 }))],
+    ['a gas key on Electricity', () => electricity({ ncvKcalPerSm3: 8250 })],
+    ['a gas key beside a block', () => electricity(block({ cvBasis: 'net' }))],
+    ['an equipment list on Electricity', () => electricity({ equipment: [line()] })],
   ])('refuses %s, as the owner too (23514)', async (_what, data) => {
     const e = await failure(withRollback(owner, (tx) => tx.activityRecord.create({ data: data() })));
     expect(sqlstateOf(e)).toBe('23514');
@@ -258,11 +283,26 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
       await tx.activityRecord.create({ data: gas({ cvBasis: null, ncvKcalPerSm3: 8100 }, 'July') });
       await tx.activityRecord.create({ data: equipment(line(), line({ equipmentType: 'refrigerator', capacityKg: 0, refillKg: 2, leakRateChoice: 'default' })) });
       await tx.activityRecord.create({ data: recordInput(tenant, { periodValue: 'August' }) });
+      // self-gen-model: a full block, the three required fields only, exports
+      // equal to the generation, optional fields as JSON null, an all-null block.
+      await tx.activityRecord.create({
+        data: electricity(block({ exportedToGridKwh: 50000, facilityConsumptionKwh: 1000000 }), 'September'),
+      });
+      await tx.activityRecord.create({ data: electricity(block({ selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 0 }), 'October') });
+      await tx.activityRecord.create({ data: electricity(block({ exportedToGridKwh: 400000 }), 'November') });
+      await tx.activityRecord.create({
+        data: electricity(block({ selfGenerationSource: 'diesel_generator', exportedToGridKwh: null, facilityConsumptionKwh: null }), 'December'),
+      });
+      await tx.activityRecord.create({
+        data: electricity({
+          generationTopology: null, selfGenerationSource: null, selfGeneratedKwh: null, exportedToGridKwh: null, facilityConsumptionKwh: null,
+        }, 'July'),
+      });
       return tx.activityRecord.count({
         where: { subsidiaryId: tenant.subsidiaryId, periodValue: { in: ['July', 'August', 'September', 'October', 'November', 'December'] } },
       });
     });
-    expect(accepted).toBe(8);
+    expect(accepted).toBe(13);
   });
 
   it('freezes them with the other inputs once a record is committed (TA001), the owner included', async () => {

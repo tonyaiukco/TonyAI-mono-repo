@@ -24,6 +24,7 @@ import {
   AuthorOnlyRefusedError,
   EvidenceDetachRequiredError,
   ReviewVersionRequiredError,
+  EditVersionRequiredError,
   RecordNotRecallableError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
@@ -62,6 +63,7 @@ import {
   isRecallable,
   EDITABLE_RECORD_STATUSES,
   normalizeRecordParameters,
+  recordParameterShape,
   recordActivityTypesFor,
   REPORTING_PERIODS,
 } from '@tonyai/shared-types';
@@ -300,6 +302,23 @@ function assertSameSubmission(record: { submittedAt: Date | null }, seenSubmitte
   const seen = seenSubmittedAt === null ? null : Date.parse(seenSubmittedAt);
   const now = record.submittedAt ? record.submittedAt.getTime() : null;
   if (seen !== now) throw new RecordChangedError();
+}
+
+/**
+ * An edit names the version it was made on (`seenUpdatedAt`, self-gen-model
+ * review of `1802e22e`): a record changed since the editor read it is refused
+ * as a lost race. With the lock's own `changedSince` (read → locked row), this
+ * covers the whole window from the page's read to the write. Absent, nothing
+ * is compared (an older client, a script).
+ */
+function assertSameVersion(record: { updatedAt: Date }, seenUpdatedAt: string | undefined): void {
+  if (seenUpdatedAt === undefined) return;
+  if (Date.parse(seenUpdatedAt) !== record.updatedAt.getTime()) throw new RecordChangedError();
+}
+
+/** Whether a stored record holds a self-generation block (self-gen-model). */
+function holdsSelfGeneration(record: { category: string; parameters: unknown }): boolean {
+  return recordParameterShape(record.category) === 'electricity' && normalizeRecordParameters(record.parameters) !== null;
 }
 
 // Statuses in which a record may still be edited or deleted by an author.
@@ -1288,6 +1307,7 @@ export class ActivityRecordsService {
   ): Promise<ActivityRecordDTO> {
     const existing = await this.loadScoped(user, id);
     this.assertCanEdit(user, existing);
+    assertSameVersion(existing, dto.seenUpdatedAt);
 
     // Resolve the effective values (dto overrides existing) so we can recompute.
     const category = (dto.category ?? existing.category) as Category;
@@ -1311,6 +1331,12 @@ export class ActivityRecordsService {
     // Refused rather than cleared when a record moves category: the user clears
     // them by sending null, as with the activity type above.
     const parameters = ((dto.parameters !== undefined ? dto.parameters : existing.parameters) ?? null) as RecordParameters | null;
+    // A stored self-generation block is shown on no screen yet: an edit that
+    // would change or remove it must name the version it was made on, so a tab
+    // that never saw the block cannot erase it (self-gen-model review).
+    if (dto.seenUpdatedAt === undefined && holdsSelfGeneration(existing) && !sameParameters(existing.parameters, parameters)) {
+      throw new EditVersionRequiredError();
+    }
     assertRecordParameters(category, parameters);
 
     const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;

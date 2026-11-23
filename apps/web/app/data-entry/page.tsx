@@ -68,6 +68,9 @@ import {
   unitChangeClearsBasis,
   unitChangeClearsQuantity,
   gasInputsFromRecord,
+  selfGenerationFromRecord,
+  selfGenerationToSend,
+  editLeavesParametersToServer,
   gasEnergyIssue,
   gasInputsIssue,
   gasParameters,
@@ -167,6 +170,7 @@ import type {
   FactorCoverageDTO,
   LocationDTO,
   RecordParameters,
+  ElectricityRecordParameters,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -317,6 +321,11 @@ function DataEntryPageInner() {
   const lineSeq = useRef(0);
   const nextLineId = useCallback(() => `line-${(lineSeq.current += 1)}`, []);
   const [equipment, setEquipment] = useState<EquipmentLineDraft[]>(() => [newEquipmentLine("line-0")]);
+  // The opened or copied record's own self-generation block, sent unchanged
+  // while the category is Electricity (`selfGenerationToSend`); the form shows
+  // no field for it yet, and without it every save would erase it
+  // (self-gen-model, design 6). Set and cleared with `ownBasis`.
+  const [ownSelfGeneration, setOwnSelfGeneration] = useState<ElectricityRecordParameters | null>(null);
   const [inputsEpoch, setInputsEpoch] = useState(0);
   useEffect(() => setRefusedGasInputs(new Set()), [inputsEpoch]);
   // The release parameters the inputs default to (D2): never a constant here.
@@ -405,6 +414,10 @@ function DataEntryPageInner() {
   const deepLinkHandled = useRef(false);
   const [subsLoading, setSubsLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The open record's `updatedAt` as this form read or last saved it, sent as
+  // `seenUpdatedAt` with every edit: a record changed elsewhere since is
+  // refused as `record_changed` rather than overwritten (self-gen-model review).
+  const [editingVersion, setEditingVersion] = useState<string | null>(null);
   const [editingCreatedBy, setEditingCreatedBy] = useState<string | null>(null);
   const canSubmit = canSubmitEntry(user, editingId, editingCreatedBy);
   // Edit mode (BUG-R2-03): entered only by the Edit action. In it, a change of
@@ -598,7 +611,7 @@ function DataEntryPageInner() {
       ? gasParameters(gasInputs, activityUnit, defaultNcv)
       : refrigerantMode && equipmentProblem === null
         ? equipmentParameters(equipment)
-        : null;
+        : selfGenerationToSend(category, ownSelfGeneration);
   // One string for the preview's dependencies: a new object each render is not a change.
   const parametersKey = JSON.stringify(recordParameters);
   // Mirrors the API's `activity_type_required`: a typed category's record
@@ -1224,9 +1237,11 @@ function DataEntryPageInner() {
     }
   }
 
-  function resetInputs(parameters: unknown = null) {
-    setGasInputs(gasInputsFromRecord(parameters));
-    setEquipment(linesFromRecord(parameters, nextLineId));
+  /** The inputs set to a record's stored parameters, read by its category; empty with none. */
+  function resetInputs(category: string | null = null, parameters: unknown = null) {
+    const stored = category === null ? null : parameters;
+    setGasInputs(gasInputsFromRecord(category ?? "", stored));
+    setEquipment(linesFromRecord(stored, nextLineId));
     setInputsEpoch((n) => n + 1);
   }
 
@@ -1290,6 +1305,7 @@ function DataEntryPageInner() {
     clearEditChoices();
     setCopying(false);
     setEditingId(rec.id);
+    setEditingVersion(rec.updatedAt);
     setEditingCreatedBy(rec.createdBy);
     setSubsidiaryId(rec.subsidiaryId);
     setLocationId(rec.locationId ?? "");
@@ -1302,11 +1318,12 @@ function DataEntryPageInner() {
     setActivityUnit(rec.activityUnit);
     setUnitCategory(rec.category);
     setOwnUnit(rec.activityUnit);
-    setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
+    setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
+    setOwnSelfGeneration(selfGenerationFromRecord(rec));
     setContext((rec.input as ContextValues | null) ?? {});
     setContextEpoch((n) => n + 1);
     if (hasContextValue(rec.input)) setContextOpen(true);
-    resetInputs(rec.parameters);
+    resetInputs(rec.category, rec.parameters);
     setVerdict(verdictOf(rec));
     setVarianceReason(rec.varianceReason ?? "");
     setPreviewError(null);
@@ -1347,10 +1364,12 @@ function DataEntryPageInner() {
     });
     if (!movedOff) return;
     setEditingId(null);
+    setEditingVersion(null);
     setEditingCreatedBy(null);
     setEditingTuple(null);
     setOwnUnit(null);
     setOwnBasis(null);
+    setOwnSelfGeneration(null);
     toast.info(t("nowEnteringNew"));
   }, [
     editingId,
@@ -1378,6 +1397,7 @@ function DataEntryPageInner() {
     setCopying(false);
     setOwnUnit(null);
     setOwnBasis(null);
+    setOwnSelfGeneration(null);
     // After a submit the next record does not inherit a TR gas bill's kWh or MWh:
     // it is narrowed to the category's first unit, m³ (ng-kwh-form review). Any
     // other reset, a subsidiary change included, keeps the unit the target offers.
@@ -1389,6 +1409,7 @@ function DataEntryPageInner() {
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
+    setEditingVersion(null);
     setEditingCreatedBy(null);
     setEditingTuple(null);
     setLocationId("");
@@ -1453,7 +1474,13 @@ function DataEntryPageInner() {
         input: inputPayload,
         // Sent on every edit, null included: a record moved off the TR rules
         // (another category or unit) clears what it no longer takes (D3).
-        parameters: recordParameters,
+        // An Electricity record saved as Electricity sends none, so the API
+        // keeps the self-generation block stored NOW, never the one this form
+        // read when it opened (self-gen-model review).
+        ...(editLeavesParametersToServer(editingTuple?.category ?? null, category) ? {} : { parameters: recordParameters }),
+        // The version this form read: a record changed elsewhere since is
+        // refused (409 `record_changed`), never overwritten.
+        ...(editingVersion !== null ? { seenUpdatedAt: editingVersion } : {}),
         // The files the band says go (owner decision D1); the API refuses a
         // category change that leaves one attached.
         ...(editMode && plan.detachIds.length > 0 ? { detachEvidenceIds: plan.detachIds } : {}),
@@ -1475,7 +1502,7 @@ function DataEntryPageInner() {
     });
   }
 
-  function showSaveError(e: unknown, moving: boolean) {
+  function showSaveError(e: unknown, moving: boolean, session: number) {
     // The record's files changed under the band (one was uploaded elsewhere):
     // read them again so the next confirmation names them all.
     if (e instanceof ApiError && (e.code === "evidence_detach_required" || e.code === "evidence_not_found")) {
@@ -1483,6 +1510,43 @@ function DataEntryPageInner() {
     }
     const { title, description } = saveErrorDescription(e, moving, describeError, t);
     toast.error(title, description ? { description } : undefined);
+    // Only while the form is still on the record that was saved: a refusal
+    // answered after the user opened another record leaves that one alone.
+    if (e instanceof ApiError && e.code === "record_changed" && formSessions.isCurrent(session) && editingId) {
+      void reloadAfterLostRace(editingId);
+    }
+  }
+
+  /**
+   * A save refused because the record changed since this form read it
+   * (`record_changed`, self-gen-model review): the form and the list read the
+   * record again as stored, with its version, so the user sees what is there
+   * now and the next save is made on it. Typed changes are not kept: they were
+   * made on values that no longer stand. Files that failed to upload to this
+   * record stay listed with Retry, so the submit still waits for the user's
+   * decision on them (review of `078ca233`).
+   */
+  async function reloadAfterLostRace(id: string) {
+    const wasEdit = editMode;
+    const keptFailures = failedUploads !== null && failedUploads.recordId === id ? failedUploads : null;
+    const session = beginFormSession();
+    if (keptFailures) setFailedUploads(keptFailures);
+    void refreshRecords(subsidiaryId);
+    try {
+      const rec = await api.getActivityRecord(id);
+      if (!formSessions.isCurrent(session)) return;
+      if (rec.status !== "draft" && rec.status !== "rejected") {
+        resetForm();
+        return;
+      }
+      fillForm(rec);
+      setEditMode(wasEdit);
+      if (wasEdit) setEditFilesVersion((v) => v + 1);
+    } catch (err) {
+      if (!formSessions.isCurrent(session)) return;
+      errorToast(err);
+      resetForm();
+    }
   }
 
   function toastFilesNotUploaded(files: readonly File[]) {
@@ -1525,7 +1589,12 @@ function DataEntryPageInner() {
     // The vault re-reads the record's files when it next mounts.
     setEvidenceVersion((v) => v + 1);
     try {
-      return { rec: await api.getActivityRecord(rec.id), failed };
+      // Only the file count is read again. Every other field, the version
+      // included, stays the save's own answer, the values on screen: a re-read
+      // version could carry another client's edit made during the upload, and
+      // the next save would then overwrite it unrefused (review of `078ca233`).
+      const fresh = await api.getActivityRecord(rec.id);
+      return { rec: { ...rec, evidenceCount: fresh.evidenceCount }, failed };
     } catch {
       // Only the client's mirror of the gate reads this; the API decides.
       return { rec: { ...rec, evidenceCount: rec.evidenceCount + out.uploaded.length }, failed };
@@ -1573,11 +1642,13 @@ function DataEntryPageInner() {
       const wasEditing = editMode;
       afterEditSaved();
       setEditingId(rec.id);
+      setEditingVersion(rec.updatedAt);
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
-      setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
+      setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
+      setOwnSelfGeneration(selfGenerationFromRecord(rec));
       setVerdict(verdictOf(rec));
       showSavedCalculation(rec);
       if (wasEditing) {
@@ -1609,7 +1680,7 @@ function DataEntryPageInner() {
       );
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      showSaveError(e, wasMoving);
+      showSaveError(e, wasMoving, session);
     } finally {
       setSaving(null);
     }
@@ -1646,11 +1717,13 @@ function DataEntryPageInner() {
       // Keep the saved record "current" so that if submit is blocked (evidence
       // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
+      setEditingVersion(rec.updatedAt);
       setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       // The saved record is the open one again: its own unit is the one saved.
       setOwnUnit(rec.activityUnit);
-      setOwnBasis(gasInputsFromRecord(rec.parameters).cvBasis);
+      setOwnBasis(gasInputsFromRecord(rec.category, rec.parameters).cvBasis);
+      setOwnSelfGeneration(selfGenerationFromRecord(rec));
       setVerdict(verdictOf(rec));
       showSavedCalculation(rec);
       // A file that did not upload: the record stays a draft, the vault lists
@@ -1694,7 +1767,7 @@ function DataEntryPageInner() {
       resetForm("submitted");
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      showSaveError(e, wasMoving);
+      showSaveError(e, wasMoving, session);
     } finally {
       setSaving(null);
     }
@@ -1780,11 +1853,12 @@ function DataEntryPageInner() {
       setActivityUnit(values.activityUnit);
       setUnitCategory(values.category);
       setOwnUnit(values.activityUnit);
-      setOwnBasis(gasInputsFromRecord(values.parameters).cvBasis);
+      setOwnBasis(gasInputsFromRecord(values.category, values.parameters).cvBasis);
+      setOwnSelfGeneration(selfGenerationFromRecord(values));
       setContext((values.input as ContextValues | null) ?? {});
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
-      resetInputs(values.parameters);
+      resetInputs(values.category, values.parameters);
       toast.info(t("copy.loaded"));
       return true;
     } catch (e) {

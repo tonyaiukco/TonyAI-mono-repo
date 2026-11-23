@@ -20,6 +20,8 @@ import {
   type UncalculatedSnapshot,
 } from '@tonyai/shared-types';
 import { CalculationsService, FACTOR_CANDIDATE_CAP } from './calculations.service';
+import type { ElectricityRecordParameters } from '@tonyai/shared-types';
+import { EXPORTED_TO_GRID_KWH_INPUT, FACILITY_CONSUMPTION_KWH_INPUT, SELF_GENERATED_KWH_INPUT } from './self-generation';
 import { CALLER_TEXT_QUOTE_MAX_LENGTH } from '../common/caller-text';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -2358,5 +2360,188 @@ describe('CalculationsService.listSealedReleases (UAT round 2, S2)', () => {
   it('never lists a row whose seal is missing, even if the query let one through', async () => {
     const { service } = makeService([releaseRow({ id: 'rel-unsealed', sealedAt: null })]);
     expect(await service.listSealedReleases()).toEqual([]);
+  });
+});
+
+describe('CalculationsService.compute — an Electricity self-generation block (self-gen-model)', () => {
+  let prisma: FactorPrismaMock;
+  let engine: CalculationsService;
+
+  // FIXTURE, not the authoritative value: a TR 2025 grid factor of 0.434
+  // kgCO2e/kWh mirroring the ETKB row of the loaded TR release. The golden
+  // vectors run against the real release in tr-factor-package.int.spec.ts.
+  const TR_2025_GRID_FIXTURE = 0.434;
+  const UK_GRID_FIXTURE = 0.207;
+
+  const grid = { category: 'Electricity', geographyCode: 'TR', reportingYear: 2025, value: 600_000, unit: 'kWh' };
+  // Typed as the engine reads it; a malformed field is the point of some cases.
+  const block = (over: Record<string, unknown> = {}) =>
+    ({ generationTopology: 'A', selfGenerationSource: 'solar', selfGeneratedKwh: 400_000, ...over }) as ElectricityRecordParameters;
+  const refusal = (input: Parameters<CalculationsService['compute']>[0]) =>
+    engine.compute(input).then(
+      () => null,
+      (e: unknown) => ({
+        error: e,
+        status: (e as { getStatus?: () => number }).getStatus?.(),
+        body: (e as { getResponse?: () => { code?: string; params?: Record<string, string> } }).getResponse?.(),
+      }),
+    );
+
+  beforeEach(() => {
+    prisma = createFactorPrismaMock();
+    engine = new CalculationsService(prisma as unknown as PrismaService, ALLOW_PLACEHOLDERS);
+    const tr = makeRelease({ status: 'authoritative', edition: 'TR-2025-FIXTURE' });
+    const uk = makeRelease({ status: 'authoritative', edition: 'UK-FIXTURE' });
+    useFactor(
+      prisma,
+      makeFactor({ release: tr, geographyCode: 'TR', reportingYear: 2025, factorValue: TR_2025_GRID_FIXTURE, source: 'SPEC FIXTURE (mirrors ETKB 2025)' }),
+      makeFactor({ release: uk, geographyCode: 'UK', reportingYear: 2025, factorValue: UK_GRID_FIXTURE, source: 'SPEC FIXTURE' }),
+    );
+  });
+
+  describe('refusals, each an input refusal before any factor lookup', () => {
+    it.each([
+      ['generationTopology', { exportedToGridKwh: 10 }],
+      ['generationTopology', { selfGenerationSource: 'solar', selfGeneratedKwh: 1 }],
+      ['selfGenerationSource', { generationTopology: 'A', selfGeneratedKwh: 400_000 }],
+      ['selfGeneratedKwh', { generationTopology: 'A', selfGenerationSource: 'wind' }],
+    ])('parameters_required naming %s', async (input, parameters) => {
+      const r = await refusal({ ...grid, parameters: parameters as ElectricityRecordParameters });
+      expect(r?.error).toBeInstanceOf(CalculationInputError);
+      expect(r?.status).toBe(400);
+      expect(r?.body).toEqual(expect.objectContaining({ code: 'parameters_required', params: { input } }));
+      expect(prisma.emissionFactor.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each(['B', 'C'])('parameters_not_applicable for topology %s, in TR and outside it', async (generationTopology) => {
+      for (const geographyCode of ['TR', 'UK']) {
+        const r = await refusal({ ...grid, geographyCode, parameters: block({ generationTopology }) });
+        expect(r?.status).toBe(400);
+        expect(r?.body?.code).toBe('parameters_not_applicable');
+      }
+      expect(prisma.emissionFactor.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['exports above the generation', block({ exportedToGridKwh: 400_001 })],
+      ['a gas key', { ncvKcalPerSm3: 8250 }],
+      ['a gas key beside a block', block({ cvBasis: 'net' })],
+      ['an equipment list', { equipment: [] }],
+      ['a generation that is not a number', block({ selfGeneratedKwh: '400000' })],
+      ['a negative export', block({ exportedToGridKwh: -1 })],
+      // The DTO's and the CHECK's named values and bounds, held by the engine too (security-rls N1).
+      ['an unknown source', block({ selfGenerationSource: 'coal' })],
+      ['a source that is a number', block({ selfGenerationSource: 5 })],
+      ['an unknown topology', block({ generationTopology: 'D' })],
+      ['a facility consumption of 0', block({ facilityConsumptionKwh: 0 })],
+      ['a generation past the CHECK\'s bound', block({ selfGeneratedKwh: 1e308 })],
+      ['a non-finite generation', block({ selfGeneratedKwh: Number.POSITIVE_INFINITY })],
+      // Raw keys are checked before null fields are dropped (review of 2c427ed8).
+      ['a gas key whose value is null', { ncvKcalPerSm3: null }],
+      ['an unknown key whose value is null, beside a block', block({ avoidedKgCo2e: null })],
+      ['a list', [] as unknown as ElectricityRecordParameters],
+    ])('record_parameters_invalid for %s', async (_what, parameters) => {
+      const r = await refusal({ ...grid, parameters: parameters as never });
+      expect(r?.error).toBeInstanceOf(CalculationInputError);
+      expect(r?.status).toBe(400);
+      expect(r?.body?.code).toBe('record_parameters_invalid');
+      expect(prisma.emissionFactor.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  it('accepts a valid block outside TR, priced exactly as the record without it', async () => {
+    const uk = { ...grid, geographyCode: 'UK' };
+    const plain = (await engine.compute(uk)) as CalculationResultV3;
+    const withBlock = (await engine.compute({ ...uk, parameters: block() })) as CalculationResultV3;
+    expect(withBlock.kgCo2e).toBe(plain.kgCo2e);
+    expect(withBlock.factorId).toBe(plain.factorId);
+    expect(withBlock.geographyCode).toBe('UK');
+    expect(withBlock.kgCo2e).toBeCloseTo(600_000 * UK_GRID_FIXTURE, 6);
+  });
+
+  describe('the price is blind to the block', () => {
+    const blocks = [
+      block(),
+      block({ selfGenerationSource: 'natural_gas_chp', selfGeneratedKwh: 0 }),
+      block({ selfGenerationSource: 'diesel_generator', exportedToGridKwh: 400_000 }),
+      block({ selfGenerationSource: 'wind', selfGeneratedKwh: 5_000_000, exportedToGridKwh: 4_999_999, facilityConsumptionKwh: 1 }),
+      block({ exportedToGridKwh: 50_000, facilityConsumptionKwh: 1_000_000 }),
+    ];
+    const figure = (r: CalculationResultV3) => ({
+      kgCo2e: r.kgCo2e,
+      tCo2e: r.tCo2e,
+      factorId: r.factorId,
+      factorValue: r.factorValue,
+      normalizedValue: r.normalizedValue,
+      normalizedUnit: r.normalizedUnit,
+      conversionApplied: r.conversionApplied,
+      conversionFactor: r.conversionFactor,
+      conversion: r.conversion,
+      scope: r.scope,
+      scope2Method: r.scope2Method,
+      methodology: r.methodology,
+    });
+
+    it.each([
+      ['kWh', 600_000],
+      ['MWh', 600],
+    ])('in %s: figure, factor, conversion and scope equal the plain record\'s', async (unit, value) => {
+      const plain = (await engine.compute({ ...grid, unit, value })) as CalculationResultV3;
+      expect(plain.kgCo2e).toBeCloseTo(260_400, 6);
+      expect(plain.scope).toBe(2);
+      for (const parameters of blocks) {
+        const result = (await engine.compute({ ...grid, unit, value, parameters })) as CalculationResultV3;
+        expect(figure(result), JSON.stringify(parameters)).toEqual(figure(plain));
+      }
+    });
+
+    it('GV-SG-1 on the fixture: 600,000 kWh imported with 400,000 kWh of solar is 260,400 kg in Scope 2', async () => {
+      const result = (await engine.compute({ ...grid, parameters: block({ facilityConsumptionKwh: 1_000_000 }) })) as CalculationResultV3;
+      expect(Math.abs(result.kgCo2e - 260_400) / 260_400).toBeLessThan(0.005);
+      expect(result.scope).toBe(2);
+    });
+
+    it('a 600 MWh record keeps its generated kWh as kWh, unscaled', async () => {
+      const result = (await engine.compute({ ...grid, unit: 'MWh', value: 600, parameters: block() })) as CalculationResultV3;
+      expect(result.kgCo2e).toBeCloseTo(260_400, 6);
+      expect(result.parameters).toEqual([{ name: 'selfGeneratedKwh', value: 400_000, origin: 'user' }]);
+    });
+  });
+
+  describe('the snapshot echoes the numbers, at schema 3', () => {
+    it('lists the three values by name, in order, with origin user, and names neither topology nor source', async () => {
+      const result = (await engine.compute({
+        ...grid,
+        // Keys out of order: the echo's order is fixed, not the object's.
+        parameters: { facilityConsumptionKwh: 1_000_000, exportedToGridKwh: 50_000, ...block() },
+      })) as CalculationResultV3;
+      expect(result.snapshotSchema).toBe(3);
+      expect(result.parameters).toEqual([
+        { name: SELF_GENERATED_KWH_INPUT, value: 400_000, origin: 'user' },
+        { name: EXPORTED_TO_GRID_KWH_INPUT, value: 50_000, origin: 'user' },
+        { name: FACILITY_CONSUMPTION_KWH_INPUT, value: 1_000_000, origin: 'user' },
+      ]);
+      expect([SELF_GENERATED_KWH_INPUT, EXPORTED_TO_GRID_KWH_INPUT, FACILITY_CONSUMPTION_KWH_INPUT]).toEqual([
+        'selfGeneratedKwh', 'exportedToGridKwh', 'facilityConsumptionKwh',
+      ]);
+      expect(JSON.stringify(result)).not.toMatch(/generationTopology|selfGenerationSource|solar/);
+      expect(result.parameterRows).toEqual([]);
+    });
+
+    it('lists selfGeneratedKwh only for a block with the required fields only, and skips null optionals', async () => {
+      for (const parameters of [block(), block({ exportedToGridKwh: null, facilityConsumptionKwh: null })]) {
+        const result = (await engine.compute({ ...grid, parameters })) as CalculationResultV3;
+        expect(result.parameters).toEqual([{ name: 'selfGeneratedKwh', value: 400_000, origin: 'user' }]);
+      }
+    });
+
+    it('keeps an empty input list for a record without a block, or with a block of nulls', async () => {
+      for (const parameters of [undefined, null, {}, { generationTopology: null, selfGenerationSource: null, selfGeneratedKwh: null }]) {
+        const result = (await engine.compute({ ...grid, parameters: parameters as never })) as CalculationResultV3;
+        expect(result.snapshotSchema).toBe(3);
+        expect(result.parameters).toEqual([]);
+        expect(result.kgCo2e).toBeCloseTo(260_400, 6);
+      }
+    });
   });
 });

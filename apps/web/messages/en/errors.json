@@ -158,7 +158,10 @@
       "ceiling": "This figure has no usable history to compare with and is above the plausibility ceiling for its category — check the evidence document and the unit, and add a variance comment before submitting."
     },
     "parameters_required": {
-      "cvBasis": "State whether this energy figure is on the bill's net or gross calorific basis."
+      "cvBasis": "State whether this energy figure is on the bill's net or gross calorific basis.",
+      "generationTopology": "State where the site's own generation sits against the grid meter.",
+      "selfGenerationSource": "State what the site's own generation runs on: solar, wind, natural gas CHP or a diesel generator.",
+      "selfGeneratedKwh": "State how many kWh the site generated itself in this period."
     }
   },
   "bulkOutcomes": {

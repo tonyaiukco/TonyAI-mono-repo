@@ -1,6 +1,6 @@
 import { formatNumber } from '@/lib/i18n/number';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
-import { isCvBasis, type ActivityRecordDTO, type CvBasis } from '@/lib/types';
+import { isCvBasis, recordParameterShape, type ActivityRecordDTO, type CvBasis } from '@/lib/types';
 
 /**
  * The calorific basis a TR natural gas bill states (ng-kwh-engine), for the
@@ -8,7 +8,7 @@ import { isCvBasis, type ActivityRecordDTO, type CvBasis } from '@/lib/types';
  * stored `cvBasis`, or null for any record that carries none.
  */
 export function reviewCalorificBasis(record: Pick<ActivityRecordDTO, 'category' | 'parameters'>): CvBasis | null {
-  if (record.category !== 'Natural Gas' || record.parameters === null) return null;
+  if (recordParameterShape(record.category) !== 'natural_gas' || record.parameters === null) return null;
   const basis = (record.parameters as { cvBasis?: unknown }).cvBasis;
   return isCvBasis(basis) ? basis : null;
 }

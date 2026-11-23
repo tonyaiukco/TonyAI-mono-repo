@@ -98,3 +98,21 @@ describe('a record\'s calculation inputs in a report (LP4-02 PR5, task 5.3)', ()
     expect(calculationInputs(null, words('en'))).toBe('');
   });
 });
+
+describe('an Electricity self-generation block in a report (self-gen-model, design 5)', () => {
+  // The block's echo: names the report does not word, so it prints nothing.
+  const echo = [
+    { name: 'selfGeneratedKwh', value: 400000, origin: 'user' as const },
+    { name: 'exportedToGridKwh', value: 50000, origin: 'user' as const },
+    { name: 'facilityConsumptionKwh', value: 1000000, origin: 'user' as const },
+  ];
+
+  it.each(['en', 'tr'] as const)('%s prints the same input text with the block as without it, in the report and the issuance', (locale) => {
+    for (const catalogue of [REPORT_CATALOGUES[locale], ISSUANCE_CATALOGUES[locale]]) {
+      const plain = calculationInputs(v3({ category: 'Electricity', parameters: [] }), words(locale, catalogue));
+      const withBlock = calculationInputs(v3({ category: 'Electricity', parameters: echo }), words(locale, catalogue));
+      expect(withBlock).toBe(plain);
+      expect(withBlock).toBe('');
+    }
+  });
+});
