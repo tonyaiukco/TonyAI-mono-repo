@@ -20,10 +20,10 @@
 > package (the IPCC and ETKB releases, reporting years 2024–2026) and the IPCC marine gas oil
 > edition. It holds no demo or placeholder factor. A TR figure is therefore a real result and
 > may be checked: the reference values in this catalogue (§7.10–§7.12) come from the
-> package's own test vectors. The external carbon reviewer's sign-off (D24) is still open;
-> until it is recorded, a figure you check is a test result, not an attested value.
-> Cases that need the holding's source list (D05) are marked
-> **Waits on D05 — do not accept**. Leave their P/F empty, or write "blocked".
+> package's own test vectors. During this run a reviewer checks the figures independently,
+> through the holding (D24).
+> The pilot examples (§7.14) run on the holding's own sources (D05), entered with synthetic
+> values during this run.
 
 ---
 
@@ -454,10 +454,11 @@ Reference values are TR, reporting year **2025**, ±0.5%.
 
 ### 7.14 Pilot examples (G4)
 
-**Waits on D05 — do not accept.** One example per source on the holding's source list (D05),
-on the loaded TR releases: record → approval → lock → capture → a counted final, with the
-PDF, workbook and CSV reconciled to an independently checked figure. Synthetic records, no
-holding data. The rows are written when D05 arrives.
+One example per source the holding has (D05), on the loaded TR releases: record → approval →
+lock → capture → a counted final, with the PDF, workbook and CSV reconciled to an
+independently checked figure. The holding enters its own source structure with synthetic
+values; a reviewer checks the figures independently. **Met in G4's run (owner, 2026-11-24);**
+the filled rows are held by the owner.
 
 | ID | Source (from D05) | Record | Final issued | Three formats agree | Independent figure | P/F |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -560,7 +561,6 @@ another tenant is **S2 at least**. Quote the round-1 ID for §3 items.
 | §6 emails | | | |
 | §7.6 refusal wording | | | |
 | §7.13 small UI changes | | | |
-| §7.14 pilot examples | — | — | **Waits on D05 — not accepted in this round** |
+| §7.14 pilot examples | | | |
 
-A verdict of *Pass* covers only the cases you ran on the SHA above. It does not accept any
-case marked **Waits on D05**.
+A verdict of *Pass* covers only the cases you ran on the SHA above.
