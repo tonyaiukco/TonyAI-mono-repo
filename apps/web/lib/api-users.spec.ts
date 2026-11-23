@@ -62,11 +62,11 @@ describe('LP4-01 user management calls', () => {
     });
   });
 
-  it('accepts an invitation with the invitee session (204, no body)', async () => {
+  it('accepts an invitation with the token it is given, not the session read again (204, no body)', async () => {
     respond(undefined, 204);
-    await expect(api.acceptInvitation()).resolves.toBeUndefined();
+    await expect(api.acceptInvitation('checked-token')).resolves.toBeUndefined();
     expect(call().url.pathname).toBe('/api/v1/invitations/accept');
-    expect((call().init.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect((call().init.headers as Record<string, string>).Authorization).toBe('Bearer checked-token');
   });
 
   it('requests a reset without a session header and reads no body from the 202', async () => {

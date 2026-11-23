@@ -464,7 +464,9 @@ export const api = {
   disableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/disable`, { method: "POST" }),
   enableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/enable`, { method: "POST" }),
   /** The invitee, once `verifyOtp` signed them in (`/auth/confirm`). */
-  acceptInvitation: () => apiFetch<void>("/invitations/accept", { method: "POST" }),
+  /** With the token of the session read that checked who is signed in, never a second read (`acceptOwnInvitation`). */
+  acceptInvitation: (accessToken: string) =>
+    apiFetch<void>("/invitations/accept", { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }),
   /**
    * "Forgot password" — public, so no session header. The API answers 202 with
    * no body for every address (nothing to parse), or 429 past its quota.
