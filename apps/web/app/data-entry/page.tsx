@@ -70,6 +70,7 @@ import {
   gasInputsFromRecord,
   selfGenerationFromRecord,
   selfGenerationToSend,
+  editLeavesParametersToServer,
   gasEnergyIssue,
   gasInputsIssue,
   gasParameters,
@@ -1466,7 +1467,10 @@ function DataEntryPageInner() {
         input: inputPayload,
         // Sent on every edit, null included: a record moved off the TR rules
         // (another category or unit) clears what it no longer takes (D3).
-        parameters: recordParameters,
+        // An Electricity record saved as Electricity sends none, so the API
+        // keeps the self-generation block stored NOW, never the one this form
+        // read when it opened (self-gen-model review).
+        ...(editLeavesParametersToServer(editingTuple?.category ?? null, category) ? {} : { parameters: recordParameters }),
         // The files the band says go (owner decision D1); the API refuses a
         // category change that leaves one attached.
         ...(editMode && plan.detachIds.length > 0 ? { detachEvidenceIds: plan.detachIds } : {}),

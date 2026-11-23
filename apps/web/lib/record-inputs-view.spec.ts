@@ -25,6 +25,7 @@ import {
   gasInputsFromRecord,
   selfGenerationFromRecord,
   selfGenerationToSend,
+  editLeavesParametersToServer,
   gasInputsIssue,
   gasParameters,
   clearsNetEnergyQuantity,
@@ -643,5 +644,20 @@ describe('selfGenerationToSend (self-gen-model, qa-auditor review)', () => {
       parameters: { ...SELF_GENERATION_BLOCK },
     });
     expect(selfGenerationToSend(copied.category, selfGenerationFromRecord(copied))).toEqual(SELF_GENERATION_BLOCK);
+  });
+});
+
+describe('editLeavesParametersToServer (self-gen-model, review of 2c427ed8)', () => {
+  it('leaves an Electricity record saved as Electricity to the server, which keeps the block it holds now', () => {
+    expect(editLeavesParametersToServer('Electricity', 'Electricity')).toBe(true);
+  });
+
+  it('sends parameters for a new record, a move off Electricity, a move onto it, and every other category', () => {
+    expect(editLeavesParametersToServer(null, 'Electricity')).toBe(false);
+    expect(editLeavesParametersToServer('Electricity', 'Natural Gas')).toBe(false);
+    expect(editLeavesParametersToServer('Natural Gas', 'Electricity')).toBe(false);
+    for (const category of ['Natural Gas', 'Refrigerants', 'Fuel', 'Water']) {
+      expect(editLeavesParametersToServer(category, category), category).toBe(false);
+    }
   });
 });

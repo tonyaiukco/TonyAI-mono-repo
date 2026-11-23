@@ -73,7 +73,7 @@ A self-generation block SHALL be accepted only with `generationTopology` `A`. To
 - **THEN** the database refuses the write
 
 ### Requirement: Self-generation fields are bounded
-`selfGeneratedKwh` and `exportedToGridKwh` SHALL be finite numbers of zero or more, `exportedToGridKwh` SHALL NOT exceed `selfGeneratedKwh`, and `facilityConsumptionKwh` SHALL be a finite number above zero. A value outside these bounds, a source or topology outside the named values, or a field the block does not define SHALL be refused with `record_parameters_invalid` (HTTP 400). The database SHALL refuse the same shapes on a direct write.
+Generated and exported kWh SHALL be numbers from 0 to 1e300, exports SHALL NOT exceed the generation, and facility consumption SHALL be a number from 1e-300 to 1e300. Anything else, an unnamed source or topology, or an undefined field SHALL be refused with `record_parameters_invalid` (HTTP 400), and the database SHALL refuse the same shapes.
 
 #### Scenario: Exports above generation
 - **WHEN** an Electricity record carries 400,000 generated kWh and 500,000 exported kWh

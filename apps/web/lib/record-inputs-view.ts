@@ -200,6 +200,24 @@ export function selfGenerationToSend(
   return recordParameterShape(category) === "electricity" ? own : null;
 }
 
+/**
+ * Whether an edit leaves the record's parameters to the server, sending none
+ * (self-gen-model, review of `2c427ed8`): an Electricity record saved as
+ * Electricity. The form shows no field for the self-generation block, so the
+ * block it holds is only what it read when the record opened; sending it would
+ * put back an older block over one corrected, added or removed by another
+ * client since. With `parameters` omitted the API keeps and prices the block
+ * stored at the moment of the save. A move to another category still sends
+ * that category's parameters or null, which the API needs to clear the block.
+ */
+export function editLeavesParametersToServer(storedCategory: string | null, category: string): boolean {
+  return (
+    storedCategory !== null &&
+    recordParameterShape(storedCategory) === "electricity" &&
+    recordParameterShape(category) === "electricity"
+  );
+}
+
 /** The source of a copy of a voided record, as `onOwnType` reads it (ng-kwh-engine). */
 export interface CopySource {
   category: string;

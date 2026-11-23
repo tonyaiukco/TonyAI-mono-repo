@@ -44,7 +44,7 @@ None.
 - `emission-calculation`:
   - MODIFIED *Calculations write the new snapshot, and TR rules follow geography*: an Electricity record's self-generation block is accepted in any geography.
   - ADDED requirements for the block's shape, its refusals, the unchanged Scope 2 figure and the snapshot echo.
-- `activity-data-entry`: ADDED *Data Entry carries a stored self-generation block*.
+- `activity-data-entry`: ADDED *Data Entry keeps a stored self-generation block*.
 
 ## Impact
 

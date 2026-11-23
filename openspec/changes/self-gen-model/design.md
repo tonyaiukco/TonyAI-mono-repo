@@ -91,12 +91,18 @@ The inputs are `selfGeneratedKwh`, then `exportedToGridKwh` and `facilityConsump
 - A PATCH that changes the block recalculates, because `sameEngineInputs` already compares the normalised parameters.
 - Report and issuance text ignores unknown input names, so no report output changes and no renderer version is bumped. A test holds that.
 
-### 6. Data Entry carries the block; it does not show it
+### 6. Data Entry never erases or reverts the block; it does not show it
 
-A pure helper, `selfGenerationFromRecord(record)`, returns the block of an Electricity record or null. The page keeps it as the opened or copied record's own block (`ownSelfGeneration`, set and cleared with `ownBasis`), and `recordParameters` sends it while the category is Electricity (`selfGenerationToSend`). Another category sends none. It is cleared on a new record and on form reset. A subsidiary or unit change keeps it, because the block is geography-free and its fields are always kWh. *(Revised in review, `qa-auditor`: the first version cleared the block on any category change, so a category picked by mistake and undone erased it on the next save, invisibly, since the form shows no field for it. The block now belongs to the record, as its own basis does, and comes back with Electricity.)*
+The form shows no field for the block, so the only block it holds is the one it read when the record opened. It therefore never writes that block back over the stored one:
 
-- **Why now and not in `self-gen-form`:** between the two changes, an Electricity record with a block edited on the web would lose it on the first save, with no error.
-- **Alternative rejected:** sending `parameters` only when the form owns them (omitting the key for Electricity). The API then keeps the stored value, but a category change away from Electricity would be refused, because the service refuses rather than clears another category's parameters.
+- **An edit saved as Electricity sends no `parameters`** (`editLeavesParametersToServer(storedCategory, category)`). The API then keeps, and prices with, the block stored at the moment of the save, including one corrected, added or removed by another client after the form opened.
+- **A save that moves the record to another category** sends that category's parameters or null, which the API needs: it refuses rather than clears another category's parameters.
+- **A copy of a voided record** is a create, so it sends the copied block (`selfGenerationFromRecord`, kept as `ownSelfGeneration` with `ownBasis`).
+- **A preview** sends the opened or copied record's block while the category is Electricity (`selfGenerationToSend`); the block changes no figure, so a stale block in a preview misprices nothing.
+
+- **Why now and not in `self-gen-form`:** between the two changes, an Electricity record with a block edited on the web would otherwise lose it on the first save, with no error.
+- *(Revised twice in review.)* The first version sent the opened block with every save and cleared it on a category change. `qa-auditor` found that a category picked by mistake and undone then erased the block; the block became the record's own. The outside review of `2c427ed8` found that sending it at all put back an older block over one corrected elsewhere, and erased one added elsewhere to a record opened without one: the server's lock check sees only changes made during the PATCH. Leaving the parameters of an Electricity-to-Electricity edit to the server removes both, with no new API contract. The alternative, a version the form sends and the API checks (409 when stale), would also cover the record's other fields, which are last-write-wins today; it is filed under Open questions.
+- **Alternative rejected (the first design's):** omitting `parameters` for every Electricity save, the moves included. A move away from Electricity must send null, or the API refuses it.
 
 ### 7. Three sentences, no new code
 
@@ -120,7 +126,11 @@ v2.5 gives GV-SG-2 no generated kWh, and the block requires one. The test uses 4
 
 1. The migration redefines the CHECK. It accepts a superset of what it accepted, so it is safe to apply before the API deploys, and a pre-change API keeps working against it.
 2. The API and the web deploy together, as usual.
-3. **Rollback:** redeploy the previous images. The CHECK stays: the old API refuses a block at its DTO, and a stored block is still valid data. Rolling the CHECK itself back needs no Electricity record holding a block.
+3. **Rollback: not safe by images alone once a block is stored** (outside review of `2c427ed8`). The previous web sends `parameters: null` on every Electricity save, and the previous API stores it, so the first ordinary edit of a draft or rejected record that holds a block erases the block and rewrites its calculation without the echo. Submitted, approved and locked records are frozen by the trigger and unaffected. Before redeploying the previous images:
+   - count the records at risk: `SELECT count(*) FROM activity_records WHERE category = 'Electricity' AND parameters IS NOT NULL AND status IN ('draft', 'rejected');`
+   - if the count is 0, redeploy the previous images; the CHECK stays (the old API refuses a block at its DTO, and a stored block is still valid data);
+   - if it is not 0, roll forward with a fix instead, or copy those rows' `id` and `parameters` out first and tell their authors not to edit them until a compatible version is back.
+   Rolling the CHECK itself back needs no Electricity record holding a block.
 
 No backfill and no data change. No record goes stale.
 

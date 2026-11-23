@@ -41,6 +41,9 @@ const MESSAGES = {
  * gets a 400 here, never the CHECK's 23514 as a 500.
  */
 export function assertSelfGeneration(parameters: object): ElectricityRecordParameters {
+  if (typeof parameters !== 'object' || Array.isArray(parameters)) {
+    throw new CalculationInputError('record_parameters_invalid', 'Record parameters are an object or null.');
+  }
   const unknown = Object.keys(parameters).filter((key) => !(SELF_GENERATION_KEYS as readonly string[]).includes(key));
   if (unknown.length > 0) {
     throw new CalculationInputError('record_parameters_invalid', 'An Electricity record takes only a self-generation block.');

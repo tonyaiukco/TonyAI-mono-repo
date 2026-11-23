@@ -5,9 +5,12 @@ import enPeriods from '../apps/web/messages/en/periods.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
+  APPROVER_EMAIL,
   E2E_PERIOD,
   E2E_YEAR,
   SUB,
+  approveRecord,
+  attachEvidence,
   bearer,
   deleteRecordsAsService,
   getAccessToken,
@@ -20,9 +23,11 @@ import {
  * Electricity record may carry a self-generation block, which the form does
  * not show yet (`self-gen-form`). Data Entry must carry a stored block through
  * every save while the record stays Electricity, or the first web edit would
- * erase it with no error; a category picked by mistake and undone keeps it; a
- * move to another category drops it; a plain grid record still sends no
- * parameters.
+ * erase it with no error. An edit saved as Electricity sends no parameters,
+ * so the server keeps the block it holds at the save, including one corrected
+ * or added by another client after the form opened (review of `2c427ed8`); a
+ * preview and a copy of a voided record send the record's own block; a move
+ * to another category drops it; a new grid record still sends no parameters.
  *
  * The block is geography-free and never priced, so the lane is a UK one, where
  * the seed prices Electricity and Natural Gas in kWh on every CI run.
@@ -59,7 +64,7 @@ const listOf = (page: Page) => page.locator('[data-testid="previous-submissions"
 const editButton = (page: Page) => listOf(page).getByRole('button', { name: new RegExp(`^Edit ${PERIOD} ${E2E_YEAR} Electricity`) });
 const quantity = (page: Page) => page.getByPlaceholder('e.g. 45000');
 
-async function draftWithBlock(request: APIRequestContext, token: string): Promise<string> {
+async function draftWithBlock(request: APIRequestContext, token: string, parameters: unknown = BLOCK): Promise<string> {
   const res = await request.post(`${API_BASE}/activity-records`, {
     headers: bearer(token),
     data: {
@@ -72,13 +77,27 @@ async function draftWithBlock(request: APIRequestContext, token: string): Promis
       activityValue: 5000,
       activityUnit: 'kWh',
       varianceReason: null,
-      parameters: BLOCK,
+      parameters,
     },
   });
   expect(res.status(), await res.text()).toBe(201);
   const id = (await res.json()).id as string;
   created.push(id);
   return id;
+}
+
+/** The next preview the page asks for whose body carries a self-generation block. */
+const previewWithBlock = (page: Page) =>
+  page.waitForRequest((r) => {
+    if (r.method() !== 'POST' || !new URL(r.url()).pathname.endsWith('/calculations/preview')) return false;
+    const body = r.postDataJSON() as { parameters?: { selfGeneratedKwh?: unknown } | null };
+    return body.parameters?.selfGeneratedKwh !== undefined;
+  });
+
+/** Another client's edit of the same draft, through the API. */
+async function patchElsewhere(request: APIRequestContext, token: string, id: string, data: Record<string, unknown>) {
+  const res = await request.patch(`${API_BASE}/activity-records/${id}`, { headers: bearer(token), data });
+  expect(res.ok(), await res.text()).toBe(true);
 }
 
 async function read(request: APIRequestContext, token: string, id: string) {
@@ -121,10 +140,14 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   const id = await draftWithBlock(request, token);
   expect((await read(request, token, id)).parameters).toEqual(BLOCK);
 
+  const preview = previewWithBlock(page);
   await openDraft(page);
+  // The preview sends the opened record's block; it changes no figure.
+  expect((await preview).postDataJSON().parameters).toEqual(BLOCK);
   await quantity(page).fill('5200');
   const first = (await save(page, 'PATCH')).body;
-  expect(first.parameters).toEqual(BLOCK);
+  // An edit saved as Electricity leaves the block to the server.
+  expect(first).not.toHaveProperty('parameters');
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   expect(await read(request, token, id)).toMatchObject({ activityValue: 5200, activityUnit: 'kWh', parameters: BLOCK });
 
@@ -134,7 +157,7 @@ test('a stored block survives a quantity edit and a move to MWh on Data Entry', 
   await expect(quantity(page)).toHaveValue('');
   await quantity(page).fill('5.2');
   const second = (await save(page, 'PATCH')).body;
-  expect(second.parameters).toEqual(BLOCK);
+  expect(second).not.toHaveProperty('parameters');
   // The first save's toast may still be on screen beside this one.
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   const saved = await read(request, token, id);
@@ -161,7 +184,8 @@ test('a category picked by mistake and undone keeps the block; a move to Natural
   await pickUnit(page, 'kWh');
   await quantity(page).fill('5100');
   const undone = (await save(page, 'PATCH')).body;
-  expect(undone).toMatchObject({ category: 'Electricity', parameters: BLOCK });
+  expect(undone).toMatchObject({ category: 'Electricity' });
+  expect(undone).not.toHaveProperty('parameters');
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   expect(await read(request, token, id)).toMatchObject({ category: 'Electricity', activityValue: 5100, parameters: BLOCK });
 
@@ -175,6 +199,67 @@ test('a category picked by mistake and undone keeps the block; a move to Natural
   expect(body.parameters ?? null).toBeNull();
   await expect(page.getByText(SAVED, { exact: true }).last()).toBeVisible();
   expect(await read(request, token, id)).toMatchObject({ category: 'Natural Gas', activityUnit: 'kWh', parameters: null });
+});
+
+test('a block corrected by another client while the form is open is kept by the save', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  await openDraft(page);
+
+  const corrected = { ...BLOCK, selfGeneratedKwh: 5000 };
+  await patchElsewhere(request, token, id, { parameters: corrected });
+
+  await quantity(page).fill('5300');
+  const { body } = await save(page, 'PATCH');
+  expect(body).not.toHaveProperty('parameters');
+  const saved = await read(request, token, id);
+  expect(saved).toMatchObject({ activityValue: 5300, parameters: corrected });
+  expect(saved.calculation.parameters).toContainEqual({ name: 'selfGeneratedKwh', value: 5000, origin: 'user' });
+});
+
+test('a block added by another client to a draft opened without one is kept by the save', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token, null);
+  await openDraft(page);
+
+  await patchElsewhere(request, token, id, { parameters: BLOCK });
+
+  await quantity(page).fill('5300');
+  const { body } = await save(page, 'PATCH');
+  expect(body).not.toHaveProperty('parameters');
+  expect(await read(request, token, id)).toMatchObject({ activityValue: 5300, parameters: BLOCK });
+});
+
+test('a voided record copied to a new draft keeps its block', async ({ page, request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await draftWithBlock(request, token);
+  // Electricity needs its evidence at submit and approval (K3); a second
+  // super_admin approves, since nobody approves their own record (D01).
+  await attachEvidence(request, token, id);
+  const submitted = await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(token) });
+  expect(submitted.ok(), await submitted.text()).toBe(true);
+  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
+  const voided = await request.post(`${API_BASE}/activity-records/${id}/void`, {
+    headers: bearer(token),
+    data: { voidReason: 'e2e: copied to a new draft' },
+  });
+  expect(voided.ok(), await voided.text()).toBe(true);
+
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/data-entry');
+  await pickByFieldLabel(page, enDataEntry.subsidiary, SUBSIDIARY_OPTION);
+  await pickByFieldLabel(page, enDataEntry.reportingYear, String(E2E_YEAR));
+  const preview = previewWithBlock(page);
+  await listOf(page).getByRole('button', { name: new RegExp(`^Copy ${PERIOD} ${E2E_YEAR} Electricity`) }).click();
+  await expect(page.getByText(enDataEntry.copy.loaded)).toBeVisible();
+  expect((await preview).postDataJSON().parameters).toEqual(BLOCK);
+
+  const { body, response } = await save(page, 'POST');
+  expect(response.status()).toBe(201);
+  const copyId = (await response.json()).id as string;
+  created.push(copyId);
+  expect(body.parameters).toEqual(BLOCK);
+  expect(await read(request, token, copyId)).toMatchObject({ status: 'draft', category: 'Electricity', parameters: BLOCK });
 });
 
 test('a plain grid record is saved with no parameters, as before', async ({ page, request }) => {

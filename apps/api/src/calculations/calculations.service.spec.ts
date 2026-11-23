@@ -2436,6 +2436,10 @@ describe('CalculationsService.compute — an Electricity self-generation block (
       ['a facility consumption of 0', block({ facilityConsumptionKwh: 0 })],
       ['a generation past the CHECK\'s bound', block({ selfGeneratedKwh: 1e308 })],
       ['a non-finite generation', block({ selfGeneratedKwh: Number.POSITIVE_INFINITY })],
+      // Raw keys are checked before null fields are dropped (review of 2c427ed8).
+      ['a gas key whose value is null', { ncvKcalPerSm3: null }],
+      ['an unknown key whose value is null, beside a block', block({ avoidedKgCo2e: null })],
+      ['a list', [] as unknown as ElectricityRecordParameters],
     ])('record_parameters_invalid for %s', async (_what, parameters) => {
       const r = await refusal({ ...grid, parameters: parameters as never });
       expect(r?.error).toBeInstanceOf(CalculationInputError);

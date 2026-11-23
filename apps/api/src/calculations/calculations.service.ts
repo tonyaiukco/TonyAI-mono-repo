@@ -415,7 +415,14 @@ export class CalculationsService {
         `${input.category} in ${input.geographyCode} takes no record parameters.`,
       );
     }
-    const selfGeneration = isElectricity && parameters !== null ? assertSelfGeneration(parameters) : null;
+    // Checked on the RAW object, before null fields are dropped: a key the block
+    // does not define is refused even when its value is null, as the DTO and
+    // the CHECK refuse it (review of `2c427ed8`).
+    const rawParameters: unknown = input.parameters;
+    const selfGeneration =
+      isElectricity && rawParameters !== null && rawParameters !== undefined
+        ? assertSelfGeneration(rawParameters as object)
+        : null;
     const coverage: CoverageKey = {
       category: input.category,
       activityType: factorActivityTypeFor(input.category, recordType),
