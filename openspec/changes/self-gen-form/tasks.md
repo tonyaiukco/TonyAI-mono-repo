@@ -60,8 +60,8 @@
 
 ## 5. End to end
 
-- [ ] 5.1 Rework `e2e/electricity-self-generation.spec.ts` with the `e2e-flow` skill. The edit cases that assert `not.toHaveProperty('parameters')` now assert the body's block equals the form's; the three stale-form cases, the version-less client case and the three `078ca233` cases keep their outcomes. Reword the file's header comment. Verify: the file passes locally on built, capped servers with CI's `RATE_*` env.
-- [ ] 5.2 Add form cases to the same file, in its lane (grep `e2e/` for the site, the category and `lockPeriod` before adding a record):
+- [x] 5.1 Rework `e2e/electricity-self-generation.spec.ts` with the `e2e-flow` skill. The edit cases that assert `not.toHaveProperty('parameters')` now assert the body's block equals the form's; the three stale-form cases, the version-less client case and the three `078ca233` cases keep their outcomes. Reword the file's header comment. Verify: the file passes locally on built, capped servers with CI's `RATE_*` env.
+- [x] 5.2 Add form cases to the same file, in its lane (grep `e2e/` for the site, the category and `lockPeriod` before adding a record):
   - a new record: choose solar, enter the generation, save → the stored block has topology `A`;
   - a source without a generation figure → no preview request is sent and the save buttons are disabled;
   - exports above generation hold the save; equal exports save;
@@ -71,14 +71,14 @@
   - a move to Natural Gas in Edit mode shows the notice, and the move back shows the block.
 
   Verify: the file passes, and each new test fails when its behaviour is disabled on the page (commit before any mutation; restore with `git checkout --`).
-- [ ] 5.3 Add review-sheet cases (in this file, or beside `e2e/review-shows-gas.spec.ts` if the lane fits better): a submitted Electricity record with a CHP block and no gas record shows the block and the missing-fuel notice and can be approved by the second super_admin; with a gas draft at the same site and year the notice is absent; a block with a balance gap shows the balance notice. Verify: the cases pass and delete every record they create.
-- [ ] 5.4 Run the neighbouring specs that share Data Entry and the review sheet: `natural-gas-energy-bill`, `record-edit`, `void-record`, `data-entry-tr-inputs`, `review-queue`, `review-shows-gas`. Verify: all pass.
+- [x] 5.3 Add review-sheet cases (in this file, or beside `e2e/review-shows-gas.spec.ts` if the lane fits better): a submitted Electricity record with a CHP block and no gas record shows the block and the missing-fuel notice and can be approved by the second super_admin; with a gas draft at the same site and year the notice is absent; a block with a balance gap shows the balance notice. Verify: the cases pass and delete every record they create.
+- [x] 5.4 Run the neighbouring specs that share Data Entry and the review sheet: `natural-gas-energy-bill`, `record-edit`, `void-record`, `data-entry-tr-inputs`, `review-queue`, `review-shows-gas`. Verify: all pass.
 
 ## 6. Integration and review
 
 - [ ] 6.1 Run `pnpm typecheck`, `pnpm build`, `pnpm test` and `pnpm lint` (ignoring `.claude/worktrees`), then the whole local e2e suite once. Verify: all pass, with the counts recorded for the PR description.
 - [ ] 6.2 Exercise the live local API: list and read an Electricity record with a CHP block before a Natural Gas draft is created at its site, after it is created and after it is deleted, and read it as a user of another organisation. Verify: `generationFuelRecord` reads `missing`, `present`, then `missing` again, and the other organisation gets 404; `audit_log` holds no row for any read and no `generationFuelRecord` in any written row.
-- [ ] 6.3 Update `docs/md_docs/calculation_logic.md` (§2.3: the form, the energy balance rule with its 5% and its two warning conditions, the fuel-record notice, D8's import statement). Verify: the section states that neither the balance nor the notice blocks or changes a figure.
+- [x] 6.3 Update `docs/md_docs/calculation_logic.md` (§2.3: the form, the energy balance rule with its 5% and its two warning conditions, the fuel-record notice, D8's import statement). Verify: the section states that neither the balance nor the notice blocks or changes a figure.
 - [ ] 6.4 Spawn `security-rls`, `qa-auditor` and `architect` in parallel on the branch diff, each on its own `git archive` copy, with self-contained prompts; only one seat runs `test:int`. Ask what each verified. Probes to name: the lookup's scope (another organisation, an inaccessible subsidiary, the accessible-set filter removed by mutation); the form writing a block over a newer one; the save gate against the API's refusals; the DTO field on every answer. Fix correctness, security and data-integrity findings; file the rest under Open questions. Verify: each seat's report is summarised for the PR description.
 - [ ] 6.5 Update `docs/roadmap_docs/project_status_roadmap_phases.md` in the same PR: a Current status entry (moving the oldest to Archive if it is the eleventh), the LP4-07 card's second box, the ledger row, Next up item 4, and Open questions, where the four `self-gen-model` review notes this change closes are removed (snapshot input names, the two comments, the category move, the `record_changed` sentence) and the design's two open questions are added. Verify: Part A, the ledger row and the LP4-07 card agree, and the other review notes are still filed.
 
