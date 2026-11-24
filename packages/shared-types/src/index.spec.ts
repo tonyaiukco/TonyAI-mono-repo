@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   isProvenanceSnapshot,
+  refrigerantTermMassKg,
+  type RefrigerantTerm,
   CATEGORY_ACTIVITY_TYPES,
   ENERGY_BALANCE_TOLERANCE,
   GENERATION_FUEL_RECORD_STATES,
@@ -760,6 +762,33 @@ describe('computeAnomalyVerdict', () => {
     // an anomaly as a spike, and a one-sided comparison would miss a meter
     // that stopped reporting.
     expect(computeAnomalyVerdict(1, [10, 10, 10]).anomalous).toBe(true);
+  });
+});
+
+describe('refrigerantTermMassKg', () => {
+  const term: RefrigerantTerm = {
+    equipmentType: 'fire_suppression_system',
+    leakRateChoice: 'default',
+    capacityKg: 50,
+    leakRate: 0.02,
+    leakedKg: 1,
+    refillKg: 35,
+  };
+
+  it('uses the refill alone for a marked line', () => {
+    expect(refrigerantTermMassKg({ ...term, pricedBy: 'refill' })).toBe(35);
+  });
+
+  it('preserves the estimate plus refill for an unmarked historical line', () => {
+    expect(refrigerantTermMassKg(term)).toBe(36);
+  });
+
+  it('uses the capacity estimate when there is no refill', () => {
+    expect(refrigerantTermMassKg({ ...term, refillKg: 0 })).toBe(1);
+  });
+
+  it('uses the refill when there is no capacity', () => {
+    expect(refrigerantTermMassKg({ ...term, capacityKg: 0, leakedKg: 0 })).toBe(35);
   });
 });
 

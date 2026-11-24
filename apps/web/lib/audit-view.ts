@@ -27,8 +27,7 @@ export type AuditBatchKey =
  * - a **deleted profile** (`userId` set, no name or email) means a person did
  *   this and their account was later removed. Identity is joined at read time,
  *   which is what makes erasure work while the opaque id survives.
- * - a **null actor** means no person was involved at all. `pnpm
- *   anomaly:recompute` writes `rescore` rows that way.
+ * - a **null actor** identifies a system action such as `rescore` or `reprice`.
  *
  * Rendering the second as "deleted user" tells a reader of a compliance trail
  * something untrue about both — that someone acted, and that their account is
@@ -49,6 +48,11 @@ export function actorLabel(
   return named === null || named === undefined
     ? { text: words.deleted, muted: true }
     : { text: named, muted: false };
+}
+
+/** Use the localized reprice label and keep the caller's display of other actions. */
+export function auditActionLabel(action: string, repriceLabel: string, fallbackLabel = action): string {
+  return action === 'reprice' ? repriceLabel : fallbackLabel;
 }
 
 /**
