@@ -90,7 +90,9 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(steps[i]['uses'], 'azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6')
         # Gates: head -> login/plan; plan -> buildx/build/CI wait; CI (re-checked head) -> everything that changes QA.
         # pre-g5-security-hardening: the owner-applied Auth policy, after head and before any login.
-        policy = next(i for i, s in enumerate(steps) if 'qa_autodeploy.py auth-policy' in s.get('run', ''))
+        policies = [i for i, s in enumerate(steps) if 'qa_autodeploy.py auth-policy' in s.get('run', '')]
+        self.assertEqual(len(policies), 1, 'the auth-policy gate must run exactly once')
+        policy = policies[0]
         self.assertTrue(index['head'] < policy < login[0])
         self.assertEqual(steps[policy]['run'], 'python3 infra/scripts/qa_autodeploy.py auth-policy')
         self.assertEqual(steps[policy]['env'], {'QA_AUTH_POLICY_DIGEST': '${{ vars.QA_AUTH_POLICY_DIGEST }}'})
