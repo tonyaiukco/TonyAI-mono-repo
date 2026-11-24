@@ -36,4 +36,4 @@
 ## Workflow follow-up
 
 - Open the PR for the owner to merge; QA retests BUG-09, BUG-10, BUG-11, BUG-15 (screen part) and BUG-16 on the deployed revision.
-- Archive the change after the merge and record the QA revision in the sprint ledger.
+- Archived in the PR at the owner's request (2026-11-24). Record the QA revision in the sprint ledger after the deploy.
