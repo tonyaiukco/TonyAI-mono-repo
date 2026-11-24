@@ -324,9 +324,14 @@ export class AccessAdminService {
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         // Another tenant took the address between the lookup and the insert:
-        // the same refusal, audited in a transaction of its own.
+        // the same refusal, audited in a transaction of its own. The lock was
+        // released with the first transaction, so the bound is counted again
+        // under it: another request of this organisation may have used the
+        // last refusal meanwhile (Codex review).
         await this.prisma.$transaction(async (tx) => {
-          await this.recordInviteRefusal(tx, await lockAndReadActor(tx, actor, organisationId));
+          const admin = await lockAndReadActor(tx, actor, organisationId);
+          await assertInviteRefusalBound(tx, organisationId);
+          await this.recordInviteRefusal(tx, admin);
         });
         throw new EmailUnavailableError();
       }

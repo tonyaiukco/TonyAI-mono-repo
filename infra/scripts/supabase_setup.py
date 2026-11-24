@@ -13,6 +13,7 @@ from runtime_urls import transfer_urls
 from supabase_keys import select_keys
 from secure_transport import Vault, json_request
 from supabase_project import ensure_project
+from auth_settings import auth_policy_digest
 from supabase_auth import configure_auth, ensure_signing_key
 
 
@@ -78,6 +79,8 @@ def run(args):
                 raise SafeFailure('Auth reconciliation needs exactly one active asymmetric signing key; inspect before rotating.')
             configure_auth(api, ref, config['web_origin'], public, active[0]['id'], public_web_host=config.get('public_web_host'))
             print('PASS: existing hosted Auth policy and public JWKS reconciled; no secret transfer or key rotation.')
+            # Printed only after configure_auth's private readback passed (pre-g5-security-hardening).
+            print('Auth policy digest (record as the QA variable QA_AUTH_POLICY_DIGEST): ' + auth_policy_digest())
             return
         if journal.data.get('configured'):
             print('PASS: initial setup already completed; use verification/rotation runbooks for subsequent changes.')
@@ -87,6 +90,7 @@ def run(args):
         configure_auth(api, ref, config['web_origin'], public, signing, public_web_host=config.get('public_web_host'))
         journal.set(versions=versions, configured=True)
         print('PASS: Stockholm project, private buckets, Auth/JWKS and vault bindings reconciled.')
+        print('Auth policy digest (record as the QA variable QA_AUTH_POLICY_DIGEST): ' + auth_policy_digest())
         print('Project reference: ' + ref + '; version IDs are in the nonsecret journal.')
     finally:
         journal.close()

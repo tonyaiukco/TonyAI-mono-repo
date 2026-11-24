@@ -1420,6 +1420,10 @@ export type PasswordSetFlow = (typeof PASSWORD_SET_FLOWS)[number];
  */
 export interface RecordPasswordSetRequest {
   flow: PasswordSetFlow;
+  /** One id per password change, kept through the web's repeats, so a repeat
+   *  whose first try was recorded but whose answer was lost writes no second
+   *  row (Codex review). A UUID. */
+  changeId: string;
 }
 
 // ---------------------------------------------------------------------------

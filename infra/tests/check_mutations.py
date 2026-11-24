@@ -121,6 +121,9 @@ MUTANTS = [
     ('qa deploy persists checkout token', '.github/workflows/deploy-qa.yml', '          persist-credentials: false\n', '          persist-credentials: true\n'),
     ('qa deploy ungated build', '.github/workflows/deploy-qa.yml', "      - name: Build, push and scan both images (in parallel with CI)\n        if: steps.plan.outputs.deploy == 'true'\n", '      - name: Build, push and scan both images (in parallel with CI)\n'),
     ('qa deploy main head check removed', 'qa_autodeploy.py', '    if sha != head:', '    if False:'),
+    ('qa deploy owner auth policy record ignored', 'qa_autodeploy.py', '    if recorded != expected:', '    if False:'),
+    ('qa deploy auth policy step removed', '.github/workflows/deploy-qa.yml', '        run: python3 infra/scripts/qa_autodeploy.py auth-policy\n', '        run: "true"\n'),
+    ('auth policy digest ignores a setting', 'auth_settings.py', "    for key in ('site_url', 'uri_allow_list'):", "    for key in ('site_url', 'uri_allow_list', 'security_update_password_require_reauthentication'):"),
     ('qa deploy drift check removed', 'qa_autodeploy.py', '    if comparable(before) != comparable(after):', '    if False:'),
     ('qa deploy rollback removed', 'qa_autodeploy.py', '                update(foundation, kind, before[kind], previous, rid + \'-rb\', source, read, patch, sleep, attempts)\n', ''),
     # QA deploy run 42889302849: listings are now read page by page, and each page link is validated.

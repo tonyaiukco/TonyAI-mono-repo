@@ -87,6 +87,8 @@ describe('POST /security/csp-reports (pre-g5-security-hardening)', () => {
   it('refuses another media type with 415 and an oversized body with 413, never a 500', async () => {
     const url = await boot();
     expect((await post(url, report, 'text/plain')).status).toBe(415);
+    // Not a form either, which every other route admits (Codex review).
+    expect((await post(url, 'csp-report=x', 'application/x-www-form-urlencoded')).status).toBe(415);
     const big = JSON.stringify({ 'csp-report': { 'document-uri': 'x'.repeat(CSP_REPORT_BODY_MAX_BYTES) } });
     expect((await post(url, big, 'application/csp-report')).status).toBe(413);
   });

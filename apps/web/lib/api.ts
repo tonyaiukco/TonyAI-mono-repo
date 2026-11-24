@@ -470,11 +470,11 @@ export const api = {
    * (`pre-g5-security-hardening`). With the token of the session read that
    * checked who is signed in (`recordPasswordSet`), never a second read.
    */
-  recordPasswordSet: (flow: PasswordSetFlow, accessToken: string) =>
+  recordPasswordSet: (flow: PasswordSetFlow, changeId: string, accessToken: string) =>
     apiFetch<void>("/me/password-set", {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ flow } satisfies RecordPasswordSetRequest),
+      body: JSON.stringify({ flow, changeId } satisfies RecordPasswordSetRequest),
     }),
   /**
    * The invitee, once `verifyOtp` signed them in (`/auth/confirm`). With the

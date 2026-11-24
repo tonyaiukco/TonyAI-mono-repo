@@ -111,7 +111,9 @@ test.describe('self-service registration', () => {
     // Three tries on the confirm step, then three on the password step.
     expect(acceptCalls).toBe(6);
     // The new password is on the account's own trail, as the account (pre-g5-security-hardening).
-    await expect.poll(() => auditRowsFor('password_set', account.profileId)).toEqual([{ userId: account.profileId, diff: { flow: 'invite' } }]);
+    await expect.poll(() => auditRowsFor('password_set', account.profileId)).toEqual([
+      { userId: account.profileId, diff: { flow: 'invite', changeId: expect.stringMatching(/^[0-9a-f-]{36}$/) } },
+    ]);
     expect((await registeredAccount(email))?.invitationStatus).toBe('sent');
 
     await page.getByTestId('sign-out').click();

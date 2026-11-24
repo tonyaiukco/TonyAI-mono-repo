@@ -15,6 +15,10 @@ export type EmailLinkFlow = PasswordSetFlow;
 
 export interface EmailLinkMarker {
   userId: string;
+  /** The Auth session the link opened (`session_id` in its token): another
+   *  sign-in by the same person, in the same tab, is a new session and finds
+   *  no marker (Codex review). */
+  sessionId: string;
   flow: EmailLinkFlow;
   /** When the link was verified, in epoch milliseconds. */
   at: number;
@@ -26,6 +30,19 @@ export const EMAIL_LINK_MARKER_TTL_MS = 60 * 60 * 1000;
 
 type MarkerStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
+/** An Auth access token's `session_id` claim, or null when it has none or cannot be read. */
+export function sessionIdOf(accessToken: string | undefined): string | null {
+  try {
+    const payload = accessToken?.split(".")[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(payload.length / 4) * 4, "="));
+    const claim = (JSON.parse(json) as { session_id?: unknown }).session_id;
+    return typeof claim === "string" && claim.length > 0 ? claim : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The tab's storage, or none where it cannot be reached. */
 export function tabStorage(): MarkerStorage | null {
   try {
@@ -35,17 +52,29 @@ export function tabStorage(): MarkerStorage | null {
   }
 }
 
-export function writeEmailLinkMarker(storage: MarkerStorage | null, userId: string, flow: EmailLinkFlow, now = Date.now()): void {
+export function writeEmailLinkMarker(
+  storage: MarkerStorage | null,
+  userId: string,
+  sessionId: string | null,
+  flow: EmailLinkFlow,
+  now = Date.now(),
+): void {
+  if (!sessionId) return;
   try {
-    storage?.setItem(EMAIL_LINK_MARKER_KEY, JSON.stringify({ userId, flow, at: now }));
+    storage?.setItem(EMAIL_LINK_MARKER_KEY, JSON.stringify({ userId, sessionId, flow, at: now }));
   } catch {
     // No marker: the set-password screen then asks for the link again.
   }
 }
 
-/** The marker for `userId`, when it is this user's and under an hour old; otherwise null. */
-export function readEmailLinkMarker(storage: MarkerStorage | null, userId: string | undefined, now = Date.now()): EmailLinkMarker | null {
-  if (!storage || !userId) return null;
+/** The marker for this user's very session, when it is under an hour old; otherwise null. */
+export function readEmailLinkMarker(
+  storage: MarkerStorage | null,
+  userId: string | undefined,
+  sessionId: string | null,
+  now = Date.now(),
+): EmailLinkMarker | null {
+  if (!storage || !userId || !sessionId) return null;
   let value: unknown;
   try {
     const raw = storage.getItem(EMAIL_LINK_MARKER_KEY);
@@ -56,12 +85,12 @@ export function readEmailLinkMarker(storage: MarkerStorage | null, userId: strin
   }
   if (value === null || typeof value !== "object") return null;
   const marker = value as Partial<EmailLinkMarker>;
-  if (marker.userId !== userId) return null;
+  if (marker.userId !== userId || marker.sessionId !== sessionId) return null;
   if (!isPasswordSetFlow(marker.flow)) return null;
   if (typeof marker.at !== "number" || !Number.isFinite(marker.at)) return null;
   const age = now - marker.at;
   if (age < 0 || age >= EMAIL_LINK_MARKER_TTL_MS) return null;
-  return { userId, flow: marker.flow, at: marker.at };
+  return { userId, sessionId, flow: marker.flow, at: marker.at };
 }
 
 export function clearEmailLinkMarker(storage: MarkerStorage | null): void {

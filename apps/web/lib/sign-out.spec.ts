@@ -139,13 +139,13 @@ describe('the session wiring', () => {
 
   it('the email link marks the tab for its user before going on, and set-password reads it (pre-g5-security-hardening)', () => {
     const confirm = read('app/auth/confirm/confirm-email-link.tsx');
-    expect(confirm).toMatch(/if \(data\.user\) writeEmailLinkMarker\(tabStorage\(\), data\.user\.id, type\);/);
+    expect(confirm).toMatch(/if \(data\.user\) writeEmailLinkMarker\(tabStorage\(\), data\.user\.id, sessionIdOf\(data\.session\?\.access_token\), type\);/);
     expect(confirm.indexOf('writeEmailLinkMarker(')).toBeGreaterThan(confirm.indexOf('verifyOtp('));
     expect(confirm.indexOf('writeEmailLinkMarker(')).toBeLessThan(confirm.indexOf('router.replace('));
 
     const form = read('app/auth/set-password/set-password-form.tsx');
     // The form needs the marker for the session's own user; the flow is the marker's.
-    expect(form).toMatch(/readEmailLinkMarker\(tabStorage\(\), data\.session\.user\.id\)/);
+    expect(form).toMatch(/readEmailLinkMarker\(tabStorage\(\), data\.session\.user\.id, sessionIdOf\(data\.session\.access_token\)\)/);
     expect(form).toMatch(/if \(access\.kind !== "ready"\) return;/);
     expect(form).toMatch(/if \(linkFlow === "recovery"\)/);
     expect(form).not.toMatch(/if \(flow === "recovery"\)/);
@@ -164,6 +164,12 @@ describe('the session wiring', () => {
     const submit = form.slice(form.indexOf('async function onSubmit'));
     expect(submit.indexOf('readEmailLinkMarker(')).toBeGreaterThan(-1);
     expect(submit.indexOf('readEmailLinkMarker(')).toBeLessThan(submit.indexOf('updateUser('));
+    // The password and the other sessions' sign-out go through Auth bound to the
+    // checked session, never the shared client, which reads the session again (Codex P1).
+    expect(submit).toMatch(/auth = await authForCheckedSession\(current\);/);
+    expect(submit).toMatch(/await auth\.updateUser\(\{ password \}\)/);
+    expect(submit).toMatch(/await auth\s*\.signOut\(\{ scope: "others" \}\)/);
+    expect(submit).not.toMatch(/supabase\.auth\.updateUser|supabase\.auth\s*\.signOut/);
   });
 
   it('the API client marks its own session end before signing out', () => {

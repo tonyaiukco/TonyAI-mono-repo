@@ -46,6 +46,6 @@ export class AuthController {
   @Post('me/password-set')
   @HttpCode(204)
   async recordPasswordSet(@CurrentUser() user: RequestUser, @Body() dto: RecordPasswordSetDto): Promise<void> {
-    await this.preferences.recordPasswordSet(user, dto.flow);
+    await this.preferences.recordPasswordSet(user, dto.flow, dto.changeId);
   }
 }

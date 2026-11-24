@@ -41,7 +41,7 @@ Once an organisation has 5 `invite_refused` rows within the last hour, the syste
 
 ### Requirement: The set-password screen serves only an email-link session
 
-The set-password screen SHALL offer a password field only to a session that an invitation or recovery link opened in the same browser tab within the last hour, for the same user, checked when the screen loads and again when the password is submitted. Any other visitor, signed in or not, SHALL be told to use the link from their email and SHALL be offered no field. This is a screen behaviour: the server-side control on a password change is the authentication service's reauthentication.
+The set-password screen SHALL offer a password field only to the very session that an invitation or recovery link opened in the same browser tab within the last hour, checked when the screen loads and again when the password is submitted, and SHALL change the password for that session's user only. Any other visitor SHALL be told to use the link from their email and offered no field.
 
 #### Scenario: From an invitation or recovery link
 
@@ -53,9 +53,19 @@ The set-password screen SHALL offer a password field only to a session that an i
 - **WHEN** a signed-in user opens `/auth/set-password` directly, or after more than an hour, or in another tab
 - **THEN** the screen offers no password field and says to use the link from their email
 
+#### Scenario: Another account signed in meanwhile
+
+- **WHEN** another tab signs a different user in between the screen's check and the password's save
+- **THEN** the password is changed for the checked session's user or not at all, never for the other user
+
+#### Scenario: A later sign-in by the same person
+
+- **WHEN** the person leaves the email-link flow, signs out, and signs in again with a password in the same tab within the hour
+- **THEN** the screen offers no password field: that is another session
+
 ### Requirement: An older session needs reauthentication to change the password
 
-The authentication service SHALL require the emailed reauthentication code for a password change from a session older than 24 hours, locally and on every hosted environment, and a hosted deploy's readback SHALL fail when the setting differs.
+The authentication service SHALL require the emailed reauthentication code for a password change from a session older than 24 hours, locally and on every hosted environment. The owner's Auth reconcile SHALL apply and read back the setting and print the policy's digest, and the QA deploy SHALL stop before any change unless the digest the owner recorded is the release's.
 
 #### Scenario: A stolen older session
 
@@ -70,11 +80,16 @@ The authentication service SHALL require the emailed reauthentication code for a
 #### Scenario: Configuration drift
 
 - **WHEN** a hosted environment's authentication settings do not require reauthentication
-- **THEN** the deploy's readback fails
+- **THEN** the owner's reconcile readback fails
+
+#### Scenario: A release ahead of the hosted policy
+
+- **WHEN** the QA deploy starts for a release whose Auth policy digest differs from the one the owner recorded for QA, or none is recorded
+- **THEN** it stops before any login, build or change, and names the reconcile to run
 
 ### Requirement: A set password is audited
 
-After the authentication service accepts a new password from the set-password screen, the web app SHALL record it with the API for the user the screen checked, with that session's token, and the API SHALL write one `password_set` audit row as that user, carrying the flow (`invite` or `recovery`) and nothing about the password. The row is the web app's report, not the authentication service's.
+After the authentication service accepts a new password from the set-password screen, the web app SHALL record it with the API for the user the screen checked, with that session's token, and the API SHALL write one `password_set` audit row as that user per password change, however often the record is repeated, carrying the flow (`invite` or `recovery`) and nothing about the password. The row is the web app's report, not the authentication service's.
 
 #### Scenario: A password set
 

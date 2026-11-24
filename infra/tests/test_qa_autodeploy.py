@@ -170,6 +170,21 @@ class DecisionTests(unittest.TestCase):
         with self.assertRaises(SafeFailure):
             qa.plan('abc', False, FakeAzure().read, git_fake(), QA_ENV)
 
+    def test_auth_policy_refuses_a_release_whose_policy_the_owner_has_not_applied(self):
+        # pre-g5-security-hardening: the recorded digest must be this release's, before any login.
+        digest = lambda: 'authpolicy-v1:' + 'a' * 64
+        qa.check_auth_policy({'QA_AUTH_POLICY_DIGEST': 'authpolicy-v1:' + 'a' * 64}, digest)
+        for env in ({}, {'QA_AUTH_POLICY_DIGEST': ''}, {'QA_AUTH_POLICY_DIGEST': 'authpolicy-v1:' + 'b' * 64}):
+            with self.assertRaisesRegex(SafeFailure, 'reconcile-auth-only.*QA_AUTH_POLICY_DIGEST'):
+                qa.check_auth_policy(env, digest)
+
+    def test_auth_policy_step_needs_no_sha_and_no_azure(self):
+        from auth_settings import auth_policy_digest
+        with patch.object(qa, 'foundation_from_env', side_effect=AssertionError('no Azure')):
+            qa.main(['auth-policy'], env={'QA_AUTH_POLICY_DIGEST': auth_policy_digest()})
+            with self.assertRaises(SafeFailure):
+                qa.main(['auth-policy'], env={})
+
     def test_head_step_reports_through_github_output_without_azure(self):
         with tempfile.TemporaryDirectory() as work:
             output = Path(work) / 'out'

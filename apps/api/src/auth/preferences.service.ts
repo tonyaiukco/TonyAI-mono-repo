@@ -50,7 +50,15 @@ export class PreferencesService {
    * this is the web's report of it — and a caller can only ever write it
    * about themselves.
    */
-  async recordPasswordSet(user: RequestUser, flow: PasswordSetFlow): Promise<void> {
-    await this.audit.record(user, { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow } });
+  async recordPasswordSet(user: RequestUser, flow: PasswordSetFlow, changeId: string): Promise<void> {
+    // A repeat of a change already recorded — its first answer lost on the
+    // way back — writes nothing: one row per password change (Codex review).
+    // The web's repeats are sequential, so a read before the write suffices.
+    const recorded = await this.prisma.auditLog.findFirst({
+      where: { action: 'password_set', entity: 'profile', entityId: user.id, diff: { path: ['changeId'], equals: changeId } },
+      select: { id: true },
+    });
+    if (recorded) return;
+    await this.audit.record(user, { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow, changeId } });
   }
 }

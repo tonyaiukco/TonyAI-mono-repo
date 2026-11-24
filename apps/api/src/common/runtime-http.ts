@@ -18,6 +18,23 @@ const refuse = (res: Response, status: number, message: string): void => {
   res.status(status).json(toErrorBody(status, { message }));
 };
 
+/**
+ * The headers every API response carries, CORS preflights included: the app
+ * registers them before CORS, which answers a preflight itself
+ * (`pre-g5-security-hardening`, Codex review).
+ */
+export const setSecurityHeaders = (res: Response): void => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // The web's CORS fetches are unaffected (CORP governs no-cors loads); another
+  // site cannot embed an API answer.
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+};
+
 export const configureRuntimeHttp = (app: NestExpressApplication, limits: RuntimeLimits): void => {
   const c = limits.config;
   // Express validates the CIDR list when compiling trust; malformed CIDRs fail boot.
@@ -25,15 +42,6 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
   app.set('query parser', 'simple');
   app.disable('x-powered-by');
   app.use((req: LimitedRequest, res: Response, next: NextFunction) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    // The web's CORS fetches are unaffected (CORP governs no-cors loads); another
-    // site cannot embed an API answer (`pre-g5-security-hardening`).
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
-    if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     if (limits.stopping && req.path !== '/api/v1/health') return refuse(res, 503, 'Server is shutting down.');
     // Probe exemptions are exact, read-only, and do not exempt /health/synthetic.
     if (req.method === 'GET' && /^\/api\/v1\/health(?:\/ready)?\/?$/.test(req.path)) return next();
@@ -65,8 +73,11 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
           || /^\/api\/v1\/(evidence|activity-records\/[^/]+\/evidence)\/?$/i.test(req.path));
         if (multipart && !uploadRoute) return refuse(res, 415, 'Multipart is not supported on this route.');
         const cspReport = isCspReportPost(req.method, req.path);
-        if (hasBody && !multipart && !(cspReport && CSP_REPORT_MEDIA_TYPES.includes(media))
-          && !['application/json', 'application/x-www-form-urlencoded'].includes(media)) {
+        // The report receiver takes its own media types and nothing else — not
+        // even a form, which every other route admits (Codex review).
+        if (hasBody && !multipart && (cspReport
+          ? !CSP_REPORT_MEDIA_TYPES.includes(media)
+          : !['application/json', 'application/x-www-form-urlencoded'].includes(media))) {
           return refuse(res, 415, 'Unsupported request content type.');
         }
         if (multipart) releases.push(limits.acquire('multipart', c.UPLOAD_CONCURRENCY));

@@ -102,3 +102,25 @@ class AuthLifecycleSettingsTests(unittest.TestCase):
                         'PASS: Auth policy unchanged (no PATCH); all readbacks passed.',
                     ])
                     self.assertNotIn('private-sentinel', output.getvalue())
+
+
+class AuthPolicyDigestTests(unittest.TestCase):
+    """pre-g5-security-hardening: the digest the owner records after applying the policy."""
+
+    def test_digest_is_stable_and_names_its_version(self):
+        from auth_settings import auth_policy_digest
+        first = auth_policy_digest()
+        self.assertEqual(first, auth_policy_digest())
+        self.assertRegex(first, r'^authpolicy-v1:[0-9a-f]{64}$')
+
+    def test_hosts_do_not_change_it_but_any_managed_setting_does(self):
+        import auth_settings
+        base = auth_settings.auth_policy_digest()
+        real = auth_settings.managed_auth_settings
+        with patch.object(auth_settings, 'managed_auth_settings', lambda origin, host=None: real('https://other.invalid', host)):
+            self.assertEqual(auth_settings.auth_policy_digest(), base)
+        for key, value in (('security_update_password_require_reauthentication', False), ('jwt_exp', 7200)):
+            changed = lambda origin, host=None, key=key, value=value: {**real(origin, host), key: value}
+            with patch.object(auth_settings, 'managed_auth_settings', changed):
+                self.assertNotEqual(auth_settings.auth_policy_digest(), base, key)
+

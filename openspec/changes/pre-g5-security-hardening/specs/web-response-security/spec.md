@@ -53,7 +53,7 @@ When the image knows the API's address, the enforced policy SHALL name a violati
 
 ### Requirement: The API receives violation reports without exposing anything
 
-The API SHALL accept violation reports without authentication, in both report formats, up to a fixed body size, under a per-IP quota of its own taken before the body is read and apart from the address's quota for every other route, and SHALL answer 204 whatever the body. It SHALL log only each report's directive, blocked origin, page path and disposition, never a query string or fragment, and SHALL store nothing.
+The API SHALL accept violation reports without authentication, in both report formats, up to a fixed body size, under a per-IP quota of its own taken before the body is read and apart from the address's quota for every other route, and SHALL answer 204 whatever the body. It SHALL log only each report's directive, blocked origin, page path and disposition, as values a browser could send (anything else as `unknown`), never a query string or fragment, and SHALL store nothing.
 
 #### Scenario: A report
 
@@ -62,7 +62,7 @@ The API SHALL accept violation reports without authentication, in both report fo
 
 #### Scenario: A hostile body
 
-- **WHEN** a client posts malformed JSON, another content type, a body over the cap or a URL carrying a query string
+- **WHEN** a client posts malformed JSON, another content type (a form included), a body over the cap, free text in a field or a URL carrying a query string
 - **THEN** the API answers 204, 413 or 415 without failing, and logs no query string, fragment or unbounded text
 
 #### Scenario: A flood
@@ -76,7 +76,7 @@ Every API response SHALL carry `Cross-Origin-Resource-Policy: same-site`, beside
 
 #### Scenario: An API response
 
-- **WHEN** any client requests an API route, a refusal included
+- **WHEN** any client requests an API route, a refusal or a CORS preflight included
 - **THEN** the response carries `Cross-Origin-Resource-Policy: same-site`
 
 ## REMOVED Requirements

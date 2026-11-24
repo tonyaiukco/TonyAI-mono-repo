@@ -68,11 +68,28 @@ describe('PreferencesService.setLanguage', () => {
 });
 
 describe('PreferencesService.recordPasswordSet (pre-g5-security-hardening)', () => {
-  it.each(['invite', 'recovery'] as const)('writes one password_set row as the caller, about their own profile (%s)', async (flow) => {
-    const { audit, service, prisma } = setup('en');
-    await service.recordPasswordSet(user, flow);
+  const CHANGE = '7f3c2a1e-4b5d-4c6e-8f90-123456789abc';
+  function recorder(already: boolean) {
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const findFirst = vi.fn().mockResolvedValue(already ? { id: 'row' } : null);
+    const prisma = { auditLog: { findFirst }, $transaction: vi.fn() };
+    return { audit, findFirst, service: new PreferencesService(prisma as unknown as PrismaService, audit as unknown as AuditService) };
+  }
+
+  it.each(['invite', 'recovery'] as const)('writes one password_set row as the caller, about their own profile, with the change id (%s)', async (flow) => {
+    const { audit, findFirst, service } = recorder(false);
+    await service.recordPasswordSet(user, flow, CHANGE);
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { action: 'password_set', entity: 'profile', entityId: user.id, diff: { path: ['changeId'], equals: CHANGE } },
+      select: { id: true },
+    });
     expect(audit.record).toHaveBeenCalledTimes(1);
-    expect(audit.record).toHaveBeenCalledWith(user, { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow } });
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(user, { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow, changeId: CHANGE } });
+  });
+
+  it('writes nothing for a repeat of a change already recorded (Codex review)', async () => {
+    const { audit, service } = recorder(true);
+    await service.recordPasswordSet(user, 'invite', CHANGE);
+    expect(audit.record).not.toHaveBeenCalled();
   });
 });

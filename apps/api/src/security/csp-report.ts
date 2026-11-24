@@ -37,18 +37,40 @@ function clip(value: string): string {
   return value.replace(UNSAFE, '').slice(0, CSP_REPORT_FIELD_MAX);
 }
 
-function text(value: unknown): string {
-  return typeof value === 'string' && value.length > 0 ? clip(value) : 'unknown';
+/** CSP directive names a browser reports as effective or violated (CSP 3). */
+const DIRECTIVES = new Set([
+  'default-src', 'script-src', 'script-src-elem', 'script-src-attr', 'style-src', 'style-src-elem', 'style-src-attr',
+  'img-src', 'font-src', 'connect-src', 'media-src', 'object-src', 'frame-src', 'child-src', 'worker-src',
+  'manifest-src', 'prefetch-src', 'fenced-frame-src', 'base-uri', 'form-action', 'frame-ancestors', 'navigate-to',
+  'sandbox', 'trusted-types', 'require-trusted-types-for', 'upgrade-insecure-requests', 'webrtc',
+]);
+/** What `blocked-uri` / `blockedURL` holds when no URL was blocked. */
+const BLOCKED_KEYWORDS = new Set(['inline', 'eval', 'wasm-eval', 'self', 'trusted-types-policy', 'trusted-types-sink']);
+
+/** A directive name the browser could have sent, its first word only (old browsers send the whole directive); else `unknown`. */
+function directiveOf(value: unknown): string {
+  const name = typeof value === 'string' ? value.trim().split(/\s+/)[0]?.toLowerCase() : undefined;
+  return name && DIRECTIVES.has(name) ? name : 'unknown';
 }
 
-/** A URL's origin; a keyword (`inline`, `eval`, `data`, …) as itself, never what follows `?` or `#`. */
+function dispositionOf(value: unknown): string {
+  return value === 'enforce' || value === 'report' ? value : 'unknown';
+}
+
+/**
+ * A web URL's origin; any other URL's scheme alone (`data`, `blob`, an
+ * extension's); a known keyword as itself; anything else `unknown` — never
+ * free text from the body (Codex review).
+ */
 function blockedOriginOf(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) return 'unknown';
+  if (BLOCKED_KEYWORDS.has(value)) return value;
   try {
     const url = new URL(value);
-    return clip(url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : url.protocol.replace(/:$/, ''));
+    if (['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return clip(url.origin);
+    return clip(url.protocol.replace(/:$/, ''));
   } catch {
-    return clip(value.split(/[?#]/)[0]);
+    return 'unknown';
   }
 }
 
@@ -67,10 +89,10 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function fromReportUri(body: Record<string, unknown>): CspReportSummary {
   return {
-    directive: text(body['effective-directive'] ?? body['violated-directive']),
+    directive: directiveOf(body['effective-directive'] ?? body['violated-directive']),
     blockedOrigin: blockedOriginOf(body['blocked-uri']),
     pagePath: pathOf(body['document-uri']),
-    disposition: text(body.disposition),
+    disposition: dispositionOf(body.disposition),
   };
 }
 
@@ -79,10 +101,10 @@ function fromReportingApi(report: Record<string, unknown>): CspReportSummary | n
   const body = record(report.body);
   if (!body) return null;
   return {
-    directive: text(body.effectiveDirective),
+    directive: directiveOf(body.effectiveDirective),
     blockedOrigin: blockedOriginOf(body.blockedURL),
     pagePath: pathOf(body.documentURL ?? report.url),
-    disposition: text(body.disposition),
+    disposition: dispositionOf(body.disposition),
   };
 }
 

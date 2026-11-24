@@ -219,7 +219,7 @@ Size refusals are 413, admission/quota refusals 429 with CORS-exposed
 `Retry-After`, and scoped report-budget refusals the fixed 422 body. Malformed,
 unsupported/compressed and timed-out request bodies receive controlled 4xx
 responses. An uncertain mutation failure is never relabelled as safe to retry.
-Non-preflight API responses carry CSP, frame denial, nosniff, referrer/permissions policies,
+API responses, CORS preflights included (the headers are set before CORS), carry CSP, frame denial, nosniff, referrer/permissions policies,
 `Cross-Origin-Resource-Policy: same-site`, and production HSTS. Multipart has finite files/parts/fields plus a complete
 request-byte ceiling; existing 2 MiB import, 10 MiB evidence, 1,000-row and
 16 MiB XLSX expansion ceilings remain. Multipart ceilings are inclusive; fixed parser allowances are one file, four

@@ -65,7 +65,25 @@
     - test gaps (TTL, flow-from-URL, controller, constants, infra pin).
 
     The set-password item closes **partially**: the marker is a screen control, and a stolen session under 24 hours can still call Auth directly (filed). The other P3s are filed under Open questions.
+  - **Codex review of `7aa07e5e` (do not merge; two P1s):**
+    - **P1, fixed:** a sign-in in another tab between the check and the save could set the password on the other account, because auth-js re-reads the shared session inside `updateUser` and `signOut`. Both now go through an Auth client bound to the checked session's tokens, in memory.
+    - **P1, fixed (owner decision 2026-11-24, option A):** the QA auto-deploy neither applied nor verified the hosted reauthentication setting. Now:
+      - the owner's `supabase_setup.py --reconcile-auth-only` prints the policy digest after its readback;
+      - the owner records the digest as the QA variable `QA_AUTH_POLICY_DIGEST`;
+      - the deploy's first gate (`qa_autodeploy.py auth-policy`, before any login) stops unless the recorded digest is the release's.
+
+      No management token in CI.
+    - **P2s fixed:**
+      - the marker holds the link's `session_id`, so a later sign-in in the tab finds none;
+      - `password_set` is idempotent per `changeId`;
+      - the race path re-counts the invite bound under the lock;
+      - report fields are allowlisted.
+    - **QA fixes:**
+      - the receiver refuses a form with 415;
+      - security headers on CORS preflights;
+      - a script page-count proof in the PDF int spec.
   - **Open:**
+    - **Owner, before the QA deploy can pass:** run runbook 04's `supabase_setup.py --reconcile-auth-only` for QA, which turns reauthentication on, and set the QA variable `QA_AUTH_POLICY_DIGEST` to the digest it prints. Until then every QA deploy stops at its first gate.
     - Owner, after the QA deploy: a screen walk with the console open; one invite of an existing address (the audit view shows `invite_refused`); one password reset end to end.
     - Owner, separately: Supabase Cloud custom SMTP for Auth mail; the legacy anon/service_role JWT keys disabled.
 - **FIVE PRE-PILOT DEFECTS FROM OPEN QUESTIONS FIXED (Claude Code; PR #350, merged 2026-11-24; the Codex re-review's fixes on `fix/pre-pilot-session-binding`).** The first step of the owner's Open-questions pass: correctness defects, allowed under the pre-pilot rule. API and web; no migration, no contract or error-code change.

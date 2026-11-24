@@ -20,7 +20,7 @@ describe('summariseCspReports (pre-g5-security-hardening)', () => {
     const body = JSON.stringify([
       { type: 'csp-violation', url: 'https://qa.example/', body: { documentURL: 'https://qa.example/emissions?a=1', blockedURL: 'inline', effectiveDirective: 'style-src-attr', disposition: 'enforce' } },
       { type: 'deprecation', body: { id: 'x' } },
-      { type: 'csp-violation', body: { documentURL: 'https://qa.example/', blockedURL: 'eval?x', effectiveDirective: 'script-src', disposition: 'report' } },
+      { type: 'csp-violation', body: { documentURL: 'https://qa.example/', blockedURL: 'eval', effectiveDirective: 'script-src', disposition: 'report' } },
     ]);
     expect(summariseCspReports(body)).toEqual([
       { directive: 'style-src-attr', blockedOrigin: 'inline', pagePath: '/emissions', disposition: 'enforce' },
@@ -36,6 +36,21 @@ describe('summariseCspReports (pre-g5-security-hardening)', () => {
     for (const raw of ['{', '', 'null', '42', '"x"', '{}', '[1, null, "x"]', '{"csp-report": 5}', undefined, null, {}, [], 7]) {
       expect(summariseCspReports(raw), String(raw)).toEqual([]);
     }
+  });
+
+  it('keeps only values a browser could send: directive names, two dispositions, origins, schemes and keywords (Codex review)', () => {
+    const [summary] = summariseCspReports(legacy({
+      'violated-directive': "script-src 'self' https://evil.example/?q=secret",
+      'blocked-uri': 'free text the attacker wrote?token=secret',
+      'document-uri': 'https://qa.example/users',
+      disposition: 'enforce; drop table',
+    }));
+    // An old browser's whole directive gives its name; free text gives unknown.
+    expect(summary).toEqual({ directive: 'script-src', blockedOrigin: 'unknown', pagePath: '/users', disposition: 'unknown' });
+    expect(summariseCspReports(legacy({ 'effective-directive': 'made-up-src', 'blocked-uri': 'wss://ws.example/x?y=1' }))[0])
+      .toMatchObject({ directive: 'unknown', blockedOrigin: 'wss://ws.example' });
+    expect(summariseCspReports(legacy({ 'blocked-uri': 'chrome-extension://abc/inject.js' }))[0].blockedOrigin).toBe('chrome-extension');
+    expect(summariseCspReports(legacy({ 'blocked-uri': 'wasm-eval' }))[0].blockedOrigin).toBe('wasm-eval');
   });
 
   it('reads an already parsed body as well as text', () => {
@@ -60,7 +75,10 @@ describe('summariseCspReports (pre-g5-security-hardening)', () => {
       // eslint-disable-next-line no-control-regex -- matching control characters is the point: they are stripped (or must be absent).
       expect(value).not.toMatch(/[\u0000-\u001f\u2028\u2029]/);
     }
-    expect(summary.disposition).toBe('enforce');
+    // Not an exact allowed value: unknown, never the text.
+    expect(summary.disposition).toBe('unknown');
+    // Its first word is a directive name; the forged line after it is gone.
+    expect(summary.directive).toBe('img-src');
     expect([...summary.pagePath].some((c) => [0x202e, 0x200b].includes(c.codePointAt(0)!))).toBe(false);
   });
 });

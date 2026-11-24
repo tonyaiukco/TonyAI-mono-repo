@@ -9,15 +9,23 @@ const errorsOf = async (body: unknown) =>
   (await validate(plainToInstance(RecordPasswordSetDto, body), { whitelist: true, forbidNonWhitelisted: true })).map((e) => e.property);
 
 describe('RecordPasswordSetDto', () => {
-  it('admits the two flows', async () => {
-    expect(await errorsOf({ flow: 'invite' })).toEqual([]);
-    expect(await errorsOf({ flow: 'recovery' })).toEqual([]);
+  const changeId = '7f3c2a1e-4b5d-4c6e-8f90-123456789abc';
+
+  it('admits the two flows with a change id', async () => {
+    expect(await errorsOf({ flow: 'invite', changeId })).toEqual([]);
+    expect(await errorsOf({ flow: 'recovery', changeId })).toEqual([]);
+  });
+
+  it('refuses a missing or malformed change id', async () => {
+    for (const body of [{ flow: 'invite' }, { flow: 'invite', changeId: 'x' }, { flow: 'invite', changeId: 5 }]) {
+      expect(await errorsOf(body), JSON.stringify(body)).toContain('changeId');
+    }
   });
 
   it('refuses anything else, a missing flow and an extra field', async () => {
-    for (const body of [{ flow: 'admin' }, { flow: null }, {}, { flow: 'RECOVERY' }]) {
+    for (const body of [{ flow: 'admin', changeId }, { flow: null, changeId }, { changeId }, { flow: 'RECOVERY', changeId }]) {
       expect(await errorsOf(body), JSON.stringify(body)).toContain('flow');
     }
-    expect(await errorsOf({ flow: 'invite', password: 'x' })).toContain('password');
+    expect(await errorsOf({ flow: 'invite', changeId, password: 'x' })).toContain('password');
   });
 });

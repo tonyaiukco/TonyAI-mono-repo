@@ -360,6 +360,15 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
     });
   });
 
+  it('an insert that loses the race when another request used the last refusal meanwhile answers the bound, and writes nothing (Codex review)', async () => {
+    const { audit, tx, service } = invitation({ insertRace: true });
+    tx.auditLog.aggregate
+      .mockResolvedValueOnce({ _count: 4, _min: { createdAt: new Date(NOW.getTime() - 10 * 60_000) } })
+      .mockResolvedValueOnce({ _count: 5, _min: { createdAt: new Date(NOW.getTime() - 10 * 60_000) } });
+    await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
+    expect(refusalRows(audit)).toHaveLength(0);
+  });
+
   it('an insert that loses the race for the address is the same refusal, audited in its own transaction', async () => {
     const { audit, prisma, service } = invitation({ insertRace: true });
     await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });

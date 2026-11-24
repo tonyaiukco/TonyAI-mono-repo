@@ -16,5 +16,7 @@ export async function recordPasswordSet(
   flow: PasswordSetFlow,
   waitAtMost = BOUNDED_CALL_WAIT_MS,
 ): Promise<boolean> {
-  return callAsSubjectQuietly(userId, (accessToken) => api.recordPasswordSet(flow, accessToken), waitAtMost);
+  // One id for this change, the same on every repeat: the API records it once.
+  const changeId = crypto.randomUUID();
+  return callAsSubjectQuietly(userId, (accessToken) => api.recordPasswordSet(flow, changeId, accessToken), waitAtMost);
 }

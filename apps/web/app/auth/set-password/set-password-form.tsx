@@ -11,7 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PasswordInput } from "@/components/auth/password-input";
 import { Label } from "@/components/ui/label";
 import { MIN_PASSWORD_LENGTH, passwordProblem, setPasswordFailureKey } from "@/lib/auth-view";
-import { clearEmailLinkMarker, readEmailLinkMarker, tabStorage, type EmailLinkFlow } from "@/lib/email-link-marker";
+import { clearEmailLinkMarker, readEmailLinkMarker, sessionIdOf, tabStorage, type EmailLinkFlow } from "@/lib/email-link-marker";
+import { authForCheckedSession } from "@/lib/session-bound-auth";
 import { acceptOwnInvitation } from "@/lib/invitation-acceptance";
 import { recordPasswordSet } from "@/lib/password-set-record";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -54,7 +55,7 @@ export function SetPasswordForm() {
       .auth.getSession()
       .then(({ data }) => {
         if (!data.session) return setAccess({ kind: "noSession" });
-        const marker = readEmailLinkMarker(tabStorage(), data.session.user.id);
+        const marker = readEmailLinkMarker(tabStorage(), data.session.user.id, sessionIdOf(data.session.access_token));
         setAccess(marker ? { kind: "ready", flow: marker.flow } : { kind: "noLink" });
       }, () => setAccess({ kind: "noSession" }));
   }, []);
@@ -71,7 +72,7 @@ export function SetPasswordForm() {
     // else in since, or the marker expired (architect review). The password
     // and its record are for the session the marker was written for.
     const current = await supabase.auth.getSession().then(({ data }) => data.session, () => null);
-    const marker = current ? readEmailLinkMarker(tabStorage(), current.user.id) : null;
+    const marker = current ? readEmailLinkMarker(tabStorage(), current.user.id, sessionIdOf(current.access_token)) : null;
     if (!current || !marker) {
       setSaving(false);
       setAccess(current ? { kind: "noLink" } : { kind: "noSession" });
@@ -79,7 +80,18 @@ export function SetPasswordForm() {
     }
     const linkFlow = marker.flow;
     const subject = current.user.id;
-    const { error } = await supabase.auth.updateUser({ password });
+    // Auth for exactly the session just checked: the shared client would read
+    // the session again inside each call, and another tab may change it
+    // (Codex review, P1).
+    let auth: Awaited<ReturnType<typeof authForCheckedSession>>;
+    try {
+      auth = await authForCheckedSession(current);
+    } catch {
+      setSaving(false);
+      setAccess({ kind: "noLink" });
+      return;
+    }
+    const { error } = await auth.updateUser({ password });
     if (error) {
       setSaving(false);
       toast.error(t(setPasswordFailureKey(error.code), { min: MIN_PASSWORD_LENGTH }));
@@ -89,7 +101,7 @@ export function SetPasswordForm() {
     // session. Asked first, before any bookkeeping can delay or lose it, and
     // said when it did not go through (Codex review of #350).
     if (linkFlow === "recovery") {
-      const { error: othersError } = await supabase.auth
+      const { error: othersError } = await auth
         .signOut({ scope: "others" })
         .catch((failure: unknown) => ({ error: failure }));
       if (othersError) toast.warning(t("setPassword.othersNotSignedOut"));

@@ -132,6 +132,8 @@
 
 ## Workflow follow-up
 
+- Owner, before the first QA deploy of this change can pass: run runbook 04's `supabase_setup.py --reconcile-auth-only` for QA, then set the QA variable `QA_AUTH_POLICY_DIGEST` to the digest it prints (design §8).
+
 - Owner, after the QA deploy:
   - a screen walk with the console open;
   - one invite of an existing address (audit view shows `invite_refused`);

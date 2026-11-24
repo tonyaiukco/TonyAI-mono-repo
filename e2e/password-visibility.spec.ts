@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { login, ENTRY_EMAIL, profileIdByEmail } from './helpers';
+import { browserSession, login, ENTRY_EMAIL } from './helpers';
 
 /**
  * UAT BUG-09 (`web-form-controls`, "Password fields offer a show/hide toggle"):
@@ -60,13 +60,16 @@ test('sign-in in Turkish: the toggle is labelled in Turkish', async ({ page, con
   await expect(page.getByRole('button', { name: 'Şifreyi gizle' })).toBeVisible();
 });
 
-test('set-password: each field starts masked and toggles on its own', async ({ page }) => {
+test('set-password: each field starts masked and toggles on its own', async ({ page, context }) => {
   // The screen offers its fields only to a session an email link opened in
   // this tab (pre-g5-security-hardening): the tab is given the marker the
   // email-link page writes, for the signed-in user. The form is never submitted.
   await login(page, ENTRY_EMAIL);
-  const userId = await profileIdByEmail(ENTRY_EMAIL);
-  await page.evaluate((id) => sessionStorage.setItem('tonyai.emailLink', JSON.stringify({ userId: id, flow: 'invite', at: Date.now() })), userId);
+  const { userId, sessionId } = await browserSession(context);
+  await page.evaluate(
+    ([id, session]) => sessionStorage.setItem('tonyai.emailLink', JSON.stringify({ userId: id, sessionId: session, flow: 'invite', at: Date.now() })),
+    [userId, sessionId],
+  );
   await page.goto('/auth/set-password');
   const first = page.locator('#new-password');
   const repeat = page.locator('#repeat-password');
@@ -80,16 +83,23 @@ test('set-password: each field starts masked and toggles on its own', async ({ p
   await expect(first).toHaveAttribute('autocomplete', 'new-password');
 });
 
-test('set-password: a signed-in user who opens it directly gets no field, and is told to use their email link', async ({ page }) => {
+test('set-password: a signed-in user who opens it directly gets no field, and is told to use their email link', async ({ page, context }) => {
   await login(page, ENTRY_EMAIL);
   await page.goto('/auth/set-password');
   await expect(page.getByText('This page sets a password only right after you open the link from your email')).toBeVisible();
   await expect(page.locator('#new-password')).toHaveCount(0);
   await expect(page.locator('#repeat-password')).toHaveCount(0);
 
-  // Another user's marker in this tab opens nothing either.
-  await page.evaluate(() => sessionStorage.setItem('tonyai.emailLink', JSON.stringify({ userId: '00000000-0000-4000-8000-000000000000', flow: 'recovery', at: Date.now() })));
-  await page.reload();
-  await expect(page.getByText('This page sets a password only right after you open the link from your email')).toBeVisible();
-  await expect(page.locator('#new-password')).toHaveCount(0);
+  // Another user's marker in this tab opens nothing either, nor this user's
+  // from another session of theirs (Codex review).
+  const { userId, sessionId } = await browserSession(context);
+  for (const marker of [
+    { userId: '00000000-0000-4000-8000-000000000000', sessionId, flow: 'recovery', at: Date.now() },
+    { userId, sessionId: '00000000-0000-4000-8000-000000000001', flow: 'recovery', at: Date.now() },
+  ]) {
+    await page.evaluate((value) => sessionStorage.setItem('tonyai.emailLink', value), JSON.stringify(marker));
+    await page.reload();
+    await expect(page.getByText('This page sets a password only right after you open the link from your email')).toBeVisible();
+    await expect(page.locator('#new-password')).toHaveCount(0);
+  }
 });

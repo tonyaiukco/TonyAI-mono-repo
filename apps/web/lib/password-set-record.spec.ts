@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const getSession = vi.fn();
 const recordPasswordSetCall = vi.fn();
 vi.mock('./supabase', () => ({ getSupabaseBrowserClient: () => ({ auth: { getSession: () => getSession() } }) }));
-vi.mock('./api', () => ({ api: { recordPasswordSet: (flow: string, token: string) => recordPasswordSetCall(flow, token) } }));
+vi.mock('./api', () => ({ api: { recordPasswordSet: (flow: string, changeId: string, token: string) => recordPasswordSetCall(flow, changeId, token) } }));
 
 import { BOUNDED_CALL_WAIT_MS } from './invitation-acceptance';
 import { recordPasswordSet } from './password-set-record';
@@ -31,7 +31,7 @@ describe('recordPasswordSet (pre-g5-security-hardening)', () => {
     getSession.mockResolvedValue(as('user-a', 'checked-token'));
     recordPasswordSetCall.mockResolvedValue(undefined);
     expect(await run('user-a', 'recovery')).toBe(true);
-    expect(recordPasswordSetCall.mock.calls).toEqual([['recovery', 'checked-token']]);
+    expect(recordPasswordSetCall.mock.calls).toEqual([['recovery', expect.stringMatching(/^[0-9a-f-]{36}$/), 'checked-token']]);
   });
 
   it('writes nothing when the session is now someone else\'s (another tab signed them in)', async () => {
@@ -45,6 +45,8 @@ describe('recordPasswordSet (pre-g5-security-hardening)', () => {
     recordPasswordSetCall.mockRejectedValue(unavailable());
     expect(await run('user-a', 'invite')).toBe(false);
     expect(recordPasswordSetCall).toHaveBeenCalledTimes(3);
+    // The same change id on every repeat (Codex review).
+    expect(new Set(recordPasswordSetCall.mock.calls.map((c) => c[1])).size).toBe(1);
   });
 
   it('holds the page for BOUNDED_CALL_WAIT_MS at most when the API never answers', async () => {

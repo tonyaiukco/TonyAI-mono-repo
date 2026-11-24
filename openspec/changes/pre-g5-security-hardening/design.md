@@ -152,6 +152,29 @@ See `proposal.md` for the why.
   - A `password_set` record can be refused 429 while a hung acceptance still holds the user's single mutation permit.
   - Report log volume has no replica-wide cap.
 
+### 8. Codex review of `7aa07e5e`
+
+- **P1: the password follows the checked session, not the shared one.**
+  - auth-js reads the session again inside `updateUser` and `signOut`, so a sign-in in another tab between the screen's check and the save could put the password on the other account.
+  - The save and the recovery's `signOut({ scope: "others" })` now go through `authForCheckedSession`: a client of its own, in memory (no storage, no refresh timer, no cross-tab channel), given the checked tokens, which asks Auth whose they are and refuses any other user.
+  - In auth-js 2.108.2, `setSession` keeps an unexpired token, and the check read it moments ago.
+- **P1: the hosted policy gates the QA deploy (owner decision 2026-11-24, option A).** Only the owner applies and verifies the hosted Auth policy (`supabase_setup.py --reconcile-auth-only`, a private management readback). That run now prints the policy's digest (`auth_policy_digest()`: the managed settings without their hosts, canonical JSON, SHA-256, `authpolicy-v1:` prefix), and the owner records it as the QA variable `QA_AUTH_POLICY_DIGEST`. The QA deploy's new first gate (`qa_autodeploy.py auth-policy`, after *head* and before any login) stops unless the recorded digest is the release's.
+  - Alternatives considered:
+    - (B) a management token in CI that reads the setting back: stronger, but a powerful credential in CI;
+    - (C) a runbook step alone: nothing would stop a deploy.
+  - Consequence: the first QA deploy after this merges stops until the owner has reconciled and recorded the digest; so does any later commit that changes the policy, even an infra-only one.
+- **The marker names the Auth session.** The marker now holds the link session's `session_id` (from its access token), and the screen compares it. A later sign-in by the same person in the same tab is another session and finds no marker.
+- **One `password_set` row per change.** The web sends a `changeId` that stays fixed through its repeats. The API writes nothing when a row with that id already exists for the user; the repeats are sequential, so a read before the write suffices. The id lives in `diff`, never as the row's primary key.
+- **The race path counts the bound again.** The P2002 path's second transaction re-takes the tenant lock and re-counts. A request that lost the last refusal to another answers 429 and writes nothing.
+- **Report fields are allowlisted.** A field is kept only when it is one of these, and is `unknown` otherwise:
+  - a directive name (the first word of an old browser's whole directive);
+  - `enforce` or `report`;
+  - a web origin, a scheme, or a keyword.
+- **Smaller fixes:**
+  - The receiver refuses a form with 415.
+  - The API's security headers are set before CORS, so a preflight carries them.
+  - The PDF int spec proves that no script ran by the page count: a script that would add 500 paragraphs leaves one page.
+
 ## Risks / Trade-offs
 
 - **An enforced policy breaks a screen nobody walked.**

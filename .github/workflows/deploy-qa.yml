@@ -60,6 +60,13 @@ jobs:
       - name: Require this commit to still be main's head
         id: head
         run: python3 infra/scripts/qa_autodeploy.py head --sha "$SOURCE_SHA"
+      # Before any token exists too: the hosted Auth policy the owner applied and
+      # verified (supabase_setup.py --reconcile-auth-only) must be this release's.
+      - name: Require the owner-applied hosted Auth policy to be this release's
+        if: steps.head.outputs.current == 'true'
+        env:
+          QA_AUTH_POLICY_DIGEST: ${{ vars.QA_AUTH_POLICY_DIGEST }}
+        run: python3 infra/scripts/qa_autodeploy.py auth-policy
       - if: steps.head.outputs.current == 'true'
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
         with:

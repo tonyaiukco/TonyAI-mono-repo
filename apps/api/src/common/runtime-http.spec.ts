@@ -89,6 +89,18 @@ describe('real HTTP protections without a database', () => {
     await waitFor(() => activePermits(limits).size === 0);
     expect((await fetch(`${url}/api/v1/read`)).status).toBe(200);
   });
+  it('a CORS preflight carries the security headers too (pre-g5-security-hardening, Codex review)', async () => {
+    const { url } = await boot();
+    const preflight = await fetch(`${url}/api/v1/json`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'POST' },
+    });
+    expect(preflight.status).toBeLessThan(300);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('http://localhost:3000');
+    expect(preflight.headers.get('cross-origin-resource-policy')).toBe('same-site');
+    expect(preflight.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
   it('does not let spoofed forwarding change direct-mode IP quotas; exposes Retry-After', async () => {
     const { url } = await boot({ RATE_IP_PER_MINUTE: '1' });
     const get = (ip: string) => fetch(`${url}/api/v1/reports/pdf`, {

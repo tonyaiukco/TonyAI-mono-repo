@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
@@ -551,12 +551,21 @@ export async function registeredAccount(email: string): Promise<RegisteredAccoun
   return rows[0] ?? null;
 }
 
-/** A profile's id by its address, read as the owner (pre-g5-security-hardening). */
-export async function profileIdByEmail(email: string): Promise<string | null> {
-  const rows = await withOwner((prisma) =>
-    prisma.$queryRawUnsafe<{ id: string }[]>('SELECT id::text AS id FROM profiles WHERE email = $1', email.toLowerCase()),
-  );
-  return rows[0]?.id ?? null;
+/**
+ * The signed-in browser's own Auth session — its user and `session_id` — read
+ * from the `sb-tonyai-auth` cookie the web app keeps (one cookie, or chunks
+ * `.0`, `.1`…, optionally `base64-` encoded), never a second sign-in.
+ */
+export async function browserSession(context: BrowserContext): Promise<{ userId: string; sessionId: string }> {
+  const chunks = (await context.cookies())
+    .filter((c) => c.name === 'sb-tonyai-auth' || c.name.startsWith('sb-tonyai-auth.'))
+    .sort((a, b) => Number(a.name.split('.')[1] ?? -1) - Number(b.name.split('.')[1] ?? -1))
+    .map((c) => decodeURIComponent(c.value));
+  let raw = chunks.join('');
+  if (raw.startsWith('base64-')) raw = Buffer.from(raw.slice('base64-'.length), 'base64url').toString('utf8');
+  const session = JSON.parse(raw) as { access_token: string; user: { id: string } };
+  const claims = JSON.parse(Buffer.from(session.access_token.split('.')[1], 'base64url').toString('utf8')) as { session_id: string };
+  return { userId: session.user.id, sessionId: claims.session_id };
 }
 
 /** The audit rows of one action about one entity, oldest first, read as the owner (pre-g5-security-hardening). */

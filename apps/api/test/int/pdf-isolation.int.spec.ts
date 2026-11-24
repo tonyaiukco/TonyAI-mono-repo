@@ -64,6 +64,20 @@ describe('a PDF render runs no script and reaches no network', () => {
     expect(hits).toEqual([]);
   }, 60_000);
 
+  it('runs no script, measured by what it would have printed (Codex review)', async () => {
+    // With JavaScript on, the script adds five hundred paragraphs: many pages.
+    // It asks for nothing over the network, so request interception alone
+    // cannot hide it — only the page's script switch can.
+    const html = `<!doctype html><html><body><p>One page as written</p>
+      <script>for (let i = 0; i < 500; i += 1) { const p = document.createElement('p'); p.textContent = 'added ' + i; document.body.appendChild(p); }</script>
+      </body></html>`;
+
+    const { bytes } = await renderer.render(html);
+
+    const pages = (bytes.toString('latin1').match(/\/Type\s*\/Page(?![s\w])/g) ?? []).length;
+    expect(pages).toBe(1);
+  }, 60_000);
+
   it('makes no connection and no lookup for hints and refreshes that bypass request interception (security-rls review)', async () => {
     connections = 0;
     hits.length = 0;
