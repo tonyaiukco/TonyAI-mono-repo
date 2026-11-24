@@ -64,6 +64,7 @@ import {
   isRecallable,
   EDITABLE_RECORD_STATUSES,
   normalizeRecordParameters,
+  electricitySupplierIssues,
   recordParameterShape,
   recordActivityTypesFor,
   REPORTING_PERIODS,
@@ -139,6 +140,19 @@ function assertActivityTypeNamed(category: string, activityType: string | null):
 function assertRecordParameters(category: string, parameters: unknown): void {
   const issues = recordParametersIssues(category, parameters);
   if (issues.length > 0) throw new CalculationInputError('record_parameters_invalid', issues.join('; '));
+}
+
+/**
+ * An Electricity record's supplier, its `utility_provider`, holds to the
+ * supplier's bound (UAT round 4, BUG-16). The DTO bounds `invoice_no` and
+ * `supplier` by their key; this one is a supplier only on an Electricity
+ * record, and the key is older than the rule, so it is asked here, of the
+ * EFFECTIVE category, with the stored `input` beside it: the value an old
+ * record already holds is left alone, a new or changed one is refused.
+ */
+function assertElectricitySupplier(category: string, input: unknown, stored?: unknown): void {
+  const issues = electricitySupplierIssues(category, input, stored);
+  if (issues.length > 0) throw new BadRequestException(errorBody('validation_failed', issues));
 }
 
 /**
@@ -1205,6 +1219,7 @@ export class ActivityRecordsService {
     const activityType = dto.activityType ?? null;
     assertActivityTypeNamed(dto.category, activityType);
     assertRecordParameters(dto.category, dto.parameters);
+    assertElectricitySupplier(dto.category, dto.input);
     // Period-lock gate (FR §4.2): no new records in a closed period. An early
     // answer only — `create` asks again once it holds the period.
     await this.assertPeriodNotLocked({
@@ -1378,6 +1393,8 @@ export class ActivityRecordsService {
       throw new EditVersionRequiredError();
     }
     assertRecordParameters(category, parameters);
+    // Only an edit that sends `input` can change the supplier.
+    if (dto.input !== undefined) assertElectricitySupplier(category, dto.input, existing.input);
 
     const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;
     const periodValue = requireCanonicalPeriodValue(

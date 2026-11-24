@@ -211,7 +211,9 @@
       "title": "Calorific basis of the bill",
       "net": "Net",
       "gross": "Gross",
-      "help": "Your bill states which one it uses: gross is the upper calorific value, net the lower.",
+      "grossOption": "{unit} on the bill (upper calorific value)",
+      "netOption": "Net {unit} (lower calorific value)",
+      "help": "Gas bills in Türkiye state energy on the upper calorific value, so that is the default. Choose net only if your bill says its figure is on the lower calorific value.",
       "missing": "Choose the bill's calorific basis, net or gross, before the figure can be calculated or saved.",
       "derivedNet": "Priced on ≈ {net} {unit} net: × {ratio} ({ncv} / {gcv} kcal/Sm³), the reference ratio of {publisher} {edition}{status}."
     },
@@ -287,6 +289,16 @@
       "incineration": "Incineration",
       "recycling": "Recycling",
       "composting": "Composting"
+    },
+    "shared": {
+      "invoice_no": {
+        "label": "Invoice number",
+        "placeholder": "As printed on the invoice"
+      },
+      "supplier": {
+        "label": "Supplier",
+        "placeholder": "Who issued the invoice"
+      }
     },
     "electricity": {
       "total_kwh": {
@@ -534,6 +546,11 @@
   },
   "records": {
     "title": "Entered records",
+    "jump": {
+      "count": "View or edit your entries ({count})",
+      "none": "View or edit your entries (none yet)",
+      "unknown": "View or edit your entries"
+    },
     "noMatch": "No record matches these filters.",
     "evidenceMissing": "Missing",
     "evidenceOne": "{value} file",

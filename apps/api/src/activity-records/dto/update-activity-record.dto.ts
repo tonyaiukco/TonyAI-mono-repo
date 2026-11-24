@@ -37,6 +37,7 @@ import { codedConstraint } from '../../common/coded-validation.pipe';
 import { storableUnit } from '../../calculations/storable-unit';
 import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../../calculations/activity-type';
 import { IsValidRecordParameters } from './record-parameters.dto';
+import { IsValidRecordReferences, storableInput } from './record-references.dto';
 
 
 /**
@@ -116,8 +117,12 @@ export class UpdateActivityRecordDto {
   @MaxLength(ACTIVITY_UNIT_MAX_LENGTH)
   activityUnit?: string;
 
+  // Additional context: a free object, except its invoice number and supplier
+  // (BUG-16), which are trimmed, dropped when blank, and bounded as text.
   @IsOptional()
+  @Transform(storableInput)
   @IsObject()
+  @IsValidRecordReferences()
   input?: Record<string, unknown> | null;
 
   // LP4-02 (D3): per-record calculation parameters, in their own column. Null

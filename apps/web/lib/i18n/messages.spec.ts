@@ -311,10 +311,13 @@ describe("the shared vocabularies (LP4-04 slice 2)", () => {
   it.each(SUPPORTED_LOCALES)("%s: every Additional context field has its label, its placeholder when it shows one, and its options' labels", (locale) => {
     const context = MESSAGES[locale].dataEntry.context as unknown as Record<string, Record<string, { label?: string; placeholder?: string }>>;
     const options = MESSAGES[locale].dataEntry.context.options as Record<string, string>;
+    const shared = new Set<string>();
     for (const [set, fields] of Object.entries(CONTEXT_FIELDS)) {
-      const words = context[set];
-      expect(Object.keys(words ?? {}).sort(), set).toEqual(fields.map((f) => f.id).sort());
+      // A set's words are its own fields'; a shared field's are under `shared` (BUG-16).
+      expect(Object.keys(context[set] ?? {}).sort(), set).toEqual(fields.filter((f) => !f.shared).map((f) => f.id).sort());
       for (const field of fields) {
+        if (field.shared) shared.add(field.id);
+        const words = context[field.shared ? "shared" : set];
         expect(words[field.id].label, `${set}.${field.id}`).toBeTruthy();
         expect(words[field.id].placeholder !== undefined, `${set}.${field.id} placeholder`).toBe(field.placeholder === true);
         for (const option of field.options ?? []) {
@@ -322,6 +325,14 @@ describe("the shared vocabularies (LP4-04 slice 2)", () => {
         }
       }
     }
+    expect(Object.keys(context.shared).sort()).toEqual([...shared].sort());
+  });
+
+  it("names the invoice number and the supplier in both languages (BUG-16)", () => {
+    expect(MESSAGES.en.dataEntry.context.shared.invoice_no.label).toBe("Invoice number");
+    expect(MESSAGES.en.dataEntry.context.shared.supplier.label).toBe("Supplier");
+    expect(MESSAGES.tr.dataEntry.context.shared.invoice_no.label).toBe("Fatura no");
+    expect(MESSAGES.tr.dataEntry.context.shared.supplier.label).toBe("Tedarikçi");
   });
 });
 

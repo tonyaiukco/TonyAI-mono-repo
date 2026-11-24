@@ -222,6 +222,19 @@ Signed-By: mirror+file:/etc/apt/apt-mirrors.txt
             self.assertNotIn('if', steps[i])
             self.assertNotIn('continue-on-error', steps[i])
 
+    def test_a_refused_cache_export_does_not_fail_the_image_gate(self):
+        # The cache service answered 503 and 504 to a large layer three times running
+        # (PR #355): the build died before the smoke could run. The cache saves time;
+        # the build and the smoke are the gate, and stay one.
+        steps = workflow('ci.yml')['jobs']['docker-build']['steps']
+        builds = [s for s in steps if s.get('uses', '').startswith('docker/build-push-action@')]
+        self.assertEqual(len(builds), 2)
+        for step, scope in zip(builds, ('api', 'web')):
+            self.assertEqual(step['with']['cache-from'], 'type=gha,scope=' + scope)
+            self.assertEqual(step['with']['cache-to'], 'type=gha,scope=' + scope + ',mode=max,ignore-error=true')
+            self.assertNotIn('continue-on-error', step)
+            self.assertTrue(step['with']['load'])
+
 
 if __name__ == '__main__':
     unittest.main()

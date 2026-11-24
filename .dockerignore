@@ -21,6 +21,8 @@ packages/db/generated
 .github
 .claude
 docs
+# Planning artifacts: no image reads them, and a spec-only commit must not rebuild one.
+openspec
 e2e/test-results
 test-results
 playwright-report

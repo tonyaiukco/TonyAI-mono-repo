@@ -62,7 +62,7 @@ import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber, formatReadAmount } from "@/lib/i18n/number";
-import { reviewCalorificBasis, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
+import { reviewCalorificBasis, reviewReferences, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
 import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -748,6 +748,26 @@ export default function ReviewPage() {
                     <>
                       <span className="text-muted-foreground">{t("sheet.calorificBasis")}</span>
                       <span className="col-span-2" data-testid="review-calorific-basis">{t(`sheet.calorificBasisValue.${basis}`)}</span>
+                    </>
+                  );
+                })()}
+                {/* What ties the record to its evidence file, each shown only when held (BUG-16). */}
+                {(() => {
+                  const { invoiceNo, supplier } = reviewReferences(selected);
+                  return (
+                    <>
+                      {invoiceNo !== null && (
+                        <>
+                          <span className="text-muted-foreground">{t("sheet.invoiceNo")}</span>
+                          <span className="col-span-2 break-words font-mono" data-testid="review-invoice-no">{invoiceNo}</span>
+                        </>
+                      )}
+                      {supplier !== null && (
+                        <>
+                          <span className="text-muted-foreground">{t("sheet.supplier")}</span>
+                          <span className="col-span-2 break-words" data-testid="review-supplier">{supplier}</span>
+                        </>
+                      )}
                     </>
                   );
                 })()}

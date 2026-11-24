@@ -34,6 +34,7 @@ type WriteDto = {
   periodValue?: string;
   activityUnit?: string;
   varianceReason?: string | null;
+  input?: Record<string, unknown> | null;
 };
 
 const DTOS: [string, ClassConstructor<WriteDto>][] = [
@@ -289,6 +290,64 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
   });
 });
 
+describe.each(DTOS)('%s — input\'s invoice number and supplier (uat4-quick-fixes, BUG-16)', (_name, Dto) => {
+  it('accepts both, either, and neither', () => {
+    expect(parse(Dto, { input: { invoice_no: 'OZK2025000011923', supplier: 'Petrol Ofisi' } }).errors).toHaveLength(0);
+    expect(parse(Dto, { input: { invoice_no: 'OZK2025000011923' } }).errors).toHaveLength(0);
+    expect(parse(Dto, { input: { supplier: 'Petrol Ofisi' } }).errors).toHaveLength(0);
+    expect(parse(Dto, { input: {} }).errors).toHaveLength(0);
+    expect(parse(Dto, { input: null }).errors).toHaveLength(0);
+    expect(parse(Dto, {}).errors).toHaveLength(0);
+  });
+
+  // Literals, not the constants: a raised limit must fail here.
+  it('takes 64 characters of invoice number and 200 of supplier, and refuses one more', () => {
+    expect(parse(Dto, { input: { invoice_no: 'x'.repeat(64), supplier: 'y'.repeat(200) } }).errors).toHaveLength(0);
+    expect(constraintsOn(Dto, { input: { invoice_no: 'x'.repeat(65) } }, 'input')).toEqual(['ValidRecordReferences']);
+    expect(constraintsOn(Dto, { input: { supplier: 'y'.repeat(201) } }, 'input')).toEqual(['ValidRecordReferences']);
+  });
+
+  it('names the key and its limit in the refusal, and quotes nothing back', () => {
+    const hit = parse(Dto, { input: { invoice_no: 'SECRET'.repeat(20) } }).errors.find((e) => e.property === 'input');
+    expect(hit?.constraints).toEqual({ ValidRecordReferences: 'input.invoice_no must be at most 64 characters' });
+    expect(JSON.stringify(hit?.constraints)).not.toContain('SECRET');
+  });
+
+  it.each([
+    ['a number', 2025000011923],
+    ['a boolean', true],
+    ['an object', { no: 'A-1' }],
+    ['a list', ['A-1']],
+  ])('refuses %s under either key', (_case, value) => {
+    expect(constraintsOn(Dto, { input: { invoice_no: value } }, 'input')).toEqual(['ValidRecordReferences']);
+    expect(constraintsOn(Dto, { input: { supplier: value } }, 'input')).toEqual(['ValidRecordReferences']);
+  });
+
+  it('trims both, and stores a blank one as absent', () => {
+    expect(parse(Dto, { input: { invoice_no: '  A-1 ', supplier: ' Shell ' } }).dto.input).toEqual({ invoice_no: 'A-1', supplier: 'Shell' });
+    expect(parse(Dto, { input: { invoice_no: '   ', supplier: 'Shell' } }).dto.input).toEqual({ supplier: 'Shell' });
+    expect(parse(Dto, { input: { invoice_no: '', supplier: '' } }).dto.input).toBeNull();
+    // Padding is not length: 64 kept characters inside spaces are accepted.
+    expect(parse(Dto, { input: { invoice_no: ` ${'x'.repeat(64)} ` } }).errors).toHaveLength(0);
+  });
+
+  // `utility_provider` is an Electricity record's supplier, and its bound is the
+  // service's, not the DTO's: it needs the effective category and the stored
+  // value, so that an old record's long one is left alone while a new or changed
+  // one is refused (`assertElectricitySupplier`, pinned in the service spec).
+  it('leaves every other key of input as sent: a record written before this rule still saves', () => {
+    const before = { utility_provider: 'z'.repeat(5000), total_kwh: 12, notes: '  as typed  ', quantity_unit: 'Liters', anything: { nested: [1, 2] } };
+    const { dto, errors } = parse(Dto, { input: before });
+    expect(errors).toHaveLength(0);
+    expect(dto.input).toEqual(before);
+  });
+
+  it('still refuses an input that is not an object', () => {
+    expect(constraintsOn(Dto, { input: 'invoice_no=A-1' }, 'input')).toContain('isObject');
+    expect(constraintsOn(Dto, { input: [{ invoice_no: 'A-1' }] }, 'input')).toContain('isObject');
+  });
+});
+
 describe('the two write DTOs agree, rule for rule', () => {
   /**
    * Honest about what this does and does not prove.
@@ -308,6 +367,9 @@ describe('the two write DTOs agree, rule for rule', () => {
     ['varianceReason', { varianceReason: 'x'.repeat(EXPLANATION_MAX_LENGTH + 1) }],
     ['activityValue', { activityValue: -0.0001 }],
     ['activityValue', { activityValue: ACTIVITY_VALUE_MAX + 1 }],
+    ['input', { input: { invoice_no: 'x'.repeat(65) } }],
+    ['input', { input: { supplier: 'x'.repeat(201) } }],
+    ['input', { input: { invoice_no: 7 } }],
   ])('%s is refused by both classes', (field, body) => {
     for (const [, Dto] of DTOS) {
       expect(constraintsOn(Dto, body, field).length).toBeGreaterThan(0);

@@ -36,6 +36,8 @@
       "net": "Net",
       "gross": "Brüt"
     },
+    "invoiceNo": "Fatura no",
+    "supplier": "Tedarikçi",
     "selfGeneration": {
       "title": "Öz üretim",
       "source": "Kaynak",

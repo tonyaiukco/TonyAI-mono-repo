@@ -147,7 +147,9 @@ jobs:
           platforms: linux/amd64
           build-args: NODE_IMAGE=docker.io/library/node:22-bookworm-slim
           cache-from: type=gha,scope=api
-          cache-to: type=gha,scope=api,mode=max
+          # A cache the service refuses to store must not fail the build: the image
+          # and the smoke below are the gate, the cache only saves time.
+          cache-to: type=gha,scope=api,mode=max,ignore-error=true
       - name: Build and load environment-bound web image
         uses: docker/build-push-action@v6
         with:
@@ -162,7 +164,7 @@ jobs:
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_API_BASE_URL=${{ env.NEXT_PUBLIC_API_BASE_URL }}
           cache-from: type=gha,scope=web
-          cache-to: type=gha,scope=web,mode=max
+          cache-to: type=gha,scope=web,mode=max,ignore-error=true
       - name: Actual-image startup, login and browser/export smoke
         env:
           API_IMAGE: tonyai-api:ci

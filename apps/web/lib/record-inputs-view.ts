@@ -113,8 +113,31 @@ export function gasInputsIssue(inputs: GasInputs, unit: string, referenceNcv: nu
 }
 
 /**
- * Why a natural gas bill cannot be sent yet, or null (ng-kwh-form): its basis
- * has no default, so nothing is previewed or saved until the author states it.
+ * The basis the form acts on where the basis choice is shown
+ * (uat4-quick-fixes, BUG-11): the held one, which is the record's stored basis
+ * or the author's pick, and gross when none is held, because a gas bill in
+ * Türkiye states its energy on the upper calorific value. Net is never the
+ * answer for a basis nobody chose.
+ */
+export function effectiveGasBasis(held: CvBasis | null): CvBasis {
+  return held ?? "gross";
+}
+
+/**
+ * The gas inputs the form shows, previews and saves: on a bill (kWh or MWh
+ * under the TR rules) the held inputs with the effective basis, anywhere else
+ * the held inputs untouched. The held state keeps its null, so every place
+ * that clears the basis lands on gross without naming a value itself.
+ */
+export function gasInputsInEffect(inputs: GasInputs, mode: RecordInputMode): GasInputs {
+  return mode === "natural_gas_energy" ? { ...inputs, cvBasis: effectiveGasBasis(inputs.cvBasis) } : inputs;
+}
+
+/**
+ * Why a natural gas bill cannot be sent yet, or null (ng-kwh-form): a bill
+ * with no basis is never previewed or saved. The form reads its inputs through
+ * `gasInputsInEffect`, which always holds one, so this stays the guard for
+ * inputs that did not come through it.
  */
 export function gasEnergyIssue(inputs: GasInputs, mode: RecordInputMode): "basis_missing" | null {
   return mode === "natural_gas_energy" && inputs.cvBasis === null ? "basis_missing" : null;

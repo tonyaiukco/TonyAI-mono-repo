@@ -111,3 +111,46 @@ export function evidenceCell(row: {
   }
   return { kind: "count", count: row.evidenceCount };
 }
+
+/**
+ * The way to the records table from the top of Data Entry (UAT round 4,
+ * BUG-15, screen part): the table sits under the form and Bulk upload, several
+ * screens down, and users did not find what they had entered.
+ */
+
+/** The id of the records table's heading: where the control at the top lands. */
+export const RECORDS_HEADING_ID = "records-table-heading";
+
+/**
+ * What the control says: the subsidiary's record count, that it has none yet,
+ * or neither while the count is not known (still loading, or refused as too
+ * broad). It leads to the table in all three.
+ */
+export function entriesJumpWording(total: number | null): { key: "jump.count"; count: number } | { key: "jump.none" } | { key: "jump.unknown" } {
+  if (total === null) return { key: "jump.unknown" };
+  return total > 0 ? { key: "jump.count", count: total } : { key: "jump.none" };
+}
+
+/** The part of a document `jumpToRecords` uses, so a test can stand in for it. */
+export interface JumpTarget {
+  scrollIntoView(options: { behavior: "auto" | "smooth"; block: "start" }): void;
+  focus(options: { preventScroll: boolean }): void;
+}
+
+/**
+ * Brings the records table into view and puts keyboard focus on its heading,
+ * so a keyboard or screen-reader user lands there too. No animated scroll for
+ * a user whose system asks for reduced motion. Returns whether there was a
+ * table to go to.
+ */
+export function jumpToRecords(
+  find: (id: string) => JumpTarget | null,
+  reducedMotion: boolean,
+): boolean {
+  const heading = find(RECORDS_HEADING_ID);
+  if (!heading) return false;
+  heading.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+  // The scroll above places it; focus must not jump there first and cancel the animation.
+  heading.focus({ preventScroll: true });
+  return true;
+}

@@ -83,6 +83,7 @@ import {
   type SelfGenerationField,
   type SelfGenerationForm,
   gasEnergyIssue,
+  gasInputsInEffect,
   gasInputsIssue,
   gasParameters,
   linesFromRecord,
@@ -129,6 +130,7 @@ import { BoundaryCoverage } from "@/components/data-entry/boundary-coverage";
 import { FactorCoverageLegend } from "@/components/data-entry/factor-coverage-legend";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { RecentImports } from "@/components/data-entry/recent-imports";
+import { EntriesJump } from "@/components/data-entry/entries-jump";
 import { RecordsTable, type AttachRequest } from "@/components/data-entry/records-table";
 import { attachableRecords, recordLabel, refrigerantShortcut } from "@/lib/evidence-view";
 import { factorReleaseId, formatSealDate, sealDateFor, type SealDates } from "@/lib/release-seal-view";
@@ -185,7 +187,7 @@ import type {
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
-import { CONTEXT_FIELDS, contextFieldSet, hasContextValue } from "@/lib/context-fields";
+import { CONTEXT_FIELDS, contextFieldMessageKey, contextFieldSet, hasContextValue } from "@/lib/context-fields";
 import type { Messages } from "@/messages";
 import { geographyName } from "@/lib/vocabulary";
 import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
@@ -389,6 +391,11 @@ function DataEntryPageInner() {
   const [records, setRecords] = useState<ActivityRecordPageItemDTO[]>([]);
   const [recordsCursor, setRecordsCursor] = useState<string | null>(null);
   const [recordsTotal, setRecordsTotal] = useState<number | null>(null);
+  // Every record of a subsidiary, whatever the table's filters narrow it to:
+  // the count on the control at the top (BUG-15), kept with the subsidiary it
+  // was read for. It is read apart from the table's rows and never holds them
+  // back; null while it is not known.
+  const [entriesTotal, setEntriesTotal] = useState<{ subsidiaryId: string; total: number } | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordsLoadingMore, setRecordsLoadingMore] = useState(false);
   // A slower answer for an earlier subsidiary must not land over a newer one.
@@ -624,15 +631,18 @@ function DataEntryPageInner() {
   const referenceRows = reference.status === "ready" ? reference.data.parameters : [];
   const defaultNcv = referenceValue(referenceRows, "reference_ncv");
   const gasProblem = inputMode === "natural_gas" ? gasInputsIssue(gasInputs, activityUnit, defaultNcv) : null;
-  // A bill's basis has no default: nothing is previewed or saved until it is chosen (ng-kwh-form).
-  const gasEnergyProblem = gasEnergyIssue(gasInputs, inputMode);
+  // What the form shows, previews and saves: a bill with no held basis reads as
+  // gross, the figure a gas bill in Türkiye states (uat4-quick-fixes, BUG-11).
+  // `gasInputs` keeps what the record stores or the author picked.
+  const gasInEffect = gasInputsInEffect(gasInputs, inputMode);
+  const gasEnergyProblem = gasEnergyIssue(gasInEffect, inputMode);
   // Only the fields on screen: the correction factor's field is gone in Sm³.
   const gasRefused =
     inputMode === "natural_gas" &&
     [...refusedGasInputs].some((field) => field !== "volumeCorrectionFactor" || activityUnit === "cubic_metres");
   const recordParameters: RecordParameters | null =
     inputMode === "natural_gas" || inputMode === "natural_gas_energy"
-      ? gasParameters(gasInputs, activityUnit, defaultNcv)
+      ? gasParameters(gasInEffect, activityUnit, defaultNcv)
       : refrigerantMode && equipmentProblem === null
         ? equipmentParameters(equipment)
         : selfGenerationBlock(category, selfGeneration);
@@ -830,12 +840,29 @@ function DataEntryPageInner() {
       setRecords([]);
       setRecordsCursor(null);
       setRecordsTotal(null);
+      setEntriesTotal(null);
       setRecordsFetchedFor(null);
       return;
     }
     setRecordsLoading(true);
     try {
       const filters: ActivityRecordPageFilters = { subsidiaryId: subId, ...recordsQueryRef.current };
+      // The table's own count is the subsidiary's when no filter narrows it.
+      // Otherwise the subsidiary's whole count is asked on its own: a count
+      // over every year may take longer than one filtered page, and the rows
+      // must not wait for it (review of 3ebe20d5).
+      const narrowed = Object.keys(recordsQueryRef.current).length > 0;
+      if (narrowed) {
+        void api.activityRecordMetadata({ subsidiaryId: subId }).then(
+          (all) => {
+            if (mine === recordsSeq.current) setEntriesTotal({ subsidiaryId: subId, total: all.total });
+          },
+          // Refused or failed: the control shows no count and still leads to the table.
+          () => {
+            if (mine === recordsSeq.current) setEntriesTotal(null);
+          },
+        );
+      }
       const [page, meta] = await Promise.all([
         api.listActivityRecordPage(filters),
         // Any refusal of the count (422 query_too_broad, a quota, an outage) shows
@@ -846,6 +873,7 @@ function DataEntryPageInner() {
       setRecords(page.items);
       setRecordsCursor(page.nextCursor);
       setRecordsTotal(meta?.total ?? null);
+      if (!narrowed) setEntriesTotal(meta ? { subsidiaryId: subId, total: meta.total } : null);
       setRecordsFetchedFor(subId);
       // Which query these rows answer: the refrigerant shortcut waits for its own.
       setRecordsFetchedQuery(JSON.stringify(recordsQueryRef.current));
@@ -1988,6 +2016,11 @@ function DataEntryPageInner() {
                 {t("subtitle")}
                 {user ? ` · ${user.fullName} (${tRoles(`roles.${user.role}`)})` : ""}
               </p>
+              {/* The records table is far below the form: a way to it from here (BUG-15). */}
+              {/* A count read for another subsidiary is not this one's: unknown until its own arrives. */}
+              {subsidiaryId && (
+                <EntriesJump total={entriesTotal?.subsidiaryId === subsidiaryId ? entriesTotal.total : null} />
+              )}
             </div>
             <SignOutButton onClick={handleLogout} />
           </div>
@@ -2350,7 +2383,7 @@ function DataEntryPageInner() {
                   })()}
                   {inputMode === "natural_gas_energy" && (
                     <CalorificBasisChoice
-                      basis={gasInputs.cvBasis}
+                      basis={gasInEffect.cvBasis}
                       quantity={valueCheck.ok ? valueCheck.value : null}
                       unit={activityUnit}
                       reference={reference}
@@ -2483,11 +2516,17 @@ function DataEntryPageInner() {
                 <div id={contextPanelId} hidden={!contextOpen}>
                 <CardContent className="space-y-4">
                   {CONTEXT_FIELDS[contextSet].map((f) => {
-                    const key = `context.${contextSet}.${f.id}`;
+                    const key = contextFieldMessageKey(contextSet, f);
                     const label = t(`${key}.label` as ContextFieldKey<"label">);
                     const placeholder = f.placeholder ? t(`${key}.placeholder` as ContextFieldKey<"placeholder">) : undefined;
+                    // A text, date or note field's label names its box: a click on
+                    // the label focuses it, and a screen reader reads the box by
+                    // its visible name (review of 3ebe20d5). The number and select
+                    // fields are composed controls and are not tied here.
+                    const inputId =
+                      f.type === "text" || f.type === "date" || f.type === "textarea" ? `context-field-${f.id}` : undefined;
                     return (
-                      <Field key={f.id} label={label}>
+                      <Field key={f.id} label={label} htmlFor={inputId}>
                         {f.type === "select" ? (
                           <Select
                             value={String(context[f.id] ?? "")}
@@ -2508,6 +2547,7 @@ function DataEntryPageInner() {
                           </Select>
                         ) : f.type === "textarea" ? (
                           <Textarea
+                            id={inputId}
                             placeholder={placeholder}
                             value={String(context[f.id] ?? "")}
                             onChange={(e) =>
@@ -2536,8 +2576,10 @@ function DataEntryPageInner() {
                           />
                         ) : (
                           <Input
+                            id={inputId}
                             type={f.type === "date" ? "date" : "text"}
                             placeholder={placeholder}
+                            maxLength={f.maxLength}
                             value={String(context[f.id] ?? "")}
                             onChange={(e) =>
                               setContext((prev) => ({
@@ -3077,14 +3119,17 @@ function Row({ label, value }: { label: string; value: string }) {
 
 function Field({
   label,
+  htmlFor,
   children,
 }: {
   label: string;
+  /** The id of the control the label names, where the field has one control of its own. */
+  htmlFor?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
     </div>
   );

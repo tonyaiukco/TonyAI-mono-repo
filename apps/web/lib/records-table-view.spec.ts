@@ -1,9 +1,18 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
+import { EntriesJump } from '@/components/data-entry/entries-jump';
+import { MESSAGES } from '@/messages';
 import { needsEvidenceBeforeSubmit } from '@/lib/types';
 import {
+  RECORDS_HEADING_ID,
   blankRecordsFilter,
+  entriesJumpWording,
   evidenceCell,
   isNarrowed,
+  jumpToRecords,
+  type JumpTarget,
   pickRecordsFilter,
   recordsQuery,
   recordsYearOptions,
@@ -119,5 +128,64 @@ describe('recordsYearOptions', () => {
     const base = [2026] as const;
     recordsYearOptions(base, { year: 2010, status: 'all', category: 'all' });
     expect(base).toEqual([2026]);
+  });
+});
+
+describe('the way to the records table from the top of Data Entry (uat4-quick-fixes, BUG-15)', () => {
+  it('says the count, that there are none yet, or neither while the count is unknown', () => {
+    expect(entriesJumpWording(12)).toEqual({ key: 'jump.count', count: 12 });
+    expect(entriesJumpWording(1)).toEqual({ key: 'jump.count', count: 1 });
+    expect(entriesJumpWording(0)).toEqual({ key: 'jump.none' });
+    expect(entriesJumpWording(null)).toEqual({ key: 'jump.unknown' });
+  });
+
+  const render = (locale: 'en' | 'tr', total: number | null) =>
+    renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale],
+      children: createElement(EntriesJump, { total }),
+    }));
+
+  it.each([
+    ['en', 12, 'View or edit your entries (12)'],
+    ['en', 3, 'View or edit your entries (3)'],
+    ['en', 0, 'View or edit your entries (none yet)'],
+    ['en', null, 'View or edit your entries'],
+    ['tr', 12, 'Girdiğiniz verileri görüntüleyin / düzenleyin (12)'],
+    ['tr', 0, 'Girdiğiniz verileri görüntüleyin / düzenleyin (henüz yok)'],
+    ['tr', null, 'Girdiğiniz verileri görüntüleyin / düzenleyin'],
+  ] as const)('%s: a total of %s reads "%s"', (locale, total, label) => {
+    const html = render(locale, total);
+    expect(html).toContain(`${label}</button>`);
+    // A button, never a link: a jump must not read as a navigation.
+    expect(html).toMatch(/<button[^>]*type="button"[^>]*data-testid="entries-jump"|<button[^>]*data-testid="entries-jump"[^>]*type="button"/);
+    expect(html).not.toContain('<a ');
+  });
+
+  const target = () => {
+    const calls: string[] = [];
+    const heading: JumpTarget = {
+      scrollIntoView: (options) => calls.push(`scroll:${options.behavior}:${options.block}`),
+      focus: (options) => calls.push(`focus:preventScroll=${options.preventScroll}`),
+    };
+    return { calls, heading };
+  };
+
+  it('scrolls to the table heading and puts focus on it', () => {
+    const { calls, heading } = target();
+    const asked: string[] = [];
+    const went = jumpToRecords((id) => { asked.push(id); return heading; }, false);
+    expect(went).toBe(true);
+    expect(asked).toEqual([RECORDS_HEADING_ID]);
+    expect(calls).toEqual(['scroll:smooth:start', 'focus:preventScroll=true']);
+  });
+
+  it('jumps without an animated scroll when the system asks for reduced motion', () => {
+    const { calls, heading } = target();
+    jumpToRecords(() => heading, true);
+    expect(calls).toEqual(['scroll:auto:start', 'focus:preventScroll=true']);
+  });
+
+  it('does nothing, and says so, when the table is not on the page', () => {
+    expect(jumpToRecords(() => null, false)).toBe(false);
   });
 });

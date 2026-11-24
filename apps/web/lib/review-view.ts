@@ -4,7 +4,9 @@ import {
   isCvBasis,
   isSelfGenerationSource,
   normalizeRecordParameters,
+  recordInvoiceNo,
   recordParameterShape,
+  recordSupplier,
   selfGenerationBalance,
   type ActivityRecordDTO,
   type CvBasis,
@@ -22,6 +24,19 @@ export function reviewCalorificBasis(record: Pick<ActivityRecordDTO, 'category' 
   if (recordParameterShape(record.category) !== 'natural_gas' || record.parameters === null) return null;
   const basis = (record.parameters as { cvBasis?: unknown }).cvBasis;
   return isCvBasis(basis) ? basis : null;
+}
+
+/**
+ * A record's invoice number and supplier (UAT round 4, BUG-16), for the review
+ * sheet, so the reviewer can match the record to its evidence file: each one
+ * the record holds, null for one it does not. An Electricity record's supplier
+ * is its utility provider (`recordSupplier`).
+ */
+export function reviewReferences(record: Pick<ActivityRecordDTO, 'category' | 'input'>): {
+  invoiceNo: string | null;
+  supplier: string | null;
+} {
+  return { invoiceNo: recordInvoiceNo(record.input), supplier: recordSupplier(record.category, record.input) };
 }
 
 /** An Electricity record's self-generation block as the review sheet shows it (self-gen-form, design 7). */
