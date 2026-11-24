@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
-import { actorLabel, summariseBatch, type AuditActorWords, type AuditBatchKey } from "@/lib/audit-view";
+import { actorLabel, auditActionLabel, summariseBatch, type AuditActorWords, type AuditBatchKey } from "@/lib/audit-view";
 import { formatNumber } from "@/lib/i18n/number";
 import { useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
@@ -76,6 +76,7 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   // `pnpm anomaly:recompute` performed them, not a person — which the trail
   // already renders, since a deleted profile produces the same shape.
   rescore: "bg-slate-500/15 text-slate-700 border-slate-500/30",
+  reprice: "bg-slate-500/15 text-slate-700 border-slate-500/30",
   generate: "bg-violet-500/15 text-violet-700 border-violet-500/30",
   // Violet, with `generate`: a batch act whose row summarises a file, not a
   // figure — the figures are the per-record `create` rows beside it.
@@ -126,8 +127,7 @@ function formatDateTime(iso: string, locale: Locale): string {
   }).format(new Date(iso));
 }
 
-/** An action or entity code as the trail shows it — a raw identifier in every
- *  language (M2), its underscores spaced. */
+/** Space underscores in a stored action or entity code. */
 function humanise(value: string): string {
   return value.replace(/_/g, " ");
 }
@@ -165,6 +165,7 @@ export default function AuditPage() {
   const tRoles = useTranslations("users");
   const t = useTranslations("audit");
   const tCommon = useTranslations("common");
+  const repriceLabel = t("actions.reprice");
   const locale = useLocale();
   const recordWords = useRecordWords();
   const showStableError = useStableErrorToast();
@@ -330,7 +331,7 @@ export default function AuditPage() {
                     <SelectItem value={ANY}>{t("allActions")}</SelectItem>
                     {AUDIT_ACTIONS.map((a) => (
                       <SelectItem key={a} value={a}>
-                        {humanise(a)}
+                        {auditActionLabel(a, repriceLabel, humanise(a))}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -415,7 +416,7 @@ export default function AuditPage() {
                                   ACTION_COLORS[row.action] ?? NEUTRAL_ACTION,
                                 )}
                               >
-                                {humanise(row.action)}
+                                {auditActionLabel(row.action, repriceLabel, humanise(row.action))}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-sm">{humanise(row.entity)}</TableCell>
@@ -462,7 +463,10 @@ export default function AuditPage() {
         <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
           <SheetHeader>
             <SheetTitle>
-              {selected ? t("sheet.title", { action: selected.action, entity: humanise(selected.entity) }) : ""}
+              {selected ? t("sheet.title", {
+                action: auditActionLabel(selected.action, repriceLabel),
+                entity: humanise(selected.entity),
+              }) : ""}
             </SheetTitle>
           </SheetHeader>
           {selected && (

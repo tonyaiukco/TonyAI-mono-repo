@@ -9,6 +9,9 @@
   "filterPlaceholder": "Filter this page…",
   "allEntities": "All entities",
   "allActions": "All actions",
+  "actions": {
+    "reprice": "Figure recalculated"
+  },
   "entriesOne": "{count} entry",
   "entriesMany": "{count} entries",
   "columns": {

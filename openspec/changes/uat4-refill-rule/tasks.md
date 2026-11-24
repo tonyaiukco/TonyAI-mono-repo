@@ -2,7 +2,7 @@
 
 ## 1. The rule and the snapshot marker (BUG-17)
 
-- [ ] 1.1 Add the optional `pricedBy: 'refill'` to `RefrigerantTerm` and a `refrigerantTermMassKg(term)` helper in `packages/shared-types` (marked term gives `refillKg`, any other gives `leakedKg + refillKg`), with unit tests for a marked term, a sum-rule term with both masses, a no-refill term and a no-capacity term; verify `pnpm --filter @tonyai/shared-types test` passes
+- [x] 1.1 Add the optional `pricedBy: 'refill'` to `RefrigerantTerm` and a `refrigerantTermMassKg(term)` helper in `packages/shared-types` (marked term gives `refillKg`, any other gives `leakedKg + refillKg`), with unit tests for a marked term, a sum-rule term with both masses, a no-refill term and a no-capacity term; verify `pnpm --filter @tonyai/shared-types test` passes
 - [ ] 1.2 Change `capacityMethod` in `apps/api/src/calculations/tr-rules.ts` to price each line by the helper and to write the marker only on a line with `capacityKg > 0` and `refillKg > 0`; add `capacityMethod` cases to `tr-rules.spec.ts` (refill replaces the estimate, mixed lines, no capacity, no refill, alternative rate with a refill, missing rate still refused); verify the spec passes
 - [ ] 1.3 Add the BUG-17 vector to `calculations.service.spec.ts` (HFC-227ea, 50 kg, 35 kg refill gives 126,000 kgCO2e and a marked term) beside golden value 9, which must pass unchanged; verify both pass
 - [ ] 1.4 Add a byte-identity test: for a no-refill record and for a no-capacity record, the snapshot the engine writes now deep-equals a fixture captured from `main` before 1.2, and `compareSnapshots` reads it as not stale; for a both-masses record it reads as stale with class `figure`; verify `snapshot-staleness.spec.ts` passes
@@ -19,7 +19,7 @@
 
 ## 3. Re-pricing open drafts
 
-- [ ] 3.1 Add `reprice` to `AUDIT_ACTIONS` with its comment, the audit viewer's label in the EN and TR catalogues, and its handling in `apps/web/lib/audit-view.ts` where `rescore` is handled; verify `audit-view.spec.ts` and the message parity test pass
+- [x] 3.1 Add `reprice` to `AUDIT_ACTIONS` with its comment, the audit viewer's label in the EN and TR catalogues, and its handling in `apps/web/lib/audit-view.ts` where `rescore` is handled; verify `audit-view.spec.ts` and the message parity test pass
 - [ ] 3.2 Add `DraftRepriceService` under `apps/api/src/activity-records/` per design decision 4. Recompute outside the transaction and re-check status, period, inputs and current snapshot in the lifecycle lock protocol. Write calculation, anomaly verdict and one `reprice` audit row in the same transaction. In DB-free tests verify dry run, draft and rejected updates, identical-snapshot no-ops, `snapshot_changed`, locked periods, engine refusals, status or input changes, and separate reporting of sum-rule and unclassified review-queue candidates
 - [ ] 3.3 Add `draft-reprice.cli.ts` and the `draft-reprice` package script (dry run by default, `--apply`, `--allow-remote` required off loopback, unknown switches refused, exit code non-zero on a refusal); verify with a CLI spec for the switches and the remote guard
 - [ ] 3.4 Confirm the runtime role can do what the command needs (update `activity_records`, insert `audit_log`) by reading `packages/db/scripts/runtime-role.mjs`; verify no grant or migration is needed, or add the grant in a migration and to that script

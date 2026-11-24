@@ -9,6 +9,9 @@
   "filterPlaceholder": "Bu sayfada ara…",
   "allEntities": "Tüm varlıklar",
   "allActions": "Tüm işlemler",
+  "actions": {
+    "reprice": "Emisyon yeniden hesaplandı"
+  },
   "entriesOne": "{count} kayıt",
   "entriesMany": "{count} kayıt",
   "columns": {

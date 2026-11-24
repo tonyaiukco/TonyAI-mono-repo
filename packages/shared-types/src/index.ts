@@ -2498,7 +2498,7 @@ export interface SnapshotParameterRow {
   edition: string;
 }
 
-/** One equipment line of the capacity method (D7): `leakedKg + refillKg` is its priced mass. */
+/** One equipment line of the capacity method (D7). Use `refrigerantTermMassKg` to read its priced mass. */
 export interface RefrigerantTerm {
   equipmentType: string;
   leakRateChoice: LeakRateChoice;
@@ -2506,6 +2506,13 @@ export interface RefrigerantTerm {
   leakRate: number;
   leakedKg: number;
   refillKg: number;
+  /** Set when a positive refill replaces the estimate for a positive-capacity line. */
+  pricedBy?: 'refill';
+}
+
+/** Read the mass priced in the snapshot. Unmarked terms keep the sum rule. */
+export function refrigerantTermMassKg(term: RefrigerantTerm): number {
+  return term.pricedBy === 'refill' ? term.refillKg : term.leakedKg + term.refillKg;
 }
 
 /**
@@ -5265,8 +5272,8 @@ export const REFRIGERANT_LINE_CEILING_KG = 500;
  * installed capacity, capped at `REFRIGERANT_LINE_CEILING_KG` — or to the cap
  * alone when the line has no capacity, since "125% of nothing" would flag every
  * refill (owner, 2026-11-13, after the `security-rls` review found refill
- * unguarded). A line's emission is capacity × leak rate + REFILL, so a refill
- * typo moves the figure most of all.
+ * unguarded). Under the refill rule, a positive refill is the line's entire
+ * released mass, so an entry error directly changes the figure.
  *
  * The share is US EPA 40 CFR 82.157's reporting trigger — an owner reports an
  * appliance that leaks 125% or more of its full charge in a calendar year —
@@ -6305,6 +6312,9 @@ export const AUDIT_ACTIONS = [
    *  null `userId` — no person performed them — which the viewer already
    *  renders, since a deleted profile produces the same shape. */
   'rescore',
+  /** An open draft's figure recalculated under the refill rule by the operator
+   *  command, with a null user and the figures before and after. */
+  'reprice',
   'generate',
   // A batch act on activity records — the import of a file, the submit of
   // many ids — beside the per-record rows the create/submit path writes. The
