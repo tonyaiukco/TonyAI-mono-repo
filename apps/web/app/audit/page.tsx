@@ -166,6 +166,7 @@ export default function AuditPage() {
   const t = useTranslations("audit");
   const tCommon = useTranslations("common");
   const repriceLabel = t("actions.reprice");
+  const displayAction = (action: string) => auditActionLabel(action, repriceLabel, humanise(action));
   const locale = useLocale();
   const recordWords = useRecordWords();
   const showStableError = useStableErrorToast();
@@ -238,11 +239,17 @@ export default function AuditPage() {
 
   // Client-side narrowing on top of the server filters: the server already
   // bounded the page, this just helps scan it.
-  const visible = search.trim()
-    ? rows.filter((r) =>
-        [r.userEmail, r.userFullName, r.entityId, r.entity, r.action]
-          .filter(Boolean)
-          .some((v) => (v as string).toLowerCase().includes(search.trim().toLowerCase())),
+  const searchTerm = search.trim().toLowerCase();
+  const visible = searchTerm
+    ? rows.filter((row) =>
+        [
+          row.userEmail,
+          row.userFullName,
+          row.entityId,
+          row.entity,
+          row.action,
+          displayAction(row.action),
+        ].some((value) => value?.toLowerCase().includes(searchTerm)),
       )
     : rows;
 
@@ -331,7 +338,7 @@ export default function AuditPage() {
                     <SelectItem value={ANY}>{t("allActions")}</SelectItem>
                     {AUDIT_ACTIONS.map((a) => (
                       <SelectItem key={a} value={a}>
-                        {auditActionLabel(a, repriceLabel, humanise(a))}
+                        {displayAction(a)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -416,7 +423,7 @@ export default function AuditPage() {
                                   ACTION_COLORS[row.action] ?? NEUTRAL_ACTION,
                                 )}
                               >
-                                {auditActionLabel(row.action, repriceLabel, humanise(row.action))}
+                                {displayAction(row.action)}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-sm">{humanise(row.entity)}</TableCell>
