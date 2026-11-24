@@ -135,7 +135,7 @@ See `proposal.md` for the why.
 - **No host resolves in the renderer.** Chromium launches with `--host-resolver-rules=MAP * ~NOTFOUND`. A DNS prefetch and a preconnect go through the resolver and the socket pool, around request interception: the int spec measured 3 connections without the flag and none with it. A meta refresh makes none either.
 - **The set-password screen is a screen control, and says so.** The marker gates the screen. The server-side control on a password change is GoTrue's 24-hour reauthentication, so a stolen session under 24 hours can still call Auth directly. The Open-questions item closes as *partially* closed, with that residual filed.
   - At submit the screen reads the session and the marker again.
-  - The acceptance and the `password_set` record are bound to that user and to that session read's token (`callAsSubjectQuietly`, the acceptance's pattern from #351).
+  - The acceptance and the `password_set` record are bound to that session's token (`callWithTokenQuietly`; see §9).
   - While the marker is read the screen shows no field.
 - **One flow type.** `EmailLinkType` and `EmailLinkFlow` are the shared `PasswordSetFlow`, validated with `PASSWORD_SET_FLOWS`.
 - **`next dev` may evaluate code.** `script-src` adds `'unsafe-eval'` only when `NODE_ENV` is `development`; a built image never does.
@@ -164,7 +164,7 @@ See `proposal.md` for the why.
     - (C) a runbook step alone: nothing would stop a deploy.
   - Consequence: the first QA deploy after this merges stops until the owner has reconciled and recorded the digest; so does any later commit that changes the policy, even an infra-only one.
 - **The marker names the Auth session.** The marker now holds the link session's `session_id` (from its access token), and the screen compares it. A later sign-in by the same person in the same tab is another session and finds no marker.
-- **One `password_set` row per change.** The web sends a `changeId` that stays fixed through its repeats. The API writes nothing when a row with that id already exists for the user; the repeats are sequential, so a read before the write suffices. The id lives in `diff`, never as the row's primary key.
+- **One `password_set` row per change.** The web sends a `changeId` that stays fixed through its repeats (made atomic in §9).
 - **The race path counts the bound again.** The P2002 path's second transaction re-takes the tenant lock and re-counts. A request that lost the last refusal to another answers 429 and writes nothing.
 - **Report fields are allowlisted.** A field is kept only when it is one of these, and is `unknown` otherwise:
   - a directive name (the first word of an old browser's whole directive);
@@ -174,6 +174,13 @@ See `proposal.md` for the why.
   - The receiver refuses a form with 415.
   - The API's security headers are set before CORS, so a preflight carries them.
   - The PDF int spec proves that no script ran by the page count: a script that would add 500 paragraphs leaves one page.
+
+### 9. Codex re-review of `d8636009`
+
+- **The record follows the password's session.** The web no longer re-reads the browser's shared session for these calls, so a sign-in in another tab can neither lose the row nor move it. `callWithTokenQuietly` runs a call with one fixed token on every repeat, and replaces the subject-bound re-read of #351:
+  - `recordPasswordSet` and the set-password screen's acceptance use the token of the session the password was changed through;
+  - the email link's and the sign-in's acceptances use the token their own Auth operation returned (`verifyOtp`, `signInWithPassword`).
+- **One row per change, decided by the database.** The `password_set` row's id is `passwordSetRowId(user, changeId)`, a UUID-shaped SHA-256 of both. A repeat, overlapping or not, meets the primary key; its P2002 is answered quietly, and nothing is ever updated. An int spec runs two records of one change at once on the runtime role and finds one row.
 
 ## Risks / Trade-offs
 

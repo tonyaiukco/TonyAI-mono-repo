@@ -125,8 +125,8 @@ describe('the session wiring', () => {
   it.each(['app/auth/confirm/confirm-email-link.tsx', 'app/login/page.tsx'])(
     '%s accepts the invitation through acceptOwnInvitation',
     (file) => {
-      // With the subject the Auth operation returned, never a later session read.
-      expect(read(file)).toMatch(/await acceptOwnInvitation\(data\.user\?\.id\);/);
+      // With the token the Auth operation returned, never a later session read.
+      expect(read(file)).toMatch(/await acceptOwnInvitation\(data\.session\?\.access_token\);/);
     },
   );
 
@@ -153,9 +153,9 @@ describe('the session wiring', () => {
     expect(form).toMatch(/access\.kind === "noSession" \|\| access\.kind === "noLink" \?/);
     // Cleared after the save, and the save recorded with the marker's flow.
     expect(form.indexOf('clearEmailLinkMarker(tabStorage())')).toBeGreaterThan(form.indexOf('updateUser('));
-    // Both calls for the user the submit re-checked, never a later read of the session.
-    expect(form).toMatch(/await acceptOwnInvitation\(subject\);/);
-    expect(form).toMatch(/await recordPasswordSet\(subject, linkFlow\);/);
+    // Both calls with the token of the session the submit re-checked, never a later read of the session.
+    expect(form).toMatch(/await acceptOwnInvitation\(current\.access_token\);/);
+    expect(form).toMatch(/await recordPasswordSet\(current\.access_token, linkFlow\);/);
     // The flow is the marker's — on load and at submit — never the address bar's.
     expect(form).toMatch(/setAccess\(marker \? \{ kind: "ready", flow: marker\.flow \}/);
     expect(form).toMatch(/const linkFlow = marker\.flow;/);

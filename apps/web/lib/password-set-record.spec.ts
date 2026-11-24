@@ -8,12 +8,9 @@ vi.mock('./api', () => ({ api: { recordPasswordSet: (flow: string, changeId: str
 import { BOUNDED_CALL_WAIT_MS } from './invitation-acceptance';
 import { recordPasswordSet } from './password-set-record';
 
-const as = (id: string | null, token = `token-${id}`) => ({
-  data: { session: id === null ? null : { user: { id }, access_token: token } },
-});
 const unavailable = () => Object.assign(new Error('unavailable'), { status: 503 });
 
-describe('recordPasswordSet (pre-g5-security-hardening)', () => {
+describe('recordPasswordSet (pre-g5-security-hardening; Codex reviews)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     getSession.mockReset();
@@ -21,38 +18,36 @@ describe('recordPasswordSet (pre-g5-security-hardening)', () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  const run = async (userId: string | undefined, flow: 'invite' | 'recovery') => {
-    const result = recordPasswordSet(userId, flow);
+  const run = async (token: string | undefined, flow: 'invite' | 'recovery') => {
+    const result = recordPasswordSet(token, flow);
     await vi.runAllTimersAsync();
     return result;
   };
 
-  it('records the flow once, with the token of the session read that checked the user', async () => {
-    getSession.mockResolvedValue(as('user-a', 'checked-token'));
+  it('records the flow with the token of the session the password was changed through, never re-reading the shared one', async () => {
     recordPasswordSetCall.mockResolvedValue(undefined);
-    expect(await run('user-a', 'recovery')).toBe(true);
+    expect(await run('checked-token', 'recovery')).toBe(true);
     expect(recordPasswordSetCall.mock.calls).toEqual([['recovery', expect.stringMatching(/^[0-9a-f-]{36}$/), 'checked-token']]);
+    // Another tab signing someone else in cannot lose the row or move it: the shared session is not read.
+    expect(getSession).not.toHaveBeenCalled();
   });
 
-  it('writes nothing when the session is now someone else\'s (another tab signed them in)', async () => {
-    getSession.mockResolvedValue(as('user-b'));
-    expect(await run('user-a', 'invite')).toBe(false);
+  it('records nothing without a token', async () => {
+    expect(await run(undefined, 'invite')).toBe(false);
     expect(recordPasswordSetCall).not.toHaveBeenCalled();
   });
 
-  it('repeats a transient failure, at most three times, and never throws', async () => {
-    getSession.mockResolvedValue(as('user-a'));
+  it('repeats a transient failure, at most three times, with the same token and change id, and never throws', async () => {
     recordPasswordSetCall.mockRejectedValue(unavailable());
-    expect(await run('user-a', 'invite')).toBe(false);
+    expect(await run('checked-token', 'invite')).toBe(false);
     expect(recordPasswordSetCall).toHaveBeenCalledTimes(3);
-    // The same change id on every repeat (Codex review).
     expect(new Set(recordPasswordSetCall.mock.calls.map((c) => c[1])).size).toBe(1);
+    expect(new Set(recordPasswordSetCall.mock.calls.map((c) => c[2]))).toEqual(new Set(['checked-token']));
   });
 
   it('holds the page for BOUNDED_CALL_WAIT_MS at most when the API never answers', async () => {
-    getSession.mockResolvedValue(as('user-a'));
     recordPasswordSetCall.mockReturnValue(new Promise(() => undefined));
-    const result = recordPasswordSet('user-a', 'invite');
+    const result = recordPasswordSet('checked-token', 'invite');
     await vi.advanceTimersByTimeAsync(BOUNDED_CALL_WAIT_MS);
     expect(await result).toBe(false);
   });

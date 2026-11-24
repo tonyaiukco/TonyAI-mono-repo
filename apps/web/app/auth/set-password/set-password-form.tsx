@@ -79,7 +79,6 @@ export function SetPasswordForm() {
       return;
     }
     const linkFlow = marker.flow;
-    const subject = current.user.id;
     // Auth for exactly the session just checked: the shared client would read
     // the session again inside each call, and another tab may change it
     // (Codex review, P1).
@@ -111,10 +110,10 @@ export function SetPasswordForm() {
     toast.success(t("setPassword.saved"));
     // The confirm step's acceptance may not have gone through: asked again, a
     // no-op when it did (pre-pilot defects); waited for `ACCEPT_WAIT_MS` at most.
-    await acceptOwnInvitation(subject);
+    await acceptOwnInvitation(current.access_token);
     // The account's own audit trail records the new password (`account-access`),
     // bounded the same way; the password is set whatever it answers.
-    await recordPasswordSet(subject, linkFlow);
+    await recordPasswordSet(current.access_token, linkFlow);
     // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
     useReportingContextStore.getState().clear();
     // …and the previous person's role, until the new one is read (pre-pilot defects).

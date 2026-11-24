@@ -89,7 +89,7 @@ function LoginForm() {
     useAuthStore.getState().clear();
     // An invitation whose acceptance never got through closes now (Codex review
     // of #350); waited for `ACCEPT_WAIT_MS` at most.
-    await acceptOwnInvitation(data.user?.id);
+    await acceptOwnInvitation(data.session?.access_token);
     router.push("/");
     router.refresh();
   }

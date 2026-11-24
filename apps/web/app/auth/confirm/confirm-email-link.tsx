@@ -60,7 +60,7 @@ export function ConfirmEmailLink() {
     // repeated, and the set-password step asks again; it is not a reason to
     // stop, since the password still has to be chosen (a disabled account has
     // already been signed out by `lib/api.ts`).
-    await acceptOwnInvitation(data.user?.id);
+    await acceptOwnInvitation(data.session?.access_token);
     router.replace(`/auth/set-password?flow=${type}`);
   }
 

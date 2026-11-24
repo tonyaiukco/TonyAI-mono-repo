@@ -73,6 +73,9 @@
       - the deploy's first gate (`qa_autodeploy.py auth-policy`, before any login) stops unless the recorded digest is the release's.
 
       No management token in CI.
+  - **Codex re-review of `d8636009` (two P2s, fixed):**
+    - the password-set record and the acceptances use the token of the session their Auth operation returned or the screen checked, never a re-read of the shared session, so another tab's sign-in can neither lose nor move the row;
+    - one `password_set` row per change is decided by the primary key: an id derived from the user and the `changeId`. An int spec runs two overlapping records and finds one row.
     - **P2s fixed:**
       - the marker holds the link's `session_id`, so a later sign-in in the tab finds none;
       - `password_set` is idempotent per `changeId`;
