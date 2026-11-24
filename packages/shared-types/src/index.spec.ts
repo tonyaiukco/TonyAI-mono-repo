@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import {
+  EQUIPMENT_TYPES,
+  EQUIPMENT_TYPES_WITH_ALTERNATIVE,
+  isRecordActivityTypeAllowed,
+  recordActivityTypesFor,
+  CAPACITY_METHOD_CATEGORIES,
+  COOLING_EQUIPMENT_TYPES,
+  FIRE_SUPPRESSION_EQUIPMENT_TYPES,
+  REFRIGERANT_TYPES_NOT_OFFERED,
+  acceptedEquipmentTypes,
+  allowsAlternativeLeakRate,
+  isCapacityMethodCategory,
+  offeredActivityTypes,
+  offeredEquipmentTypes,
   isProvenanceSnapshot,
   refrigerantTermMassKg,
   type RefrigerantTerm,
@@ -238,7 +251,7 @@ describe('category rule sets', () => {
     for (const category of scope12) {
       expect(isEvidenceRequired(category)).toBe(true);
     }
-    for (const category of ['Mobile Combustion', 'Refrigerants', 'Fugitive Gas']) {
+    for (const category of ['Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas']) {
       expect(isEvidenceRequired(category)).toBe(true);
     }
   });
@@ -847,6 +860,11 @@ describe('first-period typo ceilings (BUG-R2-07 tier 3, Decisions 2026-11-12)', 
     ['one large refrigerant line', rec('Refrigerants', 770, 'kg', 'R-410A', lines(120, 650)), true],
     ['many small refrigerant lines (600 kg in total)', rec('Refrigerants', 600, 'kg', 'R-410A', lines(...Array(6).fill(100))), false],
     ['a refrigerant line exactly at 500 kg', rec('Refrigerants', 500, 'kg', 'R-410A', lines(500)), false],
+    // Fire Suppression is checked per line as Refrigerants is (UAT round 4, BUG-12).
+    ['a fire suppression line above 500 kg', rec('Fire Suppression', 6_000, 'kg', 'CO2', lines(6_000)), true],
+    ['a fire suppression line of 6 kg (6,000 g entered)', rec('Fire Suppression', 6, 'kg', 'CO2', lines(6)), false],
+    ['a dry powder line of 650 kg', rec('Fire Suppression', 650, 'kg', 'dry_powder_or_foam', lines(650)), true],
+    ['many small fire suppression lines', rec('Fire Suppression', 900, 'kg', 'HFC-227ea', lines(450, 450)), false],
   ] as const)('%s → above %s', (_what, record, above) => {
     expect(firstPeriodCeiling(record)?.above).toBe(above);
   });
@@ -1279,7 +1297,7 @@ describe('needsEvidenceBeforeSubmit', () => {
     expect(needsEvidenceBeforeSubmit({ category: 'Business Travel', evidenceCount: 0 })).toBe(false);
   });
 
-  it.each(['Mobile Combustion', 'Refrigerants', 'Fugitive Gas'])(
+  it.each(['Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'])(
     'holds back %s with no file and lets it through with one (K3)',
     (category) => {
       expect(needsEvidenceBeforeSubmit({ category, evidenceCount: 0 })).toBe(true);
@@ -1444,11 +1462,13 @@ describe('self-generation value lists (self-gen-model)', () => {
 });
 
 describe('recordParameterShape (self-gen-model)', () => {
-  it('answers a shape for Natural Gas, Refrigerants and Electricity, and null for every other category', () => {
+  it('answers a shape for Natural Gas, the capacity-method categories and Electricity, and null for every other', () => {
     expect(recordParameterShape('Natural Gas')).toBe('natural_gas');
     expect(recordParameterShape('Refrigerants')).toBe('refrigerant');
+    expect(recordParameterShape('Fire Suppression')).toBe('refrigerant');
     expect(recordParameterShape('Electricity')).toBe('electricity');
-    for (const category of CATEGORIES.filter((c) => !['Natural Gas', 'Refrigerants', 'Electricity'].includes(c))) {
+    const shaped = ['Natural Gas', 'Refrigerants', 'Fire Suppression', 'Electricity'];
+    for (const category of CATEGORIES.filter((c) => !shaped.includes(c))) {
       expect(recordParameterShape(category)).toBeNull();
     }
     for (const category of ['', 'electricity', 'Unknown']) expect(recordParameterShape(category)).toBeNull();
@@ -1684,5 +1704,95 @@ describe('the fuel record a self-generation source needs (self-gen-form, D5)', (
     expect(GENERATION_FUEL_RECORD_STATES).toEqual(['present', 'missing']);
     for (const s of GENERATION_FUEL_RECORD_STATES) expect(isGenerationFuelRecordState(s)).toBe(true);
     for (const s of ['Present', 'none', '', null, 0]) expect(isGenerationFuelRecordState(s)).toBe(false);
+  });
+});
+
+describe('Fire Suppression and the capacity method (UAT round 4, BUG-12)', () => {
+  it('is a Scope 1 category in kilograms, listed after Refrigerants', () => {
+    expect(CATEGORY_SCOPE_MAP['Fire Suppression']).toBe(1);
+    expect(CATEGORIES.indexOf('Fire Suppression')).toBe(CATEGORIES.indexOf('Refrigerants') + 1);
+  });
+
+  it('names FM200 in both categories that hold HFC-227ea', () => {
+    for (const category of ['Refrigerants', 'Fire Suppression'] as const) {
+      expect(CATEGORY_ACTIVITY_TYPES[category]?.types.find((t) => t.value === 'HFC-227ea')?.label).toBe(
+        'FM200 (HFC-227ea)',
+      );
+    }
+  });
+
+  it('has one predicate for the capacity method, and recordParameterShape agrees with it', () => {
+    expect(CAPACITY_METHOD_CATEGORIES).toEqual(['Refrigerants', 'Fire Suppression']);
+    for (const category of CATEGORIES) {
+      expect(isCapacityMethodCategory(category), category).toBe(recordParameterShape(category) === 'refrigerant');
+    }
+    for (const category of ['', 'refrigerants', 'fire suppression', 'constructor']) {
+      expect(isCapacityMethodCategory(category)).toBe(false);
+    }
+  });
+
+  it('accepts three devices on Fire Suppression and keeps the nine on Refrigerants', () => {
+    expect(acceptedEquipmentTypes('Fire Suppression')).toEqual([
+      'fire_extinguisher',
+      'fire_suppression_system',
+      'transformer_breaker',
+    ]);
+    expect(acceptedEquipmentTypes('Refrigerants')).toEqual(EQUIPMENT_TYPES);
+    expect(acceptedEquipmentTypes('Natural Gas')).toEqual([]);
+  });
+
+  it('offers a new line its own category\'s devices only', () => {
+    expect(offeredEquipmentTypes('Fire Suppression')).toEqual(FIRE_SUPPRESSION_EQUIPMENT_TYPES);
+    expect(offeredEquipmentTypes('Refrigerants')).toEqual(COOLING_EQUIPMENT_TYPES);
+    expect(COOLING_EQUIPMENT_TYPES).toHaveLength(6);
+    for (const device of FIRE_SUPPRESSION_EQUIPMENT_TYPES) {
+      expect(offeredEquipmentTypes('Refrigerants')).not.toContain(device);
+    }
+    // Together the two offered lists are the nine devices, each once.
+    expect([...COOLING_EQUIPMENT_TYPES, ...FIRE_SUPPRESSION_EQUIPMENT_TYPES].sort()).toEqual([...EQUIPMENT_TYPES].sort());
+    expect(offeredEquipmentTypes('Water')).toEqual([]);
+  });
+
+  it('allows the alternative leak rate on Refrigerants only', () => {
+    expect(allowsAlternativeLeakRate('Refrigerants')).toBe(true);
+    expect(allowsAlternativeLeakRate('Fire Suppression')).toBe(false);
+    for (const device of FIRE_SUPPRESSION_EQUIPMENT_TYPES) expect(EQUIPMENT_TYPES_WITH_ALTERNATIVE).not.toContain(device);
+  });
+});
+
+describe('offeredActivityTypes', () => {
+  const values = (category: string, geography: string | null) =>
+    offeredActivityTypes(category, geography).map((t) => t.value);
+
+  it('offers a new refrigerant record no fire suppression gas, in any geography', () => {
+    expect(REFRIGERANT_TYPES_NOT_OFFERED).toEqual(['HFC-227ea', 'SF6']);
+    for (const geography of ['TR', 'UK', null]) {
+      const offered = values('Refrigerants', geography);
+      expect(offered).not.toContain('HFC-227ea');
+      expect(offered).not.toContain('SF6');
+      expect(offered).toContain('R-410A');
+      expect(offered).toHaveLength(10);
+    }
+    // A stored record keeps its gas: the record rule is unchanged.
+    expect(isRecordActivityTypeAllowed('Refrigerants', 'HFC-227ea')).toBe(true);
+    expect(isRecordActivityTypeAllowed('Refrigerants', 'SF6')).toBe(true);
+  });
+
+  it('offers Fire Suppression its whole list', () => {
+    for (const geography of ['TR', 'UK', null]) {
+      expect(values('Fire Suppression', geography)).toEqual(['CO2', 'HFC-227ea', 'SF6', 'dry_powder_or_foam']);
+    }
+    expect(isRecordActivityTypeAllowed('Fire Suppression', 'R-410A')).toBe(false);
+    expect(isRecordActivityTypeAllowed('Refrigerants', 'CO2')).toBe(false);
+    expect(isRecordActivityTypeAllowed('Refrigerants', 'dry_powder_or_foam')).toBe(false);
+  });
+
+  it('leaves the Mobile Combustion and Fuel lists as they were', () => {
+    expect(values('Mobile Combustion', 'TR')).toEqual([
+      'on_road_petrol', 'on_road_diesel', 'on_road_lpg', 'off_road_petrol', 'off_road_diesel', 'marine_gas_oil',
+    ]);
+    expect(values('Mobile Combustion', 'UK')).toEqual(recordActivityTypesFor('Mobile Combustion').map((t) => t.value));
+    expect(values('Fuel', 'TR')).toEqual(recordActivityTypesFor('Fuel').map((t) => t.value));
+    expect(values('Electricity', 'TR')).toEqual([]);
   });
 });

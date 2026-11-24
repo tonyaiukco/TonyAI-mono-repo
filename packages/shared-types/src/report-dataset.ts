@@ -12,14 +12,15 @@ import type {
  * All timestamps use Date.prototype.toISOString() UTC spelling; months are calendar months of reportingYear.
  * Producers validate runtime inputs, referential integrity and the invariants
  * below. TypeScript shapes alone do not certify a complete inventory. */
-export const REPORT_DATASET_SCHEMA_VERSION = 2 as const;
+export const REPORT_DATASET_SCHEMA_VERSION = 3 as const;
 
 /**
  * Every version a retained dataset may hold. 2 (LP4-02) is 1 with Fugitive Gas
- * among the categories a boundary must decide; content and encoding are the
- * same shape, so the version only selects the rule K2 recomputes under.
+ * among the categories a boundary must decide, and 3 (UAT round 4, BUG-12) is
+ * 2 with Fire Suppression; content and encoding are the same shape, so the
+ * version only selects the rule K2 recomputes under.
  */
-export const REPORT_DATASET_SCHEMA_VERSIONS = Object.freeze([1, 2] as const);
+export const REPORT_DATASET_SCHEMA_VERSIONS = Object.freeze([1, 2, 3] as const);
 export type ReportDatasetSchemaVersion = (typeof REPORT_DATASET_SCHEMA_VERSIONS)[number];
 
 /**
@@ -30,6 +31,9 @@ export type ReportDatasetSchemaVersion = (typeof REPORT_DATASET_SCHEMA_VERSIONS)
 export const BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA = Object.freeze({
   1: Object.freeze(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants'] as const),
   2: Object.freeze(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const),
+  3: Object.freeze([
+    'Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas',
+  ] as const),
 }) satisfies Record<ReportDatasetSchemaVersion, readonly InventoryCategory[]>;
 export type InventoryMonth = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 

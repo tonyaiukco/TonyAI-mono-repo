@@ -164,6 +164,7 @@ describe('units for the factor model (LP3-03)', () => {
       dimension: 'mass',
     });
     expect(CATEGORY_UNITS.Refrigerants).toEqual(['kg']);
+    expect(CATEGORY_UNITS['Fire Suppression']).toEqual(['kg']);
   });
 
   it('measures mobile combustion in fuel quantities only (fuel-based, T4)', () => {
@@ -214,7 +215,7 @@ describe('activity types (K1 = A1)', () => {
   });
 
   it('types the categories whose factors differ by fuel or gas', () => {
-    for (const category of ['Fuel', 'Mobile Combustion', 'Refrigerants'] as const) {
+    for (const category of ['Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression'] as const) {
       expect(CATEGORY_ACTIVITY_TYPES[category]?.implicit, category).toBeUndefined();
       expect(recordActivityTypesFor(category).length, category).toBeGreaterThan(1);
     }
@@ -652,6 +653,62 @@ describe('validateFactorReleaseImport', () => {
     expect(
       issuesAt(release({ factors: [factorRow({ category: 'Refrigerants', activityType: 'diesel', normalizedUnit: 'kg', calorificBasis: 'not_applicable' })] })),
     ).toContain('factors[0].activityType');
+  });
+
+  describe('Fire Suppression rows follow the refrigerant rules (UAT round 4, BUG-12)', () => {
+    const fire = (over: Partial<FactorImportRow> = {}) =>
+      factorRow({
+        category: 'Fire Suppression',
+        activityType: 'CO2',
+        geographyCode: 'TR',
+        normalizedUnit: 'kg',
+        factorUnit: 'kgCO2e/kg',
+        calorificBasis: 'not_applicable',
+        ...over,
+      });
+    const leakRate = {
+      key: 'leak_rate' as const,
+      subject: 'fire_extinguisher',
+      value: 0.04,
+      unit: 'fraction',
+      isDefault: true,
+      source: 'Revision MD.md §4.6',
+      methodology: null,
+    };
+
+    it('accepts a TR row of each of its gases with a default leak rate, the zero row included', () => {
+      const factors = ['CO2', 'HFC-227ea', 'SF6', 'dry_powder_or_foam'].map((activityType) =>
+        fire({ activityType, factorValue: activityType === 'dry_powder_or_foam' ? 0 : 1 }),
+      );
+      expect(validate(release({ factors, parameters: [leakRate] }))).toEqual([]);
+    });
+
+    it('refuses a per-gas row', () => {
+      expect(
+        issuesAt(release({ factors: [fire(), fire({ gas: 'CH4', gasCoverage: null, factorValue: 0.1 })], parameters: [leakRate] })),
+      ).toContain('factors[1].gas');
+      expect(issuesAt(release({ factors: [fire({ gasCoverage: 'co2_only' })], parameters: [leakRate] }))).toContain(
+        'factors[0].gasCoverage',
+      );
+    });
+
+    it('refuses a TR row without a default leak rate', () => {
+      expect(issuesAt(release({ factors: [fire()] }))).toContain('factors[0].category');
+      // Outside TR the capacity method does not apply, so no rate is needed.
+      expect(issuesAt(release({ factors: [fire({ geographyCode: 'UK' })] }))).not.toContain('factors[0].category');
+    });
+
+    it('refuses a refrigerant gas the category does not hold', () => {
+      expect(issuesAt(release({ factors: [fire({ activityType: 'R-410A' })], parameters: [leakRate] }))).toContain(
+        'factors[0].activityType',
+      );
+    });
+
+    it('refuses a unit other than the kilogram', () => {
+      expect(
+        issuesAt(release({ factors: [fire({ normalizedUnit: 'tonnes', factorUnit: 'kgCO2e/t' })], parameters: [leakRate] })),
+      ).toContain('factors[0].normalizedUnit');
+    });
   });
 
   it('pins scope to the category', () => {
@@ -1505,6 +1562,8 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
           'HFC-227ea', 'SF6',
         ],
       },
+      // UAT round 4 (BUG-12): Fire Suppression, exactly the fire edition's types.
+      'Fire Suppression': { implicit: undefined, values: ['CO2', 'HFC-227ea', 'SF6', 'dry_powder_or_foam'] },
       // LP4-02 PR2 task 2.2: Fugitive Gas category added.
       'Fugitive Gas': { implicit: 'gas_network_leakage', values: ['gas_network_leakage'] },
     });
