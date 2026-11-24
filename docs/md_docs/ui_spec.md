@@ -162,7 +162,7 @@ Use for:
 ## 10. UI Tone
 The platform should feel credible, calm, structured, and professional. It should look like enterprise reporting software rather than a consumer dashboard.
 ## 11. Terminology
-Every screen, report, issuance and the bulk template names the three tiers of a tenant's data the same way. The requirement is the [organisation-hierarchy spec](../../openspec/specs/organisation-hierarchy/spec.md). Until the `uat2-team-decisions-copy` change is archived, that spec is the delta at `openspec/changes/uat2-team-decisions-copy/specs/organisation-hierarchy/spec.md`. Only the copy follows this table: message keys, API fields, error codes and identifiers (`wholeCompany`, `locations.*`, `location_not_found`, `locationId`) keep their names.
+Every screen, report, issuance and the bulk template names the three tiers of a tenant's data the same way. The requirement is the organisation-hierarchy spec. Until the `uat2-team-decisions-copy` change is archived, that spec is the delta at `uat2-team-decisions-copy`. Only the copy follows this table: message keys, API fields, error codes and identifiers (`wholeCompany`, `locations.*`, `location_not_found`, `locationId`) keep their names.
 
 | Tier | TR heading, column or label | TR running text | EN |
 |---|---|---|---|

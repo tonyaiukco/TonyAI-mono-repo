@@ -99,7 +99,7 @@ since neither the dataset nor its assessments moved.
 
 **Tier names (UAT round 2, K1, 2026-11-12).** The organisation is "Parent
 company" / "Ana Şirket" and a subsidiary-level row "Whole subsidiary" /
-"Bağlı şirketin tamamı" (`openspec/specs/organisation-hierarchy`). The
+"Bağlı şirketin tamamı" (the `organisation-hierarchy` spec). The
 renderers are now `tonyai-issuance-pdf-v4` and `tonyai-issuance-tables-v4`. A
 stored PDF keeps the wording it was issued with; Excel and CSV are written on
 request from the current catalogue, so a re-download of an older issuance

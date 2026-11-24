@@ -62,3 +62,7 @@ crash.*.log
 terraform.rc
 **/__pycache__/
 # Provider dependency locks under infra are intentional source files.
+
+# OpenSpec planning (proposals, designs, specs, archives) is kept locally only,
+# not in the repository (owner decision 2026-11-25).
+/openspec/

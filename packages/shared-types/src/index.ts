@@ -5005,7 +5005,7 @@ export const SUBSIDIARY_TEXT_MAX_LENGTH = 200;
  * What a record with no location is called, everywhere it is named.
  *
  * TonyAI's tiers are named parent company (the organisation) -> subsidiary ->
- * facility (a location row) — see openspec/specs/organisation-hierarchy — so a
+ * facility (a location row) — see the OpenSpec `organisation-hierarchy` spec (kept locally) — so a
  * record attributed to the subsidiary itself is the whole SUBSIDIARY, never
  * "Whole company", which reads as the parent company. One constant because the
  * app and the generated report both print this phrase, and the record drawer's
