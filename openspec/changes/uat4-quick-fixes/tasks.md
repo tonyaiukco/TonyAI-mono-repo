@@ -31,7 +31,7 @@
 
 - [x] 5.1 Run `pnpm typecheck`, `pnpm lint` and `pnpm test`; verify all pass with no new warnings
 - [x] 5.2 Run the touched e2e specs on capped built servers and check the four fixes in the browser in TR and EN; verify BUG-09's toggle still works on sign-in and set-password
-- [ ] 5.3 Record the change in `docs/roadmap_docs/project_status_roadmap_phases.md` (Current status, Decisions: the basis default reverses `ng-kwh-form`) and set WP1's row in `docs/roadmap_docs/Pilot_launch_v4.md`; verify both name the PR
+- [x] 5.3 Record the change in `docs/roadmap_docs/project_status_roadmap_phases.md` (Current status, Decisions: the basis default reverses `ng-kwh-form`) and set WP1's row in `docs/roadmap_docs/Pilot_launch_v4.md`; verify both name the PR
 
 ## Workflow follow-up
 

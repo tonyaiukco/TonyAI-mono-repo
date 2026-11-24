@@ -42,7 +42,7 @@ The choice, the preview request and the save all read the effective basis. The t
 
 `basis_missing` stays in the code as the refusal the API can still return; the form can no longer reach it by itself.
 
-Two consequences, kept on purpose (review, 2026-11-24):
+Two consequences, kept on purpose (review, 2026-11-24; the first confirmed by the owner the same day):
 
 - **A form carried to a new record keeps its basis.** Opening a record without Edit and changing its period, year or site turns the form into a new record with every field as it was (`nowEnteringNew`); a held net stays with the figure it describes, as on a copy. Clearing it would price that figure as gross without a word, and a company whose supplier bills net would have to choose net again every month.
 - **A unit detour off a stored-net record is path-dependent.** kWh → MWh keeps the held basis; a detour through a volume unit clears it, and coming back restores the record's own basis only on the record's own unit. On the other energy unit the form holds none and shows gross. It errs toward the bill's usual figure and is visible before save.
