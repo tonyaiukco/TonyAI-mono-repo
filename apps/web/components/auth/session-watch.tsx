@@ -1,9 +1,10 @@
 "use client";
 
+import { isChunkLike } from "@supabase/ssr";
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { isPublicPath } from "@/lib/auth-view";
-import { ACTIVITY_KEY, idleTimeRemaining, lastActivity, recordActivity, shouldExpire } from "@/lib/idle-session";
+import { ACTIVITY_KEY, idleTimeRemaining, lastActivity, recordActivity, shouldExpire, withSessionLock } from "@/lib/idle-session";
 import { endingSessionHere, watchSession } from "@/lib/session-watch";
 import { AUTH_STORAGE_KEY, getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore, useReportingContextStore } from "@/lib/store";
@@ -33,23 +34,25 @@ function SessionGate({ path, children }: { path: string; children: ReactNode }) 
       setReady(false);
       useAuthStore.getState().clear();
       useReportingContextStore.getState().clear();
-      try {
-        await getSupabaseBrowserClient().auth.signOut({ scope: "local" });
-      } finally {
-        // Auth retains its SSR cookies on a network failure. Drop all chunks
-        // before the proxy checks the next request, including legacy sessions.
-        if (shouldExpire(location.pathname, lastActivity(), Date.now())) {
-          for (const part of document.cookie.split(";")) {
-            const name = part.trim().split("=")[0];
-            if (name === AUTH_STORAGE_KEY || /^sb-tonyai-auth\.\d+$/.test(name)) {
-              document.cookie = name + "=; Path=/; Max-Age=0; SameSite=Lax";
-            }
-          }
-          window.location.replace("/login?reason=idle");
-        } else {
+      await withSessionLock(async () => {
+        // A password or email-link exchange may have finished while we waited.
+        if (!shouldExpire(location.pathname, lastActivity(), Date.now())) {
           window.location.reload();
+          return;
         }
-      }
+        try {
+          await getSupabaseBrowserClient().auth.signOut({ scope: "local" });
+        } catch {
+          // The browser must still forget the session if Auth is unreachable.
+        }
+        for (const part of document.cookie.split(";")) {
+          const name = part.trim().split("=")[0];
+          if (isChunkLike(name, AUTH_STORAGE_KEY)) {
+            document.cookie = name + "=; Path=/; Max-Age=0; SameSite=Lax";
+          }
+        }
+        window.location.replace("/login?reason=idle");
+      });
     }
 
     function check() {
@@ -74,7 +77,12 @@ function SessionGate({ path, children }: { path: string; children: ReactNode }) 
     }
 
     function activity(event: Event) {
-      if (!event.isTrusted || !check()) return;
+      if (!event.isTrusted) return;
+      if (!check()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       const now = Date.now();
       if (now - Number(lastActivity()) >= 500) {
         recordActivity(now);
@@ -92,7 +100,7 @@ function SessionGate({ path, children }: { path: string; children: ReactNode }) 
     watchSession();
     setReady(true);
     const events = ["pointerdown", "keydown", "wheel", "scroll", "touchstart"];
-    for (const event of events) window.addEventListener(event, activity, { capture: true, passive: true });
+    for (const event of events) window.addEventListener(event, activity, { capture: true, passive: false });
     window.addEventListener("storage", storage);
     window.addEventListener("pageshow", check);
     window.addEventListener("pagehide", flush);

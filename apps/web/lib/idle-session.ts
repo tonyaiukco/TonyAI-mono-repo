@@ -29,3 +29,19 @@ export function recordActivity(at = Date.now()): void {
     // A protected page needs a readable, shared timestamp to open.
   }
 }
+
+/** A password/OTP exchange and an idle sign-out both replace the shared SSR
+ * cookies. Hold one origin-wide lock through the exchange AND timestamp write. */
+export function withSessionLock<T>(operation: () => Promise<T>): Promise<T> {
+  return navigator.locks.request("tonyai-session-change", operation);
+}
+
+export function startInteractiveSession<T extends { data: { session: unknown }; error: unknown }>(
+  exchange: () => Promise<T>,
+): Promise<T> {
+  return withSessionLock(async () => {
+    const result = await exchange();
+    if (!result.error && result.data.session) recordActivity();
+    return result;
+  });
+}
