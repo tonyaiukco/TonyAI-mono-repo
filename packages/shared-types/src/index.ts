@@ -3592,13 +3592,14 @@ export function tonnesDisplayOptions(value: number): Intl.NumberFormatOptions {
 
 /**
  * The cadences an inventory boundary may attribute a category's activity to
- * (PR #360 review): Fire Suppression is annual only, because the one release
- * that prices it (TR) prices it by the yearly capacity method, so a monthly or
- * quarterly policy could never be met by a priced record. Every other category
+ * (PR #360 reviews): the capacity-method categories, Refrigerants and Fire
+ * Suppression, are annual only, because the TR rules price them by the yearly
+ * capacity method, so a monthly or quarterly policy could never be met by a
+ * priced record (owner, 2026-11-25, for Refrigerants too). Every other category
  * may take any of `REPORTING_PERIODS`. The evidence cadence is a separate field.
  */
 export function inventoryReportingPeriodsFor(category: string): readonly ReportingPeriod[] {
-  return category === 'Fire Suppression' ? ANNUAL_ONLY : REPORTING_PERIODS;
+  return isCapacityMethodCategory(category) ? ANNUAL_ONLY : REPORTING_PERIODS;
 }
 const ANNUAL_ONLY: readonly ReportingPeriod[] = Object.freeze(['annual']);
 

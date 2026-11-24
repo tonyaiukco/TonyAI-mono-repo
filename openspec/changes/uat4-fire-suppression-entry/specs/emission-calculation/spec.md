@@ -78,11 +78,11 @@ A new report dataset SHALL be captured under schema version 3, whose categories 
 - **WHEN** a new boundary version marks Fire Suppression included or excluded with its reason and is confirmed and captured
 - **THEN** the dataset carries no gap for Fire Suppression
 
-### Requirement: A boundary attributes fire suppression annually
-An inventory boundary SHALL attribute the Fire Suppression category to the annual cadence only, in the editor and in the API, because its one pricing, the capacity method, is yearly. A monthly or quarterly policy for it SHALL be refused. Other categories keep every cadence; the evidence cadence is a separate field.
+### Requirement: A boundary attributes the capacity-method categories annually
+An inventory boundary SHALL attribute Refrigerants and Fire Suppression to the annual cadence only, in the editor and in the API, because the capacity method that prices them is yearly. A monthly or quarterly policy for either SHALL be refused. Other categories keep every cadence; the evidence cadence is a separate field.
 
-#### Scenario: A monthly fire suppression policy
-- **WHEN** a declaration attributes Fire Suppression monthly or quarterly
+#### Scenario: A monthly capacity-method policy
+- **WHEN** a declaration attributes Fire Suppression or Refrigerants monthly or quarterly
 - **THEN** the API refuses it and the editor does not offer it
 
 #### Scenario: An annual fire suppression policy

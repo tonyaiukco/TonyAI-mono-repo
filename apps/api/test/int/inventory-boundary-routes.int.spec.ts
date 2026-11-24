@@ -304,6 +304,31 @@ describe('who may do what (E2): super_admin writes and confirms; everyone else r
   });
 });
 
+// PR #360 reviews: Refrigerants and Fire Suppression are attributed annually
+// only. A policy saved before the rule (written here as the owner) is not
+// confirmed until the declaration is saved again with an allowed cadence.
+describe('the capacity-method categories are attributed annually only (PR #360)', () => {
+  it.each(['Refrigerants', 'Fire Suppression'])('refuses a monthly %s policy on save, and a stored one on confirm', async (category) => {
+    const monthly = completeS();
+    monthly.attribution = monthly.attribution.map((p) => (p.category === category ? { ...p, reportingPeriod: 'monthly' } : p));
+    const created = json<InventoryBoundaryVersionDTO>(await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026 }));
+    const refused = await call(admin, 'PUT', `/inventory-boundaries/${created.id}/subsidiaries/${S}`, monthly);
+    expect(refused.status).toBe(400);
+    expect(refused.text).toMatch(new RegExp(`reports ${category} monthly: it is reported annual only`));
+
+    expect((await call(admin, 'PUT', `/inventory-boundaries/${created.id}/subsidiaries/${S}`, completeS())).status).toBe(200);
+    await owner.inventoryAttributionPolicy.updateMany({
+      where: { boundaryId: created.id, subsidiaryId: S, category }, data: { reportingPeriod: 'monthly' },
+    });
+    const confirm = await call(admin, 'POST', `/inventory-boundaries/${created.id}/confirm`);
+    expect(confirm.status).toBe(409);
+    expect(confirm.text).toContain('boundary_incomplete');
+    // Saved again with the allowed cadence, it confirms.
+    expect((await call(admin, 'PUT', `/inventory-boundaries/${created.id}/subsidiaries/${S}`, completeS())).status).toBe(200);
+    expect((await call(admin, 'POST', `/inventory-boundaries/${created.id}/confirm`)).status).toBe(200);
+  });
+});
+
 describe("a version's life (E3, E4, W7, W10)", () => {
   it('is created empty, declared one subsidiary at a time, confirmed whole — then takes no write and keeps its names', async () => {
     const created = await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026 });

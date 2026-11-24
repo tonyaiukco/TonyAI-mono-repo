@@ -58,8 +58,8 @@ const subsidiaryRow = (page: Page, name: string) =>
 async function declareHolding(page: Page, editor: Locator): Promise<void> {
   for (const category of CATEGORIES) {
     await pick(page, editor, `${category}: attributed to`, 'The whole subsidiary');
-    if (category === 'Fire Suppression') {
-      // Annual only: the yearly capacity method is the one that prices it (PR #360 re-review).
+    if (category === 'Fire Suppression' || category === 'Refrigerants') {
+      // Annual only: the yearly capacity method is the one that prices them (PR #360 reviews).
       await editor.getByRole('combobox', { name: `${category}: reported`, exact: true }).click();
       await expect(page.getByRole('option', { name: 'Monthly', exact: true })).toHaveCount(0);
       await expect(page.getByRole('option', { name: 'Quarterly', exact: true })).toHaveCount(0);

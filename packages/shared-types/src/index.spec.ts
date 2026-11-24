@@ -1811,9 +1811,10 @@ describe('display and cadence rules for Fire Suppression (PR #360 re-review)', (
     expect(fmt(-0.0000123456)).toBe('-0.0000123');
   });
 
-  it('attributes Fire Suppression annually only, every other category at any cadence', () => {
+  it('attributes the capacity-method categories annually only, every other category at any cadence', () => {
     expect(inventoryReportingPeriodsFor('Fire Suppression')).toEqual(['annual']);
-    for (const category of CATEGORIES.filter((c) => c !== 'Fire Suppression')) {
+    expect(inventoryReportingPeriodsFor('Refrigerants')).toEqual(['annual']);
+    for (const category of CATEGORIES.filter((c) => !isCapacityMethodCategory(c))) {
       expect(inventoryReportingPeriodsFor(category), category).toEqual(['monthly', 'quarterly', 'annual']);
     }
   });

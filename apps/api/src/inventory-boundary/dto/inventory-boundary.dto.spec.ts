@@ -396,9 +396,9 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
     });
   });
 
-  // PR #360 review: Fire Suppression is priced only by the yearly capacity
-  // method, so a boundary may attribute it annually only.
-  it.each(['monthly', 'quarterly'])('refuses a Fire Suppression policy reported %s, and admits annual', (reportingPeriod) => {
+  // PR #360 reviews: the capacity-method categories are priced only yearly, so
+  // a boundary may attribute them annually only.
+  it.each(['monthly', 'quarterly'])('refuses a Fire Suppression or Refrigerants policy reported %s, and admits annual', (reportingPeriod) => {
     const body = valid();
     const withFire = (period: string) => ({
       ...body,
@@ -407,9 +407,11 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
     });
     expect(inventoryDeclarationIssues(withFire(reportingPeriod)).join(' ')).toMatch(/reports Fire Suppression \w+: it is reported annual only/);
     expect(inventoryDeclarationIssues(withFire('annual'))).toEqual(inventoryDeclarationIssues(body));
-    // Refrigerants keeps every cadence.
-    const monthlyRefrigerants = { ...body, attribution: [...body.attribution, { category: 'Refrigerants', level: 'company', reportingPeriod: 'monthly' }] };
-    expect(inventoryDeclarationIssues(monthlyRefrigerants).join(' ')).not.toMatch(/reported annual only/);
+    const refrigerants = (period: string) => ({ ...body, attribution: [...body.attribution, { category: 'Refrigerants', level: 'company', reportingPeriod: period }] });
+    expect(inventoryDeclarationIssues(refrigerants(reportingPeriod)).join(' ')).toMatch(/reports Refrigerants \w+: it is reported annual only/);
+    expect(inventoryDeclarationIssues(refrigerants('annual')).join(' ')).not.toMatch(/reported annual only/);
+    // Every other category keeps its cadence (the valid body holds a monthly and a quarterly one).
+    expect(inventoryDeclarationIssues(body).join(' ')).not.toMatch(/reported annual only/);
   });
 
   it('pins the bounds', () => {
