@@ -38,3 +38,8 @@ Recurring procedures are packaged as **skills** in [`.claude/skills/`](../../.cl
 | **factor-release-import** | Load, correct or withdraw an emission-factor release: a file in the import contract's shape, checked by `validateFactorReleaseImport`, loaded whole and sealed by the loader CLI as `tonyai_factor_loader`, an erratum as a new edition that withdraws what it corrects, a dry run before every `--apply` (LP4-02) |
 
 The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have `Skill` access and invoke these automatically.
+
+## OpenSpec planning stays local
+
+Since 2026-11-25 (owner decision), the `openspec/` directory, which holds change proposals, designs, delta specs, tasks and their archive, is git-ignored. It is not committed or pushed, and earlier changes are no longer in the tree; they remain in the repository's history. A session plans and archives with the `opsx` commands in its own working copy. What a reader of the repository needs goes into the PR description, `docs/` and the planning file. A change is named there by its name, for example OpenSpec `uat4-fire-suppression-entry`, never by a path. Keep a backup outside the repository; a pull of the commit that untracked the folder deletes it from any other checkout that still had it.
+

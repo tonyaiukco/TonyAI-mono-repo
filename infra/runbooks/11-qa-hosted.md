@@ -644,7 +644,7 @@ this does not close the wider G2 recovery/recreation gates or approve production
 ## ci4-1 L10 acceptance (from 2026-11-04)
 
 **This section governs L10.** The r004 package below is historical: keep its
-evidence, but do not resume it. Planning (archived 2026-11-07): `openspec/changes/archive/2026-11-07-close-l10-hosted-acceptance/`; its spec: `openspec/specs/qa-release-operations/`.
+evidence, but do not resume it. Planning: OpenSpec `close-l10-hosted-acceptance` (archived 2026-11-07); its spec: the `qa-release-operations` spec.
 
 **Scope (owner decision 2026-11-04).** L10 closes on functional and operational
 acceptance of the live release. **Numerical** emissions acceptance belongs to the
@@ -786,7 +786,7 @@ both digests above; times UTC / Europe/Istanbul; receipts in
 
 G2 is met on hosted QA. Live release `rot1-1`: `ci17-1`'s images (API `sha256:c3a2d20c…`, web
 `sha256:3e2ee87b…`), source `d2a5f9b`, runtime secret version `b4ca2b9d…`. Planning (archived):
-`openspec/changes/archive/2026-11-08-close-g2-hosted-staging/`. Receipts are private, under
+`close-g2-hosted-staging` (archived 2026-11-08). Receipts are private, under
 `~/tonyai-evidence-backup/g2/receipts/`; hashes below are the first 16 hex characters of SHA-256.
 
 | Drill | Outcome | Receipt |
