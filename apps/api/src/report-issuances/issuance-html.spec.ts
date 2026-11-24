@@ -188,13 +188,14 @@ describe('buildIssuanceHtml', () => {
   // UAT round 4, BUG-12: Fire Suppression is its own category in the ledger,
   // named in the document's language, and a dry powder record reads 0.
   it.each([
-    ['en', 'Fire Suppression', 'Refrigerants'],
-    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar'],
-  ] as const)('%s names Fire Suppression apart from Refrigerants, and prints the zero record as 0', (language, fire, refrigerants) => {
+    ['en', 'Fire Suppression', 'Refrigerants', 'Dry powder / foam (no greenhouse gas)', 'CO2 (carbon dioxide)'],
+    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar', 'Kuru toz / köpük (sera gazı içermez)', 'CO2 (karbondioksit)'],
+  ] as const)('%s names Fire Suppression and each record\'s gas, apart from Refrigerants, the zero as 0', (language, fire, refrigerants, dry, co2) => {
     const dataset = fireSuppressionDataset();
-    const page = html(dataset, { language, template: 'detail' } as never);
-    expect(page).toContain(`<td>${fire}</td>`);
-    expect(page).toContain(`<td>${refrigerants}</td>`);
+    const page = html(dataset, { language });
+    expect(page).toContain(`<td>${fire} · ${dry}</td>`);
+    expect(page).toContain(`<td>${fire} · ${co2}</td>`);
+    expect(page).toContain(`<td>${refrigerants} · R-410A</td>`);
     // The zero is a figure: no record of this dataset reads as not calculated.
     expect(dataset.records.find((r) => r.id === 'fire-dry-powder')!.calculation).toMatchObject({ tCo2e: 0 });
     expect(page).not.toContain(language === 'en' ? 'Not calculated' : 'Hesaplanmadı');
@@ -241,7 +242,8 @@ describe('the issuance catalogues', () => {
   it('hold the same keys and the same ICU arguments in both languages, translated', () => {
     expect(Object.keys(tr).sort()).toEqual(Object.keys(en).sort());
     // A unit symbol reads the same in either language.
-    const same = new Set(['colEmissions']);
+    // A fuel or gas spelled alike in both (as `reports/i18n` holds them).
+    const same = new Set(['colEmissions', 'activity Fuel oil', 'activity LPG', 'activity LNG', 'activity FM200 (HFC-227ea)']);
     for (const key of Object.keys(en) as (keyof typeof en)[]) {
       expect(tr[key].match(/\{\w+\}/g), key).toEqual(en[key].match(/\{\w+\}/g));
       expect(tr[key].trim(), key).not.toBe('');

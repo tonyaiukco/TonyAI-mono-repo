@@ -269,7 +269,8 @@
       "annualOnly": "Fire suppression records in Türkiye are annual, because the leak rates are yearly.",
       "otherGas": "Other gas",
       "otherGasStatement": "A gas the factor library does not price cannot be entered, and it is never estimated. Choose a gas from the list, or ask your administrator to have the gas added to the library.",
-      "noGreenhouseGas": "Dry powder and foam hold no greenhouse gas, so this record's figure is 0. Its equipment and evidence are still recorded."
+      "noGreenhouseGas": "Dry powder and foam hold no greenhouse gas, so this record's figure is 0. Its equipment and evidence are still recorded.",
+      "noGreenhouseGasOption": "Dry powder and foam hold no greenhouse gas. The record keeps its equipment and evidence; its figure comes from the factor library once the preview has calculated it."
     }
   },
   "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",

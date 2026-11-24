@@ -13,6 +13,7 @@ import { csvField, type CellValue } from '../common/csv-cell';
 import { calculationInputs } from '../common/calculation-inputs';
 import { NO_MARKET_BASED, NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
 import {
+  issuedActivityLabel,
   countedRecords,
   coverageGapLabel,
   datasetNames,
@@ -207,7 +208,8 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
 
   const ledger = wb.addWorksheet(t('sheetLedger'));
   ledger.addRow([t('colRecordId'), t('colEntity'), t('colCategory'), t('colScope'), t('colPeriod'), t('colStatus'),
-    t('colActivityValue'), t('colUnit'), t('colEmissions'), t('colStanding'), t('colInputs')]);
+    t('colActivityValue'), t('colUnit'), t('colEmissions'), t('colStanding'), t('colInputs'), t('colActivityType')]);
+  // Trailing, so no earlier column moves (UAT round 4, BUG-12 review).
   for (const r of countedRecords(dataset)) {
     ledger.addRow([
       r.id, names.entity(r.subsidiaryId, r.locationId, r), label('category', r.category), r.scope,
@@ -216,6 +218,7 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
       r.activityValue, r.activityUnit, figureOf(r) ?? t('notCalculated'),
       t(STANDING_KEY[standing.get(r.id) ?? 'uncalculated']),
       calculationInputs(r.calculation, { text: t, locale: language }),
+      issuedActivityLabel(language, r),
     ]);
   }
 

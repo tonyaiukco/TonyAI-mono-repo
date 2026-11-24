@@ -143,8 +143,18 @@ test('"Other gas" states the refusal and holds the preview and the save', async 
 test('a dry powder or foam record saves with a figure of zero, and its matrix cell is no longer missing', async ({ page, request }) => {
   await startFire(page, en.activityTypes.dry_powder_or_foam);
   await page.getByLabel(`${fire.capacity} (g)`).fill('12000');
+  await expect(page.getByTestId('no-ghg-option')).toHaveText(fire.noGreenhouseGasOption);
   await expect(page.getByTestId('preview-tco2e')).toHaveText('0');
   await expect(page.getByTestId('preview-no-ghg')).toHaveText(fire.noGreenhouseGas);
+
+  // A year no release prices (the fixture is 2023, the TR releases 2024–2026):
+  // no figure, so no zero is stated (PR #360 review).
+  await pickByFieldLabel(page, en.reportingYear, String(E2E_TR_INPUTS_YEAR - 1));
+  await expect(page.getByTestId('preview-tco2e')).toHaveCount(0);
+  await expect(page.getByTestId('preview-no-ghg')).toHaveCount(0);
+  await expect(page.getByTestId('no-ghg-option')).toBeVisible();
+  await pickByFieldLabel(page, en.reportingYear, String(E2E_TR_INPUTS_YEAR));
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0');
 
   await page.getByRole('button', { name: en.saveDraft }).click();
   await expect(page.getByText(en.draftSaved)).toBeVisible();
@@ -161,7 +171,11 @@ test('a dry powder or foam record saves with a figure of zero, and its matrix ce
     const row = ((await matrix.json()) as {
       rows: { subsidiaryId: string; cells: { category: string; status: string }[] }[];
     }).rows.find((r) => r.subsidiaryId === SUB.logistics);
-    expect(row?.cells.find((c) => c.category === 'Fire Suppression')?.status).not.toBe('missing');
+    expect(row).toBeDefined();
+    const cell = row!.cells.find((c) => c.category === 'Fire Suppression');
+    expect(cell).toBeDefined();
+    // A draft makes the cell incomplete, no longer missing.
+    expect(cell!.status).toBe('incomplete');
   } finally {
     await deleteSaved(request);
   }
@@ -185,4 +199,36 @@ test('the refrigerant form lists no fire device for a new line and no fire gas f
   // Kilograms, and no unit selector, on a refrigerant line.
   await page.keyboard.press('Escape');
   await expect(page.getByRole('combobox', { name: `${fire.unit} 1` })).toHaveCount(0);
+});
+
+// PR #360 review: an opened refrigerant draft keeps its stored fire device
+// selectable for the whole edit, even after its line was switched off it.
+test('an opened refrigerant draft keeps its fire device selectable after the line moves off it', async ({ page, request }) => {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const res = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.logistics, locationId: null, reportingYear: E2E_TR_INPUTS_YEAR, reportingPeriod: 'annual', periodValue: 'Annual',
+      category: 'Refrigerants', activityType: E2E_TR_INPUTS.refrigerant, activityValue: 40, activityUnit: 'kg', varianceReason: null, input: null,
+      parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' }] },
+    },
+  });
+  expect(res.status()).toBe(201);
+  const id = (await res.json()).id as string;
+  try {
+    await login(page, ENTRY_EMAIL);
+    await page.goto(`/data-entry?subsidiaryId=${SUB.logistics}&category=Refrigerants&year=${E2E_TR_INPUTS_YEAR}`);
+    await page.getByRole('button', { name: new RegExp(`^Annual ${E2E_TR_INPUTS_YEAR}`) }).click();
+    await expect(page.getByText(/Editing draft/)).toBeVisible();
+    const device = page.getByRole('combobox', { name: `${en.inputs.equipmentType} 1` });
+    await expect(device).toHaveText(en.equipmentTypes.fire_suppression_system);
+    await device.click();
+    await page.getByRole('option', { name: en.equipmentTypes.chiller, exact: true }).click();
+    await device.click();
+    await expect(page.getByRole('option', { name: en.equipmentTypes.fire_suppression_system, exact: true })).toBeVisible();
+    await page.getByRole('option', { name: en.equipmentTypes.fire_suppression_system, exact: true }).click();
+    await expect(device).toHaveText(en.equipmentTypes.fire_suppression_system);
+  } finally {
+    await request.delete(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+  }
 });

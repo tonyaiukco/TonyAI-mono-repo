@@ -53,6 +53,7 @@ import {
   withLineUnit,
   deviceOptions,
   maxEquipmentLines,
+  storedDevices,
   takesLineUnit,
   offersOtherGas,
   OTHER_GAS,
@@ -420,6 +421,22 @@ describe('the refrigerant form\'s narrowed device list', () => {
       { equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' },
     ] }, () => 'l');
     expect(maxEquipmentLines('Refrigerants', opened)).toBe(7);
+  });
+
+  // PR #360 review: the stored device stays offered after its line moved off it.
+  it('keeps a stored fire device selectable after its line was switched to a chiller', () => {
+    const kept = storedDevices({ equipment: [
+      { equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' },
+    ] });
+    expect(kept).toEqual(['fire_suppression_system']);
+    expect(deviceOptions('Refrigerants', 'chiller', new Set(), kept)).toContain('fire_suppression_system');
+    // Not twice, and not while another line holds it.
+    expect(deviceOptions('Refrigerants', 'fire_suppression_system', new Set(), kept).filter((t) => t === 'fire_suppression_system')).toHaveLength(1);
+    expect(deviceOptions('Refrigerants', '', new Set(['fire_suppression_system']), kept)).not.toContain('fire_suppression_system');
+    expect(maxEquipmentLines('Refrigerants', [], kept)).toBe(7);
+    expect(storedDevices(null)).toEqual([]);
+    // A new record keeps nothing: the cooling devices only.
+    expect(deviceOptions('Refrigerants', '', new Set(), storedDevices(null))).not.toContain('fire_suppression_system');
   });
 });
 
@@ -800,6 +817,12 @@ describe('the input fields as rendered', () => {
     expect(html).toContain('data-testid="equipment-rate"');
     expect(html).toContain('4%');
     expect(html).not.toContain(`${MESSAGES[locale].dataEntry.inputs.leakRate} 1"`);
+  });
+
+  it('totals 0.1 g as 0.0001 kg, never 0 (PR #360 review)', () => {
+    const html = render('en', EquipmentLines, equipment([fireLine({ capacity: 0.1 })], 'Fire Suppression'));
+    expect(html).toContain('= 0.0001 kg');
+    expect(html).toMatch(/<span class="font-mono">0\.0001<\/span>/);
   });
 
   it('shows no kilogram line for a kilogram line, and no selector on a refrigerant line', () => {

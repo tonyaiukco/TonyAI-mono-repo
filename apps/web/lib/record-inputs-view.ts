@@ -541,6 +541,13 @@ export function withLineUnit(line: EquipmentLineDraft, unit: LineMassUnit): Equi
   return unit === line.unit ? line : { ...line, unit, capacity: null, refill: null };
 }
 
+/**
+ * The digits a kilogram figure is shown with: all a gram line can carry (0.1 g
+ * is 0.0001 kg), so the total never reads 0 beside a line that does not (PR
+ * #360 review). Display only; `massInKg` rounds to 15 significant digits.
+ */
+export const KG_DISPLAY = Object.freeze({ maximumFractionDigits: 15 });
+
 /** The record's quantity: its total installed capacity in kilograms, summed in the engine's order (D7). */
 export function equipmentTotal(lines: readonly EquipmentLineDraft[]): number {
   return lines.reduce((sum, line) => sum + (lineCapacityKg(line) ?? 0), 0);
@@ -591,19 +598,33 @@ export function linesFromRecord(parameters: unknown, newId: () => string, unit: 
 
 /**
  * The devices a line's list offers: the category's offered devices
- * (`offeredEquipmentTypes`) less those another line holds, and the line's own
- * device, kept selectable when an opened record names one no longer offered
- * (a fire device on a Refrigerants draft, design decision 7).
+ * (`offeredEquipmentTypes`), the devices the opened record was stored with
+ * (`kept`: a fire device on a Refrigerants draft stays selectable for the whole
+ * edit, even after a line moved off it; design decision 7, PR #360 review) and
+ * the line's own device, less those another line holds.
  */
-export function deviceOptions(category: string, own: EquipmentType | "", taken: ReadonlySet<string>): EquipmentType[] {
-  const offered = offeredEquipmentTypes(category).filter((type) => !taken.has(type));
-  return own !== "" && !offered.includes(own) ? [...offered, own] : [...offered];
+export function deviceOptions(
+  category: string,
+  own: EquipmentType | "",
+  taken: ReadonlySet<string>,
+  kept: readonly EquipmentType[] = [],
+): EquipmentType[] {
+  const offered = offeredEquipmentTypes(category);
+  const all = [...offered, ...kept.filter((t) => !offered.includes(t))];
+  if (own !== "" && !all.includes(own)) all.push(own);
+  return all.filter((type) => type === own || !taken.has(type));
 }
 
 /** How many lines a record of the category may hold: one per device it may name. */
-export function maxEquipmentLines(category: string, lines: readonly EquipmentLineDraft[]): number {
+export function maxEquipmentLines(category: string, lines: readonly EquipmentLineDraft[], kept: readonly EquipmentType[] = []): number {
   const own = lines.map((l) => l.equipmentType).filter((t): t is EquipmentType => t !== "");
-  return new Set([...offeredEquipmentTypes(category), ...own]).size;
+  return new Set([...offeredEquipmentTypes(category), ...kept, ...own]).size;
+}
+
+/** The devices a stored record's lines name: the ones its edit keeps selectable. */
+export function storedDevices(parameters: unknown): EquipmentType[] {
+  const equipment = (parameters as Partial<RefrigerantRecordParameters> | null)?.equipment;
+  return Array.isArray(equipment) ? equipment.map((l) => l.equipmentType) : [];
 }
 
 /**

@@ -183,9 +183,9 @@ describe('the issued workbook', () => {
   // UAT round 4, BUG-12: the workbook names the category in its language; the
   // CSV in English, with the option's stored token; a dry powder record is 0.
   it.each([
-    ['en', 'Fire Suppression', 'Refrigerants'],
-    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar'],
-  ] as const)('%s lists Fire Suppression records under their own category, the zero as 0', async (language, fire, refrigerants) => {
+    ['en', 'Fire Suppression', 'Refrigerants', 'Dry powder / foam (no greenhouse gas)', 'Fuel or gas'],
+    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar', 'Kuru toz / köpük (sera gazı içermez)', 'Yakıt veya gaz'],
+  ] as const)('%s lists Fire Suppression records under their own category with their gas, the zero as 0', async (language, fire, refrigerants, dry, gasColumn) => {
     const dataset = fireSuppressionDataset();
     const document = doc(dataset, { language });
     const ledger = rowsOf((await load(document)).worksheets.find((w) => rowsOf(w).some((r) => r[0] === 'fire-dry-powder'))!);
@@ -194,6 +194,11 @@ describe('the issued workbook', () => {
     expect(byId('fire-co2')).toContain(fire);
     expect(byId('refrigerant-r410a')).toContain(refrigerants);
     expect(byId('fire-dry-powder')).toContain(0);
+    // The gas in a trailing column, so no earlier column moves.
+    const header = ledger.find((r) => r.includes(gasColumn))!;
+    expect(header[header.length - 1]).toBe(gasColumn);
+    expect(byId('fire-dry-powder')[header.indexOf(gasColumn)]).toBe(dry);
+    expect(byId('refrigerant-r410a')[header.indexOf(gasColumn)]).toBe('R-410A');
     const { rows } = csvRows(issuedCsv(document));
     const csvRow = (id: string) => rows.find((r) => r.record_id === id)!;
     expect(csvRow('fire-dry-powder')).toMatchObject({ category: 'Fire Suppression', activity_type: 'dry_powder_or_foam' });
@@ -298,9 +303,11 @@ describe('calculation inputs and Scope 2\'s method in the issued tables and PDF 
     wb.worksheets.find((s) => s.name !== 'Summary' && JSON.stringify((s.getRow(1).values as unknown[])).includes('Hesaplama girdileri'))!
       .eachRow((row) => ledger.push((row.values as unknown[]).slice(1)));
     const row = ledger.find((r) => r[0] === first)!;
-    expect(String(row.at(-1))).toContain('AID 8.078,67 kcal/Sm³');
-    expect(String(row.at(-1))).toContain('split / ofis klima: 10 kg × %10');
-    expect(String(row.at(-1))).toContain('transformatör kesici: 0 kg × %0,01 + 0,00049 kg dolum = 0,00049 kg salım');
+    // By its header: the gas column follows it since UAT round 4 (BUG-12 review).
+    const inputs = String(row[ledger[0].indexOf('Hesaplama girdileri')]);
+    expect(inputs).toContain('AID 8.078,67 kcal/Sm³');
+    expect(inputs).toContain('split / ofis klima: 10 kg × %10');
+    expect(inputs).toContain('transformatör kesici: 0 kg × %0,01 + 0,00049 kg dolum = 0,00049 kg salım');
   });
 
   it('prints the inputs under the quantity in the PDF, escaped once', () => {

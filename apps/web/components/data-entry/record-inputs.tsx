@@ -17,6 +17,7 @@ import {
   editedNcv,
   deviceOptions,
   equipmentTotal,
+  KG_DISPLAY,
   leakRateOf,
   leakRatePercent,
   lineCapacityKg,
@@ -396,6 +397,7 @@ export function NaturalGasInputs({
  */
 export function EquipmentLines({
   category,
+  kept = [],
   lines,
   reference,
   issue,
@@ -405,6 +407,8 @@ export function EquipmentLines({
   onRemove,
 }: {
   category: string;
+  /** The devices the opened record was stored with, selectable for the whole edit. */
+  kept?: readonly EquipmentType[];
   lines: readonly EquipmentLineDraft[];
   reference: ReferenceState;
   issue: EquipmentIssue | null;
@@ -421,7 +425,7 @@ export function EquipmentLines({
   const kgBeside = (kg: number | null, unit: LineMassUnit) =>
     unit === "g" && kg !== null ? (
       <p className="text-xs text-muted-foreground" data-testid="equipment-kg">
-        {t("fireSuppression.inKg", { value: formatNumber(kg, locale, { maximumFractionDigits: 15 }) })}
+        {t("fireSuppression.inKg", { value: formatNumber(kg, locale, KG_DISPLAY) })}
       </p>
     ) : null;
   return (
@@ -461,7 +465,7 @@ export function EquipmentLines({
                   <SelectValue placeholder={t("chooseEquipment")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {deviceOptions(category, line.equipmentType, taken).map((type) => (
+                  {deviceOptions(category, line.equipmentType, taken, kept).map((type) => (
                     <SelectItem key={type} value={type}>
                       {tTypes(type)}
                     </SelectItem>
@@ -551,12 +555,12 @@ export function EquipmentLines({
         );
       })}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={onAdd} disabled={lines.length >= maxEquipmentLines(category, lines)}>
+        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={onAdd} disabled={lines.length >= maxEquipmentLines(category, lines, kept)}>
           <Plus className="h-4 w-4" />
           {t("addLine")}
         </Button>
         <p className="text-xs text-muted-foreground">
-          {t("total")}: <span className="font-mono">{formatNumber(equipmentTotal(lines), locale)}</span>
+          {t("total")}: <span className="font-mono">{formatNumber(equipmentTotal(lines), locale, KG_DISPLAY)}</span>
         </p>
       </div>
       <p className="text-xs text-muted-foreground">{withUnit ? t("fireSuppression.annualOnly") : t("annualOnly")}</p>

@@ -1,6 +1,8 @@
 import { IntlMessageFormat } from 'intl-messageformat';
 import {
+  CATEGORY_ACTIVITY_TYPES,
   CATEGORY_SCOPE_MAP,
+  UNSPECIFIED_ACTIVITY_TYPE,
   isCalculated,
   LOCALE_FORMAT_TAGS,
   type Category,
@@ -72,6 +74,23 @@ const COVERAGE_LABEL: Record<ReportCoverageGapCode, IssuanceMessageKey> = {
 };
 
 /** A coverage gap code's words, unescaped — shared with the live report (LP4-03 K3). */
+/**
+ * A record's fuel or gas as the issued documents name it, in `locale`: the
+ * catalogue's `activity <English label>` key, else the English label, else the
+ * stored token; empty for a record that names none. The same lookup as the live
+ * reports' `reportVocabulary.activityType`, over this module's own catalogue
+ * (the reports module is a sink; a parity spec pins the keys alike).
+ */
+export function issuedActivityLabel(locale: Locale, r: { category: string; activityType: string | null }): string {
+  if (!r.activityType) return '';
+  const messages = ISSUANCE_CATALOGUES[locale] as Readonly<Record<string, string>>;
+  if (r.activityType === UNSPECIFIED_ACTIVITY_TYPE) return messages.activityNotSpecified;
+  const english = CATEGORY_ACTIVITY_TYPES[r.category as Category]?.types.find((t) => t.value === r.activityType)?.label
+    ?? r.activityType;
+  const key = `activity ${english}`;
+  return Object.prototype.hasOwnProperty.call(messages, key) ? messages[key] : english;
+}
+
 export function coverageGapLabel(code: ReportCoverageGapCode, locale: Locale): string {
   return ISSUANCE_CATALOGUES[locale][COVERAGE_LABEL[code]];
 }
@@ -187,8 +206,14 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     return text ? `<br><span class="note">${esc(text)}</span>` : '';
   };
   const ledger = countedRecords(dataset);
+  // The record's fuel or gas beside its category, in the document's language
+  // (UAT round 4, BUG-12 review): "Fire Suppression · CO2 (carbon dioxide)".
+  const categoryWithActivity = (r: { category: string; activityType: string | null }): string => {
+    const activity = issuedActivityLabel(language, r);
+    return activity ? `${label('category', r.category)} · ${esc(activity)}` : label('category', r.category);
+  };
   const ledgerRows = ledger.map((r) => `<tr><td>${entityLabel(r.subsidiaryId, r.locationId, r)}</td>
-    <td>${label('category', r.category)}</td><td>${label('period', r.periodValue)}</td>
+    <td>${categoryWithActivity(r)}</td><td>${label('period', r.periodValue)}</td>
     <td>${RECORD_STATUS_LABEL[r.status] === undefined ? esc(r.status) : t(RECORD_STATUS_LABEL[r.status])}</td>
     <td class="num">${number.format(r.activityValue)} ${esc(r.activityUnit)}${inputsNote(r.calculation)}</td>
     <td class="num">${isCalculated(r.calculation) ? number.format(r.calculation.tCo2e) : t('notCalculated')}</td>

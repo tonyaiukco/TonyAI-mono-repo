@@ -269,7 +269,8 @@
       "annualOnly": "Türkiye'deki yangın söndürme kayıtları yıllıktır, çünkü kaçak oranları yıllıktır.",
       "otherGas": "Diğer gaz",
       "otherGasStatement": "Faktör kütüphanesinin fiyatlamadığı bir gaz girilemez ve hiçbir zaman tahmin edilmez. Listeden bir gaz seçin ya da gazın kütüphaneye eklenmesi için yöneticinize başvurun.",
-      "noGreenhouseGas": "Kuru toz ve köpük sera gazı içermez, bu nedenle bu kaydın değeri 0'dır. Ekipmanı ve kanıtı yine de kaydedilir."
+      "noGreenhouseGas": "Kuru toz ve köpük sera gazı içermez, bu nedenle bu kaydın değeri 0'dır. Ekipmanı ve kanıtı yine de kaydedilir.",
+      "noGreenhouseGasOption": "Kuru toz ve köpük sera gazı içermez. Kayıt ekipmanını ve kanıtını korur; değeri, önizleme hesapladıktan sonra faktör kütüphanesinden gelir."
     }
   },
   "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",

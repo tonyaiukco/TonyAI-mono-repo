@@ -118,7 +118,7 @@ For a new record the refrigerant entry SHALL NOT offer HFC-227ea or SF6, and for
 - **THEN** the gas and the line's device are shown and stay selected, and the draft can be edited and saved
 
 ### Requirement: A bulk file names fire suppression equipment in kilograms
-The bulk upload SHALL accept equipment rows of the Fire Suppression category through the columns refrigerant rows use, in kilograms, and SHALL form one record per subsidiary, location, year and gas. A fire suppression row naming a device outside the three SHALL be refused with its row. The template SHALL list the category, its gases and its devices, and SHALL say that its masses are in kilograms.
+The bulk upload SHALL accept Fire Suppression equipment rows through the refrigerant columns, in kilograms, one record per subsidiary, location, year and gas. A row naming a device outside the three SHALL refuse its whole record with its row, writing none of its lines; other records import record by record, as the bulk contract does. The template SHALL list the category, its gases and devices, in kilograms.
 
 #### Scenario: Two devices of one gas
 - **WHEN** a bulk file holds two Fire Suppression rows of CO2 for one subsidiary and year, a fire extinguisher of 6 kg and a fire suppression system of 45 kg
@@ -126,4 +126,8 @@ The bulk upload SHALL accept equipment rows of the Fire Suppression category thr
 
 #### Scenario: An air conditioner on a fire suppression row
 - **WHEN** a Fire Suppression row names a split air conditioner
-- **THEN** the row is refused with its row number, and nothing of the file is written
+- **THEN** the row is refused with its row number, and none of its record's lines is written
+
+#### Scenario: A refused record beside a valid one
+- **WHEN** a bulk file holds a valid CO2 record and an SF6 record one of whose lines names a split air conditioner
+- **THEN** the CO2 record is imported and the SF6 record is refused whole, with its row, none of its lines written

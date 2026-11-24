@@ -89,6 +89,8 @@ import {
   linesFromRecord,
   newEquipmentLine,
   newLineUnit,
+  KG_DISPLAY,
+  storedDevices,
   NO_GREENHOUSE_GAS,
   offersOtherGas,
   OTHER_GAS,
@@ -186,6 +188,7 @@ import type {
   ActivityRecordPageFilters,
   ActivityRecordPageItemDTO,
   Category,
+  EquipmentType,
   FactorCoverageDTO,
   LocationDTO,
   RecordParameters,
@@ -341,6 +344,8 @@ function DataEntryPageInner() {
   const lineSeq = useRef(0);
   const nextLineId = useCallback(() => `line-${(lineSeq.current += 1)}`, []);
   const [equipment, setEquipment] = useState<EquipmentLineDraft[]>(() => [newEquipmentLine("line-0")]);
+  // The devices the opened record was stored with: selectable for the whole edit (PR #360 review).
+  const [keptDevices, setKeptDevices] = useState<EquipmentType[]>([]);
   // The self-generation section's fields (self-gen-form, design 1): what an
   // Electricity save sends, an edit included. Filled from an opened or copied
   // record, emptied by a reset, and kept through a category change and back
@@ -1321,6 +1326,7 @@ function DataEntryPageInner() {
     const stored = category === null ? null : parameters;
     setGasInputs(gasInputsFromRecord(category ?? "", stored));
     setEquipment(linesFromRecord(stored, nextLineId, newLineUnit(lineCategory)));
+    setKeptDevices(storedDevices(stored));
     setInputsEpoch((n) => n + 1);
   }
 
@@ -2231,8 +2237,11 @@ function DataEntryPageInner() {
                           {t("inputs.fireSuppression.otherGasStatement")}
                         </p>
                       )}
+                      {/* The option's meaning only: the figure of 0 is stated by a calculated preview, never before (PR #360 review). */}
                       {category === "Fire Suppression" && activityType === NO_GREENHOUSE_GAS && (
-                        <p className="text-xs text-muted-foreground">{t("inputs.fireSuppression.noGreenhouseGas")}</p>
+                        <p className="text-xs text-muted-foreground" data-testid="no-ghg-option">
+                          {t("inputs.fireSuppression.noGreenhouseGasOption")}
+                        </p>
                       )}
                       {/* What MGO covers and what it does not (Scope 1 only). */}
                       {marineGasOil && (
@@ -2340,7 +2349,7 @@ function DataEntryPageInner() {
                         <>
                           <Input
                             readOnly
-                            value={formatNumber(numericValue, locale)}
+                            value={formatNumber(numericValue, locale, KG_DISPLAY)}
                             aria-describedby="activity-total-note"
                             data-testid="equipment-total"
                           />
@@ -2447,6 +2456,7 @@ function DataEntryPageInner() {
                   {refrigerantMode && (
                     <EquipmentLines
                       category={category}
+                      kept={keptDevices}
                       lines={equipment}
                       reference={reference}
                       issue={equipmentProblem}

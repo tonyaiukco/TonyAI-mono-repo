@@ -3516,6 +3516,24 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     expect(report.errors[0].message).toMatch(message);
   });
 
+  // PR #360 review: two independent records. The bulk contract (WP8) writes
+  // record by record, so the valid CO2 record is written and the refused SF6
+  // record writes none of its lines.
+  it('refuses a Fire Suppression record with a cooling device whole, beside a valid record of another gas', async () => {
+    const { records, service } = build();
+    const report = await service.import(dataEntry(), file(
+      fireRow(),
+      fireRow({ activityType: 'SF6', equipmentType: 'transformer_breaker', capacityKg: '10' }),
+      fireRow({ activityType: 'SF6', equipmentType: 'split_air_conditioner', capacityKg: '5' }),
+    ), NOTHING);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 4, column: 'equipmentType', code: 'invalid' })]);
+    expect(report.errors[0].message).toMatch(/^Rows 3, 4 are one gas's record, and none was imported\. /);
+    expect(records.create).toHaveBeenCalledTimes(1);
+    expect(records.create.mock.calls[0][1]).toMatchObject({ category: 'Fire Suppression', activityType: 'CO2', activityValue: 6 });
+    expect(records.create.mock.calls.some((c) => c[1].activityType === 'SF6')).toBe(false);
+    expect(report.accepted.map((a) => a.row)).toEqual([2]);
+  });
+
   it('checks a refrigerant record against the stored slots and the rest of the file', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findMany.mockResolvedValue([{
