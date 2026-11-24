@@ -47,7 +47,7 @@ let L2: string;
 let M1: string;
 let admin: RequestUser;
 
-const CATEGORIES: readonly InventoryCategory[] = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'];
+const CATEGORIES: readonly InventoryCategory[] = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'];
 
 beforeAll(async () => {
   process.env.DATABASE_URL = process.env.INT_RUNTIME_DATABASE_URL;
@@ -111,6 +111,7 @@ function completeS(over: Partial<PutInventoryBoundarySubsidiaryRequest> = {}): P
       { category: 'Fuel', level: 'company', reportingPeriod: 'annual' },
       { category: 'Mobile Combustion', level: 'company', reportingPeriod: 'annual' },
       { category: 'Refrigerants', level: 'company', reportingPeriod: 'annual' },
+      { category: 'Fire Suppression', level: 'company', reportingPeriod: 'annual' },
       { category: 'Fugitive Gas', level: 'company', reportingPeriod: 'annual' },
     ],
     applicability: [
@@ -118,6 +119,7 @@ function completeS(over: Partial<PutInventoryBoundarySubsidiaryRequest> = {}): P
       { locationId: null, category: 'Fuel', applicability: 'excluded', reason: 'No fuel burnt on site' },
       { locationId: null, category: 'Mobile Combustion', applicability: 'excluded', reason: 'No company vehicles' },
       { locationId: null, category: 'Refrigerants', applicability: 'excluded', reason: 'No refrigeration plant' },
+      { locationId: null, category: 'Fire Suppression', applicability: 'excluded', reason: 'No fire suppression equipment' },
       { locationId: null, category: 'Fugitive Gas', applicability: 'excluded', reason: 'No gas distribution network' },
       { locationId: L1, category: 'Electricity', applicability: 'included' },
       { locationId: L2, category: 'Electricity', applicability: 'included' },

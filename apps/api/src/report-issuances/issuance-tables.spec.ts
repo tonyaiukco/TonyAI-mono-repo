@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as ExcelJS from 'exceljs';
 import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
-import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, refrigerantDataset, UNCALCULATED } from '../../test/issuance-fixtures';
+import { allExcludedBoundary, datasetOf, fireSuppressionDataset, frozenBoundary, fullYear, priced, record, refrigerantDataset, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
 import { buildIssuanceHtml, countedRecords } from './issuance-html';
 import { ISSUED_CSV_COLUMNS, ISSUED_TABLES_RENDERER, issuedCsv, issuedWorkbook, type IssuedTablesDocument } from './issuance-tables';
@@ -180,13 +180,35 @@ describe('the issued workbook', () => {
     expect(csv).toContain('36 kg released');
   });
 
+  // UAT round 4, BUG-12: the workbook names the category in its language; the
+  // CSV in English, with the option's stored token; a dry powder record is 0.
+  it.each([
+    ['en', 'Fire Suppression', 'Refrigerants'],
+    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar'],
+  ] as const)('%s lists Fire Suppression records under their own category, the zero as 0', async (language, fire, refrigerants) => {
+    const dataset = fireSuppressionDataset();
+    const document = doc(dataset, { language });
+    const ledger = rowsOf((await load(document)).worksheets.find((w) => rowsOf(w).some((r) => r[0] === 'fire-dry-powder'))!);
+    const byId = (id: string) => ledger.find((r) => r[0] === id)!;
+    expect(byId('fire-dry-powder')).toContain(fire);
+    expect(byId('fire-co2')).toContain(fire);
+    expect(byId('refrigerant-r410a')).toContain(refrigerants);
+    expect(byId('fire-dry-powder')).toContain(0);
+    const { rows } = csvRows(issuedCsv(document));
+    const csvRow = (id: string) => rows.find((r) => r.record_id === id)!;
+    expect(csvRow('fire-dry-powder')).toMatchObject({ category: 'Fire Suppression', activity_type: 'dry_powder_or_foam' });
+    expect(Number(csvRow('fire-dry-powder').tco2e)).toBe(0);
+    expect(csvRow('fire-co2').category).toBe('Fire Suppression');
+    expect(csvRow('refrigerant-r410a').category).toBe('Refrigerants');
+  });
+
   it('names its issuance, dataset, fingerprint and renderer, and says Scope 3 is not covered', async () => {
     const dataset = mixed();
     const summary = rowsOf((await load(doc(dataset))).getWorksheet('Summary')!);
     expect(summary).toContainEqual(['Issuance', ISSUANCE_ID]);
     expect(summary).toContainEqual(['Dataset', dataset.datasetId]);
     expect(summary).toContainEqual(['Dataset fingerprint', `sha256:${dataset.fingerprint.hex}`, 'tonyai-report-dataset-v1']);
-    expect(ISSUED_TABLES_RENDERER).toBe('tonyai-issuance-tables-v6');
+    expect(ISSUED_TABLES_RENDERER).toBe('tonyai-issuance-tables-v7');
     expect(summary).toContainEqual(['Tables renderer', ISSUED_TABLES_RENDERER]);
     expect(summary).toContainEqual(['Scope 3', 'Scope 3 is not covered by this inventory.']);
   });

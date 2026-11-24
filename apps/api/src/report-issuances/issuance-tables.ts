@@ -49,7 +49,7 @@ import {
 // wording; its identity row names this version.
 // v5 (ng-kwh-engine): a gross energy bill's gross-to-net ratio among a record's inputs.
 // v6 (BUG-17): explains a refrigerant term priced on its refill.
-export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v6';
+export const ISSUED_TABLES_RENDERER = 'tonyai-issuance-tables-v7';
 
 export interface IssuedTablesDocument {
   issuanceId: string;

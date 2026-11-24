@@ -106,6 +106,22 @@ describe('a record\'s calculation inputs in a report (LP4-02 PR5, task 5.3)', ()
     expect(calculationInputs(gross, words(locale, catalogue))).toContain(expected);
   });
 
+  // UAT round 4, BUG-12: a fire suppression line reads as a refrigerant line does.
+  it.each([
+    ['en', 'fire extinguisher: 6 kg × 4% + 0 kg refilled = 0.24 kg released; '
+      + 'fire suppression system: 35 kg released from the refill. The capacity estimate (50 kg at 2%) was excluded.'],
+    ['tr', 'yangın söndürme tüpü: 6 kg × %4 + 0 kg dolum = 0,24 kg salım; '
+      + 'yangın söndürme sistemi: 35 kg dolum, salınan miktardır. Kapasiteye dayalı tahmin (50 kg, oran %2) hesaba katılmadı.'],
+  ] as const)('%s prints fire suppression lines, a refill-priced one included, in both catalogues', (locale, expected) => {
+    const inputs = v3({ refrigerantTerms: [
+      { equipmentType: 'fire_extinguisher', leakRateChoice: 'default', capacityKg: 6, leakRate: 0.04, leakedKg: 0.24, refillKg: 0 },
+      { equipmentType: 'fire_suppression_system', leakRateChoice: 'default', capacityKg: 50, leakRate: 0.02, leakedKg: 1, refillKg: 35, pricedBy: 'refill' },
+    ] });
+    for (const catalogue of [REPORT_CATALOGUES[locale], ISSUANCE_CATALOGUES[locale]]) {
+      expect(calculationInputs(inputs, words(locale, catalogue))).toBe(expected);
+    }
+  });
+
   it('is empty for a snapshot that carries no inputs', () => {
     expect(calculationInputs(v3({}), words('en'))).toBe('');
     expect(calculationInputs({ snapshotSchema: 2, tCo2e: 1 }, words('en'))).toBe('');

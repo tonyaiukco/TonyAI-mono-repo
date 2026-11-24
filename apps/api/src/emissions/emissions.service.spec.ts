@@ -682,6 +682,20 @@ describe('EmissionsService.summary', () => {
     ]);
   });
 
+  // UAT round 4, BUG-12: a refrigerant and a fire suppression record of one
+  // subsidiary and year are two categories, never one total.
+  it('totals Refrigerants and Fire Suppression apart', async () => {
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Refrigerants', activityType: 'R-410A', scope: 1, calculation: { tCo2e: 3, factorId: 'f-1' } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Fire Suppression', activityType: 'CO2', scope: 1, calculation: { tCo2e: 1, factorId: 'f-2' } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Fire Suppression', activityType: 'dry_powder_or_foam', scope: 1, calculation: { tCo2e: 0, factorId: 'f-3' } }),
+    ]);
+    prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' })]);
+    const s = await service.summary(superAdmin(), {});
+    expect(s.totals).toEqual({ scope1: 4, scope2: 0, scope3: 0, total: 4 });
+    expect(s.byCategory.map((c) => [c.category, c.tCo2e])).toEqual([['Refrigerants', 3], ['Fire Suppression', 1]]);
+  });
+
   it('excludes a record with no calculated figure from every total, and declares it', async () => {
     const user = superAdmin();
     prisma.activityRecord.findMany.mockResolvedValue([
@@ -1108,13 +1122,13 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(cell('Waste').status).toBe('missing');
     expect(cell('Waste').lastUpdate).toBeNull();
 
-    // Row rollups: 1 complete, 12 categories, total = 12 + 5 + 7
+    // Row rollups: 1 complete, 13 categories, total = 12 + 5 + 7
     expect(row.completeCount).toBe(1);
-    expect(row.categoryCount).toBe(12);
+    expect(row.categoryCount).toBe(13);
     expect(row.totalTCo2e).toBe(24);
 
-    // Matrix totals: 1 complete + 2 incomplete + 9 missing
-    expect(m.totals).toEqual({ complete: 1, incomplete: 2, missing: 9 });
+    // Matrix totals: 1 complete + 2 incomplete + 10 missing
+    expect(m.totals).toEqual({ complete: 1, incomplete: 2, missing: 10 });
   });
 
   it('keeps an evidence-required cell incomplete until a file is attached (FR §2.2)', async () => {
@@ -1879,7 +1893,7 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(m.rows).toHaveLength(2);
     expect(m.rows[1].subsidiaryName).toBe('Gas Legal Ltd.'); // legalName fallback
     expect(m.rows.every((r) => r.cells.every((c) => c.status === 'missing'))).toBe(true);
-    expect(m.totals).toEqual({ complete: 0, incomplete: 0, missing: 24 });
+    expect(m.totals).toEqual({ complete: 0, incomplete: 0, missing: 26 });
   });
 });
 

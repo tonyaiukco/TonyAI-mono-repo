@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { REPORT_DATASET_SCHEMA_VERSION, type ReportIssuanceGap } from '@tonyai/shared-types';
 import { complete, SITE_1, SUB, SUB_B, without } from '../../test/boundary-fixtures';
 import { allExcludedBoundary,
-  allLocks, datasetOf, frozenBoundary, fullYear, gasYear, lock, MONTHS, priced, record, refingerprinted, release, rowOf,
+  allLocks, datasetOf, fireSuppressionDataset, frozenBoundary, fullYear, gasYear, lock, MONTHS, priced, record, refingerprinted, release, rowOf,
   site1Year, site2Year, standing, UNCALCULATED,
 } from '../../test/issuance-fixtures';
 import { boundaryMatchesVersion, deriveIssuance, readRetainedDataset, RetainedDatasetError } from './issuance-gate';
@@ -13,18 +13,24 @@ import { boundaryMatchesVersion, deriveIssuance, readRetainedDataset, RetainedDa
  * retained text held to its row, its own assessments and its version.
  */
 
+/** `complete()` before the named categories existed: no policy or cell of them. */
+function completeWithout(...categories: string[]) {
+  const rows = complete();
+  return frozenBoundary({
+    ...rows,
+    policies: without(rows.policies, (p) => categories.includes(p.category)),
+    cells: without(rows.cells, (c) => categories.includes(c.category)),
+  });
+}
+
 /** A dataset as schema 1 captured it: `complete()` before Fugitive Gas existed. */
 function schema1Dataset(facts: Parameters<typeof datasetOf>[0] = {}) {
-  const rows = complete();
-  return datasetOf({
-    boundary: frozenBoundary({
-      ...rows,
-      policies: without(rows.policies, (p) => p.category === 'Fugitive Gas'),
-      cells: without(rows.cells, (c) => c.category === 'Fugitive Gas'),
-    }),
-    schemaVersion: 1,
-    ...facts,
-  });
+  return datasetOf({ boundary: completeWithout('Fugitive Gas', 'Fire Suppression'), schemaVersion: 1, ...facts });
+}
+
+/** A dataset as schema 2 captured it: `complete()` before Fire Suppression existed (UAT round 4, BUG-12). */
+function schema2Dataset(facts: Parameters<typeof datasetOf>[0] = {}) {
+  return datasetOf({ boundary: completeWithout('Fire Suppression'), schemaVersion: 2, ...facts });
 }
 
 const codes = (gaps: readonly ReportIssuanceGap[]) => gaps.map((g) => g.code);
@@ -267,7 +273,10 @@ describe('readRetainedDataset — the text held to its row before it is trusted 
     expect(() => readRetainedDataset({ ...rowOf(dataset), organisationId: 'org-b' })).toThrow(/identity/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), content: '{"schemaVersion":' })).toThrow(/not JSON/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 1 })).toThrow(/schemaVersion/);
-    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 3 })).toThrow(/schemaVersion/);
+    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 2 })).toThrow(/schemaVersion/);
+    expect(() => readRetainedDataset({ ...rowOf(dataset), schemaVersion: 4 })).toThrow(/schemaVersion/);
+    const future = refingerprinted(dataset, (d) => { (d as { schemaVersion: number }).schemaVersion = 4; });
+    expect(() => readRetainedDataset({ ...rowOf(future), schemaVersion: 4 })).toThrow(/schemaVersion 4 is not one this gate reads/);
     expect(() => readRetainedDataset({ ...rowOf(dataset), content: 'null' })).toThrow(RetainedDatasetError);
   });
 });
@@ -281,11 +290,23 @@ describe('the pinned assessments — K2 holds every retained dataset to them (ar
   // REPORT_DATASET_SCHEMA_VERSION and keep the old rules for the old version
   // ("LP3-04 PR D follow-ups"), then re-pin.
   it('a complete year', () => {
-    expect(datasetOf().fingerprint.hex).toBe('1732443717b5bfad15ba3a2cd9dd74cec49b5532b2f69b130f22e01656927570');
+    expect(datasetOf().fingerprint.hex).toBe('4edcb5b3dd7e687ee8b2c27ab4100dd2279bbb1bf411a89426f3e5830a24c5cc');
   });
 
   it('one January record, nothing locked', () => {
     expect(datasetOf({ records: [record('r-01')], locks: [] }).fingerprint.hex)
+      .toBe('2a81f3fc097ad6e9e39d6bfdb018d078e1fa3c868f02e10a7bc1dd6cbb3db6dc');
+  });
+
+  // Schema 2's fingerprints, unchanged since LP4-02 (the six categories its
+  // boundaries were asked about; UAT round 4 moved the current ones to schema
+  // 3). Never re-pin these.
+  it('schema 2: a complete year', () => {
+    expect(schema2Dataset().fingerprint.hex).toBe('1732443717b5bfad15ba3a2cd9dd74cec49b5532b2f69b130f22e01656927570');
+  });
+
+  it('schema 2: one January record, nothing locked', () => {
+    expect(schema2Dataset({ records: [record('r-01')], locks: [] }).fingerprint.hex)
       .toBe('f2846969e058c5084bf0f7bbaa0198b013cc413306dde54df08581d774dd042d');
   });
 
@@ -349,19 +370,82 @@ describe('a dataset retained before Fugitive Gas (schema 1)', () => {
     expect(current.schemaVersion).toBe(REPORT_DATASET_SCHEMA_VERSION);
     const result = deriveIssuance(current);
     expect(result.status).toBe('partial');
-    expect(gapsOf(result).filter((g) => g.coverageCode === 'applicability_undetermined').map((g) => g.category))
-      .toEqual(['Fugitive Gas', 'Fugitive Gas']);
+    expect(gapsOf(result).filter((g) => g.coverageCode === 'applicability_undetermined').map((g) => g.category).sort())
+      .toEqual(['Fire Suppression', 'Fire Suppression', 'Fugitive Gas', 'Fugitive Gas']);
   });
 
   it("is refused when its row and its content disagree on the version, or either names one this gate doesn't read", () => {
     expect(() => readRetainedDataset({ ...rowOf(dataset()), schemaVersion: 2 })).toThrow(RetainedDatasetError);
-    const future = refingerprinted(dataset(), (d) => { (d as { schemaVersion: number }).schemaVersion = 3; });
-    expect(() => readRetainedDataset({ ...rowOf(future), schemaVersion: 3 })).toThrow(RetainedDatasetError);
+    const future = refingerprinted(dataset(), (d) => { (d as { schemaVersion: number }).schemaVersion = 4; });
+    expect(() => readRetainedDataset({ ...rowOf(future), schemaVersion: 4 })).toThrow(RetainedDatasetError);
   });
 
   it('cannot be relabelled to escape the newer rule: schema 2 recomputes under six categories', () => {
     const relabelled = refingerprinted(dataset(), (d) => { d.schemaVersion = 2; });
     expect(() => readRetainedDataset(rowOf(relabelled))).toThrow(/do not recompute/);
+  });
+});
+
+describe('a dataset retained before Fire Suppression (schema 2; UAT round 4, BUG-12)', () => {
+  const dataset = () => schema2Dataset();
+
+  it('recomputes under its six categories and is still issued final', () => {
+    expect(readRetainedDataset(rowOf(dataset()))).toEqual(dataset());
+    expect(deriveIssuance(dataset())).toEqual({ status: 'final', gaps: [] });
+  });
+
+  it('its boundary, frozen before the category, still matches its version', () => {
+    expect(boundaryMatchesVersion(2, dataset().boundary, dataset().boundary)).toBe(true);
+  });
+
+  it('a new capture of the same boundary is schema 3 and partial, applicability_undetermined on Fire Suppression alone', () => {
+    const current = datasetOf({ boundary: dataset().boundary });
+    expect(current.schemaVersion).toBe(3);
+    const result = deriveIssuance(current);
+    expect(result.status).toBe('partial');
+    const undetermined = gapsOf(result).filter((g) => g.coverageCode === 'applicability_undetermined');
+    expect(undetermined.map((g) => g.category)).toEqual(['Fire Suppression', 'Fire Suppression']);
+    expect(gapsOf(result).every((g) => g.coverageCode === 'applicability_undetermined')).toBe(true);
+  });
+
+  it('a version that decides Fire Suppression carries no gap for it', () => {
+    const decided = datasetOf();
+    expect(decided.schemaVersion).toBe(3);
+    expect(decided.boundary.applicability.filter((c) => c.category === 'Fire Suppression').map((c) => c.applicability))
+      .toEqual(['excluded', 'excluded']);
+    expect(deriveIssuance(decided)).toEqual({ status: 'final', gaps: [] });
+  });
+
+  it('cannot be relabelled to escape the newer rule: schema 3 recomputes under seven categories', () => {
+    const relabelled = refingerprinted(dataset(), (d) => { d.schemaVersion = 3; });
+    expect(() => readRetainedDataset(rowOf(relabelled))).toThrow(/do not recompute/);
+  });
+});
+
+// UAT round 4, BUG-12: a dry powder or foam record is a calculated zero, so a
+// final holding it is final; a missing figure is never read as one (QA review).
+describe('a dry powder or foam record in a final (UAT round 4, BUG-12)', () => {
+  const withAnnualLock = (dataset: ReturnType<typeof fireSuppressionDataset>) =>
+    datasetOf({ boundary: dataset.boundary, records: [...dataset.records], locks: [...allLocks(), lock('Annual', 'annual')] });
+
+  it('is final with the zero record counted as calculated and authoritative', () => {
+    expect(deriveIssuance(withAnnualLock(fireSuppressionDataset()))).toEqual({ status: 'final', gaps: [] });
+  });
+
+  it('is partial when the zero is replaced by no figure, naming the record', () => {
+    const base = fireSuppressionDataset();
+    const records = base.records.map((r) => (r.id === 'fire-dry-powder' ? { ...r, calculation: UNCALCULATED } : r));
+    const result = deriveIssuance(withAnnualLock({ ...base, records }));
+    expect(result.status).toBe('partial');
+    expect(only(gapsOf(result), 'non_authoritative_calculation').flatMap((g) => g.recordIds)).toContain('fire-dry-powder');
+  });
+
+  it('is partial when the zero names no factor', () => {
+    const base = fireSuppressionDataset();
+    const records = base.records.map((r) => (r.id === 'fire-dry-powder'
+      ? { ...r, calculation: { ...(r.calculation as object), factorId: null } as unknown as typeof r.calculation }
+      : r));
+    expect(deriveIssuance(withAnnualLock({ ...base, records })).status).toBe('partial');
   });
 });
 
@@ -385,6 +469,8 @@ describe('boundaryMatchesVersion — the retained boundary is the frozen version
 
   it('fails closed on a version it cannot read, or a schema it has no comparison for', () => {
     expect(boundaryMatchesVersion(1, retained, null)).toBe(false);
-    expect(boundaryMatchesVersion(3, retained, retained)).toBe(false);
+    expect(boundaryMatchesVersion(3, retained, retained)).toBe(true);
+    expect(boundaryMatchesVersion(4, retained, retained)).toBe(false);
+    expect(boundaryMatchesVersion(0, retained, retained)).toBe(false);
   });
 });

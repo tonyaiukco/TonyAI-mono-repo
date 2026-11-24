@@ -14,6 +14,7 @@ import {
 import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from '../../common/coded-validation.pipe';
 import { CreateActivityRecordDto } from './create-activity-record.dto';
 import { UpdateActivityRecordDto } from './update-activity-record.dto';
+import { recordParametersIssues } from './record-parameters.dto';
 
 /**
  * Both write DTOs, asserted together — hence the topic name rather than one
@@ -557,6 +558,48 @@ describe.each(DTOS)('%s — parameters (LP4-02, D3, D7)', (_name, Dto) => {
     ["another category's fields", () => ({ category: 'Refrigerants', parameters: { ncvKcalPerSm3: 1 } })],
   ])('refuses a refrigerant record with %s', (_what, body) => {
     expect(refused(body())).toContain('parameters');
+  });
+
+  // UAT round 4, BUG-12: a Fire Suppression record holds its three devices,
+  // each once, always at the default rate; Refrigerants keeps the nine.
+  const fire = (equipment: unknown) => ({ category: 'Fire Suppression', activityType: 'CO2', parameters: { equipment } });
+  const fireLine = (over: Record<string, unknown> = {}) =>
+    line({ equipmentType: 'fire_extinguisher', capacityKg: 6, refillKg: 0, ...over });
+
+  it('accepts a Fire Suppression record of the three fire devices at their default rates', () => {
+    expect(
+      refused(fire([
+        fireLine(),
+        fireLine({ equipmentType: 'fire_suppression_system', capacityKg: 50, refillKg: 35 }),
+        fireLine({ equipmentType: 'transformer_breaker', capacityKg: 10 }),
+      ])),
+    ).not.toContain('parameters');
+  });
+
+  it.each([
+    ['an air conditioner', () => fire([fireLine({ equipmentType: 'split_air_conditioner' })])],
+    ['a chiller', () => fire([fireLine({ equipmentType: 'chiller' })])],
+    ['an alternative rate', () => fire([fireLine({ leakRateChoice: 'alternative' })])],
+    ['the alternative rate on a device that has one elsewhere', () => fire([fireLine({ equipmentType: 'chiller', leakRateChoice: 'alternative' })])],
+    ['a repeated device', () => fire([fireLine(), fireLine({ capacityKg: 9 })])],
+    ['no list', () => fire(undefined)],
+    ['an empty list', () => fire([])],
+    ['a line with neither capacity nor refill', () => fire([fireLine({ capacityKg: 0 })])],
+  ])('refuses a Fire Suppression record with %s', (_what, body) => {
+    expect(refused(body())).toContain('parameters');
+  });
+
+  it('accepts a Refrigerants record with a fire device, as before (design decision 7)', () => {
+    const body = { category: 'Refrigerants', activityType: 'HFC-227ea', parameters: { equipment: [fireLine({ equipmentType: 'fire_suppression_system' })] } };
+    expect(refused(body)).not.toContain('parameters');
+  });
+
+  it('names the refusal: a device outside the category, and no alternative rate on Fire Suppression', () => {
+    expect(recordParametersIssues('Fire Suppression', { equipment: [fireLine({ equipmentType: 'split_air_conditioner' })] }).join(' '))
+      .toMatch(/split_air_conditioner is not a Fire Suppression device/);
+    expect(recordParametersIssues('Fire Suppression', { equipment: [fireLine({ leakRateChoice: 'alternative' })] }).join(' '))
+      .toMatch(/a Fire Suppression line has no alternative leak rate/);
+    expect(recordParametersIssues('Refrigerants', { equipment: [fireLine({ equipmentType: 'fire_extinguisher' })] })).toEqual([]);
   });
 
   it('refuses a key Natural Gas does not define, and an array or a scalar', () => {

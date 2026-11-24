@@ -67,4 +67,25 @@ describe('a record\'s calculation inputs and Scope 2\'s method in the live repor
     const grid = excelLedgerRow(row({ category: 'Electricity', activityType: null }), tr);
     expect(grid[at('Kapsam 2 piyasa bazlı')]).toBe('Piyasa bazlı sonuç bulunmamaktadır');
   });
+
+  // UAT round 4, BUG-12: a dry powder or foam record in a Turkish workbook and
+  // PDF: the category and the option in Turkish, its figure 0; the CSV English.
+  it('names a fire suppression record and its option in the workbook\'s language, its zero as 0', () => {
+    const dry = row({
+      category: 'Fire Suppression', activityType: 'dry_powder_or_foam', activityValue: 12, tCo2e: 0,
+      calculationInputs: 'yangın söndürme tüpü: 12 kg × %4 + 0 kg dolum = 0,48 kg salım',
+      calculationInputsCsv: 'fire extinguisher: 12 kg × 4% + 0 kg refilled = 0.48 kg released',
+    });
+    const workbook = excelLedgerRow(dry, tr);
+    expect(workbook).toContain('Yangın söndürme');
+    expect(workbook).toContain('Kuru toz / köpük (sera gazı içermez)');
+    expect(workbook).toContain(0);
+    const pdf = pdfLedgerRow(dry, tr);
+    expect(pdf).toContain('Yangın söndürme');
+    expect(pdf).toContain('Kuru toz / köpük (sera gazı içermez)');
+    const csv = cells(csvLedgerRow(dry));
+    expect(csv).toContain('Fire Suppression');
+    expect(csv).toContain('dry_powder_or_foam');
+    expect(csv).toContain('fire extinguisher: 12 kg × 4% + 0 kg refilled = 0.48 kg released');
+  });
 });

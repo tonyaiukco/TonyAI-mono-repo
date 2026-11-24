@@ -396,7 +396,7 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
   });
 
   it('pins the bounds', () => {
-    expect(INVENTORY_DECLARATION_LIMITS).toEqual({ sites: 500, attribution: 6, applicability: 3006, sources: 2000 });
+    expect(INVENTORY_DECLARATION_LIMITS).toEqual({ sites: 500, attribution: 7, applicability: 3507, sources: 2000 });
   });
 });
 

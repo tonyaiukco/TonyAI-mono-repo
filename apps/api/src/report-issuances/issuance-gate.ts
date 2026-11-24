@@ -137,8 +137,10 @@ export function readRetainedDataset(row: RetainedDatasetRow): ReportDataset {
  * Whether the retained boundary is the frozen version as stored — every fact
  * of it: ids, names, months, cells, policies and source fields, its number,
  * decision and decider (PR C follow-up (9)). Compared under the dataset's
- * schemaVersion: versions 1 and 2's boundary is what `buildBoundarySnapshot` builds
- * from a frozen version's rows (its frozen names, W7), compared whole. A later
+ * schemaVersion: versions 1, 2 and 3's boundary is what `buildBoundarySnapshot`
+ * builds from a frozen version's rows (its frozen names, W7), compared whole;
+ * the versions differ only in the categories a boundary must decide
+ * (`BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA`), never in the boundary's shape. A later
  * schemaVersion that changes the builder adds its own comparison here, so a
  * historic dataset is never held to a newer shape.
  */
@@ -151,6 +153,7 @@ export function boundaryMatchesVersion(
   switch (schemaVersion) {
     case 1:
     case 2:
+    case 3:
       return canonicalJson(rebuilt) === canonicalJson(retained);
     default:
       return false;

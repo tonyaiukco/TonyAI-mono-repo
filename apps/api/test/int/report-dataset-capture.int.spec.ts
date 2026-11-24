@@ -138,6 +138,7 @@ function declaration(): PutInventoryBoundarySubsidiaryRequest {
       { category: 'Fuel', level: 'company', reportingPeriod: 'annual' },
       { category: 'Mobile Combustion', level: 'company', reportingPeriod: 'annual' },
       { category: 'Refrigerants', level: 'company', reportingPeriod: 'annual' },
+      { category: 'Fire Suppression', level: 'company', reportingPeriod: 'annual' },
       { category: 'Fugitive Gas', level: 'company', reportingPeriod: 'annual' },
     ],
     applicability: [
@@ -146,6 +147,7 @@ function declaration(): PutInventoryBoundarySubsidiaryRequest {
       { locationId: null, category: 'Fuel', applicability: 'excluded', reason: 'No fuel burnt on site' },
       { locationId: null, category: 'Mobile Combustion', applicability: 'excluded', reason: 'No company vehicles' },
       { locationId: null, category: 'Refrigerants', applicability: 'excluded', reason: 'No refrigeration plant' },
+      { locationId: null, category: 'Fire Suppression', applicability: 'excluded', reason: 'No fire suppression equipment' },
       { locationId: null, category: 'Fugitive Gas', applicability: 'excluded', reason: 'No gas distribution network' },
     ],
     sources: [
@@ -156,7 +158,7 @@ function declaration(): PutInventoryBoundarySubsidiaryRequest {
 
 /** A holding's whole declaration: every category excluded at the company. No gap. */
 function holdingDeclaration(): PutInventoryBoundarySubsidiaryRequest {
-  const categories = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const;
+  const categories = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'] as const;
   return {
     firstMonth: 1, lastMonth: 12, sites: [],
     attribution: categories.map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
@@ -368,8 +370,8 @@ describe('a capture over HTTP', () => {
     await service.putSubsidiary(user, boundaryId, S, declaration());
     await service.putSubsidiary(user, boundaryId, S2, {
       firstMonth: 1, lastMonth: 12, sites: [],
-      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
-      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
+      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
+      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
       sources: [],
     });
     await owner.organisation.update({ where: { id: t.organisationId }, data: { tradingName: 'Int-test trading name' } });
@@ -708,8 +710,8 @@ describe('who reads a retained dataset', () => {
     await service.putSubsidiary(user, boundaryId, S, declaration());
     await service.putSubsidiary(user, boundaryId, S2, {
       firstMonth: 1, lastMonth: 12, sites: [],
-      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
-      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
+      attribution: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'] as const).map((category) => ({ category, level: 'company', reportingPeriod: 'annual' })),
+      applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded', reason: 'Holding company' })),
       sources: [],
     });
     const { datasetId } = summaryOf(await capture(admin(), { boundaryId, subsidiaryId: S }));

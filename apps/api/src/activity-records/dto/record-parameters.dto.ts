@@ -21,6 +21,8 @@ import {
   LEAK_RATE_CHOICES,
   SELF_GENERATION_SOURCES,
   recordParameterShape,
+  acceptedEquipmentTypes,
+  allowsAlternativeLeakRate,
   type CvBasis,
   type EquipmentType,
   type GenerationTopology,
@@ -123,7 +125,13 @@ class EquipmentLineDto {
   leakRateChoice!: LeakRateChoice;
 }
 
-function refrigerantIssues(value: object): string[] {
+/**
+ * The equipment lines of a capacity-method record (D7): its category's accepted
+ * devices (`acceptedEquipmentTypes`), each once, the alternative rate only where
+ * the category and the device allow one. A Fire Suppression line is always at
+ * its device's default rate (UAT round 4, BUG-12).
+ */
+function refrigerantIssues(category: string, value: object): string[] {
   const keys = Object.keys(value);
   if (keys.length !== 1 || keys[0] !== 'equipment') return ['refrigerant parameters must be { equipment: [...] }'];
   const { equipment } = value as { equipment: unknown };
@@ -137,9 +145,15 @@ function refrigerantIssues(value: object): string[] {
     }
     const { dto, issues: fields } = fieldIssues(EquipmentLineDto, line);
     issues.push(...fields.map((issue) => `equipment[${i}]: ${issue}`));
+    const accepted = acceptedEquipmentTypes(category);
+    if ((EQUIPMENT_TYPES as readonly unknown[]).includes(dto.equipmentType) && !accepted.includes(dto.equipmentType)) {
+      issues.push(`equipment[${i}]: ${String(dto.equipmentType)} is not a ${category} device: equipmentType must be one of ${accepted.join(', ')}`);
+    }
     if (seen.has(dto.equipmentType)) issues.push(`equipment[${i}] repeats ${String(dto.equipmentType)}`);
     seen.add(dto.equipmentType);
-    if (dto.leakRateChoice === 'alternative' && !EQUIPMENT_TYPES_WITH_ALTERNATIVE.includes(dto.equipmentType)) {
+    if (dto.leakRateChoice === 'alternative' && !allowsAlternativeLeakRate(category)) {
+      issues.push(`equipment[${i}]: a ${category} line has no alternative leak rate: leakRateChoice must be 'default'`);
+    } else if (dto.leakRateChoice === 'alternative' && !EQUIPMENT_TYPES_WITH_ALTERNATIVE.includes(dto.equipmentType)) {
       issues.push(`${String(dto.equipmentType)} has no alternative leak rate: leakRateChoice must be 'default'`);
     }
     if (dto.capacityKg === 0 && dto.refillKg === 0) issues.push(`equipment[${i}] has neither a capacity nor a refill`);
@@ -174,7 +188,7 @@ export function recordParametersIssues(category: string, value: unknown): string
       return issues;
     }
     case 'refrigerant':
-      return refrigerantIssues(value);
+      return refrigerantIssues(category, value);
     case 'electricity':
       return fieldIssues(ElectricityParametersDto, value).issues;
     default:

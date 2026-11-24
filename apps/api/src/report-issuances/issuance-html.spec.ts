@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
-import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, refrigerantDataset, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
+import { allExcludedBoundary, datasetOf, fireSuppressionDataset, frozenBoundary, fullYear, priced, record, refrigerantDataset, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
 import { buildIssuanceHtml, earlierDataYearCount, ISSUANCE_CATALOGUES, ISSUANCE_RENDERER, type IssuanceDocument } from './issuance-html';
 import en from './i18n/en.json';
@@ -185,6 +185,21 @@ describe('buildIssuanceHtml', () => {
     expect(page).toContain(unmarked);
   });
 
+  // UAT round 4, BUG-12: Fire Suppression is its own category in the ledger,
+  // named in the document's language, and a dry powder record reads 0.
+  it.each([
+    ['en', 'Fire Suppression', 'Refrigerants'],
+    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar'],
+  ] as const)('%s names Fire Suppression apart from Refrigerants, and prints the zero record as 0', (language, fire, refrigerants) => {
+    const dataset = fireSuppressionDataset();
+    const page = html(dataset, { language, template: 'detail' } as never);
+    expect(page).toContain(`<td>${fire}</td>`);
+    expect(page).toContain(`<td>${refrigerants}</td>`);
+    // The zero is a figure: no record of this dataset reads as not calculated.
+    expect(dataset.records.find((r) => r.id === 'fire-dry-powder')!.calculation).toMatchObject({ tCo2e: 0 });
+    expect(page).not.toContain(language === 'en' ? 'Not calculated' : 'Hesaplanmadı');
+  });
+
   it('prints in Turkish, with Turkish number formatting, when issued in Turkish (D16)', () => {
     const records = fullYear().map((r) => (r.id === 'g-Q1' ? { ...r, calculation: priced(1.5) } : r));
     const page = html(datasetOf({ records }), { language: 'tr' });
@@ -218,7 +233,7 @@ describe('an Electricity self-generation block in the issued document (self-gen-
   });
 
   it('keeps the renderer version', () => {
-    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v6');
+    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v7');
   });
 });
 

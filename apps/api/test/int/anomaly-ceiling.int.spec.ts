@@ -146,6 +146,20 @@ describe('the first-period typo ceiling', () => {
     expect((await stored(small.id)).anomalyFlag).toBe(false);
   });
 
+  // UAT round 4, BUG-12: a gram figure typed with the selector on kilograms.
+  it('flags a fire suppression record with a 6,000 kg line, not one of 6 kg (6,000 g entered as grams)', async () => {
+    const fire = (capacityKg: number) => ({
+      ...refrigerant(capacityKg),
+      category: 'Fire Suppression',
+      activityType: 'CO2',
+      parameters: { equipment: [{ equipmentType: 'fire_extinguisher', capacityKg, refillKg: 0, leakRateChoice: 'default' }] },
+    });
+    const typo = await firstPeriod(fire(6_000));
+    expect((await stored(typo.id)).anomalyFlag).toBe(true);
+    const grams = await firstPeriod(fire(6));
+    expect((await stored(grams.id)).anomalyFlag).toBe(false);
+  });
+
   it('flags a refill with an extra zero and refuses its submit, but not a refill of exactly 125%', async () => {
     const refill = (capacityKg: number, refillKg: number) => ({
       reportingPeriod: 'annual',

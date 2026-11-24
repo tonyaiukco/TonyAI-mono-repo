@@ -2192,6 +2192,104 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
     });
   });
 
+  // UAT round 4, BUG-12: Fire Suppression is priced by the capacity method
+  // exactly as Refrigerants is, from the supplementary fire edition's rows and
+  // its three default leak rates (Decisions 2026-11-24 (fifth)).
+  describe('fire suppression', () => {
+    const base = { category: 'Fire Suppression', geographyCode: 'TR', reportingYear: 2025, unit: 'kg', reportingPeriod: 'annual' };
+    const line = (over: Record<string, unknown> = {}) => ({ equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default', ...over });
+    const record = (activityType: string, value: number, ...lines: ReturnType<typeof line>[]) =>
+      ({ ...base, activityType, value, parameters: { equipment: lines } }) as never;
+    const priceBy = (activityType: string, factorValue: number) =>
+      useFactor(prisma, makeFactor({
+        id: `factor-fire-${activityType}`, release, category: 'Fire Suppression', activityType, geographyCode: 'TR', reportingYear: 2025, scope: 1,
+        normalizedUnit: 'kg', calorificBasis: 'not_applicable', factorValue, factorUnit: 'kgCO2e/kg',
+      }));
+
+    beforeEach(() => {
+      release = { ...release, id: 'release-fire-fixture' };
+      prisma.library.parameters = [
+        parameter('leak_rate', 'fire_extinguisher', 0.04, 'fraction'),
+        parameter('leak_rate', 'fire_suppression_system', 0.02, 'fraction'),
+        parameter('leak_rate', 'transformer_breaker', 0.0001, 'fraction'),
+      ];
+    });
+
+    it('prices 40 kg of FM200 in a system with no refill at 2,880 kgCO2e, the rate recorded as the default', async () => {
+      priceBy('HFC-227ea', 3600);
+      const result = (await engine.compute(record('HFC-227ea', 40, line()))) as CalculationResultV3;
+      expect(result.kgCo2e).toBeCloseTo(2880, 8);
+      expect(result.refrigerantTerms).toEqual([expect.objectContaining({ capacityKg: 40, leakRate: 0.02, leakedKg: 0.8, leakRateChoice: 'default' })]);
+      expect(result.factorId).toBe('factor-fire-HFC-227ea');
+    });
+
+    it('prices 50 kg of FM200 with 35 kg refilled on the refill alone: 126,000 kgCO2e, the term marked', async () => {
+      priceBy('HFC-227ea', 3600);
+      const result = (await engine.compute(record('HFC-227ea', 50, line({ capacityKg: 50, refillKg: 35 })))) as CalculationResultV3;
+      expect(result.kgCo2e).toBeCloseTo(126000, 6);
+      expect(result.refrigerantTerms).toEqual([expect.objectContaining({ capacityKg: 50, refillKg: 35, pricedBy: 'refill' })]);
+    });
+
+    it('prices a 6 kg CO2 extinguisher at 0.24 kgCO2e (6 × 0.04 × 1)', async () => {
+      priceBy('CO2', 1);
+      const result = (await engine.compute(record('CO2', 6, line({ equipmentType: 'fire_extinguisher', capacityKg: 6 })))) as CalculationResultV3;
+      expect(result.kgCo2e).toBeCloseTo(0.24, 12);
+      expect(result.refrigerantTerms).toEqual([expect.objectContaining({ equipmentType: 'fire_extinguisher', leakRate: 0.04 })]);
+    });
+
+    it('prices a 10 kg SF6 breaker at 25.2 kgCO2e (10 × 0.0001 × 25,200)', async () => {
+      priceBy('SF6', 25200);
+      const result = (await engine.compute(record('SF6', 10, line({ equipmentType: 'transformer_breaker', capacityKg: 10 })))) as CalculationResultV3;
+      expect(result.kgCo2e).toBeCloseTo(25.2, 9);
+    });
+
+    it('calculates a dry powder or foam record as 0 from its own row, with its factor, release and lines', async () => {
+      priceBy('dry_powder_or_foam', 0);
+      const result = (await engine.compute(record('dry_powder_or_foam', 12, line({ equipmentType: 'fire_extinguisher', capacityKg: 12 })))) as CalculationResultV3;
+      expect(result.kgCo2e).toBe(0);
+      expect(result.factorId).toBe('factor-fire-dry_powder_or_foam');
+      expect(result.factorValue).toBe(0);
+      expect(result.refrigerantTerms).toEqual([expect.objectContaining({ equipmentType: 'fire_extinguisher', capacityKg: 12, leakRate: 0.04 })]);
+    });
+
+    it('never reads a missing factor as zero: no row answers no_factor', async () => {
+      useFactor(prisma, null);
+      expect(await code(record('dry_powder_or_foam', 12, line({ equipmentType: 'fire_extinguisher', capacityKg: 12 })))).toBe('no_factor');
+    });
+
+    it.each(['monthly', 'quarterly'])('refuses a %s record: the leak rates are yearly', async (reportingPeriod) => {
+      priceBy('CO2', 1);
+      expect(await code({ ...(record('CO2', 6, line({ equipmentType: 'fire_extinguisher', capacityKg: 6 })) as object), reportingPeriod } as never)).toBe('reporting_period_not_annual');
+    });
+
+    it('refuses a record with no equipment line with parameters_required', async () => {
+      priceBy('CO2', 1);
+      expect(await code({ ...base, activityType: 'CO2', value: 6 } as never)).toBe('parameters_required');
+    });
+
+    it('answers a device the edition holds no rate for as a library defect', async () => {
+      priceBy('CO2', 1);
+      prisma.library.parameters = [parameter('leak_rate', 'fire_extinguisher', 0.04, 'fraction')];
+      expect(await code(record('CO2', 10, line({ equipmentType: 'transformer_breaker', capacityKg: 10 })))).toBe('parameter_missing');
+    });
+
+    it.each(['R-410A', '__other_gas__', 'diesel'])('refuses a gas outside the category\'s list: %s', async (activityType) => {
+      priceBy('CO2', 1);
+      expect(await code(record(activityType, 6, line({ equipmentType: 'fire_extinguisher', capacityKg: 6 })))).toBe('activity_type_not_for_category');
+    });
+
+    it('lists the fire edition\'s leak rates beside a TR input', async () => {
+      priceBy('CO2', 1);
+      const result = await engine.releaseParameters({ category: 'Fire Suppression', activityType: 'CO2', geographyCode: 'TR', year: 2025 });
+      expect(result.release?.id).toBe('release-fire-fixture');
+      expect(result.parameters.map((p) => [p.equipmentType, p.value])).toEqual([
+        ['fire_extinguisher', 0.04],
+        ['fire_suppression_system', 0.02],
+        ['transformer_breaker', 0.0001],
+      ]);
+    });
+  });
+
   describe('releaseParameters: what Data Entry shows beside a TR input (LP4-02 PR4)', () => {
     const query = { category: 'Natural Gas', geographyCode: 'TR', year: 2025 };
 
