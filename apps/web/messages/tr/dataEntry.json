@@ -211,7 +211,9 @@
       "title": "Faturanın ısıl değer esası",
       "net": "Net",
       "gross": "Brüt",
-      "help": "Faturanız hangisini kullandığını belirtir: brüt üst ısıl değer, net alt ısıl değerdir.",
+      "grossOption": "Faturadaki {unit} (üst ısıl değer)",
+      "netOption": "Net {unit} (alt ısıl değer)",
+      "help": "Türkiye'de doğal gaz faturaları enerjiyi üst ısıl değer üzerinden belirtir; bu nedenle varsayılan olarak o seçilidir. Net seçeneğini yalnızca faturanız miktarın alt ısıl değer üzerinden olduğunu söylüyorsa seçin.",
       "missing": "Miktarın hesaplanıp kaydedilebilmesi için faturanın ısıl değer esasını seçin: net veya brüt.",
       "derivedNet": "≈ {net} {unit} net üzerinden fiyatlanır: × {ratio} ({ncv} / {gcv} kcal/Sm³), {publisher} {edition} sürümünün referans oranı{status}."
     },
@@ -287,6 +289,16 @@
       "incineration": "Yakma",
       "recycling": "Geri dönüşüm",
       "composting": "Kompostlama"
+    },
+    "shared": {
+      "invoice_no": {
+        "label": "Fatura no",
+        "placeholder": "Faturada yazdığı gibi"
+      },
+      "supplier": {
+        "label": "Tedarikçi",
+        "placeholder": "Faturayı düzenleyen firma"
+      }
     },
     "electricity": {
       "total_kwh": {
@@ -534,6 +546,11 @@
   },
   "records": {
     "title": "Girilen kayıtlar",
+    "jump": {
+      "count": "Girdiğiniz verileri görüntüleyin / düzenleyin ({count})",
+      "none": "Girdiğiniz verileri görüntüleyin / düzenleyin (henüz yok)",
+      "unknown": "Girdiğiniz verileri görüntüleyin / düzenleyin"
+    },
     "noMatch": "Bu filtrelere uyan kayıt yok.",
     "evidenceMissing": "Eksik",
     "evidenceOne": "{value} dosya",

@@ -35,7 +35,6 @@ import {
   EQUIPMENT_TYPES,
   VOLUME_CORRECTION_FACTOR_MAX,
   VOLUME_CORRECTION_FACTOR_MIN,
-  CV_BASES,
   SELF_GENERATION_SOURCES,
   isCvBasis,
   isSelfGenerationSource,
@@ -197,11 +196,16 @@ function ReferenceNote({ reference, value }: { reference: ReferenceState; value:
   );
 }
 
+/** The order the form offers the two bases in: the bill's own figure first (uat4-quick-fixes, BUG-11). */
+const BASIS_CHOICE_ORDER: readonly CvBasis[] = ["gross", "net"];
+
 /**
- * A TR natural gas bill's calorific basis, chosen by the author (ng-kwh-form):
- * no default, so nothing is priced until it is stated; an opened or copied
- * record's stored basis comes selected. A gross bill shows the net quantity it
- * is priced on, by its factor release's own ratio, before save.
+ * A TR natural gas bill's calorific basis (ng-kwh-form; uat4-quick-fixes,
+ * BUG-11): gross comes selected when the record stores none and the author
+ * picked none (`gasInputsInEffect`), an opened or copied record's stored basis
+ * comes selected, and the author may change either. The labels carry the
+ * record's unit and say which figure each one is. A gross bill shows the net
+ * quantity it is priced on, by its factor release's own ratio, before save.
  */
 export function CalorificBasisChoice({
   basis,
@@ -251,26 +255,29 @@ export function CalorificBasisChoice({
     <div className="space-y-3 rounded-lg border p-4" data-testid="gas-energy-basis">
       <div>
         <p className="text-sm font-medium" id="gas-energy-basis-title">{t("cvBasis.title")}</p>
-        <p className="text-xs text-muted-foreground">{t("cvBasis.help")}</p>
+        <p className="text-xs text-muted-foreground" id="gas-energy-basis-help">{t("cvBasis.help")}</p>
       </div>
       <RadioGroup
-        // "" selects neither: the basis has no default.
+        // "" selects neither: only for inputs that did not come through `gasInputsInEffect`.
         value={basis ?? ""}
         onValueChange={(value) => {
           if (isCvBasis(value)) onChange(value);
         }}
         aria-labelledby="gas-energy-basis-title"
+        aria-describedby="gas-energy-basis-help"
         // Not Radix's `required`: its hidden native input would join a form's own validation.
         aria-required
         aria-invalid={issue !== null}
         className="flex flex-wrap gap-6"
         data-testid="gas-energy-basis-choice"
       >
-        {CV_BASES.map((value) => (
+        {BASIS_CHOICE_ORDER.map((value) => (
           <div key={value} className="flex items-center gap-2">
             {/* The group carries aria-invalid; the items stay calm, as the amber line beside them does. */}
             <RadioGroupItem value={value} id={`gas-energy-basis-${value}`} />
-            <Label htmlFor={`gas-energy-basis-${value}`} className="font-normal">{t(`cvBasis.${value}`)}</Label>
+            <Label htmlFor={`gas-energy-basis-${value}`} className="font-normal">
+              {t(`cvBasis.${value}Option`, { unit: tUnits(`label.${unit}` as "label.kWh") })}
+            </Label>
           </div>
         ))}
       </RadioGroup>

@@ -32,7 +32,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { evidenceCell, type RecordsFilter } from "@/lib/records-table-view";
+import { RECORDS_HEADING_ID, evidenceCell, type RecordsFilter } from "@/lib/records-table-view";
 import { cn } from "@/lib/utils";
 import { recordActions, type RecordActions } from "@/lib/record-edit-view";
 import { api } from "@/lib/api";
@@ -499,7 +499,14 @@ export function RecordsTable({
   return (
     <Card ref={containerRef} data-testid="previous-submissions">
       <CardHeader className="space-y-3">
-        <CardTitle className="flex items-center gap-2 text-base">
+        {/* A heading, and focusable by script only: the control at the top of the page lands here (BUG-15). */}
+        <CardTitle
+          id={RECORDS_HEADING_ID}
+          role="heading"
+          aria-level={2}
+          tabIndex={-1}
+          className="flex scroll-mt-6 items-center gap-2 rounded-sm text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           <Clock className="h-4 w-4 text-muted-foreground" />
           {t("records.title")}
         </CardTitle>

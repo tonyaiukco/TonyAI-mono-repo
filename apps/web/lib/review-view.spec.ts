@@ -1,6 +1,6 @@
 import { MESSAGES } from '@/messages';
 import { describe, it, expect, vi } from 'vitest';
-import { reviewCalorificBasis, reviewSelfGeneration, daysSince, waitingLabel as waitingLabelWith } from './review-view';
+import { reviewCalorificBasis, reviewReferences, reviewSelfGeneration, daysSince, waitingLabel as waitingLabelWith } from './review-view';
 import { copyFor } from '@/lib/i18n/testing';
 
 const waitingLabel = (iso: string | null, now?: number) => waitingLabelWith(iso, copyFor('review'), now);
@@ -130,6 +130,47 @@ describe('the review sheet\'s calorific basis (ng-kwh-engine)', () => {
   });
 });
 
+
+describe('the review sheet\'s invoice number and supplier (uat4-quick-fixes, BUG-16)', () => {
+  const record = (category: string, input: unknown) =>
+    ({ category, input }) as Parameters<typeof reviewReferences>[0];
+
+  it('shows both when the record holds both', () => {
+    expect(reviewReferences(record('Mobile Combustion', { invoice_no: 'OZK2025000011923', supplier: 'Petrol Ofisi' })))
+      .toEqual({ invoiceNo: 'OZK2025000011923', supplier: 'Petrol Ofisi' });
+  });
+
+  it('shows an Electricity record\'s utility provider as its supplier', () => {
+    expect(reviewReferences(record('Electricity', { utility_provider: 'Enerjisa' }))).toEqual({ invoiceNo: null, supplier: 'Enerjisa' });
+    expect(reviewReferences(record('Electricity', { invoice_no: 'E-7', utility_provider: 'Enerjisa' })))
+      .toEqual({ invoiceNo: 'E-7', supplier: 'Enerjisa' });
+  });
+
+  it('shows neither for a record that holds neither', () => {
+    expect(reviewReferences(record('Mobile Combustion', null))).toEqual({ invoiceNo: null, supplier: null });
+    expect(reviewReferences(record('Mobile Combustion', {}))).toEqual({ invoiceNo: null, supplier: null });
+    expect(reviewReferences(record('Fuel', { quantity: 12, fuel_notes: 'tank 3' }))).toEqual({ invoiceNo: null, supplier: null });
+    expect(reviewReferences(record('Fuel', { invoice_no: '  ', supplier: '' }))).toEqual({ invoiceNo: null, supplier: null });
+  });
+
+  it('shows one without the other', () => {
+    expect(reviewReferences(record('Fuel', { supplier: 'Shell' }))).toEqual({ invoiceNo: null, supplier: 'Shell' });
+    expect(reviewReferences(record('Fuel', { invoice_no: 'A-1' }))).toEqual({ invoiceNo: 'A-1', supplier: null });
+  });
+
+  it('never shows another category\'s key as this record\'s supplier', () => {
+    expect(reviewReferences(record('Fuel', { utility_provider: 'Enerjisa' })).supplier).toBeNull();
+    expect(reviewReferences(record('Electricity', { supplier: 'Shell' })).supplier).toBeNull();
+  });
+
+  it.each([
+    ['en', 'Invoice number', 'Supplier'],
+    ['tr', 'Fatura no', 'Tedarikçi'],
+  ] as const)('names them in %s', (locale, invoiceNo, supplier) => {
+    expect(MESSAGES[locale].review.sheet.invoiceNo).toBe(invoiceNo);
+    expect(MESSAGES[locale].review.sheet.supplier).toBe(supplier);
+  });
+});
 
 describe('the review sheet\'s self-generation block (self-gen-form, design 7)', () => {
   type Subject = Parameters<typeof reviewSelfGeneration>[0];

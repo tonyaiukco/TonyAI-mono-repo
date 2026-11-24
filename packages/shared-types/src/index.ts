@@ -7280,3 +7280,5 @@ export * from './report-dataset';
 export * from './inventory-boundary';
 
 export * from './report-consistency';
+
+export * from './record-references';

@@ -21,8 +21,10 @@ import {
   equipmentIssue,
   equipmentParameters,
   equipmentTotal,
+  effectiveGasBasis,
   gasEnergyIssue,
   gasInputsFromRecord,
+  gasInputsInEffect,
   selfGenerationFromRecord,
   EMPTY_SELF_GENERATION_FORM,
   selfGenerationBlock,
@@ -366,6 +368,53 @@ describe('refrigerant equipment lines (D7)', () => {
   });
 });
 
+describe('the basis the form acts on (uat4-quick-fixes, BUG-11)', () => {
+  it('reads a bill with no held basis as gross, and a held basis as held', () => {
+    expect(effectiveGasBasis(null)).toBe('gross');
+    expect(effectiveGasBasis('gross')).toBe('gross');
+    expect(effectiveGasBasis('net')).toBe('net');
+  });
+
+  it('a new kWh or MWh bill nobody clicked on is previewed and saved as gross', () => {
+    const acted = gasInputsInEffect(NO_GAS_INPUTS, 'natural_gas_energy');
+    expect(gasEnergyIssue(acted, 'natural_gas_energy')).toBeNull();
+    expect(gasParameters(acted, 'kWh', 8250)).toEqual({ cvBasis: 'gross' });
+    expect(gasParameters(acted, 'MWh', 8250)).toEqual({ cvBasis: 'gross' });
+    // The held state is not written: it still says nobody chose.
+    expect(NO_GAS_INPUTS.cvBasis).toBeNull();
+  });
+
+  it('an opened record\'s stored net, and the author\'s net, are sent as net', () => {
+    const opened = gasInputsFromRecord('Natural Gas', { cvBasis: 'net' });
+    expect(gasParameters(gasInputsInEffect(opened, 'natural_gas_energy'), 'kWh', 8250)).toEqual({ cvBasis: 'net' });
+    const picked = { ...NO_GAS_INPUTS, cvBasis: 'net' as const };
+    expect(gasInputsInEffect(picked, 'natural_gas_energy')).toEqual(picked);
+  });
+
+  it.each([
+    ['a volume reading', 'natural_gas'],
+    ['a refrigerant record', 'refrigerant'],
+    ['a record with no extra inputs', null],
+  ] as const)('leaves %s untouched: no basis appears where no choice is shown', (_case, mode) => {
+    expect(gasInputsInEffect(NO_GAS_INPUTS, mode)).toBe(NO_GAS_INPUTS);
+    const net = { ...NO_GAS_INPUTS, cvBasis: 'net' as const };
+    expect(gasInputsInEffect(net, mode)).toBe(net);
+  });
+
+  it('every way the held basis is cleared lands on gross, never net', () => {
+    const storedNet = { unit: 'kWh', cvBasis: 'net' as const };
+    // A unit change between a volume and a bill's energy, on a record that stores net elsewhere.
+    const afterDetour = basisAfterUnitChange('standard_cubic_metres', 'MWh', null, storedNet);
+    expect(afterDetour).toBeNull();
+    expect(effectiveGasBasis(afterDetour)).toBe('gross');
+    // A net figure that left the TR rules had its basis cleared; back under them it is gross.
+    expect(clearsNetEnergyQuantity('Natural Gas', null, 'kWh', 'net')).toBe(true);
+    expect(gasInputsInEffect({ ...NO_GAS_INPUTS, cvBasis: null }, 'natural_gas_energy').cvBasis).toBe('gross');
+    // The one path that brings net back is the record's own stored basis on its own unit.
+    expect(effectiveGasBasis(basisAfterUnitChange('cubic_metres', 'kWh', null, storedNet))).toBe('net');
+  });
+});
+
 describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
   it('holds a bill without a basis back from preview and save, and nothing else', () => {
     expect(gasEnergyIssue(NO_GAS_INPUTS, 'natural_gas_energy')).toBe('basis_missing');
@@ -405,16 +454,50 @@ describe('a bill\'s calorific basis, chosen on the form (ng-kwh-form)', () => {
     }));
   const checked = (html: string) => [...html.matchAll(/<button[^>]*role="radio"[^>]*aria-checked="true"[^>]*value="([a-z]+)"/g)].map((m) => m[1]);
 
-  it.each(['en', 'tr'] as const)('%s offers net and gross with neither chosen, and says what is missing', (locale) => {
+  // Inputs that did not come through `gasInputsInEffect`: the guard still speaks.
+  it.each(['en', 'tr'] as const)('%s says what is missing for a bill handed over with no basis, and selects neither', (locale) => {
     const html = render(locale, { issue: 'basis_missing' });
     const copy = MESSAGES[locale].dataEntry.inputs.cvBasis;
-    expect(html).toContain(copy.net);
-    expect(html).toContain(copy.gross);
-    expect(html).toContain(copy.help);
+    expect(html).toContain(copy.help.replace(/'/g, '&#x27;'));
     expect(html).toContain(copy.missing.replace(/'/g, '&#x27;'));
     expect(html).toContain('aria-required="true"');
     expect(html.match(/role="radio"/g)).toHaveLength(2);
     expect(html).not.toContain('aria-checked="true"');
+  });
+
+  it.each([
+    ['en', 'kWh', 'kWh on the bill (upper calorific value)', 'Net kWh (lower calorific value)'],
+    ['en', 'MWh', 'MWh on the bill (upper calorific value)', 'Net MWh (lower calorific value)'],
+    ['tr', 'kWh', 'Faturadaki kWh (üst ısıl değer)', 'Net kWh (alt ısıl değer)'],
+    ['tr', 'MWh', 'Faturadaki MWh (üst ısıl değer)', 'Net MWh (alt ısıl değer)'],
+  ] as const)('%s offers a %s bill\'s figure first and net second, in plain words (BUG-11)', (locale, unit, gross, net) => {
+    const html = render(locale, { unit, basis: effectiveGasBasis(null) });
+    expect(html).toContain(gross);
+    expect(html).toContain(net);
+    expect(html.indexOf(gross)).toBeLessThan(html.indexOf(net));
+    // Gross first in the markup too, so keyboard order follows the reading order.
+    expect([...html.matchAll(/role="radio"[^>]*value="([a-z]+)"|value="([a-z]+)"[^>]*role="radio"/g)].map((m) => m[1] ?? m[2])).toEqual(['gross', 'net']);
+    expect(checked(html)).toEqual(['gross']);
+    expect(html).not.toContain('data-testid="gas-energy-basis-missing"');
+    // Each label is tied to its own radio: a click on "Net" must never select gross.
+    for (const [value, words] of [['gross', gross], ['net', net]] as const) {
+      expect(html).toMatch(new RegExp(`<button[^>]*id="gas-energy-basis-${value}"[^>]*value="${value}"|<button[^>]*value="${value}"[^>]*id="gas-energy-basis-${value}"`));
+      expect(html).toContain(`for="gas-energy-basis-${value}"`);
+      const label = html.slice(html.indexOf(`for="gas-energy-basis-${value}"`));
+      expect(label.slice(0, label.indexOf('</label>'))).toContain(words);
+    }
+    // The help line is read with the group.
+    expect(html).toContain('aria-describedby="gas-energy-basis-help"');
+    expect(html).toContain('id="gas-energy-basis-help"');
+  });
+
+  it('the help says upper is the default and net is the lower value, in both languages', () => {
+    const en = MESSAGES.en.dataEntry.inputs.cvBasis.help;
+    expect(en).toMatch(/upper calorific value, so that is the default/);
+    expect(en).toMatch(/Choose net only if .* lower calorific value/);
+    const tr = MESSAGES.tr.dataEntry.inputs.cvBasis.help;
+    expect(tr).toMatch(/üst ısıl değer üzerinden belirtir; bu nedenle varsayılan olarak o seçilidir/);
+    expect(tr).toMatch(/Net seçeneğini yalnızca .* alt ısıl değer/);
   });
 
   it('selects a stored basis', () => {

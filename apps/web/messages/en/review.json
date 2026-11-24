@@ -36,6 +36,8 @@
       "net": "Net",
       "gross": "Gross"
     },
+    "invoiceNo": "Invoice number",
+    "supplier": "Supplier",
     "selfGeneration": {
       "title": "Own generation",
       "source": "Source",

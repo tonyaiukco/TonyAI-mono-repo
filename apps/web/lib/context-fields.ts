@@ -8,7 +8,20 @@
  * different words. The ids and the option VALUES are what records store, so
  * neither may change; an option's label is translated, its value is not.
  * File fields of the old mock were never rendered and are not listed.
+ *
+ * Two fields are the same in every set (UAT round 4, BUG-16): the invoice
+ * number and the supplier, which a reviewer matches against the evidence
+ * file. Their words live once, under `dataEntry.context.shared`. Electricity
+ * takes the invoice number only: its `utility_provider` is its supplier, and
+ * a stored id is not renamed (`recordSupplier` reads the right one).
  */
+
+import {
+  RECORD_INVOICE_NO_KEY,
+  RECORD_INVOICE_NO_MAX_LENGTH,
+  RECORD_SUPPLIER_KEY,
+  RECORD_SUPPLIER_MAX_LENGTH,
+} from "@/lib/types";
 
 export type ContextFieldSet = "electricity" | "fuel" | "businessTravel" | "waste" | "water" | "logistics" | "other";
 
@@ -29,6 +42,10 @@ export interface ContextField {
   /** The field has a `placeholder` message in its set. */
   placeholder?: true;
   options?: readonly ContextOption[];
+  /** Its words are under `dataEntry.context.shared`, not under its set. */
+  shared?: true;
+  /** The longest text the field takes, where the API bounds it. */
+  maxLength?: number;
 }
 
 export type ContextOptionKey =
@@ -50,8 +67,26 @@ export type ContextOptionKey =
 
 const num = (id: string): ContextField => ({ id, type: "number", placeholder: true });
 
+const INVOICE_NO: ContextField = {
+  id: RECORD_INVOICE_NO_KEY,
+  type: "text",
+  placeholder: true,
+  shared: true,
+  maxLength: RECORD_INVOICE_NO_MAX_LENGTH,
+};
+
+const SUPPLIER: ContextField = {
+  id: RECORD_SUPPLIER_KEY,
+  type: "text",
+  placeholder: true,
+  shared: true,
+  maxLength: RECORD_SUPPLIER_MAX_LENGTH,
+};
+
 export const CONTEXT_FIELDS: Readonly<Record<ContextFieldSet, readonly ContextField[]>> = {
   electricity: [
+    // The supplier is `utility_provider`, below.
+    INVOICE_NO,
     num("total_kwh"),
     num("renewable_kwh"),
     // `grid_region` was removed in WP15 (round-1 DE-6/DE-7): it never reached
@@ -64,6 +99,8 @@ export const CONTEXT_FIELDS: Readonly<Record<ContextFieldSet, readonly ContextFi
     { id: "notes", type: "textarea", placeholder: true },
   ],
   fuel: [
+    INVOICE_NO,
+    SUPPLIER,
     // No "Fuel Type" here: the fuel is the record's activity type (LP3-03),
     // chosen in the form's own "Fuel or gas" field and priced by it.
     num("quantity"),
@@ -90,6 +127,8 @@ export const CONTEXT_FIELDS: Readonly<Record<ContextFieldSet, readonly ContextFi
     { id: "fuel_notes", type: "textarea", placeholder: true },
   ],
   businessTravel: [
+    INVOICE_NO,
+    SUPPLIER,
     num("short_haul_km"),
     num("medium_haul_km"),
     num("long_haul_km"),
@@ -108,6 +147,8 @@ export const CONTEXT_FIELDS: Readonly<Record<ContextFieldSet, readonly ContextFi
     num("taxi_km"),
   ],
   waste: [
+    INVOICE_NO,
+    SUPPLIER,
     num("general_waste_tonnes"),
     num("recycled_waste_tonnes"),
     num("hazardous_waste_tonnes"),
@@ -124,8 +165,10 @@ export const CONTEXT_FIELDS: Readonly<Record<ContextFieldSet, readonly ContextFi
     },
     { id: "waste_notes", type: "textarea", placeholder: true },
   ],
-  water: [num("municipal_water_m3"), num("groundwater_m3"), num("recycled_water_m3")],
+  water: [INVOICE_NO, SUPPLIER, num("municipal_water_m3"), num("groundwater_m3"), num("recycled_water_m3")],
   logistics: [
+    INVOICE_NO,
+    SUPPLIER,
     num("road_freight_tkm"),
     num("rail_freight_tkm"),
     num("sea_freight_tkm"),
@@ -133,6 +176,8 @@ export const CONTEXT_FIELDS: Readonly<Record<ContextFieldSet, readonly ContextFi
     { id: "logistics_notes", type: "textarea", placeholder: true },
   ],
   other: [
+    INVOICE_NO,
+    SUPPLIER,
     num("activity_value"),
     {
       id: "activity_unit",
@@ -158,6 +203,11 @@ const SET_BY_CATEGORY: Readonly<Record<string, ContextFieldSet>> = {
   Water: "water",
   Logistics: "logistics",
 };
+
+/** Where a field's words are, relative to `dataEntry`: its set's, or the shared ones. */
+export function contextFieldMessageKey(set: ContextFieldSet, field: ContextField): string {
+  return `context.${field.shared ? "shared" : set}.${field.id}`;
+}
 
 /** The field set a category shows; every category without its own gets `other`. */
 export function contextFieldSet(category: string): ContextFieldSet {
