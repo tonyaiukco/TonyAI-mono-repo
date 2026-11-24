@@ -47,13 +47,13 @@ import {
   leakRateOf,
   leakRatePercent,
   linesFromRecord,
+  linesForNewRecord,
   newEquipmentLine,
   newLineUnit,
   massInKg,
   withLineUnit,
   deviceOptions,
   maxEquipmentLines,
-  storedDevices,
   takesLineUnit,
   offersOtherGas,
   OTHER_GAS,
@@ -288,6 +288,32 @@ describe('a copy keeps its own unit only where it was priced (ng-kwh-engine, qa-
     expect(copyKeepsOwnUnit({ ...tr, geography: null }, 'Natural Gas', '', null)).toBe(false);
     expect(copyKeepsOwnUnit(null, 'Natural Gas', '', 'TR')).toBe(false);
   });
+
+  // PR #360 review: a copy is a new record, so it never carries a gas the form no longer offers one.
+  it('narrows a copied Refrigerants record of HFC-227ea or SF6, and keeps an offered gas', () => {
+    for (const gas of ['HFC-227ea', 'SF6']) {
+      expect(copyKeepsOwnUnit({ category: 'Refrigerants', activityType: gas, geography: 'TR' }, 'Refrigerants', gas, 'TR')).toBe(false);
+    }
+    expect(copyKeepsOwnUnit({ category: 'Refrigerants', activityType: 'R-410A', geography: 'TR' }, 'Refrigerants', 'R-410A', 'TR')).toBe(true);
+    expect(copyKeepsOwnUnit({ category: 'Fire Suppression', activityType: 'HFC-227ea', geography: 'TR' }, 'Fire Suppression', 'HFC-227ea', 'TR')).toBe(true);
+  });
+
+  it('gives a copied record\'s lines no stored device, and clears one the category no longer offers', () => {
+    const lines = linesFromRecord({ equipment: [
+      { equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' },
+      { equipmentType: 'chiller', capacityKg: 20, refillKg: 1, leakRateChoice: 'alternative' },
+    ] }, () => 'c');
+    const copied = linesForNewRecord(lines, 'Refrigerants');
+    expect(copied.map((l) => [l.equipmentType, l.capacity, l.refill, l.storedType])).toEqual([
+      ['', 40, 0, undefined],
+      ['chiller', 20, 1, undefined],
+    ]);
+    expect(equipmentIssue(copied)).toBe('type_missing');
+    expect(deviceOptions('Refrigerants', copied[0], new Set(['chiller']))).not.toContain('fire_suppression_system');
+    // Fire Suppression keeps its own devices.
+    const fire = linesFromRecord({ equipment: [{ equipmentType: 'fire_extinguisher', capacityKg: 6, refillKg: 0, leakRateChoice: 'default' }] }, () => 'f');
+    expect(linesForNewRecord(fire, 'Fire Suppression')[0].equipmentType).toBe('fire_extinguisher');
+  });
 });
 
 describe('natural gas inputs (D5)', () => {
@@ -384,14 +410,15 @@ describe('fire suppression equipment lines (UAT round 4, BUG-12)', () => {
     const id = () => `id-${(n += 1)}`;
     const stored = { equipment: [{ equipmentType: 'fire_extinguisher', capacityKg: 6, refillKg: 0, leakRateChoice: 'default' }] };
     expect(linesFromRecord(stored, id, 'g')).toEqual([
-      { id: 'id-1', equipmentType: 'fire_extinguisher', capacity: 6, refill: 0, unit: 'kg', leakRateChoice: 'default' },
+      { id: 'id-1', equipmentType: 'fire_extinguisher', capacity: 6, refill: 0, unit: 'kg', leakRateChoice: 'default', storedType: 'fire_extinguisher' },
     ]);
     expect(linesFromRecord(null, id, 'g')).toEqual([newEquipmentLine('id-2', 'g')]);
   });
 
   it('offers a Fire Suppression line its three devices, each once', () => {
-    expect(deviceOptions('Fire Suppression', '', new Set())).toEqual(['fire_extinguisher', 'fire_suppression_system', 'transformer_breaker']);
-    expect(deviceOptions('Fire Suppression', '', new Set(['fire_extinguisher']))).toEqual(['fire_suppression_system', 'transformer_breaker']);
+    const blank = { equipmentType: '' as const };
+    expect(deviceOptions('Fire Suppression', blank, new Set())).toEqual(['fire_extinguisher', 'fire_suppression_system', 'transformer_breaker']);
+    expect(deviceOptions('Fire Suppression', blank, new Set(['fire_extinguisher']))).toEqual(['fire_suppression_system', 'transformer_breaker']);
     expect(maxEquipmentLines('Fire Suppression', [])).toBe(3);
   });
 
@@ -406,14 +433,14 @@ describe('fire suppression equipment lines (UAT round 4, BUG-12)', () => {
 // cooling devices only; an opened record keeps its own fire device.
 describe('the refrigerant form\'s narrowed device list', () => {
   it('offers a new refrigerant line the six cooling devices only', () => {
-    expect(deviceOptions('Refrigerants', '', new Set())).toEqual([
+    expect(deviceOptions('Refrigerants', { equipmentType: '' }, new Set())).toEqual([
       'split_air_conditioner', 'water_dispenser', 'refrigerator', 'chiller', 'mobile_air_conditioner', 'portable_air_conditioner',
     ]);
     expect(maxEquipmentLines('Refrigerants', [])).toBe(6);
   });
 
   it('keeps an opened HFC-227ea draft\'s fire suppression system line selectable', () => {
-    const own = deviceOptions('Refrigerants', 'fire_suppression_system', new Set(['chiller']));
+    const own = deviceOptions('Refrigerants', { equipmentType: 'fire_suppression_system', storedType: 'fire_suppression_system' }, new Set(['chiller']));
     expect(own).toContain('fire_suppression_system');
     expect(own).not.toContain('chiller');
     expect(own).not.toContain('fire_extinguisher');
@@ -423,20 +450,26 @@ describe('the refrigerant form\'s narrowed device list', () => {
     expect(maxEquipmentLines('Refrigerants', opened)).toBe(7);
   });
 
-  // PR #360 review: the stored device stays offered after its line moved off it.
-  it('keeps a stored fire device selectable after its line was switched to a chiller', () => {
-    const kept = storedDevices({ equipment: [
+  // PR #360 reviews: the stored device stays offered on its own line after the
+  // line moved off it, and never on another line.
+  it('keeps a stored fire device on its own line after a switch to a chiller, and off a new line', () => {
+    const [opened] = linesFromRecord({ equipment: [
       { equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' },
-    ] });
-    expect(kept).toEqual(['fire_suppression_system']);
-    expect(deviceOptions('Refrigerants', 'chiller', new Set(), kept)).toContain('fire_suppression_system');
+    ] }, () => 'l1');
+    expect(opened.storedType).toBe('fire_suppression_system');
+    const switched = { ...opened, equipmentType: 'chiller' as const };
+    expect(deviceOptions('Refrigerants', switched, new Set())).toContain('fire_suppression_system');
+    // A line added after the switch: the six cooling devices only, less the chiller line 1 holds.
+    const added = newEquipmentLine('l2');
+    expect(added.storedType).toBeUndefined();
+    const offered = deviceOptions('Refrigerants', added, new Set(['chiller']));
+    expect(offered).not.toContain('fire_suppression_system');
+    expect(offered).toEqual(['split_air_conditioner', 'water_dispenser', 'refrigerator', 'mobile_air_conditioner', 'portable_air_conditioner']);
     // Not twice, and not while another line holds it.
-    expect(deviceOptions('Refrigerants', 'fire_suppression_system', new Set(), kept).filter((t) => t === 'fire_suppression_system')).toHaveLength(1);
-    expect(deviceOptions('Refrigerants', '', new Set(['fire_suppression_system']), kept)).not.toContain('fire_suppression_system');
-    expect(maxEquipmentLines('Refrigerants', [], kept)).toBe(7);
-    expect(storedDevices(null)).toEqual([]);
-    // A new record keeps nothing: the cooling devices only.
-    expect(deviceOptions('Refrigerants', '', new Set(), storedDevices(null))).not.toContain('fire_suppression_system');
+    expect(deviceOptions('Refrigerants', opened, new Set()).filter((t) => t === 'fire_suppression_system')).toHaveLength(1);
+    expect(deviceOptions('Refrigerants', switched, new Set(['fire_suppression_system']))).not.toContain('fire_suppression_system');
+    expect(maxEquipmentLines('Refrigerants', [switched])).toBe(7);
+    expect(maxEquipmentLines('Refrigerants', [added])).toBe(6);
   });
 });
 
@@ -478,7 +511,7 @@ describe('refrigerant equipment lines (D7)', () => {
     let n = 0;
     const id = () => `id-${(n += 1)}`;
     expect(linesFromRecord({ equipment: [{ equipmentType: 'chiller', capacityKg: 5, refillKg: 0, leakRateChoice: 'alternative' }] }, id))
-      .toEqual([{ id: 'id-1', equipmentType: 'chiller', capacity: 5, refill: 0, unit: 'kg', leakRateChoice: 'alternative' }]);
+      .toEqual([{ id: 'id-1', equipmentType: 'chiller', capacity: 5, refill: 0, unit: 'kg', leakRateChoice: 'alternative', storedType: 'chiller' }]);
     expect(linesFromRecord(null, id)).toEqual([newEquipmentLine('id-2')]);
   });
 });

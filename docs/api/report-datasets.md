@@ -29,7 +29,9 @@ recoverable implementation, not a successful issuance with a missing artifact.
   every boundary company/site operating in any reporting-year month and its
   actual first/last month; sources at that entity must agree with those months.
   D11 chooses company or sites and one activity cadence per subsidiary/year/category,
-  across all activity types. `attribution` holds exactly one policy per boundary
+  across all activity types. Fire Suppression takes `annual` only (its one pricing,
+  the TR capacity method, is yearly; `inventoryReportingPeriodsFor`), and a monthly
+  or quarterly policy for it is refused (UAT round 4, BUG-12). `attribution` holds exactly one policy per boundary
   subsidiary × Scope 1/2 category. A missing or duplicate policy, or a `sites`
   policy with no operating site entity, raises a final-blocking
   `applicability_undetermined` gap naming the company entity and category.

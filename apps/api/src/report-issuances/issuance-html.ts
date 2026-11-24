@@ -3,6 +3,7 @@ import {
   CATEGORY_ACTIVITY_TYPES,
   CATEGORY_SCOPE_MAP,
   UNSPECIFIED_ACTIVITY_TYPE,
+  tonnesDisplayOptions,
   isCalculated,
   LOCALE_FORMAT_TAGS,
   type Category,
@@ -149,7 +150,9 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
   const entityLabel = (subsidiaryId: string, locationId: string | null, fallback?: { subsidiaryName: string; locationName: string | null }): string =>
     esc(names.entity(subsidiaryId, locationId, fallback));
   const companyName = (subsidiaryId: string): string => esc(names.company(subsidiaryId));
-  const tonnes = (value: number | null): string => (value === null ? t('notCalculated') : number.format(value));
+  // A small non-zero figure keeps its digits, so it never reads as a zero (PR #360 review).
+  const tco2e = (value: number): string => new Intl.NumberFormat(tag, tonnesDisplayOptions(value)).format(value);
+  const tonnes = (value: number | null): string => (value === null ? t('notCalculated') : tco2e(value));
 
   // --- Header and status
   const title = doc.template === 'executive_summary' ? t('titleExecutiveSummary') : t('titleGhgProtocolDetail');
@@ -216,7 +219,7 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     <td>${categoryWithActivity(r)}</td><td>${label('period', r.periodValue)}</td>
     <td>${RECORD_STATUS_LABEL[r.status] === undefined ? esc(r.status) : t(RECORD_STATUS_LABEL[r.status])}</td>
     <td class="num">${number.format(r.activityValue)} ${esc(r.activityUnit)}${inputsNote(r.calculation)}</td>
-    <td class="num">${isCalculated(r.calculation) ? number.format(r.calculation.tCo2e) : t('notCalculated')}</td>
+    <td class="num">${isCalculated(r.calculation) ? tco2e(r.calculation.tCo2e) : t('notCalculated')}</td>
     <td>${t(STANDING_LABEL[standing.get(r.id) ?? 'uncalculated'])}</td></tr>`).join('');
 
   const exclusionRows = namedExclusions(dataset)
@@ -231,8 +234,8 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
 
   const withdrawn = withdrawnRecords(dataset);
   const withdrawnRows = withdrawn.map((r) => `<tr><td>${entityLabel(r.subsidiaryId, r.locationId, r)}</td>
-    <td>${label('category', r.category)}</td><td>${label('period', r.periodValue)}</td>
-    <td class="num">${isCalculated(r.calculation) ? number.format(r.calculation.tCo2e) : t('notCalculated')}</td>
+    <td>${categoryWithActivity(r)}</td><td>${label('period', r.periodValue)}</td>
+    <td class="num">${isCalculated(r.calculation) ? tco2e(r.calculation.tCo2e) : t('notCalculated')}</td>
     <td class="wrap">${esc(r.voidReason ?? '')}</td></tr>`).join('');
 
   // --- Options: the releases as they stood at capture; the evidence by name.

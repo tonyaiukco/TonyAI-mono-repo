@@ -201,6 +201,23 @@ describe('buildIssuanceHtml', () => {
     expect(page).not.toContain(language === 'en' ? 'Not calculated' : 'Hesaplanmadı');
   });
 
+  // PR #360 re-review: a withdrawn record names its gas too; a small non-zero
+  // figure keeps its digits beside a calculated zero.
+  it.each([
+    ['en', 'Fire Suppression · Dry powder / foam (no greenhouse gas)', '0.00024'],
+    ['tr', 'Yangın söndürme · Kuru toz / köpük (sera gazı içermez)', '0,00024'],
+  ] as const)('%s names a withdrawn record\'s gas, and prints 0.00024 t, not 0', (language, withdrawnName, small) => {
+    const base = fireSuppressionDataset();
+    const records = base.records.map((r) => {
+      if (r.id === 'fire-dry-powder') return { ...r, status: 'voided' as const, voidedBy: 'actor-voided', voidedAt: '2026-10-15T00:00:00.000Z', voidReason: 'Entered twice' };
+      if (r.id === 'fire-co2') return { ...r, calculation: { ...(r.calculation as object), tCo2e: 0.00024 } as typeof r.calculation };
+      return r;
+    });
+    const page = html(datasetOf({ boundary: base.boundary, records }), { language });
+    expect(page).toContain(`<td>${withdrawnName}</td>`);
+    expect(page).toContain(`<td class="num">${small}</td>`);
+  });
+
   it('prints in Turkish, with Turkish number formatting, when issued in Turkish (D16)', () => {
     const records = fullYear().map((r) => (r.id === 'g-Q1' ? { ...r, calculation: priced(1.5) } : r));
     const page = html(datasetOf({ records }), { language: 'tr' });

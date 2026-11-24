@@ -397,7 +397,6 @@ export function NaturalGasInputs({
  */
 export function EquipmentLines({
   category,
-  kept = [],
   lines,
   reference,
   issue,
@@ -407,8 +406,6 @@ export function EquipmentLines({
   onRemove,
 }: {
   category: string;
-  /** The devices the opened record was stored with, selectable for the whole edit. */
-  kept?: readonly EquipmentType[];
   lines: readonly EquipmentLineDraft[];
   reference: ReferenceState;
   issue: EquipmentIssue | null;
@@ -465,7 +462,7 @@ export function EquipmentLines({
                   <SelectValue placeholder={t("chooseEquipment")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {deviceOptions(category, line.equipmentType, taken, kept).map((type) => (
+                  {deviceOptions(category, line, taken).map((type) => (
                     <SelectItem key={type} value={type}>
                       {tTypes(type)}
                     </SelectItem>
@@ -555,7 +552,7 @@ export function EquipmentLines({
         );
       })}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={onAdd} disabled={lines.length >= maxEquipmentLines(category, lines, kept)}>
+        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={onAdd} disabled={lines.length >= maxEquipmentLines(category, lines)}>
           <Plus className="h-4 w-4" />
           {t("addLine")}
         </Button>

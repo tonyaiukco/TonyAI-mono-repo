@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  inventoryReportingPeriodsFor,
+  tonnesDisplayOptions,
   EQUIPMENT_TYPES,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   isRecordActivityTypeAllowed,
@@ -1796,3 +1798,24 @@ describe('offeredActivityTypes', () => {
     expect(values('Electricity', 'TR')).toEqual([]);
   });
 });
+
+describe('display and cadence rules for Fire Suppression (PR #360 re-review)', () => {
+  const fmt = (n: number) => new Intl.NumberFormat('en-GB', tonnesDisplayOptions(n)).format(n);
+
+  it('shows a small non-zero tCO2e with its digits and keeps three decimals otherwise', () => {
+    expect(fmt(0.00024)).toBe('0.00024');
+    expect(fmt(0)).toBe('0');
+    expect(fmt(0.22584)).toBe('0.226');
+    expect(fmt(126)).toBe('126');
+    expect(fmt(0.001)).toBe('0.001');
+    expect(fmt(-0.0000123456)).toBe('-0.0000123');
+  });
+
+  it('attributes Fire Suppression annually only, every other category at any cadence', () => {
+    expect(inventoryReportingPeriodsFor('Fire Suppression')).toEqual(['annual']);
+    for (const category of CATEGORIES.filter((c) => c !== 'Fire Suppression')) {
+      expect(inventoryReportingPeriodsFor(category), category).toEqual(['monthly', 'quarterly', 'annual']);
+    }
+  });
+});
+

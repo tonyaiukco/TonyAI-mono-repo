@@ -5,6 +5,7 @@ import {
   isProvenanceSnapshot,
   isSelfGenerationSource,
   normalizeRecordParameters,
+  offeredActivityTypes,
   offeredEquipmentTypes,
   recordParameterShape,
   selfGenerationIssue,
@@ -332,9 +333,11 @@ export interface CopySource {
 
 /**
  * Whether a copy still keeps its source's own unit and type listed (ng-kwh-engine):
- * on the source's category and type, under the geography it was priced in. A
- * copy moved across the TR rules is narrowed like a new record, as before,
- * rather than carrying a unit or type the new geography does not price.
+ * on the source's category and type, under the geography it was priced in, and
+ * only while a new record is offered that type. A copy is a new record, so a
+ * type the form no longer offers one (HFC-227ea or SF6 on Refrigerants, PR #360
+ * review) is narrowed away like any new record's, never carried unseen. A copy
+ * moved across the TR rules is narrowed too, as before.
  */
 export function copyKeepsOwnUnit(
   source: CopySource | null,
@@ -347,8 +350,23 @@ export function copyKeepsOwnUnit(
     source.category === category &&
     (source.activityType ?? "") === activityType &&
     source.geography !== null &&
-    source.geography === geography
+    source.geography === geography &&
+    (activityType === "" || offeredActivityTypes(category, geography).some((t) => t.value === activityType))
   );
+}
+
+/**
+ * A copied record's lines, as a NEW record's (PR #360 review): no line keeps a
+ * stored device, and a device the category no longer offers for a new line (a
+ * fire device on Refrigerants) is cleared, so the author picks one the form
+ * lists. Masses and units stay.
+ */
+export function linesForNewRecord(lines: readonly EquipmentLineDraft[], category: string): EquipmentLineDraft[] {
+  const offered = offeredEquipmentTypes(category);
+  return lines.map(({ storedType: _stored, ...line }) => ({
+    ...line,
+    equipmentType: line.equipmentType !== "" && offered.includes(line.equipmentType) ? line.equipmentType : "",
+  }));
 }
 
 /**
@@ -494,6 +512,12 @@ export interface EquipmentLineDraft {
   refill: number | null;
   unit: LineMassUnit;
   leakRateChoice: LeakRateChoice;
+  /**
+   * The device this line was stored with, when it came from an opened record:
+   * selectable on this line for the whole edit, never on another (PR #360
+   * review). A new line has none.
+   */
+  storedType?: EquipmentType;
 }
 
 /**
@@ -593,38 +617,34 @@ export function linesFromRecord(parameters: unknown, newId: () => string, unit: 
     refill: line.refillKg,
     unit: "kg",
     leakRateChoice: line.leakRateChoice,
+    storedType: line.equipmentType,
   }));
 }
 
 /**
  * The devices a line's list offers: the category's offered devices
- * (`offeredEquipmentTypes`), the devices the opened record was stored with
- * (`kept`: a fire device on a Refrigerants draft stays selectable for the whole
- * edit, even after a line moved off it; design decision 7, PR #360 review) and
- * the line's own device, less those another line holds.
+ * (`offeredEquipmentTypes`), the line's own current device, and the device the
+ * line was stored with (`storedType`: a fire device on a Refrigerants draft
+ * stays selectable on its own line for the whole edit, even after the line
+ * moved off it; design decision 7, PR #360 review), less those another line
+ * holds. A new line is offered the category's devices only.
  */
 export function deviceOptions(
   category: string,
-  own: EquipmentType | "",
+  line: Pick<EquipmentLineDraft, "equipmentType" | "storedType">,
   taken: ReadonlySet<string>,
-  kept: readonly EquipmentType[] = [],
 ): EquipmentType[] {
-  const offered = offeredEquipmentTypes(category);
-  const all = [...offered, ...kept.filter((t) => !offered.includes(t))];
-  if (own !== "" && !all.includes(own)) all.push(own);
-  return all.filter((type) => type === own || !taken.has(type));
+  const all: EquipmentType[] = [...offeredEquipmentTypes(category)];
+  for (const kept of [line.storedType, line.equipmentType]) {
+    if (kept !== undefined && kept !== "" && !all.includes(kept)) all.push(kept);
+  }
+  return all.filter((type) => type === line.equipmentType || !taken.has(type));
 }
 
 /** How many lines a record of the category may hold: one per device it may name. */
-export function maxEquipmentLines(category: string, lines: readonly EquipmentLineDraft[], kept: readonly EquipmentType[] = []): number {
-  const own = lines.map((l) => l.equipmentType).filter((t): t is EquipmentType => t !== "");
-  return new Set([...offeredEquipmentTypes(category), ...kept, ...own]).size;
-}
-
-/** The devices a stored record's lines name: the ones its edit keeps selectable. */
-export function storedDevices(parameters: unknown): EquipmentType[] {
-  const equipment = (parameters as Partial<RefrigerantRecordParameters> | null)?.equipment;
-  return Array.isArray(equipment) ? equipment.map((l) => l.equipmentType) : [];
+export function maxEquipmentLines(category: string, lines: readonly EquipmentLineDraft[]): number {
+  const own = lines.flatMap((l) => [l.equipmentType, l.storedType]).filter((t): t is EquipmentType => t !== undefined && t !== "");
+  return new Set([...offeredEquipmentTypes(category), ...own]).size;
 }
 
 /**

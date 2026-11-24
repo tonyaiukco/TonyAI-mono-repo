@@ -87,10 +87,10 @@ import {
   gasInputsIssue,
   gasParameters,
   linesFromRecord,
+  linesForNewRecord,
   newEquipmentLine,
   newLineUnit,
   KG_DISPLAY,
-  storedDevices,
   NO_GREENHOUSE_GAS,
   offersOtherGas,
   OTHER_GAS,
@@ -160,6 +160,7 @@ import {
   isCeilingFlag,
   needsEvidenceBeforeSubmit,
   isCapacityMethodCategory,
+  tonnesDisplayOptions,
   offeredActivityTypes,
   PERIOD_VALUES,
   selectableReportingYears,
@@ -188,7 +189,6 @@ import type {
   ActivityRecordPageFilters,
   ActivityRecordPageItemDTO,
   Category,
-  EquipmentType,
   FactorCoverageDTO,
   LocationDTO,
   RecordParameters,
@@ -344,8 +344,6 @@ function DataEntryPageInner() {
   const lineSeq = useRef(0);
   const nextLineId = useCallback(() => `line-${(lineSeq.current += 1)}`, []);
   const [equipment, setEquipment] = useState<EquipmentLineDraft[]>(() => [newEquipmentLine("line-0")]);
-  // The devices the opened record was stored with: selectable for the whole edit (PR #360 review).
-  const [keptDevices, setKeptDevices] = useState<EquipmentType[]>([]);
   // The self-generation section's fields (self-gen-form, design 1): what an
   // Electricity save sends, an edit included. Filled from an opened or copied
   // record, emptied by a reset, and kept through a category change and back
@@ -1326,7 +1324,6 @@ function DataEntryPageInner() {
     const stored = category === null ? null : parameters;
     setGasInputs(gasInputsFromRecord(category ?? "", stored));
     setEquipment(linesFromRecord(stored, nextLineId, newLineUnit(lineCategory)));
-    setKeptDevices(storedDevices(stored));
     setInputsEpoch((n) => n + 1);
   }
 
@@ -1999,6 +1996,9 @@ function DataEntryPageInner() {
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
       resetInputs(values.category, values.parameters);
+      // A copy is a new record: its lines keep no stored device, and one the
+      // category no longer offers is cleared (PR #360 review).
+      setEquipment((lines) => linesForNewRecord(lines, values.category));
       toast.info(t("copy.loaded"));
       return true;
     } catch (e) {
@@ -2456,7 +2456,6 @@ function DataEntryPageInner() {
                   {refrigerantMode && (
                     <EquipmentLines
                       category={category}
-                      kept={keptDevices}
                       lines={equipment}
                       reference={reference}
                       issue={equipmentProblem}
@@ -3051,7 +3050,8 @@ function PreviewCard({
             <div>
               <div className="flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-foreground" data-testid="preview-tco2e">
-                  {numberFmt.format(preview.tCo2e)}
+                  {/* A small non-zero figure keeps its digits: 0.00024, never 0 (PR #360 review). */}
+                  {formatNumber(preview.tCo2e, locale, tonnesDisplayOptions(preview.tCo2e))}
                 </span>
                 <span className="flex items-center gap-1 text-sm font-medium text-primary">
                   <Leaf className="h-4 w-4" />

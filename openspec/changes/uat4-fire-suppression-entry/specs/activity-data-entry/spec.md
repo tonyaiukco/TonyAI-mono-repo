@@ -117,6 +117,14 @@ For a new record the refrigerant entry SHALL NOT offer HFC-227ea or SF6, and for
 - **WHEN** a user opens a refrigerant draft of HFC-227ea that holds a fire suppression system line
 - **THEN** the gas and the line's device are shown and stay selected, and the draft can be edited and saved
 
+#### Scenario: The stored device belongs to its own line
+- **WHEN** the user switches that line to a chiller and adds a new line
+- **THEN** the original line can take the fire suppression system back, and the new line offers the six cooling and refrigeration devices only
+
+#### Scenario: A copied refrigerant record is checked as a new one
+- **WHEN** a user copies a voided refrigerant record of HFC-227ea with a fire suppression system line to a new draft
+- **THEN** the gas and that line's device are cleared, and the user picks them from the lists a new record is offered
+
 ### Requirement: A bulk file names fire suppression equipment in kilograms
 The bulk upload SHALL accept Fire Suppression equipment rows through the refrigerant columns, in kilograms, one record per subsidiary, location, year and gas. A row naming a device outside the three SHALL refuse its whole record with its row, writing none of its lines; other records import record by record, as the bulk contract does. The template SHALL list the category, its gases and devices, in kilograms.
 

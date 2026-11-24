@@ -226,6 +226,15 @@ test('an opened refrigerant draft keeps its fire device selectable after the lin
     await page.getByRole('option', { name: en.equipmentTypes.chiller, exact: true }).click();
     await device.click();
     await expect(page.getByRole('option', { name: en.equipmentTypes.fire_suppression_system, exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    // A line added now is a new line: cooling devices only (PR #360 re-review).
+    await page.getByRole('button', { name: en.inputs.addLine }).click();
+    await page.getByRole('combobox', { name: `${en.inputs.equipmentType} 2` }).click();
+    await expect(page.getByRole('option', { name: en.equipmentTypes.refrigerator, exact: true })).toBeVisible();
+    await expect(page.getByRole('option', { name: en.equipmentTypes.fire_suppression_system, exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    // The original line still takes its stored device back.
+    await device.click();
     await page.getByRole('option', { name: en.equipmentTypes.fire_suppression_system, exact: true }).click();
     await expect(device).toHaveText(en.equipmentTypes.fire_suppression_system);
   } finally {

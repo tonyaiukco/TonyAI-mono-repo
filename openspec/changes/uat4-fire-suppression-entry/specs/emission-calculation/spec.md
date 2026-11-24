@@ -78,6 +78,17 @@ A new report dataset SHALL be captured under schema version 3, whose categories 
 - **WHEN** a new boundary version marks Fire Suppression included or excluded with its reason and is confirmed and captured
 - **THEN** the dataset carries no gap for Fire Suppression
 
+### Requirement: A boundary attributes fire suppression annually
+An inventory boundary SHALL attribute the Fire Suppression category to the annual cadence only, in the editor and in the API, because its one pricing, the capacity method, is yearly. A monthly or quarterly policy for it SHALL be refused. Other categories keep every cadence; the evidence cadence is a separate field.
+
+#### Scenario: A monthly fire suppression policy
+- **WHEN** a declaration attributes Fire Suppression monthly or quarterly
+- **THEN** the API refuses it and the editor does not offer it
+
+#### Scenario: An annual fire suppression policy
+- **WHEN** a declaration attributes Fire Suppression annually with an annual record behind it
+- **THEN** it is accepted, and a capture carries no missing, overlapping or unmapped record for it
+
 ### Requirement: Reports list fire suppression as its own category
 Live and issued reports SHALL list Fire Suppression records under their own category, apart from Refrigerants, in Scope 1. PDF and XLSX SHALL name the category and its gases in the report's Turkish or English; CSV SHALL use English. An equipment line's calculation-inputs text SHALL follow the wording refrigerant lines use.
 
@@ -88,6 +99,14 @@ Live and issued reports SHALL list Fire Suppression records under their own cate
 #### Scenario: A Turkish report
 - **WHEN** a Turkish PDF or XLSX lists a fire suppression record of the dry powder or foam option
 - **THEN** the category and the option are named in Turkish, and its figure reads zero
+
+#### Scenario: A withdrawn record names its gas
+- **WHEN** an issued PDF or XLSX lists a withdrawn fire suppression record of the dry powder or foam option
+- **THEN** it names the category and the option, so withdrawn records of one period stay apart
+
+#### Scenario: A small figure is not shown as zero
+- **WHEN** the Data Entry preview or an issued PDF shows a CO2 extinguisher of 6 kg, 0.00024 tCO2e
+- **THEN** it reads 0.00024, never 0, while a dry powder or foam record reads 0
 
 #### Scenario: A refill-priced fire suppression line
 - **WHEN** a report lists a fire suppression record with a system line of 50 kg capacity and 35 kg refill

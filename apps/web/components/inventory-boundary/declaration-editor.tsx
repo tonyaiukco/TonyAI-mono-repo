@@ -39,6 +39,7 @@ import {
   PERIOD_VALUES,
   recordActivityTypesFor,
   REPORTING_PERIODS,
+  inventoryReportingPeriodsFor,
   type InventoryCategory,
   type InventoryMonth,
   type Locale,
@@ -273,7 +274,8 @@ export function DeclarationEditor({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NONE}>{t("editor.choose")}</SelectItem>
-                        {REPORTING_PERIODS.map((p) => (
+                        {/* Fire Suppression is annual only, as the API holds it (PR #360 review). */}
+                        {inventoryReportingPeriodsFor(c).map((p) => (
                           <SelectItem key={p} value={p}>{cadence(p)}</SelectItem>
                         ))}
                       </SelectContent>

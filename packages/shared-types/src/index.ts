@@ -3581,6 +3581,28 @@ export function offeredEquipmentTypes(category: string): readonly EquipmentType[
 }
 
 /**
+ * How a tCO2e figure is shown (PR #360 review): three decimals, except a
+ * non-zero figure below 0.001 t, which takes three significant digits, so a
+ * CO2 extinguisher's 0.00024 t never reads 0 beside a calculated zero. A zero
+ * stays 0. Display only: stored figures are never rounded.
+ */
+export function tonnesDisplayOptions(value: number): Intl.NumberFormatOptions {
+  return value !== 0 && Math.abs(value) < 0.001 ? { maximumSignificantDigits: 3 } : { maximumFractionDigits: 3 };
+}
+
+/**
+ * The cadences an inventory boundary may attribute a category's activity to
+ * (PR #360 review): Fire Suppression is annual only, because the one release
+ * that prices it (TR) prices it by the yearly capacity method, so a monthly or
+ * quarterly policy could never be met by a priced record. Every other category
+ * may take any of `REPORTING_PERIODS`. The evidence cadence is a separate field.
+ */
+export function inventoryReportingPeriodsFor(category: string): readonly ReportingPeriod[] {
+  return category === 'Fire Suppression' ? ANNUAL_ONLY : REPORTING_PERIODS;
+}
+const ANNUAL_ONLY: readonly ReportingPeriod[] = Object.freeze(['annual']);
+
+/**
  * May a line of `category` take the alternative leak rate? Only a refrigerant
  * line: a fire suppression line is always at its device's default rate.
  */

@@ -207,6 +207,18 @@ describe('the issued workbook', () => {
     expect(csvRow('refrigerant-r410a').category).toBe('Refrigerants');
   });
 
+  it('names a withdrawn record\'s gas in the withdrawn sheet\'s trailing column (PR #360 re-review)', async () => {
+    const base = fireSuppressionDataset();
+    const records = base.records.map((r) => (r.id === 'fire-dry-powder'
+      ? { ...r, status: 'voided' as const, voidedBy: 'actor-voided', voidedAt: '2026-10-15T00:00:00.000Z', voidReason: 'Entered twice' }
+      : r));
+    const wb = await load(doc(datasetOf({ boundary: base.boundary, records }), { language: 'tr' }));
+    const sheet = wb.worksheets.find((ws) => rowsOf(ws).some((r) => r[0] === 'fire-dry-powder' && r.includes('Entered twice')))!;
+    const [header, ...rows] = rowsOf(sheet);
+    expect(header[header.length - 1]).toBe('Yakıt veya gaz');
+    expect(rows.find((r) => r[0] === 'fire-dry-powder')![header.indexOf('Yakıt veya gaz')]).toBe('Kuru toz / köpük (sera gazı içermez)');
+  });
+
   it('names its issuance, dataset, fingerprint and renderer, and says Scope 3 is not covered', async () => {
     const dataset = mixed();
     const summary = rowsOf((await load(doc(dataset))).getWorksheet('Summary')!);

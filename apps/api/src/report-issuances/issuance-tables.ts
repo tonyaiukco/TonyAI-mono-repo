@@ -233,11 +233,13 @@ export async function issuedWorkbook(doc: IssuedTablesDocument): Promise<Buffer>
 
   const withdrawn = wb.addWorksheet(t('sheetWithdrawn'));
   withdrawn.addRow([t('colRecordId'), t('colEntity'), t('colCategory'), t('colPeriod'), t('colActivityValue'), t('colUnit'),
-    t('colEmissions'), t('colReason')]);
+    t('colEmissions'), t('colReason'), t('colActivityType')]);
   for (const r of withdrawnRecords(dataset)) {
     withdrawn.addRow([
       r.id, names.entity(r.subsidiaryId, r.locationId, r), label('category', r.category), label('period', r.periodValue),
       r.activityValue, r.activityUnit, figureOf(r) ?? t('notCalculated'), r.voidReason ?? '',
+      // Trailing, as on the ledger: withdrawn records of one period stay apart (PR #360 review).
+      issuedActivityLabel(language, r),
     ]);
   }
 
