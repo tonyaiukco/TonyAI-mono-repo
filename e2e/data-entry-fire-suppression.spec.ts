@@ -241,3 +241,46 @@ test('an opened refrigerant draft keeps its fire device selectable after the lin
     await request.delete(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
   }
 });
+
+// PR #360 re-review: leaving an opened draft for a new record (another year)
+// gives the new record clean lines: the stored fire device is cleared.
+test('an opened refrigerant draft moved to another year drops its stored fire device', async ({ page, request }) => {
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const res = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUB.logistics, locationId: null, reportingYear: E2E_TR_INPUTS_YEAR, reportingPeriod: 'annual', periodValue: 'Annual',
+      category: 'Refrigerants', activityType: E2E_TR_INPUTS.refrigerant, activityValue: 40, activityUnit: 'kg', varianceReason: null, input: null,
+      parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' }] },
+    },
+  });
+  expect(res.status()).toBe(201);
+  const id = (await res.json()).id as string;
+  try {
+    await login(page, ENTRY_EMAIL);
+    await page.goto(`/data-entry?subsidiaryId=${SUB.logistics}&category=Refrigerants&year=${E2E_TR_INPUTS_YEAR}`);
+    await page.getByRole('button', { name: new RegExp(`^Annual ${E2E_TR_INPUTS_YEAR}`) }).click();
+    await expect(page.getByText(/Editing draft/)).toBeVisible();
+    const device = page.getByRole('combobox', { name: `${en.inputs.equipmentType} 1` });
+    await expect(device).toHaveText(en.equipmentTypes.fire_suppression_system);
+    await pickByFieldLabel(page, en.reportingYear, String(E2E_TR_INPUTS_YEAR - 1));
+    await expect(page.getByText(/Editing draft/)).toHaveCount(0);
+    await expect(device).toHaveText(en.inputs.chooseEquipment);
+    await device.click();
+    await expect(page.getByRole('option', { name: en.equipmentTypes.fire_suppression_system, exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+  } finally {
+    await request.delete(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
+  }
+});
+
+// PR #360 re-review: a tiny positive figure keeps its digits on every line of the preview.
+test('0.1 g of CO2 previews as 0.0001 kgCO2e, never 0', async ({ page }) => {
+  await startFire(page, en.activityTypes.CO2);
+  await page.getByLabel(`${fire.capacity} (g)`).fill('0.1');
+  // 0.0001 kg × 10% × 10 kgCO2e/kg = 0.0001 kgCO2e = 0.0000001 t; released 0.00001 kg.
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('0.0000001');
+  await expect(page.getByText('Scope 1 · 0.0001 kgCO₂e')).toBeVisible();
+  await expect(page.getByText('0.00001 kg', { exact: true })).toBeVisible();
+});
+

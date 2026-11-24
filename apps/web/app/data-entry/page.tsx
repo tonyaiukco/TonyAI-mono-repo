@@ -216,7 +216,6 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // these spellings. A copy that drifted would offer a value the API rejects.
 
 /** The preview's figures, in the user's locale (LP3-01). */
-const PREVIEW_DIGITS = { maximumFractionDigits: 3 } as const;
 /** A factor shows every digit it has, ungrouped — only the decimal separator follows the locale. */
 const FACTOR_DIGITS = { maximumFractionDigits: 20, useGrouping: false } as const;
 
@@ -1456,6 +1455,9 @@ function DataEntryPageInner() {
     setEditingTuple(null);
     setOwnUnit(null);
     setOwnBasis(null);
+    // A new record's lines: no stored device, and a device the category no
+    // longer offers for a new line is cleared (PR #360 re-review).
+    setEquipment((lines) => linesForNewRecord(lines, category));
     // A new record now: no stored block for a move to remove. The fields stay
     // as typed, like every other field on the form.
     setOpenedWithSelfGeneration(false);
@@ -2981,7 +2983,10 @@ function PreviewCard({
   const t = useTranslations("dataEntry");
   const tCommon = useTranslations("common");
   const locale = useLocale();
-  const numberFmt = { format: (n: number) => formatNumber(n, locale, PREVIEW_DIGITS) };
+  // Three decimals, but a small non-zero figure keeps its digits, so the kg
+  // line and the normalised input never read 0 beside a positive figure
+  // (0.1 g refilled is 0.0001 kgCO2e; PR #360 re-review).
+  const numberFmt = { format: (n: number) => formatNumber(n, locale, tonnesDisplayOptions(n)) };
   return (
     <Card className="border-primary/20">
       <CardHeader>
