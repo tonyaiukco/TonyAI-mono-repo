@@ -1,4 +1,4 @@
-import { EVIDENCE_MAX_LINKED_RECORDS, mayAuthorRecords } from '@/lib/types';
+import { EVIDENCE_MAX_LINKED_RECORDS, isCapacityMethodCategory, mayAuthorRecords } from '@/lib/types';
 import type {
   ActivityRecordDTO,
   CursorPage,
@@ -130,12 +130,14 @@ export function attachableRecords(
 }
 
 /**
- * The refrigerant shortcut (UAT round 2, K5 option A): one document attached to
- * the year's other gas records through the records table's existing
+ * The year's-gas-records shortcut (UAT round 2, K5 option A): one document
+ * attached to the year's other gas records through the records table's existing
  * one-file-to-several-records step. Offered when the subsidiary and year hold
- * at least two refrigerant records the user may attach files to. Ticks in
- * advance those that hold no file yet; the user may tick or untick the rest.
- * `rows` are one subsidiary's records, as the table lists them.
+ * at least two records of the open record's capacity-method category the user
+ * may attach files to: Refrigerants or, since UAT round 4 (BUG-12), Fire
+ * Suppression, never across the two. Ticks in advance those that hold no file
+ * yet; the user may tick or untick the rest. `rows` are one subsidiary's
+ * records, as the table lists them.
  */
 export interface RefrigerantShortcut {
   offered: boolean;
@@ -146,9 +148,11 @@ export function refrigerantShortcut(
   rows: readonly SubmittableRow[],
   attachableIds: readonly string[],
   reportingYear: number,
+  category: string,
 ): RefrigerantShortcut {
+  if (!isCapacityMethodCategory(category)) return { offered: false, preselect: [] };
   const gases = rows.filter(
-    (r) => r.category === 'Refrigerants' && r.reportingYear === reportingYear && attachableIds.includes(r.id),
+    (r) => r.category === category && r.reportingYear === reportingYear && attachableIds.includes(r.id),
   );
   if (gases.length < 2) return { offered: false, preselect: [] };
   return {

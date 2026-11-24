@@ -48,6 +48,14 @@ import {
   leakRatePercent,
   linesFromRecord,
   newEquipmentLine,
+  newLineUnit,
+  massInKg,
+  withLineUnit,
+  deviceOptions,
+  maxEquipmentLines,
+  takesLineUnit,
+  offersOtherGas,
+  OTHER_GAS,
   offersAlternative,
   recordInputMode,
   referenceValue,
@@ -78,7 +86,7 @@ const READY: ReferenceState = {
     parameters: ROWS,
   },
 };
-const line = (over: Partial<EquipmentLineDraft> = {}): EquipmentLineDraft => ({ ...newEquipmentLine('l1'), equipmentType: 'chiller', capacityKg: 20, ...over });
+const line = (over: Partial<EquipmentLineDraft> = {}): EquipmentLineDraft => ({ ...newEquipmentLine('l1'), equipmentType: 'chiller', capacity: 20, ...over });
 
 const SELF_GENERATION_BLOCK = Object.freeze({
   generationTopology: 'A',
@@ -325,26 +333,116 @@ describe('natural gas inputs (D5)', () => {
   });
 });
 
+// UAT round 4, BUG-12: a Fire Suppression line takes grams or kilograms, and
+// the form always sends kilograms.
+describe('fire suppression equipment lines (UAT round 4, BUG-12)', () => {
+  const fire = (over: Partial<EquipmentLineDraft> = {}): EquipmentLineDraft =>
+    ({ ...newEquipmentLine('f1', 'g'), equipmentType: 'fire_extinguisher', ...over });
+
+  it('starts a new Fire Suppression line on grams, and a refrigerant line on kilograms', () => {
+    expect(newLineUnit('Fire Suppression')).toBe('g');
+    expect(newLineUnit('Refrigerants')).toBe('kg');
+    expect(takesLineUnit('Fire Suppression')).toBe(true);
+    expect(takesLineUnit('Refrigerants')).toBe(false);
+    expect(newEquipmentLine('x', newLineUnit('Fire Suppression'))).toMatchObject({ unit: 'g', capacity: 0, refill: 0 });
+  });
+
+  it('converts 6000 g to 6 kg and 35 g to 0.035 kg, with no float noise', () => {
+    expect(massInKg(6000, 'g')).toBe(6);
+    expect(massInKg(35, 'g')).toBe(0.035);
+    expect(massInKg(1, 'g')).toBe(0.001);
+    expect(massInKg(0.1, 'g')).toBe(0.0001);
+    // A decimal gram figure: 4.1 / 1000 is 0.0040999999999999995 in binary, and
+    // toFixed would give 4.000599999999999 for 4000.6 g (QA review).
+    expect(massInKg(4.1, 'g')).toBe(0.0041);
+    expect(massInKg(4000.6, 'g')).toBe(4.0006);
+    expect(massInKg(6, 'kg')).toBe(6);
+    const sent = equipmentParameters([fire({ capacity: 6000, refill: 35 })]);
+    expect(sent).toEqual({ equipment: [{ equipmentType: 'fire_extinguisher', capacityKg: 6, refillKg: 0.035, leakRateChoice: 'default' }] });
+  });
+
+  it('totals lines in different units in kilograms: 6000 g and 50 kg are 56 kg', () => {
+    const lines = [fire({ capacity: 6000 }), fire({ id: 'f2', equipmentType: 'fire_suppression_system', capacity: 50, unit: 'kg' })];
+    expect(equipmentTotal(lines)).toBe(56);
+    expect(equipmentIssue(lines)).toBeNull();
+    expect(equipmentParameters(lines).equipment.map((l) => l.capacityKg)).toEqual([6, 50]);
+  });
+
+  it('clears only the changed line\'s figures on a unit change, and nothing on the same unit', () => {
+    const typed = fire({ capacity: 6000, refill: 10 });
+    const other = fire({ id: 'f2', equipmentType: 'fire_suppression_system', capacity: 50, unit: 'kg' });
+    const switched = withLineUnit(typed, 'kg');
+    expect(switched).toMatchObject({ unit: 'kg', capacity: null, refill: null, equipmentType: 'fire_extinguisher' });
+    expect(withLineUnit(typed, 'g')).toBe(typed);
+    expect(equipmentIssue([switched, other])).toBe('value_missing');
+    expect(other).toMatchObject({ capacity: 50, unit: 'kg' });
+  });
+
+  it('opens a stored record in kilograms with the selector on kilograms, and a blank line on grams', () => {
+    let n = 0;
+    const id = () => `id-${(n += 1)}`;
+    const stored = { equipment: [{ equipmentType: 'fire_extinguisher', capacityKg: 6, refillKg: 0, leakRateChoice: 'default' }] };
+    expect(linesFromRecord(stored, id, 'g')).toEqual([
+      { id: 'id-1', equipmentType: 'fire_extinguisher', capacity: 6, refill: 0, unit: 'kg', leakRateChoice: 'default' },
+    ]);
+    expect(linesFromRecord(null, id, 'g')).toEqual([newEquipmentLine('id-2', 'g')]);
+  });
+
+  it('offers a Fire Suppression line its three devices, each once', () => {
+    expect(deviceOptions('Fire Suppression', '', new Set())).toEqual(['fire_extinguisher', 'fire_suppression_system', 'transformer_breaker']);
+    expect(deviceOptions('Fire Suppression', '', new Set(['fire_extinguisher']))).toEqual(['fire_suppression_system', 'transformer_breaker']);
+    expect(maxEquipmentLines('Fire Suppression', [])).toBe(3);
+  });
+
+  it('ends the Fire Suppression gas list with "Other gas", never an activity type', () => {
+    expect(offersOtherGas('Fire Suppression')).toBe(true);
+    expect(offersOtherGas('Refrigerants')).toBe(false);
+    expect(['CO2', 'HFC-227ea', 'SF6', 'dry_powder_or_foam']).not.toContain(OTHER_GAS);
+  });
+});
+
+// UAT round 4, BUG-12 (design decision 7): a new refrigerant line is offered
+// cooling devices only; an opened record keeps its own fire device.
+describe('the refrigerant form\'s narrowed device list', () => {
+  it('offers a new refrigerant line the six cooling devices only', () => {
+    expect(deviceOptions('Refrigerants', '', new Set())).toEqual([
+      'split_air_conditioner', 'water_dispenser', 'refrigerator', 'chiller', 'mobile_air_conditioner', 'portable_air_conditioner',
+    ]);
+    expect(maxEquipmentLines('Refrigerants', [])).toBe(6);
+  });
+
+  it('keeps an opened HFC-227ea draft\'s fire suppression system line selectable', () => {
+    const own = deviceOptions('Refrigerants', 'fire_suppression_system', new Set(['chiller']));
+    expect(own).toContain('fire_suppression_system');
+    expect(own).not.toContain('chiller');
+    expect(own).not.toContain('fire_extinguisher');
+    const opened = linesFromRecord({ equipment: [
+      { equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' },
+    ] }, () => 'l');
+    expect(maxEquipmentLines('Refrigerants', opened)).toBe(7);
+  });
+});
+
 describe('refrigerant equipment lines (D7)', () => {
   it('totals the capacities as the record\'s quantity, and accepts a refill alone', () => {
-    const lines = [line(), line({ id: 'l2', equipmentType: 'split_air_conditioner', capacityKg: 10.5, refillKg: 1 })];
+    const lines = [line(), line({ id: 'l2', equipmentType: 'split_air_conditioner', capacity: 10.5, refill: 1 })];
     expect(equipmentTotal(lines)).toBe(30.5);
     expect(equipmentIssue(lines)).toBeNull();
     expect(equipmentParameters(lines)).toEqual({ equipment: [
       { equipmentType: 'chiller', capacityKg: 20, refillKg: 0, leakRateChoice: 'default' },
       { equipmentType: 'split_air_conditioner', capacityKg: 10.5, refillKg: 1, leakRateChoice: 'default' },
     ] });
-    expect(equipmentIssue([line({ capacityKg: 0, refillKg: 2 })])).toBeNull();
-    expect(equipmentTotal([line({ capacityKg: 0, refillKg: 2 })])).toBe(0);
+    expect(equipmentIssue([line({ capacity: 0, refill: 2 })])).toBeNull();
+    expect(equipmentTotal([line({ capacity: 0, refill: 2 })])).toBe(0);
   });
 
   it.each([
     ['no line', [], 'no_lines'],
     ['a line with no type', [line({ equipmentType: '' })], 'type_missing'],
     ['one type twice', [line(), line({ id: 'l2' })], 'type_repeated'],
-    ['an empty or refused mass', [line({ refillKg: null })], 'value_missing'],
-    ['neither a capacity nor a refill', [line({ capacityKg: 0 })], 'empty_line'],
-    ['a total above the bound', [line({ capacityKg: ACTIVITY_VALUE_MAX }), line({ id: 'l2', equipmentType: 'refrigerator', capacityKg: ACTIVITY_VALUE_MAX })], 'too_large'],
+    ['an empty or refused mass', [line({ refill: null })], 'value_missing'],
+    ['neither a capacity nor a refill', [line({ capacity: 0 })], 'empty_line'],
+    ['a total above the bound', [line({ capacity: ACTIVITY_VALUE_MAX }), line({ id: 'l2', equipmentType: 'refrigerator', capacity: ACTIVITY_VALUE_MAX })], 'too_large'],
   ] as const)('holds back %s', (_case, lines, issue) => {
     expect(equipmentIssue(lines as unknown as EquipmentLineDraft[])).toBe(issue);
   });
@@ -363,7 +461,7 @@ describe('refrigerant equipment lines (D7)', () => {
     let n = 0;
     const id = () => `id-${(n += 1)}`;
     expect(linesFromRecord({ equipment: [{ equipmentType: 'chiller', capacityKg: 5, refillKg: 0, leakRateChoice: 'alternative' }] }, id))
-      .toEqual([{ id: 'id-1', equipmentType: 'chiller', capacityKg: 5, refillKg: 0, leakRateChoice: 'alternative' }]);
+      .toEqual([{ id: 'id-1', equipmentType: 'chiller', capacity: 5, refill: 0, unit: 'kg', leakRateChoice: 'alternative' }]);
     expect(linesFromRecord(null, id)).toEqual([newEquipmentLine('id-2')]);
   });
 });
@@ -670,8 +768,8 @@ describe('the input fields as rendered', () => {
     expect(html).toContain(MESSAGES.en.dataEntry.inputs.referenceMissing);
   });
 
-  const equipment = (lines: EquipmentLineDraft[]) => ({
-    lines, reference: READY, issue: null, epoch: 0, onChange: () => {}, onAdd: () => {}, onRemove: () => {},
+  const equipment = (lines: EquipmentLineDraft[], category = 'Refrigerants') => ({
+    category, lines, reference: READY, issue: null, epoch: 0, onChange: () => {}, onAdd: () => {}, onRemove: () => {},
   });
 
   it.each(['en', 'tr'] as const)('%s shows a refrigerator\'s default rate and offers no alternative', (locale) => {
@@ -679,6 +777,39 @@ describe('the input fields as rendered', () => {
     expect(html).toContain('data-testid="equipment-rate"');
     expect(html).toContain(locale === 'en' ? '0.1%' : '0,1%');
     expect(html).not.toContain(`${MESSAGES[locale].dataEntry.inputs.leakRate} 1"`);
+  });
+
+  // UAT round 4, BUG-12: the Fire Suppression lines as rendered.
+  const fireLine = (over: Partial<EquipmentLineDraft> = {}) =>
+    ({ ...newEquipmentLine('f1', 'g'), equipmentType: 'fire_extinguisher', ...over }) as EquipmentLineDraft;
+  const FIRE_ROWS: ReferenceState = {
+    ...READY,
+    data: { ...(READY as { data: object }).data, parameters: [param('leak_rate', 'fire_extinguisher', 0.04)] },
+  } as ReferenceState;
+
+  it.each(['en', 'tr'] as const)('%s shows a gram line\'s unit selector, its kilograms beside it and the default rate alone', (locale) => {
+    const html = render(locale, EquipmentLines, { ...equipment([fireLine({ capacity: 6000 })], 'Fire Suppression'), reference: FIRE_ROWS });
+    const tFire = MESSAGES[locale].dataEntry.inputs.fireSuppression;
+    expect(html).toContain(`aria-label="${tFire.unit} 1"`);
+    expect(html).toContain('data-testid="equipment-kg"');
+    expect(html).toContain('= 6 kg');
+    expect(html).toContain(`${tFire.capacity} (g)`);
+    const escaped = (text: string) => text.replace(/'/g, '&#x27;');
+    expect(html).toContain(escaped(tFire.unitHelp));
+    expect(html).toContain(escaped(tFire.annualOnly));
+    expect(html).toContain('data-testid="equipment-rate"');
+    expect(html).toContain('4%');
+    expect(html).not.toContain(`${MESSAGES[locale].dataEntry.inputs.leakRate} 1"`);
+  });
+
+  it('shows no kilogram line for a kilogram line, and no selector on a refrigerant line', () => {
+    const kg = render('en', EquipmentLines, equipment([fireLine({ unit: 'kg', capacity: 6 })], 'Fire Suppression'));
+    expect(kg).not.toContain('data-testid="equipment-kg"');
+    expect(kg).toContain('Installed capacity (kg)');
+    const refrigerant = render('en', EquipmentLines, equipment([line()]));
+    expect(refrigerant).not.toContain(`aria-label="${MESSAGES.en.dataEntry.inputs.fireSuppression.unit} 1"`);
+    expect(refrigerant).not.toContain('data-testid="equipment-kg"');
+    expect(refrigerant).toContain(MESSAGES.en.dataEntry.inputs.capacity);
   });
 
   it('offers a chiller\'s alternative as a choice', () => {

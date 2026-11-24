@@ -10,6 +10,12 @@
     "nameplate": "Equipment nameplate photo or technical specification page",
     "invoice": "Annual refill or maintenance invoice, if there is one"
   },
+  "fireSuppressionNote": {
+    "intro": "A fire suppression record needs at least one supporting file before it can be submitted. Accepted documents:",
+    "trackingSheet": "Equipment tracking sheet (the register of extinguishers and systems)",
+    "drawings": "System drawings",
+    "photos": "Photographs of the equipment or its label"
+  },
   "shareShortcut": {
     "button": "Attach this document to the year's other gas records",
     "hint": "If the same document also evidences this year's other gas records, attach it to all of them at once in the records table."
