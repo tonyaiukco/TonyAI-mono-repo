@@ -1,3 +1,4 @@
+import { lastActivity, shouldExpire } from "./idle-session";
 import { isPublicPath } from "./auth-view";
 import { forgetOnSessionChange, useAuthStore } from "./store";
 import { getSupabaseBrowserClient } from "./supabase";
@@ -63,7 +64,10 @@ export function watchSession(): void {
     seenUserId = sessionUserId;
     forgetOnSessionChange(event, sessionUserId);
     const action = sessionChangeAction(event, sessionUserId, loadedUserId, window.location.pathname, endingHere);
-    if (action === "signIn") window.location.assign("/login");
+    if (action === "signIn") {
+      const idle = shouldExpire(window.location.pathname, lastActivity(), Date.now());
+      window.location.assign(idle ? "/login?reason=idle" : "/login");
+    }
     else if (action === "reload") window.location.reload();
   });
 }

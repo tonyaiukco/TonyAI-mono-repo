@@ -1,5 +1,6 @@
 "use client";
 
+import { recordActivity } from "@/lib/idle-session";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -82,6 +83,7 @@ function LoginForm() {
       toast.error(t(signInFailureKey(error.code)));
       return;
     }
+    recordActivity();
     toast.success(t("signIn.success"));
     // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
     useReportingContextStore.getState().clear();
@@ -108,6 +110,7 @@ function LoginForm() {
           <CardDescription>{t("tagline")}</CardDescription>
         </CardHeader>
         <CardContent>
+          {reason === "idle" && <p role="status" className="mb-4 text-sm">{t("signIn.idle")}</p>}
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">{t("signIn.email")}</Label>

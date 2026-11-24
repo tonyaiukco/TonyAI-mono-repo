@@ -56,8 +56,7 @@ export default async function RootLayout({
     <html lang={locale}>
       <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
         <I18nProvider locale={locale} messages={MESSAGES[locale]}>
-          <SessionWatch />
-          {children}
+          <SessionWatch>{children}</SessionWatch>
           <Toaster richColors position="bottom-right" />
         </I18nProvider>
       </body>

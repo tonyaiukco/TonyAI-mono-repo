@@ -35,6 +35,8 @@ def managed_auth_settings(origin, public_web_host=None):
         'passkey_enabled': False,
         # K4's accepted direct-PostgREST residual lasts at most one hour.
         'jwt_exp': 3600,
+        # Management API expresses session inactivity in hours.
+        'sessions_inactivity_timeout': 1,
         'password_min_length': 12,
         'mailer_otp_exp': 3600,
         'mailer_secure_email_change_enabled': True,

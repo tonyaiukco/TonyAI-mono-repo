@@ -1,5 +1,6 @@
 "use client";
 
+import { recordActivity } from "@/lib/idle-session";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -118,6 +119,7 @@ export function SetPasswordForm() {
     useReportingContextStore.getState().clear();
     // …and the previous person's role, until the new one is read (pre-pilot defects).
     useAuthStore.getState().clear();
+    recordActivity();
     router.replace("/");
     router.refresh();
   }

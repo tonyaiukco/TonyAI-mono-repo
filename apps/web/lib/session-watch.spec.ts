@@ -8,7 +8,7 @@ const subscribe = vi.fn((cb: Listener) => {
 vi.mock('./supabase', () => ({ getSupabaseBrowserClient: () => ({ auth: { onAuthStateChange: subscribe } }) }));
 
 const location = { pathname: '/users', assign: vi.fn(), reload: vi.fn() };
-vi.stubGlobal('window', { location });
+vi.stubGlobal('window', { location, localStorage: { getItem: () => String(Date.now()) } });
 
 import { endingSessionHere, watchSession } from './session-watch';
 import { useAuthStore, useReportingContextStore } from './store';
