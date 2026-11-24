@@ -42,7 +42,7 @@
 > 7. **Claude Code orchestrates; Codex implements assigned tasks** *(owner decision 2026-11-07, after L10 closed; it replaces the Codex single-tool mode of 2026-10-28, which itself replaced the two-tool mode of 2026-09-27)*. **Claude Code** is the orchestrator and planner: it defines, sequences and does the work itself, assigning a task to Codex in the Assignment ledger **only when the owner explicitly asks** (owner, 2026-11-07), reviews Codex's PRs, and is **this file's only writer**, updating it in the same PR as its own work and recording Codex's merged PRs. **Codex** takes over only the tasks the owner has Claude Code hand to it: it implements them on its own branch and PR, follows `AGENTS.md`, does not edit this file, and puts its status (what changed, evidence, open items) in its PR description for Claude Code to record. The owner reviews and merges every PR.
 
 ## Current status — as of 2026-11-23
-- **PRE-G5 SECURITY HARDENING, THE OPEN-QUESTIONS PASS STEP 2 (Claude Code; branch `feat/pre-g5-security-hardening`; OpenSpec `pre-g5-security-hardening`; 2026-11-24; owner options 1A and 2A).** Four pen-test findings-in-waiting from Open questions, before the pen-test on 2027-01-11.
+- **PRE-G5 SECURITY HARDENING, THE OPEN-QUESTIONS PASS STEP 2, MERGED AND DEPLOYED (Claude Code; [PR #352](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/352), merge `ed32395b`; QA revision `ci87-1`; OpenSpec archived as `openspec/changes/archive/2026-11-24-pre-g5-security-hardening/`; 2026-11-24; owner options 1A and 2A).** Four pen-test findings-in-waiting from Open questions, before the pen-test on 2027-01-11.
   - **What:**
     - (1) The web's CSP is enforced, resource directives included. `'unsafe-inline'` stays; `'unsafe-eval'` is allowed under `next dev` only. Violations go through `report-uri` to a public `POST /security/csp-reports`, which logs four fields and stores nothing; its own per-address quota is taken at admission, apart from the app's. COOP/CORP on the web, CORP on the API.
     - (2) The PDF renderer runs no script, aborts every request and resolves no host.
@@ -85,10 +85,24 @@
       - the receiver refuses a form with 415;
       - security headers on CORS preflights;
       - a script page-count proof in the PDF int spec.
+  - **Merged and deployed:**
+    - The first QA deploy of the merge (run 45386860736) stopped at its new first gate, as designed: no `QA_AUTH_POLICY_DIGEST` was recorded.
+    - The owner re-ran `supabase_setup.py --reconcile-auth-only` for QA, after an expired Azure session (`AADSTS700082`) failed the first attempt. It turned reauthentication on and printed `authpolicy-v1:32b2a492…`, which the owner recorded as the QA variable.
+    - The manual deploy (run 45389699934) passed the gate and serves `ed32395b` as `ci87-1`; smoke passed.
+  - **QA checks (owner's report, 2026-11-24):** all passed:
+    - a screen walk with no CSP violation in the console;
+    - an invitation to an existing address answered `email_unavailable` and wrote `invite_refused`;
+    - a password reset end to end wrote `password_set`.
+  - **Archive:** synced the three deltas into the main specs:
+    - `account-access`, new, 5 requirements;
+    - `pdf-rendering`, new, 2 requirements;
+    - `web-response-security`: 1 modified, 4 added, "A split content security policy" removed.
+
+    Every delta block is in its main spec verbatim. `openspec validate --specs --strict` passes the three; it still fails the three older specs on requirement length only (Open questions).
   - **Open:**
-    - **Owner, before the QA deploy can pass:** run runbook 04's `supabase_setup.py --reconcile-auth-only` for QA, which turns reauthentication on, and set the QA variable `QA_AUTH_POLICY_DIGEST` to the digest it prints. Until then every QA deploy stops at its first gate.
-    - Owner, after the QA deploy: a screen walk with the console open; one invite of an existing address (the audit view shows `invite_refused`); one password reset end to end.
-    - Owner, separately: Supabase Cloud custom SMTP for Auth mail; the legacy anon/service_role JWT keys disabled.
+    - Owner: Supabase Cloud custom SMTP for Auth mail.
+    - Owner: confirm the legacy anon/service_role JWT keys are disabled.
+    - The residuals are under Open questions ("`pre-g5-security-hardening` residuals").
 - **FIVE PRE-PILOT DEFECTS FROM OPEN QUESTIONS FIXED (Claude Code; PR #350, merged 2026-11-24; the Codex re-review's fixes on `fix/pre-pilot-session-binding`).** The first step of the owner's Open-questions pass: correctness defects, allowed under the pre-pilot rule. API and web; no migration, no contract or error-code change.
   - **What:**
     - (1) `/auth/confirm` no longer swallows a failed invitation acceptance: `acceptInvitationQuietly` retries a transient failure, and set-password asks again. An invitation was left `sent` behind a live account, and a re-send answered `email_unavailable`.
