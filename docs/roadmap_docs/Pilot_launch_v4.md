@@ -13,7 +13,7 @@ into the planning file and this file stops being updated.
 | Document | What it asks for |
 |---|---|
 | `TonyAI_BUG_Report_v4.md` (Rev.3) | BUG-09 … BUG-17; BUG-05 (geolocation) stays deferred |
-| `tonyai_increment_v2.5_…` (Rev.3) | Natural gas in kWh (BUG-11); self-generation is deferred |
+| `tonyai_increment_v2.5_…` (Rev.3) | Natural gas in kWh (BUG-11); self-generation is deferred, so nothing is built for it; what is already live stays (§6) |
 | `tonyai_INC-2.6_…` (Rev.3) | Roles, approval chain, recall and resubmit, recursive group tree, consolidation, owning entity and central reporter, onboarding |
 | `tonyai_INC-2.8_…` (Rev.3) | Fuel bulk ingestion: Shell, Petrol Ofisi and tanker adapters, account mapping, batch review |
 | `tonyai_INC-2.9_…` (Rev.3) | Bulk framework, evidence reading rules, review-queue evidence assistant (fuel only at go-live) |
@@ -59,7 +59,7 @@ deploys to hosted QA by itself, so QA receives the sprint as a rolling handover,
 | 8 | `inc26-central-reporter-onboarding` | INC-2.6 §4, §7: owning and reporting entity, central reporter grant, single-entry rule, masterkey wizard | WP7 | all three |
 | 9 | `inc28-fuel-bulk` | INC-2.8: three adapters, fuel-name rules, account mapping and unmatched tray, associate exclusion, batches as the review unit, dedupe keys, manual fuel screen (usage mandatory, card-fuel note), invoice no and supplier as bulk columns | parsers: none · integration: WP6–WP8 | all three |
 | 10 | `inc29-evidence-assistant` | INC-2.9 §4–§5, INC-2.8 §7: fuel invoice reader by text extraction (no outside AI model), side-by-side panel, three soft states, period-shift and shared-invoice rules, multi-invoice PDF split, emergency off switch | WP9 | all three |
-| 11 | `uat4-self-generation-deferred` | INC-2.5 Rev.3 §2: self-generation entry closed for the 1 December build; existing records and their figures untouched | — | `qa-auditor` |
+| 11 | ~~`uat4-self-generation-deferred`~~ | **Dropped (owner, 2026-11-24).** Self-generation stays as it is on QA; no work | — | — |
 
 ## 4. Schedule
 
@@ -70,7 +70,7 @@ step, so it can run in a second session; without one, Lane B starts when Lane A 
 |---|---|---|---|
 | Tue 11-24 | Plan · WP1 | — | — |
 | Wed 11-25 | WP2 · WP3 · WP4 | WP9 parsers and fuel-name rules against the real files | WP1 |
-| Thu 11-26 | WP5 · WP11 · WP6 starts · **forecast to the owner** | WP9 account mapping, unmatched tray | WP2–WP4 |
+| Thu 11-26 | WP5 · WP6 starts · **forecast to the owner** | WP9 account mapping, unmatched tray | WP2–WP4 |
 | Fri 11-27 | WP6 lands · WP7 | WP10 invoice reader against the golden invoice set | WP5 |
 | Sat 11-28 | WP8 | WP9 integration: owning entity, batches in the review queue | WP6, WP7 |
 | Sun 11-29 | Fixes from QA · whole local e2e suite · handover note | WP10 panel in the review queue | everything merged |
@@ -117,9 +117,15 @@ The owner's direction: proceed as the documents say.
 | 8 | Refill rule and approved records | **As the document** (BUG-17) for new figures; approved and locked records **stay as they are**; open drafts are re-priced |
 | 9 | If time runs short | A slip of one or two days moves the date; beyond that the scope narrows with the owner's approval (§5) |
 
-Following the documents also settles two points the plan had left open: fire suppression is **its own Scope 1 entry**
-(BUG-12), and **self-generation is closed for the 1 December build** (INC-2.5 Rev.3 §2; it is live on QA since #344
-and #346, hence WP11). The second is Claude Code's reading of the direction; the owner confirms it before WP11 starts.
+Following the documents also settles one point the plan had left open: fire suppression is **its own Scope 1 entry**
+(BUG-12).
+
+**Self-generation stays as it is (owner, 2026-11-24).** INC-2.5 Rev.3 §2 defers it ("not developed in this round"),
+but it has been live on QA since #344 and #346 and was tested in UAT round 3. The owner chose to leave it: the section
+on Data Entry and the block on the review sheet stay, nothing new is built for it, and WP11, which would have closed
+its entry for the 1 December build, is dropped. It never changes a figure (Scope 2 is the grid import × the year's
+factor). To check when the acceptance tests arrive (§7): if one of A1–A15 expects self-generation not to be offered,
+the owner decides again.
 
 Where the code departs from the documents and is left alone:
 
@@ -164,4 +170,4 @@ gets synthetic fixtures in the same shapes.
 | 8 `inc26-central-reporter-onboarding` | not started | — | — | |
 | 9 `inc28-fuel-bulk` | not started | — | — | waits for the inputs in §7 |
 | 10 `inc29-evidence-assistant` | not started | — | — | waits for the invoice PDFs (§7) |
-| 11 `uat4-self-generation-deferred` | not started | — | — | owner confirms the reading first |
+| 11 ~~`uat4-self-generation-deferred`~~ | dropped 11-24 (owner) | — | — | self-generation stays live as it is |
