@@ -8,6 +8,7 @@ import { Leaf, LinkIcon, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { parseEmailLink, type EmailLinkType } from "@/lib/auth-view";
+import { tabStorage, writeEmailLinkMarker } from "@/lib/email-link-marker";
 import { acceptOwnInvitation } from "@/lib/invitation-acceptance";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
@@ -52,6 +53,8 @@ export function ConfirmEmailLink() {
       setState({ phase: "invalid", type });
       return;
     }
+    // This tab may now set a password, for this user, within the hour (`account-access`).
+    if (data.user) writeEmailLinkMarker(tabStorage(), data.user.id, type);
     // Marks an open invitation accepted — after a reset too, for an invitee
     // who never used the invitation itself. A no-op otherwise. A failure is
     // repeated, and the set-password step asks again; it is not a reason to

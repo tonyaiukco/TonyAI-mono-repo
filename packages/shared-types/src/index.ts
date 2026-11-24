@@ -1409,6 +1409,19 @@ export interface UpdatePreferencesRequest {
   language: Locale;
 }
 
+/** How a password came to be set from an email link (`pre-g5-security-hardening`). */
+export const PASSWORD_SET_FLOWS = ['invite', 'recovery'] as const;
+export type PasswordSetFlow = (typeof PASSWORD_SET_FLOWS)[number];
+
+/**
+ * `POST /me/password-set`: the web records that Auth accepted a new password
+ * from the set-password screen, so the account's own audit trail shows it
+ * (`password_set`). Self-reported, about the caller's own account only.
+ */
+export interface RecordPasswordSetRequest {
+  flow: PasswordSetFlow;
+}
+
 // ---------------------------------------------------------------------------
 // Users and invitations (LP4-01)
 // ---------------------------------------------------------------------------
@@ -2775,6 +2788,10 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** The address already has an account — in this organisation or another
    *  (D17: one organisation per account). */
   email_unavailable: 409,
+  /** `pre-g5-security-hardening`: the inviting organisation met five
+   *  `email_unavailable` refusals within the hour; every invitation is refused
+   *  until the oldest ages out (`Retry-After`), whatever the address. */
+  invite_refusals_exhausted: 429,
   /** LP3-04 (W10): the boundary version is frozen — confirmed, or captured
    *  into a dataset; new facts make a new version. */
   boundary_frozen: 409,
@@ -6302,7 +6319,8 @@ export const AUDIT_ACTIONS = [
    *  (`entity: 'evidence'`, `diff.before.recordId`). Taking off the LAST link
    *  deletes the file, and that row is a `delete`. */
   'detach',
-  // LP4-01 — the user lifecycle. `entityId` is the profile throughout; an
+  // LP4-01 — the user lifecycle. `entityId` is the profile throughout (except
+  // `invite_refused`, whose entityId is null — no profile was made); an
   // invitation's row names its role, language and grants, never the address
   // or the name (the trail has no correction path, D20). Rows written by the
   // operator CLI carry a null `userId` and the operator in `diff.operator`.
@@ -6321,6 +6339,17 @@ export const AUDIT_ACTIONS = [
    *  and sent (an Auth or SMTP failure after it leaves the row). No person is
    *  the actor (null `userId`); `entity: 'profile'`. */
   'password_reset',
+  /** `pre-g5-security-hardening`: an invitation refused because the address
+   *  already has an account (D17), written for the inviting organisation so
+   *  probing is on the trail and bounded. Never the address: `diff` is
+   *  `{ reason: 'email_unavailable' }`. `entity: 'invitation'`, `entityId` null. */
+  'invite_refused',
+  /** `pre-g5-security-hardening`: a password set from an invitation or
+   *  recovery link, recorded by the web app after Auth accepted it — written
+   *  as the signed-in user, about their own account only. `diff` is
+   *  `{ flow: 'invite' | 'recovery' }`; nothing about the password.
+   *  `entity: 'profile'`. */
+  'password_set',
   /** LP3-04: a super_admin confirmed an inventory boundary version, freezing
    *  it (W4). `entity: 'inventory_boundary'`. */
   'confirm',

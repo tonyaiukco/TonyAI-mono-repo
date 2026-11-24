@@ -12,6 +12,7 @@ import {
   organisationsNamed,
   registeredAccount,
   registrationInvitePath,
+  auditRowsFor,
 } from './helpers';
 
 /**
@@ -109,6 +110,8 @@ test.describe('self-service registration', () => {
     await page.waitForURL((url) => url.pathname === '/');
     // Three tries on the confirm step, then three on the password step.
     expect(acceptCalls).toBe(6);
+    // The new password is on the account's own trail, as the account (pre-g5-security-hardening).
+    await expect.poll(() => auditRowsFor('password_set', account.profileId)).toEqual([{ userId: account.profileId, diff: { flow: 'invite' } }]);
     expect((await registeredAccount(email))?.invitationStatus).toBe('sent');
 
     await page.getByTestId('sign-out').click();

@@ -85,9 +85,27 @@ const INVENTORY_DECLARATION_ROUTE = /^\/api\/v1\/inventory-boundaries\/[^/]+\/su
 export const isInventoryDeclarationPut = (method: string, path: string): boolean =>
   method === 'PUT' && INVENTORY_DECLARATION_ROUTE.test(path.split('?')[0].toLowerCase().replace(/\/+$/, ''));
 
+/**
+ * The web's CSP violation reports (`pre-g5-security-hardening`): public, so
+ * any client can post here. Its body cap, media types and per-IP quota are set
+ * here in code, never by an environment value, like the declaration's cap: a
+ * report is a few hundred bytes, and a browser sends a handful per page.
+ */
+export const CSP_REPORT_ROUTE = '/api/v1/security/csp-reports';
+export const CSP_REPORT_BODY_MAX_BYTES = 16_384;
+export const CSP_REPORT_PER_IP_PER_MINUTE = 30;
+/** `report-uri` posts `application/csp-report`, the Reporting API `application/reports+json`. */
+export const CSP_REPORT_MEDIA_TYPES: readonly string[] = ['application/csp-report', 'application/reports+json', 'application/json'];
+
+/** Is this a post to the CSP report receiver — normalised as `routeGroup` normalises? */
+export const isCspReportPost = (method: string, path: string): boolean =>
+  method === 'POST' && path.split('?')[0].toLowerCase().replace(/\/+$/, '') === CSP_REPORT_ROUTE;
+
 /** A non-multipart body's cap on this route. */
 export const jsonBodyLimit = (method: string, path: string, global: number): number =>
-  isInventoryDeclarationPut(method, path) ? INVENTORY_DECLARATION_BODY_MAX_BYTES : global;
+  isInventoryDeclarationPut(method, path) ? INVENTORY_DECLARATION_BODY_MAX_BYTES
+    : isCspReportPost(method, path) ? CSP_REPORT_BODY_MAX_BYTES
+      : global;
 
 @Injectable()
 export class RuntimeLimits implements OnApplicationShutdown {

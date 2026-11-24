@@ -170,7 +170,7 @@ in `infra/config/runtime-limits.json`. Configuration changes require a restart.
 | `MUTATION_CONCURRENCY`, `MUTATION_USER_CONCURRENCY` | 2 / 1 | Mutations globally and per verified user — never the read-only preview, which would otherwise refuse the same user's save or submit |
 | `HTTP_HEADER_BYTES` | 16,384 | HTTP parser header bytes |
 | `HTTP_HEADERS_TIMEOUT_MS`, `HTTP_BODY_TIMEOUT_MS`, `HTTP_KEEPALIVE_MS` | 10,000 / 30,000 / 5,000 | Header reception, body reception, idle keep-alive |
-| `BODY_MAX_BYTES`, `BODY_MAX_PARAMETERS` | 102,400 / 100 | JSON/form body bytes and flat form parameters (LP3-04's declaration `PUT` reads up to its own 1 MB, set in code — "The write path") |
+| `BODY_MAX_BYTES`, `BODY_MAX_PARAMETERS` | 102,400 / 100 | JSON/form body bytes and flat form parameters (LP3-04's declaration `PUT` reads up to its own 1 MB, set in code — "The write path"; the public CSP report receiver reads up to 16 KiB of `application/csp-report`, `application/reports+json` or `application/json`, under a quota of 30 bodies a minute per client address taken instead of `RATE_IP_PER_MINUTE`, all set in code, so the test-only `RATE_*` overrides do not raise them — `pre-g5-security-hardening`) |
 | `IMPORT_CONCURRENCY`, `IMPORT_PARSE_TIMEOUT_MS` | 1 / 5,000 | Import work after body reception; parsing checkpoints |
 | `BULK_DEADLINE_MS` | 60,000 | Deadline for starting additional batch rows |
 | `REPORT_CONCURRENCY`, `PDF_TIMEOUT_MS` | 1 / 30,000 | Export admission before assembly; PDF renderer |
@@ -220,7 +220,7 @@ Size refusals are 413, admission/quota refusals 429 with CORS-exposed
 unsupported/compressed and timed-out request bodies receive controlled 4xx
 responses. An uncertain mutation failure is never relabelled as safe to retry.
 Non-preflight API responses carry CSP, frame denial, nosniff, referrer/permissions policies,
-and production HSTS. Multipart has finite files/parts/fields plus a complete
+`Cross-Origin-Resource-Policy: same-site`, and production HSTS. Multipart has finite files/parts/fields plus a complete
 request-byte ceiling; existing 2 MiB import, 10 MiB evidence, 1,000-row and
 16 MiB XLSX expansion ceilings remain. Multipart ceilings are inclusive; fixed parser allowances are one file, four
 16 KiB fields (shared evidence: two 64 KiB fields), and `UPLOAD_CONCURRENCY` simultaneous
@@ -239,6 +239,12 @@ and bounded finalization attempts. The retry count is bounded; Prisma transactio
 
 Only one PDF render owns Chromium at a time, even when `REPORT_CONCURRENCY`
 is raised for other formats. Header expiry checks run at most one second apart.
+Every render page has JavaScript disabled and aborts every request the document
+makes, and Chromium resolves no host (`--host-resolver-rules=MAP * ~NOTFOUND`), so a
+DNS prefetch or preconnect hint reaches nothing either (`pdf-rendering`): the report HTML needs neither, so hostile text that
+slipped past an escape can neither run nor reach the network. Measured on the
+local stack (`pre-g5-security-hardening`), 28 issuance and 2 live-report
+documents print with the same pages and text and the same render time.
 
 The pilot uses one API replica/process with memory-local counters. A deployment
 enters maintenance: the deployment tool deactivates old API revisions and

@@ -3,7 +3,15 @@
  * (LP4-01), kept out of the components so they are tested (`auth-view.spec.ts`).
  */
 
-import { REGISTRATION_COMPANY_NAME_MIN, REGISTRATION_CONSENT_VERSION, type Locale, type RegistrationRequest, type RegistrationStatus } from "@/lib/types";
+import {
+  PASSWORD_SET_FLOWS,
+  REGISTRATION_COMPANY_NAME_MIN,
+  REGISTRATION_CONSENT_VERSION,
+  type Locale,
+  type PasswordSetFlow,
+  type RegistrationRequest,
+  type RegistrationStatus,
+} from "@/lib/types";
 
 /**
  * The shortest password the product accepts — Supabase Auth's
@@ -12,7 +20,13 @@ import { REGISTRATION_COMPANY_NAME_MIN, REGISTRATION_CONSENT_VERSION, type Local
  */
 export const MIN_PASSWORD_LENGTH = 12;
 
-export type EmailLinkType = "invite" | "recovery";
+/** The emailed links a person sets a password from: the shared contract's flows (`PASSWORD_SET_FLOWS`). */
+export type EmailLinkType = PasswordSetFlow;
+
+/** Is `value` one of the flows an emailed link may carry? */
+export function isPasswordSetFlow(value: unknown): value is PasswordSetFlow {
+  return (PASSWORD_SET_FLOWS as readonly unknown[]).includes(value);
+}
 
 /** The catalogue key (namespace `auth`) for a failed sign-in, by Supabase's error code. */
 export function signInFailureKey(code: string | undefined): "signIn.invalidCredentials" | "signIn.disabled" | "signIn.failed" {
@@ -30,7 +44,7 @@ export function parseEmailLink(search: URLSearchParams): { tokenHash: string; ty
   const tokenHash = search.get("token_hash");
   const type = search.get("type");
   if (!tokenHash || !/^[A-Za-z0-9_-]{16,512}$/.test(tokenHash)) return null;
-  if (type !== "invite" && type !== "recovery") return null;
+  if (!isPasswordSetFlow(type)) return null;
   return { tokenHash, type };
 }
 
@@ -158,14 +172,15 @@ export function registrationFailure(error: unknown): "codeInvalid" | "unavailabl
 const FINAL_STATUSES = new Set([400, 401, 403, 404]);
 
 /**
- * Marks an open invitation accepted (`POST /invitations/accept`), repeating a
+ * Runs a call that must not hold the page — first the invitation acceptance
+ * (`POST /invitations/accept`), now the password-set record too — repeating a
  * transient failure, and never throws: the person still has a password to
  * choose. A no-op on the server when nothing is open, so a second call is
  * safe. Swallowing one failed call left the invitation `sent`, and a re-send
  * then answered `email_unavailable` (pre-pilot defects). Answers whether the
  * acceptance went through.
  */
-export async function acceptInvitationQuietly(
+export async function repeatQuietly(
   accept: () => Promise<unknown>,
   {
     wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
@@ -187,3 +202,6 @@ export async function acceptInvitationQuietly(
   }
   return false;
 }
+
+/** The name the acceptance callers and its tests know `repeatQuietly` by. */
+export const acceptInvitationQuietly = repeatQuietly;

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Locale } from '@tonyai/shared-types';
+import type { Locale, PasswordSetFlow } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
@@ -40,5 +40,17 @@ export class PreferencesService {
         tx,
       );
     });
+  }
+
+  /**
+   * Records that Auth accepted a new password for the caller from an email
+   * link (`account-access`; `pre-g5-security-hardening`). One `password_set`
+   * row as the caller, about their own profile, with the flow and nothing
+   * about the password. Auth changes the password; the API cannot see it, so
+   * this is the web's report of it — and a caller can only ever write it
+   * about themselves.
+   */
+  async recordPasswordSet(user: RequestUser, flow: PasswordSetFlow): Promise<void> {
+    await this.audit.record(user, { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow } });
   }
 }

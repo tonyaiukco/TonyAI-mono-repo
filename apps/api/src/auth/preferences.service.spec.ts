@@ -66,3 +66,13 @@ describe('PreferencesService.setLanguage', () => {
     await expect(service.setLanguage(user, 'tr')).rejects.toThrow('audit down');
   });
 });
+
+describe('PreferencesService.recordPasswordSet (pre-g5-security-hardening)', () => {
+  it.each(['invite', 'recovery'] as const)('writes one password_set row as the caller, about their own profile (%s)', async (flow) => {
+    const { audit, service, prisma } = setup('en');
+    await service.recordPasswordSet(user, flow);
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledWith(user, { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow } });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});

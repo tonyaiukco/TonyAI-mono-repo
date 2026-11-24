@@ -91,6 +91,7 @@
     "own_account_forbidden": "You cannot change your own role or disable your own account — ask another super admin.",
     "access_role_mismatch": "Only Data Entry users are granted subsidiaries; other roles see their whole parent company.",
     "email_unavailable": "This email address already has an account.",
+    "invite_refusals_exhausted": "Too many invitations went to addresses that already have an account. Try again in an hour.",
     "invitation_closed": "This invitation was already accepted.",
     "user_disabled": "This account is disabled — enable it before re-sending its invitation.",
     "boundary_not_found": "Inventory boundary not found.",

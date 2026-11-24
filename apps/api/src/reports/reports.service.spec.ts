@@ -47,6 +47,9 @@ import { AuditService } from '../audit/audit.service';
  * launch pins what the PDF path DOES without paying for what it renders with.
  */
 const pdfPage = {
+  setJavaScriptEnabled: vi.fn(async () => undefined),
+  setRequestInterception: vi.fn(async () => undefined),
+  on: vi.fn(),
   setContent: vi.fn(),
   createPDFStream: vi.fn(async () => new ReadableStream({ start(controller) { controller.enqueue(Buffer.from('%PDF-1.4 stub')); controller.close(); } })),
   close: vi.fn(async () => undefined),
@@ -1306,6 +1309,27 @@ describe('ReportsService', () => {
       expect(html).toContain('&lt;b&gt;Istanbul');
       expect(html).toContain('&lt;i&gt;Izmir');
       expect(html).toContain('&lt;script&gt;');
+    });
+
+    it('isolates the page before the document is set: no script, every request aborted (pre-g5-security-hardening)', async () => {
+      stubRecords(prisma, [makeRecord()]);
+      pdfPage.setJavaScriptEnabled.mockClear();
+      pdfPage.setRequestInterception.mockClear();
+      pdfPage.on.mockClear();
+      pdfPage.setContent.mockClear();
+
+      await service.generatePdf(admin, q);
+
+      expect(pdfPage.setJavaScriptEnabled).toHaveBeenCalledWith(false);
+      expect(pdfPage.setRequestInterception).toHaveBeenCalledWith(true);
+      const setContentAt = pdfPage.setContent.mock.invocationCallOrder[0];
+      expect(pdfPage.setJavaScriptEnabled.mock.invocationCallOrder[0]).toBeLessThan(setContentAt);
+      expect(pdfPage.setRequestInterception.mock.invocationCallOrder[0]).toBeLessThan(setContentAt);
+      const [event, handler] = pdfPage.on.mock.calls[0] as unknown as [string, (r: { abort: (reason: string) => Promise<void> }) => void];
+      expect(event).toBe('request');
+      const abort = vi.fn(async () => undefined);
+      handler({ abort });
+      expect(abort).toHaveBeenCalledWith('blockedbyclient');
     });
 
     it('renders the disclosure into the document the PDF is printed from', async () => {

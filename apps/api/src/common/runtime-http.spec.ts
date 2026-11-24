@@ -101,6 +101,8 @@ describe('real HTTP protections without a database', () => {
     expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
     expect(refused.headers.get('access-control-expose-headers')).toContain('Retry-After');
     expect(refused.headers.get('x-content-type-options')).toBe('nosniff');
+    // A refusal too carries the resource policy (pre-g5-security-hardening).
+    expect(refused.headers.get('cross-origin-resource-policy')).toBe('same-site');
   });
   it('retains every multipart byte while asynchronous authentication runs', async () => {
     const { url } = await boot();

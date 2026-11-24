@@ -4,7 +4,8 @@ import { STATUS_CODES, type Server, type ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
 import { toErrorBody } from './api-error';
 import {
-  CapacityError, INVENTORY_DECLARATION_BODY_MAX_BYTES, isInventoryDeclarationPut, jsonBodyLimit, routeGroup, RuntimeLimits,
+  CapacityError, CSP_REPORT_BODY_MAX_BYTES, CSP_REPORT_MEDIA_TYPES, CSP_REPORT_PER_IP_PER_MINUTE, INVENTORY_DECLARATION_BODY_MAX_BYTES, isCspReportPost,
+  isInventoryDeclarationPut, jsonBodyLimit, routeGroup, RuntimeLimits,
 } from './runtime-limits';
 import { type LimitedRequest, RuntimeRequestInterceptor } from './runtime-request';
 
@@ -29,6 +30,9 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    // The web's CORS fetches are unaffected (CORP governs no-cors loads); another
+    // site cannot embed an API answer (`pre-g5-security-hardening`).
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
     if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     if (limits.stopping && req.path !== '/api/v1/health') return refuse(res, 503, 'Server is shutting down.');
     // Probe exemptions are exact, read-only, and do not exempt /health/synthetic.
@@ -45,7 +49,12 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
         const ip = req.ip ?? req.socket.remoteAddress ?? '';
         if (!isIP(ip)) return refuse(res, 400, 'Invalid client address.');
         releases.push(limits.acquire(`http-ip:${ip}`, c.HTTP_IP_MAX_INFLIGHT));
-        await limits.quota(`ip:${ip}`, c.RATE_IP_PER_MINUTE);
+        // A CSP report spends its own per-address quota, before its body is
+        // read, and never the address's budget for the application: a noisy
+        // page behind an office's one address must not refuse that office's
+        // API calls (`pre-g5-security-hardening` reviews).
+        if (isCspReportPost(req.method, req.path)) await limits.quota(`csp-report:ip:${ip}`, CSP_REPORT_PER_IP_PER_MINUTE);
+        else await limits.quota(`ip:${ip}`, c.RATE_IP_PER_MINUTE);
         if (res.destroyed) return lease.release();
         const group = routeGroup(req.method, req.path);
         const hasBody = Boolean(req.headers['transfer-encoding']) || Number(req.headers['content-length'] ?? 0) > 0;
@@ -55,7 +64,9 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
         const uploadRoute = req.method === 'POST' && (group === 'IMPORT'
           || /^\/api\/v1\/(evidence|activity-records\/[^/]+\/evidence)\/?$/i.test(req.path));
         if (multipart && !uploadRoute) return refuse(res, 415, 'Multipart is not supported on this route.');
-        if (hasBody && !multipart && !['application/json', 'application/x-www-form-urlencoded'].includes(media)) {
+        const cspReport = isCspReportPost(req.method, req.path);
+        if (hasBody && !multipart && !(cspReport && CSP_REPORT_MEDIA_TYPES.includes(media))
+          && !['application/json', 'application/x-www-form-urlencoded'].includes(media)) {
           return refuse(res, 415, 'Unsupported request content type.');
         }
         if (multipart) releases.push(limits.acquire('multipart', c.UPLOAD_CONCURRENCY));
@@ -104,6 +115,13 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
   // parsers and does not install a second set on init. LP3-04's declaration
   // PUT is read first, at its own cap (`jsonBodyLimit`, as admitted above);
   // the global parser then finds that body read and passes it by.
+  // The CSP report receiver reads its body as text, at its own cap, and parses
+  // it itself: a malformed report must still answer 204, never a parser's 400.
+  app.useBodyParser('text', {
+    limit: CSP_REPORT_BODY_MAX_BYTES,
+    inflate: false,
+    type: (req: LimitedRequest) => isCspReportPost(req.method, req.path) && CSP_REPORT_MEDIA_TYPES.includes(mediaOf(req)),
+  });
   app.useBodyParser('json', {
     limit: INVENTORY_DECLARATION_BODY_MAX_BYTES,
     inflate: false,

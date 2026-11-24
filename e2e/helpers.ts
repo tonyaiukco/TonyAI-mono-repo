@@ -551,6 +551,25 @@ export async function registeredAccount(email: string): Promise<RegisteredAccoun
   return rows[0] ?? null;
 }
 
+/** A profile's id by its address, read as the owner (pre-g5-security-hardening). */
+export async function profileIdByEmail(email: string): Promise<string | null> {
+  const rows = await withOwner((prisma) =>
+    prisma.$queryRawUnsafe<{ id: string }[]>('SELECT id::text AS id FROM profiles WHERE email = $1', email.toLowerCase()),
+  );
+  return rows[0]?.id ?? null;
+}
+
+/** The audit rows of one action about one entity, oldest first, read as the owner (pre-g5-security-hardening). */
+export async function auditRowsFor(action: string, entityId: string): Promise<{ userId: string | null; diff: unknown }[]> {
+  return withOwner((prisma) =>
+    prisma.$queryRawUnsafe<{ userId: string | null; diff: unknown }[]>(
+      'SELECT user_id::text AS "userId", diff FROM audit_log WHERE action = $1 AND entity_id = $2 ORDER BY created_at',
+      action,
+      entityId,
+    ),
+  );
+}
+
 /**
  * Whether the API's invitation delivery for this address has finished: the
  * invitation left `pending` (sent, accepted, revoked) or recorded the step it

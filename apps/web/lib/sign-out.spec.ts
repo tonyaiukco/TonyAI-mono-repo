@@ -122,7 +122,7 @@ describe('the session wiring', () => {
     },
   );
 
-  it.each(['app/auth/confirm/confirm-email-link.tsx', 'app/auth/set-password/set-password-form.tsx', 'app/login/page.tsx'])(
+  it.each(['app/auth/confirm/confirm-email-link.tsx', 'app/login/page.tsx'])(
     '%s accepts the invitation through acceptOwnInvitation',
     (file) => {
       // With the subject the Auth operation returned, never a later session read.
@@ -135,6 +135,35 @@ describe('the session wiring', () => {
     expect(source.indexOf('signOut({ scope: "others" })')).toBeGreaterThan(-1);
     expect(source.indexOf('signOut({ scope: "others" })')).toBeLessThan(source.indexOf('await acceptOwnInvitation('));
     expect(source).toMatch(/if \(othersError\) toast\.warning\(t\("setPassword\.othersNotSignedOut"\)\)/);
+  });
+
+  it('the email link marks the tab for its user before going on, and set-password reads it (pre-g5-security-hardening)', () => {
+    const confirm = read('app/auth/confirm/confirm-email-link.tsx');
+    expect(confirm).toMatch(/if \(data\.user\) writeEmailLinkMarker\(tabStorage\(\), data\.user\.id, type\);/);
+    expect(confirm.indexOf('writeEmailLinkMarker(')).toBeGreaterThan(confirm.indexOf('verifyOtp('));
+    expect(confirm.indexOf('writeEmailLinkMarker(')).toBeLessThan(confirm.indexOf('router.replace('));
+
+    const form = read('app/auth/set-password/set-password-form.tsx');
+    // The form needs the marker for the session's own user; the flow is the marker's.
+    expect(form).toMatch(/readEmailLinkMarker\(tabStorage\(\), data\.session\.user\.id\)/);
+    expect(form).toMatch(/if \(access\.kind !== "ready"\) return;/);
+    expect(form).toMatch(/if \(linkFlow === "recovery"\)/);
+    expect(form).not.toMatch(/if \(flow === "recovery"\)/);
+    // No field without the marker.
+    expect(form).toMatch(/access\.kind === "noSession" \|\| access\.kind === "noLink" \?/);
+    // Cleared after the save, and the save recorded with the marker's flow.
+    expect(form.indexOf('clearEmailLinkMarker(tabStorage())')).toBeGreaterThan(form.indexOf('updateUser('));
+    // Both calls for the user the submit re-checked, never a later read of the session.
+    expect(form).toMatch(/await acceptOwnInvitation\(subject\);/);
+    expect(form).toMatch(/await recordPasswordSet\(subject, linkFlow\);/);
+    // The flow is the marker's — on load and at submit — never the address bar's.
+    expect(form).toMatch(/setAccess\(marker \? \{ kind: "ready", flow: marker\.flow \}/);
+    expect(form).toMatch(/const linkFlow = marker\.flow;/);
+    expect(form).not.toMatch(/flow: requestedFlow/);
+    // At submit, the session and the marker are read again.
+    const submit = form.slice(form.indexOf('async function onSubmit'));
+    expect(submit.indexOf('readEmailLinkMarker(')).toBeGreaterThan(-1);
+    expect(submit.indexOf('readEmailLinkMarker(')).toBeLessThan(submit.indexOf('updateUser('));
   });
 
   it('the API client marks its own session end before signing out', () => {

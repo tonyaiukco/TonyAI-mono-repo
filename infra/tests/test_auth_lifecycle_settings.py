@@ -29,6 +29,8 @@ class AuthLifecycleSettingsTests(unittest.TestCase):
         self.assertEqual(expected['mailer_secure_email_change_enabled'], local['email']['double_confirm_changes'])
         self.assertEqual(expected['mailer_autoconfirm'], not local['email']['enable_confirmations'])
         self.assertEqual(expected['security_update_password_require_reauthentication'], local['email']['secure_password_change'])
+        # pre-g5-security-hardening: on, both sides; parity alone would pass with both off.
+        self.assertIs(expected['security_update_password_require_reauthentication'], True)
         self.assertFalse(expected['mailer_notifications_password_changed_enabled'])
         self.assertIn(ORIGIN + '/auth/confirm', expected['uri_allow_list'].split(','))
 

@@ -566,6 +566,8 @@ function InviteDialog({
       onOpenChange(false);
       onInvited(created);
     } catch (error) {
+      // An organisation past its bound of refused invitations answers its own
+      // code, `invite_refusals_exhausted`, worded by the errors catalogue.
       errorToast(error);
     } finally {
       setSending(false);

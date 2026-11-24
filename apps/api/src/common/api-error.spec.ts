@@ -67,6 +67,7 @@ import {
   AccessRoleMismatchError,
   AccountDisabledError,
   EmailUnavailableError,
+  InviteRefusalsExhaustedError,
   RegistrationCodeInvalidError,
   InvitationClosedError,
   OwnAccountError,
@@ -84,7 +85,7 @@ function send(exception: unknown) {
   const host = {
     switchToHttp: () => ({
       getRequest: () => ({ method: 'POST', url: '/api/v1/activity-records' }),
-      getResponse: () => ({ status, headersSent: false }),
+      getResponse: () => ({ status, setHeader: vi.fn(), headersSent: false }),
     }),
   };
   const logger = { event: vi.fn() };
@@ -151,6 +152,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   own_account_forbidden: () => new OwnAccountError('disable'),
   access_role_mismatch: () => new AccessRoleMismatchError(),
   email_unavailable: () => new EmailUnavailableError(),
+  invite_refusals_exhausted: () => new InviteRefusalsExhaustedError(60),
   invitation_closed: () => new InvitationClosedError(),
   user_disabled: () => new UserDisabledError(),
   boundary_not_found: () => new ResourceNotFoundError('boundary_not_found'),
@@ -255,6 +257,17 @@ describe('every domain code, as the client receives it', () => {
     ]) {
       expect(JSON.stringify(send(new HttpException(raw, 422)).body)).toBe(JSON.stringify(clean.body));
     }
+  });
+  it('tells the client when to retry an invitation past the refusal bound (pre-g5-security-hardening)', () => {
+    const setHeader = vi.fn();
+    const host = {
+      switchToHttp: () => ({
+        getRequest: () => ({ method: 'POST', url: '/api/v1/users/invitations' }),
+        getResponse: () => ({ status: vi.fn().mockReturnValue({ json: vi.fn() }), setHeader, headersSent: false }),
+      }),
+    };
+    new HttpExceptionFilter({ event: vi.fn() } as never).catch(new InviteRefusalsExhaustedError(1_234), host as never);
+    expect(setHeader).toHaveBeenCalledWith('Retry-After', 1_234);
   });
   it('has a thrower — no registry code goes unused', () => {
     expect(Object.keys(THROWERS).sort()).toEqual(Object.keys(DOMAIN_ERROR_STATUS).sort());

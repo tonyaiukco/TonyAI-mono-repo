@@ -91,6 +91,7 @@
     "own_account_forbidden": "Kendi rolünüzü değiştiremez veya kendi hesabınızı devre dışı bırakamazsınız; başka bir süper yöneticiden isteyin.",
     "access_role_mismatch": "Bağlı şirket erişimi yalnızca Veri Girişi kullanıcılarına verilir; diğer roller ana şirketin tamamını görür.",
     "email_unavailable": "Bu e-posta adresinin zaten bir hesabı var.",
+    "invite_refusals_exhausted": "Hesabı zaten olan adreslere çok fazla davet gönderildi. Bir saat sonra yeniden deneyin.",
     "invitation_closed": "Bu davet zaten kabul edildi.",
     "user_disabled": "Bu hesap devre dışı; davetini yeniden göndermeden önce etkinleştirin.",
     "boundary_not_found": "Envanter sınırı bulunamadı.",

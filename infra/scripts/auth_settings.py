@@ -36,7 +36,9 @@ def managed_auth_settings(origin, public_web_host=None):
         'mailer_otp_exp': 3600,
         'mailer_secure_email_change_enabled': True,
         'mailer_autoconfirm': True,
-        'security_update_password_require_reauthentication': False,
+        # pre-g5-security-hardening: a password change from a session older than
+        # 24 hours needs the emailed code; the app's email-link flows are fresher.
+        'security_update_password_require_reauthentication': True,
         # Disable/enable rotates the password; never mail a password-change alert.
         'mailer_notifications_password_changed_enabled': False,
     }
