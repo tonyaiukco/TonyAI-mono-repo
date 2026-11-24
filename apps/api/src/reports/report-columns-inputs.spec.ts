@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ReportLedgerRow } from './report-data';
+import { calculationInputs } from '../common/calculation-inputs';
+import legacy from '../calculations/refrigerant-sum-rule.fixtures.json';
 import { csvHeader, csvLedgerRow, excelLedgerHeader, excelLedgerRow, pdfLedgerRow } from './report-columns';
 import { reportVocabulary } from './report-vocabulary';
 
@@ -36,6 +38,24 @@ describe('a record\'s calculation inputs and Scope 2\'s method in the live repor
     expect(refrigerant[header.indexOf('scope2_market_based')]).toBe('');
     const grid = cells(csvLedgerRow(row({ category: 'Electricity', activityType: null, calculationInputs: '', calculationInputsCsv: '' })));
     expect(grid[header.indexOf('scope2_market_based')]).toBe('No market-based result');
+  });
+
+  it.each(['en', 'tr'] as const)('%s renders marked inputs in live PDF and XLSX with English CSV', (locale) => {
+    const vocabulary = reportVocabulary(locale);
+    const calc = {
+      ...legacy.bothMasses,
+      refrigerantTerms: legacy.bothMasses.refrigerantTerms.map((term) => ({ ...term, pricedBy: 'refill' })),
+    };
+    const ledger = row({
+      calculationInputs: calculationInputs(calc, vocabulary),
+      calculationInputsCsv: calculationInputs(calc, reportVocabulary('en')),
+      tCo2e: 126,
+    });
+    const snippet = locale === 'en' ? '35 kg released from the refill' : '35 kg dolum, salınan miktardır';
+    expect(pdfLedgerRow(ledger, vocabulary)).toContain(snippet);
+    expect(excelLedgerRow(ledger, vocabulary).join(' ')).toContain(snippet);
+    expect(cells(csvLedgerRow(ledger))[csvHeader().split(',').indexOf('calculation_inputs')])
+      .toContain('35 kg released from the refill');
   });
 
   it('writes the inputs and the statement in the workbook\'s language', () => {

@@ -179,7 +179,7 @@
       "ncv_and_gcv": "Enter a net calorific value or a billed gross calorific value, not both."
     },
     "equipmentTitle": "Equipment holding this gas",
-    "equipmentHelp": "One line per equipment type, for the whole year. The leak is priced at each type's rate on its installed capacity, plus what was refilled.",
+    "equipmentHelp": "Enter one line per equipment type for the whole year. If it was refilled, the refill is the released mass. Otherwise the estimate uses its installed capacity and leak rate.",
     "equipmentType": "Equipment type",
     "chooseEquipment": "Choose equipment",
     "capacity": "Installed capacity (kg)",

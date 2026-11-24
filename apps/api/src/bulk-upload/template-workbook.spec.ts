@@ -171,6 +171,7 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
 
   it('says how to report for the whole subsidiary', async () => {
     expect(await referenceText()).toContain('Whole subsidiary');
+    expect(await referenceText()).toContain('A positive refill is the released mass. Write 0 to use the capacity estimate.');
   });
 
   it('lists each typed category\'s activity types, and says the others leave the column blank', async () => {

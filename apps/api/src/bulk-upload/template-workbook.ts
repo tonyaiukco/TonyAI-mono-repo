@@ -335,7 +335,7 @@ export async function buildTemplateWorkbook(
     'capacityKg',
     'Refrigerants: the installed capacity of that equipment type, kg. Write 0 for none. Leave activityValue blank on these rows: the record\'s quantity is the sum of its capacityKg.',
   ]);
-  reference.addRow(['refillKg', 'Refrigerants: the mass refilled in the year, kg. Write 0 for none.']);
+  reference.addRow(['refillKg', 'Refrigerants: the mass refilled in the year, kg. A positive refill is the released mass. Write 0 to use the capacity estimate.']);
   reference.addRow([
     'leakRateChoice',
     `Refrigerants: blank or default for the equipment type's default leak rate; alternative only for ${EQUIPMENT_TYPES_WITH_ALTERNATIVE.join(' and ')}.`,

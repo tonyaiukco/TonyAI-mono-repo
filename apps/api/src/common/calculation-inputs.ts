@@ -1,6 +1,7 @@
 import {
   GROSS_TO_NET_RATIO_INPUT,
   isProvenanceSnapshot,
+  refrigerantTermMassKg,
   type ActivityCalculationSnapshot,
   type EquipmentType,
   type Locale,
@@ -27,6 +28,7 @@ export type CalculationInputsKey =
   | 'inputsVolume'
   | 'inputsGrossToNet'
   | 'inputsLine'
+  | 'inputsLineRefill'
   | `inputsEquipment_${EquipmentType}`;
 
 export interface CalculationInputsWords {
@@ -67,13 +69,15 @@ export function calculationInputs(calculation: unknown, words: CalculationInputs
     }
   }
   for (const term of snapshot.refrigerantTerms ?? []) {
-    parts.push(words.text('inputsLine', {
+    const usesRefill = term.pricedBy === 'refill';
+    const mass = refrigerantTermMassKg(term);
+    parts.push(words.text(usesRefill ? 'inputsLineRefill' : 'inputsLine', {
       equipment: words.text(`inputsEquipment_${term.equipmentType as EquipmentType}`),
       capacity: entered(term.capacityKg),
       // `%1` in Turkish, `1%` in English.
       rate: words.locale === 'tr' ? `%${entered(term.leakRate * 100)}` : `${entered(term.leakRate * 100)}%`,
       refill: entered(term.refillKg),
-      mass: derived(term.leakedKg + term.refillKg),
+      mass: usesRefill ? entered(mass) : derived(mass),
     }));
   }
   return parts.join('; ');

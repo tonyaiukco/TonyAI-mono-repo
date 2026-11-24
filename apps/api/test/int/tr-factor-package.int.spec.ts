@@ -87,6 +87,18 @@ describe('the TR factor package against its golden values (LP4-02 PR5, task 5.2)
     if (result.conversion) expect(result.conversion.release.status).toBe('authoritative');
   });
 
+  it('BUG-17 uses only the refill against the sealed TR release', async () => {
+    const result = await priced(tr({
+      category: 'Refrigerants', activityType: 'HFC-227ea', value: 50, unit: 'kg', reportingPeriod: 'annual',
+      parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 50, refillKg: 35, leakRateChoice: 'default' }] },
+    }));
+    expect(result.factorRelease).toMatchObject({
+      status: 'authoritative', edition: 'TONYAI-EF-TR-UK-2026.11-AR6-SEALED',
+    });
+    expect(result.kgCo2e).toBe(126000);
+    expect(result.refrigerantTerms).toMatchObject([{ pricedBy: 'refill', leakedKg: 1, refillKg: 35 }]);
+  });
+
   it('records each input of the gas chain and the FM200 rate with its origin', async () => {
     const billed = await priced(tr({
       category: 'Natural Gas', value: 73.953103, unit: 'standard_cubic_metres', parameters: { billedGcvKcalPerSm3: 9349.174 },

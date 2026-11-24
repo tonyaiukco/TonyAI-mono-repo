@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
-import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
+import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, refrigerantDataset, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
 import { buildIssuanceHtml, earlierDataYearCount, ISSUANCE_CATALOGUES, ISSUANCE_RENDERER, type IssuanceDocument } from './issuance-html';
 import en from './i18n/en.json';
@@ -175,6 +175,16 @@ describe('buildIssuanceHtml', () => {
     expect(html(datasetOf({ records }))).toContain('<td>Not calculated</td>');
   });
 
+  it.each([
+    ['en', '35 kg released from the refill', '36 kg released'],
+    ['tr', '35 kg dolum, salınan miktardır', '36 kg salım'],
+  ] as const)('%s prints old and refill-priced lines side by side', (language, marked, unmarked) => {
+    const dataset = refrigerantDataset();
+    const page = html(dataset, { language });
+    expect(page).toContain(marked);
+    expect(page).toContain(unmarked);
+  });
+
   it('prints in Turkish, with Turkish number formatting, when issued in Turkish (D16)', () => {
     const records = fullYear().map((r) => (r.id === 'g-Q1' ? { ...r, calculation: priced(1.5) } : r));
     const page = html(datasetOf({ records }), { language: 'tr' });
@@ -208,7 +218,7 @@ describe('an Electricity self-generation block in the issued document (self-gen-
   });
 
   it('keeps the renderer version', () => {
-    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v5');
+    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v6');
   });
 });
 

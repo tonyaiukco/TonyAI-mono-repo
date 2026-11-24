@@ -47,6 +47,20 @@ describe('a record\'s calculation inputs in a report (LP4-02 PR5, task 5.3)', ()
     );
   });
 
+  it.each(['en', 'tr'] as const)('%s prints refill as the released mass in both catalogues', (locale) => {
+    const inputs = v3({ refrigerantTerms: [
+      { equipmentType: 'split_air_conditioner', leakRateChoice: 'alternative', capacityKg: 10,
+        leakRate: 0.1, leakedKg: 1, refillKg: 0.5, pricedBy: 'refill' },
+    ] });
+    const expected = locale === 'en'
+      ? '0.5 kg released from the refill. The capacity estimate (10 kg at 10%) was excluded.'
+      : '0,5 kg dolum, salınan miktardır. Kapasiteye dayalı tahmin (10 kg, oran %10) hesaba katılmadı.';
+    for (const catalogue of [REPORT_CATALOGUES[locale], ISSUANCE_CATALOGUES[locale]]) {
+      expect(calculationInputs(inputs, words(locale, catalogue)))
+        .toBe(`${catalogue.inputsEquipment_split_air_conditioner}: ${expected}`);
+    }
+  });
+
   // Codex's review of #282: three fixed decimals printed a real refill of
   // 0.00049 kg (SF6, 25,200) as 0 beside the mass it produced.
   it.each([

@@ -1,6 +1,6 @@
 import {
   REPORT_DATASET_SCHEMA_VERSION,
-  type ActivityCalculationSnapshot, type FactorReleaseSnapshot, type InventoryBoundarySnapshot, type PeriodLockDTO,
+  type ActivityCalculationSnapshot, type CalculationResultV3, type FactorReleaseSnapshot, type InventoryBoundarySnapshot, type PeriodLockDTO,
   type ReportDataset, type ReportDatasetRecord, type ReportDatasetSchemaVersion, type ReportEvidenceReference,
   type ReportReleaseStanding,
 } from '@tonyai/shared-types';
@@ -9,7 +9,8 @@ import { reportDatasetFingerprint } from '../src/report-datasets/dataset-fingerp
 import { referencedSubsidiaryIds } from '../src/report-datasets/dataset-reader';
 import type { RetainedDatasetRow } from '../src/report-issuances/issuance-gate';
 import { buildBoundarySnapshot, type BoundaryRows } from '../src/inventory-boundary/boundary-snapshot';
-import { complete, SITE_1, SITE_2, SUB } from './boundary-fixtures';
+import { complete, SITE_1, SITE_2, SUB, SUB_B, source } from './boundary-fixtures';
+import legacy from '../src/calculations/refrigerant-sum-rule.fixtures.json';
 
 /**
  * Retained datasets for the issuance's DB-free specs (LP3-04 PR D): built as
@@ -141,6 +142,32 @@ export function datasetOf(facts: DatasetFacts = {}): ReportDataset {
     ...assessments,
   };
   return { ...content, fingerprint: reportDatasetFingerprint(content) };
+}
+
+/** A retained legacy and a refill-priced FM200 record in distinct annual slots. */
+export function refrigerantDataset(): ReportDataset {
+  const rows = complete();
+  const subject = { category: 'Refrigerants', activityType: 'HFC-227ea', reportingPeriod: 'annual' } as const;
+  const boundary = frozenBoundary({
+    ...rows,
+    cells: rows.cells.map((cell) => cell.category === subject.category
+      ? { ...cell, applicability: 'included', reason: null }
+      : cell),
+    sources: [...rows.sources, ...[SUB, SUB_B].map((subsidiaryId) => source({
+      id: `refrigerant-${subsidiaryId}`, subsidiaryId, ...subject,
+    }))],
+  });
+  const sum = legacy.bothMasses as CalculationResultV3;
+  const refill: CalculationResultV3 = {
+    ...sum, normalizedValue: 35, kgCo2e: 126000, tCo2e: 126,
+    refrigerantTerms: sum.refrigerantTerms?.map((term) => ({ ...term, pricedBy: 'refill' })) ?? [],
+  };
+  const inputs = { ...subject, scope: 1 as const, activityValue: 50, activityUnit: 'kg' as const, periodValue: 'Annual',
+    locationId: null, locationName: null };
+  return datasetOf({ boundary, records: [
+    record('legacy-fm200', { ...inputs, calculation: sum }),
+    record('refilled-fm200', { ...inputs, subsidiaryId: SUB_B, calculation: refill }),
+  ] });
 }
 
 /** The row a capture retains for `dataset`: its columns and its exact text. */

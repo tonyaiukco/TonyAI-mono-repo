@@ -34,7 +34,8 @@ import tr from './i18n/tr.json';
 // v2 (LP4-02 PR5): a record's calculation inputs and Scope 2's location-based label.
 // v4 (UAT round 2, K1): the tier names — "Parent company" / "Ana Şirket" for the organisation.
 // v5 (ng-kwh-engine): a gross energy bill's gross-to-net ratio among a record's inputs.
-export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v5';
+// v6 (BUG-17): explains a refrigerant term priced on its refill.
+export const ISSUANCE_RENDERER = 'tonyai-issuance-pdf-v6';
 
 export interface IssuanceDocument {
   issuanceId: string;

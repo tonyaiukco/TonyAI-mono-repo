@@ -15,7 +15,10 @@ import { BulkSubmitService } from '../../src/bulk-upload/bulk-submit.service';
 import { FactorReleaseLoader } from '../../src/factor-releases/factor-release-loader';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { attachEvidence, connect, connectLoader, connectOwner, createRecord, createTenant, type Tenant } from './db';
-import { lifecycleServices } from './services';
+import { INT_FACTOR_POLICY, lifecycleServices } from './services';
+import { loadTrReleases } from './tr-releases';
+import { CalculationsService } from '../../src/calculations/calculations.service';
+import legacy from '../../src/calculations/refrigerant-sum-rule.fixtures.json';
 
 /**
  * K11 (LP4-02 PR B2; Decisions 2026-10-11 L4 and P6, 2026-10-13 C1–C7)
@@ -610,5 +613,44 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     await owner.activityRecord.update({ where: { id: record.id }, data: { parameters: Prisma.DbNull } });
     expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.draft);
+  });
+});
+
+
+describe('K11 — BUG-17 refrigerant rule transition', () => {
+  beforeAll(loadTrReleases);
+
+  it('refuses the submitted sum-rule snapshot and approves a no-refill snapshot', async () => {
+    await owner.subsidiary.update({ where: { id: tenant.subsidiaryId }, data: { geographyCode: 'TR' } });
+    const engine = new CalculationsService(runtime, INT_FACTOR_POLICY);
+    const draftInput = { category: 'Refrigerants', activityType: 'HFC-227ea', scope: 1,
+      activityUnit: 'kg', reportingPeriod: 'annual', periodValue: 'Annual' };
+    const price = (year: number, capacityKg: number, refillKg: number) => engine.compute({
+      ...draftInput, geographyCode: 'TR', reportingYear: year, value: capacityKg, unit: 'kg',
+      parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg, refillKg, leakRateChoice: 'default' }] },
+    });
+    const old = legacy.bothMasses;
+    const current = await price(2025, 50, 35);
+    const submitted = await createRecord(runtime, tenant, {
+      ...draftInput, reportingYear: 2025, activityValue: 50, status: 'submitted',
+      parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 50, refillKg: 35, leakRateChoice: 'default' }] },
+      calculation: { ...current, normalizedValue: old.normalizedValue, kgCo2e: old.kgCo2e, tCo2e: old.tCo2e,
+        refrigerantTerms: old.refrigerantTerms } as unknown as Prisma.InputJsonValue,
+    });
+    const unaffected = await createRecord(runtime, tenant, {
+      ...draftInput, reportingYear: 2024, activityValue: 40, status: 'submitted',
+      parameters: { equipment: [{ equipmentType: 'fire_suppression_system', capacityKg: 40, refillKg: 0, leakRateChoice: 'default' }] },
+      calculation: (await price(2024, 40, 0)) as unknown as Prisma.InputJsonValue,
+    });
+    await attachEvidence(runtime, tenant, [submitted.id, unaffected.id]);
+    const before = await row(submitted.id);
+    const beforeAudit = await auditActions(submitted.id);
+    const { records } = lifecycleServices(runtime);
+    await expect(records.approve(tenant.users.superAdmin, submitted.id)).rejects.toBeInstanceOf(CalculationStaleError);
+    expect(await row(submitted.id)).toEqual(before);
+    expect(await auditActions(submitted.id)).toEqual(beforeAudit);
+    await expect(records.approve(tenant.users.superAdmin, unaffected.id)).resolves.toMatchObject({
+      status: 'approved', calculation: { kgCo2e: 2880 },
+    });
   });
 });

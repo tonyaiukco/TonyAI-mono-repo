@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as ExcelJS from 'exceljs';
 import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
-import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, UNCALCULATED } from '../../test/issuance-fixtures';
+import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, refrigerantDataset, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
 import { buildIssuanceHtml, countedRecords } from './issuance-html';
 import { ISSUED_CSV_COLUMNS, ISSUED_TABLES_RENDERER, issuedCsv, issuedWorkbook, type IssuedTablesDocument } from './issuance-tables';
@@ -164,12 +164,29 @@ describe('the issued workbook', () => {
     expect(numeric.reduce((a, b) => a + b, 0)).toBeCloseTo((dataset.scopes[0].tCo2e ?? 0) + (dataset.scopes[1].tCo2e ?? 0), 9);
   });
 
+  it.each([
+    ['en', '35 kg released from the refill', '36 kg released'],
+    ['tr', '35 kg dolum, salınan miktardır', '36 kg salım'],
+  ] as const)('%s localizes workbook inputs and keeps the CSV in English', async (language, marked, unmarked) => {
+    const dataset = refrigerantDataset();
+    const document = doc(dataset, { language });
+    const wb = await load(document);
+    const allCells = wb.worksheets.flatMap((sheet) => rowsOf(sheet).flat()).join('\n');
+    expect(allCells).toContain(marked);
+    expect(allCells).toContain(unmarked);
+    const csv = issuedCsv(document);
+    expect(csvRows(csv).header).toEqual([...ISSUED_CSV_COLUMNS]);
+    expect(csv).toContain('35 kg released from the refill');
+    expect(csv).toContain('36 kg released');
+  });
+
   it('names its issuance, dataset, fingerprint and renderer, and says Scope 3 is not covered', async () => {
     const dataset = mixed();
     const summary = rowsOf((await load(doc(dataset))).getWorksheet('Summary')!);
     expect(summary).toContainEqual(['Issuance', ISSUANCE_ID]);
     expect(summary).toContainEqual(['Dataset', dataset.datasetId]);
     expect(summary).toContainEqual(['Dataset fingerprint', `sha256:${dataset.fingerprint.hex}`, 'tonyai-report-dataset-v1']);
+    expect(ISSUED_TABLES_RENDERER).toBe('tonyai-issuance-tables-v6');
     expect(summary).toContainEqual(['Tables renderer', ISSUED_TABLES_RENDERER]);
     expect(summary).toContainEqual(['Scope 3', 'Scope 3 is not covered by this inventory.']);
   });

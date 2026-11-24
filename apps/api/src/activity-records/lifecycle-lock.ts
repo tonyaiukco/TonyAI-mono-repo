@@ -50,6 +50,25 @@ export interface PeriodKey {
   periodValue: string;
 }
 
+/** The period a record sits in, as `period_locks` and the lifecycle locks key it. */
+export function periodOf(r: PeriodKey): PeriodKey {
+  return {
+    subsidiaryId: r.subsidiaryId,
+    reportingYear: r.reportingYear,
+    reportingPeriod: r.reportingPeriod,
+    periodValue: r.periodValue,
+  };
+}
+
+export function samePeriod(a: PeriodKey, b: PeriodKey): boolean {
+  return (
+    a.subsidiaryId === b.subsidiaryId &&
+    a.reportingYear === b.reportingYear &&
+    a.reportingPeriod === b.reportingPeriod &&
+    a.periodValue === b.periodValue
+  );
+}
+
 /**
  * Options for a lifecycle transaction. Longer than Prisma's 5 s default because
  * a writer may queue behind another writer's locks before doing its own work.

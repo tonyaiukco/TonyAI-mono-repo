@@ -108,12 +108,14 @@ are unchanged.
 
 **Gross energy bills (UAT round 3, `ng-kwh-engine`, 2026-11-20).** A TR natural gas bill entered in kWh or MWh on the gross calorific basis is reduced to net by the factor release's own `reference_ncv / reference_gcv` before it is priced. A record's calculation inputs name that ratio ("gross to net ×0.901147" / "brütten nete ×0,901147"), and the factor appendix keys each path by its factor, its conversion row and its conversion steps, so net and gross bills, and kWh and MWh records, never share a line whose steps are only one of theirs (a report mixing kWh and MWh of one factor now shows both lines). The Excel "Factors Used" sheet appends a `Conversion` column naming each line's steps. The renderers are now `tonyai-issuance-pdf-v5` and `tonyai-issuance-tables-v5`. No figure, row or fingerprint of an earlier issuance changes: no issued dataset holds a gross bill.
 
+**Refrigerant refill (UAT round 4, BUG-17).** For a marked term, the calculation inputs give the refill as the released mass and identify the capacity estimate that was excluded. An unmarked term keeps the estimate-plus-refill wording, including zero-capacity and zero-refill lines. Live and issued PDF and XLSX use the report locale. Live and issued CSV use English and preserve their columns. New PDFs use `tonyai-issuance-pdf-v6`. On-demand XLSX identifies `tonyai-issuance-tables-v6` on the Summary sheet. A previously issued PDF downloads its retained bytes.
+
 **Issued Excel and CSV (K5).** `GET /report-issuances/:id/xlsx` and `/csv`
 project the issuance's RETAINED dataset — re-read, re-verified as an issue
 verifies it (fingerprint, assessments, frozen version), and bound to the
 issuance by its fingerprint — exactly as its PDF does: the scopes' counted
 records, the same figures, gaps, exclusions and withdrawals
-(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v4`).
+(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v6`).
 Written on request and never stored (no migration, no new bucket); the same
 issuance always yields the same rows and figures under one renderer, which the
 tables name, so an issuance made under v1 now downloads with v2's two trailing
