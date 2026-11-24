@@ -99,6 +99,7 @@
     - `web-response-security`: 1 modified, 4 added, "A split content security policy" removed.
 
     Every delta block is in its main spec verbatim. `openspec validate --specs --strict` passes the three; it still fails the three older specs on requirement length only (Open questions).
+  - **Nightly E2E of 2026-11-24 red on `3ff43127` (run 45399116632; 252 passed, 1 failed), fixed on `fix/e2e-registration-open-invitation`:** `registration.spec.ts` asserted the invitation was `sent` after the failed acceptances, true only where a mail transport is configured (local mailpit). CI has none, so delivery stops at the email step and the invitation stays `pending`, which acceptance also takes. The spec now records the status once delivery has finished and asserts it is unchanged. Test-only; no product change.
   - **Open:**
     - Owner: Supabase Cloud custom SMTP for Auth mail.
     - Owner: confirm the legacy anon/service_role JWT keys are disabled.

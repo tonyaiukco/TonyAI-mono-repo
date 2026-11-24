@@ -90,6 +90,11 @@ test.describe('self-service registration', () => {
 
     const invitation = await registrationInvitePath(request, email);
     test.info().annotations.push({ type: 'invitation link', description: `from ${invitation.from}` });
+    // Delivery has finished: `sent` where a mail transport is configured
+    // (local), `pending` with the email step's error where none is (CI). Either
+    // is open, and acceptance takes both.
+    const openStatus = (await registeredAccount(email))?.invitationStatus;
+    expect(['pending', 'sent']).toContain(openStatus);
     // The API refuses every acceptance while Auth works: the confirm step's
     // three tries and the password step's three all fail, and the invitation
     // stays open. The next sign-in closes it (pre-pilot defects; Codex review
@@ -114,7 +119,8 @@ test.describe('self-service registration', () => {
     await expect.poll(() => auditRowsFor('password_set', account.profileId)).toEqual([
       { userId: account.profileId, diff: { flow: 'invite', changeId: expect.stringMatching(/^[0-9a-f-]{36}$/) } },
     ]);
-    expect((await registeredAccount(email))?.invitationStatus).toBe('sent');
+    // Every acceptance failed, so the invitation is still open, as it was.
+    expect((await registeredAccount(email))?.invitationStatus).toBe(openStatus);
 
     await page.getByTestId('sign-out').click();
     await page.waitForURL('**/login');
