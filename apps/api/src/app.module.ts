@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { RuntimeLimits } from './common/runtime-limits';
 import { RuntimeLimitsModule } from './common/runtime-limits.module';
+import { SecurityModule } from './security/security.module';
 import { RuntimeAuthGuard } from './common/runtime-request';
 import { PrismaService } from './prisma/prisma.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -54,6 +55,8 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     InventoryBoundaryModule,
     ReportDatasetsModule,
     ReportIssuancesModule,
+    // pre-g5-security-hardening: the web's CSP violation reports.
+    SecurityModule,
   ],
   controllers: [HealthController],
   providers: [{

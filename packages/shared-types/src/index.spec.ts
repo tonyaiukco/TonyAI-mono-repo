@@ -1358,6 +1358,10 @@ describe('record edit, recall and copy (BUG-R2-03)', () => {
     expect(AUDIT_ACTIONS).not.toContain('withdraw');
   });
 
+  it('records an invitation refused and a password set as their own audit verbs (pre-g5-security-hardening)', () => {
+    expect(AUDIT_ACTIONS).toEqual(expect.arrayContaining(['invite_refused', 'password_set']));
+  });
+
   it('registers the two new refusals with their params', () => {
     expect(API_ERROR_STATUS.record_not_recallable).toBe(400);
     expect(API_ERROR_PARAMS.record_not_recallable).toEqual(['status']);

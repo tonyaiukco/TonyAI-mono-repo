@@ -9,6 +9,7 @@ import { toErrorBody } from '../common/api-error';
 import { JsonLogger } from './json-logger';
 import { currentRequestContext } from './request-context';
 import { captureException } from './sentry';
+import { InviteRefusalsExhaustedError } from '../auth/access-errors';
 import { CapacityError } from '../common/runtime-limits';
 
 /**
@@ -103,7 +104,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // Streamed downloads (@Res) may already be mid-flight — never double-send.
     if (response?.headersSent || response?.destroyed) return;
-    if (exception instanceof CapacityError) response.setHeader('Retry-After', exception.retryAfter);
+    if (exception instanceof CapacityError || exception instanceof InviteRefusalsExhaustedError) {
+      response.setHeader('Retry-After', exception.retryAfter);
+    }
     response.status(status).json(body);
   }
 }

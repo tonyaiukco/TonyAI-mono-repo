@@ -281,3 +281,98 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
+
+describe('inviteMember — refusals audited and bounded (pre-g5-security-hardening)', () => {
+  const NOW = new Date('2026-11-24T10:00:00.000Z');
+  /** A transaction client for one invitation: the actor is an active super_admin of ORG. */
+  function invitation(options: { refusals?: number; taken?: boolean; insertRace?: boolean } = {}) {
+    const audit = { record: vi.fn(async () => undefined) };
+    const tx = {
+      $executeRaw: vi.fn(async () => 1),
+      $queryRaw: vi.fn(async () => [{ now: NOW }]),
+      auditLog: {
+        aggregate: vi.fn(async () => ({ _count: options.refusals ?? 0, _min: { createdAt: new Date(NOW.getTime() - 10 * 60_000) } })),
+      },
+      profile: {
+        findUnique: vi.fn(async (args: { where: { id?: string; email?: string } }) =>
+          args.where.id === 'actor'
+            ? { role: UserRole.super_admin, organisationId: ORG, disabledAt: null, organisation: { offboardedAt: null } }
+            : options.taken ? { id: 'someone' } : null),
+        create: vi.fn(async () => {
+          if (options.insertRace) {
+            const { Prisma } = await import('@tonyai/db');
+            throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' });
+          }
+          return {};
+        }),
+      },
+      subsidiary: { count: vi.fn(async () => 0) },
+      invitation: { create: vi.fn(async () => ({})) },
+      userSubsidiaryAccess: { createMany: vi.fn(async () => ({ count: 0 })) },
+    };
+    const prisma = { $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)) };
+    const service = new AccessAdminService(prisma as unknown as PrismaService, audit as unknown as AuditService);
+    return { audit, tx, prisma, service };
+  }
+  const refusalRows = (audit: { record: ReturnType<typeof vi.fn> }) =>
+    audit.record.mock.calls.filter((c) => (c[1] as { action: string }).action === 'invite_refused');
+
+  it('a taken address answers email_unavailable, creates nothing, and audits the refusal without the address', async () => {
+    const { audit, tx, service } = invitation({ taken: true });
+    await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+    expect(tx.profile.create).not.toHaveBeenCalled();
+    expect(tx.invitation.create).not.toHaveBeenCalled();
+    const rows = refusalRows(audit);
+    expect(rows).toHaveLength(1);
+    expect(rows[0][1]).toEqual({ action: 'invite_refused', entity: 'invitation', entityId: null, diff: { reason: 'email_unavailable' } });
+    // On the transaction, so it commits with nothing else.
+    expect(rows[0][2]).toBe(tx);
+    expect(JSON.stringify(audit.record.mock.calls)).not.toContain(INVITE.email);
+  });
+
+  it('a new address is invited as before, with no refusal row', async () => {
+    const { audit, tx, service } = invitation();
+    await expect(service.inviteMember(user('super_admin'), INVITE)).resolves.toMatchObject({ profileId: expect.any(String) });
+    expect(tx.profile.create).toHaveBeenCalledTimes(1);
+    expect(refusalRows(audit)).toHaveLength(0);
+  });
+
+  it.each([false, true])('at five refusals within the hour, every invitation is refused 429 before the lookup (taken: %s)', async (taken) => {
+    const { audit, tx, service } = invitation({ refusals: 5, taken });
+    const refusal = await service.inviteMember(user('super_admin'), INVITE).catch((e: unknown) => e);
+    expect(refusal).toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
+    // The same answer, whatever the address: it was never looked up.
+    expect(tx.profile.findUnique.mock.calls.filter((c) => c[0].where.email !== undefined)).toHaveLength(0);
+    expect(tx.profile.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+    // A retry hint: until the oldest refusal of the hour (ten minutes old) ages out.
+    expect((refusal as { retryAfter: number }).retryAfter).toBe(50 * 60);
+  });
+
+  it('below the bound, the count is read for this organisation and the last hour on the database clock', async () => {
+    const { tx, service } = invitation({ refusals: 4 });
+    await service.inviteMember(user('super_admin'), INVITE);
+    expect((tx.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray])[0].join('?')).toBe('SELECT now() AS now');
+    expect(tx.auditLog.aggregate).toHaveBeenCalledWith({
+      where: { organisationId: ORG, action: 'invite_refused', createdAt: { gt: new Date(NOW.getTime() - 3_600_000) } },
+      _count: true,
+      _min: { createdAt: true },
+    });
+  });
+
+  it('an insert that loses the race when another request used the last refusal meanwhile answers the bound, and writes nothing (Codex review)', async () => {
+    const { audit, tx, service } = invitation({ insertRace: true });
+    tx.auditLog.aggregate
+      .mockResolvedValueOnce({ _count: 4, _min: { createdAt: new Date(NOW.getTime() - 10 * 60_000) } })
+      .mockResolvedValueOnce({ _count: 5, _min: { createdAt: new Date(NOW.getTime() - 10 * 60_000) } });
+    await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
+    expect(refusalRows(audit)).toHaveLength(0);
+  });
+
+  it('an insert that loses the race for the address is the same refusal, audited in its own transaction', async () => {
+    const { audit, prisma, service } = invitation({ insertRace: true });
+    await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(refusalRows(audit)).toHaveLength(1);
+  });
+});

@@ -1,0 +1,4 @@
+<!-- pre-g5-security-hardening: the code Supabase Auth asks for before a password change from a session older than 24 hours. TonyAI's own screens never ask for it (they serve only a session an email link opened within the hour); it reaches someone only when a client asked Auth directly. English only, as Auth mails one template and the repository holds no Turkish outside the tr catalogue (CLAUDE.md). -->
+<h2>TonyAI</h2>
+<p>Your code to change your password: <strong>{{ .Token }}</strong></p>
+<p>If you did not ask for this, do not change your password, and tell your administrator.</p>

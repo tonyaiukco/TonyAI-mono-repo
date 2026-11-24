@@ -386,7 +386,11 @@ journal and does not provision, transfer credentials or rotate signing keys.
 Keep management responses in process memory (they may contain credentials).
 Record PASS only after all probes succeed. After all management/public/JWKS
 checks pass, the helper prints `Auth policy updated` or `Auth policy unchanged
-(no PATCH)` (no setting values). Run it twice and require the second result to be
+(no PATCH)` (no setting values), and then `Auth policy digest (record as the QA
+variable QA_AUTH_POLICY_DIGEST): authpolicy-v1:…`. For QA, set that GitHub
+environment variable to the printed value: the QA auto-deploy stops before any
+change until it equals the release's policy (runbook 11, *auth-policy*;
+`pre-g5-security-hardening`). Run it twice and require the second result to be
 `unchanged` for the no-second-write evidence. Confirm these dashboard values too:
 
 | Setting | Required result |

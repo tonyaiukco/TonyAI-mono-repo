@@ -1,4 +1,7 @@
 """Public Auth settings assertions. Missing or newly enabled providers fail closed."""
+import hashlib
+import json
+
 from pooler import SafeFailure
 
 
@@ -36,10 +39,31 @@ def managed_auth_settings(origin, public_web_host=None):
         'mailer_otp_exp': 3600,
         'mailer_secure_email_change_enabled': True,
         'mailer_autoconfirm': True,
-        'security_update_password_require_reauthentication': False,
+        # pre-g5-security-hardening: a password change from a session older than
+        # 24 hours needs the emailed code; the app's email-link flows are fresher.
+        'security_update_password_require_reauthentication': True,
         # Disable/enable rotates the password; never mail a password-change alert.
         'mailer_notifications_password_changed_enabled': False,
     }
+
+
+AUTH_POLICY_DIGEST_PREFIX = 'authpolicy-v1:'
+
+
+def auth_policy_digest():
+    """The managed Auth policy's digest, its hosts left out (pre-g5-security-hardening).
+
+    The owner's `supabase_setup.py --reconcile-auth-only` applies the policy and reads it back
+    through the private management API (`validate_managed_auth_settings`), then prints this
+    digest; the owner records it as the QA variable `QA_AUTH_POLICY_DIGEST`. The QA deploy
+    refuses a release whose policy digest is not the recorded one, so no release reaches QA
+    on an Auth policy the owner has not applied and verified there. The site URL and redirect
+    list depend on the environment's hosts and are verified by the same readback."""
+    policy = managed_auth_settings('https://origin.invalid')
+    for key in ('site_url', 'uri_allow_list'):
+        policy.pop(key)
+    canonical = json.dumps(policy, sort_keys=True, separators=(',', ':'))
+    return AUTH_POLICY_DIGEST_PREFIX + hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def validate_managed_auth_settings(settings, origin, public_web_host=None):

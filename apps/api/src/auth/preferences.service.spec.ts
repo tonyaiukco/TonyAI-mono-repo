@@ -1,8 +1,9 @@
+import { Prisma } from '@tonyai/db';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../audit/audit.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
-import { PreferencesService } from './preferences.service';
+import { passwordSetRowId, PreferencesService } from './preferences.service';
 
 // DB-free: what is written, and in which transaction. That the runtime role
 // may write `language` and nothing else new is proven on PostgreSQL in
@@ -64,5 +65,49 @@ describe('PreferencesService.setLanguage', () => {
     const { audit, service } = setup('en');
     audit.record.mockRejectedValueOnce(new Error('audit down'));
     await expect(service.setLanguage(user, 'tr')).rejects.toThrow('audit down');
+  });
+});
+
+describe('PreferencesService.recordPasswordSet (pre-g5-security-hardening)', () => {
+  const CHANGE = '7f3c2a1e-4b5d-4c6e-8f90-123456789abc';
+  function recorder(write: () => Promise<void>) {
+    const audit = { record: vi.fn(write) };
+    const prisma = { auditLog: { findFirst: vi.fn() }, $transaction: vi.fn() };
+    return { audit, prisma, service: new PreferencesService(prisma as unknown as PrismaService, audit as unknown as AuditService) };
+  }
+
+  it.each(['invite', 'recovery'] as const)('writes one password_set row as the caller, with an id derived from them and the change (%s)', async (flow) => {
+    const { audit, prisma, service } = recorder(async () => undefined);
+    await service.recordPasswordSet(user, flow, CHANGE);
+    expect(audit.record).toHaveBeenCalledWith(
+      user,
+      { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow, changeId: CHANGE } },
+      undefined,
+      passwordSetRowId(user.id, CHANGE),
+    );
+    // No read first: the primary key decides (Codex review).
+    expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('answers quietly when the row already exists — a repeat of the same change', async () => {
+    const duplicate = new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`id`)', { code: 'P2002', clientVersion: 'test' });
+    const { service } = recorder(async () => { throw duplicate; });
+    await expect(service.recordPasswordSet(user, 'invite', CHANGE)).resolves.toBeUndefined();
+  });
+
+  it('passes any other failure through', async () => {
+    const failure = new Error('connection lost');
+    const { service } = recorder(async () => { throw failure; });
+    await expect(service.recordPasswordSet(user, 'invite', CHANGE)).rejects.toBe(failure);
+  });
+});
+
+describe('passwordSetRowId', () => {
+  it('is a UUID, the same for the same user and change, and another for any other', () => {
+    const id = passwordSetRowId(user.id, 'change-1');
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(passwordSetRowId(user.id, 'change-1')).toBe(id);
+    expect(passwordSetRowId(user.id, 'change-2')).not.toBe(id);
+    expect(passwordSetRowId('someone-else', 'change-1')).not.toBe(id);
   });
 });

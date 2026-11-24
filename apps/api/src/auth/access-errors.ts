@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpException, UnauthorizedException } from '@nestjs/common';
 import { errorBody } from '../common/api-error';
 
 /**
@@ -46,6 +46,21 @@ export class AccessRoleMismatchError extends ConflictException {
         'access_role_mismatch',
         'Only data_entry users are granted subsidiaries; other roles read their whole organisation.',
       ),
+    );
+  }
+}
+
+/**
+ * `pre-g5-security-hardening`: the inviting organisation met its bound of
+ * refused invitations (`INVITE_REFUSALS_PER_HOUR`). 429 with its own code, so
+ * a screen can tell it from the runtime's capacity refusals, and `Retry-After`
+ * until the oldest refusal of the hour ages out (the exception filter sets it).
+ */
+export class InviteRefusalsExhaustedError extends HttpException {
+  constructor(readonly retryAfter: number) {
+    super(
+      errorBody('invite_refusals_exhausted', 'Too many invitations went to addresses that already have an account. Try again later.'),
+      429,
     );
   }
 }

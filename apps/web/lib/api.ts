@@ -18,6 +18,8 @@ import type {
   ReportIssuanceList,
   ReportIssuancePreview,
   ApiErrorCode,
+  PasswordSetFlow,
+  RecordPasswordSetRequest,
   ApiErrorParams,
   AuditLogDTO,
   AuthUser,
@@ -463,8 +465,22 @@ export const api = {
     apiFetch<UserSummaryDTO>(`/users/${id}/access`, { method: "PUT", body: JSON.stringify(body) }),
   disableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/disable`, { method: "POST" }),
   enableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/enable`, { method: "POST" }),
-  /** The invitee, once `verifyOtp` signed them in (`/auth/confirm`). */
-  /** With the token of the session read that checked who is signed in, never a second read (`acceptOwnInvitation`). */
+  /**
+   * `POST /me/password-set`: Auth accepted a new password from an email link
+   * (`pre-g5-security-hardening`). With the token of the session read that
+   * checked who is signed in (`recordPasswordSet`), never a second read.
+   */
+  recordPasswordSet: (flow: PasswordSetFlow, changeId: string, accessToken: string) =>
+    apiFetch<void>("/me/password-set", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ flow, changeId } satisfies RecordPasswordSetRequest),
+    }),
+  /**
+   * The invitee, once `verifyOtp` signed them in (`/auth/confirm`). With the
+   * token of the session read that checked who is signed in, never a second
+   * read (`acceptOwnInvitation`).
+   */
   acceptInvitation: (accessToken: string) =>
     apiFetch<void>("/invitations/accept", { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }),
   /**

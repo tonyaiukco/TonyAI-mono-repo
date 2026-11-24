@@ -122,11 +122,11 @@ describe('the session wiring', () => {
     },
   );
 
-  it.each(['app/auth/confirm/confirm-email-link.tsx', 'app/auth/set-password/set-password-form.tsx', 'app/login/page.tsx'])(
+  it.each(['app/auth/confirm/confirm-email-link.tsx', 'app/login/page.tsx'])(
     '%s accepts the invitation through acceptOwnInvitation',
     (file) => {
-      // With the subject the Auth operation returned, never a later session read.
-      expect(read(file)).toMatch(/await acceptOwnInvitation\(data\.user\?\.id\);/);
+      // With the token the Auth operation returned, never a later session read.
+      expect(read(file)).toMatch(/await acceptOwnInvitation\(data\.session\?\.access_token\);/);
     },
   );
 
@@ -135,6 +135,41 @@ describe('the session wiring', () => {
     expect(source.indexOf('signOut({ scope: "others" })')).toBeGreaterThan(-1);
     expect(source.indexOf('signOut({ scope: "others" })')).toBeLessThan(source.indexOf('await acceptOwnInvitation('));
     expect(source).toMatch(/if \(othersError\) toast\.warning\(t\("setPassword\.othersNotSignedOut"\)\)/);
+  });
+
+  it('the email link marks the tab for its user before going on, and set-password reads it (pre-g5-security-hardening)', () => {
+    const confirm = read('app/auth/confirm/confirm-email-link.tsx');
+    expect(confirm).toMatch(/if \(data\.user\) writeEmailLinkMarker\(tabStorage\(\), data\.user\.id, sessionIdOf\(data\.session\?\.access_token\), type\);/);
+    expect(confirm.indexOf('writeEmailLinkMarker(')).toBeGreaterThan(confirm.indexOf('verifyOtp('));
+    expect(confirm.indexOf('writeEmailLinkMarker(')).toBeLessThan(confirm.indexOf('router.replace('));
+
+    const form = read('app/auth/set-password/set-password-form.tsx');
+    // The form needs the marker for the session's own user; the flow is the marker's.
+    expect(form).toMatch(/readEmailLinkMarker\(tabStorage\(\), data\.session\.user\.id, sessionIdOf\(data\.session\.access_token\)\)/);
+    expect(form).toMatch(/if \(access\.kind !== "ready"\) return;/);
+    expect(form).toMatch(/if \(linkFlow === "recovery"\)/);
+    expect(form).not.toMatch(/if \(flow === "recovery"\)/);
+    // No field without the marker.
+    expect(form).toMatch(/access\.kind === "noSession" \|\| access\.kind === "noLink" \?/);
+    // Cleared after the save, and the save recorded with the marker's flow.
+    expect(form.indexOf('clearEmailLinkMarker(tabStorage())')).toBeGreaterThan(form.indexOf('updateUser('));
+    // Both calls with the token of the session the submit re-checked, never a later read of the session.
+    expect(form).toMatch(/await acceptOwnInvitation\(current\.access_token\);/);
+    expect(form).toMatch(/await recordPasswordSet\(current\.access_token, linkFlow\);/);
+    // The flow is the marker's — on load and at submit — never the address bar's.
+    expect(form).toMatch(/setAccess\(marker \? \{ kind: "ready", flow: marker\.flow \}/);
+    expect(form).toMatch(/const linkFlow = marker\.flow;/);
+    expect(form).not.toMatch(/flow: requestedFlow/);
+    // At submit, the session and the marker are read again.
+    const submit = form.slice(form.indexOf('async function onSubmit'));
+    expect(submit.indexOf('readEmailLinkMarker(')).toBeGreaterThan(-1);
+    expect(submit.indexOf('readEmailLinkMarker(')).toBeLessThan(submit.indexOf('updateUser('));
+    // The password and the other sessions' sign-out go through Auth bound to the
+    // checked session, never the shared client, which reads the session again (Codex P1).
+    expect(submit).toMatch(/auth = await authForCheckedSession\(current\);/);
+    expect(submit).toMatch(/await auth\.updateUser\(\{ password \}\)/);
+    expect(submit).toMatch(/await auth\s*\.signOut\(\{ scope: "others" \}\)/);
+    expect(submit).not.toMatch(/supabase\.auth\.updateUser|supabase\.auth\s*\.signOut/);
   });
 
   it('the API client marks its own session end before signing out', () => {

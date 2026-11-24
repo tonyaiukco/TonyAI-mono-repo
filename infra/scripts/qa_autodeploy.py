@@ -11,6 +11,8 @@ Container Apps CLI extension is needed and before/after snapshots are comparable
 
 Subcommands, in workflow order:
   head            before Azure login: is this commit still main's head?
+  auth-policy     before Azure login: the hosted Auth policy the owner applied and verified
+                  (its digest, the QA variable QA_AUTH_POLICY_DIGEST) is this release's
   plan            decide whether this commit deploys (image-relevant change)
   wait-ci         after the images are built in parallel: CI must pass for this exact commit
   migrate         apply pending Prisma migrations, then the read-only owner privilege check
@@ -45,6 +47,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from auth_settings import auth_policy_digest  # noqa: E402
 from candidate import bind  # noqa: E402
 from cloud_ops import command, secret  # noqa: E402
 from drain_api import drain, settle, revisions  # noqa: E402
@@ -868,9 +871,25 @@ def shield_signals():
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 
+def check_auth_policy(env, digest=auth_policy_digest):
+    """Refuse a release whose managed Auth policy the owner has not applied to QA (pre-g5-security-hardening).
+
+    Only the owner's `supabase_setup.py --reconcile-auth-only` applies the policy and reads it back
+    through the private management API; it prints the digest, which the owner records as the QA
+    variable QA_AUTH_POLICY_DIGEST. The deploy holds no management token, so it checks that record,
+    before any login, build or change: a policy change in the repository stops the deploy until
+    the owner has applied it."""
+    expected = digest()
+    recorded = env.get('QA_AUTH_POLICY_DIGEST', '')
+    if recorded != expected:
+        raise SafeFailure('The hosted Auth policy recorded for QA (' + (recorded or 'none') + ') is not this release\'s ('
+                          + expected + '). Owner: run infra/scripts/supabase_setup.py --reconcile-auth-only for QA, then '
+                          'set the QA variable QA_AUTH_POLICY_DIGEST to the digest it prints, and re-run this deploy.')
+
+
 def main(argv=None, env=os.environ):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('operation', choices=['head', 'plan', 'wait-ci', 'migrate', 'rollout', 'check-github',
+    parser.add_argument('operation', choices=['head', 'auth-policy', 'plan', 'wait-ci', 'migrate', 'rollout', 'check-github',
                                               'inputs', 'fetch-candidate', 'rollback'])
     parser.add_argument('--sha')
     parser.add_argument('--candidate')
@@ -879,6 +898,10 @@ def main(argv=None, env=os.environ):
     parser.add_argument('--mode', choices=['candidate', 'same-image'], help='rollback: target kind')
     parser.add_argument('--run-id', help='fetch-candidate: the QA deploy run that published the candidate')
     args = parser.parse_args(argv)
+    if args.operation == 'auth-policy':
+        check_auth_policy(env)
+        print('PASS: hosted Auth policy ' + auth_policy_digest() + ' was applied and verified by the owner.')
+        return
     if args.operation == 'check-github':
         verify_qa_environment()
         print('PASS: main is ruleset-protected and environment qa admits deployments from main only.')

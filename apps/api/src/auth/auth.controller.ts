@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post } from '@nestjs/common';
 import { DEFAULT_LOCALE, isLocale, type AuthUser } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from './current-user.decorator';
 import type { RequestUser } from './auth.types';
+import { RecordPasswordSetDto } from './dto/record-password-set.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { PreferencesService } from './preferences.service';
 
@@ -39,5 +40,12 @@ export class AuthController {
   ): Promise<AuthUser> {
     await this.preferences.setLanguage(user, dto.language);
     return this.me(user);
+  }
+
+  /** The web's record of a password set from an email link: 204, one `password_set` audit row. */
+  @Post('me/password-set')
+  @HttpCode(204)
+  async recordPasswordSet(@CurrentUser() user: RequestUser, @Body() dto: RecordPasswordSetDto): Promise<void> {
+    await this.preferences.recordPasswordSet(user, dto.flow, dto.changeId);
   }
 }

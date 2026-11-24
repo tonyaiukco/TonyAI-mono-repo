@@ -71,6 +71,11 @@ vi.mock('puppeteer', () => {
   const page = () => {
     let html = '';
     return {
+      // The page's isolation (`pdf-rendering`, pre-g5-security-hardening) is
+      // proven on a real Chromium in pdf-isolation.int.spec.ts.
+      setJavaScriptEnabled: async () => undefined,
+      setRequestInterception: async () => undefined,
+      on: () => undefined,
       setContent: async (content: string) => {
         html = content;
       },

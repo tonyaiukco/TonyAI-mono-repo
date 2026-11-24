@@ -1,10 +1,11 @@
-import { expect, test, type APIResponse } from '@playwright/test';
+import { expect, test, type APIResponse, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, login } from './helpers';
 
 /**
- * The headers every web response carries, and the report-only policy's sources
- * against the screens a pilot user opens (Decisions 2026-11-09). The resource
- * directives are enforced only once this has held on hosted, after QA round 2.
+ * The headers every web response carries, and the enforced content security
+ * policy against every screen a pilot user opens (Decisions 2026-11-09;
+ * `pre-g5-security-hardening`: the resource directives are enforced, and
+ * violations are reported to the API).
  */
 function expectSecurityHeaders(response: APIResponse): void {
   const headers = response.headers();
@@ -12,8 +13,16 @@ function expectSecurityHeaders(response: APIResponse): void {
   expect(headers['x-frame-options']).toBe('DENY');
   expect(headers['referrer-policy']).toBe('no-referrer');
   expect(headers['permissions-policy']).toBe('camera=(), microphone=(), geolocation=()');
-  expect(headers['content-security-policy']).toBe("frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'");
-  expect(headers['content-security-policy-report-only']).toContain("default-src 'self'");
+  expect(headers['cross-origin-opener-policy']).toBe('same-origin');
+  expect(headers['cross-origin-resource-policy']).toBe('same-origin');
+  const policy = headers['content-security-policy'];
+  for (const directive of ["frame-ancestors 'none'", "base-uri 'self'", "object-src 'none'", "form-action 'self'",
+    "default-src 'self'", "script-src 'self' 'unsafe-inline'", "style-src 'self' 'unsafe-inline'", 'connect-src ']) {
+    expect(policy, directive).toContain(directive);
+  }
+  expect(policy).toMatch(/report-uri \S+\/security\/csp-reports$/);
+  expect(policy).not.toContain('report-to');
+  expect(headers['content-security-policy-report-only']).toBeUndefined();
   expect(headers['x-powered-by']).toBeUndefined();
 }
 
@@ -36,15 +45,52 @@ test('another origin cannot frame a page', async ({ page, baseURL }) => {
   await expect.poll(() => page.frames()[1]?.url(), { timeout: 15_000 }).toMatch(/^chrome-error:/);
 });
 
-test('the pilot screens load with no report-only violation', async ({ page }) => {
+/** Collects every CSP message the console prints while `walk` runs. */
+async function violationsWhile(page: Page, walk: () => Promise<void>): Promise<string[]> {
   const violations: string[] = [];
-  page.on('console', (message) => {
+  const listener = (message: { text(): string }) => {
     if (/Content Security Policy|Content-Security-Policy/i.test(message.text())) violations.push(message.text());
-  });
-  await login(page, ADMIN_EMAIL);
-  for (const path of ['/', '/emissions', '/reports']) {
-    await page.goto(path);
-    await page.waitForLoadState('networkidle');
+  };
+  page.on('console', listener);
+  try {
+    await walk();
+  } finally {
+    page.off('console', listener);
   }
-  expect(violations).toEqual([]);
+  return violations;
+}
+
+test('every pilot screen loads under the enforced policy with no violation', async ({ page }) => {
+  const signedOut = await violationsWhile(page, async () => {
+    for (const path of ['/login', '/register', '/forgot-password']) {
+      await page.goto(path);
+      await page.waitForLoadState('networkidle');
+    }
+  });
+  expect(signedOut).toEqual([]);
+
+  const signedIn = await violationsWhile(page, async () => {
+    await login(page, ADMIN_EMAIL);
+    for (const path of ['/', '/emissions', '/data-entry', '/review', '/reports', '/users', '/subsidiaries', '/inventory-boundary', '/audit']) {
+      await page.goto(path);
+      await page.waitForLoadState('networkidle');
+    }
+  });
+  expect(signedIn).toEqual([]);
+});
+
+test('a script from another origin is blocked, not merely reported', async ({ page }) => {
+  await page.goto('/login');
+  const violation = await page.evaluate(
+    () =>
+      new Promise<{ directive: string; disposition: string; blocked: string }>((resolve) => {
+        document.addEventListener('securitypolicyviolation', (event) =>
+          resolve({ directive: event.effectiveDirective, disposition: event.disposition, blocked: event.blockedURI }),
+        );
+        const script = document.createElement('script');
+        script.src = 'https://blocked.invalid/injected.js';
+        document.head.appendChild(script);
+      }),
+  );
+  expect(violation).toEqual({ directive: 'script-src-elem', disposition: 'enforce', blocked: 'https://blocked.invalid/injected.js' });
 });

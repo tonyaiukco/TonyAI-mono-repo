@@ -231,6 +231,44 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     }
   });
 
+  it('refusals are audited without the address and bound an organisation to five an hour; another organisation is unaffected (pre-g5-security-hardening)', async () => {
+    // A tenant of its own: the bound would refuse the other tests' invitations in A.
+    const C = await createTenant();
+    try {
+      const inviteAs = (email: string) => services(inbox().transport).lifecycle.invite(C.users.superAdmin, {
+        email, fullName: 'Int Invitee', role: UserRole.data_entry, language: 'en', subsidiaryIds: [],
+      });
+      // Five refusals of an hour ago or more do not count.
+      for (let i = 0; i < 5; i += 1) {
+        await owner.auditLog.create({ data: {
+          userId: C.users.superAdmin.id, role: 'super_admin', organisationId: C.organisationId, action: 'invite_refused',
+          entity: 'invitation', entityId: null, diff: { reason: 'email_unavailable' }, createdAt: new Date(Date.now() - 2 * 3_600_000),
+        } });
+      }
+      for (let i = 0; i < 5; i += 1) {
+        await expect(inviteAs(A.users.consultant.email)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+      }
+      const rows = await owner.auditLog.findMany({ where: { organisationId: C.organisationId, action: 'invite_refused', createdAt: { gt: new Date(Date.now() - 3_600_000) } } });
+      expect(rows).toHaveLength(5);
+      expect(rows.every((r) => r.userId === C.users.superAdmin.id && r.entity === 'invitation' && r.entityId === null)).toBe(true);
+      expect(JSON.stringify(rows.map((r) => r.diff))).not.toContain('@');
+
+      // The sixth, for a taken address and for a new one alike: 429, nothing written.
+      const fresh = address();
+      for (const email of [A.users.consultant.email, fresh]) {
+        await expect(inviteAs(email)).rejects.toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
+      }
+      expect(await owner.profile.count({ where: { email: fresh } })).toBe(0);
+      expect(await owner.auditLog.count({ where: { organisationId: C.organisationId, action: 'invite_refused' } })).toBe(10);
+
+      // Another organisation still invites.
+      const created = await invite(inbox().transport);
+      expect(created.id).toEqual(expect.any(String));
+    } finally {
+      await C.cleanup();
+    }
+  });
+
   it('an address is matched exactly — `_` and `%` are characters, never wildcards over other tenants (review P1)', async () => {
     const target = B.users.consultant.email; // int-consultant-<tag>@tonyai.test
     const underscore = target.replace('consultant', 'consultan_');
@@ -895,6 +933,31 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
     expect(invitation).toMatchObject({ status: InvitationStatus.accepted, revokedAt: null });
     expect(await owner.auditLog.count({ where: { entityId: created.id, action: 'accept' } })).toBe(1);
+  });
+
+  it('Auth asks an older session for reauthentication before a password change, never the email-link session (pre-g5-security-hardening)', async () => {
+    const invited = inbox();
+    const created = await invite(invited.transport);
+    const session = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(invited.sent[0], 'invite') });
+    expect(session.error).toBeNull();
+    const holder = browser();
+    await holder.auth.setSession(session.data.session!);
+
+    // The email-link session is fresh: no code asked for.
+    expect((await holder.auth.updateUser({ password: 'first-chosen-pass-1' })).error).toBeNull();
+
+    // Its creation is what Auth measures. At 23 hours old: still no code.
+    const age = async (hours: number) =>
+      owner.$executeRawUnsafe(`UPDATE auth.sessions SET created_at = now() - interval '${hours} hours' WHERE user_id = $1::uuid`, created.id);
+    expect(await age(23)).toBeGreaterThan(0);
+    expect((await holder.auth.updateUser({ password: 'second-chosen-pass-1' })).error).toBeNull();
+    // At 25 hours old: refused without the code.
+    expect(await age(25)).toBeGreaterThan(0);
+    const refused = await holder.auth.updateUser({ password: 'stolen-session-pass-2' });
+    expect(refused.error?.code).toBe('reauthentication_needed');
+    // The password stays as it was.
+    expect((await browser().auth.signInWithPassword({ email: created.email, password: 'second-chosen-pass-1' })).error).toBeNull();
+    expect((await browser().auth.signInWithPassword({ email: created.email, password: 'stolen-session-pass-2' })).error).not.toBeNull();
   });
 
   it('a reset link accepts an invitation its owner never opened, and closes it', async () => {

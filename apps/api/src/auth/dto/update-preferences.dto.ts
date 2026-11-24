@@ -6,3 +6,4 @@ export class UpdatePreferencesDto implements UpdatePreferencesRequest {
   @IsIn(SUPPORTED_LOCALES)
   language!: Locale;
 }
+

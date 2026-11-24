@@ -15,6 +15,7 @@ import {
   AccountDisabledError,
   EmailUnavailableError,
   InvitationClosedError,
+  InviteRefusalsExhaustedError,
   OwnAccountError,
   UserDisabledError,
 } from './access-errors';
@@ -269,18 +270,26 @@ export class AccessAdminService {
     const subsidiaryIds = [...new Set(input.subsidiaryIds.map(canonicalId))].sort();
     if (input.role !== DbUserRole.data_entry && subsidiaryIds.length) throw new AccessRoleMismatchError();
     const profileId = randomUUID();
+    let outcome: 'created' | 'refused';
     try {
-      await this.prisma.$transaction(async (tx) => {
+      outcome = await this.prisma.$transaction(async (tx) => {
         const admin = await lockAndReadActor(tx, actor, organisationId);
         // The request's own subsidiaries first, so a refusal about them never
         // depends on whether some address exists.
         await assertSubsidiaries(tx, organisationId, subsidiaryIds);
+        // Past its bound, the organisation learns nothing more about any
+        // address, new or taken: refused before the lookup (`account-access`).
+        await assertInviteRefusalBound(tx, organisationId);
         // D17: one organisation per account — an address with a profile anywhere
         // is unavailable. Exact equality on the stored spelling (CHECK
         // `profiles_email_normalised`), never a pattern; the unique index
-        // catches the race between tenants.
+        // catches the race between tenants. The refusal is audited and
+        // committed — never the address — and only then answered.
         const taken = await tx.profile.findUnique({ where: { email }, select: { id: true } });
-        if (taken) throw new EmailUnavailableError();
+        if (taken) {
+          await this.recordInviteRefusal(tx, admin);
+          return 'refused' as const;
+        }
         await tx.profile.create({
           data: {
             id: profileId,
@@ -310,12 +319,39 @@ export class AccessAdminService {
             tx,
           );
         }
+        return 'created' as const;
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw new EmailUnavailableError();
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // Another tenant took the address between the lookup and the insert:
+        // the same refusal, audited in a transaction of its own. The lock was
+        // released with the first transaction, so the bound is counted again
+        // under it: another request of this organisation may have used the
+        // last refusal meanwhile (Codex review).
+        await this.prisma.$transaction(async (tx) => {
+          const admin = await lockAndReadActor(tx, actor, organisationId);
+          await assertInviteRefusalBound(tx, organisationId);
+          await this.recordInviteRefusal(tx, admin);
+        });
+        throw new EmailUnavailableError();
+      }
       throw err;
     }
+    if (outcome === 'refused') throw new EmailUnavailableError();
     return { profileId };
+  }
+
+  /**
+   * One `invite_refused` row for the inviting organisation — the reason, never
+   * the address. These rows are the bound's state (`assertInviteRefusalBound`):
+   * an audit writer that ever turns asynchronous would silently lift the bound.
+   */
+  private async recordInviteRefusal(tx: Prisma.TransactionClient, admin: RequestUser): Promise<void> {
+    await this.audit.record(
+      admin,
+      { action: 'invite_refused', entity: 'invitation', entityId: null, diff: { reason: 'email_unavailable' } },
+      tx,
+    );
   }
 
   /**
@@ -604,6 +640,33 @@ function assertTenantAdmin(actor: RequestUser): string {
  */
 export async function lockTenantAdmin(tx: Prisma.TransactionClient, organisationId: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${TENANT_ADMIN_LOCK_NAMESPACE}::int4, ${tenantAdminLockKey(organisationId)}::int4)`;
+}
+
+/** Refusals an organisation may meet within an hour before every invitation is refused (`account-access`). */
+export const INVITE_REFUSALS_PER_HOUR = 5;
+
+/**
+ * The invite route answers whether an address has an account anywhere (D17),
+ * and self-service registration makes a `super_admin` of anyone holding the
+ * code. So an organisation's `invite_refused` rows of the last hour bound it:
+ * at `INVITE_REFUSALS_PER_HOUR`, every invitation is refused 429 before the
+ * address is looked up, until the oldest ages out. Counted on the database's
+ * clock, which also stamps the rows; run under the tenant lock, so one
+ * organisation's invitations cannot race past the bound.
+ */
+async function assertInviteRefusalBound(tx: Prisma.TransactionClient, organisationId: string): Promise<void> {
+  // The database's clock — the one `created_at` defaults to — read without
+  // naming the trail in raw SQL (the append-only guard forbids that).
+  const [{ now }] = await tx.$queryRaw<{ now: Date }[]>`SELECT now() AS now`;
+  const { _count: refusals, _min: { createdAt: oldest } } = await tx.auditLog.aggregate({
+    where: { organisationId, action: 'invite_refused', createdAt: { gt: new Date(now.getTime() - 3_600_000) } },
+    _count: true,
+    _min: { createdAt: true },
+  });
+  if (refusals >= INVITE_REFUSALS_PER_HOUR) {
+    const retryAfter = oldest ? Math.max(1, Math.ceil((oldest.getTime() + 3_600_000 - now.getTime()) / 1000)) : 3600;
+    throw new InviteRefusalsExhaustedError(retryAfter);
+  }
 }
 
 /**

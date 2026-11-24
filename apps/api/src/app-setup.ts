@@ -5,7 +5,8 @@ import type { JsonLogger } from './observability/json-logger';
 import { LoggingInterceptor } from './observability/logging.interceptor';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { RuntimeLimits } from './common/runtime-limits';
-import { configureRuntimeHttp } from './common/runtime-http';
+import type { Response } from 'express';
+import { configureRuntimeHttp, setSecurityHeaders } from './common/runtime-http';
 
 /**
  * Everything that decides what a request and its error look like: the
@@ -18,6 +19,11 @@ export function configureApp(
   logger: JsonLogger,
   options: { requestLogging?: boolean; runtimeLimits?: RuntimeLimits } = {},
 ): void {
+  // Before CORS, which ends a preflight itself: every answer carries them.
+  app.use((_req: unknown, res: Response, next: () => void) => {
+    setSecurityHeaders(res);
+    next();
+  });
   app.enableCors({
     origin: (process.env.WEB_ORIGIN ?? 'http://localhost:3000').split(','),
     credentials: true,

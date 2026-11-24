@@ -58,7 +58,10 @@ export class PdfRenderer implements OnModuleDestroy {
       // In containers we use the distro Chromium (PUPPETEER_EXECUTABLE_PATH);
       // locally the var is unset and Puppeteer falls back to its bundled Chrome.
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      // No host resolves (`pdf-rendering`): a DNS prefetch or a preconnect hint
+      // goes through the resolver and the socket pool, around the page's
+      // request interception (security-rls review). The render needs no host.
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--host-resolver-rules=MAP * ~NOTFOUND'],
     });
     return this.browserPromise;
   }
@@ -88,6 +91,7 @@ export class PdfRenderer implements OnModuleDestroy {
       if (expired) throw new QueryTooBroadError();
       const engine = await browser.version();
       page = await browser.newPage();
+      await isolate(page);
       await page.setContent(html, { waitUntil: 'load', timeout: this.limits.PDF_TIMEOUT_MS });
       const stream = await page.createPDFStream({
         timeout: this.limits.PDF_TIMEOUT_MS,
@@ -121,4 +125,20 @@ export class PdfRenderer implements OnModuleDestroy {
       await page?.close().catch(() => undefined);
     }
   }
+}
+
+/**
+ * A render runs no script and reaches no network (`pdf-rendering`;
+ * `pre-g5-security-hardening`). The report HTML is the API's own and escapes
+ * every caller value, but nothing in it needs either, so hostile text that
+ * slipped past an escape could still neither act inside Chromium nor call
+ * out of it. `setContent` loads the document without a request event, so
+ * only what the document references is aborted.
+ */
+export async function isolate(page: Pick<Page, 'setJavaScriptEnabled' | 'setRequestInterception' | 'on'>): Promise<void> {
+  await page.setJavaScriptEnabled(false);
+  await page.setRequestInterception(true);
+  page.on('request', (request) => {
+    void request.abort('blockedbyclient').catch(() => undefined);
+  });
 }

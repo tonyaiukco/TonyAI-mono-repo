@@ -1,59 +1,49 @@
 import { api } from "./api";
-import { acceptInvitationQuietly } from "./auth-view";
-import { getSupabaseBrowserClient } from "./supabase";
+import { repeatQuietly } from "./auth-view";
 
-/** How long a caller waits for the acceptance before going on; the call itself goes on. */
-export const ACCEPT_WAIT_MS = 5_000;
-
-/** The session now, read once; none when it cannot be read. */
-async function currentSession(): Promise<{ userId: string; accessToken: string } | null> {
-  try {
-    const { data } = await getSupabaseBrowserClient().auth.getSession();
-    return data.session ? { userId: data.session.user.id, accessToken: data.session.access_token } : null;
-  } catch {
-    return null;
-  }
-}
-
-/** The session is no longer the subject's: a refusal no repeat can change. */
-class SessionChangedError extends Error {
-  readonly status = 401;
-  constructor() {
-    super("The session is no longer the one that started the acceptance.");
-  }
-}
+/** How long a caller waits for a bounded call before going on; the call itself goes on. */
+export const BOUNDED_CALL_WAIT_MS = 5_000;
+/** The acceptance's wait: the same bound. */
+export const ACCEPT_WAIT_MS = BOUNDED_CALL_WAIT_MS;
 
 /**
- * Accepts the open invitation of `userId` — the subject the initiating Auth
- * operation returned (sign-in, the email link, the password update) —
- * quietly and with repeats (`acceptInvitationQuietly`). Every attempt reads
- * the session once and sends that read's own token, and only while it is
- * still `userId`'s: another tab that signed someone else in meanwhile stops
- * it, instead of closing that person's invitation (Codex reviews of #350).
- *
- * Called by the email link, after the password is chosen, and after every
- * password sign-in. The last one is the reconciliation: an acceptance that
- * failed through every repeat, with the API down while Auth was up, closes at
- * the next sign-in instead of staying `sent`. A no-op on the server for anyone
- * with nothing open.
- *
- * Answers whether it went through, within `ACCEPT_WAIT_MS` at most: a hung
- * API never holds the page (false then, while the call goes on).
+ * Runs `call` with `accessToken` — the token of the session the initiating Auth
+ * operation returned or the screen checked — quietly and with repeats
+ * (`repeatQuietly`), every repeat with that same token. The browser's shared
+ * session is never read again: another tab that signs someone else in
+ * meanwhile can neither redirect the call to that person nor stop it (Codex
+ * reviews of #350 and of `pre-g5-security-hardening`). Answers whether it went
+ * through, within `waitAtMost`: a hung API never holds the page (false then,
+ * while the call goes on).
  */
-export async function acceptOwnInvitation(userId: string | undefined, waitAtMost = ACCEPT_WAIT_MS): Promise<boolean> {
-  if (!userId) return false;
-  const accepted = acceptInvitationQuietly(async () => {
-    const session = await currentSession();
-    if (session?.userId !== userId) throw new SessionChangedError();
-    await api.acceptInvitation(session.accessToken);
-  });
+export async function callWithTokenQuietly(
+  accessToken: string | undefined,
+  call: (accessToken: string) => Promise<unknown>,
+  waitAtMost = BOUNDED_CALL_WAIT_MS,
+): Promise<boolean> {
+  if (!accessToken) return false;
+  const done = repeatQuietly(() => call(accessToken));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<boolean>((resolve) => {
     timer = setTimeout(() => resolve(false), waitAtMost);
   });
   try {
-    return await Promise.race([accepted, timeout]);
+    return await Promise.race([done, timeout]);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Accepts the open invitation of the session `accessToken` belongs to
+ * (`callWithTokenQuietly`).
+ *
+ * Called by the email link, after the password is chosen, and after every
+ * password sign-in, each with its own Auth operation's token. The last one is
+ * the reconciliation: an acceptance that failed through every repeat, with the
+ * API down while Auth was up, closes at the next sign-in instead of staying
+ * `sent`. A no-op on the server for anyone with nothing open.
+ */
+export async function acceptOwnInvitation(accessToken: string | undefined, waitAtMost = ACCEPT_WAIT_MS): Promise<boolean> {
+  return callWithTokenQuietly(accessToken, (token) => api.acceptInvitation(token), waitAtMost);
 }

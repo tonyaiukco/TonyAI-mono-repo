@@ -250,7 +250,11 @@ double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
-secure_password_change = false
+# On since pre-g5-security-hardening: a password change from a session older than 24 hours needs
+# the emailed code. TonyAI's set-password screen serves only a session an email link opened in
+# the tab within the hour, so no in-app flow asks for it; a stolen older session calling Auth
+# directly is refused. Mirrored by infra/scripts/auth_settings.py for hosted environments.
+secure_password_change = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 # Number of characters used in the email OTP.
@@ -267,6 +271,12 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+
+# The reauthentication code (pre-g5-security-hardening). English only: Auth mails one template,
+# and Turkish copy lives only in the web's tr catalogue (CLAUDE.md).
+[auth.email.template.reauthentication]
+subject = "Your TonyAI verification code"
+content_path = "./supabase/templates/reauthentication.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]

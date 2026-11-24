@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import type { Locale } from '@tonyai/shared-types';
+import { Prisma } from '@tonyai/db';
+import type { Locale, PasswordSetFlow } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
@@ -41,4 +43,42 @@ export class PreferencesService {
       );
     });
   }
+
+  /**
+   * Records that Auth accepted a new password for the caller from an email
+   * link (`account-access`; `pre-g5-security-hardening`). One `password_set`
+   * row as the caller, about their own profile, with the flow and nothing
+   * about the password. Auth changes the password; the API cannot see it, so
+   * this is the web's report of it — and a caller can only ever write it
+   * about themselves.
+   */
+  async recordPasswordSet(user: RequestUser, flow: PasswordSetFlow, changeId: string): Promise<void> {
+    // One row per password change, decided by the database: the row's id is
+    // derived from the caller and the change, so a repeat — sequential, or
+    // overlapping its first try — meets the primary key and writes nothing
+    // (Codex reviews). Never an update: the trail stays append-only.
+    try {
+      await this.audit.record(
+        user,
+        { action: 'password_set', entity: 'profile', entityId: user.id, diff: { flow, changeId } },
+        undefined,
+        passwordSetRowId(user.id, changeId),
+      );
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return;
+      throw err;
+    }
+  }
+}
+
+/**
+ * The `password_set` row's id for one change of one user: a UUID-shaped digest
+ * of both (version 8, the custom layout). Deterministic, so the primary key is
+ * what keeps a repeat from writing a second row; derived from the caller's own
+ * id, so no caller can aim it at another account's row.
+ */
+export function passwordSetRowId(userId: string, changeId: string): string {
+  const hex = createHash('sha256').update(`password_set:${userId}:${changeId}`).digest('hex');
+  const variant = (8 + (parseInt(hex[16], 16) & 3)).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
