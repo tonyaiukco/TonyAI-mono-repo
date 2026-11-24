@@ -130,7 +130,7 @@ calculation snapshots, labels, evidence hashes and release standing, participate
 Normalize typed timestamps to `Date.prototype.toISOString()` spelling (UTC with
 milliseconds, e.g. `2026-10-11T00:00:00.000Z`) before capture; retained calculation
 snapshots remain unchanged (schema 2 and 3 snapshots sit side by side under dataset
-schema 2: a snapshot's own version is no dataset version) and their producer must already supply canonical
+schemas 2 and 3: a snapshot's own version is no dataset version) and their producer must already supply canonical
 values. Optional absent properties are omitted before canonicalization; a present
 key or array element whose value is `undefined` is rejected, never silently
 removed or changed to null. Null is distinct from omission. Reject nonfinite
@@ -478,6 +478,10 @@ boundary must decide: a schema 1 dataset is still recomputed under the five it
 was captured with (`BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA`), and its fingerprints
 stay pinned. A new capture of a version confirmed before the category existed is
 partial, with `applicability_undetermined` on Fugitive Gas, until a new version
+decides it. Schema 3 (UAT round 4, BUG-12) adds Fire Suppression in the same way:
+schema 1 and 2 datasets recompute under their own five and six categories, and a
+new capture of a version confirmed before Fire Suppression existed is partial,
+with `applicability_undetermined` on Fire Suppression, until a new version
 decides it. TA016 binds a dataset to its version's header and declared
 subsidiaries only; these checks hold a row written past the API to its own
 facts and its version — a self-consistent forgery (statuses, locks or standings

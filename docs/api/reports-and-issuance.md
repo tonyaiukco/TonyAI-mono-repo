@@ -110,12 +110,14 @@ are unchanged.
 
 **Refrigerant refill (UAT round 4, BUG-17).** For a marked term, the calculation inputs give the refill as the released mass and identify the capacity estimate that was excluded. An unmarked term keeps the estimate-plus-refill wording, including zero-capacity and zero-refill lines. Live and issued PDF and XLSX use the report locale. Live and issued CSV use English and preserve their columns. New PDFs use `tonyai-issuance-pdf-v6`. On-demand XLSX identifies `tonyai-issuance-tables-v6` on the Summary sheet. A previously issued PDF downloads its retained bytes.
 
+**Fire suppression (UAT round 4, BUG-12).** Fire Suppression is its own Scope 1 category in every report, its records and totals apart from Refrigerants: "Fire Suppression" in English and the CSV, "Yangın söndürme" in Turkish PDF and XLSX. Its equipment lines read as refrigerant lines do. A dry powder or foam record is a calculated 0, printed as 0, never as "Not calculated". The gas HFC-227ea is now named "FM200 (HFC-227ea)" in both categories, in live and issued PDF and XLSX; the CSV keeps the stored token. New PDFs use `tonyai-issuance-pdf-v7`, and on-demand XLSX identifies `tonyai-issuance-tables-v7` on the Summary sheet, so a re-downloaded workbook that prints the new name says it was rendered by the new wording. A previously issued PDF downloads its retained bytes.
+
 **Issued Excel and CSV (K5).** `GET /report-issuances/:id/xlsx` and `/csv`
 project the issuance's RETAINED dataset — re-read, re-verified as an issue
 verifies it (fingerprint, assessments, frozen version), and bound to the
 issuance by its fingerprint — exactly as its PDF does: the scopes' counted
 records, the same figures, gaps, exclusions and withdrawals
-(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v6`).
+(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v7`).
 Written on request and never stored (no migration, no new bucket); the same
 issuance always yields the same rows and figures under one renderer, which the
 tables name, so an issuance made under v1 now downloads with v2's two trailing

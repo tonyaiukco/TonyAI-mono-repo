@@ -140,6 +140,16 @@ Show when relevant:
 - anomaly comment must be completed when triggered
 - required evidence must be present before completion status can become complete
 
+### 5.5 Fire Suppression and the Refrigerant Entry (UAT round 4, BUG-12)
+**Fire Suppression** is its own Scope 1 category beside Refrigerants ("Yangın söndürme" in Turkish). For a Türkiye site its form is annual and priced by the capacity method, exactly as a refrigerant record is (`calculation_logic.md` §2.4):
+- **Gas.** The list holds CO2, FM200 (HFC-227ea), SF6 and "Dry powder / foam (no greenhouse gas)", and ends with **Other gas**. Choosing Other gas shows a statement that a gas the factor library does not price cannot be entered and is never estimated. While it is chosen the form shows no preview, does not save and sends nothing to the API. Choosing a listed gas again removes the statement.
+- **Dry powder or foam** keeps the equipment lines and the evidence section. The preview shows 0 tCO₂e and states that the agent holds no greenhouse gas. The record is saved, submitted and reviewed as any other, and it counts as entered in the tracking matrix.
+- **Equipment lines.** One line per device: fire extinguisher, fire suppression system or transformer breaker gas, each once. Each line shows its device's default leak rate and offers no alternative rate. The help text says a refill, when there was one, is the line's released mass, and the capacity estimate applies only without a refill.
+- **Grams or kilograms.** Each line has a unit selector (g / kg) for its capacity and its refill. A new line starts on grams. A gram field shows its kilogram figure beside it (6000 g reads "= 6 kg"), and the total installed capacity is in kilograms (6000 g and 50 kg total 56 kg). Changing a line's unit clears that line's two figures, so a figure is never re-read in another unit. The form converts grams to kilograms (÷ 1,000) before the preview and the save. The record, the API, bulk upload and every report hold kilograms only.
+- **An opened record** shows each line in kilograms, as stored, with its selector on kilograms. A line added to it starts on grams.
+
+The **Refrigerants** entry keeps kilograms and shows no unit selector. A new refrigerant record no longer offers HFC-227ea or SF6, and a new refrigerant line offers the six cooling and refrigeration devices only. An existing refrigerant record that holds a fire gas or a fire device keeps it listed and editable; it is neither moved nor refused.
+
 ---
 
 ## 6. Component: Evidence Vault
@@ -170,12 +180,16 @@ The evidence API needs a record id, so on a new record (or a copy) the vault **h
 - remove action where permitted. On a shared file it reads `Remove from this record` and takes the file off this record only; the toast says whether the file is gone (`Evidence removed`) or still backs others (`Removed from this record — q1.pdf still backs 2 other records.`)
 
 ### Validation Rule
-Every Scope 1 and Scope 2 category requires evidence: Electricity, Natural Gas, Fuel, Mobile Combustion, Refrigerants and Fugitive Gas (the last three since K3, 2026-11-10, QA finding BUG-R2-02). Water does too, because its invoice is the only check its reading gets. The other Scope 3 categories do not. For an evidence-required record:
+Every Scope 1 and Scope 2 category requires evidence: Electricity, Natural Gas, Fuel, Mobile Combustion, Refrigerants, Fire Suppression and Fugitive Gas (Mobile Combustion, Refrigerants and Fugitive Gas since K3, 2026-11-10, QA finding BUG-R2-02; Fire Suppression since UAT round 4, BUG-12). Water does too, because its invoice is the only check its reading gets. The other Scope 3 categories do not. For an evidence-required record:
 - completion status cannot become complete unless at least one evidence file is attached;
 - **Submit** saves the record first, then uploads any file held for it. With still no file, the form keeps the saved draft open with this vault on screen and asks for a file (`Saved. Attach at least one evidence file below, then submit again.`) instead of sending the submit. The API refuses such a submit anyway (`evidence_required`);
 - **Approve** refuses a record that reached review without a file, which records of the three K3 categories could do before 2026-11-10 (`approval_evidence_missing`). Files are locked after submit, so the reviewer rejects the record and its author attaches one and submits again.
 
+A refrigerant record without a file lists its four accepted documents: the equipment inventory list, the authorised service form, the nameplate photo or specification page, and the annual refill or maintenance invoice. A fire suppression record without a file, dry powder or foam included, lists its own three: the equipment tracking sheet, the system drawings, and photographs of the equipment or its label. Every other category shows the general note.
+
 ### One File for Several Records
+A saved refrigerant or fire suppression record offers **Attach this document to the year's other gas records** when its subsidiary and year hold at least two records of the same category that the user may attach files to. The records table opens its attach step with those records ticked. The shortcut never crosses the two categories.
+
 One document can evidence several records of the same subsidiary (WP8 decision 3a) — e.g. a quarterly invoice behind three monthly records, or the invoice behind the drafts of an import. It is attached from **Entered records** (§9.2), not from the vault, and the vault of each record then lists it. Attaching and removing follow the record's own rules: its author or a `super_admin`, while it is a `draft` or `rejected`, and while its period is open.
 
 ---
@@ -335,7 +349,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - after a real import (not a dry run), `Send N records for review` sends the rows just imported
 - rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button, and points to Entered records, where one file can be attached to several of the drafts
 - after a submission, `Entered records` and the `Data collection status` panel refresh, even when the request fails
-- **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure. With the TR releases loaded the same holds for Mobile Combustion, Refrigerants and Fugitive Gas (K3): only the other Scope 3 categories go straight from an import to review
+- **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure. With the TR releases loaded the same holds for Mobile Combustion, Refrigerants, Fire Suppression and Fugitive Gas (K3): only the other Scope 3 categories go straight from an import to review
 
 #### From Recent Imports
 - each applied import shows its file name, date and time, who imported it, and its outcome (`2 imported · 1 refused`); a batch whose outcome was never recorded (the import was interrupted) says so rather than showing zero

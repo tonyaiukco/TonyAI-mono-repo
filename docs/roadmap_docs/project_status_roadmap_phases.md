@@ -2163,6 +2163,12 @@ Moved here unchanged from `project-status.md` on 2026-09-27 (except the edits ma
 
 ## Decisions log
 
+**2026-11-24 (fifth) — WP3: fire suppression as its own category (BUG-12), and its factor edition (owner, in chat, `/opsx:apply`; OpenSpec `uat4-fire-suppression-entry`).** The owner accepted Claude Code's three recommendations ("continue with your recommendations"):
+1. **A supplementary edition replaces D10's erratum** (2026-11-13 (second), 4; the change's design, decision 3). `TONYAI-EF-TR-FIRE-2026.11-AR6` is IPCC ordinal 3, authoritative, supersedes nothing and prices only the new `Fire Suppression` category (HFC-227ea 3,600, SF6 25,200 and CO2 1 from the TR package's §4.6, and the three devices' default leak rates). D10's erratum was chosen when CO2 was to be one more `Refrigerants` gas; with its own category the rows overlap nothing, and no IPCC-priced open draft goes `calculation_stale` during the UAT week. Accepted cost: a later correction to one of the three fire leak rates supersedes two editions.
+2. **Dry powder and foam are a zero factor row** (design, decision 4): `dry_powder_or_foam`, value 0, citing this decision and BUG-12 (the agent holds no greenhouse gas), never the TR package. It is the change's one number not from the signed package; it joins the external reviewer's list. A record of it is an ordinary calculated record of 0 kgCO2e, so a final holding it is not partial.
+3. **CO2 is priced under `Fire Suppression` at the device rates** (fire extinguisher 0.04, fire suppression system 0.02, transformer breaker 0.0001), as the package gives them by device with no limit by gas. Whether the 4% and 2% rates apply to CO2 equipment stays on the external reviewer's list (D10's open question).
+The owner signs the edition by this entry; it is loaded on hosted QA as an owner release (dry run, then `--apply`, no `--supersedes`) after the change merges.
+
 **2026-11-24 (fourth) — WP2: the refrigerant refill rule (BUG-17), and its handover to Codex (owner, in chat).**
 1. **WP2, and only WP2, went to Codex** (rule 7): Claude Code wrote the task card, reviewed both PRs and records them; WP3–WP10 stay with Claude Code.
 2. **A refill replaces the estimate, per line** (`Pilot_launch_v4.md` §6, decision 8, as the v4 document says): a line with a refill above zero is priced on the refill; a line without one on capacity × leak rate; never both.
