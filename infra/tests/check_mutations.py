@@ -317,7 +317,9 @@ def main():
                         'secure_transport.py':'test_review_boundaries.py',
                         'foundation_contract.py':'test_review_boundaries.py',
                         'supabase_project.py':'test_supabase_resume.py',
-                        'public_hosts.py':'test_public_hosts.py'}
+                        'public_hosts.py':'test_public_hosts.py',
+                        # pre-g5-security-hardening: the full suite does not pass in a disposable copy.
+                        'auth_settings.py':'test_auth_lifecycle_settings.py'}
             if filename.startswith('.github/'): pattern = 'test_workflow_security.py'
             else: pattern = targeted.get(filename, pattern)
             # Keep a full suite control above; run each mutant against its direct
