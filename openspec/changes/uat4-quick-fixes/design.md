@@ -60,13 +60,15 @@ The radio order becomes gross, net in the component (the shared `CV_BASES` order
 - Keys: `invoice_no` and `supplier`, in the style of the existing ids. Added to every field set in `context-fields.ts` except that Electricity gets only `invoice_no`: its `utility_provider` already is the supplier, and a stored id cannot be renamed.
 - `@tonyai/shared-types` gets the two key names, their limits (64 and 200 characters) and `recordSupplier(category, input)`, which returns `supplier`, or `utility_provider` for Electricity. The web form (`maxLength`), the review sheet and the API all use them.
 - The write DTOs add one validator on `input`: when either key is present it must be a string within its limit after trimming; an empty string is stored as absent. Other keys in `input` are not touched, so every existing record still saves.
+- Electricity's `utility_provider` is a supplier only on an Electricity record, and the key is older than the rule. Its bound is therefore not the DTO's but the record service's, asked of the effective category with the stored `input` beside it (`electricitySupplierIssues(category, input, stored)`): a value the record already holds is left alone, so an old record's other fields can still be edited; a new or changed one is refused (review of `3ebe20d5`).
+- A text, date or note field's label is tied to its input (`htmlFor` and `id`).
 - The review sheet adds two rows, each shown only when its value is present.
 
 *Alternative:* nullable columns `invoice_no` and `supplier` on `activity_records`. Rejected for this change: a migration, RLS and runtime-grant review, and a contract review for two optional labels. If WP9's fuel batches need to query by invoice number, that package adds the column and backfills from `input`; the key names here are chosen so that backfill is a straight copy.
 
 ### 5. The top control is a button in the page header
 
-A button under the page title, shown when a subsidiary is selected, reading "View or edit your entries (12)". It uses the records total the page already loads. On click it scrolls the table's section into view (`scrollIntoView`, smooth unless `prefers-reduced-motion`) and focuses the table's heading (`tabIndex={-1}`), so keyboard and screen-reader users land there too. It is a button, not a hash link: the page keeps form state in memory and a hash change must not be mistaken for navigation.
+A button under the page title, shown when a subsidiary is selected, reading "View or edit your entries (12)". Its count is the subsidiary's whole record count: the table's own total when no filter narrows it, otherwise one more count request, sent apart from the table's requests and kept with the subsidiary it was read for, so a slow count never holds the rows back (review of `3ebe20d5`). On click it scrolls the table's section into view (`scrollIntoView`, smooth unless `prefers-reduced-motion`) and focuses the table's heading (`tabIndex={-1}`), so keyboard and screen-reader users land there too. It is a button, not a hash link: the page keeps form state in memory and a hash change must not be mistaken for navigation.
 
 ## Risks / Trade-offs
 

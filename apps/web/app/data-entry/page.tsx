@@ -391,9 +391,11 @@ function DataEntryPageInner() {
   const [records, setRecords] = useState<ActivityRecordPageItemDTO[]>([]);
   const [recordsCursor, setRecordsCursor] = useState<string | null>(null);
   const [recordsTotal, setRecordsTotal] = useState<number | null>(null);
-  // Every record of the subsidiary, whatever the table's filters narrow it to:
-  // the count on the control at the top (BUG-15). Null while it is not known.
-  const [entriesTotal, setEntriesTotal] = useState<number | null>(null);
+  // Every record of a subsidiary, whatever the table's filters narrow it to:
+  // the count on the control at the top (BUG-15), kept with the subsidiary it
+  // was read for. It is read apart from the table's rows and never holds them
+  // back; null while it is not known.
+  const [entriesTotal, setEntriesTotal] = useState<{ subsidiaryId: string; total: number } | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordsLoadingMore, setRecordsLoadingMore] = useState(false);
   // A slower answer for an earlier subsidiary must not land over a newer one.
@@ -846,19 +848,32 @@ function DataEntryPageInner() {
     try {
       const filters: ActivityRecordPageFilters = { subsidiaryId: subId, ...recordsQueryRef.current };
       // The table's own count is the subsidiary's when no filter narrows it.
+      // Otherwise the subsidiary's whole count is asked on its own: a count
+      // over every year may take longer than one filtered page, and the rows
+      // must not wait for it (review of 3ebe20d5).
       const narrowed = Object.keys(recordsQueryRef.current).length > 0;
-      const [page, meta, all] = await Promise.all([
+      if (narrowed) {
+        void api.activityRecordMetadata({ subsidiaryId: subId }).then(
+          (all) => {
+            if (mine === recordsSeq.current) setEntriesTotal({ subsidiaryId: subId, total: all.total });
+          },
+          // Refused or failed: the control shows no count and still leads to the table.
+          () => {
+            if (mine === recordsSeq.current) setEntriesTotal(null);
+          },
+        );
+      }
+      const [page, meta] = await Promise.all([
         api.listActivityRecordPage(filters),
         // Any refusal of the count (422 query_too_broad, a quota, an outage) shows
         // it as unknown; the list itself still loads (K7).
         api.activityRecordMetadata(filters).catch(() => null),
-        narrowed ? api.activityRecordMetadata({ subsidiaryId: subId }).catch(() => null) : null,
       ]);
       if (mine !== recordsSeq.current) return;
       setRecords(page.items);
       setRecordsCursor(page.nextCursor);
       setRecordsTotal(meta?.total ?? null);
-      setEntriesTotal((narrowed ? all : meta)?.total ?? null);
+      if (!narrowed) setEntriesTotal(meta ? { subsidiaryId: subId, total: meta.total } : null);
       setRecordsFetchedFor(subId);
       // Which query these rows answer: the refrigerant shortcut waits for its own.
       setRecordsFetchedQuery(JSON.stringify(recordsQueryRef.current));
@@ -876,7 +891,6 @@ function DataEntryPageInner() {
       setRecords([]);
       setRecordsCursor(null);
       setRecordsTotal(null);
-      setEntriesTotal(null);
       setRecordsFetchedFor(null);
       stableErrorToast(e);
     } finally {
@@ -2004,7 +2018,9 @@ function DataEntryPageInner() {
               </p>
               {/* The records table is far below the form: a way to it from here (BUG-15). */}
               {/* A count read for another subsidiary is not this one's: unknown until its own arrives. */}
-              {subsidiaryId && <EntriesJump total={recordsFetchedFor === subsidiaryId ? entriesTotal : null} />}
+              {subsidiaryId && (
+                <EntriesJump total={entriesTotal?.subsidiaryId === subsidiaryId ? entriesTotal.total : null} />
+              )}
             </div>
             <SignOutButton onClick={handleLogout} />
           </div>
@@ -2503,8 +2519,14 @@ function DataEntryPageInner() {
                     const key = contextFieldMessageKey(contextSet, f);
                     const label = t(`${key}.label` as ContextFieldKey<"label">);
                     const placeholder = f.placeholder ? t(`${key}.placeholder` as ContextFieldKey<"placeholder">) : undefined;
+                    // A text, date or note field's label names its box: a click on
+                    // the label focuses it, and a screen reader reads the box by
+                    // its visible name (review of 3ebe20d5). The number and select
+                    // fields are composed controls and are not tied here.
+                    const inputId =
+                      f.type === "text" || f.type === "date" || f.type === "textarea" ? `context-field-${f.id}` : undefined;
                     return (
-                      <Field key={f.id} label={label}>
+                      <Field key={f.id} label={label} htmlFor={inputId}>
                         {f.type === "select" ? (
                           <Select
                             value={String(context[f.id] ?? "")}
@@ -2525,6 +2547,7 @@ function DataEntryPageInner() {
                           </Select>
                         ) : f.type === "textarea" ? (
                           <Textarea
+                            id={inputId}
                             placeholder={placeholder}
                             value={String(context[f.id] ?? "")}
                             onChange={(e) =>
@@ -2553,10 +2576,10 @@ function DataEntryPageInner() {
                           />
                         ) : (
                           <Input
+                            id={inputId}
                             type={f.type === "date" ? "date" : "text"}
                             placeholder={placeholder}
                             maxLength={f.maxLength}
-                            data-testid={`context-${f.id}`}
                             value={String(context[f.id] ?? "")}
                             onChange={(e) =>
                               setContext((prev) => ({
@@ -3096,14 +3119,17 @@ function Row({ label, value }: { label: string; value: string }) {
 
 function Field({
   label,
+  htmlFor,
   children,
 }: {
   label: string;
+  /** The id of the control the label names, where the field has one control of its own. */
+  htmlFor?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
     </div>
   );

@@ -154,7 +154,7 @@ gets synthetic fixtures in the same shapes.
 
 | WP | State | Branch / PR | QA revision | Notes |
 |---|---|---|---|---|
-| 1 `uat4-quick-fixes` | implemented 11-24, PR not opened | `fix/uat4-quick-fixes` | — | `openspec/changes/uat4-quick-fixes/`. Invoice number and supplier become bulk columns in WP9. QA retests BUG-09, 10, 11, 15 (screen part), 16 after the deploy |
+| 1 `uat4-quick-fixes` | implemented and pushed 11-24, reviewed (`qa-auditor`, Codex); PR waits for the owner | `fix/uat4-quick-fixes` | — | `openspec/changes/uat4-quick-fixes/`. Invoice number and supplier become bulk columns in WP9. QA retests BUG-09, 10, 11, 15 (screen part), 16 after the deploy |
 | 2 `uat4-refill-rule` | not started | — | — | |
 | 3 `uat4-fire-suppression-entry` | not started | — | — | CO2 edition needs the owner's signature |
 | 4 `uat4-idle-session` | not started | — | — | hosted setting needs an owner release |

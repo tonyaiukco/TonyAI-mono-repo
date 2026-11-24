@@ -6,6 +6,7 @@ import {
   RECORD_REFERENCE_LIMITS,
   RECORD_SUPPLIER_KEY,
   RECORD_SUPPLIER_MAX_LENGTH,
+  electricitySupplierIssues,
   recordInvoiceNo,
   recordReferenceIssues,
   recordSupplier,
@@ -92,6 +93,46 @@ describe('a record\'s invoice number and supplier (uat4-quick-fixes, BUG-16)', (
     it('reads own keys only', () => {
       const inherited = Object.create({ invoice_no: 7 }) as Record<string, unknown>;
       expect(recordReferenceIssues(inherited)).toEqual([]);
+    });
+  });
+
+  describe('electricitySupplierIssues: an Electricity record\'s supplier is its utility provider', () => {
+    it('accepts none, null, and text up to 200 characters, padding aside', () => {
+      expect(electricitySupplierIssues('Electricity', null)).toEqual([]);
+      expect(electricitySupplierIssues('Electricity', {})).toEqual([]);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: null })).toEqual([]);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: 'Enerjisa' })).toEqual([]);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: 'y'.repeat(200) })).toEqual([]);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: ` ${'y'.repeat(200)} ` })).toEqual([]);
+    });
+
+    it('refuses 201 characters and a value that is not text, naming the key', () => {
+      expect(electricitySupplierIssues('Electricity', { utility_provider: 'y'.repeat(201) }))
+        .toEqual(['input.utility_provider must be at most 200 characters']);
+      for (const value of [7, true, { name: 'Enerjisa' }, ['Enerjisa']]) {
+        expect(electricitySupplierIssues('Electricity', { utility_provider: value })).toEqual(['input.utility_provider must be text']);
+      }
+    });
+
+    it('leaves the value a stored record already holds alone, so its other fields can still be edited', () => {
+      const long = 'z'.repeat(5000);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: long, notes: 'edited' }, { utility_provider: long })).toEqual([]);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: 7 }, { utility_provider: 7 })).toEqual([]);
+    });
+
+    it('holds a changed supplier to the bound, whatever the record held before', () => {
+      const long = 'z'.repeat(5000);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: `${long}!` }, { utility_provider: long }))
+        .toEqual(['input.utility_provider must be at most 200 characters']);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: long }, { notes: 'no supplier before' }))
+        .toEqual(['input.utility_provider must be at most 200 characters']);
+      expect(electricitySupplierIssues('Electricity', { utility_provider: long }, null))
+        .toEqual(['input.utility_provider must be at most 200 characters']);
+    });
+
+    it('is a rule of Electricity only: another category\'s key of that name is not a supplier', () => {
+      expect(electricitySupplierIssues('Fuel', { utility_provider: 'z'.repeat(5000) })).toEqual([]);
+      expect(electricitySupplierIssues('Natural Gas', { utility_provider: 7 })).toEqual([]);
     });
   });
 

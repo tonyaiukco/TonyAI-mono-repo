@@ -11,7 +11,8 @@
  *
  * An Electricity record's supplier is its `utility_provider`: that field held
  * the supplier before this change, and a stored id is not renamed. Electricity
- * therefore takes no `supplier` key from the form.
+ * therefore takes no `supplier` key from the form, and its supplier is bounded
+ * by the category (`electricitySupplierIssues`), not by the key alone.
  *
  * No imports from `index.ts` at runtime: it re-exports this module.
  */
@@ -94,6 +95,34 @@ export function storableRecordReferences<T>(input: T): T | Record<string, unknow
   }
   if (out === null) return input;
   return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * What is wrong with an Electricity record's supplier, its
+ * `utility_provider`, empty when nothing is: text no longer than a supplier's
+ * limit once trimmed, like any other record's `supplier`. The key is older
+ * than the rule, so a value the stored record already holds is left alone
+ * (`stored`, the record's `input` before the edit): an edit of another field
+ * of an old record still saves, and only a new or changed supplier is held to
+ * the bound. Any other category names no `utility_provider`, so it has no
+ * issue here.
+ */
+export function electricitySupplierIssues(category: string, input: unknown, stored?: unknown): string[] {
+  if (category !== 'Electricity' || !isPlainObject(input)) return [];
+  if (!Object.prototype.hasOwnProperty.call(input, ELECTRICITY_SUPPLIER_KEY)) return [];
+  const value = input[ELECTRICITY_SUPPLIER_KEY];
+  if (value === null || value === undefined) return [];
+  if (
+    isPlainObject(stored) &&
+    Object.prototype.hasOwnProperty.call(stored, ELECTRICITY_SUPPLIER_KEY) &&
+    JSON.stringify(stored[ELECTRICITY_SUPPLIER_KEY]) === JSON.stringify(value)
+  ) {
+    return [];
+  }
+  if (typeof value !== 'string') return [`input.${ELECTRICITY_SUPPLIER_KEY} must be text`];
+  return value.trim().length > RECORD_SUPPLIER_MAX_LENGTH
+    ? [`input.${ELECTRICITY_SUPPLIER_KEY} must be at most ${RECORD_SUPPLIER_MAX_LENGTH} characters`]
+    : [];
 }
 
 /** A record's invoice number, or null when it holds none. */

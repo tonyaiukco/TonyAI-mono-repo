@@ -17,6 +17,7 @@
  */
 
 import {
+  ELECTRICITY_SUPPLIER_KEY,
   RECORD_INVOICE_NO_KEY,
   RECORD_INVOICE_NO_MAX_LENGTH,
   RECORD_SUPPLIER_KEY,
@@ -95,7 +96,8 @@ export const CONTEXT_FIELDS: Readonly<Record<ContextFieldSet, readonly ContextFi
     // read-only instead.
     { id: "billing_period_start", type: "date" },
     { id: "billing_period_end", type: "date" },
-    { id: "utility_provider", type: "text", placeholder: true },
+    // An Electricity record's supplier, bounded as one (`electricitySupplierIssues`).
+    { id: ELECTRICITY_SUPPLIER_KEY, type: "text", placeholder: true, maxLength: RECORD_SUPPLIER_MAX_LENGTH },
     { id: "notes", type: "textarea", placeholder: true },
   ],
   fuel: [

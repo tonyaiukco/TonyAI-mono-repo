@@ -25,6 +25,24 @@ Data Entry SHALL offer two optional text fields in Additional context for every 
 - **WHEN** the author changes a draft's invoice number
 - **THEN** the audit row's before and after hold the old and the new value
 
+### Requirement: An Electricity record's utility provider is bounded as a supplier
+The API SHALL hold an Electricity record's utility provider to the supplier's rule: text, at most 200 characters. A utility provider that a record stored before this rule SHALL be left as it is while the record's other fields are edited; a new or changed one SHALL be held to the rule. The form SHALL bound the field the same way.
+
+#### Scenario: An Electricity supplier that is too long
+- **WHEN** the API receives a new Electricity record whose utility provider has 201 characters or is not text, or an edit that changes a record's utility provider to such a value
+- **THEN** it answers 400 and stores nothing
+
+#### Scenario: An old Electricity record with a long utility provider
+- **WHEN** an Electricity record stored before this rule holds a utility provider over 200 characters, and its author edits its notes and saves, the utility provider unchanged
+- **THEN** the edit is saved and the utility provider is as it was
+
+### Requirement: An Additional context text field's label names its input
+The visible label of the invoice number, the supplier and every other text, date and note field in Additional context SHALL be tied to its input, so that the label focuses it and assistive technology reads the input by that name.
+
+#### Scenario: The label focuses its field
+- **WHEN** a user clicks the visible Supplier label
+- **THEN** keyboard focus is in the supplier field
+
 ### Requirement: Data Entry links to the entered records from the top
 Data Entry SHALL show, above the form, a control labelled "View or edit your entries" (TR: "Girdiğiniz verileri görüntüleyin / düzenleyin") with the number of records the selected subsidiary has. Using it SHALL scroll to the records table and move keyboard focus to it. It SHALL be shown whenever a subsidiary is selected, and SHALL say so when the subsidiary has no records yet.
 
@@ -43,6 +61,17 @@ Data Entry SHALL show, above the form, a control labelled "View or edit your ent
 #### Scenario: Reduced motion
 - **WHEN** the user's system asks for reduced motion
 - **THEN** the page jumps to the table without an animated scroll
+
+### Requirement: The entries count never delays the records table
+The count on the control at the top of Data Entry SHALL be the selected subsidiary's whole record count, whatever the table's filters show. Reading it SHALL NOT delay the table: the records are shown and usable as soon as they are read, and the control shows no count until its own arrives.
+
+#### Scenario: The count is slower than the table
+- **WHEN** the table's filtered records have been read and the subsidiary's whole count has not
+- **THEN** the records are shown and can be opened, the control shows no count and still leads to the table, and the count appears when it arrives
+
+#### Scenario: The table is filtered to one year
+- **WHEN** the table shows only the form's reporting year and the subsidiary also has records in other years
+- **THEN** the control's count includes them
 
 ## MODIFIED Requirements
 

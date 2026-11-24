@@ -331,6 +331,10 @@ describe.each(DTOS)('%s — input\'s invoice number and supplier (uat4-quick-fix
     expect(parse(Dto, { input: { invoice_no: ` ${'x'.repeat(64)} ` } }).errors).toHaveLength(0);
   });
 
+  // `utility_provider` is an Electricity record's supplier, and its bound is the
+  // service's, not the DTO's: it needs the effective category and the stored
+  // value, so that an old record's long one is left alone while a new or changed
+  // one is refused (`assertElectricitySupplier`, pinned in the service spec).
   it('leaves every other key of input as sent: a record written before this rule still saves', () => {
     const before = { utility_provider: 'z'.repeat(5000), total_kwh: 12, notes: '  as typed  ', quantity_unit: 'Liters', anything: { nested: [1, 2] } };
     const { dto, errors } = parse(Dto, { input: before });

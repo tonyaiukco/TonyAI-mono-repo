@@ -1010,6 +1010,95 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
   });
 });
 
+describe('ActivityRecordsService — an Electricity record\'s supplier is bounded (uat4-quick-fixes, BUG-16)', () => {
+  const LONG = 'z'.repeat(201);
+  const LEGACY = 'z'.repeat(5000);
+  const stored = (over: Partial<ActivityRecord> = {}) => ({
+    ...makeRecord({ id: 'rec-el', subsidiaryId: 'sub-1', createdBy: 'user-entry', category: 'Electricity', activityUnit: 'kWh', ...over }),
+    _count: { evidenceLinks: 0 },
+    location: null,
+  });
+  const editing = (row: ReturnType<typeof stored>) => {
+    const built = build(2);
+    built.prisma.activityRecord.findUnique.mockResolvedValue(row);
+    built.prisma.activityRecord.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ ...row, ...data }));
+    return built;
+  };
+  const updatedData = (prisma: ReturnType<typeof build>['prisma']) =>
+    prisma.activityRecord.update.mock.calls[0][0].data as Record<string, unknown>;
+  const refused = { response: { code: 'validation_failed', statusCode: 400 } };
+  const creating = () => {
+    const built = build(2);
+    built.prisma.activityRecord.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      ...makeRecord({ id: 'rec-new', subsidiaryId: 'sub-1' }),
+      ...data,
+      _count: { evidenceLinks: 0 },
+      location: null,
+    }));
+    return built;
+  };
+  const create = (service: ActivityRecordsService, category: string, input: unknown) =>
+    service.create(dataEntry(), {
+      subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
+      category, activityValue: 10, activityUnit: 'kWh', input,
+    } as never);
+
+  it('create refuses a utility provider over 200 characters or not text, before anything is written', async () => {
+    const { prisma, service } = build(2);
+    await expect(create(service, 'Electricity', { utility_provider: LONG })).rejects.toMatchObject(refused);
+    await expect(create(service, 'Electricity', { utility_provider: 7 })).rejects.toMatchObject(refused);
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('the refusal names the key and the limit, and quotes nothing back', async () => {
+    const { service } = build(2);
+    const error = await create(service, 'Electricity', { utility_provider: 'SECRET'.repeat(40) }).catch((e: unknown) => e);
+    const body = (error as { response: { message: string[] } }).response;
+    expect(body.message).toEqual(['input.utility_provider must be at most 200 characters']);
+    expect(JSON.stringify(body)).not.toContain('SECRET');
+  });
+
+  it('create stores one of 200 characters', async () => {
+    const { prisma, service } = creating();
+    await create(service, 'Electricity', { utility_provider: 'y'.repeat(200) });
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.input).toEqual({ utility_provider: 'y'.repeat(200) });
+  });
+
+  it('an edit of another field of an old record keeps its long supplier', async () => {
+    const { prisma, service } = editing(stored({ input: { utility_provider: LEGACY, notes: 'old' } as never }));
+    await service.update(dataEntry(), 'rec-el', { input: { utility_provider: LEGACY, notes: 'edited' } });
+    expect(updatedData(prisma).input).toEqual({ utility_provider: LEGACY, notes: 'edited' });
+  });
+
+  it('an edit that sends no input is not asked about the stored one', async () => {
+    const { prisma, service } = editing(stored({ input: { utility_provider: LEGACY } as never }));
+    await service.update(dataEntry(), 'rec-el', { activityValue: 12 });
+    expect(updatedData(prisma)).not.toHaveProperty('input');
+  });
+
+  it('an edit that changes the supplier is held to the bound, whatever the record held', async () => {
+    const { prisma, service } = editing(stored({ input: { utility_provider: LEGACY } as never }));
+    await expect(service.update(dataEntry(), 'rec-el', { input: { utility_provider: `${LEGACY}!` } })).rejects.toMatchObject(refused);
+    await expect(service.update(dataEntry(), 'rec-el', { input: { utility_provider: LONG } })).rejects.toMatchObject(refused);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    await service.update(dataEntry(), 'rec-el', { input: { utility_provider: 'Enerjisa' } });
+    expect(updatedData(prisma).input).toEqual({ utility_provider: 'Enerjisa' });
+  });
+
+  it('is asked of the effective category: a record moved to Electricity with a new long supplier is refused', async () => {
+    const { prisma, service } = editing(stored({ category: 'Water', activityUnit: 'cubic_metres', input: null }));
+    await expect(service.update(dataEntry(), 'rec-el', { category: 'Electricity', activityUnit: 'kWh', input: { utility_provider: LONG } }))
+      .rejects.toMatchObject(refused);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('another category\'s key of that name is not a supplier and is stored as sent', async () => {
+    const { prisma, service } = creating();
+    await create(service, 'Water', { utility_provider: LONG });
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.input).toEqual({ utility_provider: LONG });
+  });
+});
+
 describe('ActivityRecordsService — locationName: read-only, never audited', () => {
   const located = { ...CREATE_DTO, locationId: 'loc-1' };
 

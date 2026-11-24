@@ -57,6 +57,12 @@ describe('the invoice number and the supplier (uat4-quick-fixes, BUG-16)', () =>
     }
   });
 
+  it('Electricity\'s utility provider is its supplier: the same stored id, bounded at 200 like any supplier', () => {
+    const provider = CONTEXT_FIELDS.electricity.find((f) => f.id === 'utility_provider');
+    expect(provider).toMatchObject({ type: 'text', maxLength: 200 });
+    expect(provider?.shared).toBeUndefined();
+  });
+
   it('a field of its own set keeps its set\'s words', () => {
     const provider = CONTEXT_FIELDS.electricity.find((f) => f.id === 'utility_provider')!;
     expect(contextFieldMessageKey('electricity', provider)).toBe('context.electricity.utility_provider');

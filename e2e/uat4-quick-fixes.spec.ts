@@ -85,6 +85,24 @@ test.describe('a record\'s invoice number and supplier (BUG-16)', () => {
     expect((await found.json()).total).toBe(0);
   });
 
+  test('an Electricity record\'s supplier is its utility provider, held to the same bound', async ({ request }) => {
+    const token = await getAccessToken(request, ENTRY_EMAIL);
+    const electricity = (input: unknown) => ({ ...draftBody(input), category: 'Electricity', activityType: null, activityUnit: 'kWh' });
+    for (const input of [{ utility_provider: 'y'.repeat(201) }, { utility_provider: { name: 'Enerjisa' } }]) {
+      const res = await request.post(`${API_BASE}/activity-records`, { headers: bearer(token), data: electricity(input) });
+      expect(res.status(), JSON.stringify(input).slice(0, 60)).toBe(400);
+      const body = await res.json();
+      expect(body.code).toBe('validation_failed');
+      expect(JSON.stringify(body)).toContain('input.utility_provider');
+      expect(JSON.stringify(body)).not.toContain('yyyyyyyy');
+    }
+    const found = await request.get(
+      `${API_BASE}/activity-records/metadata?subsidiaryId=${SUB.logistics}&year=${E2E_TR_INPUTS_YEAR}&category=Electricity`,
+      { headers: bearer(token) },
+    );
+    expect((await found.json()).total).toBe(0);
+  });
+
   test('entered on a draft, they are saved, shown again on reopening, audited, and shown to the reviewer, with the figure unchanged', async ({ page, request }) => {
     const token = await getAccessToken(request, ENTRY_EMAIL);
     const created = await request.post(`${API_BASE}/activity-records`, { headers: bearer(token), data: draftBody(null) });
@@ -109,10 +127,14 @@ test.describe('a record\'s invoice number and supplier (BUG-16)', () => {
 
       // Both fields are in Additional context, optional, bounded where the API bounds them.
       await page.getByRole('button', { name: enDataEntry.context.title }).click();
-      const invoice = page.getByTestId('context-invoice_no');
-      const supplier = page.getByTestId('context-supplier');
-      await expect(page.getByText(enDataEntry.context.shared.invoice_no.label, { exact: true })).toBeVisible();
-      await expect(page.getByText(enDataEntry.context.shared.supplier.label, { exact: true })).toBeVisible();
+      // Found by their visible names: each label is tied to its box, so a
+      // screen reader reads the box by it and a click on it focuses the box.
+      const invoice = page.getByLabel(enDataEntry.context.shared.invoice_no.label, { exact: true });
+      const supplier = page.getByLabel(enDataEntry.context.shared.supplier.label, { exact: true });
+      await expect(invoice).toBeVisible();
+      await expect(supplier).toBeVisible();
+      await page.getByText(enDataEntry.context.shared.supplier.label, { exact: true }).click();
+      await expect(supplier).toBeFocused();
       await expect(invoice).toHaveAttribute('maxlength', '64');
       await expect(supplier).toHaveAttribute('maxlength', '200');
       await invoice.fill(`  ${INVOICE_NO} `);
@@ -205,6 +227,38 @@ test.describe('the way to the entered records from the top of Data Entry (BUG-15
     // A jump, not a navigation: what was typed is still there.
     await expect(value).toHaveValue('123');
     await expect(page).toHaveURL(/\/data-entry$/);
+  });
+
+  test('the count is read apart from the table: the rows show while the subsidiary\'s whole count is still on its way', async ({ page, request }) => {
+    const energy = await total(request, SUB.energy);
+    // The count over every year is held back; the table's own filtered requests carry a year.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let held = 0;
+    await page.route(
+      (url) => url.pathname.endsWith('/activity-records/metadata') && !url.searchParams.has('year'),
+      async (route) => {
+        held += 1;
+        await gate;
+        await route.continue();
+      },
+    );
+    try {
+      await login(page, ENTRY_EMAIL);
+      await page.goto('/data-entry');
+      await pickByFieldLabel(page, enDataEntry.subsidiary, 'TonyAI Energy (TR)');
+      const jump = page.getByTestId('entries-jump');
+      // The table is usable although the count has not answered.
+      await expect(page.getByTestId('records-table-row').first()).toBeVisible();
+      expect(held).toBeGreaterThan(0);
+      await expect(jump).toHaveText(enDataEntry.records.jump.unknown);
+      // Without a count the control still leads to the table.
+      await jump.click();
+      await expect(page.getByRole('heading', { name: enDataEntry.records.title, exact: true })).toBeFocused();
+    } finally {
+      release();
+    }
+    await expect(page.getByTestId('entries-jump')).toHaveText(label(energy));
   });
 
   test('with reduced motion the page jumps there at once', async ({ page }) => {
