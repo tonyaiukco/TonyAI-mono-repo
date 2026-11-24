@@ -39,6 +39,7 @@ Owner-run from the owner's machine, or run by you only with the owner's explicit
 - **One source of types:** `@tonyai/shared-types`. The web reaches the API only through `apps/web/lib/api.ts`; the API persists only through Prisma.
 - **Keep docs current in their own homes** in the same PR as the change: `README.md` for entry-level content only (overview, features, setup, commands, configuration, environments), `docs/api/` for API contracts, `docs/architecture/` for security, data model, localisation and observability, `docs/development/` for testing and tooling. Status lives only in the status file.
 - **Never commit** `.env*` (except `.env.example`), `dist/`, `generated/` or `*.tsbuildinfo`.
+- **OpenSpec is local only (owner decision 2026-11-25):** `openspec/` is git-ignored; never commit or push it, and never cite a path into it in the repository. Your plan is the task card; what a reader needs goes into the PR description. Name a change by its name, never by a path.
 
 ## Before you hand off
 
