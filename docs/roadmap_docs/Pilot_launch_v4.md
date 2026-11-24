@@ -161,7 +161,7 @@ gets synthetic fixtures in the same shapes.
 | WP | State | Branch / PR | QA revision | Notes |
 |---|---|---|---|---|
 | 1 `uat4-quick-fixes` | merged 11-24 (`ce3b1911`) | `fix/uat4-quick-fixes`, [#355](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/355) | `ci90-1` | `openspec/changes/archive/2026-11-24-uat4-quick-fixes/`. Invoice number and supplier become bulk columns in WP9. QA retests BUG-09, 10, 11, 15 (screen part), 16 after the deploy |
-| 2 `uat4-refill-rule` | assigned to Codex 11-24 (owner); PR1 (the contract) merged 11-24 (`251ddfd3`); PR2 next | `fix/uat4-refill-rule-contract`, [#356](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/356) (PR1); then `fix/uat4-refill-rule` (PR2) | — | Base `ce3b1911`. Codex reports in its PR descriptions; Claude Code records. Hosted `draft-reprice` needs the owner's release |
+| 2 `uat4-refill-rule` | merged 11-24 (Codex; #356 `251ddfd3`, #358 `e14ccb27`), archived | `fix/uat4-refill-rule-contract`, [#356](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/356); `fix/uat4-refill-rule`, [#358](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/358) | `ci91-1` (#356), `ci93-1` (#358) | `openspec/changes/archive/2026-11-24-uat4-refill-rule/`. The hosted `draft-reprice` run (dry run, then `--apply --allow-remote`) needs the owner's release. QA retests BUG-17 with 126.00 t and GV-8 |
 | 3 `uat4-fire-suppression-entry` | not started | — | — | CO2 edition needs the owner's signature |
 | 4 `uat4-idle-session` | not started | — | — | hosted setting needs an owner release |
 | 5 `uat4-review-resubmit` | not started | — | — | |
