@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as ExcelJS from 'exceljs';
 import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
-import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, refrigerantDataset, UNCALCULATED } from '../../test/issuance-fixtures';
+import { allExcludedBoundary, datasetOf, fireSuppressionDataset, frozenBoundary, fullYear, priced, record, refrigerantDataset, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
 import { buildIssuanceHtml, countedRecords } from './issuance-html';
 import { ISSUED_CSV_COLUMNS, ISSUED_TABLES_RENDERER, issuedCsv, issuedWorkbook, type IssuedTablesDocument } from './issuance-tables';
@@ -180,13 +180,52 @@ describe('the issued workbook', () => {
     expect(csv).toContain('36 kg released');
   });
 
+  // UAT round 4, BUG-12: the workbook names the category in its language; the
+  // CSV in English, with the option's stored token; a dry powder record is 0.
+  it.each([
+    ['en', 'Fire Suppression', 'Refrigerants', 'Dry powder / foam (no greenhouse gas)', 'Fuel or gas'],
+    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar', 'Kuru toz / köpük (sera gazı içermez)', 'Yakıt veya gaz'],
+  ] as const)('%s lists Fire Suppression records under their own category with their gas, the zero as 0', async (language, fire, refrigerants, dry, gasColumn) => {
+    const dataset = fireSuppressionDataset();
+    const document = doc(dataset, { language });
+    const ledger = rowsOf((await load(document)).worksheets.find((w) => rowsOf(w).some((r) => r[0] === 'fire-dry-powder'))!);
+    const byId = (id: string) => ledger.find((r) => r[0] === id)!;
+    expect(byId('fire-dry-powder')).toContain(fire);
+    expect(byId('fire-co2')).toContain(fire);
+    expect(byId('refrigerant-r410a')).toContain(refrigerants);
+    expect(byId('fire-dry-powder')).toContain(0);
+    // The gas in a trailing column, so no earlier column moves.
+    const header = ledger.find((r) => r.includes(gasColumn))!;
+    expect(header[header.length - 1]).toBe(gasColumn);
+    expect(byId('fire-dry-powder')[header.indexOf(gasColumn)]).toBe(dry);
+    expect(byId('refrigerant-r410a')[header.indexOf(gasColumn)]).toBe('R-410A');
+    const { rows } = csvRows(issuedCsv(document));
+    const csvRow = (id: string) => rows.find((r) => r.record_id === id)!;
+    expect(csvRow('fire-dry-powder')).toMatchObject({ category: 'Fire Suppression', activity_type: 'dry_powder_or_foam' });
+    expect(Number(csvRow('fire-dry-powder').tco2e)).toBe(0);
+    expect(csvRow('fire-co2').category).toBe('Fire Suppression');
+    expect(csvRow('refrigerant-r410a').category).toBe('Refrigerants');
+  });
+
+  it('names a withdrawn record\'s gas in the withdrawn sheet\'s trailing column (PR #360 re-review)', async () => {
+    const base = fireSuppressionDataset();
+    const records = base.records.map((r) => (r.id === 'fire-dry-powder'
+      ? { ...r, status: 'voided' as const, voidedBy: 'actor-voided', voidedAt: '2026-10-15T00:00:00.000Z', voidReason: 'Entered twice' }
+      : r));
+    const wb = await load(doc(datasetOf({ boundary: base.boundary, records }), { language: 'tr' }));
+    const sheet = wb.worksheets.find((ws) => rowsOf(ws).some((r) => r[0] === 'fire-dry-powder' && r.includes('Entered twice')))!;
+    const [header, ...rows] = rowsOf(sheet);
+    expect(header[header.length - 1]).toBe('Yakıt veya gaz');
+    expect(rows.find((r) => r[0] === 'fire-dry-powder')![header.indexOf('Yakıt veya gaz')]).toBe('Kuru toz / köpük (sera gazı içermez)');
+  });
+
   it('names its issuance, dataset, fingerprint and renderer, and says Scope 3 is not covered', async () => {
     const dataset = mixed();
     const summary = rowsOf((await load(doc(dataset))).getWorksheet('Summary')!);
     expect(summary).toContainEqual(['Issuance', ISSUANCE_ID]);
     expect(summary).toContainEqual(['Dataset', dataset.datasetId]);
     expect(summary).toContainEqual(['Dataset fingerprint', `sha256:${dataset.fingerprint.hex}`, 'tonyai-report-dataset-v1']);
-    expect(ISSUED_TABLES_RENDERER).toBe('tonyai-issuance-tables-v6');
+    expect(ISSUED_TABLES_RENDERER).toBe('tonyai-issuance-tables-v7');
     expect(summary).toContainEqual(['Tables renderer', ISSUED_TABLES_RENDERER]);
     expect(summary).toContainEqual(['Scope 3', 'Scope 3 is not covered by this inventory.']);
   });
@@ -276,9 +315,11 @@ describe('calculation inputs and Scope 2\'s method in the issued tables and PDF 
     wb.worksheets.find((s) => s.name !== 'Summary' && JSON.stringify((s.getRow(1).values as unknown[])).includes('Hesaplama girdileri'))!
       .eachRow((row) => ledger.push((row.values as unknown[]).slice(1)));
     const row = ledger.find((r) => r[0] === first)!;
-    expect(String(row.at(-1))).toContain('AID 8.078,67 kcal/Sm³');
-    expect(String(row.at(-1))).toContain('split / ofis klima: 10 kg × %10');
-    expect(String(row.at(-1))).toContain('transformatör kesici: 0 kg × %0,01 + 0,00049 kg dolum = 0,00049 kg salım');
+    // By its header: the gas column follows it since UAT round 4 (BUG-12 review).
+    const inputs = String(row[ledger[0].indexOf('Hesaplama girdileri')]);
+    expect(inputs).toContain('AID 8.078,67 kcal/Sm³');
+    expect(inputs).toContain('split / ofis klima: 10 kg × %10');
+    expect(inputs).toContain('transformatör kesici: 0 kg × %0,01 + 0,00049 kg dolum = 0,00049 kg salım');
   });
 
   it('prints the inputs under the quantity in the PDF, escaped once', () => {

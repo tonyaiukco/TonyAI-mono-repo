@@ -52,7 +52,7 @@ describe('the additive report dataset contract', () => {
     expectTypeOf<ReportDatasetRecord['createdByName']>().toEqualTypeOf<undefined>();
     expectTypeOf<ReportDatasetRecord['reviewedByName']>().toEqualTypeOf<undefined>();
     expectTypeOf<ReportDatasetRecord['voidedByName']>().toEqualTypeOf<undefined>();
-    expect(REPORT_DATASET_SCHEMA_VERSION).toBe(2);
+    expect(REPORT_DATASET_SCHEMA_VERSION).toBe(3);
     // Snapshot V3 is a field of a record, not a new dataset shape (D11).
     expect(REPORT_DATASET_SCHEMA_VERSIONS.at(-1)).toBe(REPORT_DATASET_SCHEMA_VERSION);
     // The newest version asks what the write path asks today; older ones never move.
@@ -61,6 +61,12 @@ describe('the additive report dataset contract', () => {
     // Spelled out, never today's list: an alias would carry a later category into schema 2.
     expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[2]).toEqual(['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas']);
     expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[2]).not.toBe(INVENTORY_CATEGORIES);
+    // Schema 3 (UAT round 4, BUG-12) is 2 with Fire Suppression, spelled out too.
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[3]).toEqual([
+      'Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas',
+    ]);
+    expect(BOUNDARY_CATEGORIES_BY_DATASET_SCHEMA[3]).not.toBe(INVENTORY_CATEGORIES);
+    expect(REPORT_DATASET_SCHEMA_VERSIONS).toEqual([1, 2, 3]);
   });
 
   it('can describe a mid-year site, named exclusions and an unsupported source without invented amounts', () => {

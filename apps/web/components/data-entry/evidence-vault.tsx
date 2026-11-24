@@ -124,6 +124,17 @@ function RequiredNote({ category }: { category: string }) {
             <li>{t("refrigerantNote.invoice")}</li>
           </ul>
         </div>
+      ) : category === "Fire Suppression" ? (
+        // Its own accepted documents (UAT round 4, BUG-12; INC-2.9 §2), never
+        // the refrigerant list: the same for every gas, dry powder included.
+        <div>
+          <p>{t("fireSuppressionNote.intro")}</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            <li>{t("fireSuppressionNote.trackingSheet")}</li>
+            <li>{t("fireSuppressionNote.drawings")}</li>
+            <li>{t("fireSuppressionNote.photos")}</li>
+          </ul>
+        </div>
       ) : (
         <span>{t("requiredNote")}</span>
       )}

@@ -1,3 +1,4 @@
+import { INVENTORY_CATEGORIES } from '@tonyai/shared-types';
 import type { BoundaryCellRow, BoundaryPolicyRow, BoundaryRows, BoundarySiteRow, BoundarySourceRow } from '../src/inventory-boundary/boundary-snapshot';
 
 /**
@@ -54,8 +55,9 @@ export function complete(): BoundaryRows {
       policy('Fuel', 'company'),
       policy('Mobile Combustion', 'company'),
       policy('Refrigerants', 'company'),
+      policy('Fire Suppression', 'company'),
       policy('Fugitive Gas', 'company'),
-      ...['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'].map((c) => policy(c, 'company', 'annual', SUB_B)),
+      ...INVENTORY_CATEGORIES.map((c) => policy(c, 'company', 'annual', SUB_B)),
     ],
     cells: [
       cell(SITE_1, 'Electricity'),
@@ -64,8 +66,9 @@ export function complete(): BoundaryRows {
       cell(null, 'Fuel', 'excluded'),
       cell(null, 'Mobile Combustion', 'excluded'),
       cell(null, 'Refrigerants', 'excluded'),
+      cell(null, 'Fire Suppression', 'excluded'),
       cell(null, 'Fugitive Gas', 'excluded'),
-      ...['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'].map((c) => cell(null, c, 'excluded', SUB_B)),
+      ...INVENTORY_CATEGORIES.map((c) => cell(null, c, 'excluded', SUB_B)),
     ],
     sources: [
       source({ id: 'e-1', locationId: SITE_1, category: 'Electricity', scope: 2, reportingPeriod: 'monthly' }),

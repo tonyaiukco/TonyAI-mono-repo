@@ -1250,6 +1250,14 @@ export const E2E_TR_INPUTS = {
   /** Marine gas oil per kg (UAT2 BUG-R2-11): a round 2, not the IPCC edition's 3.2179. */
   marineGasOil: 'marine_gas_oil',
   marineGasOilFactor: 2,
+  /** Fire Suppression (UAT round 4, BUG-12): round values, unlike the fire edition's. */
+  fireGas: 'CO2',
+  fireGasFactor: 10,
+  /** The dry powder or foam option, priced by a zero row as the fire edition prices it. */
+  fireNoGas: 'dry_powder_or_foam',
+  fireExtinguisherRate: 0.1,
+  fireSystemRate: 0.2,
+  fireBreakerRate: 0.01,
 } as const;
 
 export async function seedTrInputsFixture(): Promise<void> {
@@ -1263,6 +1271,8 @@ export async function seedTrInputsFixture(): Promise<void> {
     ['Mobile Combustion', f.mode, 'not_applicable', f.modeFactor, 'kgCO2e/litre', 'litres'],
     ['Mobile Combustion', f.marineGasOil, 'not_applicable', f.marineGasOilFactor, 'kgCO2e/kg', 'kg'],
     ['Fugitive Gas', 'gas_network_leakage', 'not_applicable', f.leakageFactor, 'kgCO2e/Sm3', 'standard_cubic_metres'],
+    ['Fire Suppression', f.fireGas, 'not_applicable', f.fireGasFactor, 'kgCO2e/kg', 'kg'],
+    ['Fire Suppression', f.fireNoGas, 'not_applicable', 0, 'kgCO2e/kg', 'kg'],
   ] as const;
   await withOwner((owner) =>
     owner.$transaction(async (tx) => {
@@ -1302,6 +1312,9 @@ export async function seedTrInputsFixture(): Promise<void> {
         ['billed_gcv_max', null, f.billedGcvMax, 'kcal/Sm3', true],
         ['leak_rate', 'split_air_conditioner', f.splitDefaultRate, 'fraction', true],
         ['leak_rate', 'split_air_conditioner', f.splitAlternativeRate, 'fraction', false],
+        ['leak_rate', 'fire_extinguisher', f.fireExtinguisherRate, 'fraction', true],
+        ['leak_rate', 'fire_suppression_system', f.fireSystemRate, 'fraction', true],
+        ['leak_rate', 'transformer_breaker', f.fireBreakerRate, 'fraction', true],
       ] as const;
       for (const [key, subject, value, unit, isDefault] of parameters) {
         await tx.$executeRawUnsafe(

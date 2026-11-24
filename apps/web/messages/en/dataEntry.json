@@ -106,8 +106,10 @@
     "off_road_petrol": "Off-road petrol",
     "off_road_diesel": "Off-road diesel",
     "R-22": "R-22 (HCFC-22)",
-    "HFC-227ea": "HFC-227ea",
+    "HFC-227ea": "FM200 (HFC-227ea)",
     "SF6": "SF6 (sulphur hexafluoride)",
+    "CO2": "CO2 (carbon dioxide)",
+    "dry_powder_or_foam": "Dry powder / foam (no greenhouse gas)",
     "marine_gas_oil": "Marine gas oil (MGO, vessels)"
   },
   "equipmentTypes": {
@@ -253,7 +255,23 @@
     "basisReset": "This figure was on the net calorific basis. Outside Türkiye's rules an energy bill is priced as gross, so enter the bill's gross figure.",
     "recalculatedOnSave": "The factor edition changed while you were editing. The figures are being calculated again on the current edition.",
     "unitChangeReset": "The quantity was cleared: a figure entered for one unit is not the same number in another. Enter it in the new unit.",
-    "categoryReset": "The quantity was cleared with the category: enter it for the new category."
+    "categoryReset": "The quantity was cleared with the category: enter it for the new category.",
+    "fireSuppression": {
+      "capacity": "Installed capacity",
+      "refill": "Refilled in the year",
+      "unit": "Unit",
+      "units": {
+        "g": "g",
+        "kg": "kg"
+      },
+      "unitHelp": "Enter each line's capacity and refill in grams or kilograms, as its label states. A new line starts on grams. Changing a line's unit clears its figures.",
+      "inKg": "= {value} kg",
+      "annualOnly": "Fire suppression records in Türkiye are annual, because the leak rates are yearly.",
+      "otherGas": "Other gas",
+      "otherGasStatement": "A gas the factor library does not price cannot be entered, and it is never estimated. Choose a gas from the list, or ask your administrator to have the gas added to the library.",
+      "noGreenhouseGas": "Dry powder and foam hold no greenhouse gas, so this record's figure is 0. Its equipment and evidence are still recorded.",
+      "noGreenhouseGasOption": "Dry powder and foam hold no greenhouse gas. The record keeps its equipment and evidence; its figure comes from the factor library once the preview has calculated it."
+    }
   },
   "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied.",
   "selectAllLoaded": "Select all {count} loaded",

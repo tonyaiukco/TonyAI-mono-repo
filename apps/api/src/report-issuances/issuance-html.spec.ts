@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ReportDataset } from '@tonyai/shared-types';
 import { complete, SUB } from '../../test/boundary-fixtures';
-import { allExcludedBoundary, datasetOf, frozenBoundary, fullYear, priced, record, refrigerantDataset, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
+import { allExcludedBoundary, datasetOf, fireSuppressionDataset, frozenBoundary, fullYear, priced, record, refrigerantDataset, release, standing, UNCALCULATED } from '../../test/issuance-fixtures';
 import { deriveIssuance } from './issuance-gate';
 import { buildIssuanceHtml, earlierDataYearCount, ISSUANCE_CATALOGUES, ISSUANCE_RENDERER, type IssuanceDocument } from './issuance-html';
 import en from './i18n/en.json';
@@ -185,6 +185,39 @@ describe('buildIssuanceHtml', () => {
     expect(page).toContain(unmarked);
   });
 
+  // UAT round 4, BUG-12: Fire Suppression is its own category in the ledger,
+  // named in the document's language, and a dry powder record reads 0.
+  it.each([
+    ['en', 'Fire Suppression', 'Refrigerants', 'Dry powder / foam (no greenhouse gas)', 'CO2 (carbon dioxide)'],
+    ['tr', 'Yangın söndürme', 'Soğutucu akışkanlar', 'Kuru toz / köpük (sera gazı içermez)', 'CO2 (karbondioksit)'],
+  ] as const)('%s names Fire Suppression and each record\'s gas, apart from Refrigerants, the zero as 0', (language, fire, refrigerants, dry, co2) => {
+    const dataset = fireSuppressionDataset();
+    const page = html(dataset, { language });
+    expect(page).toContain(`<td>${fire} · ${dry}</td>`);
+    expect(page).toContain(`<td>${fire} · ${co2}</td>`);
+    expect(page).toContain(`<td>${refrigerants} · R-410A</td>`);
+    // The zero is a figure: no record of this dataset reads as not calculated.
+    expect(dataset.records.find((r) => r.id === 'fire-dry-powder')!.calculation).toMatchObject({ tCo2e: 0 });
+    expect(page).not.toContain(language === 'en' ? 'Not calculated' : 'Hesaplanmadı');
+  });
+
+  // PR #360 re-review: a withdrawn record names its gas too; a small non-zero
+  // figure keeps its digits beside a calculated zero.
+  it.each([
+    ['en', 'Fire Suppression · Dry powder / foam (no greenhouse gas)', '0.00024'],
+    ['tr', 'Yangın söndürme · Kuru toz / köpük (sera gazı içermez)', '0,00024'],
+  ] as const)('%s names a withdrawn record\'s gas, and prints 0.00024 t, not 0', (language, withdrawnName, small) => {
+    const base = fireSuppressionDataset();
+    const records = base.records.map((r) => {
+      if (r.id === 'fire-dry-powder') return { ...r, status: 'voided' as const, voidedBy: 'actor-voided', voidedAt: '2026-10-15T00:00:00.000Z', voidReason: 'Entered twice' };
+      if (r.id === 'fire-co2') return { ...r, calculation: { ...(r.calculation as object), tCo2e: 0.00024 } as typeof r.calculation };
+      return r;
+    });
+    const page = html(datasetOf({ boundary: base.boundary, records }), { language });
+    expect(page).toContain(`<td>${withdrawnName}</td>`);
+    expect(page).toContain(`<td class="num">${small}</td>`);
+  });
+
   it('prints in Turkish, with Turkish number formatting, when issued in Turkish (D16)', () => {
     const records = fullYear().map((r) => (r.id === 'g-Q1' ? { ...r, calculation: priced(1.5) } : r));
     const page = html(datasetOf({ records }), { language: 'tr' });
@@ -218,7 +251,7 @@ describe('an Electricity self-generation block in the issued document (self-gen-
   });
 
   it('keeps the renderer version', () => {
-    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v6');
+    expect(ISSUANCE_RENDERER).toBe('tonyai-issuance-pdf-v7');
   });
 });
 
@@ -226,7 +259,8 @@ describe('the issuance catalogues', () => {
   it('hold the same keys and the same ICU arguments in both languages, translated', () => {
     expect(Object.keys(tr).sort()).toEqual(Object.keys(en).sort());
     // A unit symbol reads the same in either language.
-    const same = new Set(['colEmissions']);
+    // A fuel or gas spelled alike in both (as `reports/i18n` holds them).
+    const same = new Set(['colEmissions', 'activity Fuel oil', 'activity LPG', 'activity LNG', 'activity FM200 (HFC-227ea)']);
     for (const key of Object.keys(en) as (keyof typeof en)[]) {
       expect(tr[key].match(/\{\w+\}/g), key).toEqual(en[key].match(/\{\w+\}/g));
       expect(tr[key].trim(), key).not.toBe('');

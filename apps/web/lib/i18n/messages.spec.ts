@@ -129,6 +129,10 @@ describe("the catalogues", () => {
       'evidence.size.bytes',
       'evidence.removeAria',
       'geography.TR',
+      // Mass units and a figure in kg, with no words (UAT round 4, BUG-12).
+      'dataEntry.inputs.fireSuppression.units.g',
+      'dataEntry.inputs.fireSuppression.units.kg',
+      'dataEntry.inputs.fireSuppression.inKg',
       // The calorific basis "net" is the same word in Turkish (ng-kwh-engine).
       'dataEntry.inputs.cvBasis.net',
       'review.sheet.calorificBasisValue.net',

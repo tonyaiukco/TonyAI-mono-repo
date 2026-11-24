@@ -5,6 +5,8 @@ import {
   isProvenanceSnapshot,
   isSelfGenerationSource,
   normalizeRecordParameters,
+  offeredActivityTypes,
+  offeredEquipmentTypes,
   recordParameterShape,
   selfGenerationIssue,
   usesTrCalculationRules,
@@ -331,9 +333,11 @@ export interface CopySource {
 
 /**
  * Whether a copy still keeps its source's own unit and type listed (ng-kwh-engine):
- * on the source's category and type, under the geography it was priced in. A
- * copy moved across the TR rules is narrowed like a new record, as before,
- * rather than carrying a unit or type the new geography does not price.
+ * on the source's category and type, under the geography it was priced in, and
+ * only while a new record is offered that type. A copy is a new record, so a
+ * type the form no longer offers one (HFC-227ea or SF6 on Refrigerants, PR #360
+ * review) is narrowed away like any new record's, never carried unseen. A copy
+ * moved across the TR rules is narrowed too, as before.
  */
 export function copyKeepsOwnUnit(
   source: CopySource | null,
@@ -346,8 +350,23 @@ export function copyKeepsOwnUnit(
     source.category === category &&
     (source.activityType ?? "") === activityType &&
     source.geography !== null &&
-    source.geography === geography
+    source.geography === geography &&
+    (activityType === "" || offeredActivityTypes(category, geography).some((t) => t.value === activityType))
   );
+}
+
+/**
+ * A copied record's lines, as a NEW record's (PR #360 review): no line keeps a
+ * stored device, and a device the category no longer offers for a new line (a
+ * fire device on Refrigerants) is cleared, so the author picks one the form
+ * lists. Masses and units stay.
+ */
+export function linesForNewRecord(lines: readonly EquipmentLineDraft[], category: string): EquipmentLineDraft[] {
+  const offered = offeredEquipmentTypes(category);
+  return lines.map(({ storedType: _stored, ...line }) => ({
+    ...line,
+    equipmentType: line.equipmentType !== "" && offered.includes(line.equipmentType) ? line.equipmentType : "",
+  }));
 }
 
 /**
@@ -472,25 +491,90 @@ export function unitChangeClearsBasis(previous: string, next: string): boolean {
   return (isGasEnergyUnit(previous) && isGasVolumeUnit(next)) || (isGasVolumeUnit(previous) && isGasEnergyUnit(next));
 }
 
-// --- Refrigerants (D7) --------------------------------------------------------
+// --- Refrigerants and Fire Suppression (D7) ------------------------------------
 
-/** One equipment line as typed: a mass is null while its field is empty or refused. */
+/**
+ * The unit a line's capacity and refill are typed in (UAT round 4, BUG-12). A
+ * Fire Suppression line carries a selector, grams or kilograms; a refrigerant
+ * line is always kilograms and shows none. The unit is the form's alone: what
+ * is sent, stored and reported is kilograms.
+ */
+export const LINE_MASS_UNITS = Object.freeze(["g", "kg"] as const);
+export type LineMassUnit = (typeof LINE_MASS_UNITS)[number];
+
+/** One equipment line as typed, in its `unit`: a mass is null while its field is empty or refused. */
 export interface EquipmentLineDraft {
   id: string;
   equipmentType: EquipmentType | "";
-  capacityKg: number | null;
-  refillKg: number | null;
+  /** The installed capacity as typed, in `unit`. */
+  capacity: number | null;
+  /** The refilled mass as typed, in `unit`. */
+  refill: number | null;
+  unit: LineMassUnit;
   leakRateChoice: LeakRateChoice;
+  /**
+   * The device this line was stored with, when it came from an opened record:
+   * selectable on this line for the whole edit, never on another (PR #360
+   * review). A new line has none.
+   */
+  storedType?: EquipmentType;
+}
+
+/**
+ * Whether a category's lines carry the g / kg selector: Fire Suppression's do,
+ * whose extinguishers are weighed in grams; Refrigerants' never.
+ */
+export function takesLineUnit(category: string): boolean {
+  return category === "Fire Suppression";
+}
+
+/** The unit a NEW line of the category starts on: grams for Fire Suppression, else kilograms. */
+export function newLineUnit(category: string): LineMassUnit {
+  return takesLineUnit(category) ? "g" : "kg";
 }
 
 /** A new line: no type yet, and an explicit zero in both masses. */
-export function newEquipmentLine(id: string): EquipmentLineDraft {
-  return { id, equipmentType: "", capacityKg: 0, refillKg: 0, leakRateChoice: "default" };
+export function newEquipmentLine(id: string, unit: LineMassUnit = "kg"): EquipmentLineDraft {
+  return { id, equipmentType: "", capacity: 0, refill: 0, unit, leakRateChoice: "default" };
 }
 
-/** The record's quantity: its total installed capacity, summed in the engine's order (D7). */
+/**
+ * A typed mass in kilograms: a gram figure ÷ 1,000, rounded to 15 significant
+ * digits so that 35 g is exactly 0.035 kg and no float noise reaches the API.
+ */
+export function massInKg(value: number, unit: LineMassUnit): number {
+  return unit === "g" ? Number((value / 1000).toPrecision(15)) : value;
+}
+
+/** A line's installed capacity in kilograms, or null while its field is empty. */
+export function lineCapacityKg(line: EquipmentLineDraft): number | null {
+  return line.capacity === null ? null : massInKg(line.capacity, line.unit);
+}
+
+/** A line's refill in kilograms, or null while its field is empty. */
+export function lineRefillKg(line: EquipmentLineDraft): number | null {
+  return line.refill === null ? null : massInKg(line.refill, line.unit);
+}
+
+/**
+ * A line switched to another unit: its capacity and refill are cleared, so a
+ * figure is never re-read in another unit (as a unit change clears a natural
+ * gas quantity). The same unit changes nothing.
+ */
+export function withLineUnit(line: EquipmentLineDraft, unit: LineMassUnit): EquipmentLineDraft {
+  return unit === line.unit ? line : { ...line, unit, capacity: null, refill: null };
+}
+
+/**
+ * The digits a kilogram figure is shown with: all a gram line can carry (0.1 g
+ * is 0.0001 kg), so the total never reads 0 beside a line that does not (PR
+ * #360 review). Display only; `massInKg` rounds to 15 significant digits.
+ */
+export const KG_DISPLAY = Object.freeze({ maximumFractionDigits: 15 });
+
+/** The record's quantity: its total installed capacity in kilograms, summed in the engine's order (D7). */
 export function equipmentTotal(lines: readonly EquipmentLineDraft[]): number {
-  return lines.reduce((sum, line) => sum + (line.capacityKg ?? 0), 0);
+  return lines.reduce((sum, line) => sum + (lineCapacityKg(line) ?? 0), 0);
 }
 
 export type EquipmentIssue = "no_lines" | "type_missing" | "type_repeated" | "value_missing" | "empty_line" | "too_large";
@@ -500,36 +584,84 @@ export function equipmentIssue(lines: readonly EquipmentLineDraft[]): EquipmentI
   if (lines.length === 0) return "no_lines";
   if (lines.some((l) => l.equipmentType === "")) return "type_missing";
   if (new Set(lines.map((l) => l.equipmentType)).size !== lines.length) return "type_repeated";
-  if (lines.some((l) => l.capacityKg === null || l.refillKg === null)) return "value_missing";
-  if (lines.some((l) => l.capacityKg === 0 && l.refillKg === 0)) return "empty_line";
+  if (lines.some((l) => l.capacity === null || l.refill === null)) return "value_missing";
+  if (lines.some((l) => l.capacity === 0 && l.refill === 0)) return "empty_line";
   if (equipmentTotal(lines) > ACTIVITY_VALUE_MAX) return "too_large";
   return null;
 }
 
-/** What a refrigerant record sends, once `equipmentIssue` is null. */
+/** What a capacity-method record sends, once `equipmentIssue` is null: every mass in kilograms. */
 export function equipmentParameters(lines: readonly EquipmentLineDraft[]): RefrigerantRecordParameters {
   return {
     equipment: lines.map((l) => ({
       equipmentType: l.equipmentType as EquipmentType,
-      capacityKg: l.capacityKg as number,
-      refillKg: l.refillKg as number,
+      capacityKg: lineCapacityKg(l) as number,
+      refillKg: lineRefillKg(l) as number,
       leakRateChoice: l.leakRateChoice,
     })),
   };
 }
 
-/** A stored record's lines, for the form; one blank line when it has none. */
-export function linesFromRecord(parameters: unknown, newId: () => string): EquipmentLineDraft[] {
+/**
+ * A stored record's lines, for the form: in kilograms as stored, each selector
+ * on kilograms (the unit is never stored). One blank line when it has none,
+ * on the category's new-line unit.
+ */
+export function linesFromRecord(parameters: unknown, newId: () => string, unit: LineMassUnit = "kg"): EquipmentLineDraft[] {
   const equipment = (parameters as Partial<RefrigerantRecordParameters> | null)?.equipment;
-  if (!Array.isArray(equipment) || equipment.length === 0) return [newEquipmentLine(newId())];
+  if (!Array.isArray(equipment) || equipment.length === 0) return [newEquipmentLine(newId(), unit)];
   return equipment.map((line) => ({
     id: newId(),
     equipmentType: line.equipmentType,
-    capacityKg: line.capacityKg,
-    refillKg: line.refillKg,
+    capacity: line.capacityKg,
+    refill: line.refillKg,
+    unit: "kg",
     leakRateChoice: line.leakRateChoice,
+    storedType: line.equipmentType,
   }));
 }
+
+/**
+ * The devices a line's list offers: the category's offered devices
+ * (`offeredEquipmentTypes`), the line's own current device, and the device the
+ * line was stored with (`storedType`: a fire device on a Refrigerants draft
+ * stays selectable on its own line for the whole edit, even after the line
+ * moved off it; design decision 7, PR #360 review), less those another line
+ * holds. A new line is offered the category's devices only.
+ */
+export function deviceOptions(
+  category: string,
+  line: Pick<EquipmentLineDraft, "equipmentType" | "storedType">,
+  taken: ReadonlySet<string>,
+): EquipmentType[] {
+  const all: EquipmentType[] = [...offeredEquipmentTypes(category)];
+  for (const kept of [line.storedType, line.equipmentType]) {
+    if (kept !== undefined && kept !== "" && !all.includes(kept)) all.push(kept);
+  }
+  return all.filter((type) => type === line.equipmentType || !taken.has(type));
+}
+
+/** How many lines a record of the category may hold: one per device it may name. */
+export function maxEquipmentLines(category: string, lines: readonly EquipmentLineDraft[]): number {
+  const own = lines.flatMap((l) => [l.equipmentType, l.storedType]).filter((t): t is EquipmentType => t !== undefined && t !== "");
+  return new Set([...offeredEquipmentTypes(category), ...own]).size;
+}
+
+/**
+ * The web-only "Other gas" item of the Fire Suppression gas list (UAT round 4,
+ * BUG-12, design decision 5). It is never an activity type: while it is chosen
+ * the form states that a gas the library does not price cannot be entered, and
+ * holds the preview and the save.
+ */
+export const OTHER_GAS = "__other_gas__";
+
+/** Whether the category's gas list ends with the "Other gas" item. */
+export function offersOtherGas(category: string): boolean {
+  return category === "Fire Suppression";
+}
+
+/** The Fire Suppression option priced by a zero row: the agent holds no greenhouse gas. */
+export const NO_GREENHOUSE_GAS = "dry_powder_or_foam";
 
 /** An equipment type's leak rate in the release: its default, or its alternative. */
 export function leakRateOf(rows: readonly ReleaseParameterDTO[], type: string, choice: LeakRateChoice): number | null {

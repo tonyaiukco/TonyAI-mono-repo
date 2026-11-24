@@ -3,10 +3,15 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ACTIVITY_VALUE_MAX,
+  CAPACITY_METHOD_CATEGORIES,
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
+  EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   PERIOD_VALUES,
   REPORTING_PERIODS,
+  acceptedEquipmentTypes,
+  allowsAlternativeLeakRate,
+  recordParameterShape,
 } from '@tonyai/shared-types';
 
 /**
@@ -82,5 +87,60 @@ describe('the activity_records CHECKs and shared-types agree (LP4-02 (33))', () 
     const bound = /^"activity_value" >= 0 AND "activity_value" <= ([0-9e.+]+)::double precision$/.exec(check);
     expect(bound, check).not.toBeNull();
     expect(Number(bound![1])).toBe(ACTIVITY_VALUE_MAX);
+  });
+
+  // UAT round 4, BUG-12: the parameters CHECK holds each capacity-method
+  // category to the devices shared-types accepts for it, Fire Suppression to
+  // the default rate only, and every category to at most one line per device.
+  describe('the parameters CHECK and the capacity-method lists', () => {
+    const check = () => checkInForce('activity_records_parameters_check');
+    /** The branch of one category: from its WHEN to the next category's. */
+    const branchOf = (category: string): string => {
+      const text = check();
+      const start = text.indexOf(`WHEN "category" = ${literal(category)} THEN`);
+      expect(start, category).toBeGreaterThan(-1);
+      const next = text.indexOf('WHEN "category" = ', start + 1);
+      return text.slice(start, next === -1 ? undefined : next);
+    };
+
+    it('has a branch for exactly the categories that take parameters, so any other refuses a parameters object', () => {
+      const branches = [...check().matchAll(/WHEN "category" = '([^']+)' THEN/g)].map((m) => m[1]);
+      expect(branches.sort()).toEqual(CATEGORIES.filter((c) => recordParameterShape(c) !== null).sort());
+      expect(check()).toMatch(/ELSE false END\s*$/);
+    });
+
+    it.each([...CAPACITY_METHOD_CATEGORIES])('holds %s to its accepted devices, each at most once', (category) => {
+      const branch = branchOf(category);
+      const filter = /\? \((@\.equipmentType == "[a-z_]+"(?: \|\| @\.equipmentType == "[a-z_]+")*)\)/.exec(branch);
+      expect(filter, category).not.toBeNull();
+      const devices = [...filter![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+      // Compared as sets: the SQL keeps the order it was first written in.
+      const accepted = [...acceptedEquipmentTypes(category)].sort();
+      expect(devices.sort(), category).toEqual(accepted);
+      const once = [...branch.matchAll(/\(@\.equipmentType == "([a-z_]+)"\)'\)\) <= 1/g)].map((m) => m[1]);
+      expect(once.sort(), category).toEqual(accepted);
+    });
+
+    it.each([...CAPACITY_METHOD_CATEGORIES])('admits the alternative leak rate on %s only where shared-types does', (category) => {
+      const branch = branchOf(category);
+      if (allowsAlternativeLeakRate(category)) {
+        const alternative = /@\.leakRateChoice == "alternative" && \(([^)]*)\)/.exec(branch);
+        expect(alternative, category).not.toBeNull();
+        expect([...alternative![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1])).toEqual([...EQUIPMENT_TYPES_WITH_ALTERNATIVE]);
+      } else {
+        expect(branch).toContain('? (@.leakRateChoice == "default") ?');
+        expect(branch).not.toContain('"alternative"');
+      }
+    });
+
+    it('keeps the line shape of the two branches identical apart from the devices and the rate', () => {
+      const shape = (category: string) =>
+        branchOf(category)
+          .replace(`'${category}'`, "'<category>'")
+          .replace(/\? \(@\.equipmentType == "[a-z_]+"(?: \|\| @\.equipmentType == "[a-z_]+")*\)/, '? (<devices>)')
+          .replace(/\? \(@\.leakRateChoice == "default"(?: \|\| \(@\.leakRateChoice == "alternative" && \([^)]*\)\))?\)/, '? (<rate>)')
+          .replace(/ AND jsonb_array_length\(jsonb_path_query_array\("parameters", 'strict \$\.equipment\[\*\] \? \(@\.equipmentType == "[a-z_]+"\)'\)\) <= 1/g, '');
+      expect(shape('Fire Suppression')).toBe(shape('Refrigerants'));
+    });
   });
 });

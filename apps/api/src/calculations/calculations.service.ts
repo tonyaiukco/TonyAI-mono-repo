@@ -13,6 +13,7 @@ import {
   FACTOR_STATUS_RANK,
   factorActivityTypeFor,
   isInvoiceTracked,
+  isCapacityMethodCategory,
   isRecordActivityTypeAllowed,
   isCvBasis,
   isRecordableWithoutFactor,
@@ -245,7 +246,7 @@ export class CalculationsService {
     const none: ReleaseParametersDTO = { release: null, parameters: [] };
     if (!usesTrCalculationRules(query.geographyCode)) return none;
     const gas = query.category === 'Natural Gas';
-    if (!gas && query.category !== 'Refrigerants') return none;
+    if (!gas && !isCapacityMethodCategory(query.category)) return none;
     const recordType = query.activityType ?? null;
     if (!isRecordActivityTypeAllowed(query.category, recordType)) return none;
     // A gas bill in kWh or MWh resolves as its calculation does: the net factor
@@ -403,7 +404,7 @@ export class CalculationsService {
       ? null
       : input.category === 'Natural Gas'
         ? 'natural_gas'
-        : input.category === 'Refrigerants'
+        : isCapacityMethodCategory(input.category)
           ? 'refrigerant'
           : null;
     // An Electricity record's self-generation block is accepted in every

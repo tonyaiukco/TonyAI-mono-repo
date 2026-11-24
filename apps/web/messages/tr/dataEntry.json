@@ -106,8 +106,10 @@
     "off_road_petrol": "Yol dışı – benzin",
     "off_road_diesel": "Yol dışı – dizel",
     "R-22": "R-22 (HCFC-22)",
-    "HFC-227ea": "HFC-227ea",
+    "HFC-227ea": "FM200 (HFC-227ea)",
     "SF6": "SF6 (kükürt hekzaflorür)",
+    "CO2": "CO2 (karbondioksit)",
+    "dry_powder_or_foam": "Kuru toz / köpük (sera gazı içermez)",
     "marine_gas_oil": "Deniz motorini (MGO, gemiler)"
   },
   "equipmentTypes": {
@@ -253,7 +255,23 @@
     "basisReset": "Bu miktar net ısıl değer esasındaydı. Türkiye kuralları dışında enerji faturası brüt olarak fiyatlanır; faturadaki brüt miktarı girin.",
     "recalculatedOnSave": "Siz düzenlerken faktör sürümü değişti. Değerler güncel sürümle yeniden hesaplanıyor.",
     "unitChangeReset": "Miktar temizlendi: bir birim için girilen sayı başka bir birimde aynı sayı değildir. Miktarı yeni birimle girin.",
-    "categoryReset": "Kategoriyle birlikte miktar temizlendi: yeni kategori için miktarı girin."
+    "categoryReset": "Kategoriyle birlikte miktar temizlendi: yeni kategori için miktarı girin.",
+    "fireSuppression": {
+      "capacity": "Kurulu kapasite",
+      "refill": "Yıl içinde dolum",
+      "unit": "Birim",
+      "units": {
+        "g": "g",
+        "kg": "kg"
+      },
+      "unitHelp": "Her satırın kapasitesini ve dolumunu, etiketinde yazan birimde gram ya da kilogram olarak girin. Yeni bir satır gramla başlar. Bir satırın birimini değiştirmek değerlerini siler.",
+      "inKg": "= {value} kg",
+      "annualOnly": "Türkiye'deki yangın söndürme kayıtları yıllıktır, çünkü kaçak oranları yıllıktır.",
+      "otherGas": "Diğer gaz",
+      "otherGasStatement": "Faktör kütüphanesinin fiyatlamadığı bir gaz girilemez ve hiçbir zaman tahmin edilmez. Listeden bir gaz seçin ya da gazın kütüphaneye eklenmesi için yöneticinize başvurun.",
+      "noGreenhouseGas": "Kuru toz ve köpük sera gazı içermez, bu nedenle bu kaydın değeri 0'dır. Ekipmanı ve kanıtı yine de kaydedilir.",
+      "noGreenhouseGasOption": "Kuru toz ve köpük sera gazı içermez. Kayıt ekipmanını ve kanıtını korur; değeri, önizleme hesapladıktan sonra faktör kütüphanesinden gelir."
+    }
   },
   "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı.",
   "selectAllLoaded": "Yüklenen {count} kaydın tümünü seç",

@@ -87,7 +87,13 @@ import {
   gasInputsIssue,
   gasParameters,
   linesFromRecord,
+  linesForNewRecord,
   newEquipmentLine,
+  newLineUnit,
+  KG_DISPLAY,
+  NO_GREENHOUSE_GAS,
+  offersOtherGas,
+  OTHER_GAS,
   recordInputMode,
   referenceValue,
   type EquipmentLineDraft,
@@ -153,6 +159,8 @@ import {
   mayEditRecord,
   isCeilingFlag,
   needsEvidenceBeforeSubmit,
+  isCapacityMethodCategory,
+  tonnesDisplayOptions,
   offeredActivityTypes,
   PERIOD_VALUES,
   selectableReportingYears,
@@ -208,7 +216,6 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // these spellings. A copy that drifted would offer a value the API rejects.
 
 /** The preview's figures, in the user's locale (LP3-01). */
-const PREVIEW_DIGITS = { maximumFractionDigits: 3 } as const;
 /** A factor shows every digit it has, ungrouped — only the decimal separator follows the locale. */
 const FACTOR_DIGITS = { maximumFractionDigits: 20, useGrouping: false } as const;
 
@@ -235,17 +242,18 @@ type ContextValues = Record<string, string | number>;
 const YEAR_GASES_MAX_PAGES = 50;
 
 /**
- * Every refrigerant record of one subsidiary and reporting year, page by page
- * (UAT round 2, K5): the shortcut is offered, and ticks, over the whole year,
- * never only the first page of it.
+ * Every record of one capacity-method category (Refrigerants or Fire
+ * Suppression), subsidiary and reporting year, page by page (UAT round 2, K5;
+ * UAT round 4, BUG-12): the shortcut is offered, and ticks, over the whole
+ * year, never only the first page of it, and never across the two categories.
  */
-function readYearGases(subsidiaryId: string, year: number): Promise<ActivityRecordPageItemDTO[]> {
+function readYearGases(subsidiaryId: string, year: number, category: Category): Promise<ActivityRecordPageItemDTO[]> {
   return readPages(
     (cursor) =>
       api.listActivityRecordPage({
         subsidiaryId,
         year,
-        category: "Refrigerants",
+        category,
         limit: MAX_PAGE_LIMIT,
         ...(cursor ? { cursor } : {}),
       }),
@@ -557,6 +565,9 @@ function DataEntryPageInner() {
   const marineGasOil = category === "Mobile Combustion" && activityType === MARINE_GAS_OIL_ACTIVITY_TYPE;
   const inputMode = recordInputMode(category, effectiveGeography, activityUnit);
   const refrigerantMode = inputMode === "refrigerant";
+  // The Fire Suppression list's "Other gas" item (UAT round 4, BUG-12): never
+  // an activity type. While it is chosen nothing is previewed, saved or sent.
+  const otherGasChosen = offersOtherGas(category) && activityType === OTHER_GAS;
   const vehicleModes = category === "Mobile Combustion" && effectiveGeography !== null && usesTrCalculationRules(effectiveGeography);
 
   /**
@@ -682,7 +693,8 @@ function DataEntryPageInner() {
     gasProblem === null &&
     gasEnergyProblem === null &&
     !gasRefused &&
-    selfGenerationProblem === null;
+    selfGenerationProblem === null &&
+    !otherGasChosen;
 
   const contextSet = contextFieldSet(category);
 
@@ -715,12 +727,12 @@ function DataEntryPageInner() {
   const [yearGases, setYearGases] = useState<ActivityRecordPageItemDTO[] | null>(null);
   const [yearGasesVersion, setYearGasesVersion] = useState(0);
   useEffect(() => {
-    if (!editingId || category !== "Refrigerants" || !subsidiaryId) {
+    if (!editingId || !isCapacityMethodCategory(category) || !subsidiaryId) {
       setYearGases(null);
       return;
     }
     let live = true;
-    readYearGases(subsidiaryId, reportingYear)
+    readYearGases(subsidiaryId, reportingYear, category)
       .then((items) => live && setYearGases(items))
       // Advisory: without the list the shortcut is simply not offered.
       .catch(() => live && setYearGases(null));
@@ -731,9 +743,9 @@ function DataEntryPageInner() {
   const gasShortcut = useMemo(() => {
     if (!yearGases) return null;
     const { attachableIds } = attachableRecords(yearGases, user, { t: tEvidence, locale, words: recordWords });
-    return refrigerantShortcut(yearGases, attachableIds, reportingYear);
+    return refrigerantShortcut(yearGases, attachableIds, reportingYear, category);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the copy follows `locale`/`recordWords`
-  }, [yearGases, user, locale, recordWords, reportingYear]);
+  }, [yearGases, user, locale, recordWords, reportingYear, category]);
   const [attachRequest, setAttachRequest] = useState<AttachRequest | null>(null);
   // The query the rows on screen answer (set with them), so a request is
   // applied to the list it asked for, never to the one still showing.
@@ -814,7 +826,7 @@ function DataEntryPageInner() {
   function startShareWithYear() {
     if (!gasShortcut?.offered) return;
     const preselect = gasShortcut.preselect;
-    const change = { year: reportingYear, category: "Refrigerants", status: "all" } as const;
+    const change = { year: reportingYear, category, status: "all" } as const;
     changeRecordsFilter(change);
     setAttachRequest((prev) => ({
       nonce: (prev?.nonce ?? 0) + 1,
@@ -995,6 +1007,7 @@ function DataEntryPageInner() {
         if (wantedCategory) {
           if ((CATEGORIES as readonly string[]).includes(wantedCategory)) {
             setCategory(wantedCategory as Category);
+            resetInputs(null, null, wantedCategory);
           } else {
             toast.error(t("unknownCategory", { category: wantedCategory }));
           }
@@ -1191,11 +1204,12 @@ function DataEntryPageInner() {
   // The release parameters this record's inputs default to: the reference NCV
   // and a gas's leak rates come from the release in force, read through the
   // engine's own lookup, so the form never holds 8,250 or a rate itself (D2).
-  const referenceGas = refrigerantMode ? activityType : "";
+  const referenceGas = refrigerantMode && !otherGasChosen ? activityType : "";
   // A bill reads its FACTOR's release, the one its gross ratio comes from (ng-kwh-form).
   const referenceUnit = inputMode === "natural_gas_energy" ? activityUnit : "";
   useEffect(() => {
-    if (inputMode === null || effectiveGeography === null) return;
+    // "Other gas" asks the API nothing (UAT round 4, BUG-12).
+    if (inputMode === null || effectiveGeography === null || otherGasChosen) return;
     let active = true;
     setReference({ status: "loading" });
     api
@@ -1217,7 +1231,7 @@ function DataEntryPageInner() {
     return () => {
       active = false;
     };
-  }, [inputMode, category, referenceGas, referenceUnit, effectiveGeography, reportingYear, stableErrorToast]);
+  }, [inputMode, category, referenceGas, referenceUnit, effectiveGeography, reportingYear, stableErrorToast, otherGasChosen]);
 
   // A new record moved under the TR rules (a site picked, a category chosen
   // by a link) may hold a unit or type they do not offer: picked again rather
@@ -1242,7 +1256,9 @@ function DataEntryPageInner() {
         toast.info(t("inputs.unitReset", { unit: unitSymbol(units[0].value) }));
       }
     }
-    if (activityType !== "" && !offeredActivityTypes(category, effectiveGeography).some((type) => type.value === activityType)) {
+    // "Other gas" is the form's own item, never offered by the contract: kept.
+    const keptOtherGas = offersOtherGas(category) && activityType === OTHER_GAS;
+    if (activityType !== "" && !keptOtherGas && !offeredActivityTypes(category, effectiveGeography).some((type) => type.value === activityType)) {
       setActivityType("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1298,11 +1314,15 @@ function DataEntryPageInner() {
     }
   }
 
-  /** The inputs set to a record's stored parameters, read by its category; empty with none. */
-  function resetInputs(category: string | null = null, parameters: unknown = null) {
+  /**
+   * The inputs set to a record's stored parameters, read by its category; empty
+   * with none. A blank line starts on `lineCategory`'s unit: grams for Fire
+   * Suppression (UAT round 4, BUG-12).
+   */
+  function resetInputs(category: string | null = null, parameters: unknown = null, lineCategory: string = category ?? "") {
     const stored = category === null ? null : parameters;
     setGasInputs(gasInputsFromRecord(category ?? "", stored));
-    setEquipment(linesFromRecord(stored, nextLineId));
+    setEquipment(linesFromRecord(stored, nextLineId, newLineUnit(lineCategory)));
     setInputsEpoch((n) => n + 1);
   }
 
@@ -1435,6 +1455,9 @@ function DataEntryPageInner() {
     setEditingTuple(null);
     setOwnUnit(null);
     setOwnBasis(null);
+    // A new record's lines: no stored device, and a device the category no
+    // longer offers for a new line is cleared (PR #360 re-review).
+    setEquipment((lines) => linesForNewRecord(lines, category));
     // A new record now: no stored block for a move to remove. The fields stay
     // as typed, like every other field on the form.
     setOpenedWithSelfGeneration(false);
@@ -1475,7 +1498,7 @@ function DataEntryPageInner() {
     activity.setValue(null);
     setContext({});
     setContextEpoch((n) => n + 1);
-    resetInputs();
+    resetInputs(null, null, category);
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
@@ -1975,6 +1998,9 @@ function DataEntryPageInner() {
       setContextEpoch((n) => n + 1);
       if (hasContextValue(values.input)) setContextOpen(true);
       resetInputs(values.category, values.parameters);
+      // A copy is a new record: its lines keep no stored device, and one the
+      // category no longer offers is cleared (PR #360 review).
+      setEquipment((lines) => linesForNewRecord(lines, values.category));
       toast.info(t("copy.loaded"));
       return true;
     } catch (e) {
@@ -2140,7 +2166,7 @@ function DataEntryPageInner() {
                         setCategory(next);
                         setContext({});
                         setContextEpoch((n) => n + 1);
-                        resetInputs();
+                        resetInputs(null, null, next);
                         // Each typed category has its own list; a type chosen
                         // for Fuel means nothing for Refrigerants.
                         setActivityType("");
@@ -2202,8 +2228,23 @@ function DataEntryPageInner() {
                               {t(`activityTypes.${type.value}` as ActivityTypeKey)}
                             </SelectItem>
                           ))}
+                          {offersOtherGas(category) && (
+                            <SelectItem value={OTHER_GAS}>{t("inputs.fireSuppression.otherGas")}</SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
+                      {/* UAT round 4, BUG-12: a gas the library does not price cannot be entered. */}
+                      {otherGasChosen && (
+                        <p className="text-xs text-amber-700" role="status" data-testid="other-gas-statement">
+                          {t("inputs.fireSuppression.otherGasStatement")}
+                        </p>
+                      )}
+                      {/* The option's meaning only: the figure of 0 is stated by a calculated preview, never before (PR #360 review). */}
+                      {category === "Fire Suppression" && activityType === NO_GREENHOUSE_GAS && (
+                        <p className="text-xs text-muted-foreground" data-testid="no-ghg-option">
+                          {t("inputs.fireSuppression.noGreenhouseGasOption")}
+                        </p>
+                      )}
                       {/* What MGO covers and what it does not (Scope 1 only). */}
                       {marineGasOil && (
                         <p className="text-xs text-muted-foreground">{t("inputs.marineGasOilScope")}</p>
@@ -2310,7 +2351,7 @@ function DataEntryPageInner() {
                         <>
                           <Input
                             readOnly
-                            value={formatNumber(numericValue, locale)}
+                            value={formatNumber(numericValue, locale, KG_DISPLAY)}
                             aria-describedby="activity-total-note"
                             data-testid="equipment-total"
                           />
@@ -2416,6 +2457,7 @@ function DataEntryPageInner() {
                   )}
                   {refrigerantMode && (
                     <EquipmentLines
+                      category={category}
                       lines={equipment}
                       reference={reference}
                       issue={equipmentProblem}
@@ -2423,7 +2465,7 @@ function DataEntryPageInner() {
                       onChange={(id, next) =>
                         setEquipment((prev) => prev.map((line) => (line.id === id ? { ...line, ...next } : line)))
                       }
-                      onAdd={() => setEquipment((prev) => [...prev, newEquipmentLine(nextLineId())])}
+                      onAdd={() => setEquipment((prev) => [...prev, newEquipmentLine(nextLineId(), newLineUnit(category))])}
                       onRemove={(id) => setEquipment((prev) => prev.filter((line) => line.id !== id))}
                     />
                   )}
@@ -2941,7 +2983,10 @@ function PreviewCard({
   const t = useTranslations("dataEntry");
   const tCommon = useTranslations("common");
   const locale = useLocale();
-  const numberFmt = { format: (n: number) => formatNumber(n, locale, PREVIEW_DIGITS) };
+  // Three decimals, but a small non-zero figure keeps its digits, so the kg
+  // line and the normalised input never read 0 beside a positive figure
+  // (0.1 g refilled is 0.0001 kgCO2e; PR #360 re-review).
+  const numberFmt = { format: (n: number) => formatNumber(n, locale, tonnesDisplayOptions(n)) };
   return (
     <Card className="border-primary/20">
       <CardHeader>
@@ -3010,7 +3055,8 @@ function PreviewCard({
             <div>
               <div className="flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-foreground" data-testid="preview-tco2e">
-                  {numberFmt.format(preview.tCo2e)}
+                  {/* A small non-zero figure keeps its digits: 0.00024, never 0 (PR #360 review). */}
+                  {formatNumber(preview.tCo2e, locale, tonnesDisplayOptions(preview.tCo2e))}
                 </span>
                 <span className="flex items-center gap-1 text-sm font-medium text-primary">
                   <Leaf className="h-4 w-4" />
@@ -3020,6 +3066,12 @@ function PreviewCard({
               <p className="mt-1 text-xs text-muted-foreground">
                 {t("preview.scopeLine", { scope: preview.scope, kg: numberFmt.format(preview.kgCo2e) })}
               </p>
+              {/* A zero priced by its own row: the agent holds no greenhouse gas (UAT round 4, BUG-12). */}
+              {preview.category === "Fire Suppression" && "activityType" in preview && preview.activityType === NO_GREENHOUSE_GAS && (
+                <p className="mt-1 text-xs text-muted-foreground" data-testid="preview-no-ghg">
+                  {t("inputs.fireSuppression.noGreenhouseGas")}
+                </p>
+              )}
             </div>
 
             <Separator />

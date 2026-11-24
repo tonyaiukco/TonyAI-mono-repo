@@ -190,6 +190,16 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
     equipmentType: 'chiller', capacityKg: 10, refillKg: 0, leakRateChoice: 'alternative', ...over,
   });
   const equipment = (...lines: unknown[]) => refrigerant({ equipment: lines });
+  // UAT round 4, BUG-12: a Fire Suppression record holds the three fire devices
+  // only, each once, always at the default rate.
+  const fire = (lines: unknown[], periodValue = 'August', activityType = 'CO2') =>
+    recordInput(tenant, {
+      category: 'Fire Suppression', activityType, activityUnit: 'kg', periodValue,
+      parameters: { equipment: lines } as Prisma.InputJsonValue,
+    });
+  const fireLine = (over: Record<string, unknown> = {}) => ({
+    equipmentType: 'fire_extinguisher', capacityKg: 6, refillKg: 0, leakRateChoice: 'default', ...over,
+  });
   // self-gen-model: an Electricity record's self-generation block.
   const electricity = (parameters: unknown, periodValue = 'August') =>
     recordInput(tenant, { category: 'Electricity', periodValue, parameters: parameters as Prisma.InputJsonValue });
@@ -255,6 +265,17 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
     ['a gas key on Electricity', () => electricity({ ncvKcalPerSm3: 8250 })],
     ['a gas key beside a block', () => electricity(block({ cvBasis: 'net' }))],
     ['an equipment list on Electricity', () => electricity({ equipment: [line()] })],
+    // UAT round 4, BUG-12: the Fire Suppression branch.
+    ['a chiller line on Fire Suppression', () => fire([line({ leakRateChoice: 'default' })])],
+    ['a split air conditioner on Fire Suppression', () => fire([fireLine({ equipmentType: 'split_air_conditioner' })])],
+    ['the alternative rate on Fire Suppression', () => fire([fireLine({ leakRateChoice: 'alternative' })])],
+    ['a repeated fire device', () => fire([fireLine(), fireLine({ capacityKg: 9 })])],
+    ['an empty fire suppression list', () => fire([])],
+    ['a fire line with neither capacity nor refill', () => fire([fireLine({ capacityKg: 0 })])],
+    ['a gas key on Fire Suppression', () => recordInput(tenant, {
+      category: 'Fire Suppression', activityType: 'CO2', activityUnit: 'kg', periodValue: 'August',
+      parameters: { equipment: [fireLine()], cvBasis: 'net' },
+    })],
   ])('refuses %s, as the owner too (23514)', async (_what, data) => {
     const e = await failure(withRollback(owner, (tx) => tx.activityRecord.create({ data: data() })));
     expect(sqlstateOf(e)).toBe('23514');
@@ -283,6 +304,22 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
       await tx.activityRecord.create({ data: gas({ cvBasis: null, ncvKcalPerSm3: 8100 }, 'July') });
       await tx.activityRecord.create({ data: equipment(line(), line({ equipmentType: 'refrigerator', capacityKg: 0, refillKg: 2, leakRateChoice: 'default' })) });
       await tx.activityRecord.create({ data: recordInput(tenant, { periodValue: 'August' }) });
+      // UAT round 4, BUG-12: the three fire devices on one record, the zero
+      // agent among them; and a Refrigerants record keeps its fire devices.
+      await tx.activityRecord.create({
+        data: fire([
+          fireLine(),
+          fireLine({ equipmentType: 'fire_suppression_system', capacityKg: 50, refillKg: 35 }),
+          fireLine({ equipmentType: 'transformer_breaker', capacityKg: 10 }),
+        ]),
+      });
+      await tx.activityRecord.create({ data: fire([fireLine({ capacityKg: 12 })], 'August', 'dry_powder_or_foam') });
+      await tx.activityRecord.create({
+        data: recordInput(tenant, {
+          category: 'Refrigerants', activityType: 'HFC-227ea', activityUnit: 'kg', periodValue: 'August',
+          parameters: { equipment: [fireLine({ equipmentType: 'fire_suppression_system', capacityKg: 40 })] },
+        }),
+      });
       // self-gen-model: a full block, the three required fields only, exports
       // equal to the generation, optional fields as JSON null, an all-null block.
       await tx.activityRecord.create({
@@ -302,7 +339,7 @@ describe('LP4-02 (D3) — a record\'s parameters', () => {
         where: { subsidiaryId: tenant.subsidiaryId, periodValue: { in: ['July', 'August', 'September', 'October', 'November', 'December'] } },
       });
     });
-    expect(accepted).toBe(13);
+    expect(accepted).toBe(16);
   });
 
   it('freezes them with the other inputs once a record is committed (TA001), the owner included', async () => {

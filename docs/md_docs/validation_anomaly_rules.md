@@ -111,8 +111,8 @@ revise any of them.
 | Mobile Combustion | 100,000 L, or 100,000 kg |
 | Mobile Combustion, marine gas oil | 1,000 t (checked instead of the kg row) |
 | Fugitive Gas | 200,000 Sm³ |
-| Refrigerants | 500 kg installed capacity on any **one** equipment line |
-| Refrigerants, refill | on any **one** line, more than 125% of that line's capacity, capped at 500 kg; 500 kg for a line with no capacity |
+| Refrigerants and Fire Suppression | 500 kg installed capacity on any **one** equipment line |
+| Refrigerants and Fire Suppression, refill | on any **one** line, more than 125% of that line's capacity, capped at 500 kg; 500 kg for a line with no capacity |
 | Fuel | 100,000 L, or 150,000 kg |
 
 - **Other units** reach the same ceiling through exact definitional
@@ -128,6 +128,13 @@ revise any of them.
   the full charge in a calendar year, used as a yardstick. A positive refill is
   the line's whole released mass, so a refill typo directly changes the figure.
   A refrigerant record without equipment lines (outside TR) has no ceiling.
+- **Fire Suppression** records are checked exactly as Refrigerants are (UAT
+  round 4, BUG-12), dry powder and foam included: line by line, on the stored
+  kilogram figures, whatever unit the Data Entry form took the line in. A
+  figure typed in grams with the selector on kilograms is 1,000 times too large
+  and, past 500 kg, is caught here; the reverse error (kilograms typed as
+  grams) is 1,000 times too small and no check catches it, so the form shows
+  each gram figure's kilograms beside it.
 - **Only where history cannot judge.** A first period, or a window whose
   figures average zero (owner, 2026-11-13: a January of 0 must not let a
   February typo through). Once the window holds a figure above zero, the

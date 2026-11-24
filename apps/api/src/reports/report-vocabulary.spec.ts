@@ -76,7 +76,7 @@ describe('the Turkish catalogue covers every word a live PDF or workbook prints'
       (def?.types ?? []).map((t) => ({ category: category as Category, activityType: t.value, label: t.label })));
     for (const { category, activityType, label } of named) {
       // A refrigerant's code is its name in every language.
-      if (/^R-\d/.test(label) || ['LPG', 'LNG', 'HFC-227ea', 'Fuel oil'].includes(label)) continue;
+      if (/^R-\d/.test(label) || ['LPG', 'LNG', 'FM200 (HFC-227ea)', 'Fuel oil'].includes(label)) continue;
       expect(tr.activityType({ category, activityType }), `${category} ${activityType}`).not.toBe(label);
     }
   });
@@ -139,3 +139,29 @@ describe('the anomaly column, state by state', () => {
     expect(tr.anomaly(r)).toBe(turkish);
   });
 });
+
+// UAT round 4, BUG-12 review: the issued documents name a record's gas through
+// `issuedActivityLabel`, which must agree with the live reports' resolver.
+describe('the issued documents\' activity label agrees with reportVocabulary.activityType', () => {
+  it('for every typed category\'s every type, in both languages, and an unspecified or absent one', async () => {
+    const { issuedActivityLabel: activityTypeLabel, ISSUANCE_CATALOGUES } = await import('../report-issuances/issuance-html');
+    // The issued catalogue holds exactly the live one's activity keys, alike.
+    for (const locale of ['en', 'tr'] as const) {
+      const live = Object.entries(REPORT_CATALOGUES[locale]).filter(([k]) => k.startsWith('activity ') || k === 'activityNotSpecified');
+      const issued = Object.entries(ISSUANCE_CATALOGUES[locale]).filter(([k]) => k.startsWith('activity ') || k === 'activityNotSpecified');
+      expect(issued.sort()).toEqual(live.sort());
+    }
+    for (const locale of ['en', 'tr'] as const) {
+      const vocabulary = reportVocabulary(locale);
+      for (const [category, def] of Object.entries(CATEGORY_ACTIVITY_TYPES)) {
+        for (const t of def?.types ?? []) {
+          const r = { category, activityType: t.value };
+          expect(activityTypeLabel(locale, r), `${locale} ${category} ${t.value}`).toBe(vocabulary.activityType(r as never));
+        }
+      }
+      expect(activityTypeLabel(locale, { category: 'Fuel', activityType: 'unspecified' })).toBe(vocabulary.activityType({ category: 'Fuel', activityType: 'unspecified' } as never));
+      expect(activityTypeLabel(locale, { category: 'Electricity', activityType: null })).toBe('');
+    }
+  });
+});
+

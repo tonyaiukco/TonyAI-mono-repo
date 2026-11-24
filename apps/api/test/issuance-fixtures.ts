@@ -170,6 +170,39 @@ export function refrigerantDataset(): ReportDataset {
   ] });
 }
 
+/**
+ * UAT round 4, BUG-12: Sub A's year with one R-410A refrigerant record, one
+ * CO2 fire suppression record and one dry powder record priced at zero, the
+ * two categories included at the company and every record annual.
+ */
+export function fireSuppressionDataset(): ReportDataset {
+  const rows = complete();
+  const included = ['Refrigerants', 'Fire Suppression'];
+  const boundary = frozenBoundary({
+    ...rows,
+    cells: rows.cells.map((cell) => (cell.subsidiaryId === SUB && included.includes(cell.category)
+      ? { ...cell, applicability: 'included', reason: null }
+      : cell)),
+    sources: [
+      ...rows.sources,
+      source({ id: 'refrigerant-ac', category: 'Refrigerants', activityType: 'R-410A', reportingPeriod: 'annual' }),
+      source({ id: 'fire-co2', category: 'Fire Suppression', activityType: 'CO2', reportingPeriod: 'annual' }),
+      source({ id: 'fire-dry', category: 'Fire Suppression', activityType: 'dry_powder_or_foam', reportingPeriod: 'annual' }),
+    ],
+  });
+  const annual = (id: string, category: string, activityType: string, activityValue: number, tCo2e: number) => record(id, {
+    category: category as ReportDatasetRecord['category'], activityType, scope: 1, reportingPeriod: 'annual', periodValue: 'Annual',
+    locationId: null, locationName: null, activityValue, activityUnit: 'kg',
+    calculation: { ...(priced(tCo2e) as object), category, activityType, scope: 1, inputUnit: 'kg', normalizedUnit: 'kg' } as unknown as ReturnType<typeof priced>,
+  });
+  return datasetOf({ boundary, records: [
+    ...fullYear(),
+    annual('refrigerant-r410a', 'Refrigerants', 'R-410A', 10, 1.5),
+    annual('fire-co2', 'Fire Suppression', 'CO2', 6, 0.25),
+    annual('fire-dry-powder', 'Fire Suppression', 'dry_powder_or_foam', 12, 0),
+  ] });
+}
+
 /** The row a capture retains for `dataset`: its columns and its exact text. */
 export function rowOf(dataset: ReportDataset, content = JSON.stringify(dataset)): RetainedDatasetRow & { boundaryId: string } {
   return {

@@ -6,7 +6,7 @@ import {
 } from 'class-validator';
 import {
   INVENTORY_CATEGORIES, INVENTORY_REASON_MAX_LENGTH, INVENTORY_SOURCE_NAME_MAX_LENGTH,
-  recordActivityTypesFor, REPORTING_PERIODS, REPORTING_YEAR_MAX, REPORTING_YEAR_MIN, textIssue,
+  inventoryReportingPeriodsFor, recordActivityTypesFor, REPORTING_PERIODS, REPORTING_YEAR_MAX, REPORTING_YEAR_MIN, textIssue,
   type CreateInventoryBoundaryRequest, type InventoryApplicabilityCellInput,
   type InventoryApplicabilityDecision, type InventoryAttributionPolicy,
   type InventoryAttributionPolicyInput, type InventoryBoundarySiteInput, type InventoryCategory,
@@ -252,6 +252,13 @@ export function inventoryDeclarationIssues(body: object): string[] {
   eachRow(b.attribution, (policy, i) => {
     if (policies.has(policy.category)) issues.push(`attribution[${i}] is declared twice`);
     policies.add(policy.category);
+    // A cadence no priced record could meet is refused (PR #360 review).
+    if (typeof policy.category === 'string' && typeof policy.reportingPeriod === 'string') {
+      const allowed = inventoryReportingPeriodsFor(policy.category);
+      if (!(allowed as readonly string[]).includes(policy.reportingPeriod)) {
+        issues.push(`attribution[${i}] reports ${policy.category} ${policy.reportingPeriod}: it is reported ${allowed.join(' or ')} only`);
+      }
+    }
   });
 
   const cells = new Set<string>();

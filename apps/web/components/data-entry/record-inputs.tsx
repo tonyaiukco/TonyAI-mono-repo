@@ -15,10 +15,19 @@ import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import {
   derivedNetQuantity,
   editedNcv,
+  deviceOptions,
   equipmentTotal,
+  KG_DISPLAY,
   leakRateOf,
   leakRatePercent,
+  lineCapacityKg,
+  lineRefillKg,
+  LINE_MASS_UNITS,
+  maxEquipmentLines,
   offersAlternative,
+  takesLineUnit,
+  withLineUnit,
+  type LineMassUnit,
   referenceValue,
   selfGenerationReminder,
   type EquipmentIssue,
@@ -32,7 +41,7 @@ import {
 } from "@/lib/record-inputs-view";
 import {
   ACTIVITY_VALUE_MAX,
-  EQUIPMENT_TYPES,
+  allowsAlternativeLeakRate,
   VOLUME_CORRECTION_FACTOR_MAX,
   VOLUME_CORRECTION_FACTOR_MIN,
   SELF_GENERATION_SOURCES,
@@ -379,12 +388,15 @@ export function NaturalGasInputs({
 }
 
 /**
- * A TR refrigerant record's equipment lines (D7): type, installed capacity and
- * refill per line, the type's default rate shown, the alternative offered only
- * where the release states one. Their total capacity is the record's quantity,
- * shown read-only by the page.
+ * A TR capacity-method record's equipment lines (D7): type, installed capacity
+ * and refill per line, the type's default rate shown, the alternative offered
+ * only where the category and the release allow one. Their total capacity in
+ * kilograms is the record's quantity, shown read-only by the page. A Fire
+ * Suppression line (UAT round 4, BUG-12) offers the three fire devices and a
+ * g / kg selector, and shows a gram figure's kilograms beside it.
  */
 export function EquipmentLines({
+  category,
   lines,
   reference,
   issue,
@@ -393,6 +405,7 @@ export function EquipmentLines({
   onAdd,
   onRemove,
 }: {
+  category: string;
   lines: readonly EquipmentLineDraft[];
   reference: ReferenceState;
   issue: EquipmentIssue | null;
@@ -405,20 +418,34 @@ export function EquipmentLines({
   const tTypes = useTranslations("dataEntry.equipmentTypes");
   const locale = useLocale();
   const rows = reference.status === "ready" ? reference.data.parameters : [];
+  const withUnit = takesLineUnit(category);
+  const kgBeside = (kg: number | null, unit: LineMassUnit) =>
+    unit === "g" && kg !== null ? (
+      <p className="text-xs text-muted-foreground" data-testid="equipment-kg">
+        {t("fireSuppression.inKg", { value: formatNumber(kg, locale, KG_DISPLAY) })}
+      </p>
+    ) : null;
   return (
     <div className="space-y-4 rounded-lg border p-4" data-testid="equipment-lines">
       <div>
         <p className="text-sm font-medium">{t("equipmentTitle")}</p>
         <p className="text-xs text-muted-foreground">{t("equipmentHelp")}</p>
+        {withUnit && <p className="text-xs text-muted-foreground">{t("fireSuppression.unitHelp")}</p>}
       </div>
       {lines.map((line, index) => {
         const taken = new Set(lines.filter((l) => l.id !== line.id).map((l) => l.equipmentType));
         const defaultRate = line.equipmentType ? leakRateOf(rows, line.equipmentType, "default") : null;
         const alternativeRate = line.equipmentType ? leakRateOf(rows, line.equipmentType, "alternative") : null;
         // A stored choice stays visible even where the release no longer offers it.
-        const showChoice = line.equipmentType !== "" && (offersAlternative(rows, line.equipmentType) || line.leakRateChoice === "alternative");
+        const showChoice =
+          line.equipmentType !== "" &&
+          ((allowsAlternativeLeakRate(category) && offersAlternative(rows, line.equipmentType)) || line.leakRateChoice === "alternative");
         return (
-          <div key={line.id} className="grid grid-cols-1 gap-3 border-t pt-3 sm:grid-cols-[1.4fr_1fr_1fr_auto]" data-testid="equipment-line">
+          <div
+            key={line.id}
+            className={`grid grid-cols-1 gap-3 border-t pt-3 ${withUnit ? "sm:grid-cols-[1.4fr_0.6fr_1fr_1fr_auto]" : "sm:grid-cols-[1.4fr_1fr_1fr_auto]"}`}
+            data-testid="equipment-line"
+          >
             <div className="space-y-1.5">
               <Label htmlFor={`equipment-${line.id}-type`}>{t("equipmentType")}</Label>
               <Select
@@ -427,7 +454,7 @@ export function EquipmentLines({
                   const type = v as EquipmentType;
                   onChange(line.id, {
                     equipmentType: type,
-                    ...(offersAlternative(rows, type) ? {} : { leakRateChoice: "default" as LeakRateChoice }),
+                    ...(allowsAlternativeLeakRate(category) && offersAlternative(rows, type) ? {} : { leakRateChoice: "default" as LeakRateChoice }),
                   });
                 }}
               >
@@ -435,7 +462,7 @@ export function EquipmentLines({
                   <SelectValue placeholder={t("chooseEquipment")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {EQUIPMENT_TYPES.filter((type) => !taken.has(type)).map((type) => (
+                  {deviceOptions(category, line, taken).map((type) => (
                     <SelectItem key={type} value={type}>
                       {tTypes(type)}
                     </SelectItem>
@@ -467,24 +494,48 @@ export function EquipmentLines({
                 )
               )}
             </div>
-            <ParameterNumberField
-              key={`${epoch}:${line.id}:capacity`}
-              id={`equipment-${line.id}-capacity`}
-              label={t("capacity")}
-              stored={line.capacityKg}
-              rule="non_negative"
-              max={ACTIVITY_VALUE_MAX}
-              onChange={(value) => onChange(line.id, { capacityKg: value })}
-            />
-            <ParameterNumberField
-              key={`${epoch}:${line.id}:refill`}
-              id={`equipment-${line.id}-refill`}
-              label={t("refill")}
-              stored={line.refillKg}
-              rule="non_negative"
-              max={ACTIVITY_VALUE_MAX}
-              onChange={(value) => onChange(line.id, { refillKg: value })}
-            />
+            {withUnit && (
+              <div className="space-y-1.5">
+                <Label htmlFor={`equipment-${line.id}-unit`}>{t("fireSuppression.unit")}</Label>
+                <Select value={line.unit} onValueChange={(v) => onChange(line.id, withLineUnit(line, v as LineMassUnit))}>
+                  <SelectTrigger id={`equipment-${line.id}-unit`} aria-label={`${t("fireSuppression.unit")} ${index + 1}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LINE_MASS_UNITS.map((unit) => (
+                      <SelectItem key={unit} value={unit}>
+                        {t(`fireSuppression.units.${unit}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              {/* Keyed on the unit too: a unit change clears the field it typed in. */}
+              <ParameterNumberField
+                key={`${epoch}:${line.id}:${line.unit}:capacity`}
+                id={`equipment-${line.id}-capacity`}
+                label={withUnit ? `${t("fireSuppression.capacity")} (${t(`fireSuppression.units.${line.unit}`)})` : t("capacity")}
+                stored={line.capacity}
+                rule="non_negative"
+                max={ACTIVITY_VALUE_MAX}
+                onChange={(value) => onChange(line.id, { capacity: value })}
+              />
+              {kgBeside(lineCapacityKg(line), line.unit)}
+            </div>
+            <div className="space-y-1.5">
+              <ParameterNumberField
+                key={`${epoch}:${line.id}:${line.unit}:refill`}
+                id={`equipment-${line.id}-refill`}
+                label={withUnit ? `${t("fireSuppression.refill")} (${t(`fireSuppression.units.${line.unit}`)})` : t("refill")}
+                stored={line.refill}
+                rule="non_negative"
+                max={ACTIVITY_VALUE_MAX}
+                onChange={(value) => onChange(line.id, { refill: value })}
+              />
+              {kgBeside(lineRefillKg(line), line.unit)}
+            </div>
             <div className="flex items-start pt-6">
               <Button
                 type="button"
@@ -500,16 +551,16 @@ export function EquipmentLines({
           </div>
         );
       })}
-      <div className="flex items-center justify-between gap-2">
-        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={onAdd} disabled={lines.length >= EQUIPMENT_TYPES.length}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={onAdd} disabled={lines.length >= maxEquipmentLines(category, lines)}>
           <Plus className="h-4 w-4" />
           {t("addLine")}
         </Button>
         <p className="text-xs text-muted-foreground">
-          {t("total")}: <span className="font-mono">{formatNumber(equipmentTotal(lines), locale)}</span>
+          {t("total")}: <span className="font-mono">{formatNumber(equipmentTotal(lines), locale, KG_DISPLAY)}</span>
         </p>
       </div>
-      <p className="text-xs text-muted-foreground">{t("annualOnly")}</p>
+      <p className="text-xs text-muted-foreground">{withUnit ? t("fireSuppression.annualOnly") : t("annualOnly")}</p>
       {issue && <p className="text-xs text-amber-700" role="status">{t(`equipmentIssues.${issue}`)}</p>}
     </div>
   );

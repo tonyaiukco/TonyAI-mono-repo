@@ -61,6 +61,15 @@ describe('the inventory boundary schema and shared-types agree', () => {
     expect(block).toMatch(/ELSE "activity_type" IS NULL\s+END/);
   });
 
+  it('on Fire Suppression: a Scope 1 typed category with its four activity types (UAT round 4, BUG-12)', () => {
+    expect(SCOPE_1_2).toContain('Fire Suppression');
+    const block = sql.slice(definitionOf('inventory_sources_mapping_check'));
+    const fire = /WHEN 'Fire Suppression' THEN "activity_type" IS NOT NULL\s+AND "activity_type" IN \(([^)]*)\)/.exec(block);
+    expect(fire).not.toBeNull();
+    expect([...fire![1].matchAll(/'([^']*)'/g)].map((m) => m[1])).toEqual(['CO2', 'HFC-227ea', 'SF6', 'dry_powder_or_foam']);
+    expect(INVENTORY_CATEGORIES).toContain('Fire Suppression');
+  });
+
   it('on the scope each category maps to', () => {
     const block = sql.slice(definitionOf('inventory_sources_mapping_check'));
     const match = block.match(/"scope" = CASE "category" WHEN '([^']+)' THEN 2 ELSE 1 END/);

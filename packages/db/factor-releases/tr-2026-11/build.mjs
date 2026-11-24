@@ -29,7 +29,7 @@ const SEALED_ON = '2026-11-04';
  */
 const REVIEWED_ON = '2026-11-05';
 const REVIEWED_BY = 'TonyAI Sustainability Team';
-const PACKAGE = 'TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md)';
+export const PACKAGE = 'TR factor package TONYAI-EF-TR-UK-2026.11-AR6-SEALED (docs/md_docs/Revision MD.md)';
 const YEARS = [2024, 2025, 2026];
 
 /** TJ per kcal: 4.184 kJ per kcal, 10⁹ kJ per TJ (package §4.1, §4.2). */
@@ -37,7 +37,7 @@ const TJ_PER_KCAL = 4.184e-9;
 /** TJ per kWh: 3.6 MJ per kWh (package §4.2). */
 const TJ_PER_KWH = 3.6e-6;
 /** AR6 100-year GWPs (package §2, D09). */
-const GWP = { CO2: 1, CH4_COMBUSTION: 27.0, CH4_FUGITIVE: 29.8, N2O: 273 };
+export const GWP = { CO2: 1, CH4_COMBUSTION: 27.0, CH4_FUGITIVE: 29.8, N2O: 273 };
 
 /** Package §4.3: stationary combustion, per TJ on the net basis. */
 const STATIONARY = [
@@ -71,7 +71,7 @@ const REFERENCE_GCV = 9155;
 const LEAKAGE = { temperature: 273 / 288, density: 0.7409, methaneShare: 0.92 };
 
 /** Package §4.6: AR6 GWPs of the gases (kgCO2e per kg). */
-const REFRIGERANTS = [
+export const REFRIGERANTS = [
   { type: 'HFC-227ea', gwp: 3600, label: 'FM200 (HFC-227ea)' },
   { type: 'R-410A', gwp: 2256, label: 'R-410A' },
   { type: 'R-134a', gwp: 1530, label: 'R-134a' },
@@ -82,7 +82,7 @@ const REFRIGERANTS = [
 ];
 
 /** Package §4.6: annual leak rates by equipment type, and the two alternatives (D7). */
-const LEAK_RATES = [
+export const LEAK_RATES = [
   { subject: 'fire_suppression_system', rate: 0.02, label: 'Fire suppression system 2.0%' },
   { subject: 'fire_extinguisher', rate: 0.04, label: 'Fire extinguisher 4.0%' },
   { subject: 'transformer_breaker', rate: 0.0001, label: 'Transformer breaker gas (SF6) 0.01%' },

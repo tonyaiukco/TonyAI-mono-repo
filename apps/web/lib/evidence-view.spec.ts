@@ -274,17 +274,38 @@ describe('the refrigerant shortcut (UAT round 2, K5 option A)', () => {
 
   it('is offered for two or more attachable gas records of the year, ticking those without a file', () => {
     const rows = [gas('r410a', { evidenceCount: 1 }), gas('r32'), gas('fm200')];
-    expect(refrigerantShortcut(rows, ['r410a', 'r32', 'fm200'], 2025)).toEqual({ offered: true, preselect: ['r32', 'fm200'] });
+    expect(refrigerantShortcut(rows, ['r410a', 'r32', 'fm200'], 2025, 'Refrigerants')).toEqual({ offered: true, preselect: ['r32', 'fm200'] });
   });
 
   it('is not offered when the year holds only one attachable gas record', () => {
     const rows = [gas('r410a'), gas('r32', { reportingYear: 2024 }), gas('gas', { category: 'Natural Gas' })];
-    expect(refrigerantShortcut(rows, ['r410a', 'r32', 'gas'], 2025)).toEqual({ offered: false, preselect: [] });
+    expect(refrigerantShortcut(rows, ['r410a', 'r32', 'gas'], 2025, 'Refrigerants')).toEqual({ offered: false, preselect: [] });
+  });
+
+  // UAT round 4, BUG-12: the shortcut serves Fire Suppression, inside its category.
+  const fire = (id: string, over: Partial<SubmittableRow> = {}) => gas(id, { category: 'Fire Suppression', ...over });
+
+  it('ticks three fire suppression records of the year from a fire suppression record', () => {
+    const rows = [fire('co2'), fire('fm200'), fire('dry')];
+    expect(refrigerantShortcut(rows, ['co2', 'fm200', 'dry'], 2025, 'Fire Suppression'))
+      .toEqual({ offered: true, preselect: ['co2', 'fm200', 'dry'] });
+  });
+
+  it('never crosses the two categories: a same-year refrigerant record is not listed, nor the reverse', () => {
+    const rows = [fire('co2'), fire('fm200'), gas('r410a')];
+    expect(refrigerantShortcut(rows, ['co2', 'fm200', 'r410a'], 2025, 'Fire Suppression').preselect).toEqual(['co2', 'fm200']);
+    expect(refrigerantShortcut(rows, ['co2', 'fm200', 'r410a'], 2025, 'Refrigerants')).toEqual({ offered: false, preselect: [] });
+  });
+
+  it('is not offered for one fire suppression record, nor for a category with no gas records', () => {
+    expect(refrigerantShortcut([fire('co2'), gas('r410a')], ['co2', 'r410a'], 2025, 'Fire Suppression').offered).toBe(false);
+    const rows = [gas('a', { category: 'Natural Gas' }), gas('b', { category: 'Natural Gas' })];
+    expect(refrigerantShortcut(rows, ['a', 'b'], 2025, 'Natural Gas').offered).toBe(false);
   });
 
   it('never counts or ticks a record the user may not attach to', () => {
     const rows = [gas('r410a'), gas('r32'), gas('locked')];
-    const shortcut = refrigerantShortcut(rows, ['r410a', 'r32'], 2025);
+    const shortcut = refrigerantShortcut(rows, ['r410a', 'r32'], 2025, 'Refrigerants');
     expect(shortcut.preselect).not.toContain('locked');
     expect(applyAttachPreselect(['r410a', 'locked'], ['r410a', 'r32'])).toEqual(['r410a']);
   });

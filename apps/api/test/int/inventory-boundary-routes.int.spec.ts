@@ -47,7 +47,7 @@ let L2: string;
 let M1: string;
 let admin: RequestUser;
 
-const CATEGORIES: readonly InventoryCategory[] = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fugitive Gas'];
+const CATEGORIES: readonly InventoryCategory[] = ['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'];
 
 beforeAll(async () => {
   process.env.DATABASE_URL = process.env.INT_RUNTIME_DATABASE_URL;
@@ -111,6 +111,7 @@ function completeS(over: Partial<PutInventoryBoundarySubsidiaryRequest> = {}): P
       { category: 'Fuel', level: 'company', reportingPeriod: 'annual' },
       { category: 'Mobile Combustion', level: 'company', reportingPeriod: 'annual' },
       { category: 'Refrigerants', level: 'company', reportingPeriod: 'annual' },
+      { category: 'Fire Suppression', level: 'company', reportingPeriod: 'annual' },
       { category: 'Fugitive Gas', level: 'company', reportingPeriod: 'annual' },
     ],
     applicability: [
@@ -118,6 +119,7 @@ function completeS(over: Partial<PutInventoryBoundarySubsidiaryRequest> = {}): P
       { locationId: null, category: 'Fuel', applicability: 'excluded', reason: 'No fuel burnt on site' },
       { locationId: null, category: 'Mobile Combustion', applicability: 'excluded', reason: 'No company vehicles' },
       { locationId: null, category: 'Refrigerants', applicability: 'excluded', reason: 'No refrigeration plant' },
+      { locationId: null, category: 'Fire Suppression', applicability: 'excluded', reason: 'No fire suppression equipment' },
       { locationId: null, category: 'Fugitive Gas', applicability: 'excluded', reason: 'No gas distribution network' },
       { locationId: L1, category: 'Electricity', applicability: 'included' },
       { locationId: L2, category: 'Electricity', applicability: 'included' },
@@ -299,6 +301,31 @@ describe('who may do what (E2): super_admin writes and confirms; everyone else r
     expect(copy.status).toBe(201);
     const deleted = await call(admin, 'DELETE', `/inventory-boundaries/${json<InventoryBoundaryVersionDTO>(copy).id}`);
     expect([deleted.status, deleted.text]).toEqual([204, '']);
+  });
+});
+
+// PR #360 reviews: Refrigerants and Fire Suppression are attributed annually
+// only. A policy saved before the rule (written here as the owner) is not
+// confirmed until the declaration is saved again with an allowed cadence.
+describe('the capacity-method categories are attributed annually only (PR #360)', () => {
+  it.each(['Refrigerants', 'Fire Suppression'])('refuses a monthly %s policy on save, and a stored one on confirm', async (category) => {
+    const monthly = completeS();
+    monthly.attribution = monthly.attribution.map((p) => (p.category === category ? { ...p, reportingPeriod: 'monthly' } : p));
+    const created = json<InventoryBoundaryVersionDTO>(await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026 }));
+    const refused = await call(admin, 'PUT', `/inventory-boundaries/${created.id}/subsidiaries/${S}`, monthly);
+    expect(refused.status).toBe(400);
+    expect(refused.text).toMatch(new RegExp(`reports ${category} monthly: it is reported annual only`));
+
+    expect((await call(admin, 'PUT', `/inventory-boundaries/${created.id}/subsidiaries/${S}`, completeS())).status).toBe(200);
+    await owner.inventoryAttributionPolicy.updateMany({
+      where: { boundaryId: created.id, subsidiaryId: S, category }, data: { reportingPeriod: 'monthly' },
+    });
+    const confirm = await call(admin, 'POST', `/inventory-boundaries/${created.id}/confirm`);
+    expect(confirm.status).toBe(409);
+    expect(confirm.text).toContain('boundary_incomplete');
+    // Saved again with the allowed cadence, it confirms.
+    expect((await call(admin, 'PUT', `/inventory-boundaries/${created.id}/subsidiaries/${S}`, completeS())).status).toBe(200);
+    expect((await call(admin, 'POST', `/inventory-boundaries/${created.id}/confirm`)).status).toBe(200);
   });
 });
 

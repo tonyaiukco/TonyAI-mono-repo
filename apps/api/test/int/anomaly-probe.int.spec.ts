@@ -6,12 +6,14 @@ import {
   FIRST_PERIOD_CEILINGS as CONTRACT_CEILINGS,
   MARINE_GAS_OIL_ACTIVITY_TYPE as CONTRACT_MGO_TYPE,
   MARINE_GAS_OIL_CEILING_KG as CONTRACT_MGO_KG,
+  CAPACITY_METHOD_CATEGORIES as CONTRACT_CAPACITY_CATEGORIES,
   REFRIGERANT_LINE_CEILING_KG as CONTRACT_LINE_KG,
   REFRIGERANT_REFILL_RATIO as CONTRACT_REFILL_RATIO,
   REFILL_CEILING_TOLERANCE as CONTRACT_REFILL_TOLERANCE,
 } from '@tonyai/shared-types';
 import {
   BASE_SQL,
+  CAPACITY_METHOD_CATEGORIES,
   CEILING_UNIT_MULTIPLIERS,
   DRIFT_WHERE,
   FIRST_PERIOD_CEILINGS,
@@ -184,6 +186,7 @@ describe('anomaly:probe — the first-period typo ceiling', () => {
     expect(MARINE_GAS_OIL_CEILING_KG).toBe(CONTRACT_MGO_KG);
     expect(MARINE_GAS_OIL_ACTIVITY_TYPE).toBe(CONTRACT_MGO_TYPE);
     expect(REFRIGERANT_LINE_CEILING_KG).toBe(CONTRACT_LINE_KG);
+    expect(CAPACITY_METHOD_CATEGORIES).toEqual([...CONTRACT_CAPACITY_CATEGORIES]);
     expect(REFRIGERANT_REFILL_RATIO).toBe(CONTRACT_REFILL_RATIO);
     expect(REFILL_CEILING_TOLERANCE).toBe(CONTRACT_REFILL_TOLERANCE);
   });
@@ -240,6 +243,25 @@ describe('anomaly:probe — the first-period typo ceiling', () => {
     for (const ok of [ceilingFlag, line, smallLines, mgo, atCeiling]) {
       expect(await selected(DRIFT_WHERE)).not.toContain(ok);
     }
+  });
+
+  // UAT round 4, BUG-12: Fire Suppression is checked per line as Refrigerants is.
+  it('judges a fire suppression line as a refrigerant one: 6,000 kg is above its ceiling, 6 kg is not', async () => {
+    const fire = (activityType: string, capacityKg: number) => ({
+      category: 'Fire Suppression', activityType, activityUnit: 'kg', activityValue: capacityKg, reportingPeriod: 'annual', periodValue: 'Annual',
+      parameters: { equipment: [{ equipmentType: 'fire_extinguisher', capacityKg, refillKg: 0, leakRateChoice: 'default' }] },
+    });
+    // A gram figure typed with the selector on kilograms, stored flagged: right.
+    const flagged = await first(fire('CO2', 6_000), true);
+    // The same figure stored unflagged before this rule: a known difference.
+    const kept = await first(fire('HFC-227ea', 6_000), false);
+    // 6,000 g entered as grams, stored as 6 kg, unflagged: right.
+    const grams = await first(fire('SF6', 6), false);
+    // A dry powder line of 650 kg, flagged as any other gas: right.
+    const dry = await first(fire('dry_powder_or_foam', 650), true);
+    const drift = await selected(DRIFT_WHERE);
+    for (const ok of [flagged, kept, grams, dry]) expect(drift).not.toContain(ok);
+    expect(await selected(PRE_CEILING_WHERE)).toEqual([kept]);
   });
 
   it('judges the refill too: a stored refill flag is right, an unflagged committed one is pre-ceiling', async () => {

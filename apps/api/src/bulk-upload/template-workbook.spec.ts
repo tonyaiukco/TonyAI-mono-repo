@@ -181,13 +181,19 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
     const text = await referenceText();
     expect(text).toContain('Every column there is required except locationId, activityType, varianceReason and the calculation inputs');
     expect(text).toContain(
-      'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
+      'Fuel, Mobile Combustion, Refrigerants and Fire Suppression rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
     );
     expect(text).toContain('Activity types, by category\ncategory | Accepted activityType');
     expect(text).toContain('Fuel | diesel, petrol, gas_oil, fuel_oil, burning_oil, lpg, lng, coal');
     expect(text).toContain('Mobile Combustion | diesel, petrol, lpg, cng, on_road_petrol, on_road_diesel, on_road_lpg, off_road_petrol, off_road_diesel, marine_gas_oil');
     expect(text).toContain('Refrigerants | R-22, R-32, R-134a, R-404A, R-407C, R-407F, R-410A, R-448A, R-449A, R-1234yf, HFC-227ea, SF6');
     expect(text).toContain('Electricity | Leave blank: this category names no activity type.');
+    // UAT round 4, BUG-12: the category, its gases and its devices, in kilograms.
+    expect(text).toContain('Fire Suppression | CO2, HFC-227ea, SF6, dry_powder_or_foam');
+    expect(text).toContain('Fire Suppression: fire_extinguisher, fire_suppression_system, transformer_breaker.');
+    expect(text).toContain('Refrigerants and Fire Suppression: the installed capacity of that equipment type, in kilograms (never grams).');
+    expect(text).toContain('Refrigerants and Fire Suppression: the mass refilled in the year, in kilograms (never grams).');
+    expect(text).toContain('Fire Suppression: always the default.');
   });
 
   it('warns that imported rows arrive as drafts', async () => {

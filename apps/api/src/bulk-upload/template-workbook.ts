@@ -7,6 +7,7 @@ import {
   CATEGORY_UNITS,
   CV_BASES,
   EQUIPMENT_TYPES,
+  acceptedEquipmentTypes,
   EQUIPMENT_TYPES_WITH_ALTERNATIVE,
   LEAK_RATE_CHOICES,
   PERIOD_VALUES,
@@ -158,7 +159,8 @@ export async function buildTemplateWorkbook(
     ['periodValue', Object.values(PERIOD_VALUES).flat()],
     ['category', CATEGORIES],
     // Closed lists whose every value fits every row that may carry them: the
-    // equipment columns belong to Refrigerants rows alone (LP4-02 PR4).
+    // equipment columns belong to Refrigerants and Fire Suppression rows alone
+    // (LP4-02 PR4; UAT round 4, BUG-12), whose devices the DTO checks per category.
     ['equipmentType', EQUIPMENT_TYPES],
     ['leakRateChoice', LEAK_RATE_CHOICES],
     // Natural Gas bills alone carry a basis (ng-kwh-engine).
@@ -226,7 +228,7 @@ export async function buildTemplateWorkbook(
     `Fill in the "${SHEET_RECORDS}" sheet. Every column there is required except locationId, activityType, varianceReason and the calculation inputs (described below).`,
   ]);
   reference.addRow([
-    'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
+    'Fuel, Mobile Combustion, Refrigerants and Fire Suppression rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
   ]);
   reference.addRow([
     `Leave locationId blank to report for the whole subsidiary (shown below as "${WHOLE_COMPANY_ENTITY_LABEL}").`,
@@ -329,16 +331,16 @@ export async function buildTemplateWorkbook(
   ]);
   reference.addRow([
     'equipmentType',
-    `Refrigerants: one row per equipment type holding the gas, on an annual period (${EQUIPMENT_TYPES.join(', ')}). Rows naming the same entity, year and gas are one record.`,
+    `Refrigerants and Fire Suppression: one row per equipment type holding the gas, on an annual period. Refrigerants: ${acceptedEquipmentTypes('Refrigerants').join(', ')}. Fire Suppression: ${acceptedEquipmentTypes('Fire Suppression').join(', ')}. Rows naming the same category, entity, year and gas are one record.`,
   ]);
   reference.addRow([
     'capacityKg',
-    'Refrigerants: the installed capacity of that equipment type, kg. Write 0 for none. Leave activityValue blank on these rows: the record\'s quantity is the sum of its capacityKg.',
+    'Refrigerants and Fire Suppression: the installed capacity of that equipment type, in kilograms (never grams). Write 0 for none. Leave activityValue blank on these rows: the record\'s quantity is the sum of its capacityKg.',
   ]);
-  reference.addRow(['refillKg', 'Refrigerants: the mass refilled in the year, kg. A positive refill is the released mass. Write 0 to use the capacity estimate.']);
+  reference.addRow(['refillKg', 'Refrigerants and Fire Suppression: the mass refilled in the year, in kilograms (never grams). A positive refill is the released mass. Write 0 to use the capacity estimate.']);
   reference.addRow([
     'leakRateChoice',
-    `Refrigerants: blank or default for the equipment type's default leak rate; alternative only for ${EQUIPMENT_TYPES_WITH_ALTERNATIVE.join(' and ')}.`,
+    `Blank or default for the equipment type's default leak rate. Refrigerants: alternative only for ${EQUIPMENT_TYPES_WITH_ALTERNATIVE.join(' and ')}. Fire Suppression: always the default.`,
   ]);
 
   section('Periods');

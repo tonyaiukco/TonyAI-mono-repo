@@ -10,6 +10,12 @@
     "nameplate": "Cihaz etiketi (nameplate) fotoğrafı veya teknik şartname sayfası",
     "invoice": "Yıllık dolum / bakım faturası (varsa)"
   },
+  "fireSuppressionNote": {
+    "intro": "Bir yangın söndürme kaydı gönderilmeden önce en az bir destekleyici dosya gerektirir. Kabul edilen belgeler:",
+    "trackingSheet": "Ekipman takip çizelgesi (tüp ve sistemlerin listesi)",
+    "drawings": "Sistem çizimleri",
+    "photos": "Ekipmanın ya da etiketinin fotoğrafları"
+  },
   "shareShortcut": {
     "button": "Bu belgeyi yılın diğer gaz kayıtlarına da ekle",
     "hint": "Aynı belge bu yılın diğer gaz kayıtlarını da kanıtlıyorsa, kayıtlar tablosunda tek seferde hepsine ekleyin."

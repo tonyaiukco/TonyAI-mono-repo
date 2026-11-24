@@ -12,6 +12,7 @@ import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from '../../common/cod
 import {
   CreateInventoryBoundaryDto,
   INVENTORY_DECLARATION_LIMITS,
+  inventoryDeclarationIssues,
   ListInventoryBoundariesQueryDto,
   PutInventoryBoundarySubsidiaryDto,
 } from './inventory-boundary.dto';
@@ -395,8 +396,26 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
     });
   });
 
+  // PR #360 reviews: the capacity-method categories are priced only yearly, so
+  // a boundary may attribute them annually only.
+  it.each(['monthly', 'quarterly'])('refuses a Fire Suppression or Refrigerants policy reported %s, and admits annual', (reportingPeriod) => {
+    const body = valid();
+    const withFire = (period: string) => ({
+      ...body,
+      attribution: [...body.attribution, { category: 'Fire Suppression', level: 'company', reportingPeriod: period }],
+      applicability: [...body.applicability, { locationId: null, category: 'Fire Suppression', applicability: 'excluded', reason: 'None on site' }],
+    });
+    expect(inventoryDeclarationIssues(withFire(reportingPeriod)).join(' ')).toMatch(/reports Fire Suppression \w+: it is reported annual only/);
+    expect(inventoryDeclarationIssues(withFire('annual'))).toEqual(inventoryDeclarationIssues(body));
+    const refrigerants = (period: string) => ({ ...body, attribution: [...body.attribution, { category: 'Refrigerants', level: 'company', reportingPeriod: period }] });
+    expect(inventoryDeclarationIssues(refrigerants(reportingPeriod)).join(' ')).toMatch(/reports Refrigerants \w+: it is reported annual only/);
+    expect(inventoryDeclarationIssues(refrigerants('annual')).join(' ')).not.toMatch(/reported annual only/);
+    // Every other category keeps its cadence (the valid body holds a monthly and a quarterly one).
+    expect(inventoryDeclarationIssues(body).join(' ')).not.toMatch(/reported annual only/);
+  });
+
   it('pins the bounds', () => {
-    expect(INVENTORY_DECLARATION_LIMITS).toEqual({ sites: 500, attribution: 6, applicability: 3006, sources: 2000 });
+    expect(INVENTORY_DECLARATION_LIMITS).toEqual({ sites: 500, attribution: 7, applicability: 3507, sources: 2000 });
   });
 });
 

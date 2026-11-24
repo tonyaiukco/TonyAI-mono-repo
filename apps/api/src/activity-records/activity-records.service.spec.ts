@@ -791,6 +791,17 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
     await service.update(dataEntry(), 'rec-p', { category: 'Electricity', parameters: null, activityValue: 100 });
     expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
   });
+
+  // UAT round 4, BUG-12: a chiller line fits Refrigerants, never Fire Suppression.
+  it('refuses moving a refrigerant record with a chiller line to Fire Suppression without new lines', async () => {
+    const CHILLER = { equipment: [{ equipmentType: 'chiller', capacityKg: 20, refillKg: 0, leakRateChoice: 'default' }] };
+    const { prisma, service } = editing(storedGas({
+      category: 'Refrigerants', activityType: 'HFC-227ea', activityUnit: 'kg', parameters: CHILLER as never,
+    }));
+    await expect(service.update(dataEntry(), 'rec-p', { category: 'Fire Suppression' }))
+      .rejects.toMatchObject({ code: 'record_parameters_invalid' });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('ActivityRecordsService — the engine reads the effective parameters and period (LP4-02, D11)', () => {

@@ -1,4 +1,8 @@
 import {
+  CAPACITY_METHOD_CATEGORIES,
+  acceptedEquipmentTypes,
+  allowsAlternativeLeakRate,
+  isCapacityMethodCategory,
   ACTIVITY_VALUE_MAX,
   BULK_EQUIPMENT_COLUMNS,
   BULK_GAS_BASIS_COLUMN,
@@ -41,13 +45,15 @@ export interface RecordRow extends ParsedRow {
   lines?: ParsedRow[];
 }
 
-/** A Refrigerants row that carries an equipment line (D7). */
+/** A capacity-method row (Refrigerants or Fire Suppression) that carries an equipment line (D7). */
 export function isEquipmentLine(cells: ParsedRow['cells']): boolean {
-  return cells.category.trim() === 'Refrigerants' && BULK_EQUIPMENT_COLUMNS.some((c) => cells[c].trim() !== '');
+  return isCapacityMethodCategory(cells.category.trim()) && BULK_EQUIPMENT_COLUMNS.some((c) => cells[c].trim() !== '');
 }
 
 /**
- * Which record an equipment line belongs to: the slot's columns and the gas.
+ * Which record an equipment line belongs to: the slot's columns, the category
+ * and the gas. The category keeps a Fire Suppression record of HFC-227ea apart
+ * from a Refrigerants one of the same slot (UAT round 4, BUG-12).
  * Ids compare case-blind, the year as a number and the period value
  * canonically, so two spellings of
  * one record are one group; a spelling the DTO refuses keeps a group of its
@@ -60,6 +66,7 @@ function recordKey(cells: ParsedRow['cells']): string {
     ? canonicalPeriodValue(period as ReportingPeriod, value)
     : null;
   return JSON.stringify([
+    cells.category.trim(),
     cells.subsidiaryId.trim().toLowerCase(),
     cells.locationId.trim().toLowerCase(),
     // As the DTO reads it: `2025`, `2025.0` and `02025` are one year, so
@@ -83,7 +90,7 @@ function recordKey(cells: ParsedRow['cells']): string {
  * keeps its place.
  */
 export function groupEquipmentLines(rows: readonly ParsedRow[]): RecordRow[] {
-  const isRefrigerant = (row: ParsedRow) => row.cells.category.trim() === 'Refrigerants';
+  const isRefrigerant = (row: ParsedRow) => isCapacityMethodCategory(row.cells.category.trim());
   const lineKeys = new Set(rows.filter((row) => isEquipmentLine(row.cells)).map((row) => recordKey(row.cells)));
   const records: RecordRow[] = [];
   const groups = new Map<string, RecordRow>();
@@ -169,7 +176,7 @@ export function gasParametersOf(
 ): { parameters: NaturalGasRecordParameters | null } | { issue: CellIssue } {
   const filled = firstFilled(cells, BULK_GAS_INPUT_COLUMNS);
   const equipment = firstFilled(cells, BULK_EQUIPMENT_COLUMNS);
-  if (equipment !== null) return { issue: notThisCategory(equipment, 'Refrigerants') };
+  if (equipment !== null) return { issue: notThisCategory(equipment, CAPACITY_METHOD_CATEGORIES.join(' and ')) };
   if (filled === null) return { parameters: null };
   if (cells.category.trim() !== 'Natural Gas') return { issue: notThisCategory(filled, 'Natural Gas') };
   const parameters: NaturalGasRecordParameters = {};
@@ -208,8 +215,10 @@ export function gasParametersOf(
 const RECORD_LEVEL_COLUMNS = ['activityUnit', 'varianceReason'] as const satisfies readonly BulkUploadColumn[];
 
 /**
- * A refrigerant record's equipment lines (D7) and its quantity, the sum of
- * their capacities, summed in the engine's order. The first refused cell is
+ * A capacity-method record's equipment lines (D7) and its quantity, the sum of
+ * their capacities, summed in the engine's order. Each line names one of its
+ * category's devices (`acceptedEquipmentTypes`); a Fire Suppression line is
+ * always at the default rate (UAT round 4, BUG-12). The first refused cell is
  * the record's one issue, on the line that holds it: a record is written whole
  * or not at all, since a line left out would understate the leak.
  */
@@ -217,6 +226,8 @@ export function equipmentOf(
   lines: readonly ParsedRow[],
 ): { total: number; equipment: RefrigerantEquipmentLine[] } | { issue: CellIssue } {
   const first = lines[0];
+  const category = first.cells.category.trim();
+  const devices = acceptedEquipmentTypes(category);
   const equipment: RefrigerantEquipmentLine[] = [];
   const seen = new Map<string, number>();
   for (const { row, cells } of lines) {
@@ -240,12 +251,13 @@ export function equipmentOf(
       }
     }
     const type = cells.equipmentType.trim();
-    if (!(EQUIPMENT_TYPES as readonly string[]).includes(type)) {
-      return fail({
-        column: 'equipmentType',
-        code: 'invalid',
-        message: `${type === '' ? 'equipmentType is required on an equipment line' : `"${quoteCallerText(type)}" is not an equipment type`}. Use one of: ${EQUIPMENT_TYPES.join(', ')}.`,
-      });
+    if (!(devices as readonly string[]).includes(type)) {
+      const what = type === ''
+        ? 'equipmentType is required on an equipment line'
+        : (EQUIPMENT_TYPES as readonly string[]).includes(type)
+          ? `${type} is not a ${category} equipment type`
+          : `"${quoteCallerText(type)}" is not an equipment type`;
+      return fail({ column: 'equipmentType', code: 'invalid', message: `${what}. Use one of: ${devices.join(', ')}.` });
     }
     const earlier = seen.get(type);
     if (earlier !== undefined) {
@@ -271,7 +283,7 @@ export function equipmentOf(
         message: `"${quoteCallerText(choice)}" is not a leak rate choice. Use ${LEAK_RATE_CHOICES.join(' or ')}, or leave it blank for the default.`,
       });
     }
-    if (choice === 'alternative' && !EQUIPMENT_TYPES_WITH_ALTERNATIVE.includes(type as EquipmentType)) {
+    if (choice === 'alternative' && (!allowsAlternativeLeakRate(category) || !EQUIPMENT_TYPES_WITH_ALTERNATIVE.includes(type as EquipmentType))) {
       return fail({
         column: 'leakRateChoice',
         code: 'invalid',

@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type InventoryBoundary } from '@tonyai/db';
+import { inventoryReportingPeriodsFor } from '@tonyai/shared-types';
 import type {
   CreateInventoryBoundaryRequest,
   InventoryBoundaryVersionDTO,
@@ -230,6 +231,12 @@ export class InventoryBoundariesService {
       if (header.frozenAt !== null) throw new BoundaryConfirmRequiresCopyError();
       const boundary = buildBoundarySnapshot(await readBoundaryRows(tx, header));
       if (boundary.subsidiaryIds.length === 0 || boundaryGaps(boundary).length > 0) throw new BoundaryIncompleteError();
+      // A cadence no priced record could meet, saved before the rule existed
+      // (a monthly Refrigerants policy; PR #360 reviews), is not confirmed:
+      // the declaration is saved again with an allowed one first.
+      if (boundary.attribution.some((p) => !inventoryReportingPeriodsFor(p.category).includes(p.reportingPeriod))) {
+        throw new BoundaryIncompleteError();
+      }
       const now = new Date();
       // The guard stamps both with the database's clock as the freeze runs,
       // and copies the names into the version (W7).

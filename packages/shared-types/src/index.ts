@@ -54,6 +54,7 @@ export const CATEGORY_SCOPE_MAP: Record<Category, 1 | 2 | 3> = {
   'Fuel': 1,
   'Mobile Combustion': 1,
   'Refrigerants': 1,
+  'Fire Suppression': 1,
   'Fugitive Gas': 1,
   'Purchased Goods': 3,
   'Waste': 3,
@@ -78,6 +79,7 @@ export const CATEGORIES = [
   'Fuel',
   'Mobile Combustion',
   'Refrigerants',
+  'Fire Suppression',
   'Fugitive Gas',
   'Purchased Goods',
   'Waste',
@@ -271,6 +273,9 @@ export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
   'Mobile Combustion': ['litres', 'uk_gallons', 'us_gallons', 'kg', 'tonnes'],
   // Leakage is reported as a mass of refrigerant, priced by that gas's GWP.
   Refrigerants: ['kg'],
+  // A fire suppression agent is priced as a refrigerant is: a mass of the gas
+  // × its GWP. Data Entry takes grams on the form and sends kilograms.
+  'Fire Suppression': ['kg'],
   // Fugitive emissions from gas network leakage, reported in Sm³ and priced
   // directly per Sm³ (D6).
   'Fugitive Gas': ['standard_cubic_metres'],
@@ -459,8 +464,21 @@ export const CATEGORY_ACTIVITY_TYPES: Partial<
       { value: 'R-448A', label: 'R-448A' },
       { value: 'R-449A', label: 'R-449A' },
       { value: 'R-1234yf', label: 'R-1234yf' },
-      { value: 'HFC-227ea', label: 'HFC-227ea' },
+      { value: 'HFC-227ea', label: 'FM200 (HFC-227ea)' },
       { value: 'SF6', label: 'SF6 (sulphur hexafluoride)' },
+    ],
+  },
+  // Fire suppression agents (UAT round 4, BUG-12): exactly the types the
+  // supplementary fire suppression edition prices. `dry_powder_or_foam` holds
+  // no greenhouse gas and is priced by that edition's zero row, so its record
+  // is a calculated 0, never an uncalculated one (Decisions 2026-11-24
+  // (fifth), 2). The form's "Other gas" item is never an activity type.
+  'Fire Suppression': {
+    types: [
+      { value: 'CO2', label: 'CO2 (carbon dioxide)' },
+      { value: 'HFC-227ea', label: 'FM200 (HFC-227ea)' },
+      { value: 'SF6', label: 'SF6 (sulphur hexafluoride)' },
+      { value: 'dry_powder_or_foam', label: 'Dry powder / foam (no greenhouse gas)' },
     ],
   },
   // Fugitive emissions from gas network leakage: the volume of natural gas
@@ -3506,6 +3524,93 @@ export const EQUIPMENT_TYPES_WITH_ALTERNATIVE: readonly EquipmentType[] = Object
   'chiller',
 ]);
 
+/** The three fire suppression devices (UAT round 4, BUG-12), in the order the form lists them. */
+export const FIRE_SUPPRESSION_EQUIPMENT_TYPES = Object.freeze([
+  'fire_extinguisher',
+  'fire_suppression_system',
+  'transformer_breaker',
+] as const satisfies readonly EquipmentType[]);
+
+/** The cooling and refrigeration devices a new refrigerant line is offered. */
+export const COOLING_EQUIPMENT_TYPES = Object.freeze([
+  'split_air_conditioner',
+  'water_dispenser',
+  'refrigerator',
+  'chiller',
+  'mobile_air_conditioner',
+  'portable_air_conditioner',
+] as const satisfies readonly EquipmentType[]);
+
+/**
+ * The categories priced by the capacity method (D7): one gas per record, one
+ * equipment line per device, each line on its refill or on capacity × leak rate.
+ * `isCapacityMethodCategory` is the one test for "has equipment lines".
+ */
+export const CAPACITY_METHOD_CATEGORIES = Object.freeze(['Refrigerants', 'Fire Suppression'] as const);
+export type CapacityMethodCategory = (typeof CAPACITY_METHOD_CATEGORIES)[number];
+
+export function isCapacityMethodCategory(category: string): category is CapacityMethodCategory {
+  return (CAPACITY_METHOD_CATEGORIES as readonly string[]).includes(category);
+}
+
+/**
+ * The devices a stored record of the category may name (the DTO, the bulk path
+ * and the database CHECK). `Refrigerants` keeps the nine it accepted before
+ * Fire Suppression existed, so no open draft or bulk file that holds a fire
+ * device is refused (the change's design, decision 7).
+ */
+const ACCEPTED_EQUIPMENT_TYPES: Readonly<Record<CapacityMethodCategory, readonly EquipmentType[]>> = Object.freeze({
+  Refrigerants: EQUIPMENT_TYPES,
+  'Fire Suppression': FIRE_SUPPRESSION_EQUIPMENT_TYPES,
+});
+
+/** The devices Data Entry offers a NEW line of the category. */
+const OFFERED_EQUIPMENT_TYPES: Readonly<Record<CapacityMethodCategory, readonly EquipmentType[]>> = Object.freeze({
+  Refrigerants: COOLING_EQUIPMENT_TYPES,
+  'Fire Suppression': FIRE_SUPPRESSION_EQUIPMENT_TYPES,
+});
+
+/** The devices a record of `category` may name; empty for a category with no equipment lines. */
+export function acceptedEquipmentTypes(category: string): readonly EquipmentType[] {
+  return isCapacityMethodCategory(category) ? ACCEPTED_EQUIPMENT_TYPES[category] : [];
+}
+
+/** The devices a new line of `category` is offered; empty for a category with no equipment lines. */
+export function offeredEquipmentTypes(category: string): readonly EquipmentType[] {
+  return isCapacityMethodCategory(category) ? OFFERED_EQUIPMENT_TYPES[category] : [];
+}
+
+/**
+ * How a tCO2e figure is shown (PR #360 review): three decimals, except a
+ * non-zero figure below 0.001 t, which takes three significant digits, so a
+ * CO2 extinguisher's 0.00024 t never reads 0 beside a calculated zero. A zero
+ * stays 0. Display only: stored figures are never rounded.
+ */
+export function tonnesDisplayOptions(value: number): Intl.NumberFormatOptions {
+  return value !== 0 && Math.abs(value) < 0.001 ? { maximumSignificantDigits: 3 } : { maximumFractionDigits: 3 };
+}
+
+/**
+ * The cadences an inventory boundary may attribute a category's activity to
+ * (PR #360 reviews): the capacity-method categories, Refrigerants and Fire
+ * Suppression, are annual only, because the TR rules price them by the yearly
+ * capacity method, so a monthly or quarterly policy could never be met by a
+ * priced record (owner, 2026-11-25, for Refrigerants too). Every other category
+ * may take any of `REPORTING_PERIODS`. The evidence cadence is a separate field.
+ */
+export function inventoryReportingPeriodsFor(category: string): readonly ReportingPeriod[] {
+  return isCapacityMethodCategory(category) ? ANNUAL_ONLY : REPORTING_PERIODS;
+}
+const ANNUAL_ONLY: readonly ReportingPeriod[] = Object.freeze(['annual']);
+
+/**
+ * May a line of `category` take the alternative leak rate? Only a refrigerant
+ * line: a fire suppression line is always at its device's default rate.
+ */
+export function allowsAlternativeLeakRate(category: string): boolean {
+  return category === 'Refrigerants';
+}
+
 // ---------------------------------------------------------------------------
 // Record parameters (LP4-02, D3): per-record inputs as a typed, validated block.
 // ---------------------------------------------------------------------------
@@ -3645,6 +3750,7 @@ export function recordParameterShape(category: string): RecordParameterShape | n
     case 'Natural Gas':
       return 'natural_gas';
     case 'Refrigerants':
+    case 'Fire Suppression':
       return 'refrigerant';
     case 'Electricity':
       return 'electricity';
@@ -3857,14 +3963,26 @@ export const MARINE_GAS_OIL_UNITS = Object.freeze(['kg', 'tonnes'] as const);
 export const TR_NATURAL_GAS_UNITS = Object.freeze(['cubic_metres', 'standard_cubic_metres', 'kWh', 'MWh'] as const);
 
 /**
+ * The gases a NEW Refrigerants record is not offered (UAT round 4, BUG-12):
+ * HFC-227ea and SF6 are fire suppression and switchgear agents, entered under
+ * Fire Suppression. A stored refrigerant record that names one keeps it.
+ */
+export const REFRIGERANT_TYPES_NOT_OFFERED = Object.freeze(['HFC-227ea', 'SF6'] as const);
+
+/**
  * The activity types Data Entry offers a NEW record (LP4-02
  * PR4). Under the TR rules a Mobile Combustion record names one of the five
- * vehicle modes or marine gas oil, since the TR releases price no other; every
- * other case is the category's whole list. A stored record keeps whatever type
- * it already names (`isRecordActivityTypeAllowed` is unchanged).
+ * vehicle modes or marine gas oil, since the TR releases price no other. A new
+ * Refrigerants record is offered no fire suppression gas, in any geography
+ * (`REFRIGERANT_TYPES_NOT_OFFERED`). Every other case is the category's whole
+ * list. A stored record keeps whatever type it already names
+ * (`isRecordActivityTypeAllowed` is unchanged).
  */
 export function offeredActivityTypes(category: string, geographyCode: string | null): readonly ActivityTypeSpec[] {
   const types = recordActivityTypesFor(category);
+  if (category === 'Refrigerants') {
+    return types.filter((t) => !(REFRIGERANT_TYPES_NOT_OFFERED as readonly string[]).includes(t.value));
+  }
   if (category !== 'Mobile Combustion' || geographyCode === null || !usesTrCalculationRules(geographyCode)) return types;
   return types.filter(
     (t) => (MOBILE_MODE_ACTIVITY_TYPES as readonly string[]).includes(t.value) || t.value === MARINE_GAS_OIL_ACTIVITY_TYPE,
@@ -4194,13 +4312,15 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
     if (gas === CALCULATION_GAS) {
       if (!isOneOf(row.gasCoverage, FACTOR_GAS_COVERAGES)) {
         fail(at('gasCoverage'), `must be one of ${FACTOR_GAS_COVERAGES.join(', ')} on a ${CALCULATION_GAS} row`);
-      } else if (category === 'Refrigerants' && row.gasCoverage !== 'all_ghg') {
-        fail(at('gasCoverage'), 'must be all_ghg for a refrigerant — its total is the gas itself');
+      } else if (isCapacityMethodCategory(category) && row.gasCoverage !== 'all_ghg') {
+        fail(at('gasCoverage'), 'must be all_ghg for a refrigerant or fire suppression agent — its total is the gas itself');
       }
       if (row.gasCoverage !== 'co2_only') needsGwp = true;
     } else if (gas !== null) {
       if (row.gasCoverage !== null) fail(at('gasCoverage'), 'must be null on a per-gas row');
-      if (category === 'Refrigerants') fail(at('gas'), `a refrigerant is quoted as one ${CALCULATION_GAS} total`);
+      if (isCapacityMethodCategory(category)) {
+        fail(at('gas'), `a refrigerant or fire suppression agent is quoted as one ${CALCULATION_GAS} total`);
+      }
       if (gas === 'CH4' || gas === 'N2O') needsGwp = true;
     }
     const key = identityKey({ ...row, releaseId: null }, FACTOR_IDENTITY_FIELDS);
@@ -4389,9 +4509,10 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
     }
   });
   factors.forEach((row, i) => {
-    if (!isObject(row) || row.category !== 'Refrigerants' || !usesTrCalculationRules(row.geographyCode as string)) return;
+    if (!isObject(row) || !isCapacityMethodCategory(row.category as string)) return;
+    if (!usesTrCalculationRules(row.geographyCode as string)) return;
     if (parameterRow('leak_rate') === undefined) {
-      fail(`factors[${i}].category`, 'a TR refrigerant factor needs a default leak_rate in parameters[]');
+      fail(`factors[${i}].category`, `a TR ${row.category} factor needs a default leak_rate in parameters[]`);
     }
   });
   for (const [subjectKey, path] of alternatives) {
@@ -5380,7 +5501,7 @@ export function refrigerantRefillCeilingKg(capacityKg: number): number {
  * question — see `withFirstPeriodCeiling`.
  */
 export function firstPeriodCeiling(input: CeilingInput): CeilingResult | null {
-  if (input.category === 'Refrigerants') {
+  if (isCapacityMethodCategory(input.category)) {
     const lines = equipmentLines(input.parameters);
     if (lines.length === 0) return null;
     // A capacity breach is named first: it is the team's own ceiling, and the
@@ -5608,6 +5729,7 @@ export const EVIDENCE_REQUIRED_CATEGORIES: Category[] = [
   'Fuel',
   'Mobile Combustion',
   'Refrigerants',
+  'Fire Suppression',
   'Fugitive Gas',
   'Water',
 ];

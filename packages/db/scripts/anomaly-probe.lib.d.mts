@@ -8,6 +8,7 @@ export const BASELINE_STATUSES: readonly string[];
 export const FIRST_PERIOD_CEILINGS: Readonly<Record<string, Readonly<Record<string, number>>>>;
 export const MARINE_GAS_OIL_CEILING_KG: number;
 export const MARINE_GAS_OIL_ACTIVITY_TYPE: string;
+export const CAPACITY_METHOD_CATEGORIES: string[];
 export const REFRIGERANT_LINE_CEILING_KG: number;
 export const REFRIGERANT_REFILL_RATIO: number;
 export const REFILL_CEILING_TOLERANCE: number;
