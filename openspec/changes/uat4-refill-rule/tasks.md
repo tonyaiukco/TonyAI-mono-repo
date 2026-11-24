@@ -28,16 +28,16 @@
 
 ## 4. Screen, template and ceiling wording
 
-- [ ] 4.1 Replace `dataEntry.inputs.equipmentHelp` in the EN and TR catalogues with the refill-or-estimate wording; verify `messages.spec.ts` parity passes and the text renders on Data Entry in both languages
+- [x] 4.1 Replace `dataEntry.inputs.equipmentHelp` in the EN and TR catalogues with the refill-or-estimate wording; verify `messages.spec.ts` parity passes and the text renders on Data Entry in both languages
 - [x] 4.2 Reword the refill column note in `apps/api/src/bulk-upload/template-workbook.ts`; verify the template spec passes and the downloaded workbook shows the new note
 - [x] 4.3 Correct the ceiling's rationale in the `REFRIGERANT_REFILL_RATIO` comment in `shared-types` and in `docs/md_docs/validation_anomaly_rules.md` (the refill is the line's whole leak; numbers unchanged); verify the ceiling specs pass untouched
-- [ ] 4.4 Rewrite the alternative-rate case in `e2e/data-entry-tr-inputs.spec.ts` to use no refill (10 kg at 50% gives 5 kg), and add a case where a refill of 1 kg on the same line previews and saves the figure for 1 kg whichever rate is chosen; verify the spec passes on capped built servers
+- [x] 4.4 Rewrite the alternative-rate case in `e2e/data-entry-tr-inputs.spec.ts` to use no refill (10 kg at 50% gives 5 kg), and add a case where a refill of 1 kg on the same line previews and saves the figure for 1 kg whichever rate is chosen; verify the spec passes on capped built servers
 
 ## 5. Integration and records
 
 - [x] 5.1 Run `pnpm typecheck`, `pnpm lint`, `pnpm build` and `pnpm test` on Node 22 and verify all pass with no new warnings
 - [x] 5.2 Run `pnpm --filter @tonyai/api test:int` with CI rate limits and no other Vitest run, then `pnpm rls:probe` against the local stack. Verify both pass
-- [ ] 5.3 Against the running local API, preview HFC-227ea with 50 kg and 35 kg refill (126.00 tCO2e) and with 40 kg and no refill (2.88 tCO2e). Save a both-masses draft on the previous build, run the command as a dry run and with `--apply`, and verify the record and audit row. Verify that live reports and on-demand issuance exports render a retained unmarked sum-rule snapshot and a marked refill-rule snapshot correctly, and that download of a previously issued PDF returns its stored bytes
+- [x] 5.3 Against the running local API, preview HFC-227ea with 50 kg and 35 kg refill (126.00 tCO2e) and with 40 kg and no refill (2.88 tCO2e). Save a both-masses draft on the previous build, run the command as a dry run and with `--apply`, and verify the record and audit row. Verify that live reports and on-demand issuance exports render a retained unmarked sum-rule snapshot and a marked refill-rule snapshot correctly, and that download of a previously issued PDF returns its stored bytes
 - [ ] 5.4 Run the fresh-eyes review pass on the diff before the PR: `security-rls` (can the command reach a committed record or another tenant's scope; the audit row; the remote guard), `qa-auditor` (the vectors, byte-identity, mutation of the rule and of the status check, stale handling) and `architect` (the `RefrigerantTerm` contract and the helper as the one reader), each in its own tree; verify every correctness, security or data-integrity finding is fixed and the rest are filed
 - [ ] 5.5 Record the change in `docs/roadmap_docs/project_status_roadmap_phases.md` (Current status; Decisions: the refill rule, the marker, and the owner's two confirmations of 2026-11-24: `submitted` and `under_review` records are left to the stale refusal, and `rejected` counts as an open draft) and in `docs/roadmap_docs/Pilot_launch_v4.md` §9 (WP2's row; WP1's row with its merge and QA revision `ci90-1`); verify both name the PR
 

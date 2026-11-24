@@ -51,8 +51,12 @@ async function run(options: Options): Promise<DraftRepriceReport> {
   const context = await NestFactory.createApplicationContext(DraftRepriceModule, { logger: false, abortOnError: false });
   try {
     const db = context.get(PrismaService);
-    const [session] = await db.$queryRaw<{ role: string }[]>`SELECT current_user AS role`;
-    if (session?.role !== 'tonyai_runtime') throw new UsageError('DATABASE_URL must use the tonyai_runtime login.');
+    const [session] = await db.$queryRaw<{ login: string; role: string }[]>`
+      SELECT session_user AS login, current_user AS role
+    `;
+    if (session?.login !== 'tonyai_runtime' || session.role !== 'tonyai_runtime') {
+      throw new UsageError('DATABASE_URL must use the tonyai_runtime login.');
+    }
     return await context.get(DraftRepriceService).run(options.apply);
   } finally {
     await context.close();
