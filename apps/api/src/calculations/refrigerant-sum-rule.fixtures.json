@@ -1,0 +1,195 @@
+{
+  "capturedAtCommit": "251ddfd3b3b4fe7e1f566c602dc26dffcdfaa4c0",
+  "noRefill": {
+    "snapshotSchema": 3,
+    "category": "Refrigerants",
+    "geographyCode": "TR",
+    "reportingYear": 2025,
+    "scope": 1,
+    "inputValue": 40,
+    "inputUnit": "kg",
+    "normalizedValue": 0.8,
+    "normalizedUnit": "kg",
+    "conversionApplied": false,
+    "kgCo2e": 2880,
+    "tCo2e": 2.88,
+    "factorId": "factor-fm200-fixture",
+    "factorValue": 3600,
+    "factorUnit": "kgCO2e/kg",
+    "methodology": "location-based",
+    "source": "calculation_logic.md §3",
+    "version": "2024.1",
+    "activityType": "HFC-227ea",
+    "gas": "CO2e",
+    "gasCoverage": "all_ghg",
+    "calorificBasis": "not_applicable",
+    "scope2Method": "not_applicable",
+    "dataYear": 2025,
+    "yearPolicy": "exact",
+    "factorRelease": {
+      "id": "release-fm200-fixture",
+      "publisher": "TonyAI prototype",
+      "title": "Prototype demo emission factors",
+      "edition": "2024.1",
+      "ordinal": 202401,
+      "status": "authoritative",
+      "sourceUrl": null,
+      "licence": null,
+      "publishedAt": null,
+      "gwpSet": null
+    },
+    "conversion": null,
+    "parameters": [],
+    "parameterRows": [
+      {
+        "id": "leak_rate-fire_suppression_system-true",
+        "releaseId": "release-fm200-fixture",
+        "key": "leak_rate",
+        "equipmentType": "fire_suppression_system",
+        "value": 0.02,
+        "unit": "fraction",
+        "isDefault": true,
+        "source": "SPEC FIXTURE",
+        "edition": "2024.1"
+      }
+    ],
+    "refrigerantTerms": [
+      {
+        "equipmentType": "fire_suppression_system",
+        "leakRateChoice": "default",
+        "capacityKg": 40,
+        "leakRate": 0.02,
+        "leakedKg": 0.8,
+        "refillKg": 0
+      }
+    ]
+  },
+  "noCapacity": {
+    "snapshotSchema": 3,
+    "category": "Refrigerants",
+    "geographyCode": "TR",
+    "reportingYear": 2025,
+    "scope": 1,
+    "inputValue": 0,
+    "inputUnit": "kg",
+    "normalizedValue": 2,
+    "normalizedUnit": "kg",
+    "conversionApplied": false,
+    "kgCo2e": 7200,
+    "tCo2e": 7.2,
+    "factorId": "factor-fm200-fixture",
+    "factorValue": 3600,
+    "factorUnit": "kgCO2e/kg",
+    "methodology": "location-based",
+    "source": "calculation_logic.md §3",
+    "version": "2024.1",
+    "activityType": "HFC-227ea",
+    "gas": "CO2e",
+    "gasCoverage": "all_ghg",
+    "calorificBasis": "not_applicable",
+    "scope2Method": "not_applicable",
+    "dataYear": 2025,
+    "yearPolicy": "exact",
+    "factorRelease": {
+      "id": "release-fm200-fixture",
+      "publisher": "TonyAI prototype",
+      "title": "Prototype demo emission factors",
+      "edition": "2024.1",
+      "ordinal": 202401,
+      "status": "authoritative",
+      "sourceUrl": null,
+      "licence": null,
+      "publishedAt": null,
+      "gwpSet": null
+    },
+    "conversion": null,
+    "parameters": [],
+    "parameterRows": [
+      {
+        "id": "leak_rate-fire_suppression_system-true",
+        "releaseId": "release-fm200-fixture",
+        "key": "leak_rate",
+        "equipmentType": "fire_suppression_system",
+        "value": 0.02,
+        "unit": "fraction",
+        "isDefault": true,
+        "source": "SPEC FIXTURE",
+        "edition": "2024.1"
+      }
+    ],
+    "refrigerantTerms": [
+      {
+        "equipmentType": "fire_suppression_system",
+        "leakRateChoice": "default",
+        "capacityKg": 0,
+        "leakRate": 0.02,
+        "leakedKg": 0,
+        "refillKg": 2
+      }
+    ]
+  },
+  "bothMasses": {
+    "snapshotSchema": 3,
+    "category": "Refrigerants",
+    "geographyCode": "TR",
+    "reportingYear": 2025,
+    "scope": 1,
+    "inputValue": 50,
+    "inputUnit": "kg",
+    "normalizedValue": 36,
+    "normalizedUnit": "kg",
+    "conversionApplied": false,
+    "kgCo2e": 129600,
+    "tCo2e": 129.6,
+    "factorId": "factor-fm200-fixture",
+    "factorValue": 3600,
+    "factorUnit": "kgCO2e/kg",
+    "methodology": "location-based",
+    "source": "calculation_logic.md §3",
+    "version": "2024.1",
+    "activityType": "HFC-227ea",
+    "gas": "CO2e",
+    "gasCoverage": "all_ghg",
+    "calorificBasis": "not_applicable",
+    "scope2Method": "not_applicable",
+    "dataYear": 2025,
+    "yearPolicy": "exact",
+    "factorRelease": {
+      "id": "release-fm200-fixture",
+      "publisher": "TonyAI prototype",
+      "title": "Prototype demo emission factors",
+      "edition": "2024.1",
+      "ordinal": 202401,
+      "status": "authoritative",
+      "sourceUrl": null,
+      "licence": null,
+      "publishedAt": null,
+      "gwpSet": null
+    },
+    "conversion": null,
+    "parameters": [],
+    "parameterRows": [
+      {
+        "id": "leak_rate-fire_suppression_system-true",
+        "releaseId": "release-fm200-fixture",
+        "key": "leak_rate",
+        "equipmentType": "fire_suppression_system",
+        "value": 0.02,
+        "unit": "fraction",
+        "isDefault": true,
+        "source": "SPEC FIXTURE",
+        "edition": "2024.1"
+      }
+    ],
+    "refrigerantTerms": [
+      {
+        "equipmentType": "fire_suppression_system",
+        "leakRateChoice": "default",
+        "capacityKg": 50,
+        "leakRate": 0.02,
+        "leakedKg": 1,
+        "refillKg": 35
+      }
+    ]
+  }
+}

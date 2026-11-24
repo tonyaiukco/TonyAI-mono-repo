@@ -1,6 +1,7 @@
 import {
   GROSS_TO_NET_RATIO_INPUT,
   KWH_PER_KCAL,
+  refrigerantTermMassKg,
   type NaturalGasRecordParameters,
   type RefrigerantEquipmentLine,
   type RefrigerantRecordParameters,
@@ -154,7 +155,7 @@ export function naturalGasChain(
 }
 
 export interface CapacityMethod {
-  /** The priced mass: Σ (capacity × rate + refill), kg. */
+  /** The priced mass: the sum of released masses in kg. */
   massKg: number;
   terms: RefrigerantTerm[];
   rowsUsed: ReleaseParameter[];
@@ -178,7 +179,7 @@ export function capacityMethod(parameters: RefrigerantRecordParameters, rows: re
   const terms = parameters.equipment.map((line): RefrigerantTerm => {
     const rate = rateFor(line, rows);
     rowsUsed.push(rate);
-    return {
+    const term: RefrigerantTerm = {
       equipmentType: line.equipmentType,
       leakRateChoice: line.leakRateChoice,
       capacityKg: line.capacityKg,
@@ -186,6 +187,8 @@ export function capacityMethod(parameters: RefrigerantRecordParameters, rows: re
       leakedKg: line.capacityKg * rate.value,
       refillKg: line.refillKg,
     };
+    if (line.capacityKg > 0 && line.refillKg > 0) term.pricedBy = 'refill';
+    return term;
   });
-  return { massKg: terms.reduce((sum, t) => sum + t.leakedKg + t.refillKg, 0), terms, rowsUsed };
+  return { massKg: terms.reduce((sum, term) => sum + refrigerantTermMassKg(term), 0), terms, rowsUsed };
 }

@@ -125,9 +125,9 @@ revise any of them.
   compared. A line is above its ceiling when its capacity is over 500 kg or its
   refill is over its refill ceiling (owner, 2026-11-13). The refill limit
   follows US EPA 40 CFR 82.157's reporting trigger, a leak of 125% or more of
-  the full charge in a calendar year, used as a yardstick. A line's emission is
-  capacity × leak rate + refill, so a refill typo moves the figure most. A
-  refrigerant record without equipment lines (outside TR) has no ceiling.
+  the full charge in a calendar year, used as a yardstick. A positive refill is
+  the line's whole released mass, so a refill typo directly changes the figure.
+  A refrigerant record without equipment lines (outside TR) has no ceiling.
 - **Only where history cannot judge.** A first period, or a window whose
   figures average zero (owner, 2026-11-13: a January of 0 must not let a
   February typo through). Once the window holds a figure above zero, the

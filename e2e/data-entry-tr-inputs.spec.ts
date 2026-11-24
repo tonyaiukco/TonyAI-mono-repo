@@ -2,6 +2,8 @@ import { test, expect, request as playwrightRequest, type APIRequestContext, typ
 import en from '../apps/web/messages/en/dataEntry.json';
 import tr from '../apps/web/messages/tr/dataEntry.json';
 import trCategories from '../apps/web/messages/tr/categories.json';
+import enNav from '../apps/web/messages/en/nav.json';
+import trNav from '../apps/web/messages/tr/nav.json';
 import enCategories from '../apps/web/messages/en/categories.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
 import enUnits from '../apps/web/messages/en/units.json';
@@ -100,7 +102,7 @@ test('natural gas: the NCV opens on the release default, and a billed GCV derive
   });
 });
 
-test('refrigerant: one annual record of equipment lines, priced on the alternative rate', async ({ page, request }) => {
+async function startRefrigerant(page: Page): Promise<void> {
   await openForm(page, 'Refrigerants');
   await pickByFieldLabel(page, en.fuelOrGas, en.activityTypes[E2E_TR_INPUTS.refrigerant]);
 
@@ -109,24 +111,59 @@ test('refrigerant: one annual record of equipment lines, priced on the alternati
   await page.getByRole('combobox', { name: `${en.inputs.equipmentType} 1` }).click();
   await page.getByRole('option', { name: en.equipmentTypes.split_air_conditioner, exact: true }).click();
   await page.getByLabel(en.inputs.capacity).fill('10');
-  await page.getByLabel(en.inputs.refill).fill('1');
+  await expect(page.getByText(en.inputs.equipmentHelp, { exact: true })).toBeVisible();
+}
+
+test('refrigerant help is visible in both report-entry languages', async ({ page }) => {
+  await startRefrigerant(page);
+  await page.getByRole('button', { name: enNav.languages.tr }).click();
+  try {
+    await expect(page.getByText(tr.inputs.equipmentHelp, { exact: true })).toBeVisible();
+  } finally {
+    await page.getByRole('button', { name: trNav.languages.en }).click();
+  }
+  await expect(page.getByText(en.inputs.equipmentHelp, { exact: true })).toBeVisible();
+});
+
+test('refrigerant: one annual record of equipment lines, priced on the alternative rate', async ({ page, request }) => {
+  await startRefrigerant(page);
+  await page.getByLabel(en.inputs.refill).fill('0');
   await page.getByRole('combobox', { name: `${en.inputs.leakRate} 1` }).click();
   await page.getByRole('option', { name: en.inputs.alternativeRate.replace('{rate}', '50%'), exact: true }).click();
 
-  // The quantity is the total capacity; the priced mass is 10 × 0.5 + 1 = 6 kg × 1,000 = 6 t.
+  // The record quantity is 10 kg. The capacity estimate is 10 × 0.5 = 5 kg, or 5 tCO2e.
   await expect(page.getByTestId('equipment-total')).toHaveValue('10');
-  await expect(page.getByTestId('preview-tco2e')).toHaveText('6');
+  await expect(page.getByTestId('preview-tco2e')).toHaveText('5');
 
   await page.getByRole('button', { name: en.saveDraft }).click();
   await expect(page.getByText(en.draftSaved)).toBeVisible();
   await readAndDelete(request, { category: 'Refrigerants', reportingPeriod: 'annual', periodValue: 'Annual' }, (record) => {
     expect(record.activityValue).toBe(10);
     expect(record.parameters).toEqual({
-      equipment: [{ equipmentType: 'split_air_conditioner', capacityKg: 10, refillKg: 1, leakRateChoice: 'alternative' }],
+      equipment: [{ equipmentType: 'split_air_conditioner', capacityKg: 10, refillKg: 0, leakRateChoice: 'alternative' }],
     });
-    expect(record.calculation.kgCo2e).toBe(6000);
+    expect(record.calculation.kgCo2e).toBe(5000);
   });
 });
+
+for (const rate of ['default', 'alternative'] as const) {
+  test(`refrigerant: a positive refill prices the preview and save with the ${rate} rate`, async ({ page, request }) => {
+    await startRefrigerant(page);
+    await page.getByLabel(en.inputs.refill).fill('1');
+    if (rate === 'alternative') {
+      await page.getByRole('combobox', { name: `${en.inputs.leakRate} 1` }).click();
+      await page.getByRole('option', { name: en.inputs.alternativeRate.replace('{rate}', '50%'), exact: true }).click();
+    }
+    await expect(page.getByTestId('preview-tco2e')).toHaveText('1');
+
+    await page.getByRole('button', { name: en.saveDraft }).click();
+    await expect(page.getByText(en.draftSaved)).toBeVisible();
+    await readAndDelete(request, { category: 'Refrigerants', reportingPeriod: 'annual', periodValue: 'Annual' }, (record) => {
+      expect(record.calculation.kgCo2e).toBe(1000);
+      expect(record.calculation.refrigerantTerms).toMatchObject([{ pricedBy: 'refill', leakRateChoice: rate }]);
+    });
+  });
+}
 
 test('mobile combustion: a TR record names its vehicle mode, in litres', async ({ page, request }) => {
   await openForm(page, 'Mobile Combustion');

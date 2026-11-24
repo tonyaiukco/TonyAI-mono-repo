@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FactorLibraryConflictError } from './errors';
 import { GROSS_TO_NET_RATIO_INPUT } from '@tonyai/shared-types';
-import { naturalGasEnergyChain } from './tr-rules';
+import { capacityMethod, naturalGasEnergyChain } from './tr-rules';
 
 /**
  * The TR natural gas energy chain (ng-kwh-engine; Decisions 2026-11-20 D2,
@@ -60,5 +60,47 @@ describe('naturalGasEnergyChain', () => {
     const alternative = { ...row('reference_gcv', 2), isDefault: false } as unknown as Row;
     const chain = naturalGasEnergyChain('gross', [scoped, alternative, ...REFERENCE]);
     expect(chain.multiplier).toBeCloseTo(8250 / 9155, 12);
+  });
+});
+
+describe('capacityMethod', () => {
+  type Line = Parameters<typeof capacityMethod>[0]['equipment'][number];
+  const line: Line = {
+    equipmentType: 'fire_suppression_system', capacityKg: 50, refillKg: 35, leakRateChoice: 'default',
+  };
+  const rates: Row[] = [
+    { ...row('leak_rate', 0.02), subject: 'fire_suppression_system', unit: 'fraction' },
+    { ...row('leak_rate', 0.02), subject: 'chiller', unit: 'fraction' },
+    { ...row('leak_rate', 0.08), subject: 'chiller', unit: 'fraction', isDefault: false },
+  ];
+
+  it('prices each line independently and records the unused estimate', () => {
+    const equipment: Line[] = [line, { ...line, equipmentType: 'chiller', capacityKg: 25, refillKg: 0 }];
+    const result = capacityMethod({ equipment }, rates);
+    expect(result.massKg).toBe(35.5);
+    expect(result.terms).toMatchObject([{ pricedBy: 'refill', leakedKg: 1 }, { leakedKg: 0.5 }]);
+    expect(result.terms[1]).not.toHaveProperty('pricedBy');
+    expect(result.rowsUsed).toEqual(rates.slice(0, 2));
+  });
+
+  it.each([
+    ['no capacity', { ...line, capacityKg: 0 }, 35],
+    ['no refill', { ...line, refillKg: 0 }, 1],
+  ] as const)('preserves the old term with %s', (_label, equipment, mass) => {
+    const result = capacityMethod({ equipment: [equipment] }, rates);
+    expect(result.massKg).toBe(mass);
+    expect(result.terms[0]).not.toHaveProperty('pricedBy');
+  });
+
+  it('preserves the selected alternative rate in a refill-priced term', () => {
+    const equipment: Line[] = [{ ...line, equipmentType: 'chiller', leakRateChoice: 'alternative' }];
+    const result = capacityMethod({ equipment }, rates);
+    expect(result.massKg).toBe(35);
+    expect(result.terms[0]).toMatchObject({ leakRate: 0.08, leakedKg: 4, pricedBy: 'refill' });
+    expect(result.rowsUsed).toEqual([rates[2]]);
+  });
+
+  it('refuses a missing rate even when a refill supplies the priced mass', () => {
+    expect(() => capacityMethod({ equipment: [line] }, [])).toThrow(FactorLibraryConflictError);
   });
 });

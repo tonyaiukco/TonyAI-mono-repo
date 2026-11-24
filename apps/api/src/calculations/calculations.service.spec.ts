@@ -20,6 +20,8 @@ import {
   type UncalculatedSnapshot,
 } from '@tonyai/shared-types';
 import { CalculationsService, FACTOR_CANDIDATE_CAP } from './calculations.service';
+import sumRuleFixtures from './refrigerant-sum-rule.fixtures.json';
+import { compareSnapshots } from './snapshot-staleness';
 import type { ElectricityRecordParameters } from '@tonyai/shared-types';
 import { EXPORTED_TO_GRID_KWH_INPUT, FACILITY_CONSUMPTION_KWH_INPUT, SELF_GENERATED_KWH_INPUT } from '@tonyai/shared-types';
 import { CALLER_TEXT_QUOTE_MAX_LENGTH } from '../common/caller-text';
@@ -2099,8 +2101,9 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
     const record = (value: number, ...lines: ReturnType<typeof line>[]) => ({ ...fm200, value, parameters: { equipment: lines } }) as never;
 
     beforeEach(() => {
+      release = { ...release, id: 'release-fm200-fixture' };
       useFactor(prisma, makeFactor({
-        release, category: 'Refrigerants', activityType: 'HFC-227ea', geographyCode: 'TR', reportingYear: 2025, scope: 1,
+        id: 'factor-fm200-fixture', release, category: 'Refrigerants', activityType: 'HFC-227ea', geographyCode: 'TR', reportingYear: 2025, scope: 1,
         normalizedUnit: 'kg', calorificBasis: 'not_applicable', factorValue: 3600, factorUnit: 'kgCO2e/kg',
       }));
       prisma.library.parameters = [
@@ -2109,6 +2112,30 @@ describe('CalculationsService.compute — the TR rules (LP4-02, D5, D7, D11)', (
         parameter('leak_rate', 'split_air_conditioner', 0.1, 'fraction', false),
         parameter('leak_rate', 'chiller', 0.02, 'fraction'),
       ];
+    });
+
+    it('keeps the captured snapshots byte-identical when one of the masses is zero', async () => {
+      const noRefill = await engine.compute(record(40, line()));
+      const noCapacity = await engine.compute(record(0, line({ capacityKg: 0, refillKg: 2 })));
+      for (const [before, after] of [
+        [sumRuleFixtures.noRefill, noRefill],
+        [sumRuleFixtures.noCapacity, noCapacity],
+      ] as const) {
+        expect(after).toEqual(before);
+        expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+        expect(compareSnapshots(before, after)).toMatchObject({ stale: false, classes: [] });
+      }
+    });
+
+    it('BUG-17: 50 kg of FM200 with 35 kg refilled prices 126 t and makes the sum-rule snapshot stale', async () => {
+      const result = (await engine.compute(record(50, line({ capacityKg: 50, refillKg: 35 })))) as CalculationResultV3;
+      expect(result.kgCo2e).toBe(126000);
+      expect(result.refrigerantTerms).toEqual([
+        { ...sumRuleFixtures.bothMasses.refrigerantTerms[0], pricedBy: 'refill' },
+      ]);
+      expect(compareSnapshots(sumRuleFixtures.bothMasses, result)).toMatchObject({
+        stale: true, classes: expect.arrayContaining(['figure']),
+      });
     });
 
     it('golden value 9: 40 kg of FM200 at 2%', async () => {

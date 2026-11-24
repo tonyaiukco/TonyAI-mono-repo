@@ -179,7 +179,7 @@
       "ncv_and_gcv": "Alt ısıl değer ya da faturadaki üst ısıl değer girin; ikisini birden değil."
     },
     "equipmentTitle": "Bu gazı içeren ekipmanlar",
-    "equipmentHelp": "Yıl boyunca her ekipman türü için bir satır. Kaçak, her türün oranıyla kurulu kapasitesi üzerinden, artı yapılan dolum ile hesaplanır.",
+    "equipmentHelp": "Yılın tamamı için her ekipman türüne bir satır girin. Dolum yapıldıysa salınan miktar dolum miktarına eşittir. Dolum yapılmadıysa miktar, kurulu kapasite ve kaçak oranıyla tahmin edilir.",
     "equipmentType": "Ekipman türü",
     "chooseEquipment": "Ekipman seçin",
     "capacity": "Kurulu kapasite (kg)",

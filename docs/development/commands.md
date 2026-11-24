@@ -30,3 +30,21 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm db:reset` | Drop, re‑migrate, re‑seed, then reclaim every orphaned object (`storage:reconcile --reclaim-orphans --older-than=0 --apply`: the reset drops the schema but not the buckets) |
 
 **After a rollback past the typo ceilings (2026-11-13):** do not run `pnpm anomaly:recompute -- --apply` under the old image. It would clear the ceiling flags of records in review, and their variance reasons would stay. The old `anomaly:probe` reports every ceiling flag (a count of 0, or an average of 0) as drift; that is expected. On screen, the old image reads a zero-average ceiling flag as a history flag against an average of 0, and the export shows a plain `yes`.
+
+## Reprice drafts after the refrigerant refill rule
+
+Build the API with `pnpm --filter @tonyai/api build`, then run
+`pnpm --filter @tonyai/api draft-reprice`. The command reads the runtime-role
+`DATABASE_URL` from the environment or `apps/api/.env`. It scans refrigerant
+records with a line that has both installed capacity and a positive refill.
+
+Start with the default dry run. Inspect the reported figures and skips before
+adding `--apply`. Applying to a database off loopback additionally requires
+`--allow-remote`. For hosted QA the owner runs the dry run and then releases the
+apply separately. Use local synthetic data for verification.
+
+Only open drafts and rejected records in unlocked periods can be updated.
+Every successful update carries a system audit row and a new anomaly verdict.
+Submitted and under-review sum-rule records are listed separately from
+unclassified ones. Approved, locked and voided records are excluded. A refusal
+returns a nonzero exit status and includes the refusal code in the report.
