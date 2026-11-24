@@ -64,7 +64,12 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
    releases included, so loading a higher ordinal first refuses the lower one
    for good (an authoritative release cannot be deleted). IPCC today:
    `tr-2026-11/ipcc.json` (ordinal 1) BEFORE `tr-mgo-2026-11/ipcc-mgo.json`
-   (ordinal 2, UAT2); a TR-package erratum then takes IPCC ordinal 3+ but ETKB 2.
+   (ordinal 2, UAT2) BEFORE `tr-fire-2026-11/ipcc-fire.json` (ordinal 3, the
+   fire suppression supplement, UAT round 4 BUG-12; Decisions 2026-11-24
+   (fifth)). Each supersedes nothing and overlaps nothing; the fire edition
+   repeats the package's three fire device leak rates, so a correction to one of
+   them supersedes two editions. A TR-package erratum then takes IPCC ordinal
+   4+ but ETKB 2.
 6. **`--operator` names a firm or a role, never a person** — it is recorded as
    the actor of every event in `factor_release_events` and as a withdrawal's
    `withdrawn_by`.
