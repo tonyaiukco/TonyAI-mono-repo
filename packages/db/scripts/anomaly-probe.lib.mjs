@@ -36,7 +36,8 @@ export const BASELINE_STATUSES = ['submitted', 'under_review', 'approved', 'lock
 /* ---- the first-period typo ceiling, mirrored from `firstPeriodCeiling` ----
  * (BUG-R2-07 tier 3, Decisions 2026-11-12.) Copies of the contract's
  * `FIRST_PERIOD_CEILINGS`, `MARINE_GAS_OIL_CEILING_KG`,
- * `REFRIGERANT_LINE_CEILING_KG` and `CEILING_UNIT_MULTIPLIERS`; the
+ * `REFRIGERANT_LINE_CEILING_KG`, `CAPACITY_METHOD_CATEGORIES` and
+ * `CEILING_UNIT_MULTIPLIERS`; the
  * integration suite asserts they are equal (`anomaly-probe.int.spec.ts`). */
 
 /** In base units. `cubic_metres` repeats the Sm³ number: a guard, not a conversion. */
@@ -51,7 +52,9 @@ export const FIRST_PERIOD_CEILINGS = {
 export const MARINE_GAS_OIL_CEILING_KG = 1_000_000;
 /** The activity type that ceiling is keyed on (`MARINE_GAS_OIL_ACTIVITY_TYPE`). */
 export const MARINE_GAS_OIL_ACTIVITY_TYPE = 'marine_gas_oil';
-/** Installed capacity on any one refrigerant equipment line. */
+/** The capacity-method categories (`CAPACITY_METHOD_CATEGORIES`), each checked per equipment line. */
+export const CAPACITY_METHOD_CATEGORIES = ['Refrigerants', 'Fire Suppression'];
+/** Installed capacity on any one refrigerant or fire suppression equipment line. */
 export const REFRIGERANT_LINE_CEILING_KG = 500;
 /** A line's refill above this share of its capacity (capped at the line
  *  ceiling; the ceiling alone for no capacity) is above its ceiling too. */
@@ -102,7 +105,7 @@ export const CEILING_ABOVE_SQL = (() => {
         `WHEN activity_unit = ${sqlText(unit)} THEN activity_value * ${sqlNumber(multiplier)} > ${sqlNumber(MARINE_GAS_OIL_CEILING_KG)}`,
     );
   return `CASE
-    WHEN category = 'Refrigerants' THEN (
+    WHEN category IN (${CAPACITY_METHOD_CATEGORIES.map(sqlText).join(', ')}) THEN (
       -- NULL with no lines (no ceiling); otherwise whether any line's capacity
       -- is above the line ceiling, or its refill above its refill ceiling. A
       -- value that is not a number counts as 0, as in the contract.

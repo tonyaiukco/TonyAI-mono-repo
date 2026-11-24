@@ -304,7 +304,8 @@ model ActivityRecord {
   periodValue               String                   @map("period_value")
   category                  String // canonical category key, e.g. "Electricity"
   // The fuel or gas a typed category's record is for (`recordActivityTypesFor`
-  // in @tonyai/shared-types: Fuel, Mobile Combustion, Refrigerants); NULL for
+  // in @tonyai/shared-types: Fuel, Mobile Combustion, Refrigerants, Fire
+  // Suppression); NULL for
   // an implicit category and for a record written before LP3-03. Part of the
   // record's uniqueness slot (the raw index below), so diesel and petrol of one
   // site and month are two records.
@@ -315,7 +316,8 @@ model ActivityRecord {
   activityUnit              String                   @map("activity_unit")
   input                     Json? // raw structured input as submitted (optional)
   // Per-record calculation parameters (LP4-02, D3): Natural Gas's calorific
-  // overrides and volume correction, a refrigerant's equipment lines. A database
+  // overrides and volume correction, a refrigerant's or a fire suppression
+  // record's equipment lines. A database
   // CHECK holds their shape; audited with the record and frozen with its inputs
   // once committed. The TR rules read them (D11).
   parameters                Json?    @map("parameters")

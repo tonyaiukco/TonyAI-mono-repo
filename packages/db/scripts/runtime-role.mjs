@@ -1027,10 +1027,13 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['activity_records', 'activity_records_activity_value_check', 'eeef9e2c8cf6539c36909ac41432c40a'],
   // LP4-02 (D3): per-record calculation parameters shape; ng-kwh-engine adds
   // Natural Gas's `cvBasis` (20261120120000_ng_kwh_cv_basis); self-gen-model
-  // adds Electricity's self-generation block (20261123120000_self_gen_model).
-  ['activity_records', 'activity_records_parameters_check', 'b8f7f38691fa5472f24cf07e8a9751bb'],
+  // adds Electricity's self-generation block (20261123120000_self_gen_model);
+  // uat4-fire-suppression-entry adds the Fire Suppression branch, and the
+  // category to the scope, boundary and mapping CHECKs, with dataset schema 3
+  // (20261124204348_uat4_fire_suppression).
+  ['activity_records', 'activity_records_parameters_check', 'd372c172cfc9d06c1dc557f888be42f9'],
   ['activity_records', 'activity_records_period_value_check', 'd15080e375207c7ca22a5777c479af8b'],
-  ['activity_records', 'activity_records_scope_check', '8cae4f533cf776fdcef2cf79f1fcf834'],
+  ['activity_records', 'activity_records_scope_check', '0613a3ac57fd8f25dd2804ed6f85629f'],
   ['emission_factors', 'emission_factors_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['emission_factors', 'emission_factors_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
   ['emission_factors', 'emission_factors_factor_value_check', '9fd4bc38d56fd6f39cda5c362d62ca79'],
@@ -1054,10 +1057,10 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['factor_releases', 'factor_releases_text_check', 'd23326d88a280c94d486b236f0c12e0b'],
   ['factor_releases', 'factor_releases_withdrawal_check', '4430a3652b1631e86ce68f076eae32a4'],
   ['factor_releases', 'factor_releases_withdrawn_sealed_check', '071f2bdff4397aeabbe9fc0c396e8dc6'],
-  ['inventory_applicability_cells', 'inventory_applicability_cells_category_check', 'db59dbf87b6a2d8d91309941108261fc'],
+  ['inventory_applicability_cells', 'inventory_applicability_cells_category_check', '2ad4b48a45ee3fb2bbe8c2167ffc30e0'],
   ['inventory_applicability_cells', 'inventory_applicability_cells_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
   ['inventory_applicability_cells', 'inventory_applicability_cells_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
-  ['inventory_attribution_policies', 'inventory_attribution_policies_category_check', 'db59dbf87b6a2d8d91309941108261fc'],
+  ['inventory_attribution_policies', 'inventory_attribution_policies_category_check', '2ad4b48a45ee3fb2bbe8c2167ffc30e0'],
   ['inventory_attribution_policies', 'inventory_attribution_policies_level_check', '584fbf926f5623ee47e8d5e34cfbcf8a'],
   ['inventory_attribution_policies', 'inventory_attribution_policies_period_check', '002fa1bd1e5ae2f5bfc7921603e932bb'],
   ['inventory_boundaries', 'inventory_boundaries_decision_check', 'b1d011288917c94e6edec6e5ccba2e9b'],
@@ -1072,12 +1075,12 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['inventory_sources', 'inventory_sources_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
   ['inventory_sources', 'inventory_sources_included_key_check', '8dd7ef5d1dcbce5b18d5ce7e1cb88f4a'],
   ['inventory_sources', 'inventory_sources_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
-  ['inventory_sources', 'inventory_sources_mapping_check', '575c7582aee7c961547d93833b9308d1'],
+  ['inventory_sources', 'inventory_sources_mapping_check', 'ae5466f9d2178bb3ec40f77d93ee78a9'],
   ['inventory_sources', 'inventory_sources_name_check', '89abd8a30af4e8ea9fe6138919107443'],
   // LP3-04 PR C: what a retained dataset row is (V5).
   ['report_datasets', 'report_datasets_fingerprint_check', '63204d1bbd98e2266744f4d2a7eb9a0c'],
   ['report_datasets', 'report_datasets_referenced_check', 'a61fe632e52e8c2bc789ca1a3a429491'],
-  ['report_datasets', 'report_datasets_schema_check', '7532274c7f11bcd412174655f7cfa6ae'],
+  ['report_datasets', 'report_datasets_schema_check', '25af82d931c97638d48c7fed5db7ce48'],
   ['report_datasets', 'report_datasets_selection_check', '8ff91db91299eba2a1b97fa4d1533b93'],
   ['report_datasets', 'report_datasets_selection_context_check', '30735b94defd559b810da8a1f204d001'],
   // LP3-04 PR D: what an issuance is — its status and gaps' shapes, its
