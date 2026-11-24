@@ -28,10 +28,12 @@ for (const secondTab of [false, true]) {
       await active.goto('/');
       await expect(active.getByTestId('dashboard-title')).toBeVisible();
     }
+    // Freeze both tabs on the same instant before advancing their timers.
+    await page.clock.pauseAt(new Date(Date.now() + 5000));
     await page.clock.fastForward(59 * minute);
     await active.keyboard.press('Shift');
     await page.clock.fastForward(2 * minute);
-    await page.reload();
+    await expect(page).toHaveURL(url => url.pathname === '/');
     await expect(page.getByTestId('dashboard-title')).toBeVisible();
     await page.clock.fastForward(59 * minute);
     await expect(page).toHaveURL(/\/login\?reason=idle$/);
