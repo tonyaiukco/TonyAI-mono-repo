@@ -70,8 +70,8 @@ ENGINE_URL = ('https://binaries.prisma.sh/all_commits/' + ENGINE_COMMIT
 # binaries.prisma.sh refuses urllib's default User-Agent (Cloudflare 403, error 1010).
 USER_AGENT = 'tonyai-qa-deploy'
 # A change confined to these paths cannot alter either image, so it does not redeploy QA.
-# `e2e/` and `openspec/` reach the builder stage's context but never a final image, which
-# copies only build outputs (apps/*/Dockerfile).
+# `e2e/` reaches the builder stage's context but never a final image, which copies only
+# build outputs (apps/*/Dockerfile); `openspec/` is not in the context (.dockerignore).
 NON_IMAGE_PREFIXES = ('docs/', 'infra/', 'e2e/', 'openspec/', '.github/', '.claude/', '.codex/')
 # ...except these, which .dockerignore admits and the API image copies.
 IMAGE_INFRA_PREFIXES = ('infra/certs/',)
