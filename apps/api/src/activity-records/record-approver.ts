@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { InvitationStatus, Prisma } from '@tonyai/db';
 import {
+  ROLE_CAPABILITIES,
   can,
   mayDecideRecord,
   recordApprover,
@@ -180,7 +181,7 @@ export async function awaitingDecisionWhere(db: Db, user: RequestUser): Promise<
     // The organisation's active masterkeys and super_admins: their records
     // route to `author` and `masterkey`; everyone else's to the company.
     db.profile.findMany({
-      where: { organisationId: user.organisationId, disabledAt: null, role: { in: ['masterkey', 'super_admin'] } },
+      where: { organisationId: user.organisationId, disabledAt: null, role: { in: [...ROLE_CAPABILITIES['record.decide']] } },
       select: { id: true, role: true },
     }),
     companiesWithActiveSuperAdmin(db, user.accessibleSubsidiaryIds),
