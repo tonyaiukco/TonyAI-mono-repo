@@ -83,7 +83,7 @@ describe('the short-history anomaly check', () => {
     const site = await owner.location.create({
       data: { subsidiaryId: tenant.subsidiaryId, name: `R2-07 TR ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
     });
-    const author = tenant.users.dataEntry;
+    const author = tenant.users.standardUser;
 
     // January: the first period of its series. Nothing to compare with.
     const january = await mgoMonth(site.id, 'January', 1000);
@@ -139,7 +139,7 @@ describe('the short-history anomaly check', () => {
     const siteB = await owner.location.create({
       data: { subsidiaryId: tenant.subsidiaryId, name: `R2-07 B ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
     });
-    const author = tenant.users.dataEntry;
+    const author = tenant.users.standardUser;
 
     // A committed January at site A, and a January DRAFT at site B.
     await s.records.submit(author, (await mgoMonth(siteA.id, 'January', 1000)).id);

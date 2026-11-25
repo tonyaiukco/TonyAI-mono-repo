@@ -46,7 +46,7 @@ async function firstPeriod(body: Record<string, unknown>) {
   const site = await owner.location.create({
     data: { subsidiaryId: tenant.subsidiaryId, name: `R2-07 ceiling ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
   });
-  const record = await s.records.create(tenant.users.dataEntry, {
+  const record = await s.records.create(tenant.users.standardUser, {
     subsidiaryId: tenant.subsidiaryId,
     locationId: site.id,
     reportingYear: 2025,
@@ -100,7 +100,7 @@ describe('the first-period typo ceiling', () => {
     });
 
     const auditBefore = await owner.auditLog.count({ where: { entityId: record.id } });
-    const refusal = await s.records.submit(tenant.users.dataEntry, record.id).catch((e: unknown) => e);
+    const refusal = await s.records.submit(tenant.users.standardUser, record.id).catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(VarianceReasonRequiredError);
     expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
       code: 'variance_reason_required',
@@ -113,7 +113,7 @@ describe('the first-period typo ceiling', () => {
       where: { id: record.id },
       data: { varianceReason: 'New plant; read checked against the meter' },
     });
-    await s.records.submit(tenant.users.dataEntry, record.id);
+    await s.records.submit(tenant.users.standardUser, record.id);
     expect(await stored(record.id)).toEqual({
       status: ActivityRecordStatus.submitted,
       anomalyFlag: true,
@@ -130,7 +130,7 @@ describe('the first-period typo ceiling', () => {
       activityValue: 1_000_000,
       activityUnit: 'kWh',
     });
-    await s.records.submit(tenant.users.dataEntry, record.id);
+    await s.records.submit(tenant.users.standardUser, record.id);
     expect(await stored(record.id)).toMatchObject({
       status: ActivityRecordStatus.submitted,
       anomalyFlag: false,
@@ -174,7 +174,7 @@ describe('the first-period typo ceiling', () => {
     });
     const typo = await firstPeriod(refill(10, 50_000));
     expect(await stored(typo.id)).toMatchObject({ anomalyFlag: true, anomalyBaselinePriorCount: 0 });
-    const refusal = await s.records.submit(tenant.users.dataEntry, typo.id).catch((e: unknown) => e);
+    const refusal = await s.records.submit(tenant.users.standardUser, typo.id).catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(VarianceReasonRequiredError);
     expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({ params: { basis: 'ceiling' } });
 
@@ -188,7 +188,7 @@ describe('the first-period typo ceiling', () => {
       data: { subsidiaryId: tenant.subsidiaryId, name: `R2-07 zero ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
     });
     const month = async (periodValue: string, activityValue: number) => {
-      const record = await s.records.create(tenant.users.dataEntry, {
+      const record = await s.records.create(tenant.users.standardUser, {
         subsidiaryId: tenant.subsidiaryId,
         locationId: site.id,
         reportingYear: 2025,
@@ -202,7 +202,7 @@ describe('the first-period typo ceiling', () => {
       return record;
     };
     const january = await month('January', 0);
-    await s.records.submit(tenant.users.dataEntry, january.id);
+    await s.records.submit(tenant.users.standardUser, january.id);
 
     const february = await month('February', 50_000_000);
     expect(await stored(february.id)).toEqual({
@@ -211,7 +211,7 @@ describe('the first-period typo ceiling', () => {
       anomalyBaselinePriorCount: 1,
       anomalyBaselineTCo2e: 0,
     });
-    const refusal = await s.records.submit(tenant.users.dataEntry, february.id).catch((e: unknown) => e);
+    const refusal = await s.records.submit(tenant.users.standardUser, february.id).catch((e: unknown) => e);
     expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({ params: { basis: 'ceiling' } });
   });
 

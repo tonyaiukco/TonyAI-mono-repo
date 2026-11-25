@@ -120,7 +120,7 @@ describe('draft repricing with PostgreSQL lifecycle locks', () => {
       where: { id: approved.id }, data: { calculation: newSnapshot },
     })).rejects.toThrow(/TA001/);
     await attachEvidence(runtime, tenant, [draft.id]);
-    await expect(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, draft.id))
+    await expect(lifecycleServices(runtime).records.submit(tenant.users.standardUser, draft.id))
       .resolves.toMatchObject({ status: 'submitted' });
   });
 

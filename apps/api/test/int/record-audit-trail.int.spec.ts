@@ -93,8 +93,9 @@ const trailOf = (user: RequestUser | null, id: string) => call(user, 'GET', `/ac
 
 /** The spec's whole story, every step through the API. */
 async function elevenEventStory(t: Tenant): Promise<ActivityRecordDTO> {
-  const entry = t.users.dataEntry;
-  const reviewer = t.users.consultant;
+  const entry = t.users.standardUser;
+  // A standard user's record is decided by its company's super_admin (INC-2.6 §1.1).
+  const reviewer = t.users.superAdmin;
   const created = await ok<ActivityRecordDTO>(entry, 'POST', '/activity-records', {
     subsidiaryId: t.subsidiaryId,
     locationId: null,
@@ -131,7 +132,7 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     expect(approved.status).toBe('approved');
     expect(approved.submissionCount).toBe(3);
 
-    const trail = JSON.parse((await trailOf(A.users.consultant, approved.id)).text) as RecordAuditTrailDTO;
+    const trail = JSON.parse((await trailOf(A.users.auditor, approved.id)).text) as RecordAuditTrailDTO;
 
     expect(trail.truncated).toBe(false);
     expect(trail.events.map((e) => e.kind)).toEqual([
@@ -150,14 +151,14 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     expect(trail.events.filter((e) => e.submission !== null).map((e) => e.submission)).toEqual([1, 2, 3]);
     const returned = trail.events[6];
     expect(returned.reason).toBe('The March invoice is missing');
-    expect(returned.actor?.role).toBe('consultant');
+    expect(returned.actor?.role).toBe('super_admin');
     const firstEdit = trail.events[3];
     expect(firstEdit.changes.map((c) => c.field)).toEqual(['activityValue', 'figure']);
     expect(firstEdit.changes[0]).toEqual({ field: 'activityValue', before: 1000, after: 1200 });
   });
 
   it("shows the author's variance reason on the submit, as the record held it (owner review)", async () => {
-    const entry = A.users.dataEntry;
+    const entry = A.users.standardUser;
     const created = await ok<ActivityRecordDTO>(entry, 'POST', '/activity-records', {
       subsidiaryId: A.subsidiaryId,
       locationId: null,
@@ -176,12 +177,12 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
 
     const row = await owner.auditLog.findFirstOrThrow({ where: { entityId: created.id, action: 'submit' } });
     expect(row.diff).toMatchObject({ submission: 1, varianceReason: 'New chiller since March' });
-    const trail = JSON.parse((await trailOf(A.users.consultant, created.id)).text) as RecordAuditTrailDTO;
+    const trail = JSON.parse((await trailOf(A.users.auditor, created.id)).text) as RecordAuditTrailDTO;
     expect(trail.events.find((e) => e.kind === 'submitted')?.reason).toBe('New chiller since March');
   });
 
   it('numbers a submit after a legacy `update` submit and an uncounted `submit` as the third (owner review)', async () => {
-    const entry = A.users.dataEntry;
+    const entry = A.users.standardUser;
     const created = await ok<ActivityRecordDTO>(entry, 'POST', '/activity-records', {
       subsidiaryId: A.subsidiaryId, locationId: null, reportingYear: 2026, reportingPeriod: 'monthly',
       periodValue: 'July', category: 'Electricity', activityType: null, activityValue: 1000,
@@ -201,12 +202,12 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
 
     const third = await ok<ActivityRecordDTO>(entry, 'POST', `/activity-records/${created.id}/submit`);
     expect(third.submissionCount).toBe(3);
-    const trail = JSON.parse((await trailOf(A.users.consultant, created.id)).text) as RecordAuditTrailDTO;
+    const trail = JSON.parse((await trailOf(A.users.auditor, created.id)).text) as RecordAuditTrailDTO;
     expect(trail.events.filter((e) => e.submission !== null).map((e) => e.submission)).toEqual([1, 2, 3]);
   });
 
   it('reads and counts rows that kept an upper-case spelling of the id (owner review)', async () => {
-    const entry = A.users.dataEntry;
+    const entry = A.users.standardUser;
     const created = await ok<ActivityRecordDTO>(entry, 'POST', '/activity-records', {
       subsidiaryId: A.subsidiaryId, locationId: null, reportingYear: 2026, reportingPeriod: 'monthly',
       periodValue: 'August', category: 'Electricity', activityType: null, activityValue: 1000,
@@ -232,19 +233,19 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
 
     const next = await ok<ActivityRecordDTO>(entry, 'POST', `/activity-records/${created.id}/submit`);
     expect(next.submissionCount).toBe(2);
-    const trail = JSON.parse((await trailOf(A.users.consultant, created.id)).text) as RecordAuditTrailDTO;
+    const trail = JSON.parse((await trailOf(A.users.auditor, created.id)).text) as RecordAuditTrailDTO;
     const edit = trail.events.find((e) => e.kind === 'edited');
     expect(edit?.changes).toEqual([{ field: 'activityValue', before: 900, after: 1000 }]);
     expect(trail.events.filter((e) => e.submission !== null).map((e) => e.submission)).toEqual([1, 2]);
   });
 
-  it('is read by the three organisation-wide roles and the author, never written', async () => {
+  it('is read by the masterkey, the auditor, the company\'s super_admin and the author, never written', async () => {
     const approved = await elevenEventStory(A);
     const auditRows = () => owner.auditLog.count({ where: { entityId: approved.id } });
     const before = await auditRows();
 
     const answers = await Promise.all(
-      [A.users.masterkey, A.users.consultant, A.users.executiveViewer, A.users.dataEntry].map((u) =>
+      [A.users.masterkey, A.users.superAdmin, A.users.auditor, A.users.standardUser].map((u) =>
         trailOf(u, approved.id),
       ),
     );
@@ -254,10 +255,10 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     expect(await auditRows()).toBe(before);
   });
 
-  it('refuses a data_entry user the trail of a colleague\'s record, which they can read', async () => {
+  it('refuses a standard user the trail of a colleague\'s record, which they can read', async () => {
     const colleagues = await createRecord(owner, A, { createdBy: A.users.masterkey.id, periodValue: 'February' });
-    expect((await call(A.users.dataEntry, 'GET', `/activity-records/${colleagues.id}`)).status).toBe(200);
-    const refused = await trailOf(A.users.dataEntry, colleagues.id);
+    expect((await call(A.users.standardUser, 'GET', `/activity-records/${colleagues.id}`)).status).toBe(200);
+    const refused = await trailOf(A.users.standardUser, colleagues.id);
     expect(refused.status).toBe(403);
     expect(refused.text).not.toContain('"events"');
   });
@@ -270,24 +271,24 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     expect(trail).toEqual(read);
   });
 
-  it('refuses a record in a subsidiary without a grant exactly as its read is', async () => {
-    const sibling = await owner.subsidiary.create({
-      data: { organisationId: A.organisationId, legalName: `Int-test no grant ${A.organisationId.slice(0, 8)}`, geographyCode: 'UK' },
+  // The standard user's own record in a company it is not granted, and (task
+  // 9.3) a super_admin reading a trail outside its companies: each refused
+  // exactly as the record's read is.
+  it.each([
+    ['a standard user', 'standardUser', 'standardUser'],
+    ['a super_admin', 'superAdmin', 'masterkey'],
+  ] as const)('refuses %s a record in a company without a grant exactly as its read is', async (_label, reader, author) => {
+    const ungranted = await createRecord(owner, A, {
+      subsidiaryId: A.otherSubsidiaryId,
+      createdBy: A.users[author].id,
+      periodValue: 'April',
     });
-    try {
-      const ungranted = await createRecord(owner, A, {
-        subsidiaryId: sibling.id,
-        createdBy: A.users.dataEntry.id,
-        periodValue: 'April',
-      });
-      const read = await call(A.users.dataEntry, 'GET', `/activity-records/${ungranted.id}`);
-      const trail = await trailOf(A.users.dataEntry, ungranted.id);
-      expect(read.status).toBe(404);
-      expect(trail).toEqual(read);
-    } finally {
-      await owner.activityRecord.deleteMany({ where: { subsidiaryId: sibling.id } });
-      await owner.subsidiary.delete({ where: { id: sibling.id } });
-    }
+    const read = await call(A.users[reader], 'GET', `/activity-records/${ungranted.id}`);
+    const trail = await trailOf(A.users[reader], ungranted.id);
+    expect(read.status).toBe(404);
+    expect(trail).toEqual(read);
+    // The control: the masterkey reads the same trail.
+    expect((await trailOf(A.users.masterkey, ungranted.id)).status).toBe(200);
   });
 
   it('refuses a request with no session', async () => {
@@ -297,7 +298,7 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
 
   it('returns no calculation, no user id and no email address', async () => {
     const approved = await elevenEventStory(A);
-    const text = (await trailOf(A.users.dataEntry, approved.id)).text;
+    const text = (await trailOf(A.users.standardUser, approved.id)).text;
     const keys = new Set<string>();
     const walk = (v: unknown) => {
       if (Array.isArray(v)) v.forEach(walk);
@@ -326,7 +327,7 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
   it('holds only this record\'s events, not a neighbour\'s edited in the same minute', async () => {
     const first = await elevenEventStory(A);
     const neighbour = await createRecord(owner, A, { periodValue: 'May' });
-    await ok(A.users.dataEntry, 'PATCH', `/activity-records/${neighbour.id}`, { activityValue: 7 });
+    await ok(A.users.standardUser, 'PATCH', `/activity-records/${neighbour.id}`, { activityValue: 7 });
     const trail = JSON.parse((await trailOf(A.users.masterkey, first.id)).text) as RecordAuditTrailDTO;
     const ids = new Set(
       (await owner.auditLog.findMany({ where: { entityId: neighbour.id }, select: { id: true } })).map((r) => r.id),

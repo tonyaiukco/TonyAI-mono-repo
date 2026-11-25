@@ -64,7 +64,7 @@ function draftRow(id: string, periodValue: string) {
   return {
     id, subsidiary_id: tenant.subsidiaryId, reporting_year: 2026, reporting_period: 'monthly', period_value: periodValue,
     category: 'Electricity', scope: 2, activity_value: 99, activity_unit: 'kWh', calculation: { tCo2e: 9, factorId: 'forged' },
-    created_by: tenant.users.dataEntry.id, updated_at: new Date().toISOString(), status: 'draft',
+    created_by: tenant.users.standardUser.id, updated_at: new Date().toISOString(), status: 'draft',
   };
 }
 

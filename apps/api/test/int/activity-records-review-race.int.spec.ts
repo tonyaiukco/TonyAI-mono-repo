@@ -1,17 +1,20 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { ActivityRecordStatus } from '@tonyai/db';
+import { ActivityRecordStatus, UserRole } from '@tonyai/db';
 import { RecordChangedError } from '../../src/activity-records/errors';
 import { ActivityRecordsService } from '../../src/activity-records/activity-records.service';
 import { AuditService } from '../../src/audit/audit.service';
 import { CalculationsService } from '../../src/calculations/calculations.service';
 import { INT_FACTOR_POLICY } from './services';
 import type { EvidenceService } from '../../src/evidence/evidence.service';
+import type { RequestUser } from '../../src/auth/auth.types';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  addMember,
   attachEvidence,
   backendPid,
   connect,
+  connectOwner,
   createRecord,
   createTenant,
   holdBefore,
@@ -23,8 +26,8 @@ import {
  * F03 (Part C): a late `startReview` could regress an approval.
  *
  * Before LP1-01 both methods read the record, checked its status in memory,
- * then wrote on the id alone, so a consultant's `startReview` that read
- * `submitted` and was then overtaken by a masterkey's `approve` still wrote
+ * then wrote on the id alone, so a decider's `startReview` that read
+ * `submitted` and was then overtaken by another decider's `approve` still wrote
  * `under_review` over the approval — and the audit trail recorded two
  * transitions out of `submitted` (reproduced in LP0-03, where this file held
  * the requirement as `it.fails` beside a pin of that behaviour).
@@ -49,6 +52,10 @@ let a: PrismaService;
 let b: PrismaService;
 let observer: PrismaService;
 let tenant: Tenant;
+/** A second super_admin of the company: the record (a standard user's) is
+ *  decided by its company's super_admins (INC-2.6 §1.1), so the two racing
+ *  deciders are two of them. */
+let secondSuperAdmin: RequestUser;
 
 beforeAll(() => {
   a = connect();
@@ -62,6 +69,12 @@ afterAll(async () => {
 
 beforeEach(async () => {
   tenant = await createTenant();
+  const owner = connectOwner();
+  try {
+    secondSuperAdmin = await addMember(owner, tenant, UserRole.super_admin, { grants: [tenant.subsidiaryId] });
+  } finally {
+    await owner.$disconnect();
+  }
 });
 
 afterEach(async () => {
@@ -103,8 +116,8 @@ function chainEnd(transitions: Transition[], start: string): string | null {
 }
 
 /**
- * Consultant A reads a submitted record and is held just before its write;
- * masterkey B approves the record; then A is released. If B blocks on a lock
+ * Super_admin A reads a submitted record and is held just before its write;
+ * a second super_admin B approves the record; then A is released. If B blocks on a lock
  * A holds, A is released as soon as that is observed.
  */
 async function interleaveStartReviewWithApprove() {
@@ -122,14 +135,14 @@ async function interleaveStartReviewWithApprove() {
   const hold = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
   const pidB = await backendPid(b);
 
-  const startReview = makeService(hold.client).startReview(tenant.users.consultant, record.id);
+  const startReview = makeService(hold.client).startReview(tenant.users.superAdmin, record.id);
   const startReviewOutcome = startReview.then(
     () => 'ok' as const,
     (err: unknown) => err,
   );
   await hold.reached();
 
-  const approve = makeService(b).approve(tenant.users.masterkey, record.id);
+  const approve = makeService(b).approve(secondSuperAdmin, record.id);
   const approveOutcome = approve.then(
     () => 'ok' as const,
     (err: unknown) => err,
@@ -142,7 +155,7 @@ async function interleaveStartReviewWithApprove() {
   return { outcomes, how, finalStatus: final.status, transitions: await transitionsOf(record.id) };
 }
 
-/** The other order: masterkey A's approve is held before its write; consultant B starts review. */
+/** The other order: super_admin A's approve is held before its write; super_admin B starts review. */
 async function interleaveApproveWithStartReview() {
   // Priced: the approve recomputes the figure (K11, LP4-02 B2).
   const record = await createRecord(
@@ -157,11 +170,11 @@ async function interleaveApproveWithStartReview() {
   const pidB = await backendPid(b);
 
   const approveOutcome = makeService(hold.client)
-    .approve(tenant.users.masterkey, record.id)
+    .approve(secondSuperAdmin, record.id)
     .then(() => 'ok' as const, (err: unknown) => err);
   await hold.reached();
 
-  const startReview = makeService(b).startReview(tenant.users.consultant, record.id);
+  const startReview = makeService(b).startReview(tenant.users.superAdmin, record.id);
   const startReviewOutcome = startReview.then(() => 'ok' as const, (err: unknown) => err);
   const how = await settledOrBlocked(startReview, pidB, observer);
   hold.release();
@@ -209,7 +222,7 @@ describe('F03 — startReview racing approve', () => {
     expect(outcomes.startReview).toBeInstanceOf(RecordChangedError);
     expect(finalStatus).toBe(ActivityRecordStatus.approved);
     expect(transitions).toEqual([
-      { from: 'submitted', to: 'approved', userId: tenant.users.masterkey.id },
+      { from: 'submitted', to: 'approved', userId: secondSuperAdmin.id },
     ]);
   });
 });

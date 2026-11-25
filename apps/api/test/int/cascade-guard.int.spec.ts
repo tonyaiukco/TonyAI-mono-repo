@@ -59,7 +59,7 @@ beforeAll(async () => {
   siteRecordId = (await createRecord(owner, tenant, { periodValue: 'February', locationId: site.id, status: ActivityRecordStatus.approved })).id;
   const batch = await owner.importBatch.create({
     data: {
-      organisationId: tenant.organisationId, uploadedBy: tenant.users.dataEntry.id, fileName: 'int-test.csv', fileFormat: 'csv',
+      organisationId: tenant.organisationId, uploadedBy: tenant.users.standardUser.id, fileName: 'int-test.csv', fileFormat: 'csv',
       sizeBytes: 1, sha256: '0'.repeat(64), totalRows: 1, subsidiaryIds: [tenant.subsidiaryId],
     },
   });
@@ -92,7 +92,7 @@ function codeOf(e: unknown): string | null {
 function recordData(periodValue: string, status: ActivityRecordStatus): Prisma.ActivityRecordUncheckedCreateInput {
   return {
     subsidiaryId: tenant.subsidiaryId, reportingYear: 2026, reportingPeriod: 'monthly', periodValue, category: 'Electricity', scope: 2,
-    activityValue: 1, activityUnit: 'kWh', calculation: { tCo2e: 0, factorId: 'int-test-placeholder' }, createdBy: tenant.users.dataEntry.id, status,
+    activityValue: 1, activityUnit: 'kWh', calculation: { tCo2e: 0, factorId: 'int-test-placeholder' }, createdBy: tenant.users.standardUser.id, status,
   };
 }
 
@@ -109,7 +109,7 @@ function recordRow(id: string, status: string, periodValue: string) {
   return {
     id, subsidiary_id: tenant.subsidiaryId, reporting_year: 2026, reporting_period: 'monthly', period_value: periodValue,
     category: 'Electricity', scope: 2, activity_value: 99, activity_unit: 'kWh', calculation: { tCo2e: 9, factorId: 'forged' },
-    created_by: tenant.users.dataEntry.id, updated_at: new Date().toISOString(), status,
+    created_by: tenant.users.standardUser.id, updated_at: new Date().toISOString(), status,
   };
 }
 
@@ -324,7 +324,7 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
         ok: false,
         code: 'TA006',
       });
-      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).createdBy).toBe(tenant.users.dataEntry.id);
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).createdBy).toBe(tenant.users.standardUser.id);
     } finally {
       await owner.activityRecord.deleteMany({ where: { id } });
     }
@@ -344,7 +344,7 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
       await runtime.activityRecord.create({ data: { ...draftData(id, 'September'), calculation: { ...engine, tCo2e: 0.0001, kgCo2e: 0.1 } } });
       await attachEvidence(owner, tenant, [id]);
 
-      const outcome = await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id));
+      const outcome = await failure(lifecycleServices(runtime).records.submit(tenant.users.standardUser, id));
       expect(outcome).toBeInstanceOf(CalculationStaleError);
       expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
         `calculation_stale: submit of record ${id} refused — figure differ`,
@@ -382,7 +382,7 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
       const engine = await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 });
       await runtime.activityRecord.create({ data: { ...draftData(id, 'September'), calculation: engine } });
       await attachEvidence(owner, tenant, [id]);
-      await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id);
+      await lifecycleServices(runtime).records.submit(tenant.users.standardUser, id);
       expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.submitted);
     } finally {
       // Its audit row goes with the tenant (`cleanup()`).
@@ -422,16 +422,16 @@ describe("LP4-01 — the API still files a draft at the company or at one of its
   it('saves a company-level draft as such, moves it to its own site and back, and refuses another tenant\'s site', async () => {
     const { records } = lifecycleServices(runtime);
     const foreignSite = await owner.location.create({ data: { subsidiaryId: foreign.subsidiaryId, name: 'Int-test foreign site', geographyCode: 'UK' } });
-    const created = await records.create(tenant.users.dataEntry, {
+    const created = await records.create(tenant.users.standardUser, {
       subsidiaryId: tenant.subsidiaryId, reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1',
       category: 'Fuel', activityType: 'diesel', activityValue: 10, activityUnit: 'litres',
     });
     try {
       // Data Entry sends `locationId: null` on every save of a company-level draft.
-      expect((await records.update(tenant.users.dataEntry, created.id, { locationId: null, activityValue: 11 })).locationId).toBeNull();
-      expect((await records.update(tenant.users.dataEntry, created.id, { locationId: siteId })).locationId).toBe(siteId);
-      expect((await records.update(tenant.users.dataEntry, created.id, { locationId: null })).locationId).toBeNull();
-      expect(await failure(records.update(tenant.users.dataEntry, created.id, { locationId: foreignSite.id }))).toMatchObject({ code: 'location_not_found' });
+      expect((await records.update(tenant.users.standardUser, created.id, { locationId: null, activityValue: 11 })).locationId).toBeNull();
+      expect((await records.update(tenant.users.standardUser, created.id, { locationId: siteId })).locationId).toBe(siteId);
+      expect((await records.update(tenant.users.standardUser, created.id, { locationId: null })).locationId).toBeNull();
+      expect(await failure(records.update(tenant.users.standardUser, created.id, { locationId: foreignSite.id }))).toMatchObject({ code: 'location_not_found' });
       const stored = await owner.activityRecord.findUniqueOrThrow({ where: { id: created.id } });
       expect(stored).toMatchObject({ subsidiaryId: tenant.subsidiaryId, locationId: null });
     } finally {

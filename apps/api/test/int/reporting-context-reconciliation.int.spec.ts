@@ -155,9 +155,8 @@ beforeAll(async () => {
   owner = connectOwner(2);
   t = await createTenant();
   S1 = t.subsidiaryId;
-  ({ id: S2 } = await owner.subsidiary.create({
-    data: { organisationId: t.organisationId, legalName: `Int-test second subsidiary ${S1.slice(0, 8)}`, geographyCode: 'UK' },
-  }));
+  // The fixture's second company, granted to nobody: the organisation holds exactly S1 and S2.
+  S2 = t.otherSubsidiaryId;
   for (const row of FIXTURE) {
     await createRecord(owner, t, {
       subsidiaryId: idOf(row.sub),
@@ -199,7 +198,7 @@ describe('one reporting context, every surface: two years × two subsidiaries (L
     const voided = rows.filter((row) => row.status === ActivityRecordStatus.voided);
     const scope12 = committed.filter((r) => CATEGORY_SCOPE_MAP[r.category] !== 3);
     const total = sum(scope12);
-    const viewer = t.users.consultant.id;
+    const viewer = t.users.auditor.id;
 
     // Dashboard + absolute view: the summary.
     const summary = await json<ReportingSummaryResponse>(viewer, `/emissions/context/summary${query(context)}`);
@@ -289,16 +288,16 @@ describe('one reporting context, every surface: two years × two subsidiaries (L
 describe('the 2027 rollover (D06, D07)', () => {
   it('2027 is a valid, empty selection that claims no factor coverage', async () => {
     const context = { year: 2027 };
-    const summary = await json<ReportingSummaryResponse>(t.users.consultant.id, `/emissions/context/summary${query(context)}`);
+    const summary = await json<ReportingSummaryResponse>(t.users.auditor.id, `/emissions/context/summary${query(context)}`);
     expect(summary.data).toMatchObject({ recordCount: 0, totals: { scope1: 0, scope2: 0, scope3: 0, total: 0 } });
-    const intensity = await json<ReportingIntensityResponse>(t.users.consultant.id, `/intensity/context${query(context)}`);
+    const intensity = await json<ReportingIntensityResponse>(t.users.auditor.id, `/intensity/context${query(context)}`);
     expect(intensity.data.metrics).toEqual([]);
   });
 
   it('a 2027 calculation is refused with no_factor — no "latest overall" fallback', async () => {
     const res = await fetch(`${base}/calculations/preview`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(t.users.dataEntry.id)}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${await tokenFor(t.users.standardUser.id)}`, 'content-type': 'application/json' },
       body: JSON.stringify({ category: 'Electricity', geographyCode: 'UK', reportingYear: 2027, value: 100, unit: 'kWh' }),
     });
     const body = (await res.json()) as { code?: string };
@@ -308,16 +307,16 @@ describe('the 2027 rollover (D06, D07)', () => {
     // The control: the same calculation for a year the library covers is priced.
     const priced = await fetch(`${base}/calculations/preview`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(t.users.dataEntry.id)}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${await tokenFor(t.users.standardUser.id)}`, 'content-type': 'application/json' },
       body: JSON.stringify({ category: 'Electricity', geographyCode: 'UK', reportingYear: 2026, value: 100, unit: 'kWh' }),
     });
     expect(priced.status).toBe(200);
   });
 });
 
-describe('a selection is not authorisation: data_entry granted S1 only', () => {
-  it('reads S2 as empty and "all" as S1 alone — never broadened', async () => {
-    const entry = t.users.dataEntry.id;
+describe('a selection is not authorisation: a standard user and a super_admin granted S1 only', () => {
+  it.each(['standardUser', 'superAdmin'] as const)('%s reads S2 as empty and "all" as S1 alone — never broadened', async (role) => {
+    const entry = t.users[role].id;
     for (const year of [2025, 2026]) {
       const s2 = await json<ReportingSummaryResponse>(entry, `/emissions/context/summary${query({ year, subsidiaryId: S2 })}`);
       expect(s2.data.recordCount, `${year} S2`).toBe(0);
@@ -347,7 +346,7 @@ describe('an export selector is bounded before it reaches an audit row or a labe
   ])('%s refuses a %#th malformed subsidiaryId with validation_failed and writes nothing', async (path, subsidiaryId) => {
     const before = await owner.auditLog.count({ where: { organisationId: t.organisationId } });
     const params = new URLSearchParams({ year: '2026', ...(path.endsWith('meta') ? {} : { template: 'executive_summary' }), subsidiaryId });
-    const res = await get(t.users.consultant.id, `${path}?${params}`);
+    const res = await get(t.users.auditor.id, `${path}?${params}`);
     expect(res.status).toBe(400);
     expect(((await res.json()) as { code?: string }).code).toBe('validation_failed');
     expect(await owner.auditLog.count({ where: { organisationId: t.organisationId } })).toBe(before);
@@ -360,7 +359,7 @@ describe('HEAD on every export, context and legacy (15)', () => {
     '/reports/pdf', '/reports/excel', '/reports/csv',
   ])('HEAD %s answers 405 with Allow: GET and writes nothing', async (path) => {
     const before = await owner.auditLog.count({ where: { organisationId: t.organisationId } });
-    const res = await get(t.users.consultant.id, `${path}?year=2026&template=executive_summary&subsidiaryId=${S1}`, 'HEAD');
+    const res = await get(t.users.auditor.id, `${path}?year=2026&template=executive_summary&subsidiaryId=${S1}`, 'HEAD');
     expect(res.status).toBe(405);
     expect(res.headers.get('allow')).toBe('GET');
     expect(await owner.auditLog.count({ where: { organisationId: t.organisationId } })).toBe(before);

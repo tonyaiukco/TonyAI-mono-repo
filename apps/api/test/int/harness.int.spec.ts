@@ -84,9 +84,11 @@ describe('createTenant', () => {
     });
     expect(await countTenantRows(a, tenant)).toEqual({
       organisations: 1,
-      subsidiaries: 1,
+      // The granted company and the one granted to nobody (INC-2.6 fixture).
+      subsidiaries: 2,
       profiles: 4,
-      grants: 1,
+      // The super_admin's and the standard user's grant of the first.
+      grants: 2,
       records: 1,
       audit: 1,
     });

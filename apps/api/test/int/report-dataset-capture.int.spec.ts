@@ -308,11 +308,11 @@ describe('a capture over HTTP', () => {
     expect(captures[0]).toMatchObject({ action: 'capture', entityId: row.id, diff: { fingerprint: row.fingerprintHex, records: 12 } });
 
     // Read back: the stored text, byte for byte, as JSON.
-    const read = await call(t.users.executiveViewer, 'GET', `/report-datasets/${row.id}`);
+    const read = await call(t.users.auditor, 'GET', `/report-datasets/${row.id}`);
     expect(read.status).toBe(200);
     expect(read.contentType).toMatch(/^application\/json/);
     expect(read.text).toBe(row.content);
-    const list = await call(t.users.consultant, 'GET', `/report-datasets?year=${YEAR}`);
+    const list = await call(t.users.auditor, 'GET', `/report-datasets?year=${YEAR}`);
     expect(JSON.parse(list.text)).toEqual({ items: [summary], truncated: false });
   });
 
@@ -330,19 +330,25 @@ describe('a capture over HTTP', () => {
     expect(await datasetCount()).toBe(2);
   });
 
-  it('lets only masterkey freeze an open version; a consultant captures one already frozen; data_entry and executive_viewer capture nothing', async () => {
+  // INC-2.6 §6 (`dataset.capture`: masterkey only). Formerly a consultant also
+  // captured a version already frozen; that role is retired and no role
+  // inherits the power.
+  it('lets only masterkey capture — open or already frozen; a super_admin, a standard user and an auditor capture nothing', async () => {
     const boundaryId = await openVersion();
-    for (const user of [t.users.dataEntry, t.users.executiveViewer]) {
+    const others = [t.users.superAdmin, t.users.standardUser, t.users.auditor];
+    for (const user of others) {
       const refused = await capture(user, { boundaryId });
-      expect([refused.status, refused.code]).toEqual([403, 'forbidden']);
+      expect([refused.status, refused.code], user.role).toEqual([403, 'forbidden']);
     }
-    const refused = await capture(t.users.consultant, { boundaryId });
-    expect([refused.status, refused.code]).toEqual([403, 'forbidden']);
     expect((await versionRow(boundaryId)).frozenAt).toBeNull();
     expect(await audits('inventory_boundary').then((rows) => rows.filter((r) => r.action === 'freeze'))).toEqual([]);
 
     expect((await capture(admin(), { boundaryId })).status).toBe(201);
-    expect((await capture(t.users.consultant, { boundaryId })).status).toBe(201);
+    for (const user of others) {
+      const refused = await capture(user, { boundaryId });
+      expect([refused.status, refused.code], `${user.role} on the frozen version`).toEqual([403, 'forbidden']);
+    }
+    expect(await datasetCount()).toBe(1);
     // Captured unconfirmed, it is confirmed only as a copy.
     const confirm = await call(admin(), 'POST', `/inventory-boundaries/${boundaryId}/confirm`);
     expect([confirm.status, confirm.code]).toEqual([409, 'boundary_confirm_requires_copy']);
@@ -352,7 +358,7 @@ describe('a capture over HTTP', () => {
     const boundaryId = await openVersion();
     expect((await call(admin(), 'POST', `/inventory-boundaries/${boundaryId}/confirm`)).status).toBe(200);
     await yearOfRecords();
-    const dataset = JSON.parse((await stored(summaryOf(await capture(t.users.consultant, { boundaryId })).datasetId)).content) as ReportDataset;
+    const dataset = JSON.parse((await stored(summaryOf(await capture(admin(), { boundaryId })).datasetId)).content) as ReportDataset;
     expect(dataset.boundary.decision).toBe('confirmed');
     expect(dataset.coverage.gaps).toEqual([]);
     expect(dataset.scopes[1].coverage).toBe('covered');
@@ -436,22 +442,22 @@ describe('a capture over HTTP', () => {
     expect(list.map((d) => d.context)).toEqual([{ year: YEAR, scope: 3 }, { year: YEAR, scope: 2 }]);
   });
 
-  it('refuses data_entry every read', async () => {
+  it.each(['standardUser', 'superAdmin'] as const)('refuses a %s every read (`dataset.read`: masterkey and auditor)', async (role) => {
     const boundaryId = await openVersion();
     const { datasetId } = summaryOf(await capture(admin(), { boundaryId }));
     for (const path of [`/report-datasets/${datasetId}`, `/report-datasets?year=${YEAR}`]) {
-      const refused = await call(t.users.dataEntry, 'GET', path);
+      const refused = await call(t.users[role], 'GET', path);
       expect([refused.status, refused.code]).toEqual([403, 'forbidden']);
     }
   });
 
-  it('refuses data_entry on all three routes before a malformed body, year or id is validated (Codex)', async () => {
+  it.each(['standardUser', 'superAdmin'] as const)('refuses a %s on all three routes before a malformed body, year or id is validated (Codex)', async (role) => {
     for (const [method, path, body] of [
       ['POST', '/report-datasets', { boundaryId: 'not-an-id', scope: 99 }],
       ['GET', '/report-datasets?year=bad', undefined],
       ['GET', '/report-datasets/not-an-id', undefined],
     ] as const) {
-      const refused = await call(t.users.dataEntry, method, path, body);
+      const refused = await call(t.users[role], method, path, body);
       expect([refused.status, refused.code], `${method} ${path}`).toEqual([403, 'forbidden']);
     }
   });
@@ -596,7 +602,7 @@ describe('a failed capture', () => {
   it('whose audit insert fails, or aborts after it, retains nothing', async () => {
     const boundaryId = await openVersion();
     await owner.inventoryBoundary.update({ where: { id: boundaryId }, data: { frozenAt: new Date() } });
-    const user = await withAccess(t.users.consultant);
+    const user = await withAccess(admin());
     const failing = new ReportDatasetsService(failingAuditClient(runtime), new AuditService(failingAuditClient(runtime)));
     expect((await failure(failing.capture(user, { boundaryId })) as Error).message).toContain(INJECTED_AUDIT_FAILURE);
     const aborting = new ReportDatasetsService(abortAfterAuditClient(runtime), new AuditService(abortAfterAuditClient(runtime)));

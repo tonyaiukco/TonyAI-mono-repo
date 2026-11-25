@@ -1,18 +1,22 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ConflictException } from '@nestjs/common';
-import { ActivityRecordStatus, type Prisma } from '@tonyai/db';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ActivityRecordStatus, UserRole, type Prisma } from '@tonyai/db';
 import {
   EvidenceRequiredError,
   PeriodLockedError,
   RecordChangedError,
 } from '../../src/activity-records/errors';
 import { AuditService } from '../../src/audit/audit.service';
+import { AccessAdminService } from '../../src/auth/access-admin.service';
+import type { RequestUser } from '../../src/auth/auth.types';
 import { BulkSubmitService } from '../../src/bulk-upload/bulk-submit.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  addMember,
   attachEvidence,
   backendPid,
   connect,
+  connectOwner,
   createRecord,
   createTenant,
   deferred,
@@ -44,20 +48,27 @@ import { lifecycleServices, pdfFile, storageStub } from './services';
 let a: PrismaService;
 let b: PrismaService;
 let observer: PrismaService;
+let owner: PrismaService;
 let tenant: Tenant;
+/** A second super_admin of the company: a standard user's record is decided
+ *  by its company's super_admins (INC-2.6 §1.1), so two racing deciders of
+ *  one record are two of them. */
+let secondSuperAdmin: RequestUser;
 
 beforeAll(() => {
   a = connect();
   b = connect();
   observer = connect();
+  owner = connectOwner();
 });
 
 afterAll(async () => {
-  await Promise.all([a, b, observer].map((c) => c.$disconnect()));
+  await Promise.all([a, b, observer, owner].map((c) => c.$disconnect()));
 });
 
 beforeEach(async () => {
   tenant = await createTenant();
+  secondSuperAdmin = await addMember(owner, tenant, UserRole.super_admin, { grants: [tenant.subsidiaryId] });
 });
 
 afterEach(async () => {
@@ -140,8 +151,8 @@ describe('F03 — edit, submit and approve', () => {
     const { record } = await submittableDraft(water);
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.update(tenant.users.dataEntry, record.id, { activityValue: 250 }),
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+      (s) => s.records.update(tenant.users.standardUser, record.id, { activityValue: 250 }),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -152,8 +163,8 @@ describe('F03 — edit, submit and approve', () => {
     expect(r.second).toBeInstanceOf(RecordChangedError);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
 
-    await lifecycleServices(b).records.submit(tenant.users.dataEntry, record.id);
-    await lifecycleServices(b).records.approve(tenant.users.masterkey, record.id);
+    await lifecycleServices(b).records.submit(tenant.users.standardUser, record.id);
+    await lifecycleServices(b).records.approve(tenant.users.superAdmin, record.id);
     const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
     expect(final.status).toBe(ActivityRecordStatus.approved);
     expect(final.activityValue).toBe(250);
@@ -173,14 +184,14 @@ describe('F03 — edit, submit and approve', () => {
     const { record } = await submittableDraft(water);
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
-      (s) => s.records.update(tenant.users.dataEntry, record.id, { activityValue: 250 }),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
+      (s) => s.records.update(tenant.users.standardUser, record.id, { activityValue: 250 }),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
     expect(r.second).toBeInstanceOf(RecordChangedError);
 
-    await lifecycleServices(b).records.approve(tenant.users.masterkey, record.id);
+    await lifecycleServices(b).records.approve(tenant.users.superAdmin, record.id);
     const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
     expect(final.status).toBe(ActivityRecordStatus.approved);
     expect(final.activityValue).toBe(record.activityValue);
@@ -194,7 +205,7 @@ describe('BUG-R2-03 — recall and review', () => {
   /** A record its author has submitted — the only status recall accepts. */
   async function submittedRecord() {
     const { record } = await submittableDraft(water);
-    await lifecycleServices(b).records.submit(tenant.users.dataEntry, record.id);
+    await lifecycleServices(b).records.submit(tenant.users.standardUser, record.id);
     return record;
   }
 
@@ -202,8 +213,8 @@ describe('BUG-R2-03 — recall and review', () => {
     const record = await submittedRecord();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.recall(tenant.users.dataEntry, record.id),
-      (s) => s.records.startReview(tenant.users.consultant, record.id),
+      (s) => s.records.recall(tenant.users.standardUser, record.id),
+      (s) => s.records.startReview(tenant.users.superAdmin, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -219,8 +230,8 @@ describe('BUG-R2-03 — recall and review', () => {
     const record = await submittedRecord();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.startReview(tenant.users.consultant, record.id),
-      (s) => s.records.recall(tenant.users.dataEntry, record.id),
+      (s) => s.records.startReview(tenant.users.superAdmin, record.id),
+      (s) => s.records.recall(tenant.users.standardUser, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -233,8 +244,8 @@ describe('BUG-R2-03 — recall and review', () => {
     const record = await submittedRecord();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.recall(tenant.users.dataEntry, record.id),
-      (s) => s.records.approve(tenant.users.masterkey, record.id),
+      (s) => s.records.recall(tenant.users.standardUser, record.id),
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -247,8 +258,8 @@ describe('BUG-R2-03 — recall and review', () => {
     const record = await submittedRecord();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.approve(tenant.users.masterkey, record.id),
-      (s) => s.records.recall(tenant.users.dataEntry, record.id),
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.recall(tenant.users.standardUser, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -263,12 +274,12 @@ describe('BUG-R2-03 — recall and review', () => {
       (await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).submissionCount;
     expect(await countOf()).toBe(1);
     const svc = lifecycleServices(b).records;
-    await svc.recall(tenant.users.dataEntry, record.id);
+    await svc.recall(tenant.users.standardUser, record.id);
     // WP5: a recall leaves the count; only a submit raises it.
     expect(await countOf()).toBe(1);
-    await svc.update(tenant.users.dataEntry, record.id, { activityValue: 321 });
+    await svc.update(tenant.users.standardUser, record.id, { activityValue: 321 });
     expect(await countOf()).toBe(1);
-    await svc.submit(tenant.users.dataEntry, record.id);
+    await svc.submit(tenant.users.standardUser, record.id);
     const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
     expect(final.status).toBe(ActivityRecordStatus.submitted);
     expect(final.activityValue).toBe(321);
@@ -289,8 +300,8 @@ describe('WP5 — two submits of one draft', () => {
     const { record } = await submittableDraft({ category: 'Water', activityUnit: 'cubic_metres' });
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -307,7 +318,7 @@ describe('F03 — submit and period lock', () => {
     const { record } = await submittableDraft();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
       lockJanuary,
     );
     expect(r.how).toBe('blocked');
@@ -321,7 +332,7 @@ describe('F03 — submit and period lock', () => {
   it('a lock held before its write: the submit waits, then finds the period closed', async () => {
     const { record } = await submittableDraft();
     const r = await race(['PeriodLock', 'create'], lockJanuary, (s) =>
-      s.records.submit(tenant.users.dataEntry, record.id),
+      s.records.submit(tenant.users.standardUser, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -334,7 +345,7 @@ describe('F03 — submit and period lock', () => {
 
 describe('F03 — create and period lock (a period with no lock row yet)', () => {
   const createWater = (s: Services) =>
-    s.records.create(tenant.users.dataEntry, {
+    s.records.create(tenant.users.standardUser, {
       subsidiaryId: tenant.subsidiaryId,
       ...january,
       category: 'Water',
@@ -368,8 +379,8 @@ describe('F03 — detach and submit', () => {
     const { record, file } = await submittableDraft();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
-      (s) => s.evidence.detach(tenant.users.dataEntry, record.id, file.id),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
+      (s) => s.evidence.detach(tenant.users.standardUser, record.id, file.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -382,8 +393,8 @@ describe('F03 — detach and submit', () => {
     const { record, file } = await submittableDraft();
     const r = await race(
       ['ActivityRecordEvidence', 'deleteMany'],
-      (s) => s.evidence.detach(tenant.users.dataEntry, record.id, file.id),
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+      (s) => s.evidence.detach(tenant.users.standardUser, record.id, file.id),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -405,14 +416,14 @@ describe('F03 — deleting a shared file while one of its records goes to approv
     const { first, file } = await sharedFile();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.submit(tenant.users.dataEntry, first.id),
-      (s) => s.evidence.remove(tenant.users.dataEntry, file.id),
+      (s) => s.records.submit(tenant.users.standardUser, first.id),
+      (s) => s.evidence.remove(tenant.users.standardUser, file.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
     expect(r.second).toBeInstanceOf(RecordChangedError);
 
-    await lifecycleServices(b).records.approve(tenant.users.masterkey, first.id);
+    await lifecycleServices(b).records.approve(tenant.users.superAdmin, first.id);
     expect(await statusOf(first.id)).toBe(ActivityRecordStatus.approved);
     expect(await linkCount(first.id)).toBe(1);
     expect(await observer.evidence.count({ where: { id: file.id } })).toBe(1);
@@ -422,8 +433,8 @@ describe('F03 — deleting a shared file while one of its records goes to approv
     const { first, second, file } = await sharedFile();
     const r = await race(
       ['Evidence', ['delete', 'deleteMany']],
-      (s) => s.evidence.remove(tenant.users.dataEntry, file.id),
-      (s) => s.records.submit(tenant.users.dataEntry, first.id),
+      (s) => s.evidence.remove(tenant.users.standardUser, file.id),
+      (s) => s.records.submit(tenant.users.standardUser, first.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -480,13 +491,13 @@ describe('F03 — a record moved to another period between an upload\'s read and
 
     const upload = outcome(
       lifecycleServices(held.client, storage).evidence.upload(
-        tenant.users.dataEntry,
+        tenant.users.standardUser,
         record.id,
         pdfFile(),
       ),
     );
     await blobStored.promise;
-    await lifecycleServices(b).records.update(tenant.users.dataEntry, record.id, {
+    await lifecycleServices(b).records.update(tenant.users.standardUser, record.id, {
       periodValue: 'February',
     });
     letUploadContinue.resolve();
@@ -524,7 +535,7 @@ describe('F03 — a REJECTED record moved into a period being locked (D03)', () 
       status: ActivityRecordStatus.rejected,
     });
   const moveToJanuary = (id: string) => (s: Services) =>
-    s.records.update(tenant.users.dataEntry, id, { periodValue: 'January' });
+    s.records.update(tenant.users.standardUser, id, { periodValue: 'January' });
 
   it('a lock held before its write: the move waits, then finds January closed', async () => {
     const record = await rejectedInFebruary();
@@ -560,8 +571,8 @@ describe('F03 — approve, reject and submit, against each other', () => {
     const record = await underReview();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.reject(tenant.users.consultant, record.id, 'Wrong meter'),
-      (s) => s.records.approve(tenant.users.masterkey, record.id),
+      (s) => s.records.reject(tenant.users.superAdmin, record.id, 'Wrong meter'),
+      (s) => s.records.approve(secondSuperAdmin, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -574,8 +585,8 @@ describe('F03 — approve, reject and submit, against each other', () => {
     const record = await underReview();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.approve(tenant.users.masterkey, record.id),
-      (s) => s.records.reject(tenant.users.consultant, record.id, 'Wrong meter'),
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.reject(secondSuperAdmin, record.id, 'Wrong meter'),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -588,8 +599,8 @@ describe('F03 — approve, reject and submit, against each other', () => {
     const { record } = await submittableDraft();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
-      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
+      (s) => s.records.submit(tenant.users.standardUser, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -614,8 +625,8 @@ describe('F03 — two requests unlinking the last links of one shared file', () 
     const { first, second, file } = await sharedFile();
     const r = await race(
       ['AuditLog', 'create'],
-      (s) => s.evidence.detach(tenant.users.dataEntry, first.id, file.id),
-      (s) => s.evidence.detach(tenant.users.dataEntry, second.id, file.id),
+      (s) => s.evidence.detach(tenant.users.standardUser, first.id, file.id),
+      (s) => s.evidence.detach(tenant.users.standardUser, second.id, file.id),
     );
     expect(r.how).toBe('blocked');
     expect(r).toMatchObject({ first: 'ok', second: 'ok' });
@@ -626,8 +637,8 @@ describe('F03 — two requests unlinking the last links of one shared file', () 
     const { first, second, file } = await sharedFile();
     const r = await race(
       ['AuditLog', 'create'],
-      (s) => s.records.remove(tenant.users.dataEntry, first.id),
-      (s) => s.evidence.detach(tenant.users.dataEntry, second.id, file.id),
+      (s) => s.records.remove(tenant.users.standardUser, first.id),
+      (s) => s.evidence.detach(tenant.users.standardUser, second.id, file.id),
     );
     expect(r.how).toBe('blocked');
     expect(r).toMatchObject({ first: 'ok', second: 'ok' });
@@ -643,7 +654,7 @@ describe('F03 — the importer reuses these paths (bulk submit)', () => {
     const lock = outcome(lockJanuary(lifecycleServices(held.client)));
     await held.reached();
     const bulk = new BulkSubmitService(b, lifecycleServices(b).records, new AuditService(b));
-    const report = bulk.submitIds(tenant.users.dataEntry, [record.id]);
+    const report = bulk.submitIds(tenant.users.standardUser, [record.id]);
     const how = await settledOrBlocked(report, pidB, observer);
     held.release();
 
@@ -662,7 +673,7 @@ describe('F03 — the importer reuses these paths (bulk submit)', () => {
     const refused = await createRecord(a, tenant, { periodValue: 'March' }, { priced: true });
     const bulk = new BulkSubmitService(b, lifecycleServices(b).records, new AuditService(b));
 
-    const report = await bulk.submitIds(tenant.users.dataEntry, [one.id, two.id, refused.id]);
+    const report = await bulk.submitIds(tenant.users.standardUser, [one.id, two.id, refused.id]);
 
     expect(report.failed).toEqual([expect.objectContaining({ recordId: refused.id })]);
     const counts = await observer.activityRecord.findMany({
@@ -674,5 +685,65 @@ describe('F03 — the importer reuses these paths (bulk submit)', () => {
       [two.id]: 1,
       [refused.id]: 0,
     });
+  });
+});
+
+describe('INC-2.6 §1.1 — approvers of one record, and an approver losing the company (task 7.6)', () => {
+  const pendingRecord = async (status: ActivityRecordStatus = ActivityRecordStatus.submitted) => {
+    const record = await createRecord(a, tenant, { status, submittedAt: new Date() }, { priced: true });
+    await attachEvidence(a, tenant, [record.id]);
+    return record;
+  };
+
+  it('two approvers approve one record at once: one decision, the other a lost race', async () => {
+    const record = await pendingRecord();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.approve(secondSuperAdmin, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+    expect([final.status, final.reviewedBy]).toEqual([ActivityRecordStatus.approved, tenant.users.superAdmin.id]);
+    expect(await auditActions(record.id)).toEqual(['approve']);
+  });
+
+  it('an approver whose grant is withdrawn after authentication is refused as for an unknown record — nothing changes', async () => {
+    const record = await pendingRecord();
+    // The request authenticated with the grant (the RequestUser still lists
+    // the company); a masterkey then withdraws it through the one boundary.
+    await new AccessAdminService(b, new AuditService(b)).replaceSubsidiaryAccess(tenant.users.masterkey, tenant.users.superAdmin.id, []);
+    const refusal = await lifecycleServices(b).records.approve(tenant.users.superAdmin, record.id).then(() => null, (e: unknown) => e);
+    expect(refusal).toBeInstanceOf(NotFoundException);
+    expect((refusal as NotFoundException).getResponse()).toMatchObject({ code: 'record_not_found' });
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.submitted);
+    expect(await auditActions(record.id)).toEqual([]);
+  });
+
+  it('an approve held after its scoped read while the grant is withdrawn: the decision re-reads the grant and is refused', async () => {
+    const record = await pendingRecord();
+    // Held at the approver check's first profile read — after the scoped read
+    // and the recompute, inside the decision's transaction.
+    const held = holdBefore(a, 'Profile', ['findUnique', 'findUniqueOrThrow', 'findFirst']);
+    const approve = outcome(lifecycleServices(held.client).records.approve(tenant.users.superAdmin, record.id));
+    await held.reached();
+    await owner.userSubsidiaryAccess.deleteMany({ where: { userId: tenant.users.superAdmin.id } });
+    held.release();
+    const refusal = await approve;
+    expect(refusal).toBeInstanceOf(NotFoundException);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.submitted);
+    expect(await auditActions(record.id)).toEqual([]);
+  });
+
+  it('a decision started by an approver who then lost the company is finished by another approver of it', async () => {
+    const record = await pendingRecord();
+    await lifecycleServices(b).records.startReview(tenant.users.superAdmin, record.id);
+    await owner.userSubsidiaryAccess.deleteMany({ where: { userId: tenant.users.superAdmin.id } });
+    await lifecycleServices(b).records.approve(secondSuperAdmin, record.id);
+    const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+    expect([final.status, final.reviewedBy]).toEqual([ActivityRecordStatus.approved, secondSuperAdmin.id]);
+    expect(await auditActions(record.id)).toEqual(['approve', 'review']);
   });
 });

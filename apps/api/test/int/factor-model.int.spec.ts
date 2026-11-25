@@ -488,7 +488,7 @@ describe('a slot holds typed records or one untyped record, never both', () => {
         await tx.activityRecord.create({
           data: {
             subsidiaryId: tenant.subsidiaryId, ...slot, ...fuel, activityType: 'diesel', activityValue: 1,
-            calculation: { tCo2e: 0, factorId: 'int' }, createdBy: tenant.users.dataEntry.id,
+            calculation: { tCo2e: 0, factorId: 'int' }, createdBy: tenant.users.standardUser.id,
           },
         });
         inserted.resolve();
@@ -516,7 +516,7 @@ describe('a slot holds typed records or one untyped record, never both', () => {
     await createRecord(owner, tenant, { ...slot, ...fuel });
     const { records } = lifecycleServices(runtime);
     const e = await failure(
-      records.create(tenant.users.dataEntry, {
+      records.create(tenant.users.standardUser, {
         subsidiaryId: tenant.subsidiaryId,
         reportingYear: 2026,
         reportingPeriod: 'quarterly',
@@ -542,13 +542,13 @@ describe('a slot holds typed records or one untyped record, never both', () => {
     };
     // Its own slots: Q3 for the diesel record, Q2 holding an untyped one.
     await createRecord(owner, tenant, { reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q2', ...fuel });
-    const created = await records.create(tenant.users.dataEntry, { ...dto, periodValue: 'Q3', activityType: 'diesel' });
+    const created = await records.create(tenant.users.standardUser, { ...dto, periodValue: 'Q3', activityType: 'diesel' });
     // gas oil has no placeholder factor: the PATCH is refused by the engine,
     // and the column must not move.
-    expect(await failure(records.update(tenant.users.dataEntry, created.id, { activityType: 'gas_oil' }))).toMatchObject({ code: 'no_factor' });
+    expect(await failure(records.update(tenant.users.standardUser, created.id, { activityType: 'gas_oil' }))).toMatchObject({ code: 'no_factor' });
     expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: created.id } })).activityType).toBe('diesel');
     // Moving it into Q2, which holds an untyped Fuel record: 409.
-    expect(await failure(records.update(tenant.users.dataEntry, created.id, { periodValue: 'Q2' }))).toBeInstanceOf(
+    expect(await failure(records.update(tenant.users.standardUser, created.id, { periodValue: 'Q2' }))).toBeInstanceOf(
       ActivityTypeSlotConflictError,
     );
   });

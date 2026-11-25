@@ -754,17 +754,19 @@ describe('RLS and the client roles', () => {
     return seen;
   }
 
-  it('shows a data_entry user a version only through a declared subsidiary it is granted (W3)', async () => {
+  it('shows a granted user (standard user, super_admin) a version only through a declared subsidiary it is granted (W3)', async () => {
     const seen = await withRollback(owner, async (tx) => {
       const declared = await createBoundary(tx, a, { locationId: siteA });
-      // A second subsidiary of A's, not granted to A's data_entry user, alone in its own version.
+      // A second subsidiary of A's, granted to neither A's standard user nor its super_admin, alone in its own version.
       const other = await tx.subsidiary.create({ data: { organisationId: a.organisationId, legalName: 'Int-test other subsidiary', geographyCode: 'UK' } });
       const otherSite = await tx.location.create({ data: { subsidiaryId: other.id, name: 'Int-test other site', geographyCode: 'UK' } });
       const undeclared = await createBoundary(tx, { ...a, subsidiaryId: other.id }, { locationId: otherSite.id, version: 2 });
       return {
-        entryDeclared: await seenAs(tx, 'authenticated', a.users.dataEntry.id, declared.boundaryId),
-        entryOther: await seenAs(tx, 'authenticated', a.users.dataEntry.id, undeclared.boundaryId),
-        consultantOther: await seenAs(tx, 'authenticated', a.users.consultant.id, undeclared.boundaryId),
+        entryDeclared: await seenAs(tx, 'authenticated', a.users.standardUser.id, declared.boundaryId),
+        entryOther: await seenAs(tx, 'authenticated', a.users.standardUser.id, undeclared.boundaryId),
+        superAdminDeclared: await seenAs(tx, 'authenticated', a.users.superAdmin.id, declared.boundaryId),
+        superAdminOther: await seenAs(tx, 'authenticated', a.users.superAdmin.id, undeclared.boundaryId),
+        auditorOther: await seenAs(tx, 'authenticated', a.users.auditor.id, undeclared.boundaryId),
         foreignAdmin: await seenAs(tx, 'authenticated', b.users.masterkey.id, declared.boundaryId),
         anon: await seenAs(tx, 'anon', null, declared.boundaryId),
       };
@@ -772,25 +774,29 @@ describe('RLS and the client roles', () => {
     expect(seen).toEqual({
       entryDeclared: [1, 1, 1, 1, 1, 1],
       entryOther: [0, 0, 0, 0, 0, 0],
-      consultantOther: [1, 1, 1, 1, 1, 1],
+      superAdminDeclared: [1, 1, 1, 1, 1, 1],
+      superAdminOther: [0, 0, 0, 0, 0, 0],
+      auditorOther: [1, 1, 1, 1, 1, 1],
       foreignAdmin: [0, 0, 0, 0, 0, 0],
       anon: [0, 0, 0, 0, 0, 0],
     });
   });
 
-  it('shows a data_entry user only its granted subsidiary\'s rows of a version that also declares another (security-rls P3-4)', async () => {
+  it('shows a granted user only its granted subsidiary\'s rows of a version that also declares another (security-rls P3-4)', async () => {
     const seen = await withRollback(owner, async (tx) => {
       const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
       const other = await tx.subsidiary.create({ data: { organisationId: a.organisationId, legalName: 'Int-test ungranted subsidiary', geographyCode: 'UK' } });
       const otherSite = await tx.location.create({ data: { subsidiaryId: other.id, name: 'Int-test ungranted site', geographyCode: 'UK' } });
       await createRows(tx, boundaryId, a.organisationId, other.id, otherSite.id);
       return {
-        entry: await seenAs(tx, 'authenticated', a.users.dataEntry.id, boundaryId),
-        consultant: await seenAs(tx, 'authenticated', a.users.consultant.id, boundaryId),
+        entry: await seenAs(tx, 'authenticated', a.users.standardUser.id, boundaryId),
+        superAdmin: await seenAs(tx, 'authenticated', a.users.superAdmin.id, boundaryId),
+        auditor: await seenAs(tx, 'authenticated', a.users.auditor.id, boundaryId),
       };
     });
     expect(seen.entry).toEqual([1, 1, 1, 1, 1, 1]);
-    expect(seen.consultant).toEqual([1, 2, 2, 2, 2, 2]);
+    expect(seen.superAdmin).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(seen.auditor).toEqual([1, 2, 2, 2, 2, 2]);
   });
 
   it('lets no client role, the service role included, write a row (42501)', async () => {

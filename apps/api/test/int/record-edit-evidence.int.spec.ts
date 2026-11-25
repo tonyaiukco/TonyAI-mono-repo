@@ -66,7 +66,7 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const own = await attachEvidence(a, tenant, [record.id]);
     const shared = await attachEvidence(a, tenant, [record.id, other.id]);
 
-    const dto = await lifecycleServices(b, storage).records.update(tenant.users.dataEntry, record.id, {
+    const dto = await lifecycleServices(b, storage).records.update(tenant.users.standardUser, record.id, {
       ...toWater,
       detachEvidenceIds: [own.id, shared.id],
     } as never);
@@ -94,7 +94,7 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const second = await attachEvidence(a, tenant, [record.id]);
 
     await expect(
-      lifecycleServices(b).records.update(tenant.users.dataEntry, record.id, { ...toWater, detachEvidenceIds: [first.id] } as never),
+      lifecycleServices(b).records.update(tenant.users.standardUser, record.id, { ...toWater, detachEvidenceIds: [first.id] } as never),
     ).rejects.toBeInstanceOf(EvidenceDetachRequiredError);
 
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).category).toBe('Electricity');
@@ -110,7 +110,7 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const file = await attachEvidence(a, tenant, [record.id]);
 
     await expect(
-      lifecycleServices(b, storage).records.update(tenant.users.dataEntry, record.id, { ...toWater, detachEvidenceIds: [file.id] } as never),
+      lifecycleServices(b, storage).records.update(tenant.users.standardUser, record.id, { ...toWater, detachEvidenceIds: [file.id] } as never),
     ).rejects.toBeInstanceOf(DuplicateActivityRecordError);
 
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).category).toBe('Electricity');
@@ -126,7 +126,7 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const foreign = await attachEvidence(a, tenant, [other.id]);
 
     await expect(
-      lifecycleServices(b).records.update(tenant.users.dataEntry, record.id, { activityValue: 5, detachEvidenceIds: [foreign.id] } as never),
+      lifecycleServices(b).records.update(tenant.users.standardUser, record.id, { activityValue: 5, detachEvidenceIds: [foreign.id] } as never),
     ).rejects.toBeInstanceOf(ResourceNotFoundError);
     expect(await linkedFileIds(other.id)).toEqual([foreign.id]);
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).activityValue).toBe(record.activityValue);
@@ -135,7 +135,7 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
   it('a year move without a list keeps its files', async () => {
     const record = await createRecord(a, tenant, {}, { priced: true });
     const file = await attachEvidence(a, tenant, [record.id]);
-    await lifecycleServices(b).records.update(tenant.users.dataEntry, record.id, { periodValue: 'June' } as never);
+    await lifecycleServices(b).records.update(tenant.users.standardUser, record.id, { periodValue: 'June' } as never);
     expect(await linkedFileIds(record.id)).toEqual([file.id]);
   });
 
@@ -143,7 +143,7 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const record = await createRecord(a, tenant, {}, { priced: true });
     const keep = await attachEvidence(a, tenant, [record.id]);
     const drop = await attachEvidence(a, tenant, [record.id]);
-    await lifecycleServices(b).records.update(tenant.users.dataEntry, record.id, { periodValue: 'May', detachEvidenceIds: [drop.id] } as never);
+    await lifecycleServices(b).records.update(tenant.users.standardUser, record.id, { periodValue: 'May', detachEvidenceIds: [drop.id] } as never);
     expect(await linkedFileIds(record.id)).toEqual([keep.id]);
     expect(await observer.evidence.count({ where: { id: drop.id } })).toBe(0);
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).periodValue).toBe('May');
@@ -158,7 +158,7 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
 
     await expect(
       lifecycleServices(failingAuditClient(b), storage).records.update(
-        tenant.users.dataEntry, record.id, { ...toWater, detachEvidenceIds: [file.id] } as never,
+        tenant.users.standardUser, record.id, { ...toWater, detachEvidenceIds: [file.id] } as never,
       ),
     ).rejects.toThrow(INJECTED_AUDIT_FAILURE);
 
@@ -173,16 +173,16 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const record = await createRecord(a, tenant, {}, { priced: true });
     await attachEvidence(a, tenant, [record.id]);
     const svc = lifecycleServices(b).records;
-    const first = await svc.submit(tenant.users.dataEntry, record.id);
-    await svc.recall(tenant.users.dataEntry, record.id);
-    await svc.update(tenant.users.dataEntry, record.id, { activityValue: 1000 } as never);
-    const second = await svc.submit(tenant.users.dataEntry, record.id);
+    const first = await svc.submit(tenant.users.standardUser, record.id);
+    await svc.recall(tenant.users.standardUser, record.id);
+    await svc.update(tenant.users.standardUser, record.id, { activityValue: 1000 } as never);
+    const second = await svc.submit(tenant.users.standardUser, record.id);
     expect(second.submittedAt).not.toBe(first.submittedAt);
 
-    await expect(svc.approve(tenant.users.masterkey, record.id, first.submittedAt)).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(svc.approve(tenant.users.superAdmin, record.id, first.submittedAt)).rejects.toBeInstanceOf(RecordChangedError);
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).status).toBe(ActivityRecordStatus.submitted);
 
-    const approved = await svc.approve(tenant.users.masterkey, record.id, second.submittedAt);
+    const approved = await svc.approve(tenant.users.superAdmin, record.id, second.submittedAt);
     expect(approved.status).toBe(ActivityRecordStatus.approved);
     expect(approved.activityValue).toBe(1000);
   });
@@ -194,10 +194,10 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const held = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
     const pidB = await backendPid(b);
     const edit = lifecycleServices(held.client).records
-      .update(tenant.users.dataEntry, record.id, { ...toWater, detachEvidenceIds: [file.id] } as never)
+      .update(tenant.users.standardUser, record.id, { ...toWater, detachEvidenceIds: [file.id] } as never)
       .then(() => 'ok' as const, (e: unknown) => e);
     await held.reached();
-    const detach = lifecycleServices(b).evidence.detach(tenant.users.dataEntry, record.id, file.id);
+    const detach = lifecycleServices(b).evidence.detach(tenant.users.standardUser, record.id, file.id);
     const detachOutcome = detach.then(() => 'ok' as const, (e: unknown) => e);
     const how = await settledOrBlocked(detach, pidB, observer);
     held.release();

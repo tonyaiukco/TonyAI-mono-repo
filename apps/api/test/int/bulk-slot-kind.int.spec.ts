@@ -101,7 +101,7 @@ describe('the bulk slot-kind pre-check agrees with TA002 (LP4-02, Codex F1)', ()
   it('refuses a typed row where a stored untyped record holds the slot — on the dry run, the apply and the insert alike', async () => {
     // A legacy (pre-LP3-03) Fuel record names no fuel.
     await createRecord(owner, tenant, { ...FUEL, activityType: null });
-    const user = tenant.users.dataEntry;
+    const user = tenant.users.standardUser;
     const refused = [{ row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_UNTYPED_MESSAGE }];
 
     // "january": the file's spelling; the slot is the canonical "January".
@@ -122,7 +122,7 @@ describe('the bulk slot-kind pre-check agrees with TA002 (LP4-02, Codex F1)', ()
     await createRecord(owner, tenant, { activityType: 'grid_electricity' });
 
     const dry = await importer().import(
-      tenant.users.dataEntry,
+      tenant.users.standardUser,
       file({ category: 'Electricity', activityValue: '10', activityUnit: 'kWh' }),
       { dryRun: true },
     );
@@ -135,7 +135,7 @@ describe('the bulk slot-kind pre-check agrees with TA002 (LP4-02, Codex F1)', ()
   it('lets a voided untyped record go, as the trigger does', async () => {
     await createRecord(owner, tenant, { ...FUEL, activityType: null, status: ActivityRecordStatus.voided });
 
-    const dry = await importer().import(tenant.users.dataEntry, file(typedFuelRow), { dryRun: true });
+    const dry = await importer().import(tenant.users.standardUser, file(typedFuelRow), { dryRun: true });
     expect(dry.errors.filter((e) => e.code === 'duplicate_existing')).toEqual([]);
     expect(await insertCode({ ...FUEL, activityType: 'diesel' })).toBe('inserted');
   });
@@ -151,7 +151,7 @@ describe('the bulk slot-kind pre-check agrees with TA002 (LP4-02, Codex F1)', ()
   it('reads another month as another slot', async () => {
     await createRecord(owner, tenant, { ...FUEL, activityType: null, periodValue: 'February' });
 
-    const dry = await importer().import(tenant.users.dataEntry, file(typedFuelRow), { dryRun: true });
+    const dry = await importer().import(tenant.users.standardUser, file(typedFuelRow), { dryRun: true });
     expect(dry.errors.filter((e) => e.code === 'duplicate_existing')).toEqual([]);
     expect(await insertCode({ ...FUEL, activityType: 'diesel' })).toBe('inserted');
   });

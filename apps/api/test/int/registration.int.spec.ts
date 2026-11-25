@@ -422,7 +422,7 @@ describe('an address that is already known — the same job, no second organisat
     const { registrations, lifecycle } = wire(transport);
 
     const invitee = address();
-    const invited = await lifecycle.invite(A.users.masterkey, { email: invitee, fullName: 'Invited Person', role: UserRole.consultant, language: 'en', subsidiaryIds: [] });
+    const invited = await lifecycle.invite(A.users.masterkey, { email: invitee, fullName: 'Invited Person', role: UserRole.auditor, language: 'en', access: [] });
     await pastCooldown(invited.id);
 
     const provisioned = address();
@@ -533,7 +533,7 @@ describe('through the HTTP API — the public routes, the switch and the answers
       expect(fresh).toEqual({ status: 202, text: '', body: undefined });
       // The same address again — now known — and one that has long had an account.
       const again = await call('POST', first);
-      const active = await call('POST', form({ email: A.users.consultant.email }));
+      const active = await call('POST', form({ email: A.users.auditor.email }));
       expect(again).toEqual(fresh);
       expect(active).toEqual(fresh);
 
@@ -544,7 +544,7 @@ describe('through the HTTP API — the public routes, the switch and the answers
       expect(profile.invitation).toMatchObject({ status: InvitationStatus.pending, lastErrorStep: 'email', lastErrorCode: 'mail_not_configured' });
       expect(await organisationsNamed(first.companyName)).toBe(1);
       // The active account is untouched.
-      expect((await profileOf(A.users.consultant.email))!.organisationId).toBe(A.organisationId);
+      expect((await profileOf(A.users.auditor.email))!.organisationId).toBe(A.organisationId);
     });
 
     it('refuses a wrong code in words — a different letter case included — then 429 once the client address has spent its quota', async () => {

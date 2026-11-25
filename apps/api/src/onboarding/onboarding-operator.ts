@@ -149,7 +149,7 @@ export class OnboardingOperator {
       }
       if (org.offboardedAt) throw new OperatorRefusal('That organisation is offboarded.');
       if (existing.role !== UserRole.masterkey) {
-        throw new OperatorRefusal(`That address is already a ${existing.role} of the organisation; its administrators change roles in the app.`);
+        throw new OperatorRefusal(`That address already holds the role ${existing.role} in the organisation; its masterkey changes roles in the app.`);
       }
       const invitation = existing.invitation?.status ?? 'none';
       // A sent invitation not yet accepted is sent again — its link may have

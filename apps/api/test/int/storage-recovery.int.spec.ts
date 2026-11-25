@@ -177,8 +177,8 @@ async function uploaded(recordIds: string[]) {
   const services = lifecycleServices(a, storage);
   const dto =
     recordIds.length === 1
-      ? await services.evidence.upload(tenant.users.dataEntry, recordIds[0], pdfFile())
-      : await services.evidence.uploadForRecords(tenant.users.dataEntry, recordIds, pdfFile());
+      ? await services.evidence.upload(tenant.users.standardUser, recordIds[0], pdfFile())
+      : await services.evidence.uploadForRecords(tenant.users.standardUser, recordIds, pdfFile());
   return observer.evidence.findUniqueOrThrow({ where: { id: dto.id } });
 }
 
@@ -204,7 +204,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     const upload = vi.spyOn(storage, 'upload');
 
     const result = await outcome(
-      lifecycleServices(noIntent, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(noIntent, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
 
     expect(result).toBeInstanceOf(Error);
@@ -219,7 +219,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     vi.spyOn(storage, 'upload').mockRejectedValueOnce(new Error(INJECTED));
 
     const result = await outcome(
-      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(a, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
 
     expect((result as Error).message).toBe(INJECTED);
@@ -234,7 +234,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
 
     const result = await outcome(
       lifecycleServices(failingAuditClient(a), storage).evidence.upload(
-        tenant.users.dataEntry,
+        tenant.users.standardUser,
         record.id,
         pdfFile(),
       ),
@@ -253,7 +253,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
 
     await outcome(
       lifecycleServices(failingAuditClient(a), storage).evidence.upload(
-        tenant.users.dataEntry,
+        tenant.users.standardUser,
         record.id,
         pdfFile(),
       ),
@@ -287,7 +287,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     const lostAck = lostAckOnce(a, LOST, async () => (await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })) > 0);
 
     const result = await outcome(
-      lifecycleServices(lostAck, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(lostAck, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
 
     expect((result as Error).message).toBe(LOST);
@@ -327,7 +327,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     const record = await draft();
     const held = holdBefore(a, 'StorageIntent', 'deleteMany');
     const upload = outcome(
-      lifecycleServices(held.client, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(held.client, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
     await held.reached();
     // The bytes are up; the transaction holds its record locks but has not adopted the intent.
@@ -361,7 +361,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
       return send(...args);
     });
     const upload = outcome(
-      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(a, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
     await started.promise;
     // The intent is committed, the bytes are not there yet — and the sweeper
@@ -400,7 +400,7 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     }) as unknown as PrismaService;
     const held = holdBefore(backdated, 'Evidence', 'create');
     const upload = outcome(
-      lifecycleServices(held.client, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(held.client, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
     await held.reached();
 
@@ -424,7 +424,7 @@ describe('LP1-02 — the sweeper and an adoption, at the same moment', () => {
     const record = await draft();
     const held = holdBefore(a, 'StorageIntent', 'deleteMany');
     const upload = outcome(
-      lifecycleServices(held.client, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(held.client, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
     await held.reached();
     const [intent] = await intents();
@@ -494,7 +494,7 @@ describe('LP1-02 — late bytes, whatever else fails (`qa-auditor` round 2)', ()
     vi.spyOn(storage, 'remove').mockRejectedValueOnce(new Error(INJECTED));
 
     const upload = outcome(
-      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(a, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
     await started.promise;
     const [intent] = await intents();
@@ -524,7 +524,7 @@ describe('LP1-02 — late bytes, whatever else fails (`qa-auditor` round 2)', ()
     const gate = deferred();
     slowUpload(storage, gate.promise, started);
     const upload = outcome(
-      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(a, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
     await started.promise;
     const [intent] = await intents();
@@ -557,7 +557,7 @@ describe('LP1-02 — late bytes, whatever else fails (`qa-auditor` round 2)', ()
     slowUpload(storage, gate.promise, started);
 
     const upload = outcome(
-      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+      lifecycleServices(a, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()),
     );
     await started.promise;
     const [intent] = await intents();
@@ -581,7 +581,7 @@ describe('LP1-02 — deleting evidence, failed at each boundary', () => {
     const file = await uploaded([record.id]);
     vi.spyOn(storage, 'remove').mockRejectedValueOnce(new Error(INJECTED));
 
-    const res = await lifecycleServices(a, storage).evidence.detach(tenant.users.dataEntry, record.id, file.id);
+    const res = await lifecycleServices(a, storage).evidence.detach(tenant.users.standardUser, record.id, file.id);
 
     expect(res.fileDeleted).toBe(true);
     expect(await observer.evidence.count({ where: { id: file.id } })).toBe(0);
@@ -603,7 +603,7 @@ describe('LP1-02 — deleting evidence, failed at each boundary', () => {
     // The commit happened; the post-commit removal never ran.
     vi.spyOn(services.intents, 'runNow').mockResolvedValueOnce(undefined);
 
-    await services.evidence.remove(tenant.users.dataEntry, file.id);
+    await services.evidence.remove(tenant.users.standardUser, file.id);
 
     expect(await observer.evidence.count({ where: { id: file.id } })).toBe(0);
     expect(await objectExists(observer, EVIDENCE_BUCKET, file.storagePath)).toBe(true);
@@ -624,7 +624,7 @@ describe('LP1-02 — deleting evidence, failed at each boundary', () => {
     const file = await uploaded([record.id]);
     vi.spyOn(storage, 'remove').mockRejectedValueOnce(new Error(INJECTED));
 
-    await lifecycleServices(a, storage).records.remove(tenant.users.dataEntry, record.id);
+    await lifecycleServices(a, storage).records.remove(tenant.users.standardUser, record.id);
 
     expect(await observer.activityRecord.count({ where: { id: record.id } })).toBe(0);
     expect(await observer.evidence.count({ where: { id: file.id } })).toBe(0);
@@ -643,11 +643,11 @@ describe('LP1-02 — deleting evidence, failed at each boundary', () => {
     const file = await uploaded([record.id]);
 
     const results = await Promise.all([
-      outcome(lifecycleServices(failingAuditClient(a), storage).evidence.remove(tenant.users.dataEntry, file.id)),
+      outcome(lifecycleServices(failingAuditClient(a), storage).evidence.remove(tenant.users.standardUser, file.id)),
     ]);
     expect(results[0]).toBeInstanceOf(Error);
     const detach = await outcome(
-      lifecycleServices(failingAuditClient(a), storage).evidence.detach(tenant.users.dataEntry, record.id, file.id),
+      lifecycleServices(failingAuditClient(a), storage).evidence.detach(tenant.users.standardUser, record.id, file.id),
     );
     expect(detach).toBeInstanceOf(Error);
 
@@ -663,7 +663,7 @@ describe('LP1-02 — deleting evidence, failed at each boundary', () => {
     // The detach commits; its own post-commit removal is replaced by one on a
     // client whose first raw statement — the conditional close — fails.
     vi.spyOn(services.intents, 'runNow').mockResolvedValueOnce(undefined);
-    await services.evidence.detach(tenant.users.dataEntry, record.id, file.id);
+    await services.evidence.detach(tenant.users.standardUser, record.id, file.id);
     const flaky = connect();
     try {
       const close = vi.spyOn(flaky, '$executeRaw').mockRejectedValueOnce(new Error('injected close failure'));
@@ -891,7 +891,7 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
 
   it('an import source a batch owns is kept too, whatever an intent says — the guard asks the right table', async () => {
     quiet();
-    const report = await importer(a).import(tenant.users.dataEntry, importCsv(), { dryRun: false });
+    const report = await importer(a).import(tenant.users.standardUser, importCsv(), { dryRun: false });
     const batch = await observer.importBatch.findUniqueOrThrow({ where: { id: report.batchId! } });
     await sweeper().enqueueDeletes(observer, [{ bucket: IMPORT_SOURCES_BUCKET, path: batch.storagePath! }], {
       reason: 'test',
@@ -991,7 +991,7 @@ describe('LP1-02 — reconciliation: both directions', () => {
 
   it('does not count an import source its batch owns as an orphan — nor reclaim it', async () => {
     quiet();
-    const report = await importer(a).import(tenant.users.dataEntry, importCsv(), { dryRun: false });
+    const report = await importer(a).import(tenant.users.standardUser, importCsv(), { dryRun: false });
     const batch = await observer.importBatch.findUniqueOrThrow({ where: { id: report.batchId! } });
     expect((await reconcile().orphans(IMPORT_SOURCES_BUCKET, ALL)).map((o) => o.path)).not.toContain(batch.storagePath);
     await reconcile().reclaimOrphans(IMPORT_SOURCES_BUCKET, 0, 100_000, tenantPrefixes(tenant)['import-sources']);
@@ -1175,14 +1175,14 @@ describe('LP1-02 — concurrent approval cannot silently lose evidence (real Sto
     const { first, file } = await sharedFile();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.submit(tenant.users.dataEntry, first.id),
-      (s) => s.evidence.remove(tenant.users.dataEntry, file.id),
+      (s) => s.records.submit(tenant.users.standardUser, first.id),
+      (s) => s.evidence.remove(tenant.users.standardUser, file.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
     expect(r.second).toBeInstanceOf(RecordChangedError);
 
-    await lifecycleServices(b, storage).records.approve(tenant.users.masterkey, first.id);
+    await lifecycleServices(b, storage).records.approve(tenant.users.superAdmin, first.id);
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: first.id } })).status).toBe(
       ActivityRecordStatus.approved,
     );
@@ -1194,8 +1194,8 @@ describe('LP1-02 — concurrent approval cannot silently lose evidence (real Sto
     const { first, file } = await sharedFile();
     const r = await race(
       ['Evidence', ['delete', 'deleteMany']],
-      (s) => s.evidence.remove(tenant.users.dataEntry, file.id),
-      (s) => s.records.submit(tenant.users.dataEntry, first.id),
+      (s) => s.evidence.remove(tenant.users.standardUser, file.id),
+      (s) => s.records.submit(tenant.users.standardUser, first.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -1222,7 +1222,7 @@ describe('LP1-02 — an applied import\'s source file, failed at each boundary',
 
   it('an apply keeps the file under its batch, with bytes that hash to the batch row', async () => {
     quiet();
-    const report = await importer(a).import(tenant.users.dataEntry, csv(), { dryRun: false });
+    const report = await importer(a).import(tenant.users.standardUser, csv(), { dryRun: false });
     const [batch] = await batches();
     expect(batch.id).toBe(report.batchId);
     expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch.storagePath!))).toBe(batch.sha256);
@@ -1232,7 +1232,7 @@ describe('LP1-02 — an applied import\'s source file, failed at each boundary',
   it('Storage refuses the file: no batch, no object, no intent', async () => {
     quiet();
     vi.spyOn(storage, 'upload').mockRejectedValueOnce(new Error(INJECTED));
-    expect(await outcome(importer(a).import(tenant.users.dataEntry, csv(), { dryRun: false }))).toBeInstanceOf(Error);
+    expect(await outcome(importer(a).import(tenant.users.standardUser, csv(), { dryRun: false }))).toBeInstanceOf(Error);
     expect(await batches()).toEqual([]);
     expect(await sources()).toEqual([]);
     expect(await intents()).toEqual([]);
@@ -1242,7 +1242,7 @@ describe('LP1-02 — an applied import\'s source file, failed at each boundary',
     quiet();
     const LOST = 'connection reset after COMMIT (import test)';
     const lostAck = lostAckOnce(a, LOST, async () => (await batches()).length > 0);
-    expect(((await outcome(importer(lostAck).import(tenant.users.dataEntry, csv(), { dryRun: false }))) as Error).message).toBe(LOST);
+    expect(((await outcome(importer(lostAck).import(tenant.users.standardUser, csv(), { dryRun: false }))) as Error).message).toBe(LOST);
     const [batch] = await batches();
     expect(batch).toBeDefined();
     expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch!.storagePath!))).toBe(batch!.sha256);
@@ -1262,7 +1262,7 @@ describe('LP1-02 — an applied import\'s source file, failed at each boundary',
         },
       },
     }) as unknown as PrismaService;
-    expect(await outcome(importer(noBatch).import(tenant.users.dataEntry, csv(), { dryRun: false }))).toBeInstanceOf(
+    expect(await outcome(importer(noBatch).import(tenant.users.standardUser, csv(), { dryRun: false }))).toBeInstanceOf(
       Error,
     );
     expect(await batches()).toEqual([]);
@@ -1283,7 +1283,7 @@ describe('LP1-02 — an applied import\'s source file, failed at each boundary',
     }) as unknown as PrismaService;
     vi.spyOn(storage, 'remove').mockRejectedValueOnce(new Error(INJECTED));
 
-    await outcome(importer(noBatch).import(tenant.users.dataEntry, csv(), { dryRun: false }));
+    await outcome(importer(noBatch).import(tenant.users.standardUser, csv(), { dryRun: false }));
 
     const [left] = await sources();
     expect(left).toBeDefined();
@@ -1327,7 +1327,7 @@ describe('LP1-02 — a late upload that then reports a failure: removed, never a
     quiet();
     const record = await draft();
     const upload = lateFailingUpload();
-    const result = await outcome(lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()));
+    const result = await outcome(lifecycleServices(a, storage).evidence.upload(tenant.users.standardUser, record.id, pdfFile()));
     expect((result as Error).message).toBe(INJECTED);
     const path = upload.mock.calls[0]![1];
     expect(await objectExists(observer, EVIDENCE_BUCKET, path)).toBe(false);
@@ -1341,7 +1341,7 @@ describe('LP1-02 — a late upload that then reports a failure: removed, never a
   it("an applied import's source file: no batch, no object, no intent — and nothing for another sweep", async () => {
     quiet();
     const upload = lateFailingUpload();
-    const result = await outcome(importer(a).import(tenant.users.dataEntry, importCsv(), { dryRun: false }));
+    const result = await outcome(importer(a).import(tenant.users.standardUser, importCsv(), { dryRun: false }));
     expect((result as Error).message).toBe(INJECTED);
     const path = upload.mock.calls[0]![1];
     expect(await objectExists(observer, IMPORT_SOURCES_BUCKET, path)).toBe(false);
