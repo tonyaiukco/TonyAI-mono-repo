@@ -8,7 +8,8 @@ const subscribe = vi.fn((cb: Listener) => {
 vi.mock('./supabase', () => ({ getSupabaseBrowserClient: () => ({ auth: { onAuthStateChange: subscribe } }) }));
 
 const location = { pathname: '/users', assign: vi.fn(), reload: vi.fn() };
-vi.stubGlobal('window', { location, localStorage: { getItem: () => String(Date.now()) } });
+const getActivity = vi.fn(() => String(Date.now()));
+vi.stubGlobal('window', { location, localStorage: { getItem: getActivity } });
 
 import { endingSessionHere, watchSession } from './session-watch';
 import { useAuthStore, useReportingContextStore } from './store';
@@ -29,6 +30,12 @@ describe('watchSession', () => {
     listener!('INITIAL_SESSION', { user: { id: 'user-a' } });
     location.assign.mockReset();
     location.reload.mockReset();
+  });
+
+  it('explains a session end after an hour of inactivity', () => {
+    getActivity.mockReturnValueOnce(String(Date.now() - 3_600_000));
+    listener!('SIGNED_OUT', null);
+    expect(location.assign).toHaveBeenCalledWith('/login?reason=idle');
   });
 
   it('subscribes once per tab', () => {

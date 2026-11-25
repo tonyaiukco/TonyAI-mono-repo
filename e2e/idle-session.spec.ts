@@ -31,11 +31,15 @@ for (const secondTab of [false, true]) {
     // Freeze both tabs on the same instant before advancing their timers.
     await page.clock.pauseAt(new Date(Date.now() + 5000));
     await page.clock.fastForward(59 * minute);
+    const activityAt = await active.evaluate(() => Date.now());
     await active.keyboard.press('Shift');
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('tonyai-last-activity'))).toBe(String(activityAt));
     await page.clock.fastForward(2 * minute);
     await expect(page).toHaveURL(url => url.pathname === '/');
     await expect(page.getByTestId('dashboard-title')).toBeVisible();
-    await page.clock.fastForward(59 * minute);
+    await page.clock.fastForward(minute);
+    await expect(page.getByTestId('dashboard-title')).toBeVisible();
+    await page.clock.fastForward(58 * minute);
     await expect(page).toHaveURL(/\/login\?reason=idle$/);
   });
 }

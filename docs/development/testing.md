@@ -29,3 +29,6 @@ What that leaves: the E2E-only behaviour (locations, the subsidiary control pane
 The idle-session Playwright spec uses the read-only viewer and Playwright's
 context-wide clock. Advancing the clock exercises the browser's one-hour idle
 deadline across tabs without waiting an hour or changing the Auth server clock.
+The per-PR web unit suite exercises the same idle watcher with a controlled
+clock, cookie jar and session lock. It also checks the first protected render
+and the proxy redirect when Auth rejects a saved session.

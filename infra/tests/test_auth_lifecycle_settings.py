@@ -23,8 +23,9 @@ class AuthLifecycleSettingsTests(unittest.TestCase):
         expected = managed_auth_settings(ORIGIN)
         self.assertEqual(expected['disable_signup'], not local['enable_signup'])
         self.assertEqual(expected['external_email_enabled'], local['email']['enable_signup'])
-        self.assertEqual(local['sessions'], {'inactivity_timeout': '1h'})
-        self.assertEqual(expected['sessions_inactivity_timeout'], 1)
+        self.assertEqual(local['sessions'], {'inactivity_timeout': '2h'})
+        self.assertEqual(expected['sessions_inactivity_timeout'], 2)
+        self.assertGreaterEqual(expected['sessions_inactivity_timeout'] * 3600, expected['jwt_exp'] + 3600)
         self.assertEqual(expected['jwt_exp'], local['jwt_expiry'])
         self.assertEqual(expected['password_min_length'], local['minimum_password_length'])
         self.assertEqual(expected['mailer_otp_exp'], local['email']['otp_expiry'])
@@ -121,7 +122,7 @@ class AuthPolicyDigestTests(unittest.TestCase):
         real = auth_settings.managed_auth_settings
         with patch.object(auth_settings, 'managed_auth_settings', lambda origin, host=None: real('https://other.invalid', host)):
             self.assertEqual(auth_settings.auth_policy_digest(), base)
-        for key, value in (('security_update_password_require_reauthentication', False), ('jwt_exp', 7200), ('sessions_inactivity_timeout', 2)):
+        for key, value in (('security_update_password_require_reauthentication', False), ('jwt_exp', 7200), ('sessions_inactivity_timeout', 1)):
             changed = lambda origin, host=None, key=key, value=value: {**real(origin, host), key: value}
             with patch.object(auth_settings, 'managed_auth_settings', changed):
                 self.assertNotEqual(auth_settings.auth_policy_digest(), base, key)

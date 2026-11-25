@@ -397,7 +397,7 @@ change until it equals the release's policy (runbook 11, *auth-policy*;
 |---|---|
 | Public signup / email provider | Off / **on** (turning off the provider breaks password sign-in) |
 | Minimum password / email OTP expiry | 12 characters / 3600 seconds |
-| Session inactivity timeout (`sessions_inactivity_timeout`) | 1 hour |
+| Session inactivity timeout (`sessions_inactivity_timeout`) | 2 hours since the last refresh (one-hour JWT lifetime plus the browser idle hour) |
 | Access-token lifetime (`jwt_exp`) | 3600 seconds (separate from email OTP expiry; K4 PostgREST residual) |
 | Confirm email changes / email confirmations | Double confirmation / off |
 | Secure password change / password-changed notification | Off / off (disable/enable rotates the password) |
