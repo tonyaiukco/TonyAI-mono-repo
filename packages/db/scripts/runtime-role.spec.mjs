@@ -883,6 +883,14 @@ describe("the runtime role's inventory boundary grants (LP3-04's write path)", (
     }
   });
 
+  it('adds and withdraws a grant whole, and changes only its categories — never its user, company or organisation (inc26)', () => {
+    expect(RUNTIME_TABLE_PRIVILEGES.user_subsidiary_access).toEqual(['SELECT', 'INSERT', 'DELETE']);
+    expect(RUNTIME_COLUMN_UPDATES.user_subsidiary_access).toEqual(['categories']);
+    for (const column of ['user_id', 'subsidiary_id', 'organisation_id', 'created_at']) {
+      expect(RUNTIME_COLUMN_UPDATES.user_subsidiary_access).not.toContain(column);
+    }
+  });
+
   it('creates a header open and undecided, and changes only its decision and freeze — never its identity', () => {
     expect(RUNTIME_TABLE_PRIVILEGES.inventory_boundaries).toEqual(['SELECT', 'DELETE']);
     expect(RUNTIME_COLUMN_INSERTS.inventory_boundaries).toEqual(

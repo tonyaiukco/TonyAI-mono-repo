@@ -45,16 +45,18 @@ SET LOCAL lock_timeout = '5s';
 -- organisation-wide administrator (shown as such, `displayRole`). An
 -- organisation created later keeps NULL: every row of it is today's model.
 ALTER TABLE "organisations" ADD COLUMN "role_model_changed_at" TIMESTAMPTZ(6);
-UPDATE "organisations" SET "role_model_changed_at" = now();
+-- Truncated to milliseconds: `audit_log.created_at` keeps three decimals, so
+-- the carry-over rows below carry exactly this instant.
+UPDATE "organisations" SET "role_model_changed_at" = date_trunc('milliseconds', now());
 
 -- ---------------------------------------------------------------------------
 -- 2. One audit row per carried account (before the renames read the old role)
 -- ---------------------------------------------------------------------------
 
 -- No acting user and no acting role: nobody acted, the migration did.
--- `created_at` is the transaction's instant in UTC (the column is a
--- timestamp without time zone, written in UTC), equal to the cut-over, so the
--- row is never "before" it. No address or name: the profile id only.
+-- `created_at` is the cut-over instant in UTC (the column is a timestamp(3)
+-- without time zone, written in UTC), equal to the organisation's cut-over,
+-- so the row is never "before" it. No address or name: the profile id only.
 INSERT INTO "audit_log" ("id", "user_id", "action", "entity", "entity_id", "diff", "created_at", "organisation_id", "role")
 SELECT
   gen_random_uuid(),
@@ -73,7 +75,7 @@ SELECT
       END
     )
   ),
-  (now() AT TIME ZONE 'UTC'),
+  (date_trunc('milliseconds', now()) AT TIME ZONE 'UTC'),
   p."organisation_id",
   NULL
 FROM "profiles" p;
@@ -155,7 +157,7 @@ ALTER POLICY "activity_record_evidence_select_scoped" ON "activity_record_eviden
   WHERE ((s.id = activity_record_evidence.subsidiary_id) AND ((EXISTS ( SELECT 1
            FROM (user_subsidiary_access usa
              JOIN profiles p ON ((p.id = usa.user_id)))
-          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id) AND ((p.role <> 'standard_user'::"UserRole") OR (EXISTS ( SELECT 1 FROM activity_records ar WHERE ((ar.id = activity_record_evidence.activity_record_id) AND ((ar.category = ANY (usa.categories)) OR (ar.created_by = ( SELECT auth.uid() AS uid))))))))))) OR (EXISTS ( SELECT 1
+          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id) AND ((p.role <> 'standard_user'::"UserRole") OR (EXISTS ( SELECT 1 FROM activity_records ar WHERE ((ar.id = activity_record_evidence.activity_record_id) AND ((ar.category = ANY (usa.categories)) OR (ar.created_by = ( SELECT auth.uid() AS uid)))))))))) OR (EXISTS ( SELECT 1
            FROM profiles p
           WHERE ((p.id = ( SELECT auth.uid() AS uid)) AND (p.role = ANY (ARRAY['masterkey'::"UserRole", 'auditor'::"UserRole"])) AND (p.organisation_id = s.organisation_id))))))))
 );

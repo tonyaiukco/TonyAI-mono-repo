@@ -168,6 +168,7 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // RUNTIME_COLUMN_INSERTS) and read, never updated or deleted.
   consents: ['SELECT'],
   user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
+  // + UPDATE on `categories` only — see RUNTIME_COLUMN_UPDATES.
   // + UPDATE on every column but its identity and organisation — see
   // RUNTIME_COLUMN_UPDATES.
   subsidiaries: ['SELECT', 'INSERT', 'DELETE'],
@@ -266,6 +267,10 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
     'revoked_at',
     'updated_at',
   ],
+  // A standard user's ticked categories change in place (inc26-roles-
+  // approval-chain, one UPDATE and one audit row); a grant's user, company and
+  // organisation never do — a grant is added or withdrawn whole.
+  user_subsidiary_access: ['categories'],
   // Everything an edit changes; never `id` or `organisation_id`, so not even a
   // bug can move a subsidiary — and every record, file and lock under it — to
   // another tenant. A new column needs its grant here and in a migration.
