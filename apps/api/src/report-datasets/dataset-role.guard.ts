@@ -1,29 +1,29 @@
 import { ForbiddenException, Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
+import { can, type Capability } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
-import { CAPTURE_ROLES, DATASET_READ_ROLES } from './report-datasets.service';
 
 /**
  * The dataset routes' roles (W4, V7), refused before a body is read — guards
  * run before the global pipe. The service keeps its own check.
  */
-const requireRole = (context: ExecutionContext, roles: ReadonlySet<string>, refusal: string): true => {
+const requireCapability = (context: ExecutionContext, capability: Capability, refusal: string): true => {
   const user = context.switchToHttp().getRequest<{ user?: RequestUser }>().user;
-  if (user === undefined || !roles.has(user.role)) throw new ForbiddenException(refusal);
+  if (user === undefined || !can(user.role, capability)) throw new ForbiddenException(refusal);
   return true;
 };
 
-/** masterkey and consultant capture (W4). */
+/** A masterkey captures (W4, INC-2.6 ruling R4). */
 @Injectable()
 export class DatasetCapturerGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    return requireRole(context, CAPTURE_ROLES, 'Only masterkey or consultant may capture a report dataset');
+    return requireCapability(context, 'dataset.capture', 'Only a masterkey may capture a report dataset');
   }
 }
 
-/** Every role but data_entry reads (W3, V7). */
+/** Datasets cover the organisation: a masterkey and an auditor read them. */
 @Injectable()
 export class DatasetReaderGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    return requireRole(context, DATASET_READ_ROLES, 'data_entry users do not read report datasets');
+    return requireCapability(context, 'dataset.read', 'Only a masterkey or an auditor reads report datasets');
   }
 }

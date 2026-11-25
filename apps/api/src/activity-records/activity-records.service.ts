@@ -54,7 +54,7 @@ import {
   type RecordParameters,
   type ReportingPeriod,
   mayAuthorRecords,
-  mayApproveRecords,
+  can,
   isRecallable,
   EDITABLE_RECORD_STATUSES,
   normalizeRecordParameters,
@@ -191,18 +191,14 @@ export function evidenceReadyWhere() {
     ],
   };
 }
-// Roles allowed to take a record into review and to reject it ("flag for
-// revision" in permissions_and_roles.md §3).
-const REVIEW_ROLES = new Set(['consultant', 'masterkey']);
-// Who may APPROVE is `mayApproveRecords` (@tonyai/shared-types): `consultant`
-// or `masterkey`. Until 2026-11-12 approval was masterkey only; the owner
-// reversed that (Decisions 2026-11-12, K2) so that a one-person customer's
-// approver can be its external consultant. D01 still applies to every approver
-// (see `approve`), and every other approval gate is role-blind.
+// Who may take a record into review, return it or approve it is
+// `can(role, 'record.decide')` — a masterkey or a super_admin (INC-2.6 §1.1)
+// — and, of those, only the record's approver (`recordApprover`). Every other
+// approval gate is role-blind.
 //
-// Roles allowed to VOID — `masterkey` only, and deliberately NOT derived from
-// the approval rule: widening approval must never widen void (see `void`).
-const VOID_ROLES = new Set(['masterkey']);
+// Who may VOID is `can(role, 'record.void')` — a masterkey only, and
+// deliberately a capability of its own: deciding records must never widen
+// void (see `void`; INC-2.6 ruling R4).
 /**
  * A review decision is about the submission the reviewer saw (BUG-R2-03
  * review, P1). Since an author may recall a submitted record, edit it and
@@ -646,7 +642,7 @@ export class ActivityRecordsService {
         'Your role may not modify activity records',
       );
     }
-    if (user.role !== 'masterkey' && record.createdBy !== user.id) {
+    if (!can(user.role, 'record.delete_any_draft') && record.createdBy !== user.id) {
       throw new ForbiddenException(
         'You may only modify activity records you created',
       );
@@ -1483,9 +1479,9 @@ export class ActivityRecordsService {
    */
   async startReview(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
-    if (!REVIEW_ROLES.has(user.role)) {
+    if (!can(user.role, 'record.decide')) {
       throw new ForbiddenException(
-        'Only a consultant or masterkey may review records',
+        'Only a masterkey or a super_admin may review records',
       );
     }
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
@@ -1516,8 +1512,8 @@ export class ActivityRecordsService {
 
   async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
-    if (!mayApproveRecords(user)) {
-      throw new ForbiddenException('Only a consultant or masterkey may approve records');
+    if (!can(user.role, 'record.decide')) {
+      throw new ForbiddenException('Only a masterkey or a super_admin may approve records');
     }
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
@@ -1592,11 +1588,10 @@ export class ActivityRecordsService {
    * baseline excludes it by construction rather than by a filter each call site
    * has to remember.
    *
-   * `masterkey` only, narrower than `REVIEW_ROLES` on purpose: a consultant
-   * may send a record back for revision (`reject`), but removing an accepted
-   * figure from the client's reported inventory is the holding company's own
-   * decision. A consultant may approve (Decisions 2026-11-12, K2) but not
-   * void: hence `VOID_ROLES`, separate from `mayApproveRecords`.
+   * A masterkey only (`record.void`), narrower than `record.decide` on
+   * purpose: a super_admin may return or approve a record of their company,
+   * but removing an accepted figure from the reported inventory is the
+   * organisation-wide administrator's decision (INC-2.6 ruling R4).
    *
    * The pilot's correction procedure (decision D04, 2026-09-29) is an audited
    * unlock → void → re-entry: the voided row leaves the uniqueness index, so
@@ -1608,7 +1603,7 @@ export class ActivityRecordsService {
     reason: string,
   ): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
-    if (!VOID_ROLES.has(user.role)) {
+    if (!can(user.role, 'record.void')) {
       throw new ForbiddenException('Only a masterkey may void records');
     }
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
@@ -1646,9 +1641,9 @@ export class ActivityRecordsService {
     seenSubmittedAt?: SeenSubmission,
   ): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
-    if (!REVIEW_ROLES.has(user.role)) {
+    if (!can(user.role, 'record.decide')) {
       throw new ForbiddenException(
-        'Only a consultant or masterkey may return records',
+        'Only a masterkey or a super_admin may return records',
       );
     }
     assertSubmissionNamed(seenSubmittedAt);

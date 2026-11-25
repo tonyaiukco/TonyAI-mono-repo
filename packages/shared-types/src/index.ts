@@ -91,6 +91,12 @@ export const CATEGORIES = [
 
 export type Category = typeof CATEGORIES[number];
 
+/** One of the product's categories, spelled exactly (a grant's stored names
+ *  and a request's are checked against it). */
+export function isCategory(value: unknown): value is Category {
+  return typeof value === 'string' && (CATEGORIES as readonly string[]).includes(value);
+}
+
 // ---------------------------------------------------------------------------
 // Activity units (WP15 / round-1 DE-3 + EM-1)
 // ---------------------------------------------------------------------------
@@ -608,6 +614,9 @@ export const ROLE_CAPABILITIES = Object.freeze({
   'scope.organisation': ['masterkey', 'auditor'],
   /** Works only in granted companies (`user_subsidiary_access`). */
   'scope.granted': ['super_admin', 'standard_user'],
+  /** Further narrowed by the categories ticked on each grant (INC-2.6 §1,
+   *  §7.3, ruling R5); the only role whose grant carries categories. */
+  'scope.categories': ['standard_user'],
   /** Create, edit, delete, submit and recall records, attach evidence. A
    *  standard user within its categories. */
   'record.author': ['masterkey', 'super_admin', 'standard_user'],

@@ -10,6 +10,7 @@ import { ResourceNotFoundError } from '../common/api-error';
 import { boundaryGaps } from './boundary-gaps';
 import { readBoundaryRows, type BoundaryRowsReader } from './boundary-rows';
 import { buildBoundarySnapshot, type BoundaryRows } from './boundary-snapshot';
+import { can } from '@tonyai/shared-types';
 
 /**
  * The routes' own reader (LP3-04's write path; contract follow-up (7)): a
@@ -66,7 +67,7 @@ export function versionDTO(loaded: LoadedVersion, viewer: BoundaryViewer): Inven
   const boundary = buildBoundarySnapshot(loaded.rows);
   const gaps = boundaryGaps(boundary);
   const summary = versionSummary(loaded.header);
-  if (viewer.role !== 'data_entry') return { ...summary, boundary, boundaryGaps: gaps, view: 'organisation' };
+  if (!can(viewer.role, 'scope.granted')) return { ...summary, boundary, boundaryGaps: gaps, view: 'organisation' };
   const granted = new Set(viewer.accessibleSubsidiaryIds);
   if (!boundary.subsidiaryIds.some((id) => granted.has(id))) throw new ResourceNotFoundError('boundary_not_found');
   return { ...summary, ...grantedView(boundary, gaps, granted), view: 'granted_subsidiaries' };

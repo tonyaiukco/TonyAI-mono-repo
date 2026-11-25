@@ -72,6 +72,7 @@ import { calculationInputs } from '../common/calculation-inputs';
 /** The CSV's words: English, whatever the caller's language (D16's machine-readable export). */
 const CSV_VOCABULARY = reportVocabulary('en');
 import { PdfRenderer } from '../common/pdf-renderer';
+import { can } from '@tonyai/shared-types';
 
 // Single source of truth for "committed": imported from the emissions service so
 // a report's summary tables and its own ledger can never silently diverge.
@@ -208,8 +209,8 @@ export class ReportsService {
    * data_entry). Reads like /reports/meta stay tenant-scoped for everyone.
    */
   private assertCanGenerate(user: RequestUser): void {
-    if (user.role === 'data_entry') {
-      throw new ForbiddenException('data_entry may not generate or export reports');
+    if (!can(user.role, 'report.generate')) {
+      throw new ForbiddenException('Only a masterkey, an auditor or a super_admin may generate or export reports');
     }
   }
 

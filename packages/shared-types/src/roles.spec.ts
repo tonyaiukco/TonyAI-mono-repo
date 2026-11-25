@@ -80,6 +80,7 @@ describe('displayRole — history under the new names (design Decision 10)', () 
 const MATRIX: Record<Capability, string> = {
   'scope.organisation': 'M..A',
   'scope.granted': '.SU.',
+  'scope.categories': '..U.',
   'record.author': 'MSU.',
   'record.decide': 'MS..',
   'record.void': 'M...',

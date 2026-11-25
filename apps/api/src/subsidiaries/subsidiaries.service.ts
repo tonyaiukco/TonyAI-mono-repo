@@ -11,7 +11,7 @@ import {
   type ActivityRecordStatus,
   type Subsidiary,
 } from '@tonyai/db';
-import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
+import { PENDING_REVIEW_STATUSES, can } from '@tonyai/shared-types';
 import type {
   SubsidiaryBlockerCount,
   SubsidiaryBlockerKind,
@@ -102,9 +102,10 @@ export class SubsidiariesService {
     };
   }
 
+  /** Companies are organisation structure — a masterkey only (INC-2.6 §6). */
   private assertCanWrite(user: RequestUser): void {
-    if (user.role !== 'masterkey') {
-      throw new ForbiddenException('Only masterkey may modify subsidiaries');
+    if (!can(user.role, 'company.write')) {
+      throw new ForbiddenException('Only a masterkey may modify subsidiaries');
     }
     if (!user.organisationId) {
       throw new ForbiddenException('No organisation context for this user');

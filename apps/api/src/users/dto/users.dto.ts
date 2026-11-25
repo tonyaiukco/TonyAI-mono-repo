@@ -1,4 +1,4 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   Equals,
@@ -10,8 +10,10 @@ import {
   Matches,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import {
+  CATEGORIES,
   REGISTRATION_CONSENT_VERSION,
   REGISTRATION_COMPANY_NAME_MIN, REGISTRATION_FIELD_MAX,
   SUPPORTED_LOCALES,
@@ -21,7 +23,9 @@ import {
   type PasswordResetRequest,
   type RegistrationRequest,
   type ReplaceUserAccessRequest,
+  type Category,
   type UpdateUserRoleRequest,
+  type UserAccessGrantDTO,
   type UserRole,
   USER_ROLES,
 } from '@tonyai/shared-types';
@@ -41,6 +45,22 @@ const MAX_EMAIL_LENGTH = 254;
 /** A subsidiary set no organisation reaches in the pilot; bounds the request. */
 const MAX_GRANTS = 500;
 
+/** One company grant: the company and, for a standard user, its ticked
+ *  categories (each one of `CATEGORIES`; the service sorts and dedupes, and
+ *  refuses categories for any other role). */
+export class AccessGrantDto implements UserAccessGrantDTO {
+  @Transform(({ value }: { value: unknown }) => canonicalUuid(value) ?? value)
+  // The 8-4-4-4-12 shape, not `@IsUUID`: the seed's fixed ids are not RFC 4122
+  // conformant (see `ParseUuidParamPipe`).
+  @Matches(UUID_SHAPE, { message: 'subsidiaryId must be an id' })
+  subsidiaryId!: string;
+
+  @IsArray()
+  @ArrayMaxSize(CATEGORIES.length)
+  @IsIn(CATEGORIES, { each: true })
+  categories!: Category[];
+}
+
 /** POST /api/v1/users/invitations */
 export class InviteUserDto implements InviteUserRequest {
   @IsEmail()
@@ -59,14 +79,13 @@ export class InviteUserDto implements InviteUserRequest {
   @IsIn(SUPPORTED_LOCALES)
   language!: Locale;
 
+  /** super_admin (companies) or standard_user (one company, categories). */
   @IsOptional()
-  @Transform(lowercaseIds)
   @IsArray()
   @ArrayMaxSize(MAX_GRANTS)
-  // The 8-4-4-4-12 shape, not `@IsUUID`: the seed's fixed ids are not RFC 4122
-  // conformant (see `ParseUuidParamPipe`).
-  @Matches(UUID_SHAPE, { each: true, message: 'each subsidiaryIds entry must be an id' })
-  subsidiaryIds?: string[];
+  @ValidateNested({ each: true })
+  @Type(() => AccessGrantDto)
+  access?: AccessGrantDto[];
 }
 
 /** PATCH /api/v1/users/:id/role */
@@ -75,13 +94,13 @@ export class UpdateUserRoleDto implements UpdateUserRoleRequest {
   role!: UserRole;
 }
 
-/** PUT /api/v1/users/:id/access — the complete set. */
+/** PUT /api/v1/users/:id/access — the complete set within the actor's scope. */
 export class ReplaceUserAccessDto implements ReplaceUserAccessRequest {
-  @Transform(lowercaseIds)
   @IsArray()
   @ArrayMaxSize(MAX_GRANTS)
-  @Matches(UUID_SHAPE, { each: true, message: 'each subsidiaryIds entry must be an id' })
-  subsidiaryIds!: string[];
+  @ValidateNested({ each: true })
+  @Type(() => AccessGrantDto)
+  access!: AccessGrantDto[];
 }
 
 /** GET /api/v1/users — `CursorPage` bounds (LP4-05's contract). */

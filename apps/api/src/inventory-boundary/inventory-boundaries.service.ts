@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type InventoryBoundary } from '@tonyai/db';
-import { inventoryReportingPeriodsFor } from '@tonyai/shared-types';
+import { inventoryReportingPeriodsFor, can } from '@tonyai/shared-types';
 import type {
   CreateInventoryBoundaryRequest,
   InventoryBoundaryVersionDTO,
@@ -88,7 +88,7 @@ export class InventoryBoundariesService {
       where: {
         organisationId: user.organisationId,
         reportingYear: query.reportingYear,
-        ...(user.role === 'data_entry'
+        ...(can(user.role, 'scope.granted')
           ? { subsidiaries: { some: { subsidiaryId: { in: user.accessibleSubsidiaryIds } } } }
           : {}),
       },
@@ -290,7 +290,7 @@ export class InventoryBoundariesService {
   /** The organisation a masterkey writes in; anyone else is refused before
    * anything is read (E2). */
   private writerOrganisation(user: RequestUser): string {
-    if (user.role !== 'masterkey') throw new ForbiddenException('Only masterkey may change an inventory boundary');
+    if (!can(user.role, 'boundary.write')) throw new ForbiddenException('Only a masterkey may change an inventory boundary');
     if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
     return user.organisationId;
   }

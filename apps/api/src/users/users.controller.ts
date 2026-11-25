@@ -33,7 +33,7 @@ export class UsersController {
       fullName: dto.fullName,
       role: dto.role,
       language: dto.language,
-      subsidiaryIds: dto.subsidiaryIds ?? [],
+      access: dto.access ?? [],
     });
   }
 
@@ -53,14 +53,14 @@ export class UsersController {
     return this.lifecycle.setRole(user, id, dto.role);
   }
 
-  /** The complete set of a data_entry user's subsidiaries. */
+  /** The complete access of a super_admin or standard_user, within the actor's scope. */
   @Put(':id/access')
   replaceAccess(
     @CurrentUser() user: RequestUser,
     @Param('id', CanonicalIdPipe) id: string,
     @Body() dto: ReplaceUserAccessDto,
   ): Promise<UserSummaryDTO> {
-    return this.lifecycle.replaceAccess(user, id, dto.subsidiaryIds);
+    return this.lifecycle.replaceAccess(user, id, dto.access);
   }
 
   @Post(':id/disable')

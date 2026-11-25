@@ -50,37 +50,66 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     guard = new SupabaseAuthGuard(reflector, prisma as unknown as PrismaService);
   });
 
-  it('gives a data_entry user exactly its explicit subsidiary access', async () => {
-    prisma.profile.findUnique.mockResolvedValue({
-      id: 'user-1',
-      email: 'e@x',
-      role: 'data_entry',
-      organisationId: 'org-1',
-      subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-2' }],
-    });
+  const profileOf = (role: string, subsidiaryAccess: Array<{ subsidiaryId: string; categories?: string[] }>, organisationId: string | null = 'org-1') => ({
+    id: 'user-1',
+    email: 'u@x',
+    role,
+    organisationId,
+    subsidiaryAccess,
+  });
+
+  it('gives a standard user exactly its grants, with their ticked categories', async () => {
+    prisma.profile.findUnique.mockResolvedValue(profileOf('standard_user', [
+      { subsidiaryId: 'sub-1', categories: ['Electricity', 'Natural Gas'] },
+      { subsidiaryId: 'sub-2', categories: [] },
+    ]));
     prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }, { id: 'sub-2' }]);
     const { context, request } = makeContext();
     await guard.canActivate(context);
     expect(request.user?.accessibleSubsidiaryIds).toEqual(['sub-1', 'sub-2']);
+    expect(request.user?.categoryGrants).toEqual({ 'sub-1': ['Electricity', 'Natural Gas'], 'sub-2': [] });
   });
 
-  it('drops an access row that points OUTSIDE the profile\'s organisation', async () => {
+  it('gives a super_admin exactly its grants, and no category narrowing', async () => {
+    prisma.profile.findUnique.mockResolvedValue(profileOf('super_admin', [
+      { subsidiaryId: 'sub-1', categories: [] },
+      { subsidiaryId: 'sub-3', categories: [] },
+    ]));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }, { id: 'sub-3' }]);
+    const { context, request } = makeContext();
+    await guard.canActivate(context);
+    expect(request.user?.accessibleSubsidiaryIds).toEqual(['sub-1', 'sub-3']);
+    expect(request.user?.categoryGrants).toEqual({});
+    // Never the organisation-wide query: the new super_admin is scoped.
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['sub-1', 'sub-3'] }, organisationId: 'org-1' } }),
+    );
+  });
+
+  it('gives a super_admin with no grant nothing — not the organisation', async () => {
+    prisma.profile.findUnique.mockResolvedValue(profileOf('super_admin', []));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }, { id: 'sub-2' }]);
+    const { context, request } = makeContext();
+    await guard.canActivate(context);
+    expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
+    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['standard_user', 'super_admin'])('drops a %s grant that points OUTSIDE the profile\'s organisation, categories included', async (role) => {
     // A stray grant must not become real access: WP7 stamps audit rows with the
     // ACTOR's organisation, so acting on another tenant's subsidiary would file
     // that tenant's activity under the wrong organisation — readable by the
     // wrong masterkey and invisible to the right one.
-    prisma.profile.findUnique.mockResolvedValue({
-      id: 'user-1',
-      email: 'e@x',
-      role: 'data_entry',
-      organisationId: 'org-1',
-      subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-foreign' }],
-    });
+    prisma.profile.findUnique.mockResolvedValue(profileOf(role, [
+      { subsidiaryId: 'sub-1', categories: ['Fuel'] },
+      { subsidiaryId: 'sub-foreign', categories: ['Electricity'] },
+    ]));
     // Only sub-1 is in org-1.
     prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }]);
     const { context, request } = makeContext();
     await guard.canActivate(context);
     expect(request.user?.accessibleSubsidiaryIds).toEqual(['sub-1']);
+    expect(request.user?.categoryGrants).toEqual(role === 'standard_user' ? { 'sub-1': ['Fuel'] } : {});
     expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ organisationId: 'org-1' }),
@@ -88,64 +117,49 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     );
   });
 
-  it('default-denies a data_entry profile with no organisation', async () => {
-    prisma.profile.findUnique.mockResolvedValue({
-      id: 'user-1',
-      email: 'e@x',
-      role: 'data_entry',
-      organisationId: null,
-      subsidiaryAccess: [{ subsidiaryId: 'sub-1' }],
-    });
+  it('keeps only category names the product knows', async () => {
+    prisma.profile.findUnique.mockResolvedValue(profileOf('standard_user', [
+      { subsidiaryId: 'sub-1', categories: ['Electricity', 'Steam', 'electricity', ''] },
+    ]));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }]);
     const { context, request } = makeContext();
     await guard.canActivate(context);
-    expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
-    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
+    expect(request.user?.categoryGrants).toEqual({ 'sub-1': ['Electricity'] });
   });
 
-  it('gives a masterkey every subsidiary in its organisation', async () => {
-    prisma.profile.findUnique.mockResolvedValue({
-      id: 'user-1',
-      email: 'a@x',
-      role: 'masterkey',
-      organisationId: 'org-1',
-      subsidiaryAccess: [],
-    });
+  it.each(['masterkey', 'auditor'])('gives a %s every subsidiary in its organisation, and ignores any stray grant', async (role) => {
+    prisma.profile.findUnique.mockResolvedValue(profileOf(role, [{ subsidiaryId: 'sub-foreign', categories: [] }]));
     prisma.subsidiary.findMany.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
     const { context, request } = makeContext();
     await guard.canActivate(context);
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { organisationId: 'org-1' } }),
     );
     expect(request.user?.accessibleSubsidiaryIds).toEqual(['s1', 's2']);
+    expect(request.user?.categoryGrants).toEqual({});
   });
 
-  it('DEFAULT-DENIES a privileged profile with a null organisationId (no cross-tenant leak)', async () => {
-    prisma.profile.findUnique.mockResolvedValue({
-      id: 'user-1',
-      email: 'a@x',
-      role: 'masterkey',
-      organisationId: null,
-      subsidiaryAccess: [],
-    });
-    const { context, request } = makeContext();
-    await guard.canActivate(context);
-    // No unfiltered findMany, and an empty accessible set (default-deny).
-    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
-    expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
-  });
+  it.each(['masterkey', 'auditor', 'super_admin', 'standard_user'])(
+    'DEFAULT-DENIES a %s profile with a null organisationId (no cross-tenant leak)',
+    async (role) => {
+      prisma.profile.findUnique.mockResolvedValue(profileOf(role, [{ subsidiaryId: 'sub-1', categories: ['Fuel'] }], null));
+      const { context, request } = makeContext();
+      await guard.canActivate(context);
+      // No unfiltered findMany, and an empty accessible set (default-deny).
+      expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
+      expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
+      expect(request.user?.categoryGrants).toEqual({});
+    },
+  );
 
-  it('also default-denies a consultant with a null organisationId', async () => {
-    prisma.profile.findUnique.mockResolvedValue({
-      id: 'user-1',
-      email: 'c@x',
-      role: 'consultant',
-      organisationId: null,
-      subsidiaryAccess: [],
-    });
+  it.each(['consultant', 'data_entry', 'executive_viewer', 'MASTERKEY'])('gives a role it does not know (%s) nothing', async (role) => {
+    prisma.profile.findUnique.mockResolvedValue(profileOf(role, [{ subsidiaryId: 'sub-1', categories: ['Fuel'] }]));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }]);
     const { context, request } = makeContext();
     await guard.canActivate(context);
-    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
     expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
+    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
   });
 });
 

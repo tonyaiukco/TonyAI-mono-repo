@@ -9,6 +9,7 @@ import {
   ReportDatasetSummary,
   type ReportingContext,
   type UserRole,
+  can,
 } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -46,10 +47,9 @@ import { datasetRow, datasetSummary, listDatasetSummaries, readableBy, readDatas
  * only as a copy.
  */
 
-/** Who captures (W4): masterkey and consultant. Only masterkey freezes an open version (V1). */
-export const CAPTURE_ROLES: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant']);
-/** Who reads a retained dataset (V7): not data_entry, which generates no report (W3). */
-export const DATASET_READ_ROLES: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant', 'executive_viewer']);
+// Who captures, freezes an open version and reads a dataset: `can(role,
+// 'dataset.capture' | 'dataset.capture_open_boundary' | 'dataset.read')`
+// (W4, V1, V7; INC-2.6 ruling R4).
 
 const FREEZE_TX = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000 };
 const SNAPSHOT_TX = { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30_000 };
@@ -93,7 +93,7 @@ export class ReportDatasetsService {
   ) {}
 
   async capture(user: RequestUser, dto: CaptureReportDatasetRequest): Promise<ReportDatasetSummary> {
-    if (!CAPTURE_ROLES.has(user.role)) throw new ForbiddenException('Only masterkey or consultant may capture a report dataset');
+    if (!can(user.role, 'dataset.capture')) throw new ForbiddenException('Only a masterkey may capture a report dataset');
     const organisationId = user.organisationId;
     if (!organisationId) throw new ForbiddenException('No organisation context for this user');
     const selection = selectionOf(dto);
@@ -188,8 +188,8 @@ export class ReportDatasetsService {
       const links = scopes.length === 0 ? 0 : await tx.activityRecordEvidence.count({ where: { activityRecord: selected } });
       if (links > this.limits.REPORT_EVIDENCE_LINK_LIMIT) throw new QueryTooBroadError();
       if (header.frozenAt !== null) return;
-      if (user.role !== 'masterkey') {
-        throw new ForbiddenException('Only masterkey may capture an open inventory boundary version; capture it once it is frozen');
+      if (!can(user.role, 'dataset.capture_open_boundary')) {
+        throw new ForbiddenException('Only a masterkey may capture an open inventory boundary version; capture it once it is frozen');
       }
       // Conditional, so a retry never meets the guard: none changed means
       // another capture or a confirmation froze it first.
@@ -281,7 +281,7 @@ export class ReportDatasetsService {
 
   /** One retained dataset's exact text — served as retained, never rebuilt. */
   async get(user: RequestUser, id: string): Promise<string> {
-    if (!DATASET_READ_ROLES.has(user.role)) throw new ForbiddenException('data_entry users do not read report datasets');
+    if (!can(user.role, 'dataset.read')) throw new ForbiddenException('Only a masterkey or an auditor reads report datasets');
     if (!user.organisationId) throw new ResourceNotFoundError('report_dataset_not_found');
     const content = await readDatasetContent(this.prisma, id, user.organisationId, user.accessibleSubsidiaryIds);
     if (content === null) throw new ResourceNotFoundError('report_dataset_not_found');
@@ -290,7 +290,7 @@ export class ReportDatasetsService {
 
   /** A year's datasets the caller may read, newest first. */
   async list(user: RequestUser, year: number): Promise<ReportDatasetList> {
-    if (!DATASET_READ_ROLES.has(user.role)) throw new ForbiddenException('data_entry users do not read report datasets');
+    if (!can(user.role, 'dataset.read')) throw new ForbiddenException('Only a masterkey or an auditor reads report datasets');
     if (!user.organisationId) return { items: [], truncated: false };
     return listDatasetSummaries(this.prisma, user.organisationId, year, user.accessibleSubsidiaryIds);
   }

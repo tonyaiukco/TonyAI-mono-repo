@@ -6,7 +6,21 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { InvitationStatus, Prisma, UserRole as DbUserRole } from '@tonyai/db';
-import { isLocale, type ConsentKind, type Locale, type UserRole } from '@tonyai/shared-types';
+import {
+  ACCESS_ASSIGNABLE_ROLES,
+  INVITABLE_ROLES,
+  ROLE_CHANGE_TARGETS,
+  can,
+  isCategory,
+  isLocale,
+  isUserRole,
+  type Capability,
+  type Category,
+  type ConsentKind,
+  type Locale,
+  type UserAccessGrantDTO,
+  type UserRole,
+} from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { createDefaultSubsidiary } from '../subsidiaries/default-subsidiary';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +31,7 @@ import {
   InvitationClosedError,
   InviteRefusalsExhaustedError,
   OwnAccountError,
+  StandardUserSingleCompanyError,
   UserDisabledError,
 } from './access-errors';
 import type { RequestUser } from './auth.types';
@@ -27,7 +42,8 @@ export interface InviteMember {
   fullName: string;
   role: UserRole;
   language: Locale;
-  subsidiaryIds: string[];
+  /** The companies granted, and for a standard user their categories. */
+  access: UserAccessGrantDTO[];
 }
 
 /** What a self-service registration creates — validated by the DTO, re-checked here. */
@@ -63,10 +79,14 @@ export interface EnabledChange {
  * nothing else writes `profiles.role` or `user_subsidiary_access`.
  *
  * The rules, each enforced here and — where the database can — again below:
- *  - Only a `masterkey` of an organisation administers it. There is no
- *    cross-tenant administrator: every lookup is bounded by the actor's own
- *    organisation, and an id from another tenant answers 404, exactly as an id
- *    that does not exist (no existence oracle).
+ *  - Who administers whom follows INC-2.6 §6 (design Decision 9): a
+ *    `masterkey` invites super_admins (with their companies) and auditors,
+ *    changes roles, disables and enables accounts; a `super_admin` invites
+ *    standard users into its own companies and sets their company and
+ *    categories there. Nobody is made a masterkey here (ruling R1). There is
+ *    no cross-tenant administrator: every lookup is bounded by the actor's
+ *    own organisation, and an id from another tenant answers 404, exactly as
+ *    an id that does not exist (no existence oracle).
  *  - A grant joins a profile and a subsidiary of the SAME organisation — the
  *    composite foreign keys on `user_subsidiary_access` refuse anything else,
  *    whoever writes it.
@@ -74,13 +94,20 @@ export interface EnabledChange {
  *    UPDATE only `profiles.role`, so not even a bug here could move one.
  *  - Nobody changes their own role, so an organisation is never left without a
  *    `masterkey` by its last one, and nobody promotes themselves.
+ *  - A super_admin acts only inside its own grants, re-read under the lock: a
+ *    company outside them answers as unknown, and a target's grants outside
+ *    them are neither returned nor touched.
+ *  - A standard user is assigned one company (ruling R6): an added company
+ *    that would leave them holding more than one is refused, counted over all
+ *    their grants; withdrawals and category changes always pass.
  *  - The actor is re-read under a per-organisation lock, so an administrator
  *    demoted a moment ago cannot act on the stale role their request was
  *    authenticated with, and two administrators cannot demote each other at
  *    once.
- *  - Only data_entry users hold grants: a user moved to another role loses them,
- *    each withdrawal audited, so a later move back to data_entry starts with
- *    nothing rather than silently regaining old access.
+ *  - Only super_admin and standard_user accounts hold grants, and only a
+ *    standard user's names categories. Any role change withdraws every grant,
+ *    each withdrawal audited: the two granted roles read a grant differently
+ *    (every category, or the ticked ones), so nothing is carried.
  *  - Every change writes its audit row in the same transaction.
  *  - LP4-01: an invitation creates its profile, grants and invitation row here
  *    in one transaction (the database first; Auth and the email follow, in
@@ -102,76 +129,22 @@ export class AccessAdminService {
     private readonly audit: AuditService,
   ) {}
 
-  /** Grants `subsidiaryId` to the data_entry user `profileId`. Idempotent. */
-  async grantSubsidiaryAccess(actor: RequestUser, rawProfileId: string, rawSubsidiaryId: string): Promise<void> {
-    const organisationId = assertTenantAdmin(actor);
-    const profileId = canonicalId(rawProfileId);
-    const subsidiaryId = canonicalId(rawSubsidiaryId);
-    await this.prisma.$transaction(async (tx) => {
-      const admin = await lockAndReadActor(tx, actor, organisationId);
-      const target = await findMember(tx, organisationId, profileId);
-      if (target.role !== DbUserRole.data_entry) {
-        // The guard ignores grants for organisation-wide roles; storing one would
-        // silently widen that user's access if their role later changed.
-        throw new AccessRoleMismatchError();
-      }
-      const subsidiary = await tx.subsidiary.findFirst({
-        where: { id: subsidiaryId, organisationId },
-        select: { id: true },
-      });
-      if (!subsidiary) throw new ResourceNotFoundError('subsidiary_not_found');
-
-      const existing = await tx.userSubsidiaryAccess.findUnique({
-        where: { userId_subsidiaryId: { userId: profileId, subsidiaryId } },
-        select: { userId: true },
-      });
-      if (existing) return;
-
-      try {
-        await tx.userSubsidiaryAccess.create({ data: { userId: profileId, subsidiaryId, organisationId } });
-      } catch (err) {
-        // The subsidiary (or profile) was deleted after the lookup above — a
-        // subsidiary delete does not take this lock. The same answer as a miss.
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-          throw new ResourceNotFoundError('subsidiary_not_found');
-        }
-        throw err;
-      }
-      await this.audit.record(
-        admin,
-        { action: 'create', entity: 'subsidiary_access', entityId: profileId, diff: { subsidiaryId } },
-        tx,
-      );
-    });
-  }
-
-  /** Withdraws `subsidiaryId` from `profileId`. 404 when no such grant exists in the actor's organisation. */
-  async revokeSubsidiaryAccess(actor: RequestUser, rawProfileId: string, rawSubsidiaryId: string): Promise<void> {
-    const organisationId = assertTenantAdmin(actor);
-    const profileId = canonicalId(rawProfileId);
-    const subsidiaryId = canonicalId(rawSubsidiaryId);
-    await this.prisma.$transaction(async (tx) => {
-      const admin = await lockAndReadActor(tx, actor, organisationId);
-      const { count } = await tx.userSubsidiaryAccess.deleteMany({
-        where: { userId: profileId, subsidiaryId, organisationId },
-      });
-      if (count === 0) throw new ResourceNotFoundError('access_grant_not_found');
-      await this.audit.record(
-        admin,
-        { action: 'delete', entity: 'subsidiary_access', entityId: profileId, diff: { subsidiaryId } },
-        tx,
-      );
-    });
-  }
-
-  /** Changes the role of `profileId`, a member of the actor's organisation other than the actor. */
+  /**
+   * Changes the role of `profileId`, a member of the actor's organisation
+   * other than the actor — a masterkey's power only (INC-2.6 §6, ruling R4).
+   * Never to `masterkey` (ruling R1). Every grant the account holds is
+   * withdrawn in the same transaction, each audited.
+   */
   async setRole(actor: RequestUser, rawProfileId: string, role: UserRole): Promise<void> {
-    const organisationId = assertTenantAdmin(actor);
+    const organisationId = assertActorMay(actor, 'users.set_role');
     const profileId = canonicalId(rawProfileId);
-    if (!(Object.values(DbUserRole) as string[]).includes(role)) throw new BadRequestException('Unknown role');
+    if (!isUserRole(role)) throw new BadRequestException('Unknown role');
+    if (!(ROLE_CHANGE_TARGETS as readonly string[]).includes(role)) {
+      throw new ForbiddenException('Nobody is made a masterkey in the product.');
+    }
     if (profileId === actor.id) throw new OwnAccountError('role');
     await this.prisma.$transaction(async (tx) => {
-      const admin = await lockAndReadActor(tx, actor, organisationId);
+      const admin = await lockAndReadActor(tx, actor, organisationId, 'users.set_role');
       const target = await findMember(tx, organisationId, profileId);
       if (target.role === role) return;
       await tx.profile.update({ where: { id: profileId }, data: { role } });
@@ -180,57 +153,67 @@ export class AccessAdminService {
         { action: 'update', entity: 'profile', entityId: profileId, diff: { before: { role: target.role }, after: { role } } },
         tx,
       );
-      if (target.role === DbUserRole.data_entry) {
-        // One statement, so the audit names exactly the grants it removed — a
-        // subsidiary deleted (or a grant added by the seed) between a read and
-        // a delete would otherwise be audited without being removed, or the
-        // reverse (`security-rls` round 2).
-        const grants = await tx.$queryRaw<{ subsidiaryId: string }[]>`
-          DELETE FROM user_subsidiary_access
-          WHERE user_id = ${profileId}::uuid AND organisation_id = ${organisationId}::uuid
-          RETURNING subsidiary_id::text AS "subsidiaryId"`;
-        grants.sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId));
-        for (const { subsidiaryId } of grants) {
-          await this.audit.record(
-            admin,
-            {
-              action: 'delete',
-              entity: 'subsidiary_access',
-              entityId: profileId,
-              diff: { subsidiaryId, reason: `role changed from data_entry to ${role}` },
-            },
-            tx,
-          );
-        }
+      // One statement, so the audit names exactly the grants it removed — a
+      // subsidiary deleted (or a grant added by the seed) between a read and
+      // a delete would otherwise be audited without being removed, or the
+      // reverse (`security-rls` round 2).
+      const grants = await tx.$queryRaw<{ subsidiaryId: string }[]>`
+        DELETE FROM user_subsidiary_access
+        WHERE user_id = ${profileId}::uuid AND organisation_id = ${organisationId}::uuid
+        RETURNING subsidiary_id::text AS "subsidiaryId"`;
+      grants.sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId));
+      for (const { subsidiaryId } of grants) {
+        await this.audit.record(
+          admin,
+          {
+            action: 'delete',
+            entity: 'subsidiary_access',
+            entityId: profileId,
+            diff: { subsidiaryId, reason: `role changed from ${target.role} to ${role}` },
+          },
+          tx,
+        );
       }
     });
   }
 
   /**
-   * Replaces the data_entry user's grants with exactly `subsidiaryIds` (an
-   * access screen's whole set, rather than grant/revoke pairs). Each grant
-   * added or withdrawn is audited on its own, as with the single calls.
+   * Sets a granted account's access to exactly `access` WITHIN the actor's
+   * scope (an access screen's whole selection): a masterkey a super_admin's
+   * companies, a super_admin a standard user's company and categories inside
+   * its own grants. Grants outside the actor's scope are neither read back
+   * nor touched. Each grant added, withdrawn or re-categorised is audited on
+   * its own; nothing changed writes nothing.
    */
-  async replaceSubsidiaryAccess(actor: RequestUser, rawProfileId: string, subsidiaryIds: string[]): Promise<void> {
-    const organisationId = assertTenantAdmin(actor);
+  async replaceSubsidiaryAccess(actor: RequestUser, rawProfileId: string, access: UserAccessGrantDTO[]): Promise<void> {
+    const organisationId = assertActorMay(actor, 'users.set_access');
     const profileId = canonicalId(rawProfileId);
-    const wanted = [...new Set(subsidiaryIds.map(canonicalId))].sort();
     await this.prisma.$transaction(async (tx) => {
-      const admin = await lockAndReadActor(tx, actor, organisationId);
+      const admin = await lockAndReadActor(tx, actor, organisationId, 'users.set_access');
       const target = await findMember(tx, organisationId, profileId);
-      if (target.role !== DbUserRole.data_entry) {
-        if (wanted.length === 0) return; // nothing to hold, nothing held
-        throw new AccessRoleMismatchError();
+      assertMaySetAccessOf(admin, target.role, access.length > 0);
+      if (!can(target.role, 'scope.granted')) return; // an organisation-wide role, nothing asked: nothing held
+      const wanted = normaliseAccess(access, target.role);
+      await assertSubsidiaries(tx, organisationId, wanted.map((g) => g.subsidiaryId), admin.scope);
+      const heldAll = await tx.userSubsidiaryAccess.findMany({
+        where: { userId: profileId, organisationId },
+        select: { subsidiaryId: true, categories: true },
+      });
+      const inScope = (id: string) => admin.scope === null || admin.scope.has(id);
+      const held = heldAll.filter((g) => inScope(g.subsidiaryId));
+      const wantedById = new Map(wanted.map((g) => [g.subsidiaryId, g.categories]));
+      const heldById = new Map(held.map((g) => [g.subsidiaryId, sortedCategories(g.categories)]));
+      const removed = held.map((g) => g.subsidiaryId).filter((id) => !wantedById.has(id)).sort();
+      const added = wanted.filter((g) => !heldById.has(g.subsidiaryId));
+      const recategorised = can(target.role, 'scope.categories')
+        ? wanted.filter((g) => heldById.has(g.subsidiaryId) && !sameList(heldById.get(g.subsidiaryId)!, g.categories))
+        : [];
+      // One company per standard user (ruling R6), counted over ALL their
+      // grants — those the actor cannot see included. Only an ADDED company is
+      // refused: an account carried over with several is edited down, not up.
+      if (can(target.role, 'scope.categories') && added.length > 0 && heldAll.length - removed.length + added.length > 1) {
+        throw new StandardUserSingleCompanyError();
       }
-      await assertSubsidiaries(tx, organisationId, wanted);
-      const held = (
-        await tx.userSubsidiaryAccess.findMany({
-          where: { userId: profileId, organisationId },
-          select: { subsidiaryId: true },
-        })
-      ).map((g) => g.subsidiaryId);
-      const removed = held.filter((id) => !wanted.includes(id)).sort();
-      const added = wanted.filter((id) => !held.includes(id));
       if (removed.length) {
         await tx.userSubsidiaryAccess.deleteMany({
           where: { userId: profileId, organisationId, subsidiaryId: { in: removed } },
@@ -244,10 +227,22 @@ export class AccessAdminService {
         );
       }
       await createGrants(tx, profileId, organisationId, added);
-      for (const subsidiaryId of added) {
+      for (const grant of added) {
+        await this.audit.record(admin, grantCreatedRow(profileId, grant, target.role), tx);
+      }
+      for (const { subsidiaryId, categories } of recategorised) {
+        await tx.userSubsidiaryAccess.update({
+          where: { userId_subsidiaryId: { userId: profileId, subsidiaryId } },
+          data: { categories },
+        });
         await this.audit.record(
           admin,
-          { action: 'create', entity: 'subsidiary_access', entityId: profileId, diff: { subsidiaryId } },
+          {
+            action: 'update',
+            entity: 'subsidiary_access',
+            entityId: profileId,
+            diff: { subsidiaryId, before: { categories: heldById.get(subsidiaryId) }, after: { categories } },
+          },
           tx,
         );
       }
@@ -263,20 +258,26 @@ export class AccessAdminService {
    * or the name: the trail has no correction path (D20).
    */
   async inviteMember(actor: RequestUser, input: InviteMember): Promise<{ profileId: string }> {
-    const organisationId = assertTenantAdmin(actor);
-    if (!(Object.values(DbUserRole) as string[]).includes(input.role)) throw new BadRequestException('Unknown role');
+    const organisationId = assertActorMay(actor, 'users.invite');
+    if (!isUserRole(input.role)) throw new BadRequestException('Unknown role');
     if (!isLocale(input.language)) throw new BadRequestException('Unsupported language');
+    assertMayInvite(actor.role, input.role);
     const email = normaliseEmail(input.email);
-    const subsidiaryIds = [...new Set(input.subsidiaryIds.map(canonicalId))].sort();
-    if (input.role !== DbUserRole.data_entry && subsidiaryIds.length) throw new AccessRoleMismatchError();
+    const access = normaliseAccess(input.access, input.role);
+    // One company per standard user (ruling R6): an invitation names at most one.
+    if (can(input.role, 'scope.categories') && access.length > 1) throw new StandardUserSingleCompanyError();
+    const subsidiaryIds = access.map((g) => g.subsidiaryId);
     const profileId = randomUUID();
     let outcome: 'created' | 'refused';
     try {
       outcome = await this.prisma.$transaction(async (tx) => {
-        const admin = await lockAndReadActor(tx, actor, organisationId);
-        // The request's own subsidiaries first, so a refusal about them never
-        // depends on whether some address exists.
-        await assertSubsidiaries(tx, organisationId, subsidiaryIds);
+        const admin = await lockAndReadActor(tx, actor, organisationId, 'users.invite');
+        // Re-checked on the role read under the lock.
+        assertMayInvite(admin.role, input.role);
+        // The request's own companies first, so a refusal about them never
+        // depends on whether some address exists. A super_admin names only
+        // its own; any other answers as unknown.
+        await assertSubsidiaries(tx, organisationId, subsidiaryIds, admin.scope);
         // Past its bound, the organisation learns nothing more about any
         // address, new or taken: refused before the lookup (`account-access`).
         await assertInviteRefusalBound(tx, organisationId);
@@ -300,7 +301,7 @@ export class AccessAdminService {
             organisationId,
           },
         });
-        await createGrants(tx, profileId, organisationId, subsidiaryIds);
+        await createGrants(tx, profileId, organisationId, access);
         await tx.invitation.create({ data: { profileId, language: input.language, invitedBy: admin.id } });
         await this.audit.record(
           admin,
@@ -312,12 +313,8 @@ export class AccessAdminService {
           },
           tx,
         );
-        for (const subsidiaryId of subsidiaryIds) {
-          await this.audit.record(
-            admin,
-            { action: 'create', entity: 'subsidiary_access', entityId: profileId, diff: { subsidiaryId } },
-            tx,
-          );
+        for (const grant of access) {
+          await this.audit.record(admin, grantCreatedRow(profileId, grant, input.role), tx);
         }
         return 'created' as const;
       });
@@ -329,7 +326,7 @@ export class AccessAdminService {
         // under it: another request of this organisation may have used the
         // last refusal meanwhile (Codex review).
         await this.prisma.$transaction(async (tx) => {
-          const admin = await lockAndReadActor(tx, actor, organisationId);
+          const admin = await lockAndReadActor(tx, actor, organisationId, 'users.invite');
           await assertInviteRefusalBound(tx, organisationId);
           await this.recordInviteRefusal(tx, admin);
         });
@@ -492,11 +489,14 @@ export class AccessAdminService {
    * account is disabled.
    */
   async reopenInvitation(actor: RequestUser, rawProfileId: string): Promise<void> {
-    const organisationId = assertTenantAdmin(actor);
+    const organisationId = assertActorMay(actor, 'users.invite');
     const profileId = canonicalId(rawProfileId);
     await this.prisma.$transaction(async (tx) => {
-      const admin = await lockAndReadActor(tx, actor, organisationId);
+      const admin = await lockAndReadActor(tx, actor, organisationId, 'users.invite');
       const target = await findMember(tx, organisationId, profileId);
+      // Re-sending is inviting again: the actor must be one who may invite
+      // the account's role.
+      assertMayInvite(admin.role, target.role);
       const invitation = await tx.invitation.findUnique({ where: { profileId }, select: { status: true } });
       if (!invitation) throw new ResourceNotFoundError('invitation_not_found');
       if (invitation.status === InvitationStatus.accepted) throw new InvitationClosedError();
@@ -520,11 +520,11 @@ export class AccessAdminService {
    * (K4); the caller then applies it. Idempotent.
    */
   async disableMember(actor: RequestUser, rawProfileId: string): Promise<EnabledChange> {
-    const organisationId = assertTenantAdmin(actor);
+    const organisationId = assertActorMay(actor, 'users.disable');
     const profileId = canonicalId(rawProfileId);
     if (profileId === actor.id) throw new OwnAccountError('disable');
     return this.prisma.$transaction(async (tx) => {
-      const admin = await lockAndReadActor(tx, actor, organisationId);
+      const admin = await lockAndReadActor(tx, actor, organisationId, 'users.disable');
       const target = await findMember(tx, organisationId, profileId);
       if (target.disabledAt) return { changed: false };
       const now = new Date();
@@ -549,10 +549,10 @@ export class AccessAdminService {
 
   /** Re-enables a disabled member; Auth's unban is flagged pending (K4). Idempotent. */
   async enableMember(actor: RequestUser, rawProfileId: string): Promise<EnabledChange> {
-    const organisationId = assertTenantAdmin(actor);
+    const organisationId = assertActorMay(actor, 'users.disable');
     const profileId = canonicalId(rawProfileId);
     return this.prisma.$transaction(async (tx) => {
-      const admin = await lockAndReadActor(tx, actor, organisationId);
+      const admin = await lockAndReadActor(tx, actor, organisationId, 'users.disable');
       const target = await findMember(tx, organisationId, profileId);
       if (!target.disabledAt) return { changed: false };
       const now = new Date();
@@ -586,23 +586,83 @@ export function normaliseEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/** Every id a subsidiary of `organisationId`; any other — another tenant's included — is 404. */
-async function assertSubsidiaries(tx: Prisma.TransactionClient, organisationId: string, ids: string[]): Promise<void> {
+/**
+ * Every id a subsidiary of `organisationId` AND, for a scoped actor, one of
+ * its own grants; any other — another tenant's, or a company of the
+ * organisation the actor is not granted — is 404, as one that does not exist.
+ */
+async function assertSubsidiaries(
+  tx: Prisma.TransactionClient,
+  organisationId: string,
+  ids: string[],
+  scope: ReadonlySet<string> | null,
+): Promise<void> {
   if (!ids.length) return;
+  if (scope !== null && ids.some((id) => !scope.has(id))) throw new ResourceNotFoundError('subsidiary_not_found');
   const found = await tx.subsidiary.count({ where: { id: { in: ids }, organisationId } });
   if (found !== ids.length) throw new ResourceNotFoundError('subsidiary_not_found');
+}
+
+/** A grant as the service handles it: canonical id, sorted unique categories. */
+interface AccessGrant {
+  subsidiaryId: string;
+  categories: Category[];
+}
+
+function sortedCategories(categories: readonly string[]): Category[] {
+  return [...new Set(categories.filter(isCategory))].sort();
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+/**
+ * The request's grants for an account of `role`: each company once, each
+ * category one of `CATEGORIES` (400 otherwise), stored sorted and unique.
+ * Categories belong to a standard user's grant only, and grants to the two
+ * granted roles only (`access_role_mismatch`).
+ */
+function normaliseAccess(access: readonly UserAccessGrantDTO[] | undefined, role: string): AccessGrant[] {
+  const list = access ?? [];
+  if (!list.length) return [];
+  if (!can(role, 'scope.granted')) throw new AccessRoleMismatchError();
+  const seen = new Set<string>();
+  const out: AccessGrant[] = [];
+  for (const grant of list) {
+    const subsidiaryId = canonicalId(grant.subsidiaryId);
+    if (seen.has(subsidiaryId)) throw new BadRequestException('Each company may appear once');
+    seen.add(subsidiaryId);
+    const categories = grant.categories ?? [];
+    if (categories.some((c) => !isCategory(c))) throw new BadRequestException('Unknown category');
+    if (!can(role, 'scope.categories') && categories.length) throw new AccessRoleMismatchError();
+    out.push({ subsidiaryId, categories: sortedCategories(categories) });
+  }
+  return out.sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId));
+}
+
+/** The audit row of a grant added: the company, and a standard user's categories. */
+function grantCreatedRow(profileId: string, grant: AccessGrant, role: string) {
+  return {
+    action: 'create' as const,
+    entity: 'subsidiary_access' as const,
+    entityId: profileId,
+    diff: can(role, 'scope.categories')
+      ? { subsidiaryId: grant.subsidiaryId, categories: grant.categories }
+      : { subsidiaryId: grant.subsidiaryId },
+  };
 }
 
 async function createGrants(
   tx: Prisma.TransactionClient,
   profileId: string,
   organisationId: string,
-  subsidiaryIds: string[],
+  grants: AccessGrant[],
 ): Promise<void> {
-  if (!subsidiaryIds.length) return;
+  if (!grants.length) return;
   try {
     await tx.userSubsidiaryAccess.createMany({
-      data: subsidiaryIds.map((subsidiaryId) => ({ userId: profileId, subsidiaryId, organisationId })),
+      data: grants.map(({ subsidiaryId, categories }) => ({ userId: profileId, subsidiaryId, organisationId, categories })),
     });
   } catch (err) {
     // A subsidiary deleted after the check above (its delete takes no lock here).
@@ -624,12 +684,52 @@ export function tenantAdminLockKey(organisationId: string): number {
   return createHash('sha256').update(organisationId.toLowerCase()).digest().readInt32BE(0);
 }
 
-/** The actor's organisation, when the actor may administer it at all. */
-function assertTenantAdmin(actor: RequestUser): string {
-  if (actor.role !== DbUserRole.masterkey || !actor.organisationId) {
-    throw new ForbiddenException('Only a masterkey manages roles and access.');
+/** The actor's organisation, when the actor's role holds `capability` at all. */
+function assertActorMay(actor: RequestUser, capability: Capability): string {
+  if (!actor.organisationId || !can(actor.role, capability)) {
+    throw new ForbiddenException(REFUSAL[capability] ?? 'Your role may not manage accounts.');
   }
   return actor.organisationId;
+}
+
+const REFUSAL: Partial<Record<Capability, string>> = {
+  'users.invite': 'Only a masterkey or a super_admin invites accounts.',
+  'users.set_access': 'Only a masterkey or a super_admin sets access.',
+  'users.set_role': 'Only a masterkey changes roles.',
+  'users.disable': 'Only a masterkey disables or enables accounts.',
+};
+
+/** A masterkey invites super_admins and auditors, a super_admin standard
+ *  users; nobody invites a masterkey (design Decision 9, ruling R1). */
+function assertMayInvite(actorRole: string, role: string): void {
+  const allowed = isUserRole(actorRole) ? INVITABLE_ROLES[actorRole] : [];
+  if (!(allowed as readonly string[]).includes(role)) {
+    throw new ForbiddenException(
+      role === 'masterkey'
+        ? 'Nobody is made a masterkey in the product.'
+        : `A ${actorRole} may not invite a ${role}.`,
+    );
+  }
+}
+
+/**
+ * Whose access the actor sets: a masterkey a super_admin's, a super_admin a
+ * standard user's (ruling R3). An organisation-wide target answers
+ * `access_role_mismatch` when access is asked for it, and nothing otherwise.
+ */
+function assertMaySetAccessOf(admin: AdminActor, targetRole: string, asksForAccess: boolean): void {
+  if (!can(targetRole, 'scope.granted')) {
+    if (asksForAccess) throw new AccessRoleMismatchError();
+    return;
+  }
+  const assignable = isUserRole(admin.role) ? ACCESS_ASSIGNABLE_ROLES[admin.role] : [];
+  if (!(assignable as readonly string[]).includes(targetRole)) {
+    throw new ForbiddenException(
+      admin.role === 'masterkey'
+        ? 'A super_admin of the company sets a standard user\'s company and categories.'
+        : `A ${admin.role} may not set a ${targetRole}'s access.`,
+    );
+  }
 }
 
 /**
@@ -674,24 +774,41 @@ async function assertInviteRefusalBound(tx: Prisma.TransactionClient, organisati
  * re-reads the actor: the role the request was authenticated with may have
  * been withdrawn since.
  */
+/** The actor as re-read under the lock, with its scope: null for the whole
+ *  organisation (a masterkey), else its own same-organisation grants. */
+interface AdminActor extends RequestUser {
+  scope: ReadonlySet<string> | null;
+}
+
 async function lockAndReadActor(
   tx: Prisma.TransactionClient,
   actor: RequestUser,
   organisationId: string,
-): Promise<RequestUser> {
+  capability: Capability,
+): Promise<AdminActor> {
   await lockTenantAdmin(tx, organisationId);
   const current = await tx.profile.findUnique({
     where: { id: actor.id },
-    select: { role: true, organisationId: true, disabledAt: true, organisation: { select: { offboardedAt: true } } },
+    select: {
+      role: true,
+      organisationId: true,
+      disabledAt: true,
+      organisation: { select: { offboardedAt: true } },
+      subsidiaryAccess: { where: { organisationId }, select: { subsidiaryId: true } },
+    },
   });
   // Disabled — or the organisation offboarded — since the guard admitted the
   // request (D19, K6): the same answer the guard gives, so the session ends
   // rather than acting once more.
   if (current?.disabledAt || current?.organisation?.offboardedAt) throw new AccountDisabledError();
-  if (!current || current.role !== DbUserRole.masterkey || current.organisationId !== organisationId) {
-    throw new ForbiddenException('Only a masterkey manages roles and access.');
+  if (!current || current.organisationId !== organisationId || !can(current.role, capability)) {
+    throw new ForbiddenException(REFUSAL[capability] ?? 'Your role may not manage accounts.');
   }
-  return { ...actor, role: current.role };
+  // A scoped actor's companies as they stand now, not as authenticated.
+  const scope = can(current.role, 'scope.granted')
+    ? new Set((current.subsidiaryAccess ?? []).map((g) => g.subsidiaryId))
+    : null;
+  return { ...actor, role: current.role, scope };
 }
 
 /** A profile of `organisationId`; any other id — another tenant's included — is 404. */

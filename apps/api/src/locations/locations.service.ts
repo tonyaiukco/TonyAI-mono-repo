@@ -19,6 +19,7 @@ import {
   CreateSubsidiaryLocationDto,
 } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
+import { can } from '@tonyai/shared-types';
 
 /**
  * A subsidiary that some caller has already established the right to write to.
@@ -74,10 +75,12 @@ export class LocationsService {
     };
   }
 
-  /** Admin-managed org structure: only masterkey may modify locations. */
+  /** Facilities: a masterkey anywhere, a super_admin in granted companies
+   *  (INC-2.6 §1, §6) — the company itself is checked against the caller's
+   *  scope, so an ungranted one answers as unknown. */
   private assertCanWrite(user: RequestUser): void {
-    if (user.role !== 'masterkey') {
-      throw new ForbiddenException('Only masterkey may modify locations');
+    if (!can(user.role, 'location.write')) {
+      throw new ForbiddenException('Only a masterkey or a super_admin may modify locations');
     }
   }
 

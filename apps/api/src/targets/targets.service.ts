@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { ActivityRecordStatus, Prisma, type Target } from '@tonyai/db';
-import { COUNTED_STATUSES as SHARED_COUNTED_STATUSES } from '@tonyai/shared-types';
+import { COUNTED_STATUSES as SHARED_COUNTED_STATUSES, can } from '@tonyai/shared-types';
 import type {
   CursorPage,
   EmissionsScope,
@@ -92,10 +92,10 @@ export class TargetsService {
     };
   }
 
-  /** Targets are org configuration — masterkey only (perm §5.3). */
+  /** Targets are org configuration — a masterkey only (perm §5.3; INC-2.6 ruling R4). */
   private assertCanManage(user: RequestUser): void {
-    if (user.role !== 'masterkey') {
-      throw new ForbiddenException('Only masterkey may manage targets');
+    if (!can(user.role, 'target.write')) {
+      throw new ForbiddenException('Only a masterkey may manage targets');
     }
   }
 

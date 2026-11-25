@@ -7,6 +7,7 @@ import {
   type ImportBatchDetailDTO,
   type ImportBatchDTO,
   type ImportBatchRecordRef,
+  can,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
@@ -23,8 +24,9 @@ const DEFAULT_LIST_LIMIT = 20;
 /** Seconds a source-file download link stays valid — the evidence module's. */
 const SIGNED_URL_TTL_SECONDS = 60;
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-/** Roles that read every batch of their organisation, as they read its records. */
-const ORGANISATION_READERS = new Set(['masterkey', 'consultant', 'executive_viewer']);
+// Roles that read every batch of their organisation, as they read its
+// records: `can(role, 'import_batch.read_all')`. The granted roles see their
+// own uploads within their scope.
 
 /**
  * Applied bulk imports: list, read, download the source file, submit the
@@ -52,7 +54,7 @@ export class ImportBatchesService {
 
   async list(user: RequestUser, limit = DEFAULT_LIST_LIMIT): Promise<ImportBatchDTO[]> {
     if (!user.organisationId) return [];
-    const organisationReader = ORGANISATION_READERS.has(user.role);
+    const organisationReader = can(user.role, 'import_batch.read_all');
     const rows = await this.prisma.importBatch.findMany({
       where: {
         organisationId: user.organisationId,
@@ -166,7 +168,7 @@ export class ImportBatchesService {
 
   private canSee(user: RequestUser, batch: ImportBatch): boolean {
     if (!user.organisationId || batch.organisationId !== user.organisationId) return false;
-    if (ORGANISATION_READERS.has(user.role)) return true;
+    if (can(user.role, 'import_batch.read_all')) return true;
     const accessible = new Set(user.accessibleSubsidiaryIds);
     return (
       batch.uploadedBy === user.id &&

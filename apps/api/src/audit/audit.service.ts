@@ -13,6 +13,7 @@ import { resolveProfiles } from '../common/resolve-profiles';
 import type { RequestUser } from '../auth/auth.types';
 import { DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT } from './audit.constants';
 import { ListAuditQueryDto } from './dto/list-audit-query.dto';
+import { can } from '@tonyai/shared-types';
 
 /**
  * The single place an audit row is written.
@@ -33,7 +34,7 @@ import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 /** Reading the trail is masterkey-only, matching the RLS policy exactly.
  * The API is the primary control (Prisma connects as the runtime role, which
  * bypasses RLS — LP1-03), so this check is what actually enforces it. */
-const READ_ROLES = new Set<UserRole>(['masterkey']);
+// Readers: `can(role, 'audit.read')` — a masterkey and an auditor (INC-2.6 §6, ruling R4).
 
 /** Accepts a transaction client so the audit row commits with the mutation. */
 type Writer = Pick<Prisma.TransactionClient, 'auditLog'>;
@@ -140,8 +141,8 @@ export class AuditService {
     user: RequestUser,
     query: ListAuditQueryDto,
   ): Promise<Paginated<AuditLogDTO>> {
-    if (!READ_ROLES.has(user.role)) {
-      throw new ForbiddenException('Only a masterkey may read the audit trail');
+    if (!can(user.role, 'audit.read')) {
+      throw new ForbiddenException('Only a masterkey or an auditor may read the audit trail');
     }
     if (!user.organisationId) {
       // Default-deny, mirroring the guard's treatment of an org-less profile.

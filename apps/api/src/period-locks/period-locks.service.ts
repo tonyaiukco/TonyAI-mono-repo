@@ -10,7 +10,7 @@ import {
   Prisma,
   type PeriodLock,
 } from '@tonyai/db';
-import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW } from '@tonyai/shared-types';
+import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW, can } from '@tonyai/shared-types';
 import { canonicalPeriodValue, REPORTING_PERIODS } from '@tonyai/shared-types';
 import type { CursorPage, PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
 import {
@@ -95,11 +95,11 @@ export class PeriodLocksService {
     };
   }
 
-  /** Closing/reopening a period is org structure — masterkey only (perm §5.3). */
+  /** Closing/reopening a period is org structure — a masterkey only (perm §5.3; INC-2.6 ruling R4). */
   private assertCanLock(user: RequestUser): void {
-    if (user.role !== 'masterkey') {
+    if (!can(user.role, 'period_lock.write')) {
       throw new ForbiddenException(
-        'Only masterkey may lock or unlock reporting periods',
+        'Only a masterkey may lock or unlock reporting periods',
       );
     }
   }
