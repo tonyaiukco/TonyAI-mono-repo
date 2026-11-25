@@ -5,8 +5,11 @@ import {
   INVITABLE_ROLES,
   ROLE_CHANGE_TARGETS,
   can,
+  holdsRecords,
   type AuthUser,
   type Category,
+  type ControlKind,
+  type NodeType,
   type InviteUserRequest,
   type Locale,
   type UserAccessGrantDTO,
@@ -166,11 +169,17 @@ export function pickerKind(role: UserRole): PickerKind {
  * subsidiaries list is already scoped by the API; this keeps the picker to
  * the reader's grants even if it is not.
  */
-export function assignableCompanies<S extends { id: string }>(reader: Reader | null | undefined, subsidiaries: readonly S[]): S[] {
+export function assignableCompanies<S extends { id: string; nodeType: NodeType; control: ControlKind }>(
+  reader: Reader | null | undefined,
+  subsidiaries: readonly S[],
+): S[] {
   if (!reader || !can(reader.role, "users.set_access")) return [];
-  if (can(reader.role, "scope.organisation")) return [...subsidiaries];
+  // No account is assigned to an associate or a sector group (inc26-group-tree):
+  // the API refuses one with `subsidiary_not_assignable`.
+  const open = subsidiaries.filter((s) => holdsRecords(s));
+  if (can(reader.role, "scope.organisation")) return open;
   const own = new Set(reader.accessibleSubsidiaryIds);
-  return subsidiaries.filter((s) => own.has(s.id));
+  return open.filter((s) => own.has(s.id));
 }
 
 /** A selection being edited: the grants the request will send. */

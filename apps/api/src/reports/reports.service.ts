@@ -73,7 +73,7 @@ import { calculationInputs } from '../common/calculation-inputs';
 /** The CSV's words: English, whatever the caller's language (D16's machine-readable export). */
 const CSV_VOCABULARY = reportVocabulary('en');
 import { PdfRenderer } from '../common/pdf-renderer';
-import { can } from '@tonyai/shared-types';
+import { can, type ConsolidationApproach } from '@tonyai/shared-types';
 
 // Single source of truth for "committed": imported from the emissions service so
 // a report's summary tables and its own ledger can never silently diverge.
@@ -263,6 +263,34 @@ export class ReportsService {
       const withdrawn = await withdrawnReleaseIds(db, committed);
       return this.metaOf(head, inventorySummary(committed, nameById, withdrawn), await this.readTail(snapshot, user, ids, selection));
     });
+  }
+
+  /**
+   * The organisation's stored consolidation approach and the associates the
+   * caller may read (inc26-group-tree, D8), read in the report's snapshot. A
+   * scoped reader is granted no associate (no grant can name one), so its
+   * report names none.
+   */
+  private async consolidationOf(
+    db: Prisma.TransactionClient,
+    user: RequestUser,
+    /** The selection's companies: none readable, nothing more is read (`readHead`). */
+    selected: readonly string[],
+  ): Promise<{ approach: ConsolidationApproach; associates: string[] }> {
+    const org = user.organisationId
+      ? await db.organisation.findUnique({ where: { id: user.organisationId }, select: { consolidationApproach: true } })
+      : null;
+    const associates = selected.length === 0 || user.accessibleSubsidiaryIds.length === 0
+      ? []
+      : await db.subsidiary.findMany({
+          where: { id: { in: user.accessibleSubsidiaryIds }, control: 'associate' },
+          select: { legalName: true, tradingName: true },
+          orderBy: [{ legalName: 'asc' }, { id: 'asc' }],
+        });
+    return {
+      approach: org?.consolidationApproach ?? 'operational_control',
+      associates: associates.map((a) => a.tradingName || a.legalName),
+    };
   }
 
   /** The organisation, the snapshot's clock and the selection's status counts — Scope 1/2 only (K4). */
@@ -457,6 +485,7 @@ export class ReportsService {
       throw new QueryTooBroadError();
     }
     const nameById = await this.namesOf(db, ids);
+    const consolidation = await this.consolidationOf(db, user, ids);
     // Scope 1 and 2 only (K4): Scope 3 is not covered, so its records are
     // disclosed (`readTail`) and never in the ledger, a total or a percentage.
     const scopes = inventoryScopeFilter(q.scope);
@@ -733,6 +762,8 @@ export class ReportsService {
         REPORT_TEMPLATES.find((t) => t.id === q.template)?.name ?? q.template,
       language,
       organisationName: meta.organisationName,
+      consolidationApproach: consolidation.approach,
+      excludedAssociates: consolidation.associates,
       subsidiaryName: q.subsidiaryId ? (nameById.get(q.subsidiaryId) ?? null) : null,
       year: q.year,
       // The snapshot's own clock: every figure below is as of this moment.

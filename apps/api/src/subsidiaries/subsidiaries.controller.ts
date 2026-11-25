@@ -23,6 +23,15 @@ export class SubsidiariesController {
     return this.service.list(user);
   }
 
+  /**
+   * The boundary-exclusions note (inc26-group-tree, D8): the associates the
+   * caller can read. A literal segment, so declared BEFORE `@Get(':id')`.
+   */
+  @Get('boundary-exclusions')
+  boundaryExclusions(@CurrentUser() user: RequestUser) {
+    return this.service.boundaryExclusions(user);
+  }
+
   @Get(':id')
   get(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.get(user, id);

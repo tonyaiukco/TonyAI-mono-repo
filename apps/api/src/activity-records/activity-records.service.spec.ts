@@ -45,6 +45,7 @@ import {
   SLOT_HOLDS_UNTYPED_MESSAGE,
   SnapshotImmutableError,
   recordTriggerCode,
+  EntityClosedToDataEntryError,
 } from './errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { errorCodeOf } from '../common/api-error';
@@ -4868,7 +4869,9 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     // imported row, plus the period's advisory lock.
     expect(prisma.periodLock.findFirst).toHaveBeenCalledTimes(2);
     expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(prisma.subsidiary.findUnique).toHaveBeenCalledTimes(1);
+    // Twice: the closed-node gate's type and control (inc26-group-tree, D6),
+    // and the calculation's geography.
+    expect(prisma.subsidiary.findUnique).toHaveBeenCalledTimes(2);
     expect(calc.compute).toHaveBeenCalledTimes(1);
     expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.activityRecord.create).toHaveBeenCalledTimes(1);
@@ -7013,5 +7016,61 @@ describe("ActivityRecordsService — a standard user's categories (inc26-roles-a
       prisma.people.set('user-entry', { role: 'standard_user', grants: ['sub-1'] });
       expect((await service.approve(superAdmin(), 'rec-own')).status).toBe(ActivityRecordStatus.approved);
     });
+  });
+});
+
+describe('ActivityRecordsService — a node closed to data entry (inc26-group-tree, D6)', () => {
+  let prisma: PrismaMock;
+  let service: ActivityRecordsService;
+
+  beforeEach(() => {
+    audit.record.mockClear();
+    ({ prisma, service } = build());
+  });
+
+  it.each([
+    ['an associate', { nodeType: 'company', control: 'associate' }],
+    ['an associate child company', { nodeType: 'child_company', control: 'associate' }],
+    ['a sector group', { nodeType: 'sector_group', control: 'controlled' }],
+  ] as const)('refuses a record for %s — in the preview and the create — as a conflict, writing nothing', async (_what, node) => {
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1', ...node }));
+    for (const user of [masterkey(), standardUser()]) {
+      for (const call of [() => service.previewCreate(user, CREATE_DTO), () => service.create(user, CREATE_DTO)]) {
+        const e = await call().catch((err: unknown) => err);
+        expect(e).toBeInstanceOf(EntityClosedToDataEntryError);
+        expect(e).toMatchObject({ response: { code: 'entity_closed_to_data_entry', statusCode: 409 } });
+      }
+    }
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+    // The gate reads only the company's type and control.
+    expect(prisma.subsidiary.findUnique).toHaveBeenCalledWith({ where: { id: 'sub-1' }, select: { nodeType: true, control: true } });
+  });
+
+  it('lets an ordinary controlled company, and the holding, through', async () => {
+    for (const nodeType of ['company', 'holding', 'child_company', 'sub_holding'] as const) {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1', nodeType, control: 'controlled' }));
+      await expect(service.previewCreate(masterkey(), CREATE_DTO)).resolves.toMatchObject({ subsidiaryId: 'sub-1' });
+    }
+  });
+
+  it('answers a company outside the caller\'s set as unknown, before the gate reads it', async () => {
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-9', control: 'associate' }));
+    await expect(service.previewCreate(standardUser(), { ...CREATE_DTO, subsidiaryId: 'sub-9' })).rejects.toMatchObject({
+      response: { code: 'subsidiary_not_found' },
+    });
+    expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('answers TA019 reached through a race (a tick between the check and the insert) with the same code', async () => {
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.tx.activityRecord.create.mockRejectedValue(
+      new Prisma.PrismaClientUnknownRequestError(
+        'Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "TA019", message: "entity_closed_to_data_entry: subsidiary sub-1 is outside the Scope 1 and 2 inventory", severity: "ERROR", detail: None, column: None, hint: None }) })',
+        { clientVersion: '6' },
+      ),
+    );
+    await expect(service.create(masterkey(), CREATE_DTO)).rejects.toBeInstanceOf(EntityClosedToDataEntryError);
   });
 });

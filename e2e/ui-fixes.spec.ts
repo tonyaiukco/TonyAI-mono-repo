@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, bearer, getAccessToken, ADMIN_EMAIL, API_BASE, SUB } from './helpers';
+import { login, bearer, getAccessToken, ADMIN_EMAIL, API_BASE, SUB, deleteCompanyWithFacilities } from './helpers';
 
 /**
  * WP15 slice (d) — round-1 DE-1 + DASH-1.
@@ -55,7 +55,7 @@ test('DE-1: a very long subsidiary name does not push the control over its neigh
       clientW + 1,
     );
   } finally {
-    await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+    await deleteCompanyWithFacilities(request, token, sub.id);
   }
 });
 

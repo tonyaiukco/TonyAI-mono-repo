@@ -78,6 +78,17 @@ import {
 } from '../auth/access-errors';
 import { NotRecordApproverError } from '../activity-records/record-approver';
 import { CategoryNotGrantedError } from '../activity-records/record-scope';
+import {
+  boundarySubsidiaryNotReportable,
+  controlChangeBlocked,
+  entityClosedToDataEntry,
+  geographyWithoutFactors,
+  nodeMoveBlocked,
+  nodePlacementInvalid,
+  nodeTypeFixed,
+  subsidiaryNotAssignable,
+  treeCycle,
+} from '../subsidiaries/tree-errors';
 
 vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -233,6 +244,15 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   bulk_workbook_no_sheets: () => new BadRequestException(errorBody('bulk_workbook_no_sheets', 'x')),
   bulk_workbook_first_sheet_not_worksheet: () => new BadRequestException(errorBody('bulk_workbook_first_sheet_not_worksheet', 'x')),
   bulk_workbook_too_large: () => unpackedTooLarge(10 * 1024 * 1024),
+  node_placement_invalid: () => nodePlacementInvalid(),
+  node_type_fixed: () => nodeTypeFixed(),
+  tree_cycle: () => treeCycle(),
+  node_move_blocked: () => nodeMoveBlocked(),
+  control_change_blocked: () => controlChangeBlocked(['records', 'assignments']),
+  entity_closed_to_data_entry: () => entityClosedToDataEntry(),
+  subsidiary_not_assignable: () => subsidiaryNotAssignable(),
+  boundary_subsidiary_not_reportable: () => boundarySubsidiaryNotReportable(),
+  geography_without_factors: () => geographyWithoutFactors('UK'),
 };
 
 /** What `fn` threw — it must throw. */

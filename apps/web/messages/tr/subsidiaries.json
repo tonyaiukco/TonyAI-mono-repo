@@ -32,7 +32,7 @@
     "created": "Bağlı şirket oluşturuldu",
     "deleted": "Bağlı şirket silindi",
     "deleteTitle": "Bağlı şirket silinsin mi?",
-    "deleteBody": "Bu işlem bağlı şirketi kalıcı olarak kaldırır ve denetim kaydına yazılır. Hâlâ faaliyet kaydı, tesis, hedef veya kapalı raporlama dönemi olan bir bağlı şirket kaldırılamaz — silmek bunları ve kanıtlarını yok eder.",
+    "deleteBody": "Bu işlem bağlı şirketi kalıcı olarak kaldırır ve denetim kaydına yazılır. Hâlâ faaliyet kaydı, alt şirket, tesis, hedef veya kapalı raporlama dönemi olan bir bağlı şirket kaldırılamaz — silmek bunları ve kanıtlarını yok eder.",
     "deleteConfirm": "Sil"
   },
   "create": {
@@ -114,13 +114,13 @@
     "targets": "Azaltım hedefleri",
     "denominators": "Yoğunluk paydaları",
     "blocked": "Bu bağlı şirket silinemez",
-    "deletableOne": "Bu bağlı şirket sicilden silinebilir. {count} tesisi de onunla birlikte silinir ve her biri denetim kaydına yazılır.",
-    "deletableMany": "Bu bağlı şirket sicilden silinebilir. {count} tesisi de onunla birlikte silinir ve her biri denetim kaydına yazılır.",
     "deletableNothing": "Bu bağlı şirkete bağlı bir şey yok, bu yüzden sicilden silinebilir."
   },
   "blockers": {
     "terminalRecords": "Bu bağlı şirkete ait {count} onaylanmış, kilitli veya geçersiz kılınmış faaliyet kaydı var ve şirketi silmek bunları kanıtlarıyla birlikte kalıcı olarak yok eder. Bu kayıtlar hiçbir aşamada silinemez, bu yüzden veri raporlamış bir bağlı şirket kalır. Bunun yerine durumunu \"pasif\" yaparak kullanımdan kaldırın.",
     "frozenBoundaryVersions": "Bu bağlı şirket, bir raporun dayandığı envanteri kaydeden ve hiç değişmeyen {count} onaylanmış veya rapora alınmış envanter sınırı sürümünde beyan edilmiş; bu yüzden böyle bir sürümde beyan edilen şirket kalır. Bunun yerine durumunu \"pasif\" yaparak kullanımdan kaldırın.",
+    "children": "{count} alt şirket düğümü",
+    "locations": "{count} tesis",
     "reviewRecords": "İnceleme bekleyen {count} kayıt",
     "openRecords": "{count} taslak veya iade edilmiş kayıt",
     "locationsHoldingForeignRecords": "Başka bir bağlı şirkete ait kayıt içeren {count} tesis",
@@ -159,7 +159,21 @@
     "deleted": "Tesis silindi",
     "deleteTitle": "Tesis silinsin mi?",
     "deleteBody": "Bu işlem tesisi kalıcı olarak kaldırır ve denetim kaydına yazılır. Faaliyet kayıtları bağlı olan bir tesis kaldırılamaz — o kayıtlar hesaplandıkları coğrafyadan farklı bir coğrafya göstermeye başlar.",
-    "deleteConfirm": "Sil"
+    "deleteConfirm": "Sil",
+    "type": "Tesis türü",
+    "typeNone": "Tür yok",
+    "types": {
+      "warehouse": "Depo",
+      "office": "Ofis",
+      "factory": "Fabrika",
+      "plant": "Santral",
+      "refinery": "Rafineri",
+      "retail_shop": "Mağaza",
+      "mall": "Alışveriş merkezi",
+      "building": "Bina",
+      "apartment": "Apartman",
+      "rms_station": "RMS istasyonu"
+    }
   },
   "locks": {
     "title": "Dönem kilitleri",
@@ -179,5 +193,69 @@
     "readOnly": "Raporlama dönemlerini yalnızca bir Masterkey kilitleyebilir veya açabilir.",
     "locked": "{period} {year} kilitlendi — bu dönemdeki kayıtlar artık donduruldu",
     "unlocked": "{period} {year} kilidi açıldı"
+  },
+  "tree": {
+    "types": {
+      "holding": "Holding",
+      "sub_holding": "Alt Holding",
+      "sector_group": "Sektör Grubu",
+      "company": "Şirket",
+      "child_company": "Alt Şirket"
+    },
+    "associateLabel": "Öz kaynak — Kapsam 1/2 dışı",
+    "associateClosed": "Kapsam dışı — veri girişi kapalı",
+    "columns": {
+      "type": "Tür",
+      "own": "Kendi (tCO₂e)",
+      "rollUp": "Toplam (tCO₂e)"
+    },
+    "expand": "{name} altındaki şirketleri göster",
+    "collapse": "{name} altındaki şirketleri gizle",
+    "year": "Raporlama yılı",
+    "figuresLoading": "Rakamlar yükleniyor…",
+    "figuresFailed": "Rakamlar yüklenemedi. Ağaç rakamlar olmadan gösteriliyor.",
+    "createdBy": "Oluşturan",
+    "carriedOver": "Kaydedilmedi (grup ağacından önce oluşturuldu)",
+    "parent": "Üst düğüm",
+    "parentTop": "Yok — görebildiğiniz ağacın en üstü",
+    "ghgBasis": "Sera gazı esası",
+    "ghgBasisControlled": "{approach}, %100",
+    "ghgBasisAssociate": "Öz kaynak — Kapsam 1/2 dışı",
+    "ghgBasisHint": "Konsolidasyon yaklaşımından ve şirketin kontrol durumundan türetilir; seçilmez.",
+    "control": "Öz kaynak (iştirak, Kapsam 1/2 dışı)",
+    "controlHint": "Yalnızca kaydı, kullanıcı ataması, alt şirketi veya güncel sınır beyanı olmayan bir şirket öz kaynak yapılabilir.",
+    "nace": "NACE kodu",
+    "naceHint": "İsteğe bağlı, örneğin C10.11.",
+    "naceInvalid": "NACE kodu C, 10, 10.1 veya C10.11 biçimindedir.",
+    "sharePercent": "Pay yüzdesi",
+    "sharePercentHint": "İsteğe bağlı. Hiçbir rakama, toplama veya konsolide toplama girmez.",
+    "sharePercentInvalid": "0 ile 100 arasında, en fazla iki ondalıklı bir pay girin.",
+    "move": "Şunun altına taşı",
+    "moveHint": "Altında herhangi bir yerde kaydı olan bir şirket taşınamaz.",
+    "type": "Tür",
+    "typeFixed": "Bir düğümün türü oluşturulduğunda sabitlenir.",
+    "noFacilitySectorGroup": "Sektör grubu bir etikettir: tesis barındırmaz.",
+    "pricedOnly": "Yalnızca faktör kütüphanesinin hesaplayabildiği coğrafyalar sunulur.",
+    "save": "Grup bilgilerini kaydet"
+  },
+  "consolidation": {
+    "title": "Konsolidasyon yaklaşımı",
+    "hint": "Tüm grup için tek bir yaklaşım. Kontrol edilen bir şirket her iki yaklaşımda da %100 sayılır; öz kaynak şirketi Kapsam 1 ve 2 dışında tutulur.",
+    "approaches": {
+      "operational_control": "Operasyonel kontrol",
+      "financial_control": "Finansal kontrol",
+      "equity_share": "Öz kaynak payı"
+    },
+    "comingSoon": "Yakında",
+    "readOnly": "Bir Masterkey tarafından belirlenir.",
+    "saved": "Konsolidasyon yaklaşımı kaydedildi.",
+    "loadFailed": "Konsolidasyon yaklaşımı yüklenemedi."
+  },
+  "exclusions": {
+    "title": "Sınır dışında bırakılanlar",
+    "none": "Hiçbir şirket hariç tutulmuyor.",
+    "item": "{name} — öz kaynak şirketi olarak Kapsam 1 ve 2 dışında",
+    "itemShare": "{name} (%{share}) — öz kaynak şirketi olarak Kapsam 1 ve 2 dışında",
+    "loadFailed": "Sınır dışında bırakılanlar yüklenemedi."
   }
 }

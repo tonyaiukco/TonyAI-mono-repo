@@ -107,6 +107,34 @@ const SUBSIDIARIES = [
   { id: '22222222-2222-2222-2222-222222220005', designatedPerson: 'Sophie Hall', contactEmail: 'sophie.hall@example.com', contactPhone: '+44 7700 900005', legalName: 'TonyAI Trading Ltd.', tradingName: 'TonyAI Trading', location: 'Manchester, UK', geographyCode: 'UK', sector: 'Wholesale Trade', businessArea: 'Commodity Trading', status: SubsidiaryStatus.inactive },
 ];
 
+// The group tree (inc26-group-tree): the organisation's root, and three nodes
+// that show the tree's rules — a sector group (a label: no record, no grant,
+// no facility), a child company created as by a super_admin (granted to
+// approver@ below), and an associate (outside Scope 1 and 2). Fixed ids keep
+// the seed idempotent; demo names and values.
+const SEED_ROOT_ID = '22222222-2222-2222-2222-222222220000';
+const SEED_TREE_NODES = {
+  sectorGroup: {
+    id: '22222222-2222-2222-2222-222222220006',
+    legalName: 'TonyAI Energy & Utilities Group',
+    nodeType: 'sector_group',
+    geographyCode: 'TR',
+  },
+  // Under TonyAI Energy, which approver@ is granted.
+  childCompany: {
+    id: '22222222-2222-2222-2222-222222220007',
+    legalName: 'TonyAI Energy Services A.Ş.',
+    nodeType: 'child_company',
+    geographyCode: 'TR',
+  },
+  associate: {
+    id: '22222222-2222-2222-2222-222222220008',
+    legalName: 'Bosphorus Associates A.Ş.',
+    nodeType: 'company',
+    geographyCode: 'TR',
+  },
+} as const;
+
 // Operational locations (FR §1.1 third tier). Fixed ids keep the seed
 // idempotent; names/addresses are demo values.
 // geographyCode defaults to the parent subsidiary's (a location determines the
@@ -585,6 +613,34 @@ async function main() {
     },
   });
 
+  // The organisation's root (inc26-group-tree): the holding it already has — on
+  // a database migrated from before the tree, the one the carry-over created —
+  // or, on a fresh one, a root created first, so the five companies are not
+  // left for the first of them to become the root by the trigger's default.
+  const existingRoot = await prisma.subsidiary.findFirst({
+    where: { organisationId: ORG_ID, nodeType: 'holding' },
+    select: { id: true },
+  });
+  const rootId =
+    existingRoot?.id ??
+    (
+      await prisma.subsidiary.create({
+        data: {
+          id: SEED_ROOT_ID,
+          organisationId: ORG_ID,
+          legalName: 'TonyAI Holding A.Ş.',
+          tradingName: 'TonyAI Holding',
+          geographyCode: 'TR',
+          sector: 'Diversified Holding',
+          reportingStatus: SubsidiaryStatus.pending,
+          includedScopes: [1, 2],
+          nodeType: 'holding',
+          parentId: null,
+        },
+        select: { id: true },
+      })
+    ).id;
+
   for (const s of SUBSIDIARIES) {
     await prisma.subsidiary.upsert({
       where: { id: s.id },
@@ -625,9 +681,41 @@ async function main() {
         contactPhone: s.contactPhone,
         reportingStatus: s.status,
         includedScopes: [1, 2],
+        parentId: rootId,
+        nodeType: 'company',
       },
     });
   }
+
+  // The tree's three demonstration nodes, create-only like the companies.
+  const { sectorGroup, childCompany, associate } = SEED_TREE_NODES;
+  await prisma.subsidiary.upsert({
+    where: { id: sectorGroup.id },
+    update: {},
+    create: { ...sectorGroup, organisationId: ORG_ID, parentId: rootId, createdByRole: UserRole.masterkey },
+  });
+  await prisma.subsidiary.upsert({
+    where: { id: childCompany.id },
+    update: {},
+    create: {
+      ...childCompany,
+      organisationId: ORG_ID,
+      parentId: SUBSIDIARIES[0].id,
+      createdByRole: UserRole.super_admin,
+    },
+  });
+  await prisma.subsidiary.upsert({
+    where: { id: associate.id },
+    update: {},
+    create: {
+      ...associate,
+      organisationId: ORG_ID,
+      parentId: rootId,
+      control: 'associate',
+      sharePercent: 20,
+      createdByRole: UserRole.masterkey,
+    },
+  });
 
   console.log('Seeding operational locations...');
   for (const l of LOCATIONS) {
@@ -757,6 +845,12 @@ async function main() {
       create: { userId: approverId, subsidiaryId, organisationId: ORG_ID },
     });
   }
+  // The child company approver@ "created" (inc26-group-tree): its creator holds it.
+  await prisma.userSubsidiaryAccess.upsert({
+    where: { userId_subsidiaryId: { userId: approverId, subsidiaryId: SEED_TREE_NODES.childCompany.id } },
+    update: { categories: [] },
+    create: { userId: approverId, subsidiaryId: SEED_TREE_NODES.childCompany.id, organisationId: ORG_ID },
+  });
   // A re-run against a database where the super_admin held Trading drops it.
   await prisma.userSubsidiaryAccess.deleteMany({ where: { userId: approverId, subsidiaryId: FALLBACK_SUBSIDIARY_ID } });
 

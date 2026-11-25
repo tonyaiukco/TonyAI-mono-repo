@@ -95,12 +95,13 @@ describe('versionDTO', () => {
     }
   });
 
-  it.each(GRANTED)('%s granted none of the declared subsidiaries reads it as missing — byte for byte', (role) => {
+  it.each(GRANTED)('%s granted none of the declared subsidiaries reads a FROZEN version as missing — byte for byte', (role) => {
     const missing = new ResourceNotFoundError('boundary_not_found').getResponse();
+    const frozen = { header: { ...HEADER, decision: 'confirmed' as const, frozenAt: new Date('2026-10-16T08:00:00.000Z') }, rows: rows() };
     for (const granted of [[], ['sub-elsewhere']]) {
       let thrown: unknown;
       try {
-        versionDTO(loaded(), viewer(role, granted));
+        versionDTO(frozen, viewer(role, granted));
       } catch (e) {
         thrown = e;
       }
@@ -110,9 +111,26 @@ describe('versionDTO', () => {
     }
   });
 
-  it('a version declaring no subsidiary is no granted reader’s — and an organisation-wide reader’s, empty', () => {
+  it('a standard user reads an OPEN version declaring none of its companies as missing too', () => {
+    expect(() => versionDTO(loaded(), viewer('standard_user', ['sub-elsewhere']))).toThrow(ResourceNotFoundError);
+  });
+
+  it('a super_admin reads the open version declaring none of its companies — the granted view, nothing of another company (inc26-group-tree, D7)', () => {
+    const dto = versionDTO(loaded(), viewer('super_admin', ['sub-elsewhere']));
+    expect(dto.view).toBe('granted_subsidiaries');
+    expect(dto.boundary.subsidiaryIds).toEqual([]);
+    expect(dto.boundary.entities).toEqual([]);
+    expect(dto.boundary.attribution).toEqual([]);
+    expect(dto.boundary.applicability).toEqual([]);
+    expect(dto.boundary.sources).toEqual([]);
+    expect(dto.boundaryGaps).toEqual([]);
+    expect(JSON.stringify(dto)).not.toContain(SUB);
+  });
+
+  it('a version declaring no subsidiary is no standard user’s; the open one is a super_admin’s, empty — and an organisation-wide reader’s, empty', () => {
     const empty: BoundaryRows = { ...rows(), subsidiaries: [], sites: [], policies: [], cells: [], sources: [] };
-    for (const role of GRANTED) expect(() => versionDTO(loaded(empty), viewer(role, [SUB]))).toThrow(ResourceNotFoundError);
+    expect(() => versionDTO(loaded(empty), viewer('standard_user', [SUB]))).toThrow(ResourceNotFoundError);
+    expect(versionDTO(loaded(empty), viewer('super_admin', [SUB])).boundary.subsidiaryIds).toEqual([]);
     const dto = versionDTO(loaded(empty), viewer('auditor'));
     expect(dto.boundary.subsidiaryIds).toEqual([]);
     expect(dto.boundaryGaps).toEqual([]);

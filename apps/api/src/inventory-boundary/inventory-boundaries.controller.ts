@@ -7,7 +7,7 @@ import type {
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
-import { BoundaryWriterGuard, DeclarationSizeGuard } from './boundary-writer.guard';
+import { BoundaryWriterGuard, DeclarationSizeGuard, DeclarationWriterGuard } from './boundary-writer.guard';
 import {
   CreateInventoryBoundaryDto,
   ListInventoryBoundariesQueryDto,
@@ -38,8 +38,11 @@ export class InventoryBoundariesController {
     return this.service.create(user, dto);
   }
 
+  // A company's declaration: a masterkey, or a super_admin for its own
+  // companies (inc26-group-tree, D7). Opening, confirming and deleting a
+  // version stay the masterkey's.
   @Put(':id/subsidiaries/:subsidiaryId')
-  @UseGuards(BoundaryWriterGuard, DeclarationSizeGuard)
+  @UseGuards(DeclarationWriterGuard, DeclarationSizeGuard)
   putSubsidiary(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseUuidParamPipe) id: string,
@@ -52,7 +55,7 @@ export class InventoryBoundariesController {
   }
 
   @Delete(':id/subsidiaries/:subsidiaryId')
-  @UseGuards(BoundaryWriterGuard)
+  @UseGuards(DeclarationWriterGuard)
   deleteSubsidiary(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseUuidParamPipe) id: string,

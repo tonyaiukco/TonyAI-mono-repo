@@ -1,4 +1,5 @@
 import type { CursorPageParams } from './bounded-access';
+import type { ControlKind, LocationType, NodeType } from './group-tree';
 
 export type DataStatus = 'complete' | 'incomplete' | 'missing';
 
@@ -634,14 +635,23 @@ export const ROLE_CAPABILITIES = Object.freeze({
   'record.delete_any_draft': ['masterkey'],
   /** Copy a voided record someone else created into a new draft. */
   'record.copy_any_voided': ['masterkey'],
+  /** Create any node, change, move or delete a company, set its control. */
   'company.write': ['masterkey'],
+  /** Create a `child_company` under a granted `company` or `child_company`;
+   *  the creator is granted it in the same step (inc26-group-tree, §6, R6). */
+  'company.create_child': ['masterkey', 'super_admin'],
+  /** The organisation's consolidation approach (§3). */
+  'consolidation.write': ['masterkey'],
   /** Facilities — a super_admin in granted companies only (by scope). */
   'location.write': ['masterkey', 'super_admin'],
   'period_lock.write': ['masterkey'],
   'target.write': ['masterkey'],
   'intensity.write': ['masterkey'],
-  /** A super_admin's own company from `inc26-group-tree` (ruling R6). */
+  /** Open, confirm and delete an inventory-boundary version (RD5). */
   'boundary.write': ['masterkey'],
+  /** Write and withdraw a company's declaration inside the open version, a
+   *  super_admin for granted companies only (by scope; ruling R6, D7). */
+  'boundary.write_granted': ['masterkey', 'super_admin'],
   'dataset.capture': ['masterkey'],
   'report.issue': ['masterkey'],
   'report.issue_final': ['masterkey'],
@@ -1868,6 +1878,23 @@ export interface SubsidiaryDTO {
   includedScopes: number[];
   /** How this subsidiary's completeness is measured (WP17). */
   trackingGranularity: TrackingGranularity;
+  /**
+   * The node's parent in the group tree (inc26-group-tree), answered ONLY when
+   * the parent is in the caller's accessible set and `null` otherwise — a
+   * reader granted a child but not its parent learns nothing of the parent,
+   * not even its id (design D4). Stored `null` only for the root.
+   */
+  parentId: string | null;
+  /** Fixed at creation. */
+  nodeType: NodeType;
+  /** `associate` only on a `company` or `child_company`, set by a masterkey. */
+  control: ControlKind;
+  /** 0–100, optional, and enters no figure, total, roll-up or rule (§2 inert). */
+  sharePercent: number | null;
+  naceCode: string | null;
+  /** The role that created the node through the product; null for a node
+   *  carried over from before the tree, or written by an earlier version. */
+  createdByRole: UserRole | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1907,6 +1934,22 @@ export interface CreateSubsidiaryInput {
    */
   trackingGranularity?: TrackingGranularity;
   /**
+   * The parent node (inc26-group-tree). Omitted: the node is stored as a
+   * `company` under the organisation's root, or as the root (a `holding`)
+   * when the organisation has none (RD14). A parent the caller cannot read
+   * answers `subsidiary_not_found`.
+   */
+  parentId?: string | null;
+  /** Defaults to `company` (or `holding` for an organisation's first node).
+   *  On PATCH it is accepted only unchanged: a different type answers
+   *  `node_type_fixed`. */
+  nodeType?: NodeType;
+  /** Defaults to `controlled`; only a masterkey sends `associate`, and only on
+   *  a `company` or `child_company`. */
+  control?: ControlKind;
+  sharePercent?: number | null;
+  naceCode?: string | null;
+  /**
    * Operational locations to create with the subsidiary, in one transaction.
    *
    * Note the neighbour: `location` (singular, above) is a free-text address
@@ -1940,8 +1983,15 @@ export const SUBSIDIARY_BLOCKER_KINDS = [
   'targets',
   'denominators',
   'openBoundaryVersions',
+  /** inc26-group-tree (RD9): a child node, and any facility, now block. */
+  'children',
+  'locations',
 ] as const;
 export type SubsidiaryBlockerKind = (typeof SUBSIDIARY_BLOCKER_KINDS)[number];
+
+/** What blocks ticking associate on a company (`control_change_blocked`, RD3). */
+export const CONTROL_CHANGE_BLOCKER_KINDS = ['records', 'assignments', 'children', 'boundaryDeclarations'] as const;
+export type ControlChangeBlockerKind = (typeof CONTROL_CHANGE_BLOCKER_KINDS)[number];
 
 export interface SubsidiaryBlockerCount {
   kind: SubsidiaryBlockerKind;
@@ -1971,9 +2021,11 @@ export interface SubsidiaryBlockerCount {
  */
 export interface SubsidiarySummaryDTO {
   subsidiaryId: string;
-  /** Informational, not a blocker: deleting the subsidiary now removes its own
-   *  record-free locations, with an audit row each. */
+  /** A blocker since inc26-group-tree (RD9): a company with a facility is not
+   *  deleted, and a delete no longer removes its facilities. */
   locations: number;
+  /** Child nodes in the group tree; a blocker. */
+  children: number;
   /** `approved`, `locked` or `voided` — these can never be deleted, at any
    *  point. A voided record is included because it is the only trace that a
    *  figure was withdrawn, and a subsidiary delete would cascade it away. */
@@ -2033,6 +2085,9 @@ export interface LocationDTO {
   geographyCode: string;
   address: string | null;
   authorizedPerson: string | null;
+  /** Optional facility type (inc26-group-tree, RD12); null for a facility
+   *  stored without one, which stays valid. */
+  locationType: LocationType | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2061,6 +2116,7 @@ export interface CreateSubsidiaryLocationInput {
   geographyCode: string;
   address?: string | null;
   authorizedPerson?: string | null;
+  locationType?: LocationType | null;
 }
 
 export type CreateLocationInput = CreateSubsidiaryLocationInput & {
@@ -3185,6 +3241,29 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
    * No partial result. Body depends only on this code: fixed message, no params
    * or extra fields (including counts, ids or limits). */
   query_too_broad: 422,
+  /** inc26-group-tree: a type the parent does not admit, a second `holding`,
+   *  a parent that is an associate, or `associate` on a type that is always
+   *  controlled. No params. */
+  node_placement_invalid: 400,
+  /** A node's type is fixed at creation. */
+  node_type_fixed: 400,
+  /** A move under the node itself or its own subtree. */
+  tree_cycle: 409,
+  /** A move while the node's subtree (facilities included) holds a record. */
+  node_move_blocked: 409,
+  /** Ticking associate on a company in use. Its English `message` names each
+   *  kind of blocker (records, user assignments, child nodes, boundary
+   *  declarations), as `subsidiary_in_use` does. No params. */
+  control_change_blocked: 409,
+  /** A record for an associate or a sector group (design D6). */
+  entity_closed_to_data_entry: 409,
+  /** A grant naming an associate or a sector group. */
+  subsidiary_not_assignable: 409,
+  /** A boundary declaration for an associate or a sector group. */
+  boundary_subsidiary_not_reportable: 409,
+  /** params: `geography` — a `GEOGRAPHY_CODES` entry the environment's factor
+   *  library prices no set for (the DTO admits only those codes). */
+  geography_without_factors: 422,
 } as const);
 export type DomainErrorCode = keyof typeof DOMAIN_ERROR_STATUS;
 
@@ -3245,6 +3324,7 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     /** `approver` (`RecordApprover`): a SENTENCE SELECTOR. */
     not_record_approver: Object.freeze(['approver']),
     category_not_granted: Object.freeze(['category']),
+    geography_without_factors: Object.freeze(['geography']),
   });
 
 /** What a `variance_reason_required` refusal rests on: a flag on history
@@ -7220,6 +7300,10 @@ export const BULK_UPLOAD_ERROR_CODES = [
   /** A standard user's grant for the row's company does not tick its
    *  category (INC-2.6 §1, §7.3) — the same name as the record API's code. */
   'category_not_granted',
+  /** The row names an associate or a sector group, closed to data entry
+   *  (inc26-group-tree) — the same name and words as the record API's code.
+   *  WP9 turns an associate's rows into "excluded" ones; until then, an error. */
+  'entity_closed_to_data_entry',
   /** Anything the server did not anticipate; the row is refused, not applied. */
   'unexpected',
   /** The request's deadline passed before this row began. Nothing was applied
@@ -7764,3 +7848,5 @@ export * from './inventory-boundary';
 export * from './report-consistency';
 
 export * from './record-references';
+
+export * from './group-tree';

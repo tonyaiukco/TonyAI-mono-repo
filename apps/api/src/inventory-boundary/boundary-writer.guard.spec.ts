@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, type ExecutionContext } from '
 import { describe, expect, it } from 'vitest';
 import { errorCodeOf } from '../common/api-error';
 import { makeAuditor, makeMasterkey, makeStandardUser, makeSuperAdmin } from '../../test/helpers';
-import { BoundaryWriterGuard, DeclarationSizeGuard } from './boundary-writer.guard';
+import { BoundaryWriterGuard, DeclarationSizeGuard, DeclarationWriterGuard } from './boundary-writer.guard';
 import { INVENTORY_DECLARATION_LIMITS } from './dto/inventory-boundary.dto';
 
 /**
@@ -40,6 +40,24 @@ describe('BoundaryWriterGuard', () => {
 
   it("lets a masterkey of an organisation through", () => {
     expect(new BoundaryWriterGuard().canActivate(context({ user: makeMasterkey() }))).toBe(true);
+  });
+});
+
+describe('DeclarationWriterGuard (inc26-group-tree, D7)', () => {
+  it.each([
+    ['an auditor', makeAuditor()],
+    ['a standard_user', makeStandardUser()],
+    ['a retired role name', makeMasterkey({ role: 'consultant' as never })],
+    ['a super_admin with no organisation', makeSuperAdmin({ organisationId: null })],
+    ['no one', undefined],
+  ])('refuses %s with forbidden — whatever the body', (_who, user) => {
+    expect(() => new DeclarationWriterGuard().canActivate(context({ user, body: { sources: Array(100_000).fill({}) } })))
+      .toThrow(ForbiddenException);
+  });
+
+  it('lets a masterkey and a super_admin through — the service checks the company against the scope', () => {
+    expect(new DeclarationWriterGuard().canActivate(context({ user: makeMasterkey() }))).toBe(true);
+    expect(new DeclarationWriterGuard().canActivate(context({ user: makeSuperAdmin() }))).toBe(true);
   });
 });
 

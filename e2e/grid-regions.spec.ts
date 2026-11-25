@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, bearer, getAccessToken, ADMIN_EMAIL, API_BASE, SUB } from './helpers';
+import { login, bearer, getAccessToken, ADMIN_EMAIL, API_BASE, SUB, deleteCompanyWithFacilities } from './helpers';
 
 /**
  * WP15 slice (a) — round-1 DE-6 + DE-7.
@@ -86,7 +86,7 @@ test('a subsidiary on a hidden geography opens on it, and a mis-click is reversi
   // No API re-read here: nothing has been written, so comparing the fixture to
   // itself would look like an assertion and prove nothing. What this test is
   // for is the PICKER — that a hidden code stays reachable once you leave it.
-  await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+  await deleteCompanyWithFacilities(request, token, sub.id);
 });
 
 test('the locations drawer keeps a hidden geography reachable too', async ({ page, request }) => {

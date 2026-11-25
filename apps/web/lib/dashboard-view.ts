@@ -6,7 +6,7 @@
 // still mapped here is what `EmissionsCharts` (matrixToSubsidiaries),
 // `KPICards` (buildKpiData) and `AlertsPanel` (matrixToAlerts) consume.
 // Retiring the remaining three view models is a separate change.
-import { CATEGORIES } from "@/lib/types";
+import { CATEGORIES, holdsRecords } from "@/lib/types";
 import type {
   Alert,
   Category,
@@ -16,6 +16,8 @@ import type {
   Subsidiary,
   TrackingMatrixDTO,
   TrackingMatrixRow,
+  ControlKind,
+  NodeType,
 } from "@/lib/types";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
 import { formatNumber } from "@/lib/i18n/number";
@@ -224,3 +226,13 @@ export function emptyInvoiceGridKey(trackingGranularity: string): "grid.wholeCom
   return trackingGranularity === "subsidiary" ? "grid.wholeCompany" : "grid.noVisibleCategory";
 }
 
+
+/**
+ * The dashboard's companies (inc26-group-tree): the reporting set — the nodes
+ * that can hold records. A sector group (a label) and an associate (outside
+ * Scope 1 and 2) have no row in the register and no place in the selector,
+ * as the API's matrix, chart and counts give them none.
+ */
+export function reportingCompanies<S extends { nodeType: NodeType; control: ControlKind }>(list: readonly S[]): S[] {
+  return list.filter((s) => holdsRecords(s));
+}

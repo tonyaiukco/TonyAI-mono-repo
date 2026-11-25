@@ -1,5 +1,5 @@
 import { test, expect, request as playwrightRequest, type APIRequestContext, type Page } from '@playwright/test';
-import type { SubsidiaryDTO, UserSummaryDTO } from '@tonyai/shared-types';
+import { holdsRecords, type SubsidiaryDTO, type UserSummaryDTO } from '@tonyai/shared-types';
 import enCategories from '../apps/web/messages/en/categories.json';
 import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enRecordTrail from '../apps/web/messages/en/recordTrail.json';
@@ -129,7 +129,8 @@ test('BUG-14: a masterkey invites a super admin for two companies through the us
   await dialog.getByRole('checkbox', { name: name(SUB.gas) }).click();
   await dialog.getByRole('checkbox', { name: name(SUB.mfg) }).click();
   await expect(dialog.getByTestId('subsidiary-picker-count')).toHaveText(
-    enUsers.picker.selectedCount.replace('{count}', '2').replace('{total}', String(subs.length)),
+    // The picker lists the companies that can hold a grant: no sector group, no associate (inc26-group-tree).
+    enUsers.picker.selectedCount.replace('{count}', '2').replace('{total}', String(subs.filter((s) => holdsRecords(s)).length)),
   );
   await dialog.getByRole('button', { name: enUsers.inviteDialog.submit }).click();
   // Delivered or not (a local stack may hold no mail transport), the account exists.

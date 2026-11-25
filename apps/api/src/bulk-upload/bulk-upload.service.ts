@@ -45,6 +45,7 @@ import {
   ActivityTypeSlotConflictError,
   DuplicateActivityRecordError,
   PeriodLockedError,
+  EntityClosedToDataEntryError,
   SLOT_HOLDS_TYPED_MESSAGE,
   SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
@@ -59,6 +60,7 @@ import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
+import { HOLDS_RECORDS_WHERE } from '../subsidiaries/reporting-set';
 import { StorageService } from '../storage/storage.service';
 import { StorageIntentsService, type ObjectRef } from '../storage/storage-intents.service';
 import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
@@ -363,8 +365,11 @@ export class BulkUploadService {
    */
   async template(user: RequestUser): Promise<Buffer> {
     const [subsidiaries, locations] = await Promise.all([
+      // Only nodes that hold records (inc26-group-tree): never a sector group
+      // or an associate, nor an associate's facilities — `holdsRecords` as a
+      // query.
       this.prisma.subsidiary.findMany({
-        where: { id: { in: user.accessibleSubsidiaryIds } },
+        where: { id: { in: user.accessibleSubsidiaryIds }, ...HOLDS_RECORDS_WHERE },
         select: {
           id: true,
           legalName: true,
@@ -375,7 +380,7 @@ export class BulkUploadService {
         take: TEMPLATE_ENTITY_LIMIT,
       }),
       this.prisma.location.findMany({
-        where: { subsidiaryId: { in: user.accessibleSubsidiaryIds } },
+        where: { subsidiaryId: { in: user.accessibleSubsidiaryIds }, subsidiary: HOLDS_RECORDS_WHERE },
         select: {
           id: true,
           subsidiaryId: true,
@@ -1416,6 +1421,10 @@ export class BulkUploadService {
     }
     if (error instanceof PeriodLockedError) {
       return { row, column: null, code: 'period_locked', message: error.message };
+    }
+    // The single-record refusal's own words (inc26-group-tree, D6).
+    if (error instanceof EntityClosedToDataEntryError) {
+      return { row, column: null, code: 'entity_closed_to_data_entry', message: error.message };
     }
     // Before the generic 403s: a standard user's row outside its categories
     // is that user's own answer, in the dry run and the apply alike.

@@ -3,7 +3,7 @@
 import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } from "@/lib/i18n/message-keys";
 import { conversionNote, grossToNetRatioOf } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
-import { categoryGate, categoryGateMessage, fallbackCategory } from "@/lib/entry-categories-view";
+import { categoryGate, categoryGateMessage, entryCompanies, fallbackCategory } from "@/lib/entry-categories-view";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -968,7 +968,9 @@ function DataEntryPageInner() {
           api.listSubsidiaries(),
           api.listLocations(),
         ]);
-        setSubsidiaries(list);
+        // Only the nodes that hold records (inc26-group-tree): no associate,
+        // no sector group.
+        setSubsidiaries(entryCompanies(list));
         setLocations(locs);
 
         // Deep link (tracking matrix → here). Validated against what this user

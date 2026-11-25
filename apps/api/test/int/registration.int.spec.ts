@@ -170,6 +170,10 @@ describe('a new address — the organisation, its default subsidiary, its first 
       reportingStatus: 'pending',
       includedScopes: [1, 2],
       trackingGranularity: 'subsidiary',
+      // The root of the new organisation's tree (inc26-group-tree).
+      nodeType: 'holding',
+      control: 'controlled',
+      parentId: null,
       locations: [],
       access: [],
       inventoryBoundaries: [],

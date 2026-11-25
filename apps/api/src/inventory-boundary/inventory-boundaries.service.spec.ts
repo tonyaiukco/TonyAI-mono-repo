@@ -43,6 +43,15 @@ function mockDb() {
   };
   tx.inventoryBoundary.findUniqueOrThrow.mockResolvedValue(header());
   tx.inventoryBoundary.findFirst.mockResolvedValue(header());
+  // A header lock reads back the header; a company read FOR SHARE
+  // (`lockCompanies`, inc26-group-tree) answers through `subsidiary.findFirst`,
+  // this spec's knob for "the company as stored" (organisation org-1, a
+  // controlled company unless the case says otherwise).
+  tx.$queryRaw.mockImplementation(async (sql: TemplateStringsArray) => {
+    if (!sql.join('?').includes('FROM subsidiaries')) return [{ id: ID }];
+    const row = (await tx.subsidiary.findFirst()) as Record<string, unknown> | null | undefined;
+    return row ? [{ organisationId: 'org-1', nodeType: 'company', control: 'controlled', ...row }] : [];
+  });
   const prisma = {
     ...tx,
     // The root client's own: a write made outside the transaction shows here.
@@ -84,7 +93,6 @@ describe('InventoryBoundariesService', () => {
 
   describe('who writes (E2)', () => {
     it.each([
-      ['a scoped super_admin (boundary.write is the masterkey\'s)', makeSuperAdmin()],
       ['an auditor', makeAuditor()],
       ['a standard_user', makeStandardUser()],
       ['a masterkey with no organisation', makeMasterkey({ organisationId: null })],
@@ -96,6 +104,52 @@ describe('InventoryBoundariesService', () => {
       expect(db.prisma.auditLog.create).not.toHaveBeenCalled();
       expect(db.prisma.$transaction).not.toHaveBeenCalled();
       expect(db.tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    describe("a super_admin's own companies (inc26-group-tree, D7, ruling R6)", () => {
+      const superAdmin = () => makeSuperAdmin({ accessibleSubsidiaryIds: [SUB_ID] });
+
+      it('is refused the version lifecycle — open, confirm, delete — before anything is read', async () => {
+        for (const write of [
+          () => service.create(superAdmin(), { reportingYear: 2026 }),
+          () => service.confirm(superAdmin(), ID),
+          () => service.remove(superAdmin(), ID),
+        ]) {
+          await expect(write()).rejects.toBeInstanceOf(ForbiddenException);
+        }
+        expect(db.prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it("answers another company's declaration as an unknown company, before anything is read", async () => {
+        const other = makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+        for (const write of [() => service.putSubsidiary(other, ID, SUB_ID, BODY), () => service.deleteSubsidiary(other, ID, SUB_ID)]) {
+          await expect(write()).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+        }
+        expect(db.prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('writes its granted company\'s declaration in the open version, audited as a masterkey\'s', async () => {
+        db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID, nodeType: 'company', control: 'controlled' });
+        db.tx.inventoryBoundarySubsidiary.findUnique.mockResolvedValue(null);
+        await service.putSubsidiary(superAdmin(), ID, SUB_ID, BODY).catch(() => undefined);
+        expect(db.tx.inventoryBoundarySubsidiary.create).toHaveBeenCalled();
+        expect(db.tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+          data: expect.objectContaining({ entity: 'inventory_boundary', action: 'update', role: 'super_admin' }),
+        }));
+      });
+    });
+
+    it.each([
+      ['an associate', { nodeType: 'company', control: 'associate' }],
+      ['a sector group', { nodeType: 'sector_group', control: 'controlled' }],
+    ])('refuses a declaration for %s as not reportable, the version unchanged (D6)', async (_what, node) => {
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID, ...node });
+      await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toMatchObject({
+        response: { code: 'boundary_subsidiary_not_reportable', statusCode: 409 },
+      });
+      expect(db.tx.inventoryBoundarySubsidiary.deleteMany).not.toHaveBeenCalled();
+      expect(db.tx.inventoryBoundarySubsidiary.create).not.toHaveBeenCalled();
+      expect(db.tx.auditLog.create).not.toHaveBeenCalled();
     });
 
     it('writes in READ COMMITTED — the only isolation the guard admits a row write or a freeze in (TA014)', async () => {
@@ -149,6 +203,71 @@ describe('InventoryBoundariesService', () => {
       }]);
       await expect(service.confirm(admin, ID)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_incomplete');
       expect(db.tx.inventoryBoundary.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('closed nodes and frozen versions under the group tree (inc26-group-tree, WP7 reviews)', () => {
+    it("another organisation's company, read FOR SHARE, answers as unknown", async () => {
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID, organisationId: 'org-2' });
+      await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toSatisfy((e) => errorCodeOf(e) === 'subsidiary_not_found');
+      expect(db.tx.inventoryBoundarySubsidiary.create).not.toHaveBeenCalled();
+    });
+
+    it('a confirm with an associate still declared: boundary_subsidiary_not_reportable, nothing frozen', async () => {
+      db.tx.inventoryBoundarySubsidiary.findMany.mockResolvedValue([{
+        boundaryId: ID, organisationId: 'org-1', subsidiaryId: SUB_ID, firstMonth: 1, lastMonth: 12, subsidiaryName: null, geographyCode: null,
+        subsidiary: { legalName: 'Alpha Ltd', tradingName: null, geographyCode: 'GB' },
+      }]);
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID, control: 'associate' });
+      await expect(service.confirm(admin, ID)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_subsidiary_not_reportable');
+      expect(db.tx.inventoryBoundary.update).not.toHaveBeenCalled();
+      expect(db.tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('a copy leaves a company now closed out of every row, and its audit row names it', async () => {
+      const CLOSED = '5b000000-0000-4000-8000-000000000002';
+      const sub = (subsidiaryId: string) => ({ boundaryId: 'src', organisationId: 'org-1', subsidiaryId, firstMonth: 1, lastMonth: 12, subsidiaryName: 'n', geographyCode: 'TR' });
+      db.tx.inventoryBoundarySubsidiary.findMany.mockResolvedValue([sub(SUB_ID), sub(CLOSED)]);
+      db.tx.inventoryBoundarySite.findMany.mockResolvedValue([
+        { boundaryId: 'src', subsidiaryId: SUB_ID, locationId: 'l1', firstMonth: 1, lastMonth: 12, locationName: 'a', geographyCode: 'TR' },
+        { boundaryId: 'src', subsidiaryId: CLOSED, locationId: 'l2', firstMonth: 1, lastMonth: 12, locationName: 'b', geographyCode: 'TR' },
+      ]);
+      db.tx.$queryRaw.mockImplementation(async (sql: TemplateStringsArray) =>
+        sql.join('?').includes('FROM subsidiaries')
+          ? [
+              { id: SUB_ID, organisationId: 'org-1', nodeType: 'company', control: 'controlled' },
+              { id: CLOSED, organisationId: 'org-1', nodeType: 'company', control: 'associate' },
+            ]
+          : [{ id: ID }]);
+      db.tx.inventoryBoundary.findFirst.mockResolvedValue(null);
+      db.tx.inventoryBoundary.create.mockResolvedValue(header({ id: 'new' }));
+      await service.create(admin, { reportingYear: 2026, copyOf: ID }).catch(() => undefined);
+      const inserted = [
+        ...db.tx.inventoryBoundarySubsidiary.createMany.mock.calls,
+        ...db.tx.inventoryBoundarySubsidiary.create.mock.calls,
+        ...db.tx.inventoryBoundarySite.createMany.mock.calls,
+        ...db.tx.inventoryBoundarySite.create.mock.calls,
+      ];
+      expect(inserted.length).toBeGreaterThan(0);
+      expect(JSON.stringify(inserted)).toContain(SUB_ID);
+      expect(JSON.stringify(inserted)).not.toContain(CLOSED);
+      expect(db.tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ entity: 'inventory_boundary', action: 'create', diff: expect.objectContaining({ leftOutClosedSubsidiaries: [CLOSED] }) }),
+      }));
+    });
+
+    it("a frozen version declaring none of a super_admin's companies answers as unknown; one declaring them, as frozen", async () => {
+      db.tx.inventoryBoundary.findUniqueOrThrow.mockResolvedValue(header({ frozenAt: new Date() }));
+      const own = makeSuperAdmin({ accessibleSubsidiaryIds: [SUB_ID] });
+      db.tx.inventoryBoundarySubsidiary.count.mockResolvedValue(0);
+      for (const write of [() => service.putSubsidiary(own, ID, SUB_ID, BODY), () => service.deleteSubsidiary(own, ID, SUB_ID)]) {
+        await expect(write()).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_not_found');
+      }
+      expect(db.tx.inventoryBoundarySubsidiary.count).toHaveBeenCalledWith({
+        where: { boundaryId: ID, subsidiaryId: { in: [SUB_ID] } },
+      });
+      db.tx.inventoryBoundarySubsidiary.count.mockResolvedValue(1);
+      await expect(service.putSubsidiary(own, ID, SUB_ID, BODY)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_frozen');
     });
   });
 
@@ -244,7 +363,9 @@ describe('InventoryBoundariesService', () => {
       const site = '1c000000-0000-4000-8000-000000000001';
       await expect(service.putSubsidiary(admin, ID, SUB_ID, { ...BODY, sites: [{ locationId: site, firstMonth: 1, lastMonth: 12 }] }))
         .rejects.toSatisfy((e) => errorCodeOf(e) === 'location_not_found');
-      expect(db.tx.subsidiary.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: SUB_ID, organisationId: 'org-1' } }));
+      const read = db.tx.$queryRaw.mock.calls[1] as unknown[];
+      expect((read[0] as TemplateStringsArray).join('?')).toMatch(/FROM subsidiaries WHERE id = ANY\(\?::uuid\[\]\) ORDER BY id FOR SHARE\s*$/);
+      expect(read.slice(1)).toEqual([[SUB_ID]]);
       expect(db.tx.location.count).toHaveBeenCalledWith({ where: { id: { in: [site] }, subsidiaryId: SUB_ID } });
       expect((db.tx.$queryRaw.mock.calls[0] as unknown[]).slice(1)).toEqual([ID, 'org-1']);
     });
@@ -271,17 +392,27 @@ describe('InventoryBoundariesService', () => {
   });
 
   describe('reads', () => {
-    it.each([
-      ['a standard_user', makeStandardUser()],
-      ['a scoped super_admin (a granted reader, like a standard user)', makeSuperAdmin()],
-    ])("lists %s's versions declaring a granted subsidiary only", async (_who, user) => {
+    it("lists a standard_user's versions declaring a granted subsidiary only", async () => {
       db.prisma.inventoryBoundary.findMany.mockResolvedValue([header()]);
-      await service.list(user, { reportingYear: 2026 });
+      await service.list(makeStandardUser(), { reportingYear: 2026 });
       expect(db.prisma.inventoryBoundary.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: {
           organisationId: 'org-1',
           reportingYear: 2026,
-          subsidiaries: { some: { subsidiaryId: { in: ['sub-1', 'sub-2'] } } },
+          OR: [{ subsidiaries: { some: { subsidiaryId: { in: ['sub-1', 'sub-2'] } } } }],
+        },
+        orderBy: { version: 'desc' },
+      }));
+    });
+
+    it("lists a scoped super_admin's versions declaring a granted subsidiary, and the year's open version it declares in (D7)", async () => {
+      db.prisma.inventoryBoundary.findMany.mockResolvedValue([header()]);
+      await service.list(makeSuperAdmin(), { reportingYear: 2026 });
+      expect(db.prisma.inventoryBoundary.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          organisationId: 'org-1',
+          reportingYear: 2026,
+          OR: [{ subsidiaries: { some: { subsidiaryId: { in: ['sub-1', 'sub-2'] } } } }, { frozenAt: null }],
         },
         orderBy: { version: 'desc' },
       }));

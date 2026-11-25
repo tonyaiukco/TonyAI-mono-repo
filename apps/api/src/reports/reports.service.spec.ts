@@ -161,10 +161,15 @@ function createTxMock() {
       findUnique: vi.fn().mockResolvedValue({ legalName: 'TonyAI Holding Ltd.', tradingName: 'TonyAI Holding' }),
     },
     subsidiary: {
-      findMany: vi.fn().mockResolvedValue([
-        { id: 'sub-1', legalName: 'Energy Legal', tradingName: 'Energy' },
-        { id: 'sub-2', legalName: 'Gas Legal', tradingName: 'Gas' },
-      ]),
+      // The names of the selection; the associates' read (inc26-group-tree)
+      // finds none unless a case says so.
+      findMany: vi.fn(async (args?: { where?: { control?: string } }): Promise<{ id?: string; legalName: string; tradingName: string | null }[]> =>
+        args?.where?.control === 'associate'
+          ? []
+          : [
+              { id: 'sub-1', legalName: 'Energy Legal', tradingName: 'Energy' },
+              { id: 'sub-2', legalName: 'Gas Legal', tradingName: 'Gas' },
+            ]),
     },
     auditLog: { create: vi.fn() },
     activityRecordEvidence: { findMany: vi.fn().mockResolvedValue([]) },
@@ -2684,4 +2689,59 @@ it('accepts the exact serialized source budget and rejects one byte less', async
       else await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
     }
   } finally { vi.unstubAllEnvs(); }
+});
+
+describe('ReportsService — the methodology text states the stored approach (inc26-group-tree, 5.5)', () => {
+  let prisma: PrismaMock;
+  let service: ReportsService;
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    service = new ReportsService(prisma as unknown as PrismaService, auditMock(), new PdfRenderer());
+  });
+
+  const withAssociate = (name: string) =>
+    prisma.subsidiary.findMany.mockImplementation((async (args?: { where?: { control?: string } }) =>
+      args?.where?.control === 'associate'
+        ? [{ legalName: name, tradingName: null }]
+        : [{ id: 'sub-1', legalName: 'Energy Legal', tradingName: 'Energy' }]) as never);
+  const approach = (value: string) =>
+    prisma.organisation.findUnique.mockResolvedValue({ legalName: 'TonyAI Holding Ltd.', tradingName: null, consolidationApproach: value });
+
+  it.each([
+    ['operational_control', 'en', 'Consolidation approach: operational control.', /financial control/],
+    ['financial_control', 'en', 'Consolidation approach: financial control.', /operational control/],
+    ['financial_control', 'tr', 'Konsolidasyon yaklaşımı: finansal kontrol.', /operasyonel kontrol/],
+  ])('under %s, in %s, names it and never the other', async (value, language, sentence, other) => {
+    approach(value);
+    const html = buildReportHtml(await service.assemble(admin, { ...q, language } as ReportQueryDto));
+    expect(html).toContain(sentence);
+    expect(html).not.toMatch(other);
+    expect(html).not.toMatch(/Boundary: operational control|Sınır: operasyonel kontrol/);
+  });
+
+  it('names an associate the reader may read as left outside Scope 1 and 2, escaped', async () => {
+    approach('operational_control');
+    withAssociate('Dünya <b>Katılım</b>');
+    const html = buildReportHtml(await service.assemble(admin, q));
+    expect(html).toContain('Left outside Scope 1 and 2 as associates (equity, not consolidated): Dünya &lt;b&gt;Katılım&lt;/b&gt;.');
+    const read = prisma.subsidiary.findMany.mock.calls.find((c) => (c[0] as { where?: { control?: string } })?.where?.control === 'associate');
+    expect((read![0] as { where: unknown }).where).toEqual({ id: { in: ['sub-1', 'sub-2'] }, control: 'associate' });
+  });
+
+  it('names no associate where there is none', async () => {
+    approach('operational_control');
+    const html = buildReportHtml(await service.assemble(admin, q));
+    expect(html).not.toMatch(/associates \(equity/);
+  });
+
+  it("states the approach in a super_admin's report and names no associate (its scope holds none)", async () => {
+    approach('financial_control');
+    const superAdmin = { ...admin, id: 'sa-1', role: 'super_admin', accessibleSubsidiaryIds: ['sub-1'] } as RequestUser;
+    const data = await service.assemble(superAdmin, q);
+    expect(data.consolidationApproach).toBe('financial_control');
+    expect(data.excludedAssociates).toEqual([]);
+    const read = prisma.subsidiary.findMany.mock.calls.find((c) => (c[0] as { where?: { control?: string } })?.where?.control === 'associate');
+    expect((read![0] as { where: { id: unknown } }).where.id).toEqual({ in: ['sub-1'] });
+  });
 });

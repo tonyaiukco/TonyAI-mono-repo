@@ -2,9 +2,14 @@ import { test, expect } from '@playwright/test';
 import {
   login,
   subsidiaryRows,
+  bearer,
+  getAccessToken,
   ADMIN_EMAIL,
+  API_BASE,
   ENTRY_EMAIL,
   PASSWORD,
+  SEED_NODE_COUNT,
+  SEED_REPORTING_COUNT,
 } from './helpers';
 
 test.describe('Milestone-1 slice', () => {
@@ -80,12 +85,12 @@ test.describe('Milestone-1 slice', () => {
       .locator('.rounded-\\[18px\\]')
       .filter({ has: page.getByText('Total Subsidiaries', { exact: true }) })
       .first();
-    await expect(totalCard.locator('.font-mono')).toHaveText('5');
+    await expect(totalCard.locator('.font-mono')).toHaveText(String(SEED_REPORTING_COUNT));
 
     // Navigate to the subsidiaries register.
     await page.goto('/subsidiaries');
     await expect(page.getByRole('heading', { name: 'Subsidiaries' })).toBeVisible();
-    await expect(subsidiaryRows(page)).toHaveCount(5);
+    await expect(subsidiaryRows(page)).toHaveCount(SEED_NODE_COUNT);
 
     // CREATE: open the dialog, fill the form, add a location, submit.
     const uniqueName = `E2E Test Co ${Date.now()}`;
@@ -105,13 +110,14 @@ test.describe('Milestone-1 slice', () => {
     // Creating lands on the new subsidiary's own page, with the location it was
     // created with already there — one transaction, not a follow-up write.
     await expect(page).toHaveURL(/\/subsidiaries\/[0-9a-f-]{36}$/);
+    const createdId = page.url().split('/').pop() as string;
     await expect(page.getByRole('heading', { name: uniqueName })).toBeVisible();
     await expect(page.getByText('E2E Smoke Site')).toBeVisible();
 
-    // Back on the register the new row is there and the count grows to 6.
+    // Back on the register the new row is there and the count grows by one.
     await page.goto('/subsidiaries');
     await expect(page.getByRole('cell', { name: uniqueName })).toBeVisible();
-    await expect(subsidiaryRows(page)).toHaveCount(6);
+    await expect(subsidiaryRows(page)).toHaveCount(SEED_NODE_COUNT + 1);
 
     // EDIT moved to `subsidiary-panel.spec.ts` (WP16 PR 2b): a subsidiary is
     // now edited on its own page, not in a dialog on the register. What stays
@@ -120,15 +126,23 @@ test.describe('Milestone-1 slice', () => {
     // DELETE: one step again. The subsidiary's own record-free locations go
     // with it, each with its own audit row — so the "typo in the create form"
     // the guard's message names is undone in one action, not six.
+    // A company with a facility is not deleted (inc26-group-tree, RD9): the
+    // facility goes first, through its own endpoint and audit row.
+    const token = await getAccessToken(page.request, ADMIN_EMAIL);
+    const sites = (await (await page.request.get(`${API_BASE}/locations?subsidiaryId=${createdId}`, { headers: bearer(token) })).json()) as { id: string }[];
+    for (const site of sites) {
+      expect((await page.request.delete(`${API_BASE}/locations/${site.id}`, { headers: bearer(token) })).ok()).toBe(true);
+    }
+    await page.reload();
     const newRow = page.locator('tr', { hasText: uniqueName });
     await newRow.getByRole('button', { name: 'Delete subsidiary' }).click();
     const alert = page.getByRole('alertdialog');
     await expect(alert.getByText('Delete subsidiary?')).toBeVisible();
     await alert.getByRole('button', { name: 'Delete' }).click();
 
-    // The row is gone and the count returns to 5.
+    // The row is gone and the count returns to the seed's.
     await expect(page.getByRole('cell', { name: uniqueName })).toHaveCount(0);
-    await expect(subsidiaryRows(page)).toHaveCount(5);
+    await expect(subsidiaryRows(page)).toHaveCount(SEED_NODE_COUNT);
   });
 
   test('a standard user: tenant isolation -> only 2 subsidiaries visible', async ({ page }) => {

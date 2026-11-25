@@ -13,6 +13,8 @@ import {
   SUB,
   OUT_OF_SCOPE_SUB,
   findRecordId,
+  SEED_NODE_COUNT,
+  SEED_APPROVER_GRANTS,
 } from './helpers';
 
 /**
@@ -50,14 +52,17 @@ test('a standard user: scoped reads + period-lock write gated in the UI', async 
   await expect(page.getByRole('button', { name: 'Lock period' })).toHaveCount(0);
 });
 
-test('a super admin sees its four companies, an auditor all five; neither is offered a company write', async ({ page }) => {
+test('a super admin sees its companies and may add only a child company; an auditor sees the whole tree and writes none', async ({ page }) => {
   await login(page, APPROVER_EMAIL);
   await page.goto('/subsidiaries');
   await expect(page.getByRole('heading', { name: 'Subsidiaries' })).toBeVisible();
-  // Every seed company but TonyAI Trading, the fallback company.
-  await expect(subsidiaryRows(page)).toHaveCount(4);
+  // Every seed company but TonyAI Trading, the fallback company, and the
+  // child company it created under TonyAI Energy (inc26-group-tree).
+  await expect(subsidiaryRows(page)).toHaveCount(SEED_APPROVER_GRANTS.length);
   await expect(subsidiaryRows(page).filter({ hasText: 'TonyAI Trading' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Add Subsidiary' })).toHaveCount(0);
+  // A super_admin creates child companies under its own (inc26-group-tree, R6),
+  // and changes or deletes none.
+  await expect(page.getByRole('button', { name: 'Add Subsidiary' })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Delete subsidiary' })).toHaveCount(0);
 
   await page.getByTestId('sign-out').click();
@@ -66,7 +71,7 @@ test('a super admin sees its four companies, an auditor all five; neither is off
   await page.goto('/subsidiaries');
   await expect(page.getByRole('heading', { name: 'Subsidiaries' })).toBeVisible();
   await expect(subsidiaryRows(page).filter({ hasText: 'TonyAI Trading' })).toHaveCount(1);
-  await expect(subsidiaryRows(page)).toHaveCount(5);
+  await expect(subsidiaryRows(page)).toHaveCount(SEED_NODE_COUNT);
   await expect(page.getByRole('button', { name: 'Add Subsidiary' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Delete subsidiary' })).toHaveCount(0);
 });

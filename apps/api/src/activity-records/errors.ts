@@ -65,6 +65,22 @@ export class DuplicateActivityRecordError extends ConflictException {
   }
 }
 
+/**
+ * The record names a node closed to data entry — an associate (outside Scope
+ * 1 and 2) or a sector group (a label): inc26-group-tree, design D6. Its own
+ * class, so the bulk importer reports the row in the same words.
+ */
+export class EntityClosedToDataEntryError extends ConflictException {
+  constructor() {
+    super(
+      errorBody(
+        'entity_closed_to_data_entry',
+        'This entity is outside the Scope 1 and 2 inventory (an associate or a sector group); data entry is closed for it.',
+      ),
+    );
+  }
+}
+
 /** The period is locked; the sentence names which, and so do the params. */
 export class PeriodLockedError extends ConflictException {
   constructor(message: string, period: { periodValue: string; reportingYear: number }) {

@@ -20,6 +20,9 @@ import {
 } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { can } from '@tonyai/shared-types';
+import { CalculationsService } from '../calculations/calculations.service';
+import { assertPricedGeography } from '../common/priced-geography';
+import { nodePlacementInvalid, treeTriggerRefusal } from '../subsidiaries/tree-errors';
 
 /**
  * A subsidiary that some caller has already established the right to write to.
@@ -60,6 +63,7 @@ export class LocationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly calculations: CalculationsService,
   ) {}
 
   private toDTO(l: Location): LocationDTO {
@@ -70,6 +74,7 @@ export class LocationsService {
       geographyCode: l.geographyCode,
       address: l.address,
       authorizedPerson: l.authorizedPerson,
+      locationType: l.locationType,
       createdAt: l.createdAt.toISOString(),
       updatedAt: l.updatedAt.toISOString(),
     };
@@ -161,15 +166,29 @@ export class LocationsService {
     parent: TrustedParent,
     input: CreateSubsidiaryLocationDto,
   ): Promise<LocationDTO> {
-    const created = await db.location.create({
-      data: {
-        subsidiaryId: parent.subsidiaryId,
-        name: input.name,
-        geographyCode: input.geographyCode,
-        address: input.address ?? null,
-        authorizedPerson: input.authorizedPerson ?? null,
-      },
-    });
+    // inc26-group-tree: a sector group is a label and holds no facility (the
+    // database's TA021 holds the same for every writer), and a facility takes
+    // only a geography the factor library prices (D10).
+    const node = await db.subsidiary.findUnique({ where: { id: parent.subsidiaryId }, select: { nodeType: true } });
+    if (node?.nodeType === 'sector_group') {
+      throw nodePlacementInvalid('A sector group holds no facility: add the facility to a company beneath it.');
+    }
+    await assertPricedGeography(this.calculations, input.geographyCode);
+    let created: Location;
+    try {
+      created = await db.location.create({
+        data: {
+          subsidiaryId: parent.subsidiaryId,
+          name: input.name,
+          geographyCode: input.geographyCode,
+          address: input.address ?? null,
+          authorizedPerson: input.authorizedPerson ?? null,
+          locationType: input.locationType ?? null,
+        },
+      });
+    } catch (e) {
+      throw treeTriggerRefusal(e) ?? e;
+    }
     await this.audit.record(
       user,
       {
@@ -215,6 +234,12 @@ export class LocationsService {
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.authorizedPerson !== undefined) {
       data.authorizedPerson = dto.authorizedPerson;
+    }
+    if (dto.locationType !== undefined) data.locationType = dto.locationType;
+    // A stored geography stays valid until it is changed; a new one must be
+    // priced (D10).
+    if (dto.geographyCode !== undefined && dto.geographyCode !== existing.geographyCode) {
+      await assertPricedGeography(this.calculations, dto.geographyCode);
     }
 
     // Same as create and delete now: mutation and audit in one transaction.

@@ -32,7 +32,7 @@
     "created": "Subsidiary created",
     "deleted": "Subsidiary deleted",
     "deleteTitle": "Delete subsidiary?",
-    "deleteBody": "This permanently removes the subsidiary and is recorded in the audit log. A subsidiary that still holds activity records, facilities, targets or closed reporting periods cannot be removed — deleting it would destroy them, and their evidence with them.",
+    "deleteBody": "This permanently removes the subsidiary and is recorded in the audit log. A subsidiary that still holds activity records, child companies, facilities, targets or closed reporting periods cannot be removed — deleting it would destroy them, and their evidence with them.",
     "deleteConfirm": "Delete"
   },
   "create": {
@@ -114,13 +114,13 @@
     "targets": "Reduction targets",
     "denominators": "Intensity denominators",
     "blocked": "This subsidiary cannot be deleted",
-    "deletableOne": "This subsidiary can be deleted from the register. Its {count} facility would go with it, each recorded in the audit log.",
-    "deletableMany": "This subsidiary can be deleted from the register. Its {count} facilities would go with it, each recorded in the audit log.",
     "deletableNothing": "Nothing depends on this subsidiary, so it can be deleted from the register."
   },
   "blockers": {
     "terminalRecords": "{count} approved, locked or voided activity record(s) belong to this subsidiary, and deleting it would permanently destroy them along with their evidence. Those records cannot be deleted at any point, so a subsidiary that has reported data stays. Set its status to \"inactive\" to retire it instead.",
     "frozenBoundaryVersions": "This subsidiary is declared in {count} confirmed or captured inventory boundary version(s), which record the inventory a report was issued from and never change, so a subsidiary declared in one stays. Set its status to \"inactive\" to retire it instead.",
+    "children": "{count} child company node(s)",
+    "locations": "{count} facility(ies)",
     "reviewRecords": "{count} record(s) awaiting review",
     "openRecords": "{count} draft or returned record(s)",
     "locationsHoldingForeignRecords": "{count} facility(ies) holding a record that belongs to another subsidiary",
@@ -159,7 +159,21 @@
     "deleted": "Facility deleted",
     "deleteTitle": "Delete facility?",
     "deleteBody": "This permanently removes the facility and is recorded in the audit log. A facility that activity records are attached to cannot be removed — those records would end up showing a different geography than the one they were calculated with.",
-    "deleteConfirm": "Delete"
+    "deleteConfirm": "Delete",
+    "type": "Facility type",
+    "typeNone": "No type",
+    "types": {
+      "warehouse": "Warehouse",
+      "office": "Office",
+      "factory": "Factory",
+      "plant": "Plant",
+      "refinery": "Refinery",
+      "retail_shop": "Retail shop",
+      "mall": "Shopping mall",
+      "building": "Building",
+      "apartment": "Apartment",
+      "rms_station": "RMS station"
+    }
   },
   "locks": {
     "title": "Period locks",
@@ -179,5 +193,69 @@
     "readOnly": "Only a Masterkey can lock or unlock reporting periods.",
     "locked": "Locked {period} {year} — records in this period are now frozen",
     "unlocked": "Unlocked {period} {year}"
+  },
+  "tree": {
+    "types": {
+      "holding": "Holding",
+      "sub_holding": "Sub-holding",
+      "sector_group": "Sector group",
+      "company": "Company",
+      "child_company": "Child company"
+    },
+    "associateLabel": "Equity — outside Scope 1 and 2",
+    "associateClosed": "Out of scope — data entry closed",
+    "columns": {
+      "type": "Type",
+      "own": "Own (tCO₂e)",
+      "rollUp": "Roll-up (tCO₂e)"
+    },
+    "expand": "Show the companies under {name}",
+    "collapse": "Hide the companies under {name}",
+    "year": "Reporting year",
+    "figuresLoading": "Loading figures…",
+    "figuresFailed": "The figures could not be loaded. The tree is shown without them.",
+    "createdBy": "Created by",
+    "carriedOver": "Not recorded (created before the group tree)",
+    "parent": "Parent",
+    "parentTop": "None — the top of the tree you can read",
+    "ghgBasis": "GHG basis",
+    "ghgBasisControlled": "{approach}, 100 %",
+    "ghgBasisAssociate": "Equity — outside Scope 1 and 2",
+    "ghgBasisHint": "Derived from the consolidation approach and the company’s control; it is not chosen.",
+    "control": "Associate (equity, outside Scope 1 and 2)",
+    "controlHint": "Only a company with no records, user assignments, child companies or current boundary declaration can become an associate.",
+    "nace": "NACE code",
+    "naceHint": "Optional, for example C10.11.",
+    "naceInvalid": "A NACE code reads like C, 10, 10.1 or C10.11.",
+    "sharePercent": "Share percent",
+    "sharePercentHint": "Optional. It enters no figure, total or roll-up.",
+    "sharePercentInvalid": "Enter a share from 0 to 100, with two decimals at most.",
+    "move": "Move under",
+    "moveHint": "A company holding records anywhere beneath it does not move.",
+    "type": "Type",
+    "typeFixed": "A node’s type is fixed when it is created.",
+    "noFacilitySectorGroup": "A sector group is a label: it holds no facility.",
+    "pricedOnly": "Only geographies the factor library can price are offered.",
+    "save": "Save group details"
+  },
+  "consolidation": {
+    "title": "Consolidation approach",
+    "hint": "One approach for the whole group. A controlled company counts at 100 % under either approach; an associate is left outside Scope 1 and 2.",
+    "approaches": {
+      "operational_control": "Operational control",
+      "financial_control": "Financial control",
+      "equity_share": "Equity share"
+    },
+    "comingSoon": "Coming soon",
+    "readOnly": "Set by a Masterkey.",
+    "saved": "Consolidation approach saved.",
+    "loadFailed": "The consolidation approach could not be loaded."
+  },
+  "exclusions": {
+    "title": "Boundary exclusions",
+    "none": "No company is excluded.",
+    "item": "{name} — outside Scope 1 and 2 as an associate",
+    "itemShare": "{name} ({share} %) — outside Scope 1 and 2 as an associate",
+    "loadFailed": "The boundary exclusions could not be loaded."
   }
 }

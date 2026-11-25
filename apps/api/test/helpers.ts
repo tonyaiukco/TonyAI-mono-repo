@@ -70,6 +70,9 @@ export function createPrismaMock() {
     subsidiary: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      // inc26-group-tree: a parent or the root is looked up, and children counted.
+      findFirst: vi.fn(),
+      count: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
@@ -104,8 +107,13 @@ export function createPrismaMock() {
     subsidiaryDenominator: { count: vi.fn() },
     // LP3-04 PR B: a subsidiary or site declared in an inventory boundary
     // version is not deleted (W9) — the delete guards count these too.
-    inventoryBoundarySubsidiary: { count: vi.fn() },
+    inventoryBoundarySubsidiary: { count: vi.fn(), findMany: vi.fn() },
     inventoryBoundarySite: { count: vi.fn() },
+    // inc26-group-tree: ticking associate reads the grants and the newest
+    // boundary version of each declared year; a delete reads the grants it
+    // cascades, to audit each.
+    userSubsidiaryAccess: { count: vi.fn(), findMany: vi.fn() },
+    inventoryBoundary: { findFirst: vi.fn() },
     // The object handed to `$transaction` callbacks, with its OWN spies for
     // every model — see `createTxClient` below.
     txClient: null as unknown as typeof mock,
@@ -113,6 +121,9 @@ export function createPrismaMock() {
     // counting children, so the guard cannot be raced by a concurrent insert.
     // A row lock reads back the row it locked, as Postgres answers one that exists.
     $queryRaw: vi.fn().mockResolvedValue([{ id: 'locked' }]),
+    // inc26-group-tree: a move or a control tick takes the organisation's tree
+    // lock (`pg_advisory_xact_lock`) before it locks the node.
+    $executeRaw: vi.fn().mockResolvedValue(1),
     $transaction: vi.fn(),
   };
   mock.txClient = createTxClient(mock);
@@ -132,9 +143,15 @@ export function createPrismaMock() {
       client.subsidiaryDenominator,
       client.inventoryBoundarySubsidiary,
       client.inventoryBoundarySite,
+      client.subsidiary,
+      client.userSubsidiaryAccess,
     ]) {
       model.count.mockResolvedValue(0);
     }
+    client.subsidiary.findFirst.mockResolvedValue(null);
+    client.inventoryBoundarySubsidiary.findMany.mockResolvedValue([]);
+    client.userSubsidiaryAccess.findMany.mockResolvedValue([]);
+    client.inventoryBoundary.findFirst.mockResolvedValue(null);
     // Same reasoning one step further: an unstubbed `findMany` resolves to
     // `undefined`, and a service that iterates it dies with "not iterable" —
     // which reads as a broken test rather than the missing default it is.
@@ -177,6 +194,14 @@ export function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary 
     // `toEqual` ignores undefined-valued keys — so every assertion over this
     // fixture passed while the DTO silently lacked the field.
     trackingGranularity: 'subsidiary',
+    // inc26-group-tree, listed for the reason above: a controlled company
+    // under the fixture organisation's root.
+    parentId: 'sub-root',
+    nodeType: 'company',
+    control: 'controlled',
+    sharePercent: null,
+    naceCode: null,
+    createdByRole: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -196,6 +221,7 @@ export function makeLocation(
     geographyCode: 'UK',
     address: null,
     authorizedPerson: null,
+    locationType: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,

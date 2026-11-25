@@ -1,4 +1,4 @@
-import { can } from "./types";
+import { can, holdsRecords } from "./types";
 import type {
   InventoryBoundaryGapCode,
   InventoryBoundaryVersionDTO,
@@ -32,8 +32,12 @@ export type ConfirmBlock = "empty" | "gaps" | null;
 export interface BoundaryActions {
   /** A new version may be started: the year has no open version (`boundary_draft_open`). */
   create: boolean;
-  /** The selected version takes writes: declare, edit, remove, confirm, delete. */
+  /** The selected version takes declaration writes: declare, edit, remove —
+   *  a masterkey's, or a super_admin's for its own companies in the open
+   *  version (inc26-group-tree, D7). */
   edit: boolean;
+  /** The selected version's lifecycle — confirm, delete — the masterkey's alone. */
+  lifecycle: boolean;
   /** Why confirming the selected version would be refused (`boundary_incomplete`), when it would. */
   confirmBlock: ConfirmBlock;
 }
@@ -46,11 +50,15 @@ export function boundaryActions(input: {
 }): BoundaryActions {
   const writer = can(input.role, "boundary.write");
   const open = input.versions.some((v) => v.frozenAt === null);
-  const editable = writer && input.selected !== null && input.selected.frozenAt === null
-    && input.selected.view === "organisation";
+  const selectedOpen = input.selected !== null && input.selected.frozenAt === null;
+  const lifecycle = writer && selectedOpen && input.selected?.view === "organisation";
+  // A super_admin declares its own companies in the open version; the API
+  // checks each company against its scope.
+  const declares = !writer && can(input.role, "boundary.write_granted") && selectedOpen;
   return {
     create: writer && !open,
-    edit: editable,
+    edit: lifecycle || declares,
+    lifecycle,
     confirmBlock: input.selected === null ? null : confirmBlock(input.selected),
   };
 }
@@ -100,8 +108,9 @@ export function subsidiaryRows(
       status: listed.get(company.subsidiaryId)?.reportingStatus ?? null,
     }));
   const declaredIds = new Set(declared.map((r) => r.id));
+  // Never an associate or a sector group: outside the boundary (inc26-group-tree).
   const undeclared = subsidiaries
-    .filter((s) => !declaredIds.has(s.id))
+    .filter((s) => !declaredIds.has(s.id) && holdsRecords(s))
     .map((s): SubsidiaryRow => ({
       id: s.id, name: boundaryName(s), declared: false, months: null, sites: 0, sources: 0, gaps: 0, status: s.reportingStatus,
     }));
@@ -140,5 +149,5 @@ export function undeclaredSubsidiaries(
   subsidiaries: readonly SubsidiaryDTO[],
 ): SubsidiaryDTO[] {
   const declared = new Set(v.boundary.subsidiaryIds);
-  return subsidiaries.filter((s) => !declared.has(s.id));
+  return subsidiaries.filter((s) => !declared.has(s.id) && holdsRecords(s));
 }

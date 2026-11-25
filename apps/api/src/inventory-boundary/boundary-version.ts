@@ -69,7 +69,14 @@ export function versionDTO(loaded: LoadedVersion, viewer: BoundaryViewer): Inven
   const summary = versionSummary(loaded.header);
   if (!can(viewer.role, 'scope.granted')) return { ...summary, boundary, boundaryGaps: gaps, view: 'organisation' };
   const granted = new Set(viewer.accessibleSubsidiaryIds);
-  if (!boundary.subsidiaryIds.some((id) => granted.has(id))) throw new ResourceNotFoundError('boundary_not_found');
+  // A super_admin writes its companies' declarations inside the year's open
+  // version, so reads it even before it declares one of them
+  // (inc26-group-tree, D7); the body is still the granted view, nothing of
+  // another company. A frozen version declaring none of them stays unknown.
+  const writesOpenVersion = can(viewer.role, 'boundary.write_granted') && loaded.header.frozenAt === null;
+  if (!writesOpenVersion && !boundary.subsidiaryIds.some((id) => granted.has(id))) {
+    throw new ResourceNotFoundError('boundary_not_found');
+  }
   return { ...summary, ...grantedView(boundary, gaps, granted), view: 'granted_subsidiaries' };
 }
 

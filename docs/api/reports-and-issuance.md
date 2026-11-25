@@ -8,6 +8,18 @@ Decisions 2026-10-24, K1–K13. A live report (the Reports preview, `GET
 /reports/{context/,}{meta,pdf,excel,csv}`) is **live and says so**; an issued
 report is retained and retrieved, never regenerated.
 
+**The consolidation approach in the methodology text (`inc26-group-tree`,
+D8).** A live PDF's methodology note states the organisation's stored
+approach — "Consolidation approach: operational control." or "financial
+control." (TR "operasyonel kontrol" / "finansal kontrol") — in place of the
+fixed "Boundary: operational control." it carried before, and names the
+associates its reader may read as left outside Scope 1 and 2 (equity, not
+consolidated); a `super_admin`, granted no associate, reads none. Both are read
+in the request's snapshot. An issued PDF is retained as issued: issuance renders
+its own template and stores its bytes, and a dataset records no approach
+(design non-goal), so neither changes when the approach does. Figures never
+move with the approach: a controlled company counts at 100 % under either.
+
 **One snapshot (K2).** Every read of one live request — the organisation, the
 status counts, the committed and withdrawn ledgers, their evidence links, the
 releases' standing, the Scope 3 disclosure and the boundary's coverage — runs

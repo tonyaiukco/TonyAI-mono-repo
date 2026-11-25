@@ -247,7 +247,16 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // and truncate guard on `report_datasets`; PR D's issuance guard and
     // truncate guard on `report_issuances`. LP4-02 PR2 adds factor_parameters
     // (6 triggers: 4 BEFORE + 2 AFTER).
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2);
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2 + 5);
+    // inc26-group-tree's five (TA018–TA022), each on INSERT and every UPDATE.
+    for (const [table, trigger] of [
+      ['subsidiaries', 'subsidiaries_tree_shape'],
+      ['activity_records', 'activity_records_entity_open'],
+      ['user_subsidiary_access', 'user_subsidiary_access_assignable'],
+      ['locations', 'locations_company_holds_records'],
+    ]) {
+      expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === trigger)).toEqual({ table, trigger, fn: trigger, type: 1 | 2 | 4 | 16 });
+    }
     for (const table of ['subsidiaries', 'locations']) {
       expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === `${table}_geography_writer`)).toEqual({
         table,
@@ -386,7 +395,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       'activity_records', 'emission_factors', 'factor_parameters', 'factor_release_events', 'factor_releases',
       'inventory_applicability_cells', 'inventory_attribution_policies', 'inventory_boundaries', 'inventory_boundary_sites',
       'inventory_boundary_subsidiaries', 'inventory_sources', 'locations', 'report_datasets', 'report_issuances',
-      'subsidiaries', 'unit_conversions',
+      'subsidiaries', 'unit_conversions', 'user_subsidiary_access',
     ]);
     for (const table of guarded) {
       expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);

@@ -27,6 +27,47 @@ enum UserRole {
   super_admin
 }
 
+// The group tree (inc26-group-tree): `@tonyai/shared-types` NODE_TYPES,
+// CONTROL_KINDS, CONSOLIDATION_APPROACHES and LOCATION_TYPES list the same values.
+enum SubsidiaryNodeType {
+  holding
+  sub_holding
+  sector_group
+  company
+  child_company
+
+  @@map("subsidiary_node_type")
+}
+
+enum SubsidiaryControl {
+  controlled
+  associate
+
+  @@map("subsidiary_control")
+}
+
+enum ConsolidationApproach {
+  operational_control
+  financial_control
+
+  @@map("consolidation_approach")
+}
+
+enum LocationType {
+  warehouse
+  office
+  factory
+  plant
+  refinery
+  retail_shop
+  mall
+  building
+  apartment
+  rms_station
+
+  @@map("location_type")
+}
+
 enum SubsidiaryStatus {
   active
   inactive
@@ -147,6 +188,9 @@ model Organisation {
   /// `super_admin` stored on an audit row before it was the earlier,
   /// organisation-wide administrator (`displayRole`).
   roleModelChangedAt  DateTime?           @map("role_model_changed_at") @db.Timestamptz(6)
+  /// One approach for the group (INC-2.6 §3, RD4), set by the masterkey;
+  /// `equity_share` is announced, not stored.
+  consolidationApproach ConsolidationApproach @default(operational_control) @map("consolidation_approach")
   createdAt           DateTime            @default(now()) @map("created_at")
   updatedAt           DateTime            @updatedAt @map("updated_at")
 
@@ -244,6 +288,23 @@ model Subsidiary {
   // would be `0 × 12 = 0`, every slot is then vacuously covered, and a
   // subsidiary holding one stray record would read as complete.
   trackingGranularity TrackingGranularity           @default(subsidiary) @map("tracking_granularity")
+  // The group tree (inc26-group-tree, INC-2.6 §2). Null only at the root, the
+  // organisation's one `holding`. The key is composite with the organisation,
+  // so a parent of another organisation cannot be stored; RESTRICT, so a node
+  // with a child is not deleted. Placement, cycles, moves and closed nodes are
+  // held by the `subsidiaries_tree_shape` trigger (TA018) for every writer.
+  parentId            String?                       @map("parent_id") @db.Uuid
+  parent              Subsidiary?                   @relation("SubsidiaryTree", fields: [parentId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  children            Subsidiary[]                  @relation("SubsidiaryTree")
+  // Fixed at creation: the runtime role holds no UPDATE grant on it.
+  nodeType            SubsidiaryNodeType            @default(company) @map("node_type")
+  control             SubsidiaryControl             @default(controlled)
+  // 0–100, optional, inert: no figure, total, roll-up or rule reads it.
+  sharePercent        Decimal?                      @map("share_percent") @db.Decimal(5, 2)
+  naceCode            String?                       @map("nace_code")
+  // The role that created the node through the product; null for a node
+  // carried over from before the tree. Never updated by the runtime role.
+  createdByRole       UserRole?                     @map("created_by_role")
   locations           Location[]
   inventoryBoundaries InventoryBoundarySubsidiary[]
   access              UserSubsidiaryAccess[]
@@ -258,6 +319,7 @@ model Subsidiary {
   // The target of `user_subsidiary_access`'s composite foreign key (LP1-03).
   @@unique([id, organisationId])
   @@index([organisationId])
+  @@index([parentId])
   @@map("subsidiaries")
 }
 
@@ -269,6 +331,8 @@ model Location {
   geographyCode       String                  @map("geography_code") // drives factor selection for records at this location
   address             String?
   authorizedPerson    String?                 @map("authorized_person")
+  // Optional (inc26-group-tree, RD12): a facility from before the tree has none.
+  locationType        LocationType?           @map("location_type")
   activityRecords     ActivityRecord[]
   inventoryBoundaries InventoryBoundarySite[]
   createdAt           DateTime                @default(now()) @map("created_at")

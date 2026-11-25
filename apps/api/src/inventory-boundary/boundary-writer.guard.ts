@@ -25,6 +25,24 @@ export class BoundaryWriterGuard implements CanActivate {
   }
 }
 
+/**
+ * A company's declaration inside an open version (inc26-group-tree, D7,
+ * ruling R6): a masterkey, or a super_admin for its granted companies — the
+ * company is checked against its scope by the service. Refused here before
+ * the body is read, as `BoundaryWriterGuard` refuses the rest.
+ */
+@Injectable()
+export class DeclarationWriterGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const user = context.switchToHttp().getRequest<{ user?: RequestUser }>().user;
+    if (!user || !can(user.role, 'boundary.write_granted')) {
+      throw new ForbiddenException("Only a masterkey or a company's super_admin may change its inventory boundary declaration");
+    }
+    if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
+    return true;
+  }
+}
+
 /** A declaration's lists within the DTO's limits, counted before a row is
  * built; whatever is not a list of rows is the pipe's to refuse. */
 @Injectable()

@@ -13,6 +13,7 @@ import {
 import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
+  holdsRecords,
   selectableReportingYears,
   type ReportingContext,
   type SubsidiaryDTO,
@@ -38,7 +39,7 @@ export function selectionAvailable(context: ReportingContext, subsidiaries: Subs
  */
 export function ReportingContextBar({
   context,
-  subsidiaries,
+  subsidiaries: listed,
   onSelect,
   fields = ["year", "subsidiaryId", "scope", "category"],
   disabled = false,
@@ -52,6 +53,9 @@ export function ReportingContextBar({
 }) {
   const t = useTranslations("reportingContext");
   const tCategory = useTranslations("categories");
+  // The reporting set (inc26-group-tree): a sector group or an associate holds
+  // no figure, so it is never offered as a selection.
+  const subsidiaries = listed === null ? null : listed.filter((s) => holdsRecords(s));
   const available = selectionAvailable(context, subsidiaries);
   const show = (field: Field) => fields.includes(field);
 

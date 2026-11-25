@@ -166,9 +166,15 @@ describe('LP4-01 — records stay where they were filed', () => {
   it("refuses the service role a subsidiary's new id (TA004), and lets the owner's session move one (the operator)", async () => {
     expect(await refusal(await serviceRest('PATCH', `subsidiaries?id=eq.${foreign.subsidiaryId}`, { id: randomUUID() }))).toEqual({ ok: false, code: 'TA004' });
     // A subsidiary with no grant (a granted one is held by LP1-03's keys, for the owner too).
+    // Since the group tree (inc26-group-tree) its parent moves with it: the
+    // tree key is same-organisation, so the operator names a parent in the new
+    // organisation — here its root, the tenant's first subsidiary.
     const moved = await withRollback(owner, async (tx) => {
       const spare = await tx.subsidiary.create({ data: { organisationId: foreign.organisationId, legalName: 'Int-test spare', geographyCode: 'UK' } });
-      return (await tx.subsidiary.update({ where: { id: spare.id }, data: { organisationId: tenant.organisationId } })).organisationId;
+      return (await tx.subsidiary.update({
+        where: { id: spare.id },
+        data: { organisationId: tenant.organisationId, parentId: tenant.subsidiaryId },
+      })).organisationId;
     });
     expect(moved).toBe(tenant.organisationId);
   });

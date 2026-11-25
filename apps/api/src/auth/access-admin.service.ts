@@ -11,6 +11,7 @@ import {
   INVITABLE_ROLES,
   ROLE_CHANGE_TARGETS,
   can,
+  holdsRecords,
   isCategory,
   isLocale,
   isUserRole,
@@ -23,6 +24,7 @@ import {
 } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { createDefaultSubsidiary } from '../subsidiaries/default-subsidiary';
+import { subsidiaryNotAssignable, treeTriggerRefusal } from '../subsidiaries/tree-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AccessRoleMismatchError,
@@ -255,6 +257,35 @@ export class AccessAdminService {
         );
       }
     });
+  }
+
+  /**
+   * inc26-group-tree (design D5, ruling R6): a super_admin creating a child
+   * company under one of its companies. Called by `SubsidiariesService.create`
+   * inside its transaction BEFORE the node is written: takes the
+   * organisation's administration lock and re-reads the actor, so a
+   * super_admin whose grant on the parent was withdrawn a moment ago — or who
+   * was demoted or disabled — creates nothing. A parent outside its grants
+   * answers as an unknown company.
+   */
+  async lockChildCompanyCreator(tx: Prisma.TransactionClient, actor: RequestUser, parentId: string): Promise<void> {
+    const organisationId = assertActorMay(actor, 'company.create_child');
+    const admin = await lockAndReadActor(tx, actor, organisationId, 'company.create_child');
+    if (admin.scope !== null && !admin.scope.has(parentId)) throw new ResourceNotFoundError('subsidiary_not_found');
+  }
+
+  /**
+   * The same step's grant (D5): the super_admin who created child company
+   * `subsidiaryId` is granted it, with its `subsidiary_access` audit row, in
+   * the caller's transaction — so if the grant cannot be stored, the company
+   * is not stored either. No other account gains access by the creation.
+   */
+  async grantChildCompanyCreator(tx: Prisma.TransactionClient, actor: RequestUser, subsidiaryId: string): Promise<void> {
+    const organisationId = assertActorMay(actor, 'company.create_child');
+    if (!can(actor.role, 'scope.granted')) return; // a masterkey reads the whole organisation already
+    const grant: AccessGrant = { subsidiaryId, categories: [] };
+    await createGrants(tx, actor.id, organisationId, [grant]);
+    await this.audit.record(actor, grantCreatedRow(actor.id, grant, actor.role), tx);
   }
 
   /**
@@ -617,8 +648,16 @@ async function assertSubsidiaries(
 ): Promise<void> {
   if (!ids.length) return;
   if (scope !== null && ids.some((id) => !scope.has(id))) throw new ResourceNotFoundError('subsidiary_not_found');
-  const found = await tx.subsidiary.count({ where: { id: { in: ids }, organisationId } });
-  if (found !== ids.length) throw new ResourceNotFoundError('subsidiary_not_found');
+  const found = await tx.subsidiary.findMany({
+    where: { id: { in: ids }, organisationId },
+    select: { nodeType: true, control: true },
+  });
+  if (found.length !== ids.length) throw new ResourceNotFoundError('subsidiary_not_found');
+  // No account is assigned to an associate or a sector group (inc26-group-tree,
+  // INC-2.6 §6: never to an associate; design D6) — after the scope and tenant
+  // checks, so a foreign id still answers as unknown. TA020 holds it for
+  // every writer.
+  if (found.some((node) => !holdsRecords(node))) throw subsidiaryNotAssignable();
 }
 
 /** A grant as the service handles it: canonical id, sorted unique categories. */
@@ -687,7 +726,8 @@ async function createGrants(
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
       throw new ResourceNotFoundError('subsidiary_not_found');
     }
-    throw err;
+    // Ticked associate after the check above: TA020 refused the grant.
+    throw treeTriggerRefusal(err) ?? err;
   }
 }
 

@@ -132,10 +132,25 @@ describe('the database refuses a grant across organisations', () => {
   });
 
   it('a subsidiary that is granted cannot move to another organisation', async () => {
+    // The tenant's first subsidiary is its tree's root: since the group tree
+    // (inc26-group-tree, WP7 review) TA018 refuses it as the other
+    // organisation's second root before the grant's key is checked.
     const error = await failure(owner, (tx) =>
       tx.subsidiary.update({ where: { id: a.subsidiaryId }, data: { organisationId: b.organisationId } }),
     );
-    expect(error).toMatch(FK_VIOLATION);
+    expect(error).toMatch(/TA018[\s\S]*already has its holding/);
+    // A granted company that is not a root meets the grant's same-organisation key.
+    const granted = await failure(owner, async (tx) => {
+      const company = await tx.subsidiary.create({
+        data: { organisationId: a.organisationId, legalName: 'Int-test granted company', geographyCode: 'UK' },
+      });
+      await tx.userSubsidiaryAccess.create({
+        data: { userId: a.users.standardUser.id, subsidiaryId: company.id, organisationId: a.organisationId },
+      });
+      // Placed under the other organisation's root, so only the grant's key refuses it.
+      await tx.subsidiary.update({ where: { id: company.id }, data: { organisationId: b.organisationId, parentId: b.subsidiaryId } });
+    });
+    expect(granted).toMatch(FK_VIOLATION);
   });
 
   it('deleting an organisation that still has grants succeeds and takes the grants with it', async () => {
@@ -154,6 +169,10 @@ describe('the database refuses a grant across organisations', () => {
       // A subsidiary an open boundary version declares is not deleted (LP3-04
       // W9): the version goes first, as its records do.
       await tx.inventoryBoundary.delete({ where: { id: dataA.boundaryId } });
+      // The tenant's first subsidiary is its tree's root (inc26-group-tree): a
+      // node with a child is not deleted, so its children go first.
+      await tx.activityRecord.deleteMany({ where: { subsidiary: { parentId: a.subsidiaryId } } });
+      await tx.subsidiary.deleteMany({ where: { parentId: a.subsidiaryId } });
       await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
       return tx.userSubsidiaryAccess.count({ where: { userId: a.users.standardUser.id } });
     });

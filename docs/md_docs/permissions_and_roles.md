@@ -16,48 +16,52 @@ This document must be used as the single source of truth for permission logic ac
 
 ## 2. Role Definitions
 
-TonyAI uses four primary roles.
+TonyAI uses the four roles of INC-2.6 §1 (`inc26-roles-approval-chain`, 2026-11-25); the canonical list is `USER_ROLES` in `@tonyai/shared-types`. Until 2026-11-25 the roles were `super_admin` (organisation-wide, now `masterkey`), `consultant` and `executive_viewer` (now `auditor`) and `data_entry` (now `standard_user`); audit rows keep the names they were written with (see `docs/architecture/data-model.md`, "Roles (RBAC)").
 
 | Role | Responsibility | Data Scope |
 | :--- | :--- | :--- |
-| `super_admin` | System governance, factor management, approvals, configuration, and the organisation's users | Their own organisation only — there is no platform-wide administrator (D18); organisations and first administrators are provisioned by the operator |
-| `consultant` | Review, anomaly flagging, approval (since 2026-11-12, K2 — never a record they created, D01), advisory support; never enters data | Assigned organisations only |
-| `data_entry` | Activity logging, evidence upload, draft and submission workflows | Assigned subsidiaries and permitted parent organisation context |
-| `executive_viewer` | Dashboard monitoring, report viewing, high level visibility | Assigned organisations only |
+| `masterkey` | The organisation's administrator: its group tree (companies, their control, the consolidation approach), facilities, period locks, targets, the inventory boundary, report capture and issue, users and roles | The whole organisation; holds no grant. There is no platform-wide administrator (D18) |
+| `super_admin` | Enters records and decides a standard user's records in its companies; manages their facilities; creates a `child_company` under one of its companies (and is granted it); writes its companies' inventory-boundary declarations in the open version; invites standard users into its companies | The companies it is granted — a grant covers the node it names, never one beneath it (`inc26-group-tree`, RD2) |
+| `standard_user` | Enters, edits, submits and bulk-uploads records in its ticked categories | One granted company, narrowed to the categories ticked on the grant |
+| `auditor` | Reads everything, changes nothing | The whole organisation; holds no grant |
+
+No account is assigned to an associate or a sector group (`subsidiary_not_assignable`, `inc26-group-tree`).
 
 ---
 
 ## 3. Functional Permissions Matrix
 
-This matrix defines action permissions for UI rendering and backend enforcement.
+Every row is a capability of `ROLE_CAPABILITIES` in `@tonyai/shared-types`, asked as `can(role, capability)`; `packages/shared-types/src/roles.spec.ts` pins each cell. M = `masterkey`, S = `super_admin`, U = `standard_user`, A = `auditor`. Scope (which companies) is not a row: a scoped role's grants bound every read and write.
 
-| Feature / Action | super_admin | consultant | data_entry | executive_viewer |
-| :--- | :---: | :---: | :---: | :---: |
-| View dashboard and analytics | ✅ | ✅ | ✅ | ✅ |
-| Enter or edit activity data | ✅ | ❌ | ✅ | ❌ |
-| Upload, detach or delete evidence files (own records only, `super_admin` included — Decisions 2026-11-12) | ✅ | ❌ | ✅ | ❌ |
-| Attach one evidence file to several records (own editable records of one subsidiary, `super_admin` included — Decisions 2026-11-12) | ✅ | ❌ | ✅ | ❌ |
-| Save draft records | ✅ | ❌ | ✅ | ❌ |
-| Submit records for review (own records only — decision D02, `super_admin` included) | ✅ | ❌ | ✅ | ❌ |
-| Approve records (never a record you created — decision D01; consultant since 2026-11-12, K2) | ✅ | ✅ | ❌ | ❌ |
-| Reject records / flag for revision | ✅ | ✅ | ❌ | ❌ |
-| Lock records | ✅ | ❌ | ❌ | ❌ |
-| Manage subsidiaries | ✅ | ❌ | ❌ | ❌ |
-| Manage suppliers | ✅ | ❌ | ❌ | ❌ |
-| Override calculation factors | ✅ | ❌ | ❌ | ❌ |
-| Generate and export reports | ✅ | ✅ | ❌ | ✅ |
-| Manage users and roles — invite, re-send an invitation, change a role, replace a data_entry user's subsidiaries (LP4-01) | ✅ ² | ❌ | ❌ | ❌ |
-| Disable or enable an account (LP4-01, D19) | ✅ ² | ❌ | ❌ | ❌ |
-| Reset one's own password from the sign-in page | ✅ | ✅ | ✅ | ✅ |
-| View the organisation-wide audit trail | ✅ | ❌ ¹ | ❌ ¹ | ❌ ¹ |
-| View one record's history (`GET /activity-records/:id/audit-trail`, WP5) | ✅ | ✅ | ✅ ³ | ✅ |
+| Capability | What it allows | M | S | U | A |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| `scope.organisation` | Reads the whole organisation, holds no grant | ✅ | ❌ | ❌ | ✅ |
+| `scope.granted` | Works only in granted companies | ❌ | ✅ | ✅ | ❌ |
+| `scope.categories` | Further narrowed by the categories ticked on each grant | ❌ | ❌ | ✅ | ❌ |
+| `record.author` | Create, edit, delete, submit and recall records, attach evidence (own records only — D02, Decisions 2026-11-12) | ✅ | ✅ | ✅ | ❌ |
+| `record.decide` | Take into review, return and approve — routed by `recordApprover`; never a record one created unless a masterkey (D01) | ✅ | ✅ | ❌ | ❌ |
+| `record.void` | Void an approved record | ✅ | ❌ | ❌ | ❌ |
+| `record.delete_any_draft` | Delete a draft or returned record someone else created | ✅ | ❌ | ❌ | ❌ |
+| `record.copy_any_voided` | Copy a voided record someone else created into a new draft | ✅ | ❌ | ❌ | ❌ |
+| `company.write` | Create any node of the group tree; change, move or delete a company; set its control | ✅ | ❌ | ❌ | ❌ |
+| `company.create_child` | Create a `child_company` under a granted `company` or `child_company`, granted to its creator in the same step | ✅ | ✅ | ❌ | ❌ |
+| `consolidation.write` | Set the organisation's consolidation approach | ✅ | ❌ | ❌ | ❌ |
+| `location.write` | Create, edit and delete facilities (a super_admin in its granted companies) | ✅ | ✅ | ❌ | ❌ |
+| `period_lock.write` | Lock and unlock a period | ✅ | ❌ | ❌ | ❌ |
+| `target.write` · `intensity.write` | Targets and intensity denominators | ✅ | ❌ | ❌ | ❌ |
+| `boundary.write` | Open, confirm and delete an inventory-boundary version | ✅ | ❌ | ❌ | ❌ |
+| `boundary.write_granted` | Write and withdraw a company's declaration in the open version (a super_admin for its granted companies) | ✅ | ✅ | ❌ | ❌ |
+| `dataset.capture` · `dataset.capture_open_boundary` | Capture a report dataset (freezing an open version) | ✅ | ❌ | ❌ | ❌ |
+| `report.issue` · `report.issue_final` | Issue a report, and a final | ✅ | ❌ | ❌ | ❌ |
+| `dataset.read` | Read captured datasets and issued reports | ✅ | ❌ | ❌ | ✅ |
+| `report.generate` | Live reports and exports (a super_admin within its companies) | ✅ | ✅ | ❌ | ✅ |
+| `import_batch.read_all` | Every import batch of the organisation (the others see their own) | ✅ | ❌ | ❌ | ✅ |
+| `audit.read` | The organisation-wide audit trail | ✅ | ❌ | ❌ | ✅ |
+| `record_trail.read_any` | Any readable record's history (a standard user reads its own records') | ✅ | ✅ | ❌ | ✅ |
+| `users.list` · `users.invite` · `users.set_access` | List, invite and set the access of accounts (`INVITABLE_ROLES`, `ACCESS_ASSIGNABLE_ROLES`: a masterkey super_admins and auditors, a super_admin standard users in its companies) | ✅ | ✅ | ❌ | ❌ |
+| `users.set_role` · `users.disable` | Change a role, disable or enable an account (never one's own) | ✅ | ❌ | ❌ | ❌ |
 
-² Own organisation only, never one's own role or account (ask another `super_admin`), serialised per organisation with the actor re-read; every change audited. Creating an organisation and its first administrator is the operator's (`pnpm onboarding`, §6a) or, where an environment enables it, self-service registration's; offboarding is the operator's.
-
-### Limited Audit Visibility
-- Since WP5 (`uat4-review-resubmit`, owner decision 2026-11-25, INC-2.6 §6): one record's history is read by `super_admin`, `consultant` and `executive_viewer` for any record they can read, and by `data_entry` for the records they created (³). The organisation-wide audit trail stays `super_admin`-only.
-
-³ Records they created; a colleague's record in a shared subsidiary is readable, its history is not (`mayReadRecordTrail`).
+Everyone resets their own password from the sign-in page and changes their own language and theme.
 
 ---
 

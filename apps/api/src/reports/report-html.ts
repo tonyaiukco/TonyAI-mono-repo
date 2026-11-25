@@ -301,7 +301,15 @@ export function buildReportHtml(data: ReportData): string {
   ${
     data.includeMethodologyNotes
       ? `<h2>${v.html('methodologyHeading')}</h2>
-  <p class="note">${v.html('methodologyNote', { standingAsOf: v.text('standingAsOf') })}</p>
+  <p class="note">${v.html('methodologyNote', {
+    standingAsOf: v.text('standingAsOf'),
+    // The organisation's stored approach (inc26-group-tree, D8), not a fixed sentence.
+    approach: v.text(`approach ${data.consolidationApproach}`),
+  })}${
+    data.excludedAssociates.length > 0
+      ? ` ${v.html('excludedAssociates', { names: data.excludedAssociates.join(', ') })}`
+      : ''
+  }</p>
   <table><thead><tr>${th('Category')}${th('Geography')}${th('Factor', true)}${th('Methodology')}${th('Source')}${th('Release')}${th('Standing')}</tr></thead>
   <tbody>${factorRows}</tbody></table>`
       : ''

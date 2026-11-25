@@ -117,6 +117,8 @@ describe("the catalogues", () => {
       'anomaly.tonnes',
       // A role name spelled alike in both languages (INC-2.6 §1: "masterkey").
       'users.roles.masterkey',
+      // The root's type name, alike in both languages (INC-2.6 §2: "Holding").
+      'subsidiaries.tree.types.holding',
       'bulkUpload.groupHeading',
       'bulkUpload.sizeCap',
       'bulkUpload.tonnes.figure',

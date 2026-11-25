@@ -11,6 +11,10 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  IsNumber,
+  Matches,
+  Max,
+  Min,
 } from 'class-validator';
 import {
   GEOGRAPHY_CODES,
@@ -20,8 +24,15 @@ import {
   TRACKING_GRANULARITIES,
   type SubsidiaryStatus,
   type TrackingGranularity,
+  CONTROL_KINDS,
+  NACE_CODE_MAX_LENGTH,
+  NACE_CODE_PATTERN,
+  NODE_TYPES,
+  type ControlKind,
+  type NodeType,
 } from '@tonyai/shared-types';
 import { blankToNull } from '../../common/blank-to-null';
+import { ID_SHAPE_MESSAGE, lowercaseUuid, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
 // Owned by the locations module — it is a location shape, and the module edge
 // already runs subsidiaries → locations.
 import { CreateSubsidiaryLocationDto } from '../../locations/dto/create-location.dto';
@@ -140,4 +151,42 @@ export class CreateSubsidiaryDto {
   @IsOptional()
   @IsIn(TRACKING_GRANULARITIES as readonly string[])
   trackingGranularity?: TrackingGranularity;
+
+  // ---- The group tree (inc26-group-tree) ----------------------------------
+
+  /**
+   * The parent node. Omitted: the node is stored as a `company` under the organisation's root, or as the root when there is none (RD14). A parent the caller cannot read
+   * answers `subsidiary_not_found`, exactly as an unknown company.
+   */
+  // The shape, not RFC 4122's version bits: the seed's fixed ids are not
+  // version-conformant (`ParseUuidParamPipe` says why).
+  @IsOptional()
+  @Transform(lowercaseUuid)
+  @IsString()
+  @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
+  parentId?: string | null;
+
+  /** Defaults to `company` (the root: `holding`); placement follows `allowedChildTypes`. */
+  @IsOptional()
+  @IsIn(NODE_TYPES as readonly string[])
+  nodeType?: NodeType;
+
+  /** `associate` only on a `company` or `child_company`, by a masterkey. */
+  @IsOptional()
+  @IsIn(CONTROL_KINDS as readonly string[])
+  control?: ControlKind;
+
+  /** 0–100, two decimals at most; inert (no rule or figure reads it). */
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  sharePercent?: number | null;
+
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
+  @MaxLength(NACE_CODE_MAX_LENGTH)
+  @Matches(NACE_CODE_PATTERN)
+  naceCode?: string | null;
 }

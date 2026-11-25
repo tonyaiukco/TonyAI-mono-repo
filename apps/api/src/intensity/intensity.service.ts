@@ -17,6 +17,7 @@ import type {
   IntensityResponseDTO,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { HOLDS_RECORDS_WHERE } from '../subsidiaries/reporting-set';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
@@ -271,6 +272,10 @@ export class IntensityService {
     const denoms = await this.prisma.subsidiaryDenominator.findMany({
       where: {
         subsidiaryId: { in: selectedSubsidiaryIds },
+        // The reporting set (inc26-group-tree): a sector group or an associate
+        // adds nothing to the numerator, so its revenue or headcount must not
+        // enter the denominator either (architect review, P2-1).
+        subsidiary: HOLDS_RECORDS_WHERE,
         year: context.year,
         ...(!hasSelectedSubsidiary(context.subsidiaryId) ? { metric: { in: [...GROUP_INTENSITY_METRICS] } } : {}),
       },

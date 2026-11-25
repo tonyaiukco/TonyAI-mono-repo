@@ -217,7 +217,8 @@ function InventoryBoundaryScreen() {
   const state = detail ? versionState(detail) : null;
   const openVersion = versions?.find((v) => v.frozenAt === null) ?? null;
   const canWriteBoundary = can(user?.role, "boundary.write");
-  const readOnlyRole = user !== null && !canWriteBoundary;
+  // A super_admin writes its own companies' declarations (inc26-group-tree, D7).
+  const readOnlyRole = user !== null && !canWriteBoundary && !can(user?.role, "boundary.write_granted");
 
   async function create(copyOf?: InventoryBoundaryVersionSummary) {
     if (year === null) return;
@@ -490,7 +491,7 @@ function InventoryBoundaryScreen() {
                     {t("versions.labelWithYear", { version: detail.version, year: detail.reportingYear })}
                     <Badge variant="outline" className={STATE_STYLES[state]}>{t(`state.${state}`)}</Badge>
                   </CardTitle>
-                  {actions.edit && (
+                  {actions.lifecycle && (
                     <div className="flex gap-2">
                       <Button size="sm" className="gap-2" disabled={busy !== null} onClick={() => setConfirmOpen(true)}>
                         <CheckCircle2 className="h-4 w-4" />

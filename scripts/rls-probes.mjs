@@ -109,7 +109,14 @@ const ACC = `(${ENERGY},${LOGISTICS})`;
 // The seeded super_admin's four companies, and the fifth it is NOT granted.
 const GAS = '22222222-2222-2222-2222-222222220002';
 const TRADING = '22222222-2222-2222-2222-222222220005';
-const SUPER_ADMIN_SUBS = [ENERGY, GAS, '22222222-2222-2222-2222-222222220003', LOGISTICS];
+// The child company the seed creates under Energy as by approver@, who holds
+// it (inc26-group-tree), and the seeded associate, which nobody may hold.
+const SEED_CHILD_COMPANY = '22222222-2222-2222-2222-222222220007';
+const SEED_ASSOCIATE = '22222222-2222-2222-2222-222222220008';
+const SUPER_ADMIN_SUBS = [ENERGY, GAS, '22222222-2222-2222-2222-222222220003', LOGISTICS, SEED_CHILD_COMPANY];
+// A child company the probe creates under Gas, which approver@ is granted, and
+// does NOT grant: a grant covers the node it names, never one beneath it.
+const PROBE_CHILD_ID = '22222222-2222-2222-2222-2222222200f1';
 
 // Service-role query that counts ONLY the rows belonging to entry's accessible
 // tenants — the exact set entry must see.
@@ -336,6 +343,12 @@ async function seedForeignSubsidiary() {
   ]);
   if (!res.ok) throw new Error(`foreign subsidiary seed failed: ${res.status} ${await res.text()}`);
 }
+async function cleanupTreeProbe() {
+  const owner = await ownerDb();
+  await owner.userSubsidiaryAccess.deleteMany({ where: { subsidiaryId: { in: [PROBE_CHILD_ID, SEED_ASSOCIATE] } } });
+  await owner.subsidiary.deleteMany({ where: { id: PROBE_CHILD_ID } });
+}
+
 async function cleanupForeignSubsidiary() {
   const owner = await ownerDb();
   await owner.subsidiary.deleteMany({ where: { id: FOREIGN_SUB_ID } });
@@ -985,6 +998,7 @@ async function main() {
 
   await cleanupBoundaries(); // in case a previous run aborted; before the subsidiaries they declare
   await cleanupForeignSubsidiary(); // in case a previous run aborted
+  await cleanupTreeProbe(); // in case a previous run aborted
   await cleanupCategoryProbe(subjectOf(token)); // in case a previous run aborted: entry's loop needs its full grant
   try {
     // Seeds go INSIDE the try. Outside it, a failure between the organisation
@@ -1825,6 +1839,48 @@ async function main() {
     }
   } catch (e) {
     check('runtime role check could run', false, e.message);
+  }
+
+  // inc26-group-tree: scope does not inherit down the tree, and a closed node
+  // takes no grant — at the database, past the API.
+  try {
+    const owner = await ownerDb();
+    const orgId = (await profileByEmail(ADMIN_EMAIL)).organisation_id;
+    await owner.subsidiary.create({
+      data: {
+        id: PROBE_CHILD_ID, organisationId: orgId, parentId: GAS, nodeType: 'child_company',
+        legalName: 'RLS probe child company', geographyCode: 'UK',
+      },
+    });
+    const saToken = await getToken(SUPER_ADMIN_EMAIL);
+    const query = `select=id&id=eq.${PROBE_CHILD_ID}`;
+    const [seen, exists, parent] = await Promise.all([
+      count('subsidiaries', { token: saToken, query }),
+      count('subsidiaries', { token: SERVICE, key: SERVICE, query }),
+      count('subsidiaries', { token: saToken, query: `select=id&id=eq.${GAS}` }),
+    ]);
+    check(
+      'subsidiaries: a super_admin granted a parent reads none of its ungranted child through PostgREST',
+      seen.total === 0 && exists.total === 1 && parent.total === 1,
+      `child seen ${seen.error ?? seen.total}/${exists.total}, parent seen ${parent.total}`,
+    );
+    const approverId = (await profileByEmail(SUPER_ADMIN_EMAIL)).id;
+    const grant = await fetch(`${URL_}/rest/v1/user_subsidiary_access`, {
+      method: 'POST',
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ user_id: approverId, subsidiary_id: SEED_ASSOCIATE, organisation_id: orgId }),
+    });
+    const refusal = grant.ok ? null : await grant.json();
+    const held = await count('user_subsidiary_access', { token: SERVICE, key: SERVICE, query: `select=user_id&subsidiary_id=eq.${SEED_ASSOCIATE}` });
+    check(
+      'user_subsidiary_access: a grant naming an associate is refused at the database (TA020), even for the service role',
+      !grant.ok && refusal?.code === 'TA020' && held.total === 0,
+      `status=${grant.status}, code=${refusal?.code ?? 'none'}, held=${held.total}`,
+    );
+  } catch (e) {
+    check('the group-tree probes could run', false, e.message);
+  } finally {
+    await cleanupTreeProbe();
   }
 
   await ownerClient?.$disconnect();

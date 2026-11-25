@@ -1,4 +1,4 @@
-import { Prisma, SubsidiaryStatus, TrackingGranularity } from '@tonyai/db';
+import { Prisma, SubsidiaryControl, SubsidiaryNodeType, SubsidiaryStatus, TrackingGranularity } from '@tonyai/db';
 import type { AuditService } from '../audit/audit.service';
 
 /**
@@ -12,6 +12,11 @@ export const DEFAULT_SUBSIDIARY_SETTINGS = Object.freeze({
   reportingStatus: SubsidiaryStatus.pending,
   includedScopes: Object.freeze([1, 2]) as readonly number[],
   trackingGranularity: TrackingGranularity.subsidiary,
+  // The root of the organisation's tree (inc26-group-tree): a controlled
+  // `holding` with no parent. Stated, not left to the trigger's default
+  // placement, which would reach the same answer for a new organisation.
+  nodeType: SubsidiaryNodeType.holding,
+  control: SubsidiaryControl.controlled,
 });
 
 export interface DefaultSubsidiaryInput {
@@ -55,6 +60,9 @@ export async function createDefaultSubsidiary(
       reportingStatus: DEFAULT_SUBSIDIARY_SETTINGS.reportingStatus,
       includedScopes: [...DEFAULT_SUBSIDIARY_SETTINGS.includedScopes],
       trackingGranularity: DEFAULT_SUBSIDIARY_SETTINGS.trackingGranularity,
+      nodeType: DEFAULT_SUBSIDIARY_SETTINGS.nodeType,
+      control: DEFAULT_SUBSIDIARY_SETTINGS.control,
+      parentId: null,
     },
     select: { id: true },
   });
@@ -72,6 +80,8 @@ export async function createDefaultSubsidiary(
         includedScopes: [...DEFAULT_SUBSIDIARY_SETTINGS.includedScopes],
         trackingGranularity: DEFAULT_SUBSIDIARY_SETTINGS.trackingGranularity,
         reportingStatus: DEFAULT_SUBSIDIARY_SETTINGS.reportingStatus,
+        nodeType: DEFAULT_SUBSIDIARY_SETTINGS.nodeType,
+        control: DEFAULT_SUBSIDIARY_SETTINGS.control,
       },
     },
     tx,

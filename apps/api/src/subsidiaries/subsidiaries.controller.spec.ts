@@ -27,6 +27,7 @@ function route(method: keyof SubsidiariesController) {
 describe('SubsidiariesController — routes', () => {
   it.each([
     ['list', '/', RequestMethod.GET],
+    ['boundaryExclusions', 'boundary-exclusions', RequestMethod.GET],
     ['get', ':id', RequestMethod.GET],
     ['summary', ':id/summary', RequestMethod.GET],
     ['create', '/', RequestMethod.POST],
@@ -42,6 +43,11 @@ describe('SubsidiariesController — routes', () => {
     // have to precede `:id`. Pinned because the difference is invisible until
     // someone adds the literal.
     expect(route('summary').path.startsWith(':id/')).toBe(true);
+  });
+
+  it('the literal `boundary-exclusions` is declared before `:id`, which would otherwise take it', () => {
+    const names = Object.getOwnPropertyNames(SubsidiariesController.prototype);
+    expect(names.indexOf('boundaryExclusions')).toBeLessThan(names.indexOf('get'));
   });
 
   it('every id-bearing route validates the uuid before the service sees it', () => {

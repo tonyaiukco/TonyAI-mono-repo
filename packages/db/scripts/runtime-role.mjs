@@ -144,8 +144,10 @@ const SIUD = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
  */
 export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // + INSERT on listed columns only (self-service registration) — see
-  // RUNTIME_COLUMN_INSERTS. Never UPDATE or DELETE: an organisation's facts
-  // and its offboarding are the owner's.
+  // RUNTIME_COLUMN_INSERTS, and UPDATE on its consolidation approach and
+  // `updated_at` only (inc26-group-tree, RUNTIME_COLUMN_UPDATES). Never
+  // DELETE, and no other column: an organisation's facts and its offboarding
+  // are the owner's.
   organisations: ['SELECT'],
   // The factor library (LP3-03): reference data the API reads and never
   // writes — the seed loads it on the owner connection, LP4-02's loader
@@ -227,8 +229,10 @@ export const RUNTIME_COLUMN_INSERTS = Object.freeze({
   profiles: ['id', 'email', 'full_name', 'job_title', 'role', 'language', 'theme', 'auth_sync_generation', 'organisation_id', 'created_at', 'updated_at'],
   // Registration creates the organisation: its name, country, geography and
   // currency — never `offboarded_at`, so an organisation is born active.
-  // Prisma fills `id` and the two timestamps.
-  organisations: ['id', 'legal_name', 'country', 'geography_code', 'reporting_currency', 'created_at', 'updated_at'],
+  // Prisma fills `id` and the two timestamps, and `consolidation_approach`,
+  // its schema default (inc26-group-tree): a new organisation holds
+  // operational control.
+  organisations: ['id', 'legal_name', 'country', 'geography_code', 'reporting_currency', 'consolidation_approach', 'created_at', 'updated_at'],
   // Never `accepted_at`: the database's clock stamps a consent.
   consents: ['id', 'profile_id', 'kind', 'text_version', 'language'],
   // A boundary version is born open and undecided (LP3-04's write path):
@@ -288,7 +292,17 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
     'contact_email',
     'contact_phone',
     'tracking_granularity',
+    // The group tree (inc26-group-tree): a move, a control tick and the two
+    // inert fields. Never `node_type` (fixed at creation) or
+    // `created_by_role` (written once, at insert).
+    'parent_id',
+    'control',
+    'share_percent',
+    'nace_code',
   ],
+  // The consolidation approach (inc26-group-tree, D8) and the row's version;
+  // never the organisation's name, country, geography or offboarding.
+  organisations: ['consolidation_approach', 'updated_at'],
   // What `confirm` writes — and PR C's capture, which freezes unconfirmed —
   // the four columns the guard lets change (TA014); never the organisation,
   // year, version or author.
@@ -1017,6 +1031,16 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   // change NEW.geography_code after the guard compared it.
   { table: 'subsidiaries', trigger: 'subsidiaries_geography_writer', fn: 'geography_code_writer', type: ROW | BEFORE | ON.update },
   { table: 'locations', trigger: 'locations_geography_writer', fn: 'geography_code_writer', type: ROW | BEFORE | ON.update },
+  // inc26-group-tree (D2): the tree's shape — the one root, placement by type,
+  // no cycle, no move over records, associates — under an advisory lock per
+  // organisation (TA018); and no record, grant or facility for a node that
+  // cannot hold one (TA019–TA021). Not narrowed: each returns at once when
+  // its columns did not change.
+  { table: 'subsidiaries', trigger: 'subsidiaries_tree_shape', fn: 'subsidiaries_tree_shape', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'activity_records', trigger: 'activity_records_entity_open', fn: 'activity_records_entity_open', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'user_subsidiary_access', trigger: 'user_subsidiary_access_assignable', fn: 'user_subsidiary_access_assignable', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'locations', trigger: 'locations_company_holds_records', fn: 'locations_company_holds_records', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'inventory_boundary_subsidiaries', trigger: 'inventory_boundary_subsidiaries_reportable', fn: 'inventory_boundary_subsidiaries_reportable', type: ROW | BEFORE | ON.insert | ON.update },
 ]);
 
 /**
@@ -1110,6 +1134,10 @@ export const INTEGRITY_CHECKS = Object.freeze([
   // LP4-02: factor_parameters CHECKs
   ['factor_parameters', 'factor_parameters_text_check', 'cadaec00182803028e60114b35441b1e'],
   ['factor_parameters', 'factor_parameters_value_check', '358e0e70df506a850b60caf8c1db861d'],
+  // inc26-group-tree (D2): only the root has no parent, and it is the
+  // holding; the share percent is a percentage.
+  ['subsidiaries', 'subsidiaries_root_check', '09210997478fc6effe8bb45885cca4f8'],
+  ['subsidiaries', 'subsidiaries_share_percent_check', '809fd0c8686e3550c74c384a8ad19770'],
 ]);
 
 /**
@@ -1321,6 +1349,9 @@ function pinsPgTempLast(config) {
 const GUARDED_TABLES = Object.freeze([
   'activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_parameters', 'factor_release_events', 'subsidiaries',
   'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES, 'locations', 'report_datasets', 'report_issuances',
+  // inc26-group-tree: a later BEFORE trigger could re-point a grant at a
+  // closed node after TA020 compared it.
+  'user_subsidiary_access',
 ]);
 
 /** Every integrity trigger, CHECK and record key, present, in force and unaltered. */

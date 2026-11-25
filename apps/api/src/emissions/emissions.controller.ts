@@ -7,6 +7,7 @@ import { EmissionsService } from './emissions.service';
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
 import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
 import { CompletenessQueryDto } from './dto/completeness-query.dto';
+import { RollUpQueryDto } from './dto/roll-up-query.dto';
 
 @Controller('emissions')
 export class EmissionsController {
@@ -37,6 +38,15 @@ export class EmissionsController {
     @Query() query: EmissionsSummaryQueryDto,
   ) {
     return this.service.summary(user, query);
+  }
+
+  /** Each node's own figure and roll-up for a year (inc26-group-tree, D9). */
+  @Get('roll-up')
+  rollUp(
+    @CurrentUser() user: RequestUser,
+    @Query() query: RollUpQueryDto,
+  ) {
+    return this.service.rollUp(user, query);
   }
 
   /** Subsidiary × category completeness matrix for the dashboard (FR §2). */

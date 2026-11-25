@@ -38,7 +38,7 @@ const INPUT = {
 };
 
 describe('createDefaultSubsidiary (UAT round 2, K1)', () => {
-  it('writes the subsidiary with the parent company name, its geography and explicit settings', async () => {
+  it('writes the subsidiary with the parent company name, its geography and explicit settings, as the tree\'s root', async () => {
     const { tx, audit } = setup();
     await expect(createDefaultSubsidiary(tx as never, audit as unknown as AuditService, INPUT)).resolves.toEqual({ id: SUB });
     expect(tx.subsidiary.create).toHaveBeenCalledTimes(1);
@@ -52,6 +52,10 @@ describe('createDefaultSubsidiary (UAT round 2, K1)', () => {
         reportingStatus: 'pending',
         includedScopes: [1, 2],
         trackingGranularity: 'subsidiary',
+        // inc26-group-tree: the root — a controlled holding with no parent.
+        nodeType: 'holding',
+        control: 'controlled',
+        parentId: null,
       },
       select: { id: true },
     });
@@ -91,6 +95,8 @@ describe('createDefaultSubsidiary (UAT round 2, K1)', () => {
         includedScopes: [1, 2],
         trackingGranularity: 'subsidiary',
         reportingStatus: 'pending',
+        nodeType: 'holding',
+        control: 'controlled',
       },
     });
     const text = JSON.stringify(entry);
@@ -103,7 +109,7 @@ describe('createDefaultSubsidiary (UAT round 2, K1)', () => {
     await createDefaultSubsidiary(tx as never, audit as unknown as AuditService, { ...INPUT, source: leaky });
     const [entry] = audit.recordSystem.mock.calls[0] as unknown as [{ diff: Record<string, unknown> }];
     expect(Object.keys(entry.diff).sort()).toEqual(
-      ['default', 'geographyCode', 'includedScopes', 'operator', 'reportingStatus', 'source', 'trackingGranularity'],
+      ['control', 'default', 'geographyCode', 'includedScopes', 'nodeType', 'operator', 'reportingStatus', 'source', 'trackingGranularity'],
     );
     expect(JSON.stringify(entry)).not.toContain('Örnek');
   });

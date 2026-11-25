@@ -48,7 +48,20 @@ export const SUB = {
   mfg: '22222222-2222-2222-2222-222222220003', // TonyAI Mfg · EU
   logistics: '22222222-2222-2222-2222-222222220004', // TonyAI Logistics · TR · entry-accessible
   trading: '22222222-2222-2222-2222-222222220005', // TonyAI Trading · UK · no super_admin (the fallback company)
+  // The group tree (inc26-group-tree): the seed's demonstration nodes. The
+  // root's id is the seed's on a fresh database (CI); a database carried over
+  // from before the tree has its own root — read it by type, never by this id.
+  sectorGroup: '22222222-2222-2222-2222-222222220006', // TonyAI Energy & Utilities Group · a label
+  childCompany: '22222222-2222-2222-2222-222222220007', // TonyAI Energy Services · under Energy · approver@ created it
+  associate: '22222222-2222-2222-2222-222222220008', // Bosphorus Associates · outside Scope 1 and 2
 } as const;
+
+/** The seed organisation's company nodes: the root, five companies, a sector
+ *  group, a child company and an associate. */
+export const SEED_NODE_COUNT = 9;
+/** Of those, the reporting set — the nodes that hold records (no sector group,
+ *  no associate): what the dashboard counts. */
+export const SEED_REPORTING_COUNT = 7;
 
 /** A subsidiary OUTSIDE `entry@tonyai.local`'s access set. The seed has a
  * single organisation, so this proves access-set isolation, not cross-ORG
@@ -120,8 +133,9 @@ export const SEED_ROLES: ReadonlyArray<readonly [string, UserRole]> = [
 export const SEED_ENTRY_GRANTS: readonly string[] = [SUB.energy, SUB.logistics];
 /** The categories ticked on each of the standard user's seed grants: all thirteen, sorted, as the seed writes them. */
 export const SEED_ENTRY_CATEGORIES: readonly Category[] = [...CATEGORIES].sort();
-/** `approver@tonyai.local`'s grants in the seed: every company but TonyAI Trading, the fallback company. */
-export const SEED_APPROVER_GRANTS: readonly string[] = [SUB.energy, SUB.gas, SUB.mfg, SUB.logistics];
+/** `approver@tonyai.local`'s grants in the seed: every company but TonyAI Trading, the fallback
+ *  company — and the child company it created under Energy (inc26-group-tree). */
+export const SEED_APPROVER_GRANTS: readonly string[] = [SUB.energy, SUB.gas, SUB.mfg, SUB.logistics, SUB.childCompany];
 
 /** Two grant lists hold the same companies with the same categories, in any order. */
 function sameAccess(a: readonly UserAccessGrantDTO[], b: readonly UserAccessGrantDTO[]): boolean {
@@ -1718,3 +1732,23 @@ export async function waitOutImportThrottle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 61_000));
 }
 
+
+/**
+ * Delete a test company and its facilities (inc26-group-tree, RD9): a company
+ * with a facility is not deleted, so each facility goes first, through its own
+ * endpoint and audit row. For teardowns; the answer of the company's delete is
+ * returned, so a spec may still assert it.
+ */
+export async function deleteCompanyWithFacilities(
+  request: APIRequestContext,
+  token: string,
+  subsidiaryId: string,
+): Promise<number> {
+  const sites = await request.get(`${API_BASE}/locations?subsidiaryId=${encodeURIComponent(subsidiaryId)}`, { headers: bearer(token) });
+  if (sites.ok()) {
+    for (const site of (await sites.json()) as { id: string }[]) {
+      await request.delete(`${API_BASE}/locations/${site.id}`, { headers: bearer(token) });
+    }
+  }
+  return (await request.delete(`${API_BASE}/subsidiaries/${subsidiaryId}`, { headers: bearer(token) })).status();
+}

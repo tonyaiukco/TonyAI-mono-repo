@@ -11,14 +11,29 @@ import {
   type ActivityRecordStatus,
   type Subsidiary,
 } from '@tonyai/db';
-import { PENDING_REVIEW_STATUSES, can } from '@tonyai/shared-types';
+import { PENDING_REVIEW_STATUSES, admitsChild, can, mayBeAssociate } from '@tonyai/shared-types';
 import type {
+  BoundaryExclusionDTO,
+  ControlChangeBlockerKind,
+  ControlKind,
+  NodeType,
   SubsidiaryBlockerCount,
   SubsidiaryBlockerKind,
   SubsidiaryDTO,
   SubsidiarySummaryDTO,
 } from '@tonyai/shared-types';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
+import { AccessAdminService } from '../auth/access-admin.service';
+import { CalculationsService } from '../calculations/calculations.service';
+import { assertPricedGeography } from '../common/priced-geography';
+import {
+  controlChangeBlocked,
+  nodeMoveBlocked,
+  nodePlacementInvalid,
+  nodeTypeFixed,
+  treeCycle,
+  treeTriggerRefusal,
+} from './tree-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { recordScopeWhere } from '../activity-records/record-scope';
@@ -50,7 +65,11 @@ interface SubsidiaryDependentCounts {
   openBoundaryVersions: number;
   reviewRecords: number;
   openRecords: number;
+  /** A blocker since inc26-group-tree (RD9): a company with a facility is not
+   *  deleted, and a delete no longer removes facilities. */
   locations: number;
+  /** Child nodes in the group tree; the database's RESTRICT key holds it too. */
+  children: number;
   /**
    * Locations of this subsidiary holding a record that belongs to a DIFFERENT
    * subsidiary — an integrity alarm, not a dependency anyone manages.
@@ -80,9 +99,18 @@ export class SubsidiariesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly locations: LocationsService,
+    private readonly accessAdmin: AccessAdminService,
+    private readonly calculations: CalculationsService,
   ) {}
 
-  private toDTO(s: Subsidiary): SubsidiaryDTO {
+  /**
+   * The company as the API answers it. `readable` is the caller's accessible
+   * set: `parentId` is answered only for a parent in it, and `null` otherwise
+   * (design D4) — a reader granted a child but not its parent learns nothing
+   * of the parent, not even its id. Omitted for an audit row's diff, which
+   * holds the stored value (its readers read the whole organisation).
+   */
+  private toDTO(s: Subsidiary, readable?: ReadonlySet<string>): SubsidiaryDTO {
     return {
       id: s.id,
       organisationId: s.organisationId,
@@ -98,12 +126,23 @@ export class SubsidiariesService {
       reportingStatus: s.reportingStatus,
       includedScopes: s.includedScopes,
       trackingGranularity: s.trackingGranularity,
+      parentId: s.parentId !== null && (readable === undefined || readable.has(s.parentId)) ? s.parentId : null,
+      nodeType: s.nodeType,
+      control: s.control,
+      sharePercent: s.sharePercent === null ? null : s.sharePercent.toNumber(),
+      naceCode: s.naceCode,
+      createdByRole: s.createdByRole,
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),
     };
   }
 
-  /** Companies are organisation structure — a masterkey only (INC-2.6 §6). */
+  private static readable(user: RequestUser, ...more: string[]): ReadonlySet<string> {
+    return new Set([...user.accessibleSubsidiaryIds, ...more]);
+  }
+
+  /** Changing, moving or deleting a company, and setting its control, are
+   *  organisation structure — a masterkey only (INC-2.6 §6, RD8). */
   private assertCanWrite(user: RequestUser): void {
     if (!can(user.role, 'company.write')) {
       throw new ForbiddenException('Only a masterkey may modify subsidiaries');
@@ -118,7 +157,8 @@ export class SubsidiariesService {
       where: { id: { in: user.accessibleSubsidiaryIds } },
       orderBy: { createdAt: 'asc' },
     });
-    return subs.map((s) => this.toDTO(s));
+    const readable = SubsidiariesService.readable(user);
+    return subs.map((s) => this.toDTO(s, readable));
   }
 
   async get(user: RequestUser, id: string): Promise<SubsidiaryDTO> {
@@ -128,7 +168,26 @@ export class SubsidiariesService {
     }
     const s = await this.prisma.subsidiary.findUnique({ where: { id } });
     if (!s) throw new ResourceNotFoundError('subsidiary_not_found');
-    return this.toDTO(s);
+    return this.toDTO(s, SubsidiariesService.readable(user));
+  }
+
+  /**
+   * The associates the caller can read, for the boundary-exclusions note
+   * (design D8, RD11): in practice a masterkey's and an auditor's, since no
+   * grant can name an associate. Name and share percent only.
+   */
+  async boundaryExclusions(user: RequestUser): Promise<BoundaryExclusionDTO[]> {
+    if (user.accessibleSubsidiaryIds.length === 0) return [];
+    const rows = await this.prisma.subsidiary.findMany({
+      where: { id: { in: user.accessibleSubsidiaryIds }, control: 'associate' },
+      select: { id: true, legalName: true, sharePercent: true },
+      orderBy: [{ legalName: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map((r) => ({
+      subsidiaryId: r.id,
+      legalName: r.legalName,
+      sharePercent: r.sharePercent === null ? null : r.sharePercent.toNumber(),
+    }));
   }
 
   /**
@@ -148,7 +207,7 @@ export class SubsidiariesService {
    * created later through `POST /locations`.
    */
   async create(user: RequestUser, dto: CreateSubsidiaryDto): Promise<SubsidiaryDTO> {
-    this.assertCanWrite(user);
+    this.assertCanCreate(user, dto);
     // The timeout is stated, not inherited. Prisma's default is 5s; the DTO
     // caps `locations` so the work fits well inside it, and naming the number
     // here means a future raise of that cap has to confront this line.
@@ -170,24 +229,57 @@ export class SubsidiariesService {
     if (dto.trackingGranularity === 'location') {
       this.assertHasLocations(dto.locations?.length ?? 0);
     }
-    const created = await tx.subsidiary.create({
-      data: {
-        organisationId: user.organisationId as string,
-        legalName: dto.legalName,
-        tradingName: dto.tradingName ?? null,
-        location: dto.location ?? null,
-        geographyCode: dto.geographyCode,
-        businessArea: dto.businessArea ?? null,
-        sector: dto.sector ?? null,
-        designatedPerson: dto.designatedPerson ?? null,
-        contactEmail: dto.contactEmail ?? null,
-        contactPhone: dto.contactPhone ?? null,
-        reportingStatus: (dto.reportingStatus ?? 'pending') as SubsidiaryStatus,
-        includedScopes: dto.includedScopes ?? [1, 2],
-        trackingGranularity: (dto.trackingGranularity ??
-          'subsidiary') as TrackingGranularity,
-      },
-    });
+    const placement = await this.resolvePlacement(tx, user, dto);
+    const control: ControlKind = dto.control ?? 'controlled';
+    if (control === 'associate' && !mayBeAssociate(placement.nodeType)) {
+      throw nodePlacementInvalid('Only a company or a child company can be an associate; every other node is controlled.');
+    }
+    // A sector group is a label: it holds no facility and takes its parent's
+    // geography unchecked, since nothing is ever priced for it (D10). Every
+    // other node takes only a geography the factor library prices.
+    let geographyCode = dto.geographyCode;
+    if (placement.nodeType === 'sector_group') {
+      if ((dto.locations?.length ?? 0) > 0) {
+        throw nodePlacementInvalid('A sector group holds no facility: add the facility to a company beneath it.');
+      }
+      geographyCode = placement.parentGeography ?? geographyCode;
+    } else {
+      await assertPricedGeography(this.calculations, geographyCode);
+    }
+    // A super_admin's child company (D5): its scope re-read under the
+    // administration lock before anything is written, and its grant written
+    // below in this same transaction.
+    const byCreator = !can(user.role, 'company.write');
+    if (byCreator) await this.accessAdmin.lockChildCompanyCreator(tx, user, placement.parentId as string);
+    let created: Subsidiary;
+    try {
+      created = await tx.subsidiary.create({
+        data: {
+          organisationId: user.organisationId as string,
+          legalName: dto.legalName,
+          tradingName: dto.tradingName ?? null,
+          location: dto.location ?? null,
+          geographyCode,
+          businessArea: dto.businessArea ?? null,
+          sector: dto.sector ?? null,
+          designatedPerson: dto.designatedPerson ?? null,
+          contactEmail: dto.contactEmail ?? null,
+          contactPhone: dto.contactPhone ?? null,
+          reportingStatus: (dto.reportingStatus ?? 'pending') as SubsidiaryStatus,
+          includedScopes: dto.includedScopes ?? [1, 2],
+          trackingGranularity: (dto.trackingGranularity ??
+            'subsidiary') as TrackingGranularity,
+          parentId: placement.parentId,
+          nodeType: placement.nodeType,
+          control,
+          sharePercent: dto.sharePercent ?? null,
+          naceCode: dto.naceCode ?? null,
+          createdByRole: user.role,
+        },
+      });
+    } catch (e) {
+      throw treeTriggerRefusal(e) ?? e;
+    }
     await this.audit.record(
       user,
       {
@@ -198,6 +290,7 @@ export class SubsidiariesService {
       },
       tx,
     );
+    if (byCreator) await this.accessAdmin.grantChildCompanyCreator(tx, user, created.id);
     // One audit row per location, exactly as `POST /locations` writes them —
     // never a single batched row, or a location's history would depend on how
     // it was created.
@@ -209,7 +302,65 @@ export class SubsidiariesService {
         loc,
       );
     }
-    return this.toDTO(created);
+    return this.toDTO(created, SubsidiariesService.readable(user, created.id));
+  }
+
+  /**
+   * Who may create what (INC-2.6 §6, design D5) — role-only refusals, before
+   * any company is looked at: a masterkey any admitted node; a super_admin a
+   * controlled `child_company` only, its parent then checked against its
+   * scope; anyone else nothing.
+   */
+  private assertCanCreate(user: RequestUser, dto: CreateSubsidiaryDto): void {
+    if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
+    if (can(user.role, 'company.write')) return;
+    if (!can(user.role, 'company.create_child')) {
+      throw new ForbiddenException('Only a masterkey may modify subsidiaries');
+    }
+    if (dto.nodeType !== 'child_company') {
+      throw new ForbiddenException('A super_admin creates child companies only, under a company it is granted');
+    }
+    if (dto.control !== undefined && dto.control !== 'controlled') {
+      throw new ForbiddenException("Only a masterkey sets a company's control");
+    }
+  }
+
+  /**
+   * Where a new node sits (RD7, RD14). A named parent must be readable by the
+   * caller — anything else, another organisation's node included, answers as
+   * an unknown company — and must admit the type. No parent named: under the
+   * organisation's root as a `company`, or as the root itself (a `holding`)
+   * when the organisation has none. The database's TA018 holds the same rules
+   * for every writer; the API words them.
+   */
+  private async resolvePlacement(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    dto: CreateSubsidiaryDto,
+  ): Promise<{ parentId: string | null; nodeType: NodeType; parentGeography: string | null }> {
+    const organisationId = user.organisationId as string;
+    const select = { id: true, nodeType: true, control: true, geographyCode: true } as const;
+    if (dto.parentId != null) {
+      if (!user.accessibleSubsidiaryIds.includes(dto.parentId)) throw new ResourceNotFoundError('subsidiary_not_found');
+      const parent = await tx.subsidiary.findFirst({ where: { id: dto.parentId, organisationId }, select });
+      if (!parent) throw new ResourceNotFoundError('subsidiary_not_found');
+      const nodeType = dto.nodeType ?? 'company';
+      if (nodeType === 'holding') throw nodePlacementInvalid('This organisation already has its holding, the root.');
+      if (!admitsChild(parent, nodeType)) throw nodePlacementInvalid();
+      return { parentId: parent.id, nodeType, parentGeography: parent.geographyCode };
+    }
+    const root = await tx.subsidiary.findFirst({ where: { organisationId, nodeType: 'holding' }, select });
+    if (!root) {
+      // The organisation's first node is its root.
+      if (dto.nodeType !== undefined && dto.nodeType !== 'holding' && dto.nodeType !== 'company') {
+        throw nodePlacementInvalid("An organisation's first company is its root, the holding.");
+      }
+      return { parentId: null, nodeType: 'holding', parentGeography: null };
+    }
+    const nodeType = dto.nodeType ?? 'company';
+    if (nodeType === 'holding') throw nodePlacementInvalid('This organisation already has its holding, the root.');
+    if (!admitsChild(root, nodeType)) throw nodePlacementInvalid();
+    return { parentId: root.id, nodeType, parentGeography: root.geographyCode };
   }
 
   async update(
@@ -223,8 +374,10 @@ export class SubsidiariesService {
     // 403) so the response cannot confirm the row exists — the same rule every
     // other scoped read/write in the API follows.
     const existing = await this.loadScoped(user, id);
+    // A node's type is fixed at creation; the same type sent back is no change.
+    if (dto.nodeType !== undefined && dto.nodeType !== existing.nodeType) throw nodeTypeFixed();
 
-    const data: Prisma.SubsidiaryUpdateInput = {};
+    const data: Prisma.SubsidiaryUncheckedUpdateInput = {};
     if (dto.legalName !== undefined) data.legalName = dto.legalName;
     if (dto.tradingName !== undefined) data.tradingName = dto.tradingName;
     if (dto.location !== undefined) data.location = dto.location;
@@ -242,12 +395,46 @@ export class SubsidiariesService {
       await this.assertGranularityIsUsable(id, dto.trackingGranularity);
       data.trackingGranularity = dto.trackingGranularity as TrackingGranularity;
     }
+    if (dto.sharePercent !== undefined) data.sharePercent = dto.sharePercent;
+    if (dto.naceCode !== undefined) data.naceCode = dto.naceCode;
+    // A stored geography stays valid until it is changed (an existing company
+    // is renamed whatever the library prices); a new one must be priced. A
+    // sector group's is never priced, so never checked (D10).
+    if (
+      dto.geographyCode !== undefined &&
+      dto.geographyCode !== existing.geographyCode &&
+      existing.nodeType !== 'sector_group'
+    ) {
+      await assertPricedGeography(this.calculations, dto.geographyCode);
+    }
+    const moves = dto.parentId !== undefined && dto.parentId !== existing.parentId;
+    if (moves) data.parentId = dto.parentId;
+    const controlChanges = dto.control !== undefined && dto.control !== existing.control;
+    if (controlChanges) data.control = dto.control;
 
     // In a transaction like create and delete. It was not, which left this
     // class half-atomic — a crash between the row write and the audit insert
     // lost the trail for an update while create and delete were safe.
     const updated = await this.prisma.$transaction(async (tx) => {
-      const row = await tx.subsidiary.update({ where: { id }, data });
+      if (moves || controlChanges) {
+        // TA018's own lock order, taken before the row: the organisation's
+        // tree lock, then the node FOR NO KEY UPDATE. Updating the row first
+        // and meeting the tree lock in the trigger could deadlock against a
+        // move of an ancestor, which holds the tree lock and then locks its
+        // subtree. Locking the node before counting also serialises an
+        // associate tick against a record, a grant or a boundary declaration
+        // (each reads the row FOR SHARE; architect and security review, WP7).
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('tonyai.subsidiary_tree'), hashtext(${existing.organisationId}))`;
+        await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR NO KEY UPDATE`;
+      }
+      if (moves) await this.assertMovable(tx, user, existing, dto.parentId ?? null);
+      if (controlChanges && dto.control === 'associate') await this.assertMayBecomeAssociate(tx, existing);
+      let row: Subsidiary;
+      try {
+        row = await tx.subsidiary.update({ where: { id }, data });
+      } catch (e) {
+        throw treeTriggerRefusal(e) ?? e;
+      }
       await this.audit.record(
         user,
         {
@@ -260,7 +447,90 @@ export class SubsidiariesService {
       );
       return row;
     });
-    return this.toDTO(updated);
+    return this.toDTO(updated, SubsidiariesService.readable(user));
+  }
+
+  /**
+   * A move (INC-2.6 §2.2): the holding does not move and every other node
+   * keeps a parent; the new parent is a readable node that admits the type;
+   * never under the node itself or its subtree (`tree_cycle`); never while the
+   * subtree — facilities included — holds a record in any status (RD6,
+   * `node_move_blocked`). TA018 holds each rule again under the
+   * organisation's lock, so a concurrent move or record the reads below miss
+   * is refused there with the same code.
+   */
+  private async assertMovable(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    node: Subsidiary,
+    parentId: string | null,
+  ): Promise<void> {
+    if (node.nodeType === 'holding') throw nodePlacementInvalid('The holding is the root of the tree and does not move.');
+    if (parentId === null) throw nodePlacementInvalid('Only the holding has no parent.');
+    if (!user.accessibleSubsidiaryIds.includes(parentId)) throw new ResourceNotFoundError('subsidiary_not_found');
+    const parent = await tx.subsidiary.findFirst({
+      where: { id: parentId, organisationId: node.organisationId },
+      select: { id: true, nodeType: true, control: true },
+    });
+    if (!parent) throw new ResourceNotFoundError('subsidiary_not_found');
+    if (parent.id === node.id) throw treeCycle();
+    const [{ cycle }] = await tx.$queryRaw<{ cycle: boolean }[]>`
+      WITH RECURSIVE up (id, parent_id) AS (
+        SELECT s.id, s.parent_id FROM subsidiaries s WHERE s.id = ${parent.id}::uuid
+        UNION
+        SELECT s.id, s.parent_id FROM subsidiaries s JOIN up ON s.id = up.parent_id
+      )
+      SELECT EXISTS (SELECT 1 FROM up WHERE up.id = ${node.id}::uuid) AS cycle`;
+    if (cycle) throw treeCycle();
+    if (!admitsChild(parent, node.nodeType)) throw nodePlacementInvalid();
+    const [{ records }] = await tx.$queryRaw<{ records: boolean }[]>`
+      WITH RECURSIVE down (id) AS (
+        SELECT ${node.id}::uuid
+        UNION
+        SELECT s.id FROM subsidiaries s JOIN down d ON s.parent_id = d.id
+      )
+      SELECT EXISTS (SELECT 1 FROM activity_records r WHERE r.subsidiary_id IN (SELECT id FROM down)) AS records`;
+    if (records) throw nodeMoveBlocked();
+  }
+
+  /**
+   * Ticking associate (RD3): a company or child company only, and refused
+   * while it — or a facility of it — holds a record in any status, an account
+   * is assigned to it, it has a child node, or the newest inventory-boundary
+   * version of any reporting year declares it. The refusal names each kind;
+   * nothing is withdrawn or hidden silently. TA018 backs the first three.
+   */
+  private async assertMayBecomeAssociate(tx: Prisma.TransactionClient, node: Subsidiary): Promise<void> {
+    if (!mayBeAssociate(node.nodeType)) {
+      throw nodePlacementInvalid('Only a company or a child company can be an associate; every other node is controlled.');
+    }
+    const [records, assignments, children, declarations] = await Promise.all([
+      tx.activityRecord.count({ where: { subsidiaryId: node.id } }),
+      tx.userSubsidiaryAccess.count({ where: { subsidiaryId: node.id } }),
+      tx.subsidiary.count({ where: { parentId: node.id } }),
+      tx.inventoryBoundarySubsidiary.findMany({
+        where: { subsidiaryId: node.id },
+        select: { boundary: { select: { reportingYear: true, version: true } } },
+      }),
+    ]);
+    let declaredInNewest = false;
+    for (const year of new Set(declarations.map((d) => d.boundary.reportingYear))) {
+      const newest = await tx.inventoryBoundary.findFirst({
+        where: { organisationId: node.organisationId, reportingYear: year },
+        orderBy: { version: 'desc' },
+        select: { version: true },
+      });
+      if (newest && declarations.some((d) => d.boundary.reportingYear === year && d.boundary.version === newest.version)) {
+        declaredInNewest = true;
+        break;
+      }
+    }
+    const kinds: ControlChangeBlockerKind[] = [];
+    if (records > 0) kinds.push('records');
+    if (assignments > 0) kinds.push('assignments');
+    if (children > 0) kinds.push('children');
+    if (declaredInNewest) kinds.push('boundaryDeclarations');
+    if (kinds.length > 0) throw controlChangeBlocked(kinds);
   }
 
   /**
@@ -315,6 +585,9 @@ export class SubsidiariesService {
     /** The reader's record scope for the panel's read-only view; none for a
      *  delete, which must count every record it would cascade. */
     recordScope: Prisma.ActivityRecordWhereInput = {},
+    /** The reader's companies, for the panel: a child it cannot read is not
+     *  counted (nor named). None for a delete, which counts every child. */
+    childScope?: readonly string[],
   ): Promise<SubsidiaryDependentCounts> {
     // Annotated, not inferred: assignability is what catches a status that no
     // longer exists in the Prisma enum, and it names the bad one. The same trap
@@ -341,6 +614,7 @@ export class SubsidiariesService {
       denominators,
       frozenBoundaryVersions,
       openBoundaryVersions,
+      children,
     ] =
       await Promise.all([
         db.activityRecord.count({
@@ -364,6 +638,7 @@ export class SubsidiariesService {
         db.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
         db.inventoryBoundarySubsidiary.count({ where: { subsidiaryId: id, boundary: { frozenAt: { not: null } } } }),
         db.inventoryBoundarySubsidiary.count({ where: { subsidiaryId: id, boundary: { frozenAt: null } } }),
+        db.subsidiary.count({ where: { parentId: id, ...(childScope ? { id: { in: [...childScope] } } : {}) } }),
       ]);
     return {
       terminalRecords,
@@ -372,6 +647,7 @@ export class SubsidiariesService {
       reviewRecords,
       openRecords,
       locations,
+      children,
       locationsHoldingForeignRecords,
       periodLocks,
       targets,
@@ -392,7 +668,7 @@ export class SubsidiariesService {
     await this.loadScoped(user, id);
     // `this.prisma` is directly assignable — the delegates a transaction client
     // exposes are the ones used here. Verified: removing the cast typechecks.
-    const counts = await this.countDependents(this.prisma, id, recordScopeWhere(user));
+    const counts = await this.countDependents(this.prisma, id, recordScopeWhere(user), user.accessibleSubsidiaryIds);
     const refusal = SubsidiariesService.describeBlockers(counts);
     const {
       locationsHoldingForeignRecords: _alarm,
@@ -495,12 +771,13 @@ export class SubsidiariesService {
       blockers.push(phrase);
       counts.push({ kind, count: c[kind] });
     };
+    // A child node and any facility block (inc26-group-tree, RD9): the tree
+    // lists a facility as a node, and a node with a child or a facility is
+    // not deleted. A delete no longer removes facilities.
+    if (c.children > 0) add('children', `${c.children} child company node(s)`);
+    if (c.locations > 0) add('locations', `${c.locations} facility(ies)`);
     if (c.reviewRecords > 0) add('reviewRecords', `${c.reviewRecords} record(s) awaiting review`);
     if (c.openRecords > 0) add('openRecords', `${c.openRecords} draft or returned record(s)`);
-    // `c.locations` is deliberately absent: deleting the subsidiary removes its
-    // own record-free locations, audited, so they are never something the user
-    // must clear first. Only ones holding records block, and for a different
-    // reason — see below.
     if (c.locationsHoldingForeignRecords > 0) {
       add(
         'locationsHoldingForeignRecords',
@@ -521,7 +798,8 @@ export class SubsidiariesService {
       message:
         `This subsidiary still holds ${blockers.join(', ')}. Deleting it would ` +
         'destroy them without an audit entry for each. Remove them first ' +
-        '(reopen any closed period rather than deleting its lock' +
+        '(move or delete each child company, delete each facility, ' +
+        'reopen any closed period rather than deleting its lock' +
         (c.locationsHoldingForeignRecords > 0
           ? '; a facility holding another subsidiary\'s record cannot be swept up, because that figure was calculated with its geography — the record has to move or go first'
           : '') +
@@ -542,53 +820,12 @@ export class SubsidiariesService {
     if (refusal) throw new ConflictException(errorBody('subsidiary_in_use', refusal.message));
   }
 
-  /**
-   * Remove the subsidiary's own locations as part of deleting it, with an audit
-   * row each — so undoing a mistyped subsidiary is one action, not a scavenger
-   * hunt.
-   *
-   * PR 1's refusal was never "locations are precious". It was that the FK
-   * cascade destroyed them UNAUDITED, behind a single "delete subsidiary" row.
-   * Writing each row removes that objection entirely, so the guard keeps its
-   * thesis and loses friction that had become routine: PR 3 made the create
-   * form require a location, so every subsidiary made through the UI was
-   * immediately undeletable — the case the guard's own message calls "a typo in
-   * the create form, most often".
-   *
-   * Called AFTER the guard, never before — and the reason is stronger than
-   * "the refusal would come too late". Everything is in one transaction, so a
-   * premature delete would simply roll back. The danger is that this method
-   * destroys the very evidence the guard reads: run it first and
-   * `locationsHoldingForeignRecords` counts ZERO, because the location is
-   * already gone in that snapshot. `describeBlockers` returns null, the
-   * transaction COMMITS, and another subsidiary's record is permanently
-   * detached. The guard would not be late — it would be structurally incapable
-   * of ever firing.
-   */
-  private async clearOwnLocations(
-    tx: Prisma.TransactionClient,
-    user: RequestUser,
-    id: string,
-  ): Promise<void> {
-    const locations = await tx.location.findMany({ where: { subsidiaryId: id } });
-    for (const location of locations) {
-      // False when a concurrent `DELETE /locations/:id` removed the site after
-      // the list was read: it is cleared all the same, and its audit row is
-      // that request's (Codex review of #350 P2).
-      await this.locations.deleteLocationForTrustedParent(tx, user, location);
-    }
-  }
-
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
     // Delete + audit in one transaction: the row is gone afterwards, so a
     // failed audit insert would leave a deletion with no trail at all.
-    // Stated, not inherited — the same argument the create path makes. This
-    // now does a findMany plus two round trips per location while holding the
-    // parent row exclusively, and `POST /locations` puts no cap on how many a
-    // subsidiary may have. Prisma's 5s default would surface as an opaque
-    // timeout at a managed database's latency.
+    // Stated, not inherited — the same argument the create path makes.
     await this.prisma.$transaction(async (tx) => {
       // Lock the parent row BEFORE counting. Inserting any child takes a
       // FOR KEY SHARE lock on the row it references, so FOR UPDATE here
@@ -600,17 +837,26 @@ export class SubsidiariesService {
       // Deleted by a concurrent request while this one waited for the lock:
       // the answer it would get now, not a 500 (pre-pilot defects).
       if (!locked) throw new ResourceNotFoundError('subsidiary_not_found');
-      // Guard first. It refuses on anything that must survive — including a
-      // location that holds records — so by the time the clear runs, every
-      // remaining location is provably record-free.
+      // The guard refuses on anything left beneath the company — a child
+      // node and a facility included (RD9) — so nothing cascades.
       await this.assertDeletable(tx, id);
-      await this.clearOwnLocations(tx, user, id);
+      // Its grants go with it (the key cascades); each removal is audited as
+      // a grant's removal is anywhere else (security review, WP7) — a child
+      // company a super_admin created carries one from the start.
+      const grants = await tx.userSubsidiaryAccess.findMany({ where: { subsidiaryId: id }, select: { userId: true } });
       await tx.subsidiary.delete({ where: { id } });
       await this.audit.record(
         user,
         { action: 'delete', entity: 'subsidiary', entityId: id, diff: { before: this.toDTO(existing) } },
         tx,
       );
+      for (const { userId } of [...grants].sort((a, b) => a.userId.localeCompare(b.userId))) {
+        await this.audit.record(
+          user,
+          { action: 'delete', entity: 'subsidiary_access', entityId: userId, diff: { subsidiaryId: id, reason: 'company deleted' } },
+          tx,
+        );
+      }
     }, { timeout: 15_000 });
     return { id, deleted: true };
   }

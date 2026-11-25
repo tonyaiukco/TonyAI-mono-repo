@@ -9,6 +9,11 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  IsNumber,
+  Matches,
+  Max,
+  Min,
+  ValidateIf,
 } from 'class-validator';
 import {
   GEOGRAPHY_CODES,
@@ -17,8 +22,15 @@ import {
   TRACKING_GRANULARITIES,
   type SubsidiaryStatus,
   type TrackingGranularity,
+  CONTROL_KINDS,
+  NACE_CODE_MAX_LENGTH,
+  NACE_CODE_PATTERN,
+  NODE_TYPES,
+  type ControlKind,
+  type NodeType,
 } from '@tonyai/shared-types';
 import { blankToNull } from '../../common/blank-to-null';
+import { ID_SHAPE_MESSAGE, lowercaseUuid, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
 
 export class UpdateSubsidiaryDto {
   // All six free-text descriptors are bounded, not just the names: one class
@@ -117,4 +129,44 @@ export class UpdateSubsidiaryDto {
   @IsOptional()
   @IsIn(TRACKING_GRANULARITIES as readonly string[])
   trackingGranularity?: TrackingGranularity;
+
+  // ---- The group tree (inc26-group-tree) ----------------------------------
+
+  /**
+   * The parent node. Omitted: the parent is unchanged; a value is a move (masterkey only; refused under the node's own subtree or while its subtree holds records); `null` is refused for every node but the holding. A parent the caller cannot read
+   * answers `subsidiary_not_found`, exactly as an unknown company.
+   */
+  // The shape, not RFC 4122's version bits: the seed's fixed ids are not
+  // version-conformant (`ParseUuidParamPipe` says why).
+  @IsOptional()
+  @Transform(lowercaseUuid)
+  @IsString()
+  @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
+  parentId?: string | null;
+
+  /** Accepted only unchanged: a node's type is fixed at creation (`node_type_fixed`). */
+  @IsOptional()
+  @IsIn(NODE_TYPES as readonly string[])
+  nodeType?: NodeType;
+
+  /** `associate` only on a `company` or `child_company`, by a masterkey.
+   *  Absent leaves it; `null` is refused here (a NOT NULL column — it reached
+   *  the database as a 500; QA review, WP7). */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(CONTROL_KINDS as readonly string[])
+  control?: ControlKind;
+
+  /** 0–100, two decimals at most; inert (no rule or figure reads it). */
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  sharePercent?: number | null;
+
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
+  @MaxLength(NACE_CODE_MAX_LENGTH)
+  @Matches(NACE_CODE_PATTERN)
+  naceCode?: string | null;
 }

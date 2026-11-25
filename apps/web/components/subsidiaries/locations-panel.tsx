@@ -11,7 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { geographyOptions } from '@/lib/types';
+import { LOCATION_TYPES, type LocationType } from '@/lib/types';
+import { usePricedGeographies } from '@/lib/use-priced-geographies';
 import { useTranslations } from 'use-intl';
 import { geographyLabel } from '@/lib/vocabulary';
 import { useErrorToast } from '@/lib/i18n/hooks';
@@ -41,7 +42,9 @@ interface LocationsPanelProps {
   onChanged: () => Promise<void> | void;
 }
 
-const emptyForm = { name: '', geographyCode: '', address: '', authorizedPerson: '' };
+// `locationType` '' is "no type" (inc26-group-tree, RD12: optional).
+const emptyForm = { name: '', geographyCode: '', address: '', authorizedPerson: '', locationType: '' };
+const NO_TYPE = 'none';
 
 /**
  * Operational locations of one subsidiary (FR §1.1 third tier): list + CRUD,
@@ -65,6 +68,7 @@ export function LocationsPanel({
   const tCommon = useTranslations('common');
   const showError = useErrorToast();
   const [form, setForm] = useState(emptyForm);
+  const pricedGeographies = usePricedGeographies();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [geoConfirm, setGeoConfirm] = useState<{ from: string; to: string } | null>(
@@ -92,6 +96,7 @@ export function LocationsPanel({
       geographyCode: loc.geographyCode,
       address: loc.address ?? '',
       authorizedPerson: loc.authorizedPerson ?? '',
+      locationType: loc.locationType ?? '',
     });
   }
 
@@ -133,6 +138,7 @@ export function LocationsPanel({
           geographyCode: form.geographyCode,
           address: form.address || null,
           authorizedPerson: form.authorizedPerson || null,
+          locationType: (form.locationType || null) as LocationType | null,
         });
         toast.success(t('locations.updated'));
       } else {
@@ -142,6 +148,7 @@ export function LocationsPanel({
           geographyCode: form.geographyCode,
           address: form.address || null,
           authorizedPerson: form.authorizedPerson || null,
+          ...(form.locationType ? { locationType: form.locationType as LocationType } : {}),
         });
         toast.success(t('locations.added'));
       }
@@ -188,6 +195,7 @@ export function LocationsPanel({
                     {loc.name}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
+                    {loc.locationType ? `${t(`locations.types.${loc.locationType}`)} · ` : ''}
                     {loc.address ?? t('locations.noAddress')}
                     {loc.authorizedPerson ? ` · ${loc.authorizedPerson}` : ''}
                   </p>
@@ -259,7 +267,7 @@ export function LocationsPanel({
                   {/* UK + Türkiye, plus this location's own value if it
                       is something else — hiding a code the record holds
                       would blank the trigger. */}
-                  {geographyOptions(
+                  {pricedGeographies(
                     form.geographyCode,
                     subsidiary?.geographyCode,
                     locations.find((l) => l.id === editingId)?.geographyCode,
@@ -273,6 +281,25 @@ export function LocationsPanel({
               <p className="text-xs text-muted-foreground">
                 {t('locations.geographyHint')}
               </p>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('locations.type')}</Label>
+              <Select
+                value={form.locationType || NO_TYPE}
+                onValueChange={(v) => setForm({ ...form, locationType: v === NO_TYPE ? '' : v })}
+              >
+                <SelectTrigger aria-label={t('locations.type')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_TYPE}>{t('locations.typeNone')}</SelectItem>
+                  {LOCATION_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {t(`locations.types.${type}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>{t('locations.address')}</Label>

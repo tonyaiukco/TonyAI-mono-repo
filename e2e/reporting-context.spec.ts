@@ -50,7 +50,8 @@ test('the selection lives in the URL: reload, navigation and the export keep it'
   await expect(page.getByRole('listbox')).toHaveCount(0);
   // A year other than the default, inside the pickers' window.
   await pick(page, 'context-year', '2024');
-  await pick(page, 'context-subsidiary', /^TonyAI Energy/);
+  // Not "TonyAI Energy Services" (the seed's child company, inc26-group-tree).
+  await pick(page, 'context-subsidiary', /^TonyAI Energy(?! Services)/);
   await expect(page).toHaveURL(new RegExp(`year=2024&subsidiaryId=${SUB.energy}&scope=all&category=all`));
   // Each choice is a history entry: Back returns to the previous selection, and its data.
   const backData = page.waitForRequest((r) => isSummary(r) && !('subsidiaryId' in queryOf(r)));

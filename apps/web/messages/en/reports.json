@@ -47,7 +47,12 @@
   },
   "scopeValue": "Scope {scope}",
   "noCommittedData": "No committed data for this selection.",
-  "methodology": "<strong>Methodology:</strong> every calculation stores an immutable snapshot of the emission factor it used (value, source, version) — the full factor appendix is included in the generated PDF/Excel. Boundary: operational control. Aligned with ISO 14064-1 / GHG Protocol.",
+  "methodology": "<strong>Methodology:</strong> every calculation stores an immutable snapshot of the emission factor it used (value, source, version) — the full factor appendix is included in the generated PDF/Excel. Consolidation approach: {approach}. Aligned with ISO 14064-1 / GHG Protocol.",
+  "methodologyApproach": {
+    "operational_control": "operational control",
+    "financial_control": "financial control"
+  },
+  "methodologyExclusions": "Left outside Scope 1 and 2 as associates (equity, not consolidated): {names}.",
   "generate": "Generate & download",
   "cannotGenerate": "Your role can view report data but cannot generate or export reports.",
   "downloadPdf": "Download PDF",

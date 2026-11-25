@@ -14,6 +14,7 @@ import {
 } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
+import type { CalculationsService } from '../calculations/calculations.service';
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -23,6 +24,17 @@ import { AuditService } from '../audit/audit.service';
 const audit = { record: vi.fn() };
 const auditMock = () => audit as unknown as AuditService;
 
+/** The factor library's coverage (inc26-group-tree, D10): UK and TR priced. */
+const calculations = {
+  coverage: vi.fn(async () => ({
+    entries: [
+      { geographyCode: 'TR', reportingYear: 2026, statuses: ['authoritative'] },
+      { geographyCode: 'UK', reportingYear: 2026, statuses: ['authoritative'] },
+    ],
+  })),
+};
+const calculationsMock = () => calculations as unknown as CalculationsService;
+
 describe('LocationsService', () => {
   let prisma: PrismaMock;
   let service: LocationsService;
@@ -31,7 +43,8 @@ describe('LocationsService', () => {
 
     audit.record.mockClear();
     prisma = createPrismaMock();
-    service = new LocationsService(prisma as unknown as PrismaService, auditMock());
+    calculations.coverage.mockClear();
+    service = new LocationsService(prisma as unknown as PrismaService, auditMock(), calculationsMock());
   });
 
   describe('list', () => {
@@ -155,6 +168,7 @@ describe('LocationsService', () => {
         geographyCode: 'TR',
         address: 'Levent, Istanbul',
         authorizedPerson: 'Aylin Demir',
+        locationType: 'office',
       });
 
       expect(prisma.txClient.location.create).toHaveBeenCalledWith({
@@ -164,7 +178,58 @@ describe('LocationsService', () => {
           geographyCode: 'TR',
           address: 'Levent, Istanbul',
           authorizedPerson: 'Aylin Demir',
+          locationType: 'office',
         },
+      });
+    });
+
+    describe('the group tree (inc26-group-tree)', () => {
+      it('stores a facility with no type as null, and answers it so', async () => {
+        prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+        const dto = await service.create(makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] }), {
+          subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR',
+        });
+        expect(prisma.txClient.location.create.mock.calls[0][0].data.locationType).toBeNull();
+        expect(dto.locationType).toBeNull();
+      });
+
+      it('answers the stored facility type', async () => {
+        prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1', locationType: 'warehouse' }));
+        const dto = await service.create(makeMasterkey(), {
+          subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR', locationType: 'warehouse',
+        });
+        expect(dto.locationType).toBe('warehouse');
+      });
+
+      it('refuses a facility under a sector group, and writes nothing', async () => {
+        prisma.txClient.subsidiary.findUnique.mockResolvedValue({ nodeType: 'sector_group' });
+        await expect(
+          service.create(makeMasterkey(), { subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR' }),
+        ).rejects.toMatchObject({ response: { code: 'node_placement_invalid', statusCode: 400 } });
+        expect(prisma.txClient.location.create).not.toHaveBeenCalled();
+        expect(audit.record).not.toHaveBeenCalled();
+      });
+
+      it('refuses a geography the factor library cannot price with 422, naming it, and writes nothing', async () => {
+        await expect(
+          service.create(makeMasterkey(), { subsidiaryId: 'sub-1', name: 'Munich', geographyCode: 'EU' }),
+        ).rejects.toMatchObject({
+          status: 422,
+          response: { code: 'geography_without_factors', params: { geography: 'EU' } },
+        });
+        expect(prisma.txClient.location.create).not.toHaveBeenCalled();
+      });
+
+      it('answers TA021 reached through a race as node_placement_invalid', async () => {
+        prisma.txClient.location.create.mockRejectedValue(
+          new Prisma.PrismaClientUnknownRequestError(
+            'Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "TA021", message: "node_placement_invalid: subsidiary x is a sector group and holds no facility", severity: "ERROR", detail: None, column: None, hint: None }) })',
+            { clientVersion: '6' },
+          ),
+        );
+        await expect(
+          service.create(makeMasterkey(), { subsidiaryId: 'sub-1', name: 'Depot', geographyCode: 'TR' }),
+        ).rejects.toMatchObject({ response: { code: 'node_placement_invalid' } });
       });
     });
 
@@ -296,6 +361,44 @@ describe('LocationsService', () => {
       expect(prisma.location.findUnique).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('sets, and clears, the facility type (inc26-group-tree)', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, locationType: 'factory' });
+      expect((await service.update(makeMasterkey(), existing.id, { locationType: 'factory' })).locationType).toBe('factory');
+      expect(prisma.txClient.location.update).toHaveBeenLastCalledWith({ where: { id: existing.id }, data: { locationType: 'factory' } });
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, locationType: null });
+      await service.update(makeMasterkey(), existing.id, { locationType: null });
+      expect(prisma.txClient.location.update).toHaveBeenLastCalledWith({ where: { id: existing.id }, data: { locationType: null } });
+    });
+
+    it('saves a facility from before the release with its stored, unpriced geography unchanged', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'EU' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, name: 'Renamed' });
+      await service.update(makeMasterkey(), existing.id, { name: 'Renamed', geographyCode: 'EU' });
+      expect(calculations.coverage).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.update).toHaveBeenCalled();
+    });
+
+    it('refuses a change to an unpriced geography with 422, and writes nothing', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'TR' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      await expect(service.update(makeMasterkey(), existing.id, { geographyCode: 'EU' })).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'geography_without_factors', params: { geography: 'EU' } },
+      });
+      expect(prisma.txClient.location.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts a change to a priced geography', async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'UK' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, geographyCode: 'TR' });
+      expect((await service.update(makeMasterkey(), existing.id, { geographyCode: 'TR' })).geographyCode).toBe('TR');
+      expect(calculations.coverage).toHaveBeenCalledTimes(1);
     });
 
     it('updates only provided fields and audits with before/after', async () => {

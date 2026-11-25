@@ -245,7 +245,7 @@ const auditOf = (entityId: string) =>
 // --------------------------------------------------------------------------
 
 describe('who may do what (E2): masterkey writes and confirms; everyone else reads', () => {
-  it('refuses every write by super_admin, auditor and standard_user with forbidden — changing nothing — and lets each read', async () => {
+  it('refuses every write by auditor and standard_user, and a super_admin the version lifecycle and another company, with nothing changed — and lets each read', async () => {
     const id = await versionWith([[S, completeS()]]);
     const before = await boundaryState();
     for (const role of ['superAdmin', 'auditor', 'standardUser'] as const) {
@@ -258,8 +258,18 @@ describe('who may do what (E2): masterkey writes and confirms; everyone else rea
         ['POST', `/inventory-boundaries/${id}/confirm`, undefined],
         ['DELETE', `/inventory-boundaries/${id}`, undefined],
       ] as const) {
+        // A super_admin writes its own company's declaration (inc26-group-tree,
+        // D7) — proved below; here it is refused only the rest.
+        if (role === 'superAdmin' && path.includes('/subsidiaries/')) continue;
         const answer = await call(user, method, path, body);
         expect([answer.status, answer.code], `${role} ${method} ${path}`).toEqual([403, 'forbidden']);
+      }
+      if (role === 'superAdmin') {
+        // Another company of the organisation answers as unknown, before anything is read.
+        for (const [method, body] of [['PUT', excludedAll()], ['DELETE', undefined]] as const) {
+          const answer = await call(user, method, `/inventory-boundaries/${id}/subsidiaries/${S2}`, body);
+          expect([answer.status, answer.code], `superAdmin ${method} S2`).toEqual([404, 'subsidiary_not_found']);
+        }
       }
       expect((await call(user, 'GET', '/inventory-boundaries?reportingYear=2026')).status, role).toBe(200);
       expect((await call(user, 'GET', `/inventory-boundaries/${id}`)).status, role).toBe(200);
@@ -272,7 +282,12 @@ describe('who may do what (E2): masterkey writes and confirms; everyone else rea
     const empties = (n: number) => ({ firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applicability: [], sources: Array(n).fill({}) });
     const flood = empties(340_000);
     expect(Buffer.byteLength(JSON.stringify(flood))).toBeLessThan(1_048_576);
-    for (const role of ['superAdmin', 'auditor', 'standardUser'] as const) {
+    // A super_admin is a declaration writer now (inc26-group-tree): its flood
+    // is refused by the size guard, small, before the pipe builds a row.
+    const sized = await call(t.users.superAdmin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, flood);
+    expect([sized.status, sized.code]).toEqual([400, 'validation_failed']);
+    expect(sized.text.length).toBeLessThan(1_000);
+    for (const role of ['auditor', 'standardUser'] as const) {
       const answer = await call(t.users[role], 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, flood);
       expect([answer.status, answer.code], role).toEqual([403, 'forbidden']);
       expect(answer.text.length, role).toBeLessThan(1_000);
@@ -283,6 +298,20 @@ describe('who may do what (E2): masterkey writes and confirms; everyone else rea
       expect(json<{ message: string[] }>(answer).message).toEqual(['sources must contain no more than 2000 elements']);
     }
     expect(await declared(id, S)).toBeNull();
+  });
+
+  it("lets a super_admin write and withdraw its own company's declaration in the open version, audited as a masterkey's (D7)", async () => {
+    const id = await versionWith([]);
+    const superAdmin = t.users.superAdmin;
+    expect((await call(superAdmin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, completeS())).status).toBe(200);
+    expect(await declared(id, S)).not.toBeNull();
+    expect((await call(superAdmin, 'DELETE', `/inventory-boundaries/${id}/subsidiaries/${S}`)).status).toBe(200);
+    expect(await declared(id, S)).toBeNull();
+    const rows = await auditOf(id);
+    expect(rows.filter((r) => r.userId === superAdmin.id).map((r) => [r.action, r.role])).toEqual([
+      ['update', 'super_admin'],
+      ['update', 'super_admin'],
+    ]);
   });
 
   it('lets masterkey do every one of them', async () => {
@@ -494,12 +523,17 @@ describe("a granted user's view (W3): its granted subsidiaries' part, and nothin
     expect(json<InventoryBoundaryVersionSummary[]>(await call(entry, 'GET', '/inventory-boundaries?reportingYear=2025'))).toEqual([]);
     expect(json<InventoryBoundaryVersionSummary[]>(await call(t.users.auditor, 'GET', '/inventory-boundaries?reportingYear=2026')).map((v) => v.id))
       .toEqual([siblingOnly, both]);
-    // A super_admin is scoped as the standard user is (INC-2.6 §1): its granted part only.
+    // A super_admin is scoped as the standard user is (INC-2.6 §1): its granted
+    // part only — and it also lists the year's OPEN version, which it declares
+    // its companies in, reading it with nothing of the sibling (inc26-group-tree, D7).
     expect(json<InventoryBoundaryVersionSummary[]>(await call(t.users.superAdmin, 'GET', '/inventory-boundaries?reportingYear=2026')).map((v) => v.id))
-      .toEqual([both]);
+      .toEqual([siblingOnly, both]);
     const scoped = json<InventoryBoundaryVersionDTO>(await call(t.users.superAdmin, 'GET', `/inventory-boundaries/${both}`));
     expect([scoped.view, scoped.boundary.subsidiaryIds]).toEqual(['granted_subsidiaries', [S]]);
-    expect((await call(t.users.superAdmin, 'GET', `/inventory-boundaries/${siblingOnly}`)).status).toBe(404);
+    const openRead = await call(t.users.superAdmin, 'GET', `/inventory-boundaries/${siblingOnly}`);
+    expect(openRead.status).toBe(200);
+    expect(json<InventoryBoundaryVersionDTO>(openRead).boundary.subsidiaryIds).toEqual([]);
+    for (const marker of [S2, M1]) expect(openRead.text, marker).not.toContain(marker);
 
     const view = await call(entry, 'GET', `/inventory-boundaries/${both}`);
     const dto = json<InventoryBoundaryVersionDTO>(view);
@@ -718,19 +752,27 @@ describe('concurrent writers (W8, E5; PR B (6))', () => {
     }
     expect(await boundaryState()).toBe(before);
 
+    // The subsidiary itself can no longer go mid-write: the write reads it
+    // FOR SHARE (inc26-group-tree, TA022 and the associate tick's lock), so
+    // its delete waits for the write and then meets the declaration.
     const S3 = (await owner.subsidiary.create({ data: { organisationId: t.organisationId, legalName: 'Int-test short-lived', geographyCode: 'UK' } })).id;
     const client2 = connect(1);
+    const deleter = connectOwner(1);
     try {
       const hold = holdBefore(client2, 'InventoryBoundarySubsidiary', 'create');
       const write = serviceOn(hold.client).putSubsidiary(admin, id, S3, excludedAll());
       await hold.reached();
-      await owner.subsidiary.delete({ where: { id: S3 } });
+      const deleting = deleter.subsidiary.delete({ where: { id: S3 } });
+      deleting.catch(() => undefined);
+      expect(await settledOrBlocked(deleting, await backendPid(deleter), owner)).toBe('blocked');
       hold.release();
-      expect(answered(await failure(write))).toBe('conflict');
+      // The write commits whole; the delete then runs against a declared company.
+      await expect(write).resolves.toMatchObject({ id });
+      await Promise.allSettled([deleting]);
     } finally {
       await client2.$disconnect();
+      await deleter.$disconnect();
     }
-    expect(await boundaryState()).toBe(before);
   });
 });
 
