@@ -549,8 +549,9 @@ export function factorActivityTypeFor(
 
 // Data Entry Types
 // The four roles of INC-2.6 §1 (inc26-roles-approval-chain, owner decisions
-// 2026-11-24 (third) 2–3 and 2026-11-25 (sixth)). Order matches Prisma's
-// `UserRole`, which follows the database's (nothing orders by role).
+// 2026-11-24 (third) 2–3 and 2026-11-25 (sixth)). Listed by reach; the
+// database's (and Prisma's) enum order differs — masterkey, auditor,
+// standard_user, super_admin — and nothing orders by role.
 export const USER_ROLES = ['masterkey', 'super_admin', 'standard_user', 'auditor'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 

@@ -10,8 +10,8 @@ function fixture() {
       email: `lp2-l10-${userId}@tonyai.test`, name: `L10 synthetic acceptance ${organisationId}` },
     invitees: ['tr', 'en'].map(language => ({ id: randomUUID(), language, email: `${language}@example.test` })),
     url: `postgresql://postgres.${projectRef}:SYNTHETIC@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt`, backendKey: 'SYNTHETIC' };
-  const rows = [{ id: userId, email: input.target.email, fullName: 'L10 bootstrap', role: 'super_admin' },
-    ...input.invitees.map(x => ({ ...x, role: x.language === 'tr' ? 'super_admin' : 'executive_viewer' }))]
+  const rows = [{ id: userId, email: input.target.email, fullName: 'L10 bootstrap', role: 'masterkey' },
+    ...input.invitees.map(x => ({ ...x, role: x.language === 'tr' ? 'super_admin' : 'auditor' }))]
     .map(x => ({ ...x, disabledAt: null, authSyncPendingSince: null, sessionsRevokedAt: null }));
   const org = { legalName: input.target.name, offboardedAt: null };
   let called = 0, disconnected = false;
@@ -63,7 +63,7 @@ for (const defect of ['foreign-member', 'foreign-org', 'wrong-role', 'already-di
     const f = fixture();
     if (defect === 'foreign-member') f.rows.push({ ...f.rows[0], id: randomUUID() });
     if (defect === 'foreign-org') f.org.legalName = 'Customer company';
-    if (defect === 'wrong-role') f.rows[0].role = 'consultant';
+    if (defect === 'wrong-role') f.rows[0].role = 'auditor';
     if (defect === 'already-disabled') f.rows[1].disabledAt = new Date();
     if (defect === 'already-pending') f.rows[1].authSyncPendingSince = new Date();
     await assert.rejects(execute(f.input, f.deps)); assert.equal(f.calls(), 0); assert.equal(f.disconnected(), true);

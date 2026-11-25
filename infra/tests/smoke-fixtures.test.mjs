@@ -54,7 +54,7 @@ test('hosted fixtures use current Prisma fields, canonical geography and one aud
           assert.equal(audit, 'auditLog'); assert.equal(row.entity, entity);
           assert.equal(row.entityId, data.id); assert.equal(row.action, 'create');
           if (entity !== 'profile') assert.ok(GEOGRAPHY_CODES.includes(data.geographyCode));
-          else { assert.equal(data.role, 'super_admin'); assert.equal(data.email, `lp2-smoke-${data.id}@tonyai.test`); }
+          else { assert.equal(data.role, 'masterkey'); assert.equal(data.email, `lp2-smoke-${data.id}@tonyai.test`); }
         }
         assert.deepEqual(events.filter(([entity]) => entity === 'profile').map(([, row]) => row.organisationId), selected.tenants.map((tenant) => tenant.organisationId));
       }

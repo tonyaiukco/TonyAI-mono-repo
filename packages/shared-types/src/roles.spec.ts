@@ -26,7 +26,7 @@ import {
 // inc26-roles-approval-chain: the role model of INC-2.6 §1 and §6.
 
 describe('the four roles', () => {
-  it('are the document\'s, in the database\'s order', () => {
+  it('are the document\'s four roles', () => {
     expect(USER_ROLES).toEqual(['masterkey', 'super_admin', 'standard_user', 'auditor']);
   });
 

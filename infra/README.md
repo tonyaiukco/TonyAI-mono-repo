@@ -256,7 +256,7 @@ foundation; SMTP secret storage follows vault creation.
 Provisioning/readback, readiness and scheduled verification cover `evidence`
 (10 MiB), `import-sources` (2 MiB) and `report-artifacts` (20 MiB, PDF only).
 The first two probes use CSV; the report probe uses PDF. All buckets are private.
-Smoke uses two synthetic super_admin tenants with canonical hosted geography;
+Smoke uses two synthetic masterkey tenants with canonical hosted geography;
 all-role, factorless lifecycle and retained-PDF acceptance are separate owner checks.
 
 ## Authoritative writers: the hosted path

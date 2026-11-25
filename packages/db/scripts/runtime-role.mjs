@@ -167,8 +167,8 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // A consent given at registration: inserted (listed columns only — see
   // RUNTIME_COLUMN_INSERTS) and read, never updated or deleted.
   consents: ['SELECT'],
-  user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
   // + UPDATE on `categories` only — see RUNTIME_COLUMN_UPDATES.
+  user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
   // + UPDATE on every column but its identity and organisation — see
   // RUNTIME_COLUMN_UPDATES.
   subsidiaries: ['SELECT', 'INSERT', 'DELETE'],

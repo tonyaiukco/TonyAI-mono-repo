@@ -18,22 +18,27 @@ Do not guess a hostname, use a local demo URL or share vault access with testers
 
 After L4a privilege acceptance, migrations, runtime checks and SMTP acceptance,
 the owner uses [runbook 04 §4.6](04-verify.md#46-lp4-01-hosted-auth-and-first-organisation-owner-run)
-to provision one synthetic holding and its first super_admin (the holding starts
-with one default subsidiary named after itself; rename it or add the others). That admin invites
-the second super_admin, data_entry, consultant and executive_viewer, assigning
-explicit subsidiary access to data_entry. Use individual accounts and private
-invitations; never share passwords or reuse `@tonyai.local` demo accounts.
+to provision one synthetic holding and its first masterkey (the holding starts
+with one default subsidiary named after itself; rename it or add the others). The
+masterkey invites a super_admin (ticking its companies) and an auditor; the
+super_admin invites a standard user into one of its companies and ticks the
+user's categories (INC-2.6 §6; `inc26-roles-approval-chain`). Use individual
+accounts and private invitations; never share passwords or reuse `@tonyai.local`
+demo accounts.
 
 | Role | QA responsibility |
 |---|---|
-| First super_admin | Manage synthetic subsidiaries/users, author records; cannot approve own records |
-| Second super_admin | Independently approve the first author's submissions and test locks |
-| data_entry | Author/submit in assigned subsidiaries; foreign/unassigned access must fail |
-| consultant | Review/read access; no record-authoring or approval privileges |
-| executive_viewer | Read/export only; every attempted mutation must be refused |
+| Masterkey | Manage synthetic subsidiaries, super_admins and auditors, locks and reports; decides super_admin records, its own (a self-approval) and the fallback for a company with no super_admin |
+| Super admin | Works in its granted companies only; invites standard users there and sets their company and categories; decides its standard users' records, never its own |
+| Standard user | Author/submit in its one company and ticked categories; other companies and categories must answer as unknown |
+| Auditor | Read the whole organisation, the audit log included; every attempted mutation and decision must be refused |
+
+Sections below that record earlier runs (before 2026-11-25) use the role names
+of their time: `super_admin` there is today's `masterkey`, `data_entry` today's
+`standard_user`, and `consultant` and `executive_viewer` are today's `auditor`.
 
 Use a second synthetic holding for isolation acceptance. The automated smoke
-creates two random-ID super_admin tenants itself; it does **not** issue QA team
+creates two random-ID masterkey tenants itself; it does **not** issue QA team
 accounts or prove the four-role matrix. Its Auth accounts are removed after each
 run; application rows and append-only audit remain labelled smoke evidence.
 
