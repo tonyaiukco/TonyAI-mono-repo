@@ -13,7 +13,9 @@ function user(role: RequestUser['role'], id = `u-${role}`, organisationId: strin
   return { id, role, organisationId, email: `${id}@example.test`, fullName: id } as RequestUser;
 }
 
-function auditRow(i: number) {
+/** A row as stored: its role is the actor's role WHEN it was written — here
+ *  a retired name, which history shows as stored (design Decision 10). */
+function auditRow(i: number, over: Partial<{ role: string; action: string; createdAt: Date }> = {}) {
   return {
     id: `audit-${String(i).padStart(4, '0')}`,
     action: i === 0 ? 'create' : 'update',
@@ -21,10 +23,15 @@ function auditRow(i: number) {
     role: 'data_entry',
     diff: {},
     createdAt: new Date(Date.UTC(2026, 10, 25, 0, 0, i)),
+    ...over,
   };
 }
 
-function build({ rows = [auditRow(0)], get = vi.fn().mockResolvedValue(RECORD) } = {}) {
+function build({
+  rows = [auditRow(0)],
+  get = vi.fn().mockResolvedValue(RECORD),
+  cutOver = null as Date | null,
+} = {}) {
   const prisma = {
     // The service asks for the newest first; the mock answers in that order.
     auditLog: {
@@ -34,6 +41,8 @@ function build({ rows = [auditRow(0)], get = vi.fn().mockResolvedValue(RECORD) }
     },
     profile: { findMany: vi.fn().mockResolvedValue([{ id: 'u-entry', fullName: 'Entry User' }]) },
     location: { findMany: vi.fn().mockResolvedValue([]) },
+    // The organisation's cut-over (`role_model_changed_at`), read once per trail.
+    organisation: { findUnique: vi.fn().mockResolvedValue({ roleModelChangedAt: cutOver }) },
   };
   const records = { get };
   const service = new RecordAuditTrailService(
@@ -44,30 +53,59 @@ function build({ rows = [auditRow(0)], get = vi.fn().mockResolvedValue(RECORD) }
 }
 
 describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 §6)', () => {
-  it.each(['masterkey', 'consultant', 'executive_viewer'] as const)(
-    'a %s reads the trail of a record they can read',
+  // "A trail is read within its reader's role and scope": a masterkey and an
+  // auditor any record of the organisation; a super_admin any record its
+  // scoped read returns (a granted company); each a record another created.
+  it.each(['masterkey', 'auditor', 'super_admin'] as const)(
+    'a %s reads the trail of a record another user created that they can read',
     async (role) => {
-      const { service } = build();
+      const { records, service } = build();
       const trail = await service.read(user(role), 'rec-1');
       expect(trail).toMatchObject({ recordId: 'rec-1', truncated: false });
       expect(trail.events).toHaveLength(1);
+      // A retired role passes through as stored.
       expect(trail.events[0].actor).toEqual({ name: 'Entry User', role: 'data_entry' });
+      // Through the record's own scoped read, as the caller.
+      expect(records.get).toHaveBeenCalledWith(expect.objectContaining({ role }), 'rec-1');
     },
   );
 
-  it('a data_entry author reads their own record\'s trail', async () => {
-    const { service } = build();
-    const trail = await service.read(user('data_entry', 'u-entry'), 'rec-1');
-    expect(trail.events.map((e) => e.kind)).toEqual(['created']);
+  it('a standard user author reads their own record\'s trail, with a return and its reason', async () => {
+    const rows = [
+      auditRow(0),
+      { ...auditRow(1, { action: 'submit', role: 'standard_user' }), diff: { transition: { from: 'draft', to: 'submitted' } } },
+      {
+        ...auditRow(2, { action: 'reject', role: 'super_admin' }),
+        userId: 'u-sa',
+        diff: { transition: { from: 'submitted', to: 'rejected' }, reviewNote: 'Invoice missing' },
+      },
+    ];
+    const { service } = build({ rows });
+    const trail = await service.read(user('standard_user', 'u-entry'), 'rec-1');
+    expect(trail.events.map((e) => e.kind)).toEqual(['created', 'submitted', 'returned']);
+    expect(trail.events[2].reason).toBe('Invoice missing');
   });
 
-  it('a data_entry colleague is refused as forbidden, and no audit row is read', async () => {
+  it('a standard user colleague in a shared company is refused as forbidden, and no audit row is read', async () => {
     const { prisma, service } = build();
-    await expect(service.read(user('data_entry', 'u-colleague'), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.read(user('standard_user', 'u-colleague'), 'rec-1')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
   });
+
+  it.each(['standard_user', 'super_admin'] as const)(
+    'a %s reading a record of a company they hold no grant for is refused exactly as the record read is',
+    async (role) => {
+      // The scoped read (`loadScoped` → `inRecordScope`) answers not found for
+      // a company outside the grants; the trail repeats that answer verbatim.
+      const notFound = new ResourceNotFoundError('record_not_found');
+      const { prisma, service } = build({ get: vi.fn().mockRejectedValue(notFound) });
+      await expect(service.read(user(role), 'rec-in-company-c')).rejects.toBe(notFound);
+      expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+      expect(prisma.organisation.findUnique).not.toHaveBeenCalled();
+    },
+  );
 
   it('refuses an organisation-less caller before reading', async () => {
     const { prisma, service } = build();
@@ -77,7 +115,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
     expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
   });
 
-  it('refuses a record the caller cannot read exactly as its read does', async () => {
+  it('refuses a record of another organisation exactly as its read does, not saying whether it exists', async () => {
     const notFound = new ResourceNotFoundError('record_not_found');
     const { prisma, service } = build({ get: vi.fn().mockRejectedValue(notFound) });
     await expect(service.read(user('masterkey'), 'rec-other-org')).rejects.toBe(notFound);
@@ -86,7 +124,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
 
   it('keys the audit query by the record and the caller\'s organisation, newest first', async () => {
     const { prisma, service } = build();
-    await service.read(user('consultant'), 'rec-1');
+    await service.read(user('auditor'), 'rec-1');
     expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -151,11 +189,66 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
     ]);
   });
 
-  it('writes nothing: the audit writer is never called', async () => {
-    const { prisma, service } = build();
-    await service.read(user('masterkey'), 'rec-1');
-    await service.read(user('masterkey'), 'rec-1');
+  it('writes nothing, and two reads answer the same events', async () => {
+    const { prisma, service } = build({ rows: [auditRow(0), auditRow(1)] });
+    const first = await service.read(user('masterkey'), 'rec-1');
+    const second = await service.read(user('masterkey'), 'rec-1');
+    expect(second).toEqual(first);
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
     expect(prisma.auditLog.createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('RecordAuditTrailService — a stored role is shown under the role model it was written in (design Decision 10)', () => {
+  const CUT_OVER = new Date('2026-11-25T12:00:00.000Z');
+  const before = new Date('2026-11-25T11:59:59.999Z');
+  const after = new Date('2026-11-25T12:00:00.001Z');
+  const approval = (createdAt: Date, role: string) => ({
+    ...auditRow(1, { action: 'approve', role, createdAt }),
+    userId: 'u-entry',
+    diff: { transition: { from: 'submitted', to: 'approved' } },
+  });
+
+  it('reads the organisation\'s cut-over once per trail, keyed by the caller\'s organisation', async () => {
+    const rows = [auditRow(0), approval(before, 'super_admin'), approval(after, 'super_admin')];
+    const { prisma, service } = build({ rows, cutOver: CUT_OVER });
+    await service.read(user('auditor'), 'rec-1');
+    expect(prisma.organisation.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.organisation.findUnique).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      select: { roleModelChangedAt: true },
+    });
+  });
+
+  it('shows a super_admin approval from before the cut-over as legacy_super_admin, one after it as super_admin', async () => {
+    const rows = [approval(before, 'super_admin'), approval(after, 'super_admin')];
+    const { service } = build({ rows, cutOver: CUT_OVER });
+    const trail = await service.read(user('auditor'), 'rec-1');
+    expect(trail.events.map((e) => e.actor?.role)).toEqual(['legacy_super_admin', 'super_admin']);
+  });
+
+  it('shows today\'s names for an organisation with no cut-over (created after the change)', async () => {
+    const rows = [approval(before, 'super_admin'), approval(after, 'masterkey')];
+    const { service } = build({ rows, cutOver: null });
+    const trail = await service.read(user('auditor'), 'rec-1');
+    expect(trail.events.map((e) => e.actor?.role)).toEqual(['super_admin', 'masterkey']);
+  });
+
+  it('shows a consultant\'s old review start as consultant', async () => {
+    const rows = [{
+      ...auditRow(1, { action: 'review', role: 'consultant', createdAt: before }),
+      diff: { transition: { from: 'submitted', to: 'under_review' } },
+    }];
+    const { service } = build({ rows, cutOver: CUT_OVER });
+    const trail = await service.read(user('auditor'), 'rec-1');
+    expect(trail.events[0]).toMatchObject({ kind: 'review_started', actor: { role: 'consultant' } });
+  });
+
+  it('a missing organisation row reads as no cut-over', async () => {
+    const rows = [approval(before, 'super_admin')];
+    const { prisma, service } = build({ rows });
+    prisma.organisation.findUnique.mockResolvedValue(null);
+    const trail = await service.read(user('auditor'), 'rec-1');
+    expect(trail.events[0].actor?.role).toBe('super_admin');
   });
 });

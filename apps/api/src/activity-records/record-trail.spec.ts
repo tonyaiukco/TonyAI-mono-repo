@@ -11,6 +11,8 @@ const lookups: TrailLookups = {
     ['loc-a', 'Istanbul plant'],
     ['loc-b', 'Izmir depot'],
   ]),
+  // An organisation created after the role model changed: today's names.
+  cutOver: null,
 };
 
 let seq = 0;
@@ -67,6 +69,8 @@ const transition = (from: string, to: string, extra: Record<string, unknown> = {
   transition: { from, to },
   ...extra,
 });
+// A retired role, as rows written before the role model changed hold it:
+// shown as stored (design Decision 10).
 const reviewer = { userId: 'u-review', role: 'consultant' };
 
 describe('buildRecordTrail — the events of one record, in order', () => {
@@ -229,14 +233,17 @@ describe('buildRecordTrail — the events of one record, in order', () => {
   });
 
   it('reads a role it does not know, or none, as null', () => {
+    // `auditor` is a role since INC-2.6, so the unknown text is another; and
+    // the display-only `legacy_super_admin` is never a STORED role.
     const events = buildRecordTrail(
       [
         row('create', {}, { role: null }),
-        row('update', {}, { role: 'auditor' }),
+        row('update', {}, { role: 'reviewer' }),
+        row('update', {}, { role: 'legacy_super_admin' }),
       ],
       lookups,
     );
-    expect(events.map((e) => e.actor?.role)).toEqual([null, null]);
+    expect(events.map((e) => e.actor?.role)).toEqual([null, null, null]);
   });
 
   it('holds a draft that was only created as one event', () => {
@@ -483,5 +490,85 @@ describe('editChanges — each changed input, before and after', () => {
       lookups,
     );
     expect(changes).toEqual([{ field: 'figure', before: 0.442, after: null }]);
+  });
+});
+
+describe('buildRecordTrail — a self-approval is its own kind (inc26-roles-approval-chain)', () => {
+  const masterkeyRow = { userId: 'u-admin', role: 'masterkey' };
+
+  it('lists a masterkey\'s approval of their own record as self_approved, never approved', () => {
+    const events = buildRecordTrail(
+      [
+        row('create', { after: snapshot({ createdBy: 'u-admin' }) }, masterkeyRow),
+        row('submit', transition('draft', 'submitted', { submission: 1 }), masterkeyRow),
+        row('review', transition('submitted', 'under_review'), masterkeyRow),
+        row('self_approve', transition('under_review', 'approved', { reviewNote: null }), masterkeyRow),
+      ],
+      lookups,
+    );
+    expect(events.map((e) => e.kind)).toEqual(['created', 'submitted', 'review_started', 'self_approved']);
+    expect(events.some((e) => e.kind === 'approved')).toBe(false);
+    for (const e of events) expect(e.actor).toEqual({ name: 'Admin User', role: 'masterkey' });
+    // Like an approval: no reason, no changed input, its action as written.
+    expect(events[3]).toMatchObject({ action: 'self_approve', reason: null, changes: [], submission: null });
+  });
+
+  it('keeps an ordinary approval as approved', () => {
+    const [event] = buildRecordTrail(
+      [row('approve', transition('under_review', 'approved'), { userId: 'u-review', role: 'super_admin' })],
+      lookups,
+    );
+    expect(event.kind).toBe('approved');
+  });
+
+  it('a void after a self-approval keeps the self-approval event', () => {
+    const events = buildRecordTrail(
+      [
+        row('self_approve', transition('submitted', 'approved'), masterkeyRow),
+        row('void', transition('approved', 'voided', { voidReason: 'Duplicate', before: snapshot() }), masterkeyRow),
+      ],
+      lookups,
+    );
+    expect(events.map((e) => e.kind)).toEqual(['self_approved', 'voided']);
+  });
+});
+
+describe('buildRecordTrail — a role stored before the role model changed (displayRole, design Decision 10)', () => {
+  const CUT_OVER = new Date('2026-11-25T12:00:00.000Z');
+  const withCutOver: TrailLookups = { ...lookups, cutOver: CUT_OVER };
+  const approval = (role: string, createdAt: Date) =>
+    row('approve', transition('under_review', 'approved'), { userId: 'u-review', role, createdAt });
+
+  it('shows a super_admin row before the cut-over as legacy_super_admin, one at or after it as super_admin', () => {
+    const events = buildRecordTrail(
+      [
+        approval('super_admin', new Date(CUT_OVER.getTime() - 1)),
+        approval('super_admin', CUT_OVER),
+        approval('super_admin', new Date(CUT_OVER.getTime() + 1)),
+      ],
+      withCutOver,
+    );
+    expect(events.map((e) => e.actor?.role)).toEqual(['legacy_super_admin', 'super_admin', 'super_admin']);
+  });
+
+  it('shows today\'s names for an organisation with no cut-over', () => {
+    const [event] = buildRecordTrail([approval('super_admin', new Date('2020-01-01T00:00:00.000Z'))], lookups);
+    expect(event.actor?.role).toBe('super_admin');
+  });
+
+  it.each(['consultant', 'data_entry', 'executive_viewer'])('passes the retired %s through, before and after the cut-over', (role) => {
+    const events = buildRecordTrail(
+      [approval(role, new Date(CUT_OVER.getTime() - 1)), approval(role, new Date(CUT_OVER.getTime() + 1))],
+      withCutOver,
+    );
+    expect(events.map((e) => e.actor?.role)).toEqual([role, role]);
+  });
+
+  it.each(['masterkey', 'standard_user', 'auditor'])('shows today\'s %s as stored, whatever the row\'s time', (role) => {
+    const events = buildRecordTrail(
+      [approval(role, new Date(CUT_OVER.getTime() - 1)), approval(role, new Date(CUT_OVER.getTime() + 1))],
+      withCutOver,
+    );
+    expect(events.map((e) => e.actor?.role)).toEqual([role, role]);
   });
 });
