@@ -1,5 +1,6 @@
 {
   "entryProgress": "%{rate} veri girişi ilerlemesi",
+  "entryProgressNone": "— veri girişi ilerlemesi (tamamlanacak kategori yok)",
   "entryNote": "Veri girişi ilerlemesi, verileri bir incelemeci tarafından onaylanmış kategorileri sayar; incelemeyi bekleyen her şey kısmi sayılır. Envanter kapsamı değildir — sınırın kapsamı aşağıda gösterilir.",
   "nonAuthoritative": "Bu sayfada yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: <strong>{count} / {of}</strong>, Kapsam 3 dahil. Bunlar yetkili değildir.",
   "scope3Description": "Kapsanmıyor — toplama dahil değil",

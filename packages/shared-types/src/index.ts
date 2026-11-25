@@ -18,6 +18,10 @@ export interface Subsidiary {
   shortName: string;
   sector: string;
   totalEmissions: number;
+  /** True when the row holds no Scope 1 or 2 cell the reader may see (a
+   *  Scope 3 selection, or a standard user granted none of those categories):
+   *  `totalEmissions` is then not a measured 0, and a chart leaves it out. */
+  emissionsNotCovered?: boolean;
   completionRate: number;
   categories: CategoryData[];
   notes?: string;
@@ -43,7 +47,9 @@ export interface KPIData {
   incompleteCategories: number;
   missingCategories: number;
   totalEmissions: number;
-  calculationCompletionRate: number;
+  /** Null when there is no category cell to complete (no subsidiary, or a
+   *  standard user granted no category it may see): not applicable, never 0 %. */
+  calculationCompletionRate: number | null;
   emissions: ScopeEmissions;
 }
 

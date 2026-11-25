@@ -62,6 +62,8 @@ function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
     // 0 for a row the selection leaves uncovered: the chart is told so on its
     // own (`notCovered`) and draws no bar at all.
     totalEmissions: scope12Total(row) ?? 0,
+    // Not a measured 0: the chart leaves such a row out (owner's review).
+    emissionsNotCovered: scope12Total(row) === null,
     // 0 for a row with no category the reader may see (`completionRate` null).
     completionRate: completionRate(row) ?? 0,
     categories,
@@ -94,8 +96,10 @@ export function buildKpiData(
     // Scope 1 + 2, as every report prints it (LP4-03 K4): Scope 3 is recorded,
     // shown on its own card, and not covered by the inventory.
     totalEmissions: summary.totals.scope1 + summary.totals.scope2,
+    // Null with no cell to complete — not applicable, as the company detail
+    // shows it (owner's review): never 0 % of nothing.
     calculationCompletionRate:
-      cellCount > 0 ? Math.round((complete / cellCount) * 100) : 0,
+      cellCount > 0 ? Math.round((complete / cellCount) * 100) : null,
     emissions: {
       scope1: summary.totals.scope1,
       scope2: summary.totals.scope2,

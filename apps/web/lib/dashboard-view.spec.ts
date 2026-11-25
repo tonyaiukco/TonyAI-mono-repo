@@ -160,12 +160,12 @@ describe('buildKpiData', () => {
     expect(kpi.calculationCompletionRate).toBe(0);
   });
 
-  it('reports 0%, not NaN, for a tenant with no cells at all', () => {
-    // Reachable on a fresh organisation with no subsidiaries. The card divided
-    // by this total to size its bar and rendered a literal `NaN%`.
+  it('reports not applicable (null), never 0% or NaN, with no cell to complete', () => {
+    // A fresh organisation with no subsidiaries, or a standard user granted a
+    // company with no category ticked and no record of its own (owner's
+    // review): there is nothing to complete. The card once rendered `NaN%`.
     const kpi = buildKpiData(summary, matrix([], { complete: 0, incomplete: 0, missing: 0 }), null);
-    expect(kpi.calculationCompletionRate).toBe(0);
-    expect(Number.isNaN(kpi.calculationCompletionRate)).toBe(false);
+    expect(kpi.calculationCompletionRate).toBeNull();
   });
 
   it('totals Scope 1 + 2 as every report does — Scope 3 on its own card, outside the total (LP4-03 K4)', () => {
@@ -292,6 +292,17 @@ describe("emptyInvoiceGridKey (owner's review: a reader's access is not the comp
   });
   it("explains a location-measured subsidiary whose invoice categories the reader is not granted", () => {
     expect(emptyInvoiceGridKey("location")).toBe("grid.noVisibleCategory");
+  });
+});
+
+describe("matrixToSubsidiaries — a row with nothing the reader may see is not a measured 0 (owner's review)", () => {
+  it("marks a row with no Scope 1 or 2 cell as not covered, and a row with one as covered", () => {
+    const empty = { subsidiaryId: "a", subsidiaryName: "A", sector: null, designatedPerson: null, totalTCo2e: 0, completeCount: 0, categoryCount: 0, trackingGranularity: "subsidiary", locationCount: 0, uncalculatedRecordCount: 0, cells: [] };
+    const covered = { ...empty, subsidiaryId: "b", categoryCount: 1, cells: [{ category: "Electricity", scope: 2, status: "complete", tCo2e: 5, lastUpdate: null }] };
+    const [a, b] = matrixToSubsidiaries({ reportingYear: 2026, rows: [empty, covered], totals: { complete: 1, incomplete: 0, missing: 0 } } as never);
+    expect(a.emissionsNotCovered).toBe(true);
+    expect(b.emissionsNotCovered).toBe(false);
+    expect(b.totalEmissions).toBe(5);
   });
 });
 
