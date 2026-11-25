@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { tokenVerifier, TokenVerificationError } from './token-verifier';
 import { AccountDisabledError, SessionRevokedError } from './access-errors';
+import { can, isCategory, type Category } from '@tonyai/shared-types';
 import type { RequestUser } from './auth.types';
 
 /**
@@ -115,35 +116,41 @@ export class SupabaseAuthGuard implements CanActivate {
       throw new SessionRevokedError();
     }
 
-    let accessibleSubsidiaryIds: string[];
-    if (profile.role === 'data_entry') {
+    // The scope rule of INC-2.6 §1 (inc26-roles-approval-chain, design
+    // Decision 4): a super_admin and a standard user work in their grants, a
+    // masterkey and an auditor in the whole organisation. A role this build
+    // does not know gets nothing.
+    let accessibleSubsidiaryIds: string[] = [];
+    const categoryGrants: Record<string, Category[]> = {};
+    if (!profile.organisationId) {
+      // No organisation → default-deny, for every role. Otherwise a null
+      // `organisationId` would make the organisation-wide query below an
+      // unfiltered `findMany` and expose EVERY subsidiary across all tenants.
+      accessibleSubsidiaryIds = [];
+    } else if (can(profile.role, 'scope.granted')) {
       // Access rows are intersected with the profile's OWN organisation. Without
       // this, a stray `user_subsidiary_access` row pointing at another tenant's
       // subsidiary would grant real access — and every audit row it produced
       // would be stamped with this actor's organisation (WP7 denormalises the
       // tenant from the actor), filing another tenant's activity under this one:
-      // visible to the wrong super_admin, invisible to the right one.
-      // A data_entry profile with no organisation is default-denied for the same
-      // reason the privileged roles below are.
-      if (!profile.organisationId) {
-        accessibleSubsidiaryIds = [];
-      } else {
-        const granted = profile.subsidiaryAccess.map((a) => a.subsidiaryId);
-        const sameOrg = granted.length
-          ? await this.prisma.subsidiary.findMany({
-              where: { id: { in: granted }, organisationId: profile.organisationId },
-              select: { id: true },
-            })
-          : [];
-        accessibleSubsidiaryIds = sameOrg.map((s) => s.id);
+      // visible to the wrong masterkey, invisible to the right one.
+      const granted = profile.subsidiaryAccess.map((a) => a.subsidiaryId);
+      const sameOrg = granted.length
+        ? await this.prisma.subsidiary.findMany({
+            where: { id: { in: granted }, organisationId: profile.organisationId },
+            select: { id: true },
+          })
+        : [];
+      accessibleSubsidiaryIds = sameOrg.map((s) => s.id);
+      if (can(profile.role, 'scope.categories')) {
+        const inScope = new Set(accessibleSubsidiaryIds);
+        for (const grant of profile.subsidiaryAccess) {
+          if (!inScope.has(grant.subsidiaryId)) continue;
+          // Only names the product knows: a stray stored name widens nothing.
+          categoryGrants[grant.subsidiaryId] = (grant.categories ?? []).filter(isCategory);
+        }
       }
-    } else if (!profile.organisationId) {
-      // super_admin / consultant / executive_viewer WITHOUT an organisation →
-      // default-deny. Otherwise a null `organisationId` would make the query below
-      // an unfiltered `findMany` and expose EVERY subsidiary across all tenants.
-      accessibleSubsidiaryIds = [];
-    } else {
-      // super_admin / consultant / executive_viewer get organisation-wide visibility.
+    } else if (can(profile.role, 'scope.organisation')) {
       const subs = await this.prisma.subsidiary.findMany({
         where: { organisationId: profile.organisationId },
         select: { id: true },
@@ -158,6 +165,7 @@ export class SupabaseAuthGuard implements CanActivate {
       role: profile.role,
       organisationId: profile.organisationId,
       accessibleSubsidiaryIds,
+      categoryGrants,
     };
     request.user = user;
     return true;

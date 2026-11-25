@@ -34,7 +34,7 @@ export type RegistrationJob = Omit<RegistrationRequest, 'registrationCode' | 'co
 /**
  * Self-service registration's work (owner decisions 2026-11-11): behind the
  * environment's registration code, a public form creates an organisation and
- * its first `super_admin` and sends that person the invitation email; the
+ * its first `masterkey` and sends that person the invitation email; the
  * invitation flow takes over from there.
  *
  * The switch is the code itself: with none configured there is no

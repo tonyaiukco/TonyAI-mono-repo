@@ -142,7 +142,7 @@ export interface RecordActions {
   edit: boolean;
   /** Take a submitted record back to draft — its author, before review. */
   recall: boolean;
-  /** Pre-fill a new draft from a voided record — its author or a super_admin. */
+  /** Pre-fill a new draft from a voided record — its author or a masterkey. */
   copy: boolean;
 }
 

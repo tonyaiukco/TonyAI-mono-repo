@@ -10,6 +10,7 @@ import { ResourceNotFoundError } from '../common/api-error';
 import { boundaryGaps } from './boundary-gaps';
 import { readBoundaryRows, type BoundaryRowsReader } from './boundary-rows';
 import { buildBoundarySnapshot, type BoundaryRows } from './boundary-snapshot';
+import { can } from '@tonyai/shared-types';
 
 /**
  * The routes' own reader (LP3-04's write path; contract follow-up (7)): a
@@ -49,16 +50,16 @@ export function versionSummary(header: InventoryBoundary): InventoryBoundaryVers
   };
 }
 
-/** Who reads: the role decides the view, data_entry's grants its part. */
+/** Who reads: the role decides the view, a granted reader's grants its part. */
 export interface BoundaryViewer {
   role: UserRole;
   accessibleSubsidiaryIds: readonly string[];
 }
 
 /**
- * The version as `viewer` reads it. Every reader but data_entry reads the
- * whole declared inventory (`organisation`). A data_entry user reads its
- * granted subsidiaries' part (`granted_subsidiaries`, W3) — as the boundary's
+ * The version as `viewer` reads it. A masterkey and an auditor read the
+ * whole declared inventory (`organisation`). A granted reader (a super_admin
+ * or a standard user) reads its granted companies' part (`granted_subsidiaries`, W3) — as the boundary's
  * RLS shows it — and a version declaring none of them, an empty one included,
  * is `boundary_not_found`, the same body a missing version answers.
  */
@@ -66,7 +67,7 @@ export function versionDTO(loaded: LoadedVersion, viewer: BoundaryViewer): Inven
   const boundary = buildBoundarySnapshot(loaded.rows);
   const gaps = boundaryGaps(boundary);
   const summary = versionSummary(loaded.header);
-  if (viewer.role !== 'data_entry') return { ...summary, boundary, boundaryGaps: gaps, view: 'organisation' };
+  if (!can(viewer.role, 'scope.granted')) return { ...summary, boundary, boundaryGaps: gaps, view: 'organisation' };
   const granted = new Set(viewer.accessibleSubsidiaryIds);
   if (!boundary.subsidiaryIds.some((id) => granted.has(id))) throw new ResourceNotFoundError('boundary_not_found');
   return { ...summary, ...grantedView(boundary, gaps, granted), view: 'granted_subsidiaries' };

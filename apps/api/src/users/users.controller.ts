@@ -8,9 +8,11 @@ import { UserLifecycleService } from './user-lifecycle.service';
 import { UsersQueryService } from './users-query.service';
 
 /**
- * User and access management (LP4-01) — the caller's own organisation, a
- * `super_admin`'s alone; every other role is refused (403) and an id of
- * another tenant answers 404, exactly as one that does not exist.
+ * User and access management (LP4-01; INC-2.6 §6) — the caller's own
+ * organisation: a masterkey administers super_admins and auditors, a
+ * super_admin the standard users of its companies (`AccessAdminService`);
+ * a standard user and an auditor are refused (403), and an id of another
+ * tenant answers 404, exactly as one that does not exist.
  */
 @Controller('users')
 export class UsersController {
@@ -33,7 +35,7 @@ export class UsersController {
       fullName: dto.fullName,
       role: dto.role,
       language: dto.language,
-      subsidiaryIds: dto.subsidiaryIds ?? [],
+      access: dto.access ?? [],
     });
   }
 
@@ -53,14 +55,14 @@ export class UsersController {
     return this.lifecycle.setRole(user, id, dto.role);
   }
 
-  /** The complete set of a data_entry user's subsidiaries. */
+  /** The complete access of a super_admin or standard_user, within the actor's scope. */
   @Put(':id/access')
   replaceAccess(
     @CurrentUser() user: RequestUser,
     @Param('id', CanonicalIdPipe) id: string,
     @Body() dto: ReplaceUserAccessDto,
   ): Promise<UserSummaryDTO> {
-    return this.lifecycle.replaceAccess(user, id, dto.subsidiaryIds);
+    return this.lifecycle.replaceAccess(user, id, dto.access);
   }
 
   @Post(':id/disable')

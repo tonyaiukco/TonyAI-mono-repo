@@ -3,8 +3,8 @@
   "subtitle": "Records awaiting a decision",
   "subtitleUser": "Records awaiting a decision · {name} ({role})",
   "gate": {
-    "title": "Reviewing is done by a consultant or a super_admin",
-    "body": "This is not hidden data — records you can already see on the Emissions page are the same ones being decided here. Your role is <mono>{role}</mono>."
+    "title": "Reviewing belongs to the Masterkey and the Super Admin",
+    "body": "This is not hidden data — records you can already see on the Emissions page are the same ones being decided here. Your role is {role}."
   },
   "allSubsidiaries": "All subsidiaries",
   "awaitingReview": "{count} awaiting review",
@@ -80,10 +80,16 @@
     "startReview": "Start review",
     "reject": "Return",
     "approve": "Approve",
-    "selfApproval": "You cannot approve a record you entered.",
+    "selfApproval": "You cannot approve a record you entered. A Masterkey decides it.",
     "reading": "Reading the record as it stands now…",
     "readFailed": "The record could not be read again, so the decision waits.",
-    "noLongerPending": "This record is no longer waiting for review."
+    "noLongerPending": "This record is no longer waiting for review.",
+    "selfApprovalNote": "This is your own record: approving it is recorded as a self-approval and shown to the auditor.",
+    "decidedBy": {
+      "super_admin": "A Super Admin of its company decides this record. You can read it, but not take it into review, return or approve it.",
+      "masterkey": "A Masterkey decides this record. You can read it, but not take it into review, return or approve it.",
+      "author": "Its author, a Masterkey, decides this record. You can read it, but not take it into review, return or approve it."
+    }
   },
   "toast": {
     "reviewed": "Taken into review",
@@ -93,5 +99,12 @@
   "revised": {
     "label": "Revised",
     "title": "Submission {n}: sent for review again after a recall or a return"
+  },
+  "showAll": "Show every pending record",
+  "emptyMine": "Nothing is waiting for your decision.",
+  "awaits": {
+    "super_admin": "Awaits Super Admin",
+    "masterkey": "Awaits Masterkey",
+    "author": "Awaits its author"
   }
 }

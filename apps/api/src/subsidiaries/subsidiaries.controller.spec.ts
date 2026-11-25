@@ -5,7 +5,7 @@ import { RequestMethod } from '@nestjs/common';
 import { SubsidiariesController } from './subsidiaries.controller';
 import { SubsidiariesService } from './subsidiaries.service';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
-import { makeSuperAdmin } from '../../test/helpers';
+import { makeMasterkey } from '../../test/helpers';
 
 /**
  * There was no controller spec at all, and the whole of WP16 PR 2a is one new
@@ -65,7 +65,7 @@ describe('SubsidiariesController — routes', () => {
       summary: vi.fn().mockResolvedValue({ subsidiaryId: 'sub-1' }),
     } as unknown as SubsidiariesService;
     const controller = new SubsidiariesController(service);
-    const user = makeSuperAdmin();
+    const user = makeMasterkey();
 
     void controller.summary(user, 'sub-1');
 

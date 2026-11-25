@@ -3,9 +3,13 @@
  * Live RLS containment probes (Phase-1 hardening, WP4).
  *
  * Talks directly to Supabase PostgREST (bypassing the NestJS guard) to prove the
- * database-layer defence holds on its own: a data_entry user, using a real
+ * database-layer defence holds on its own: a standard user, using a real
  * Supabase JWT, must see ONLY its own tenant's rows, and an anonymous caller
- * must see none — for every tenant-scoped table.
+ * must see none — for every tenant-scoped table. Since INC-2.6 the same holds
+ * for each of the four roles: a masterkey and an auditor read their whole
+ * organisation, a super_admin and a standard user only their granted
+ * companies, and a standard user only the categories ticked on a grant (plus
+ * the records they created themselves) of activity records and their links.
  *
  * For each table we assert three things, which together also rule out a false
  * pass from a missing GRANT (which would return an error/empty for everyone and
@@ -56,9 +60,18 @@ if (!URL_ || !ANON || !SERVICE) {
   process.exit(2);
 }
 
-const ENTRY_EMAIL = 'entry@tonyai.local';
-const ADMIN_EMAIL = 'admin@tonyai.local';
-const CONSULTANT_EMAIL = 'review@tonyai.local';
+// The seeded accounts, one per role (INC-2.6). One organisation holds them all.
+const ENTRY_EMAIL = 'entry@tonyai.local'; // standard_user: Energy + Logistics, every category
+const ADMIN_EMAIL = 'admin@tonyai.local'; // masterkey: the organisation, no grant
+const AUDITOR_EMAIL = 'review@tonyai.local'; // auditor: the organisation, read-only, no grant
+const SUPER_ADMIN_EMAIL = 'approver@tonyai.local'; // super_admin: Energy, Gas, Mfg, Logistics — not Trading
+// What the API stores on a standard user's grant that ticks every category:
+// all thirteen, sorted. The category probe narrows entry's Energy grant and
+// writes this back afterwards.
+const ALL_CATEGORIES = [
+  'Business Travel', 'Commuting', 'Electricity', 'Fire Suppression', 'Fuel', 'Fugitive Gas', 'Logistics',
+  'Mobile Combustion', 'Natural Gas', 'Purchased Goods', 'Refrigerants', 'Waste', 'Water',
+];
 const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI-CI!2026';
 const TENANT_TABLES = [
   // `subsidiaries` was missing here until WP16 PR 2a, which is when it started
@@ -69,7 +82,7 @@ const TENANT_TABLES = [
   'subsidiaries',
   // `profiles` joined for the same reason `subsidiaries` did. It has always
   // held personal data, but until WP22 the only API surface exposing another
-  // person's identity was `/audit`, which is super_admin-only. Record actor
+  // person's identity was `/audit`, which is masterkey-only. Record actor
   // names now flow to every tenant reader, so the containment of the table
   // behind them has to be asserted rather than assumed from the ENABLE bit.
   'profiles',
@@ -83,8 +96,9 @@ const TENANT_TABLES = [
   'targets',
   'subsidiary_denominators',
   // A batch's subject is the SOURCE FILE, which holds every row — so a
-  // data_entry reader sees only a batch they uploaded, and only while they can
-  // reach every subsidiary it names. Seeded below; see `seedImportBatches`.
+  // scoped reader (super_admin, standard user) sees only a batch they
+  // uploaded, and only while they can reach every subsidiary it names. Seeded
+  // below; see `seedImportBatches`.
   'import_batches',
 ];
 
@@ -92,6 +106,10 @@ const TENANT_TABLES = [
 const ENERGY = '22222222-2222-2222-2222-222222220001';
 const LOGISTICS = '22222222-2222-2222-2222-222222220004';
 const ACC = `(${ENERGY},${LOGISTICS})`;
+// The seeded super_admin's four companies, and the fifth it is NOT granted.
+const GAS = '22222222-2222-2222-2222-222222220002';
+const TRADING = '22222222-2222-2222-2222-222222220005';
+const SUPER_ADMIN_SUBS = [ENERGY, GAS, '22222222-2222-2222-2222-222222220003', LOGISTICS];
 
 // Service-role query that counts ONLY the rows belonging to entry's accessible
 // tenants — the exact set entry must see.
@@ -191,19 +209,22 @@ async function ownerDb() {
 
 // period_locks is empty in the seed → seed a temporary pair (one accessible to
 // entry, one not) so the entry>0 and entry<service assertions have data.
-// The seeded admin by address, not "any super_admin": an organisation the
+// The seeded admin by address, not "any masterkey": an organisation the
 // operator CLI provisioned locally (LP4-01) has one too, in another tenant.
 async function seedPeriodLocks() {
   const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const adminId = (await r.json())[0]?.id;
-  if (!adminId) throw new Error('could not resolve a super_admin profile id for the period_locks seed');
+  if (!adminId) throw new Error('could not resolve a masterkey profile id for the period_locks seed');
   // `id` has no DB default (Prisma generates the uuid client-side), so supply one.
   const base = { reporting_year: 2024, reporting_period: 'quarterly', period_value: 'ZZ', locked_by: adminId };
   const res = await svc('POST', 'period_locks', [
     { id: randomUUID(), ...base, subsidiary_id: '22222222-2222-2222-2222-222222220001' }, // Energy (entry-accessible)
     { id: randomUUID(), ...base, subsidiary_id: '22222222-2222-2222-2222-222222220003' }, // Mfg (NOT accessible)
+    // Trading: the one company the seeded super_admin is not granted, so its
+    // "none of Trading" check has a row to withhold here.
+    { id: randomUUID(), ...base, subsidiary_id: TRADING },
   ]);
   if (!res.ok) throw new Error(`period_locks seed failed: ${res.status} ${await res.text()}`);
 }
@@ -215,15 +236,22 @@ async function cleanupPeriodLocks() {
 // found again by a sentinel file name: entry's own batch over entry's two
 // subsidiaries (the only one entry may read), a colleague's batch over the same
 // subsidiary, entry's own batch that ALSO names a subsidiary entry cannot reach,
-// and entry's own batch with no `subsidiary_ids` at all (fail-closed).
+// and entry's own batch with no `subsidiary_ids` at all (fail-closed). Two
+// more by the super_admin: one over two of its companies (readable to it),
+// one that also names Trading, which it is not granted (not readable).
 const IMPORT_PROBE_FILE = 'rls-probe-import.csv';
 const MANUFACTURING = '22222222-2222-2222-2222-222222220003';
-async function seedImportBatches(entryId) {
-  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id,organisation_id`, {
+async function profileByEmail(email, select = 'id,organisation_id') {
+  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${email}&select=${select}`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
-  const admin = (await r.json())[0];
-  if (!admin?.id) throw new Error('could not resolve a super_admin profile for the import_batches seed');
+  return (await r.json())[0];
+}
+async function seedImportBatches(entryId) {
+  const admin = await profileByEmail(ADMIN_EMAIL);
+  if (!admin?.id) throw new Error('could not resolve a masterkey profile for the import_batches seed');
+  const superAdmin = await profileByEmail(SUPER_ADMIN_EMAIL);
+  if (!superAdmin?.id) throw new Error('could not resolve the seeded super_admin for the import_batches seed');
   const now = new Date().toISOString();
   const base = {
     organisation_id: admin.organisation_id,
@@ -240,6 +268,8 @@ async function seedImportBatches(entryId) {
     { id: randomUUID(), ...base, uploaded_by: admin.id, subsidiary_ids: [ENERGY] },
     { id: randomUUID(), ...base, uploaded_by: entryId, subsidiary_ids: [ENERGY, MANUFACTURING] },
     { id: randomUUID(), ...base, uploaded_by: entryId, subsidiary_ids: null },
+    { id: randomUUID(), ...base, uploaded_by: superAdmin.id, subsidiary_ids: [ENERGY, MANUFACTURING] },
+    { id: randomUUID(), ...base, uploaded_by: superAdmin.id, subsidiary_ids: [ENERGY, TRADING] },
   ]);
   if (!res.ok) throw new Error(`import_batches seed failed: ${res.status} ${await res.text()}`);
 }
@@ -250,7 +280,7 @@ async function cleanupImportBatches() {
 // The seed writes no audit rows, so a fresh `db:reset` would leave the audit
 // probes with nothing to measure. Seed two: one in the admin's organisation and
 // one filed under a FOREIGN organisation — the latter is what proves the RLS
-// tightening (a super_admin of org A must not read org B's rows), which a
+// tightening (a masterkey of org A must not read org B's rows), which a
 // single-organisation seed otherwise cannot demonstrate.
 const AUDIT_PROBE_ENTITY = 'rls_probe';
 const FOREIGN_ORG = '99999999-9999-9999-9999-999999999999';
@@ -259,8 +289,8 @@ async function seedAuditRows() {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const admin = (await r.json())[0];
-  if (!admin) throw new Error('could not resolve a super_admin profile for the audit_log seed');
-  const base = { action: 'create', entity: AUDIT_PROBE_ENTITY, user_id: admin.id, role: 'super_admin' };
+  if (!admin) throw new Error('could not resolve a masterkey profile for the audit_log seed');
+  const base = { action: 'create', entity: AUDIT_PROBE_ENTITY, user_id: admin.id, role: 'masterkey' };
   const res = await svc('POST', 'audit_log', [
     { id: randomUUID(), ...base, organisation_id: admin.organisation_id },
     { id: randomUUID(), ...base, organisation_id: FOREIGN_ORG },
@@ -274,8 +304,8 @@ async function cleanupAuditRows() {
 
 // A subsidiary filed under a FOREIGN organisation. The seed has exactly one
 // organisation, so without this the cross-ORG half of the subsidiaries policy
-// is untestable — `data_entry` seeing 2 of 5 proves intra-org scoping only,
-// and a policy that leaked every organisation's rows to a super_admin would
+// is untestable — a standard user seeing 2 of 5 proves intra-org scoping only,
+// and a policy that leaked every organisation's rows to a masterkey would
 // still pass it. Carries contact values, so a leak would be visible as PII
 // rather than as a bare count.
 const FOREIGN_SUB_ID = '99999999-0000-0000-0000-000000000001';
@@ -364,22 +394,26 @@ async function probeBoundaries(entryToken) {
     colleague: await plantBoundary(owner, MANUFACTURING, admin.id, 2),
     foreign: await plantBoundary(owner, FOREIGN_SUB_ID, admin.id, 1),
   };
-  const consultant = await getToken(CONSULTANT_EMAIL);
+  const auditor = await getToken(AUDITOR_EMAIL);
+  const superAdmin = await getToken(SUPER_ADMIN_EMAIL);
   const all = `(${ids.entry},${ids.colleague},${ids.foreign})`;
   for (const [table, column] of BOUNDARY_TABLES) {
     const query = `select=${column}&${column}=in.${all}`;
-    const [anon, entry, review, service] = await Promise.all([
+    const [anon, entry, review, scoped, service] = await Promise.all([
       count(table, { query }),
       count(table, { token: entryToken, query }),
-      count(table, { token: consultant, query }),
+      count(table, { token: auditor, query }),
+      count(table, { token: superAdmin, query }),
       count(table, { token: SERVICE, key: SERVICE, query }),
     ]);
     const mine = await count(table, { token: entryToken, query: `select=${column}&${column}=eq.${ids.entry}` });
+    // The super_admin is granted Energy and Manufacturing both: two, like the
+    // auditor — through its grants, not the organisation-wide branch.
     check(
-      `${table}: anon none; entry exactly its own subsidiary's version; a consultant its organisation's two; never the foreign one`,
-      anon.total === 0 && entry.total === 1 && mine.total === 1 && review.total === 2 && service.total === 3,
+      `${table}: anon none; entry exactly its own subsidiary's version; an auditor its organisation's two; a super_admin its two granted companies' two; never the foreign one`,
+      anon.total === 0 && entry.total === 1 && mine.total === 1 && review.total === 2 && scoped.total === 2 && service.total === 3,
       `anon=${anon.error ?? anon.total}, entry=${entry.error ?? entry.total} (own ${mine.error ?? mine.total}), ` +
-        `consultant=${review.error ?? review.total}, service=${service.error ?? service.total}`,
+        `auditor=${review.error ?? review.total}, super_admin=${scoped.error ?? scoped.total}, service=${service.error ?? service.total}`,
     );
   }
   // The client roles hold SELECT alone here — the service role too (W1).
@@ -396,12 +430,208 @@ async function probeBoundaries(entryToken) {
   );
 }
 
+// --- INC-2.6: a standard user's ticked categories ---------------------------
+// The seeded standard user's grants tick every category, so the main loop
+// cannot tell the category clause of `activity_records_select_scoped` and
+// `activity_record_evidence_select_scoped` from the company clause. Here its
+// Energy grant is narrowed to Electricity alone (service role — the column the
+// API writes), and three drafts are planted in Energy as the owner, each
+// linked to one probe file: an Electricity record by the masterkey (ticked),
+// a Fuel record by the masterkey (unticked, someone else's) and a Fuel
+// record by the standard user itself (unticked, its own). A fourth, its own
+// in Gas — a company it is not granted — has no grant to ride on. The seed's
+// Natural Gas records by the masterkey are more unticked, foreign rows. The
+// grant is written back to all thirteen and the fixtures removed in a
+// finally, even on failure; a run killed between the two is repaired by the
+// next (the narrowed value is the probe's own sentinel).
+const CATEGORY_PROBE = {
+  ticked: '99999999-0c47-4000-8000-0000000000a1', // Energy, Electricity, masterkey
+  foreign: '99999999-0c47-4000-8000-0000000000a2', // Energy, Fuel, masterkey
+  own: '99999999-0c47-4000-8000-0000000000a3', // Energy, Fuel, standard user
+  ungranted: '99999999-0c47-4000-8000-0000000000a4', // Gas, Electricity, standard user
+  evidence: '99999999-0c47-4000-8000-0000000000e1', // Energy, linked to the three above
+  hiddenEvidence: '99999999-0c47-4000-8000-0000000000e2', // Energy, by the masterkey, linked only to `foreign`
+  ownEvidence: '99999999-0c47-4000-8000-0000000000e3', // Energy, uploaded by the standard user, not linked yet
+};
+const NARROWED = ['Electricity'];
+
+async function entryEnergyCategories(entryId) {
+  const res = await fetch(`${URL_}/rest/v1/user_subsidiary_access?select=categories&user_id=eq.${entryId}&subsidiary_id=eq.${ENERGY}`, {
+    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+  });
+  return (await res.json())[0]?.categories;
+}
+async function setEntryEnergyCategories(entryId, categories) {
+  const res = await svc('PATCH', `user_subsidiary_access?user_id=eq.${entryId}&subsidiary_id=eq.${ENERGY}`, { categories });
+  if (!res.ok) throw new Error(`writing entry's Energy categories failed: ${res.status} ${await res.text()}`);
+  const now = await entryEnergyCategories(entryId);
+  if (JSON.stringify(now) !== JSON.stringify(categories)) throw new Error(`entry's Energy categories read back as ${JSON.stringify(now)}`);
+}
+async function cleanupCategoryProbe(entryId) {
+  const owner = await ownerDb();
+  // Records first (their links cascade), then the file.
+  await owner.activityRecord.deleteMany({
+    where: { id: { in: [CATEGORY_PROBE.ticked, CATEGORY_PROBE.foreign, CATEGORY_PROBE.own, CATEGORY_PROBE.ungranted] } },
+  });
+  await owner.evidence.deleteMany({
+    where: { id: { in: [CATEGORY_PROBE.evidence, CATEGORY_PROBE.hiddenEvidence, CATEGORY_PROBE.ownEvidence] } },
+  });
+  if (JSON.stringify(await entryEnergyCategories(entryId)) === JSON.stringify(NARROWED)) {
+    await setEntryEnergyCategories(entryId, ALL_CATEGORIES);
+  }
+}
+
+async function probeCategoryGrant(entryToken) {
+  console.log("▸ a standard user's ticked categories (INC-2.6: one category of Energy)");
+  const entryId = subjectOf(entryToken);
+  await cleanupCategoryProbe(entryId); // in case a previous run aborted
+  const before = await entryEnergyCategories(entryId);
+  if (JSON.stringify(before) !== JSON.stringify(ALL_CATEGORIES)) {
+    // Not the seed's state and not the probe's own leftover: someone else's
+    // setting, which this probe will not overwrite.
+    check("category probe: entry's Energy grant ticks every category before the probe", false, `categories=${JSON.stringify(before)}`);
+    return;
+  }
+  try {
+    const owner = await ownerDb();
+    const admin = await owner.profile.findFirstOrThrow({ where: { email: ADMIN_EMAIL } });
+    const record = (id, subsidiaryId, category, periodValue, createdBy) => ({
+      id, subsidiaryId, reportingYear: 2019, reportingPeriod: 'monthly', periodValue, category, scope: category === 'Electricity' ? 2 : 1,
+      activityValue: 1, activityUnit: 'kWh', calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, createdBy,
+    });
+    await owner.activityRecord.createMany({
+      data: [
+        record(CATEGORY_PROBE.ticked, ENERGY, 'Electricity', 'January', admin.id),
+        record(CATEGORY_PROBE.foreign, ENERGY, 'Fuel', 'January', admin.id),
+        record(CATEGORY_PROBE.own, ENERGY, 'Fuel', 'February', entryId),
+        record(CATEGORY_PROBE.ungranted, GAS, 'Electricity', 'January', entryId),
+      ],
+    });
+    const file = (id, uploadedBy) => ({
+      id, subsidiaryId: ENERGY, storagePath: `rls-probe/${id}.pdf`,
+      fileName: 'rls-probe-category.pdf', mimeType: 'application/pdf', sizeBytes: 1, uploadedBy,
+    });
+    await owner.evidence.createMany({
+      data: [
+        file(CATEGORY_PROBE.evidence, admin.id),
+        file(CATEGORY_PROBE.hiddenEvidence, admin.id),
+        file(CATEGORY_PROBE.ownEvidence, entryId),
+      ],
+    });
+    await owner.activityRecordEvidence.createMany({
+      data: [
+        ...[CATEGORY_PROBE.ticked, CATEGORY_PROBE.foreign, CATEGORY_PROBE.own].map((activityRecordId) => ({
+          activityRecordId, evidenceId: CATEGORY_PROBE.evidence, subsidiaryId: ENERGY, linkedBy: admin.id,
+        })),
+        { activityRecordId: CATEGORY_PROBE.foreign, evidenceId: CATEGORY_PROBE.hiddenEvidence, subsidiaryId: ENERGY, linkedBy: admin.id },
+      ],
+    });
+    await setEntryEnergyCategories(entryId, NARROWED);
+
+    const ids = async (table, column, query, token) => {
+      const res = await fetch(`${URL_}/rest/v1/${table}?select=${column}&${query}`, {
+        headers: token ? { apikey: ANON, Authorization: `Bearer ${token}` } : { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+      });
+      const body = await res.json();
+      return Array.isArray(body) ? body.map((r) => r[column]).sort() : body;
+    };
+    const planted = `(${CATEGORY_PROBE.ticked},${CATEGORY_PROBE.foreign},${CATEGORY_PROBE.own},${CATEGORY_PROBE.ungranted})`;
+    const want = [CATEGORY_PROBE.ticked, CATEGORY_PROBE.own].sort();
+
+    // Named rows: the ticked one and its own unticked one; not someone else's
+    // unticked one, not its own in a company it is not granted.
+    const seenRecords = await ids('activity_records', 'id', `id=in.${planted}`, entryToken);
+    check(
+      "activity_records: a standard user granted one category reads that category and its own records — not another author's unticked record, not its own in an ungranted company",
+      JSON.stringify(seenRecords) === JSON.stringify(want),
+      `seen=${Array.isArray(seenRecords) ? seenRecords.map((id) => id.slice(-2)).join(',') : JSON.stringify(seenRecords)}`,
+    );
+    const seenLinks = await ids('activity_record_evidence', 'activity_record_id', `evidence_id=eq.${CATEGORY_PROBE.evidence}`, entryToken);
+    check(
+      'activity_record_evidence: the same standard user reads the links of exactly those records',
+      JSON.stringify(seenLinks) === JSON.stringify(want),
+      `seen=${Array.isArray(seenLinks) ? seenLinks.map((id) => id.slice(-2)).join(',') : JSON.stringify(seenLinks)}`,
+    );
+
+    // Evidence files (owner ruling 2026-11-25): a file the standard user
+    // uploaded, or one linked to a record it reads — never a file that backs
+    // only another category's records.
+    const files = `(${CATEGORY_PROBE.evidence},${CATEGORY_PROBE.hiddenEvidence},${CATEGORY_PROBE.ownEvidence})`;
+    const seenFiles = await ids('evidence', 'id', `id=in.${files}`, entryToken);
+    check(
+      "evidence: a standard user granted one category reads a file linked to a record it reads and a file it uploaded — not a file backing only another category's record",
+      JSON.stringify(seenFiles) === JSON.stringify([CATEGORY_PROBE.evidence, CATEGORY_PROBE.ownEvidence].sort()),
+      `seen=${Array.isArray(seenFiles) ? seenFiles.map((id) => id.slice(-2)).join(',') : JSON.stringify(seenFiles)}`,
+    );
+    const [wantEnergyFiles, allEnergyFiles] = await Promise.all([
+      owner.evidence.count({
+        where: { subsidiaryId: ENERGY, OR: [{ uploadedBy: entryId }, { links: { some: { activityRecord: { subsidiaryId: ENERGY, OR: [{ category: { in: NARROWED } }, { createdBy: entryId }] } } } }] },
+      }),
+      owner.evidence.count({ where: { subsidiaryId: ENERGY } }),
+    ]);
+    const [energyFiles, superFiles] = await Promise.all([
+      count('evidence', { token: entryToken, query: `select=id&subsidiary_id=eq.${ENERGY}` }),
+      count('evidence', { token: await getToken(SUPER_ADMIN_EMAIL), query: `select=id&subsidiary_id=eq.${ENERGY}` }),
+    ]);
+    check(
+      "evidence: of the narrowed company the standard user reads exactly its own uploads and the files of records it reads; a super_admin reads every file",
+      wantEnergyFiles < allEnergyFiles && energyFiles.total === wantEnergyFiles && superFiles.total === allEnergyFiles,
+      `standard user=${energyFiles.error ?? energyFiles.total}/${wantEnergyFiles} of ${allEnergyFiles}, super_admin=${superFiles.error ?? superFiles.total}/${allEnergyFiles}`,
+    );
+
+    // The whole of Energy (the seed's rows too) and Logistics, against the
+    // owner's own count: Energy narrowed to Electricity plus its own records,
+    // Logistics — still every category — whole.
+    const own = { OR: [{ category: { in: NARROWED } }, { createdBy: entryId }] };
+    const [wantEnergy, hiddenEnergy, wantEnergyLinks, wantLogistics, allEnergy] = await Promise.all([
+      owner.activityRecord.count({ where: { subsidiaryId: ENERGY, ...own } }),
+      owner.activityRecord.count({ where: { subsidiaryId: ENERGY, NOT: own } }),
+      owner.activityRecordEvidence.count({ where: { subsidiaryId: ENERGY, activityRecord: own } }),
+      owner.activityRecord.count({ where: { subsidiaryId: LOGISTICS } }),
+      owner.activityRecord.count({ where: { subsidiaryId: ENERGY } }),
+    ]);
+    const [energy, energyLinks, logistics] = await Promise.all([
+      count('activity_records', { token: entryToken, query: `select=id&subsidiary_id=eq.${ENERGY}` }),
+      count('activity_record_evidence', { token: entryToken, query: `select=evidence_id&subsidiary_id=eq.${ENERGY}` }),
+      count('activity_records', { token: entryToken, query: `select=id&subsidiary_id=eq.${LOGISTICS}` }),
+    ]);
+    check(
+      "activity_records, activity_record_evidence: every row of the narrowed company outside the ticked category and the holder's own is withheld; the other company's grant is untouched",
+      hiddenEnergy > 0 && energy.total === wantEnergy && energyLinks.total === wantEnergyLinks && logistics.total === wantLogistics,
+      `Energy records=${energy.error ?? energy.total}/${wantEnergy} (withheld ${hiddenEnergy}), links=${energyLinks.error ?? energyLinks.total}/${wantEnergyLinks}, ` +
+        `Logistics=${logistics.error ?? logistics.total}/${wantLogistics}`,
+    );
+
+    // A super_admin's grant carries no categories and covers every one.
+    const superAdmin = await getToken(SUPER_ADMIN_EMAIL);
+    const superSees = await count('activity_records', { token: superAdmin, query: `select=id&subsidiary_id=eq.${ENERGY}` });
+    const superLinks = await ids('activity_record_evidence', 'activity_record_id', `evidence_id=eq.${CATEGORY_PROBE.evidence}`, superAdmin);
+    check(
+      "activity_records: a super_admin's grant (no categories) reads every record of its company, every category",
+      superSees.total === allEnergy && JSON.stringify(superLinks) === JSON.stringify([CATEGORY_PROBE.ticked, CATEGORY_PROBE.foreign, CATEGORY_PROBE.own].sort()),
+      `super_admin=${superSees.error ?? superSees.total}/${allEnergy}, probe links=${Array.isArray(superLinks) ? superLinks.length : JSON.stringify(superLinks)}`,
+    );
+  } catch (e) {
+    check('category probe could run', false, e.message);
+  } finally {
+    await cleanupCategoryProbe(entryId);
+    const restored = await entryEnergyCategories(entryId);
+    check(
+      "category probe: entry's Energy grant is back to every category",
+      JSON.stringify(restored) === JSON.stringify(ALL_CATEGORIES),
+      `categories=${JSON.stringify(restored)}`,
+    );
+  }
+}
+
 // --- LP1-03: two organisations, all four roles, malformed grants ------------
 // A fixture of its own, independent of the seed: organisations X and Y, X with
 // two subsidiaries and Y with one, a record in each, and one user per role in
 // each organisation (temporary auth users, so every role signs in for real).
-// X's data_entry user is granted X1 only. Fixed ids and a fixed email prefix,
-// so a run killed half-way is cleaned up by the next one.
+// X's standard user is granted X1 only (Electricity ticked), X's super_admin
+// X2 only; Y's scoped roles hold no grant. One audit row is filed under each
+// organisation. Fixed ids and a fixed email prefix, so a run killed half-way
+// is cleaned up by the next one.
 const LP103 = {
   orgX: '99999999-1003-4000-8000-00000000000a',
   orgY: '99999999-1003-4000-8000-00000000000b',
@@ -413,8 +643,9 @@ const LP103 = {
   recY1: '99999999-1003-4000-8000-000000000b11',
   recX1Forged: '99999999-1003-4000-8000-000000000a1f', // the service role's refused insert (LP4-02 (29))
   emailPrefix: 'lp103-probe-',
+  auditEntity: 'rls_probe_two_orgs',
 };
-const LP103_ROLES = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'];
+const LP103_ROLES = ['masterkey', 'auditor', 'super_admin', 'standard_user'];
 
 function authAdmin(method, path, body) {
   return fetch(`${URL_}/auth/v1/admin/${path}`, {
@@ -434,6 +665,7 @@ async function cleanupTwoOrganisations() {
   const users = await lp103AuthUsers();
   const ids = users.map((u) => u.id);
   const owner = await ownerDb();
+  await svc('DELETE', `audit_log?entity=eq.${LP103.auditEntity}`);
   // Records first: their subsidiary's key refuses the delete while they exist.
   await owner.activityRecord.deleteMany({ where: { subsidiaryId: { in: [LP103.subX1, LP103.subX2, LP103.subY1] } } });
   if (ids.length) await owner.profile.deleteMany({ where: { id: { in: ids } } }); // their grants cascade
@@ -478,19 +710,26 @@ async function seedTwoOrganisations() {
     }
   }
   await ok(
-    await svc('POST', 'user_subsidiary_access', {
-      user_id: users['data_entry:x'].id,
-      subsidiary_id: LP103.subX1,
-      organisation_id: LP103.orgX,
-    }),
-    'grant X1 to X data_entry',
+    await svc('POST', 'user_subsidiary_access', [
+      { user_id: users['standard_user:x'].id, subsidiary_id: LP103.subX1, organisation_id: LP103.orgX, categories: ['Electricity'] },
+      // A super_admin's grant carries no categories: it covers every one.
+      { user_id: users['super_admin:x'].id, subsidiary_id: LP103.subX2, organisation_id: LP103.orgX, categories: [] },
+    ]),
+    'grant X1 to X standard_user, X2 to X super_admin',
+  );
+  await ok(
+    await svc('POST', 'audit_log', [LP103.orgX, LP103.orgY].map((org) => ({
+      id: randomUUID(), action: 'create', entity: LP103.auditEntity, user_id: users[`masterkey:${org === LP103.orgX ? 'x' : 'y'}`].id,
+      role: 'masterkey', organisation_id: org,
+    }))),
+    'audit rows in X and Y',
   );
   // The drafts are the owner's to insert (LP4-02 (29)): the service role may
   // not insert a record at all — a probe below proves it.
   const record = (id, sub) => ({
     id, subsidiaryId: sub, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January',
     category: 'Electricity', scope: 2, activityValue: 1, activityUnit: 'kWh',
-    calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, createdBy: users['super_admin:x'].id,
+    calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, createdBy: users['masterkey:x'].id,
   });
   const owner = await ownerDb();
   await owner.activityRecord.createMany({
@@ -508,17 +747,18 @@ async function probeTwoOrganisations() {
     for (const [key, { email }] of Object.entries(users)) tokens[key] = await getToken(email);
 
     // What each role may read, per organisation: the organisation-wide roles
-    // their whole organisation, data_entry only what it is granted.
+    // (masterkey, auditor) their whole organisation, the scoped roles
+    // (super_admin, standard_user) only what they are granted — Y's none.
     const subs = `${LP103.subX1},${LP103.subX2},${LP103.subY1}`;
     const expected = {
-      'super_admin:x': [LP103.subX1, LP103.subX2],
-      'consultant:x': [LP103.subX1, LP103.subX2],
-      'executive_viewer:x': [LP103.subX1, LP103.subX2],
-      'data_entry:x': [LP103.subX1],
-      'super_admin:y': [LP103.subY1],
-      'consultant:y': [LP103.subY1],
-      'executive_viewer:y': [LP103.subY1],
-      'data_entry:y': [],
+      'masterkey:x': [LP103.subX1, LP103.subX2],
+      'auditor:x': [LP103.subX1, LP103.subX2],
+      'super_admin:x': [LP103.subX2],
+      'standard_user:x': [LP103.subX1],
+      'masterkey:y': [LP103.subY1],
+      'auditor:y': [LP103.subY1],
+      'super_admin:y': [],
+      'standard_user:y': [],
     };
     for (const [key, visible] of Object.entries(expected)) {
       const subsRes = await fetch(`${URL_}/rest/v1/subsidiaries?select=id&id=in.(${subs})`, {
@@ -537,13 +777,31 @@ async function probeTwoOrganisations() {
       );
     }
 
+    // The audit log answers the organisation-wide roles of its organisation
+    // and nobody else: a masterkey or an auditor of X reads X's row, never Y's;
+    // a super_admin or a standard user reads none, granted or not.
+    for (const key of Object.keys(expected)) {
+      const [role, tag] = key.split(':');
+      const rows = await (await fetch(`${URL_}/rest/v1/audit_log?select=organisation_id&entity=eq.${LP103.auditEntity}`, {
+        headers: { apikey: ANON, Authorization: `Bearer ${tokens[key]}` },
+      })).json();
+      const orgs = Array.isArray(rows) ? rows.map((r) => r.organisation_id) : rows;
+      const own = tag === 'x' ? LP103.orgX : LP103.orgY;
+      const want = ['masterkey', 'auditor'].includes(role) ? [own] : [];
+      check(
+        `two organisations: ${key.replace(':', ' of ')} reads ${want.length ? "its own organisation's audit row only" : 'no audit row'}`,
+        JSON.stringify(orgs) === JSON.stringify(want),
+        `seen=${JSON.stringify(orgs)}`,
+      );
+    }
+
     // Malformed grants, written with the service role — the most privileged
     // PostgREST client, which RLS does not restrict. The composite foreign keys
     // refuse every one (409, foreign-key violation).
-    const entryX = users['data_entry:x'].id;
+    const entryX = users['standard_user:x'].id;
     const malformed = [
-      ['a grant of Y1 to X\'s data_entry user, labelled X', { user_id: entryX, subsidiary_id: LP103.subY1, organisation_id: LP103.orgX }],
-      ['a grant of Y1 to X\'s data_entry user, labelled Y', { user_id: entryX, subsidiary_id: LP103.subY1, organisation_id: LP103.orgY }],
+      ['a grant of Y1 to X\'s standard user, labelled X', { user_id: entryX, subsidiary_id: LP103.subY1, organisation_id: LP103.orgX }],
+      ['a grant of Y1 to X\'s standard user, labelled Y', { user_id: entryX, subsidiary_id: LP103.subY1, organisation_id: LP103.orgY }],
       ['a grant of a subsidiary that does not exist', { user_id: entryX, subsidiary_id: randomUUID(), organisation_id: LP103.orgX }],
       ['a grant to a profile that does not exist', { user_id: randomUUID(), subsidiary_id: LP103.subX2, organisation_id: LP103.orgX }],
     ];
@@ -555,43 +813,91 @@ async function probeTwoOrganisations() {
     check("a granted profile cannot be moved to another organisation (service role)", moved.status === 409, `status=${moved.status}`);
 
     // Client roles write nothing here: no INSERT/UPDATE/DELETE policy exists on
-    // grants or profiles, so these are refused or match no row.
-    const asEntry = { apikey: ANON, Authorization: `Bearer ${tokens['data_entry:x']}`, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+    // grants or profiles, so these are refused or match no row. Everything is
+    // read back with the service role — "no error" is not "no change".
+    const superX = users['super_admin:x'].id;
+    const asUser = (key) => ({ apikey: ANON, Authorization: `Bearer ${tokens[key]}`, 'Content-Type': 'application/json', Prefer: 'return=representation' });
+    const asEntry = asUser('standard_user:x');
+    const asSuper = asUser('super_admin:x');
+    const asAdmin = asUser('masterkey:x');
+    const asAnon = { ...asEntry, Authorization: `Bearer ${ANON}` };
+    const rows = async (res) => (res.ok ? res.json() : []);
+    const grantRows = async () =>
+      (await (await fetch(`${URL_}/rest/v1/user_subsidiary_access?select=user_id,subsidiary_id,categories&organisation_id=eq.${LP103.orgX}&order=user_id,subsidiary_id`, {
+        headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+      })).json());
+    const roleOf = async (id) =>
+      (await (await fetch(`${URL_}/rest/v1/profiles?select=role,organisation_id&id=eq.${id}`, {
+        headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+      })).json())[0];
+    const grantsBefore = JSON.stringify(await grantRows());
+
     const selfGrant = await fetch(`${URL_}/rest/v1/user_subsidiary_access`, {
       method: 'POST',
       headers: asEntry,
-      body: JSON.stringify({ user_id: entryX, subsidiary_id: LP103.subX2, organisation_id: LP103.orgX }),
+      body: JSON.stringify({ user_id: entryX, subsidiary_id: LP103.subX2, organisation_id: LP103.orgX, categories: ALL_CATEGORIES }),
     });
+    const superSelfGrant = await fetch(`${URL_}/rest/v1/user_subsidiary_access`, {
+      method: 'POST',
+      headers: asSuper,
+      body: JSON.stringify({ user_id: superX, subsidiary_id: LP103.subX1, organisation_id: LP103.orgX, categories: [] }),
+    });
+    // A standard user widening its OWN grant's categories — the grant row is
+    // visible to it (`user_subsidiary_access_select_own`), so this is the real
+    // attack, not a write against an invisible row.
+    const widen = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}&subsidiary_id=eq.${LP103.subX1}`, {
+      method: 'PATCH',
+      headers: asEntry,
+      body: JSON.stringify({ categories: ALL_CATEGORIES }),
+    });
+    const adminWiden = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}`, {
+      method: 'PATCH',
+      headers: asAdmin,
+      body: JSON.stringify({ categories: ALL_CATEGORIES }),
+    });
+    const anonWiden = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}`, {
+      method: 'PATCH',
+      headers: asAnon,
+      body: JSON.stringify({ categories: ALL_CATEGORIES }),
+    });
+    const ownRevoke = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}`, { method: 'DELETE', headers: asEntry });
+    const revoke = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}`, { method: 'DELETE', headers: asAdmin });
     const promote = await fetch(`${URL_}/rest/v1/profiles?id=eq.${entryX}`, {
       method: 'PATCH',
       headers: asEntry,
-      body: JSON.stringify({ role: 'super_admin' }),
+      body: JSON.stringify({ role: 'masterkey' }),
     });
-    const asAdmin = { ...asEntry, Authorization: `Bearer ${tokens['super_admin:x']}` };
-    const revoke = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}`, { method: 'DELETE', headers: asAdmin });
-    const after = await fetch(`${URL_}/rest/v1/user_subsidiary_access?select=subsidiary_id&user_id=eq.${entryX}`, {
-      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+    const superPromote = await fetch(`${URL_}/rest/v1/profiles?id=eq.${superX}`, {
+      method: 'PATCH',
+      headers: asSuper,
+      body: JSON.stringify({ role: 'masterkey' }),
     });
-    const grantsAfter = (await after.json()).map((r) => r.subsidiary_id);
-    const profileAfter = await (await fetch(`${URL_}/rest/v1/profiles?select=role,organisation_id&id=eq.${entryX}`, {
-      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
-    })).json();
-    const promotedRows = promote.ok ? await promote.json() : [];
-    const revokedRows = revoke.ok ? await revoke.json() : [];
+    const grantsAfter = await grantRows();
+    const entryGrants = grantsAfter.filter((g) => g.user_id === entryX);
+    const profileAfter = await roleOf(entryX);
+    const superAfter = await roleOf(superX);
+    const unchangedGrants = JSON.stringify(grantsAfter) === grantsBefore;
     check(
-      'a data_entry user cannot grant itself a subsidiary through PostgREST',
-      !selfGrant.ok && JSON.stringify(grantsAfter) === JSON.stringify([LP103.subX1]),
-      `insert=${selfGrant.status}, grants now=${grantsAfter.length}`,
+      'a standard user cannot grant itself a subsidiary through PostgREST; nor a super_admin',
+      !selfGrant.ok && !superSelfGrant.ok && unchangedGrants && entryGrants.length === 1 && entryGrants[0].subsidiary_id === LP103.subX1,
+      `standard_user insert=${selfGrant.status}, super_admin insert=${superSelfGrant.status}, grants now=${grantsAfter.length}`,
     );
     check(
-      'a data_entry user cannot promote itself through PostgREST',
-      promotedRows.length === 0 && profileAfter[0]?.role === 'data_entry' && profileAfter[0]?.organisation_id === LP103.orgX,
-      `patch=${promote.status}, rows=${promotedRows.length}, role now=${profileAfter[0]?.role}`,
+      "no client widens a grant's categories through PostgREST (its own grant, a masterkey, anon) — the API's audited boundary alone does",
+      (await rows(widen)).length === 0 && (await rows(adminWiden)).length === 0 && (await rows(anonWiden)).length === 0 &&
+        unchangedGrants && JSON.stringify(entryGrants[0]?.categories) === JSON.stringify(['Electricity']),
+      `own=${widen.status}, masterkey=${adminWiden.status}, anon=${anonWiden.status}, categories now=${JSON.stringify(entryGrants[0]?.categories)}`,
     );
     check(
-      "a super_admin cannot change grants through PostgREST — only through the API's audited boundary",
-      revokedRows.length === 0 && grantsAfter.length === 1,
-      `delete=${revoke.status}, rows=${revokedRows.length}`,
+      'a standard user cannot promote itself to masterkey through PostgREST; nor a super_admin',
+      (await rows(promote)).length === 0 && (await rows(superPromote)).length === 0 &&
+        profileAfter?.role === 'standard_user' && profileAfter?.organisation_id === LP103.orgX && superAfter?.role === 'super_admin',
+      `patch=${promote.status}/${superPromote.status}, role now=${profileAfter?.role}/${superAfter?.role}`,
+    );
+    check(
+      "a masterkey cannot change grants through PostgREST, nor a standard user drop its own — only through the API's audited boundary",
+      (await rows(revoke)).length === 0 && (await rows(ownRevoke)).length === 0 && unchangedGrants,
+      `delete=${revoke.status}/${ownRevoke.status}, grants now=${grantsAfter.length}`,
     );
 
     // LP4-01: no foreign key's action reaches a record. X1 holds one, so the
@@ -629,7 +935,7 @@ async function probeTwoOrganisations() {
     const inserted = await svc('POST', 'activity_records', {
       id: LP103.recX1Forged, subsidiary_id: LP103.subX1, reporting_year: 2019, reporting_period: 'monthly', period_value: 'February',
       category: 'Electricity', scope: 2, activity_value: 1, activity_unit: 'kWh',
-      calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, created_by: users['data_entry:x'].id,
+      calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, created_by: users['standard_user:x'].id,
       updated_at: new Date().toISOString(),
     });
     const insertedBody = inserted.ok ? {} : await inserted.json().catch(() => ({}));
@@ -679,6 +985,7 @@ async function main() {
 
   await cleanupBoundaries(); // in case a previous run aborted; before the subsidiaries they declare
   await cleanupForeignSubsidiary(); // in case a previous run aborted
+  await cleanupCategoryProbe(subjectOf(token)); // in case a previous run aborted: entry's loop needs its full grant
   try {
     // Seeds go INSIDE the try. Outside it, a failure between the organisation
     // insert and the subsidiary insert left an orphan organisation behind (and
@@ -721,17 +1028,88 @@ async function main() {
     check(
       "import_batches: entry reads only its own batch over its own subsidiaries — not a colleague's, not one naming a subsidiary it cannot reach, not one with no subsidiaries",
       entryBatches.total === 1,
-      `entry sees ${entryBatches.total} of 4 seeded`,
+      `entry sees ${entryBatches.total} of 6 seeded`,
     );
-    const consultantBatches = await count('import_batches', {
-      token: await getToken(CONSULTANT_EMAIL),
-      query: probeBatches,
-    });
+    const superAdminBatches = await count('import_batches', { token: await getToken(SUPER_ADMIN_EMAIL), query: probeBatches });
     check(
-      'import_batches: a consultant reads every batch of its organisation',
-      consultantBatches.total === 4,
-      `consultant sees ${consultantBatches.total} of 4`,
+      'import_batches: a super_admin reads only its own batch over its granted companies — not one naming Trading, not anyone else\'s',
+      superAdminBatches.total === 1,
+      `super_admin sees ${superAdminBatches.total} of 6 seeded`,
     );
+    for (const [label, email] of [['an auditor', AUDITOR_EMAIL], ['a masterkey', ADMIN_EMAIL]]) {
+      const orgBatches = await count('import_batches', { token: await getToken(email), query: probeBatches });
+      check(
+        `import_batches: ${label} reads every batch of its organisation`,
+        orgBatches.total === 6,
+        `${label} sees ${orgBatches.total} of 6`,
+      );
+    }
+
+    // INC-2.6: every seeded role, every tenant table. A masterkey and an
+    // auditor read their whole organisation (no grant); a super_admin only its
+    // four granted companies — none of Trading; the standard user is the loop
+    // above. `profiles` is the caller's own row for everyone. Each count is
+    // compared with the service role's count of exactly that set, so a partial
+    // leak and a partial denial both fail.
+    const orgId = (await profileByEmail(ADMIN_EMAIL)).organisation_id;
+    const orgSubs = (await (await fetch(`${URL_}/rest/v1/subsidiaries?select=id&organisation_id=eq.${orgId}`, {
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+    })).json()).map((s) => s.id);
+    const viewers = [
+      { label: 'masterkey', email: ADMIN_EMAIL, subs: orgSubs, orgWide: true },
+      { label: 'auditor', email: AUDITOR_EMAIL, subs: orgSubs, orgWide: true },
+      { label: 'super_admin', email: SUPER_ADMIN_EMAIL, subs: SUPER_ADMIN_SUBS, orgWide: false },
+    ];
+    for (const viewer of viewers) {
+      const vToken = await getToken(viewer.email);
+      const vId = subjectOf(vToken);
+      const inSubs = `(${viewer.subs.join(',')})`;
+      const expectedQuery = (table) => {
+        if (table === 'subsidiaries') return `select=id&id=in.${inSubs}`;
+        if (table === 'profiles') return `select=id&id=eq.${vId}`;
+        if (table === 'import_batches') {
+          return viewer.orgWide
+            ? `select=id&organisation_id=eq.${orgId}`
+            : `select=id&uploaded_by=eq.${vId}&subsidiary_ids=cd.{${viewer.subs.join(',')}}`;
+        }
+        return `${COUNT_SELECT[table] ?? 'select=id'}&subsidiary_id=in.${inSubs}`;
+      };
+      const results = [];
+      for (const table of TENANT_TABLES) {
+        const [seen, want] = await Promise.all([
+          count(table, { token: vToken, query: COUNT_SELECT[table] }),
+          count(table, { token: SERVICE, key: SERVICE, query: expectedQuery(table) }),
+        ]);
+        results.push({ table, ok: !seen.error && !want.error && seen.total === want.total && want.total > 0, seen, want });
+      }
+      const wrong = results.filter((r) => !r.ok);
+      check(
+        `every tenant table: the ${viewer.label} reads exactly ${viewer.orgWide ? 'its organisation' : 'its granted companies'} (no more, no less, never empty)`,
+        wrong.length === 0,
+        wrong.length
+          ? wrong.map((r) => `${r.table} ${r.seen.error ?? r.seen.total}/${r.want.error ?? r.want.total}`).join('; ')
+          : results.map((r) => `${r.table}=${r.seen.total}`).join(', '),
+      );
+      if (!viewer.orgWide) {
+        // Trading by name: a row exists there (the service role sees it) and
+        // the super_admin reads none of it, table by table.
+        const tradingTables = TENANT_TABLES.filter((t) => !['profiles', 'import_batches'].includes(t));
+        const trading = [];
+        for (const table of tradingTables) {
+          const query = table === 'subsidiaries' ? `select=id&id=eq.${TRADING}` : `${COUNT_SELECT[table] ?? 'select=id'}&subsidiary_id=eq.${TRADING}`;
+          const [seen, exists] = await Promise.all([
+            count(table, { token: vToken, query }),
+            count(table, { token: SERVICE, key: SERVICE, query }),
+          ]);
+          trading.push({ table, seen: seen.error ?? seen.total, exists: exists.total });
+        }
+        check(
+          'every tenant table: the super_admin reads none of Trading, the company it is not granted',
+          trading.every((t) => t.seen === 0) && ['subsidiaries', 'locations', 'period_locks'].every((t) => trading.find((r) => r.table === t).exists > 0),
+          trading.map((t) => `${t.table} ${t.seen}/${t.exists}`).join(', '),
+        );
+      }
+    }
 
     // The contact columns specifically, not just `id`: they are the reason
     // `subsidiaries` joined this list, and a column-level grant slip would be
@@ -747,12 +1125,16 @@ async function main() {
       `anon=${anonContacts.total}, entry=${entryContacts.total}`,
     );
 
-    // Cross-ORGANISATION containment. `data_entry` seeing 2 of 5 proves only
+    // Cross-ORGANISATION containment. A standard user seeing 2 of 5 proves only
     // intra-org scoping; a policy handing every organisation's rows to a
-    // super_admin would pass that and fail this.
+    // masterkey or an auditor would pass that and fail this.
     const adminTokenForSubs = await getToken(ADMIN_EMAIL);
     const adminSees = await count('subsidiaries', {
       token: adminTokenForSubs,
+      query: `select=id&id=eq.${FOREIGN_SUB_ID}`,
+    });
+    const auditorSees = await count('subsidiaries', {
+      token: await getToken(AUDITOR_EMAIL),
       query: `select=id&id=eq.${FOREIGN_SUB_ID}`,
     });
     const foreignExists = await count('subsidiaries', {
@@ -761,9 +1143,9 @@ async function main() {
       query: `select=id&id=eq.${FOREIGN_SUB_ID}`,
     });
     check(
-      'subsidiaries: a super_admin cannot read another organisation',
-      foreignExists.total === 1 && adminSees.total === 0,
-      `foreign rows exist=${foreignExists.total}, visible to admin=${adminSees.total}`,
+      'subsidiaries: a masterkey and an auditor cannot read another organisation',
+      foreignExists.total === 1 && adminSees.total === 0 && auditorSees.total === 0,
+      `foreign rows exist=${foreignExists.total}, visible to admin=${adminSees.total}, to auditor=${auditorSees.total}`,
     );
 
     // LP4-01: an organisation is the operator's to remove (the owner's
@@ -779,6 +1161,7 @@ async function main() {
     );
 
     await probeBoundaries(token);
+    await probeCategoryGrant(token);
   } finally {
     await cleanupPeriodLocks();
     await cleanupImportBatches();
@@ -787,45 +1170,87 @@ async function main() {
   }
 
   // audit_log does NOT follow the tenant-table shape: its policy is role-gated
-  // (super_admin only) AND organisation-scoped, so a data_entry user must see
-  // nothing at all while an admin sees only their own organisation's rows.
+  // (masterkey and auditor, INC-2.6) AND organisation-scoped, so a standard
+  // user or a super_admin must see nothing at all — however many companies
+  // they are granted — while a masterkey or an auditor sees exactly their own
+  // organisation's rows.
   console.log('▸ audit_log (role-gated + organisation-scoped)');
   await cleanupAuditRows(); // in case a previous run aborted
-  await seedAuditRows();
+  const auditAdmin = await seedAuditRows();
   try {
     const adminToken = await getToken(ADMIN_EMAIL);
+    const auditorToken = await getToken(AUDITOR_EMAIL);
+    const superAdminToken = await getToken(SUPER_ADMIN_EMAIL);
+    const ownOrg = `select=id&organisation_id=eq.${auditAdmin.organisation_id}`;
+    const foreignOrg = `select=id&organisation_id=eq.${FOREIGN_ORG}`;
     const anon = await count('audit_log');
     const entry = await count('audit_log', { token });
+    const superAdmin = await count('audit_log', { token: superAdminToken });
     const admin = await count('audit_log', { token: adminToken });
-    const foreign = await count('audit_log', {
-      token: SERVICE,
-      key: SERVICE,
-      query: `select=id&organisation_id=eq.${FOREIGN_ORG}`,
-    });
-    const adminSeesForeign = await count('audit_log', {
-      token: adminToken,
-      query: `select=id&organisation_id=eq.${FOREIGN_ORG}`,
-    });
+    const auditor = await count('audit_log', { token: auditorToken });
+    const own = await count('audit_log', { token: SERVICE, key: SERVICE, query: ownOrg });
+    const foreign = await count('audit_log', { token: SERVICE, key: SERVICE, query: foreignOrg });
+    const adminSeesForeign = await count('audit_log', { token: adminToken, query: foreignOrg });
+    const auditorSeesForeign = await count('audit_log', { token: auditorToken, query: foreignOrg });
 
     if (anon.error) check('audit_log: anon read', false, `unexpected status ${anon.error}`);
     else check('audit_log: anon sees nothing', anon.total === 0, `count=${anon.total}`);
 
-    if (entry.error) check('audit_log: entry read', false, `unexpected status ${entry.error}`);
+    if (entry.error || superAdmin.error) check('audit_log: scoped-role read', false, `unexpected status ${entry.error ?? superAdmin.error}`);
     else
-      check('audit_log: data_entry sees nothing (role-gated)', entry.total === 0, `count=${entry.total}`);
-
-    if (admin.error) check('audit_log: admin read', false, `unexpected status ${admin.error} (missing GRANT?)`);
-    else check('audit_log: super_admin sees own-organisation rows', admin.total > 0, `count=${admin.total}`);
-
-    // The tightening this probe exists for: before it, a super_admin of one
-    // organisation could read another organisation's audit rows.
-    if (!foreign.error && !adminSeesForeign.error) {
       check(
-        'audit_log: super_admin cannot read another organisation (the WP7 fix)',
-        foreign.total > 0 && adminSeesForeign.total === 0,
-        `foreign rows exist=${foreign.total}, visible to admin=${adminSeesForeign.total}`,
+        'audit_log: a standard user and a super_admin see nothing (role-gated, grants notwithstanding)',
+        entry.total === 0 && superAdmin.total === 0,
+        `standard_user=${entry.total}, super_admin=${superAdmin.total}`,
+      );
+
+    if (admin.error || auditor.error) check('audit_log: organisation-wide read', false, `unexpected status ${admin.error ?? auditor.error} (missing GRANT?)`);
+    else
+      check(
+        'audit_log: a masterkey and an auditor see exactly their organisation\'s rows',
+        own.total > 0 && admin.total === own.total && auditor.total === own.total,
+        `masterkey=${admin.total}, auditor=${auditor.total}, organisation=${own.total}`,
+      );
+
+    // The tightening this probe exists for: before it, a masterkey of one
+    // organisation could read another organisation's audit rows.
+    if (!foreign.error && !adminSeesForeign.error && !auditorSeesForeign.error) {
+      check(
+        'audit_log: a masterkey and an auditor cannot read another organisation (the WP7 fix)',
+        foreign.total > 0 && adminSeesForeign.total === 0 && auditorSeesForeign.total === 0,
+        `foreign rows exist=${foreign.total}, visible to admin=${adminSeesForeign.total}, to auditor=${auditorSeesForeign.total}`,
       );
     }
+
+    // Append-only for every client: `authenticated` holds SELECT alone, so an
+    // insert, an update and a delete are refused by privilege — anon, a
+    // standard user, an auditor and a masterkey alike. Read back with the
+    // service role against the REAL seeded row.
+    const [target] = await (await fetch(`${URL_}/rest/v1/audit_log?select=id,action&entity=eq.${AUDIT_PROBE_ENTITY}&organisation_id=eq.${auditAdmin.organisation_id}`, {
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+    })).json();
+    const forgedId = randomUUID();
+    const writes = [];
+    for (const [who, bearer] of [['anon', ANON], ['standard_user', token], ['auditor', auditorToken], ['masterkey', adminToken]]) {
+      const headers = { apikey: ANON, Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+      const insert = await fetch(`${URL_}/rest/v1/audit_log`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ id: forgedId, action: 'create', entity: AUDIT_PROBE_ENTITY, organisation_id: auditAdmin.organisation_id }),
+      });
+      const update = await fetch(`${URL_}/rest/v1/audit_log?id=eq.${target?.id}`, { method: 'PATCH', headers, body: JSON.stringify({ action: 'forged' }) });
+      const remove = await fetch(`${URL_}/rest/v1/audit_log?id=eq.${target?.id}`, { method: 'DELETE', headers });
+      const denied = async (res) => !res.ok && /42501|permission denied/i.test(await res.text());
+      writes.push({ who, refused: (await denied(insert)) && (await denied(update)) && (await denied(remove)), statuses: `${insert.status}/${update.status}/${remove.status}` });
+    }
+    const [targetAfter] = await (await fetch(`${URL_}/rest/v1/audit_log?select=id,action&id=eq.${target?.id}`, {
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+    })).json();
+    const forgedLeft = await count('audit_log', { token: SERVICE, key: SERVICE, query: `select=id&id=eq.${forgedId}` });
+    check(
+      'audit_log: no client inserts, updates or deletes a row (42501) — the row is unchanged and no forgery landed',
+      Boolean(target) && writes.every((w) => w.refused) && targetAfter?.action === target.action && forgedLeft.total === 0,
+      writes.map((w) => `${w.who}=${w.statuses}`).join(', '),
+    );
   } finally {
     await cleanupAuditRows();
   }
@@ -850,7 +1275,7 @@ async function main() {
     const intentsEntry = await count('storage_intents', { token });
     const intentsAdmin = await count('storage_intents', { token: await getToken(ADMIN_EMAIL) });
     check(
-      'storage_intents: no client role reads a row (anon, data_entry, super_admin)',
+      'storage_intents: no client role reads a row (anon, standard_user, masterkey)',
       intentsSvc.total > 0 && refused(intentsAnon) && refused(intentsEntry) && refused(intentsAdmin),
       `service=${intentsSvc.total}, anon=${intentsAnon.error ?? intentsAnon.total}, entry=${intentsEntry.error ?? intentsEntry.total}, admin=${intentsAdmin.error ?? intentsAdmin.total}`,
     );
@@ -1000,7 +1425,7 @@ async function main() {
       method: 'PATCH',
       headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify({
-        role: 'super_admin', disabled_at: stamp, sessions_revoked_at: stamp, auth_sync_pending_since: stamp, auth_sync_generation: 999, recovery_sent_at: stamp,
+        role: 'masterkey', disabled_at: stamp, sessions_revoked_at: stamp, auth_sync_pending_since: stamp, auth_sync_generation: 999, recovery_sent_at: stamp,
       }),
     });
     const afterRow = await readOwn();
@@ -1185,26 +1610,26 @@ async function main() {
     }
   }
 
-  // --- The consultant seat (WP7 PR 3) -------------------------------------
-  // Added with the reviewer UI. The NestJS guard grants a consultant org-wide
+  // --- The auditor seat (WP7 PR 3; the consultant's, auditor since INC-2.6) -
+  // Added with the reviewer UI. The NestJS guard grants an auditor org-wide
   // READ and no writes; that is the primary layer, and this asserts the second
-  // one independently agrees — otherwise "the consultant writes nothing
+  // one independently agrees — otherwise "the auditor writes nothing
   // directly" would rest on the guard alone for a seat no probe had ever
   // touched. (Its approve, since K2, goes through the API's runtime role.)
-  const consultantToken = await getToken(CONSULTANT_EMAIL);
+  const auditorSeatToken = await getToken(AUDITOR_EMAIL);
   const svcRecords = await count('activity_records', { key: SERVICE, token: SERVICE });
-  const consultantRecords = await count('activity_records', {
-    token: consultantToken,
+  const auditorRecords = await count('activity_records', {
+    token: auditorSeatToken,
   });
   check(
-    'activity_records: consultant reads the organisation (SELECT grant + policy)',
-    consultantRecords.total === svcRecords.total && consultantRecords.total > 0,
-    `consultant=${consultantRecords.total}, service=${svcRecords.total}`,
+    'activity_records: an auditor reads the organisation (SELECT grant + policy)',
+    auditorRecords.total === svcRecords.total && auditorRecords.total > 0,
+    `auditor=${auditorRecords.total}, service=${svcRecords.total}`,
   );
 
   // No direct writes at the database either: RLS has no write policy
   // for this role, so an UPDATE straight through PostgREST must affect nothing.
-  // A REAL, consultant-visible row: patching a nonexistent id returns `[]`
+  // A REAL, auditor-visible row: patching a nonexistent id returns `[]`
   // whether or not a write policy exists, so that form of the probe could never
   // fail — it proved nothing.
   const sample = await fetch(
@@ -1218,7 +1643,7 @@ async function main() {
       method: 'PATCH',
       headers: {
         apikey: ANON,
-        Authorization: `Bearer ${consultantToken}`,
+        Authorization: `Bearer ${auditorSeatToken}`,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
@@ -1234,7 +1659,7 @@ async function main() {
   );
   const [afterRow] = await after.json();
   check(
-    'activity_records: consultant cannot write through RLS (real row unchanged)',
+    'activity_records: an auditor cannot write through RLS (real row unchanged)',
     (!patch.ok || (Array.isArray(patched) && patched.length === 0)) &&
       afterRow.status === sampleRow.status,
     `status=${patch.status}, rows=${Array.isArray(patched) ? patched.length : 'n/a'}, ` +
@@ -1253,7 +1678,7 @@ async function main() {
       method: 'PATCH',
       headers: {
         apikey: ANON,
-        Authorization: `Bearer ${consultantToken}`,
+        Authorization: `Bearer ${auditorSeatToken}`,
         'Content-Type': 'application/json',
         Prefer: 'return=representation',
       },
@@ -1270,7 +1695,7 @@ async function main() {
   );
   const [afterVoidRow] = await afterVoid.json();
   check(
-    'activity_records: consultant cannot VOID a figure through RLS',
+    'activity_records: an auditor cannot VOID a figure through RLS',
     // `voidPatch.status === 200` is pinned, not just `!ok`. A rejected BODY
     // (stale PostgREST schema cache -> 400 PGRST204) would also leave the row
     // unchanged, and the probe would pass while proving nothing about RLS. 200

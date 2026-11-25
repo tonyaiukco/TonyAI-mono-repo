@@ -10,7 +10,7 @@ import type { RequestUser } from '../auth/auth.types';
  * service as SUBMISSION_NOT_NAMED, which refuses it after the role check
  * (activity-records.service.spec.ts); a value — a time or null — goes as is.
  */
-const user = { id: 'user-admin', role: 'super_admin' } as RequestUser;
+const user = { id: 'user-admin', role: 'masterkey' } as RequestUser;
 const ID = 'a1111111-1111-4111-8111-111111111111';
 const SEEN = '2026-11-10T09:00:00.000Z';
 

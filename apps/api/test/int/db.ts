@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, UserRole } from '@tonyai/db';
-import { CATEGORY_SCOPE_MAP, type Category } from '@tonyai/shared-types';
+import { CATEGORIES, CATEGORY_SCOPE_MAP, type Category } from '@tonyai/shared-types';
 import type { RequestUser } from '../../src/auth/auth.types';
 import { expectedIssuers } from '../../src/auth/token-verifier';
 import { CalculationsService } from '../../src/calculations/calculations.service';
@@ -138,15 +138,21 @@ export async function withRollback<T>(
 export interface Tenant {
   organisationId: string;
   subsidiaryId: string;
-  users: Record<'superAdmin' | 'consultant' | 'dataEntry' | 'executiveViewer', RequestUser>;
+  /** A second company of the organisation that the super_admin and the
+   *  standard user are NOT granted (the scope probes' "other company"). */
+  otherSubsidiaryId: string;
+  users: Record<'masterkey' | 'superAdmin' | 'standardUser' | 'auditor', RequestUser>;
   /** Every id this tenant's rows can be found by, for cleanup and leak checks. */
   profileIds: string[];
   cleanup(): Promise<void>;
 }
 
 /**
- * One organisation, one subsidiary, and a profile per role — the data_entry
- * profile with a real grant of the subsidiary. Written as the OWNER (the
+ * One organisation, two subsidiaries, and a profile per role (INC-2.6 §1): a
+ * masterkey and an auditor (organisation-wide), a super_admin and a standard
+ * user each with a real grant of the FIRST subsidiary only — the standard
+ * user's with every category ticked — and the second subsidiary granted to
+ * nobody. Written as the OWNER (the
  * runtime role cannot create organisations or profiles), on a client of its
  * own that `cleanup()` closes.
  */
@@ -188,6 +194,15 @@ async function populateTenant(
     },
   });
 
+  const otherSubsidiary = await prisma.subsidiary.create({
+    data: {
+      organisationId: organisation.id,
+      legalName: `Int-test other subsidiary ${tag}`,
+      geographyCode: 'UK',
+    },
+  });
+  const everyCategory = [...CATEGORIES].sort();
+
   const makeUser = async (role: UserRole, label: string): Promise<RequestUser> => {
     const profile = await prisma.profile.create({
       data: {
@@ -198,30 +213,38 @@ async function populateTenant(
         organisationId: organisation.id,
       },
     });
+    // As the guard builds it: the organisation for the organisation-wide
+    // roles, the one grant for the scoped ones.
+    const organisationWide = role === UserRole.masterkey || role === UserRole.auditor;
     return {
       id: profile.id,
       email: profile.email,
       fullName: profile.fullName,
       role,
       organisationId: organisation.id,
-      accessibleSubsidiaryIds: [subsidiary.id],
+      accessibleSubsidiaryIds: organisationWide ? [subsidiary.id, otherSubsidiary.id] : [subsidiary.id],
+      categoryGrants: role === UserRole.standard_user ? { [subsidiary.id]: everyCategory } : {},
     };
   };
 
   const users = {
-    superAdmin: await makeUser(UserRole.super_admin, 'admin'),
-    consultant: await makeUser(UserRole.consultant, 'consultant'),
-    dataEntry: await makeUser(UserRole.data_entry, 'entry'),
-    executiveViewer: await makeUser(UserRole.executive_viewer, 'viewer'),
+    masterkey: await makeUser(UserRole.masterkey, 'admin'),
+    superAdmin: await makeUser(UserRole.super_admin, 'superadmin'),
+    standardUser: await makeUser(UserRole.standard_user, 'entry'),
+    auditor: await makeUser(UserRole.auditor, 'auditor'),
   };
-  await prisma.userSubsidiaryAccess.create({
-    data: { userId: users.dataEntry.id, subsidiaryId: subsidiary.id, organisationId: organisation.id },
+  await prisma.userSubsidiaryAccess.createMany({
+    data: [
+      { userId: users.standardUser.id, subsidiaryId: subsidiary.id, organisationId: organisation.id, categories: everyCategory },
+      { userId: users.superAdmin.id, subsidiaryId: subsidiary.id, organisationId: organisation.id },
+    ],
   });
   const profileIds = Object.values(users).map((u) => u.id);
 
   return {
     organisationId: organisation.id,
     subsidiaryId: subsidiary.id,
+    otherSubsidiaryId: otherSubsidiary.id,
     users,
     profileIds,
     // Test-only teardown of a synthetic tenant's own rows. Audit rows are
@@ -237,7 +260,7 @@ async function populateTenant(
     // rows instead.
     async cleanup() {
       try {
-        await prisma.storageIntent.deleteMany({ where: tenantIntents([subsidiary.id], [organisation.id]) });
+        await prisma.storageIntent.deleteMany({ where: tenantIntents([subsidiary.id, otherSubsidiary.id], [organisation.id]) });
         await prisma.auditLog.deleteMany({
           where: { OR: [{ organisationId: organisation.id }, { userId: { in: profileIds } }] },
         });
@@ -248,6 +271,73 @@ async function populateTenant(
         await prisma.$disconnect();
       }
     },
+  };
+}
+
+export interface MemberOptions {
+  /** Companies granted (a super_admin's or a standard user's); none by default. */
+  grants?: string[];
+  /** A standard user's categories on every grant; every category by default. */
+  categories?: Category[];
+  /** A pending invitation (not accepted): such a super_admin is not "active" (ruling R3). */
+  invitation?: 'pending' | 'accepted';
+}
+
+/**
+ * One more member of `tenant` in `role`, written as the OWNER — a second
+ * masterkey or super_admin, a standard user with chosen categories — and
+ * registered in `tenant.profileIds`, so `cleanup()` removes it. The
+ * RequestUser is built as the guard builds it (organisation-wide roles see
+ * every company of the organisation; granted roles their grants; a standard
+ * user its categories).
+ */
+export async function addMember(
+  prisma: PrismaService,
+  tenant: Tenant,
+  role: UserRole,
+  options: MemberOptions = {},
+): Promise<RequestUser> {
+  const tag = randomUUID().slice(0, 8);
+  const profile = await prisma.profile.create({
+    data: {
+      id: randomUUID(),
+      email: `int-${role.replace('_', '')}-${tag}@tonyai.test`,
+      fullName: `Int ${role} ${tag}`,
+      role,
+      organisationId: tenant.organisationId,
+    },
+  });
+  tenant.profileIds.push(profile.id);
+  const grants = options.grants ?? [];
+  const categories = role === UserRole.standard_user ? [...(options.categories ?? CATEGORIES)].sort() : [];
+  if (grants.length) {
+    await prisma.userSubsidiaryAccess.createMany({
+      data: grants.map((subsidiaryId) => ({ userId: profile.id, subsidiaryId, organisationId: tenant.organisationId, categories })),
+    });
+  }
+  if (options.invitation) {
+    await prisma.invitation.create({
+      data: {
+        profileId: profile.id,
+        language: 'en',
+        status: options.invitation,
+        invitedBy: tenant.users.masterkey.id,
+        ...(options.invitation === 'accepted' ? { acceptedAt: new Date() } : {}),
+      },
+    });
+  }
+  const organisationWide = role === UserRole.masterkey || role === UserRole.auditor;
+  const companies = organisationWide
+    ? (await prisma.subsidiary.findMany({ where: { organisationId: tenant.organisationId }, select: { id: true } })).map((s) => s.id)
+    : grants;
+  return {
+    id: profile.id,
+    email: profile.email,
+    fullName: profile.fullName,
+    role,
+    organisationId: tenant.organisationId,
+    accessibleSubsidiaryIds: companies,
+    categoryGrants: role === UserRole.standard_user ? Object.fromEntries(grants.map((id) => [id, categories])) : {},
   };
 }
 
@@ -299,7 +389,7 @@ export function recordInput(
     activityValue: 100,
     activityUnit: 'kWh',
     calculation: { tCo2e: 0, factorId: 'int-test-placeholder' },
-    createdBy: tenant.users.dataEntry.id,
+    createdBy: tenant.users.standardUser.id,
     status: ActivityRecordStatus.draft,
     ...data,
   };
@@ -514,7 +604,7 @@ export async function attachEvidence(
       fileName: 'int-test.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 4,
-      uploadedBy: tenant.users.dataEntry.id,
+      uploadedBy: tenant.users.standardUser.id,
     },
   });
   await prisma.activityRecordEvidence.createMany({
@@ -522,7 +612,7 @@ export async function attachEvidence(
       activityRecordId,
       evidenceId: file.id,
       subsidiaryId: tenant.subsidiaryId,
-      linkedBy: tenant.users.dataEntry.id,
+      linkedBy: tenant.users.standardUser.id,
     })),
   });
   return file;
@@ -551,9 +641,9 @@ export interface TenantData {
 export async function createTenantData(
   prisma: PrismaService,
   tenant: Tenant,
-  options: CreateRecordOptions = {},
+  options: CreateRecordOptions & { boundaryVersion?: number } = {},
 ): Promise<TenantData> {
-  const by = tenant.users.dataEntry.id;
+  const by = tenant.users.standardUser.id;
   const subsidiaryId = tenant.subsidiaryId;
   const record = await createRecord(prisma, tenant, {}, options);
   const evidence = await attachEvidence(prisma, tenant, [record.id]);
@@ -592,7 +682,8 @@ export async function createTenantData(
       subsidiaryIds: [subsidiaryId],
     },
   });
-  const boundary = await createBoundary(prisma, tenant, { locationId: location.id });
+  // A second company's data takes the year's next version (`boundaryVersion`).
+  const boundary = await createBoundary(prisma, tenant, { locationId: location.id, version: options.boundaryVersion });
   return {
     recordId: record.id,
     evidenceId: evidence.id,
@@ -633,7 +724,7 @@ export async function createBoundary(
       organisationId,
       reportingYear: options.reportingYear ?? 2026,
       version: options.version ?? 1,
-      createdBy: tenant.users.superAdmin.id,
+      createdBy: tenant.users.masterkey.id,
     },
   });
   await prisma.inventoryBoundarySubsidiary.create({

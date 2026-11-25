@@ -24,7 +24,7 @@ and persistence happen before rendering; an issuance exists only after the
 immutable dataset and exact PDF bytes are retained. Storage failures require a
 recoverable implementation, not a successful issuance with a missing artifact.
 
-- **Boundary:** `super_admin` owns per-year decisions. A boundary version is
+- **Boundary:** the `masterkey` owns per-year decisions. A boundary version is
   immutable once confirmed or captured into any dataset. `entities` retains
   every boundary company/site operating in any reporting-year month and its
   actual first/last month; sources at that entity must agree with those months.
@@ -263,7 +263,7 @@ calculation and its releases' standing now, and recalculates nothing
 rows — the catalogue, the loader's re-read, the seed's accepted second copy —
 and fails on a new one. Issuance with its storage recovery (PR D) and the
 editor's screen (LP4-03 PR C, "The boundary editor") came later; the routes read through their own
-reader (below), which answers an empty version and a data_entry user's part —
+reader (below), which answers an empty version and a granted user's part —
 the capture's reader reads none.
 
 **The write path (LP3-04 W1, W13; Decisions 2026-10-15 (fifth), E1–E9).** The
@@ -284,8 +284,9 @@ the screen's `api.ts` functions came with LP4-03 (the list in PR B, the rest in 
 | `POST` | `/inventory-boundaries/:id/confirm` | Confirms and freezes it |
 | `DELETE` | `/inventory-boundaries/:id` | An open version only |
 
-`super_admin` alone writes and confirms (E2; D12's matrix is theirs);
-consultant and `executive_viewer` read; a `data_entry` user reads only its
+The `masterkey` alone writes and confirms (`boundary.write`; E2, D12's matrix is
+theirs; a `super_admin`'s own company arrives with `inc26-group-tree`); an
+`auditor` reads the whole of it; a `super_admin` or `standard_user` reads only its
 granted subsidiaries' part (`view: 'granted_subsidiaries'`, W3), never captured
 — as the boundary's RLS does, its list holds only the versions declaring a
 subsidiary it is granted, and a version declaring none of them is
@@ -311,7 +312,7 @@ newest: a create takes the highest version + 1 and answers
 A copy takes its source's declarations as they are, months included, read
 under the source's header lock. Edits serialise on the header's
 row lock with no revision precondition — the last writer of a subsidiary wins,
-and each audit row holds what it replaced (E5). **Confirm** (`super_admin`)
+and each audit row holds what it replaced (E5). **Confirm** (`masterkey`)
 refuses `boundary_frozen` when already confirmed,
 `boundary_confirm_requires_copy` when the version froze unconfirmed in a capture
 (copy it, confirm the copy), and `boundary_incomplete` when it declares no
@@ -345,8 +346,8 @@ key that broke; any other key's failure is a defect). `boundaryGaps(snapshot)`
 each gap at its entity and a source's naming that source; a version's routes
 report them, `confirm` refuses on them, and PR C's dataset starts from them.
 Reads run in one REPEATABLE READ snapshot through the routes' own reader
-(`boundary-version.ts`, on `buildBoundarySnapshot`): every reader but
-data_entry gets the whole declared inventory; data_entry's view filters every
+(`boundary-version.ts`, on `buildBoundarySnapshot`): a `masterkey` and an
+`auditor` get the whole declared inventory; a granted role's view filters every
 collection and gap to its granted subsidiaries — the gaps are the whole
 version's, which equals its part's alone, since every rule stays inside one
 subsidiary. The `PUT`'s body has a cap of its own, **1 MB, set in code**
@@ -358,7 +359,7 @@ keeps `BODY_MAX_BYTES`; the declaration's parser is registered before the
 global one, which then passes the read body by. A body is parsed before
 authentication, but a write is refused before it is validated — the global
 pipe's work grows with a body's rows — by guards (`boundary-writer.guard.ts`):
-anyone but a `super_admin` is `forbidden`, and a declaration's list past the
+anyone but a `masterkey` is `forbidden`, and a declaration's list past the
 DTO's limits is `validation_failed` by its count alone.
 
 **The capture (LP3-04 PR C; Decisions 2026-10-15 (ninth), V1–V12).** A
@@ -369,9 +370,9 @@ are not what is hashed — and served back as stored (`apps/api/src/report-datas
 
 | Method | Path | What | Who |
 |---|---|---|---|
-| `POST` | `/report-datasets` | Capture a version (`boundaryId`) — the whole declared inventory, or an extract by `subsidiaryId`, `scope` and/or `category`; 201 with a `ReportDatasetSummary` | `super_admin`; a consultant only a version already frozen |
-| `GET` | `/report-datasets?year=` | A year's datasets the caller may read, newest first (at most 50) | every role but data_entry |
-| `GET` | `/report-datasets/:id` | One dataset, its retained text byte for byte (`application/json`) | every role but data_entry |
+| `POST` | `/report-datasets` | Capture a version (`boundaryId`) — the whole declared inventory, or an extract by `subsidiaryId`, `scope` and/or `category`; 201 with a `ReportDatasetSummary` | `masterkey` |
+| `GET` | `/report-datasets?year=` | A year's datasets the caller may read, newest first (at most 50) | `masterkey`, `auditor` |
+| `GET` | `/report-datasets/:id` | One dataset, its retained text byte for byte (`application/json`) | `masterkey`, `auditor` |
 
 **Two transactions.** The first, READ COMMITTED — the only isolation the
 boundary guard freezes in (TA014) — locks the version's header FOR UPDATE and
@@ -383,8 +384,9 @@ subsidiary the version does not declare or outside access (`subsidiary_not_found
 covered over nothing), a capture certain to read
 more than `REPORT_RECORD_LIMIT` records or `REPORT_EVIDENCE_LINK_LIMIT` evidence
 links (`query_too_broad`; only the 20 MB text cap is known after the freeze),
-and a consultant
-before an open version (`forbidden`: freezing is a header write, E2's). Then,
+and a capturer without `dataset.capture_open_boundary`
+before an open version (`forbidden`: freezing is a header write, E2's; today
+the only capturer, the `masterkey`, holds it). Then,
 if the version is open, it **freezes it unconfirmed** — conditionally
 (`frozenAt: null`; none changed means it was frozen already) — and audits the
 freeze (`inventory_boundary` / `freeze`). The second, REPEATABLE READ
@@ -460,10 +462,10 @@ SHA-256 and the status the final gate derived are the issuance
 
 | Method | Path | What | Who |
 |---|---|---|---|
-| `POST` | `/report-issuances` | Issue a retained dataset (`datasetId`, `template`; `language` — D16: else the issuer's `profiles.language` —, `includeMethodologyNotes`, `includeEvidenceSummary`, both default false); 201 with its `ReportIssuance` | `super_admin`; a consultant a partial only |
-| `GET` | `/report-issuances?year=&status=` | A year's issuances the caller may read, newest first: at most 50 summaries, `truncated` past them, and the year's current final (LP4-03 K7) | every role but data_entry |
-| `GET` | `/report-issuances/:id` | One issuance's `ReportIssuance` | every role but data_entry |
-| `GET` | `/report-issuances/:id/pdf` | Its retained PDF, byte for byte, as an attachment — re-hashed first, never rendered again | every role but data_entry |
+| `POST` | `/report-issuances` | Issue a retained dataset (`datasetId`, `template`; `language` — D16: else the issuer's `profiles.language` —, `includeMethodologyNotes`, `includeEvidenceSummary`, both default false); 201 with its `ReportIssuance` | `masterkey` |
+| `GET` | `/report-issuances?year=&status=` | A year's issuances the caller may read, newest first: at most 50 summaries, `truncated` past them, and the year's current final (LP4-03 K7) | `masterkey`, `auditor` |
+| `GET` | `/report-issuances/:id` | One issuance's `ReportIssuance` | `masterkey`, `auditor` |
+| `GET` | `/report-issuances/:id/pdf` | Its retained PDF, byte for byte, as an attachment — re-hashed first, never rendered again | `masterkey`, `auditor` |
 
 **Read, then verified before it is trusted (K2).** One REPEATABLE READ snapshot
 reads the retained row under the read rule (`report_dataset_not_found`
@@ -506,9 +508,10 @@ lock, naming every obligation it holds back); every counted figure authoritative
 an uncalculated or legacy figure); and one GWP set across the counted all-GHG
 calculations (`gwp_set_mismatch` — the capture names two disagreeing sets, and
 the gate also fails closed on a null set beside a named one, K4). Anything else
-is partial, every gap named; final has none. A final is `super_admin`'s (W4):
-a consultant is refused one (`report_final_forbidden`, 403) after the read
-rule, before anything is rendered. **A final needs at least one included
+is partial, every gap named; final has none. A final is the `masterkey`'s (W4,
+`report.issue_final`): an issuer without it is refused one
+(`report_final_forbidden`, 403) after the read rule, before anything is
+rendered — no role issues without it today, so the code stays as the gate. **A final needs at least one included
 obligation** (Decisions 2026-11-09 (4)): a confirmed inventory whose every
 category is excluded has no figure to certify, so it is partial and names
 `no_included_obligation`. The rule lives in the gate and in the database's

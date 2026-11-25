@@ -18,7 +18,7 @@ import { InvitationDeliveryService } from '../../src/users/invitation-delivery.s
 import { PasswordResetService } from '../../src/users/password-reset.service';
 import { UserLifecycleService } from '../../src/users/user-lifecycle.service';
 import { UsersQueryService } from '../../src/users/users-query.service';
-import { apiTokenIssuer, connect, connectOwner, createTenant, deferred, holdBefore, TENANT_ORG_PREFIX, type Tenant } from './db';
+import { addMember, apiTokenIssuer, connect, connectOwner, createTenant, deferred, holdBefore, TENANT_ORG_PREFIX, type Tenant } from './db';
 import { failingAuditClient, INJECTED_AUDIT_FAILURE } from './services';
 
 /**
@@ -65,6 +65,8 @@ let counter = 0;
 const invitedIds: string[] = [];
 const createdOrgs: string[] = [];
 const address = () => `int-inv${++counter}-${tag}@tonyai.test`;
+/** A grant as the access contract takes it; a super_admin's names no category. */
+const grant = (subsidiaryId: string) => ({ subsidiaryId, categories: [] as never[] });
 
 function services(transport: MailTransport | null, overrides: { authAdmin?: AuthAdminService; db?: PrismaService } = {}) {
   const db = overrides.db ?? runtime;
@@ -85,13 +87,14 @@ async function asRequestUser(profileId: string): Promise<RequestUser> {
   return { id: p.id, email: p.email, fullName: p.fullName, role: p.role, organisationId: p.organisationId, accessibleSubsidiaryIds: [] };
 }
 
-async function invite(transport: MailTransport | null, over: Partial<Parameters<AccessAdminService['inviteMember']>[1]> = {}, actor = A.users.superAdmin) {
+async function invite(transport: MailTransport | null, over: Partial<Parameters<AccessAdminService['inviteMember']>[1]> = {}, actor = A.users.masterkey) {
   const created = await services(transport).lifecycle.invite(actor, {
     email: address(),
     fullName: 'Int Invitee',
-    role: UserRole.data_entry,
+    // A masterkey invites super_admins and auditors (INC-2.6, design Decision 9).
+    role: UserRole.super_admin,
     language: 'en',
-    subsidiaryIds: [],
+    access: [],
     ...over,
   });
   invitedIds.push(created.id);
@@ -154,23 +157,23 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
   it('creates profile, grant, invitation and audit on the runtime role, then the Auth user and a TR email', async () => {
     const { sent, transport } = inbox();
     const email = address();
-    const created = await services(transport).lifecycle.invite(A.users.superAdmin, {
+    const created = await services(transport).lifecycle.invite(A.users.masterkey, {
       email: `  ${email.toUpperCase()} `,
       fullName: 'Ayşe <Yılmaz>',
-      role: UserRole.data_entry,
+      role: UserRole.super_admin,
       language: 'tr',
-      subsidiaryIds: [A.subsidiaryId],
+      access: [{ subsidiaryId: A.subsidiaryId, categories: [] }],
     });
     invitedIds.push(created.id);
 
     expect(created).toMatchObject({
-      email, role: 'data_entry', language: 'tr', status: 'invited', subsidiaryIds: [A.subsidiaryId],
+      email, role: 'super_admin', language: 'tr', status: 'invited', access: [{ subsidiaryId: A.subsidiaryId, categories: [] }],
       invitation: { status: 'sent', attempts: 1, lastErrorStep: null, language: 'tr' },
     });
     const profile = await owner.profile.findUniqueOrThrow({ where: { id: created.id } });
     expect(profile).toMatchObject({ organisationId: A.organisationId, disabledAt: null, theme: 'light' });
     const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
-    expect(invitation).toMatchObject({ status: InvitationStatus.sent, invitedBy: A.users.superAdmin.id, language: 'tr' });
+    expect(invitation).toMatchObject({ status: InvitationStatus.sent, invitedBy: A.users.masterkey.id, language: 'tr' });
 
     // The Auth user carries the profile's own id (created after it, K4).
     const { data } = await admin.getUserById(created.id);
@@ -184,8 +187,8 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
 
     const rows = await owner.auditLog.findMany({ where: { entityId: created.id }, orderBy: { action: 'asc' } });
     expect(rows.map((r) => [r.action, r.entity, r.userId, r.organisationId])).toEqual([
-      ['create', 'subsidiary_access', A.users.superAdmin.id, A.organisationId],
-      ['invite', 'invitation', A.users.superAdmin.id, A.organisationId],
+      ['create', 'subsidiary_access', A.users.masterkey.id, A.organisationId],
+      ['invite', 'invitation', A.users.masterkey.id, A.organisationId],
     ]);
     // The trail has no correction path (D20): never the address or the name.
     expect(JSON.stringify(rows.map((r) => r.diff))).not.toMatch(/inv\d|Ayşe|tonyai\.test/);
@@ -204,29 +207,31 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
     expect(invitation.status).toBe(InvitationStatus.accepted);
     const accepts = await owner.auditLog.findMany({ where: { entityId: created.id, action: 'accept' } });
-    expect(accepts.map((r) => [r.userId, r.role])).toEqual([[created.id, 'data_entry']]);
+    expect(accepts.map((r) => [r.userId, r.role])).toEqual([[created.id, 'super_admin']]);
     // Accepted: a re-send is refused, and the list says active.
-    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.superAdmin, created.id)).rejects.toMatchObject({
+    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.masterkey, created.id)).rejects.toMatchObject({
       response: { code: 'invitation_closed' },
     });
-    expect((await services(null).query.summary(A.users.superAdmin, created.id)).status).toBe('active');
+    expect((await services(null).query.summary(A.users.masterkey, created.id)).status).toBe('active');
   });
 
+  // A super_admin for A's company, as each actor that may not invite one.
   it.each([
-    ['a consultant', () => A.users.consultant],
-    ['a data_entry user', () => A.users.dataEntry],
-    ["another tenant's super_admin, for this tenant's subsidiary", () => B.users.superAdmin],
+    ['a super_admin (it invites standard users only)', () => A.users.superAdmin],
+    ['a standard user', () => A.users.standardUser],
+    ['an auditor', () => A.users.auditor],
+    ["another tenant's masterkey, for this tenant's subsidiary", () => B.users.masterkey],
   ])('refuses %s, writing nothing', async (_label, actor) => {
     const email = address();
     const attempt = services(inbox().transport).lifecycle.invite(actor(), {
-      email, fullName: 'X', role: UserRole.data_entry, language: 'en', subsidiaryIds: [A.subsidiaryId],
+      email, fullName: 'X', role: UserRole.super_admin, language: 'en', access: [{ subsidiaryId: A.subsidiaryId, categories: [] }],
     });
     await expect(attempt).rejects.toMatchObject({ status: expect.any(Number) });
     expect(await owner.profile.count({ where: { email } })).toBe(0);
   });
 
   it('refuses an address that has an account here or in another organisation (D17), in any case', async () => {
-    for (const taken of [A.users.consultant.email, B.users.consultant.email.toUpperCase()]) {
+    for (const taken of [A.users.auditor.email, B.users.auditor.email.toUpperCase()]) {
       await expect(invite(inbox().transport, { email: taken })).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
     }
   });
@@ -235,27 +240,27 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     // A tenant of its own: the bound would refuse the other tests' invitations in A.
     const C = await createTenant();
     try {
-      const inviteAs = (email: string) => services(inbox().transport).lifecycle.invite(C.users.superAdmin, {
-        email, fullName: 'Int Invitee', role: UserRole.data_entry, language: 'en', subsidiaryIds: [],
+      const inviteAs = (email: string) => services(inbox().transport).lifecycle.invite(C.users.masterkey, {
+        email, fullName: 'Int Invitee', role: UserRole.super_admin, language: 'en', access: [],
       });
       // Five refusals of an hour ago or more do not count.
       for (let i = 0; i < 5; i += 1) {
         await owner.auditLog.create({ data: {
-          userId: C.users.superAdmin.id, role: 'super_admin', organisationId: C.organisationId, action: 'invite_refused',
+          userId: C.users.masterkey.id, role: 'masterkey', organisationId: C.organisationId, action: 'invite_refused',
           entity: 'invitation', entityId: null, diff: { reason: 'email_unavailable' }, createdAt: new Date(Date.now() - 2 * 3_600_000),
         } });
       }
       for (let i = 0; i < 5; i += 1) {
-        await expect(inviteAs(A.users.consultant.email)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+        await expect(inviteAs(A.users.auditor.email)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
       }
       const rows = await owner.auditLog.findMany({ where: { organisationId: C.organisationId, action: 'invite_refused', createdAt: { gt: new Date(Date.now() - 3_600_000) } } });
       expect(rows).toHaveLength(5);
-      expect(rows.every((r) => r.userId === C.users.superAdmin.id && r.entity === 'invitation' && r.entityId === null)).toBe(true);
+      expect(rows.every((r) => r.userId === C.users.masterkey.id && r.entity === 'invitation' && r.entityId === null)).toBe(true);
       expect(JSON.stringify(rows.map((r) => r.diff))).not.toContain('@');
 
       // The sixth, for a taken address and for a new one alike: 429, nothing written.
       const fresh = address();
-      for (const email of [A.users.consultant.email, fresh]) {
+      for (const email of [A.users.auditor.email, fresh]) {
         await expect(inviteAs(email)).rejects.toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
       }
       expect(await owner.profile.count({ where: { email: fresh } })).toBe(0);
@@ -270,27 +275,27 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
   });
 
   it('an address is matched exactly — `_` and `%` are characters, never wildcards over other tenants (review P1)', async () => {
-    const target = B.users.consultant.email; // int-consultant-<tag>@tonyai.test
-    const underscore = target.replace('consultant', 'consultan_');
-    const percent = target.replace('consultant', 'c%');
+    const target = B.users.auditor.email; // int-auditor-<tag>@tonyai.test
+    const underscore = target.replace('auditor', 'audito_');
+    const percent = target.replace('auditor', 'a%');
     // With a subsidiary that is not the actor's, every address — an existing one
     // included — answers the same 404: the subsidiaries are checked first.
     for (const email of [percent, underscore, `int-nobody-${tag}@tonyai.test`, target]) {
-      await expect(invite(inbox().transport, { email, subsidiaryIds: [randomUUID()] })).rejects.toMatchObject({
+      await expect(invite(inbox().transport, { email, access: [{ subsidiaryId: randomUUID(), categories: [] }] })).rejects.toMatchObject({
         response: { code: 'subsidiary_not_found' },
       });
     }
     // Without one, an address that only LOOKS like another tenant's is not "taken".
-    const created = await invite(inbox().transport, { email: underscore, role: UserRole.consultant });
+    const created = await invite(inbox().transport, { email: underscore, role: UserRole.auditor });
     expect(created.email).toBe(underscore);
   });
 
   it("refuses another tenant's subsidiary (the same 404 as none) and grants for an organisation-wide role", async () => {
     const email = address();
-    await expect(invite(inbox().transport, { email, subsidiaryIds: [B.subsidiaryId] })).rejects.toMatchObject({
+    await expect(invite(inbox().transport, { email, access: [{ subsidiaryId: B.subsidiaryId, categories: [] }] })).rejects.toMatchObject({
       response: { code: 'subsidiary_not_found' },
     });
-    await expect(invite(inbox().transport, { email, role: UserRole.consultant, subsidiaryIds: [A.subsidiaryId] })).rejects.toMatchObject({
+    await expect(invite(inbox().transport, { email, role: UserRole.auditor, access: [{ subsidiaryId: A.subsidiaryId, categories: [] }] })).rejects.toMatchObject({
       response: { code: 'access_role_mismatch' },
     });
     expect(await owner.profile.count({ where: { email } })).toBe(0);
@@ -301,7 +306,7 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     const audit = new AuditService(failingAuditClient(runtime));
     const access = new AccessAdminService(failingAuditClient(runtime), audit);
     await expect(
-      access.inviteMember(A.users.superAdmin, { email, fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [] }),
+      access.inviteMember(A.users.masterkey, { email, fullName: 'X', role: UserRole.auditor, language: 'en', access: [] }),
     ).rejects.toThrow(INJECTED_AUDIT_FAILURE);
     expect(await owner.profile.count({ where: { email } })).toBe(0);
     const [{ n }] = await owner.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM auth.users WHERE email = ${email}`;
@@ -314,7 +319,7 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     expect(created.status).toBe('invited');
 
     const { sent, transport } = inbox();
-    const resent = await services(transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    const resent = await services(transport).lifecycle.resendInvitation(A.users.masterkey, created.id);
     expect(resent.invitation).toMatchObject({ status: 'sent', attempts: 2, lastErrorStep: null, lastErrorCode: null });
     expect(sent).toHaveLength(1);
     const resends = await owner.auditLog.findMany({ where: { entityId: created.id, action: 'invite' } });
@@ -325,7 +330,7 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     const first = inbox();
     const created = await invite(first.transport);
     const second = inbox();
-    await services(second.transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    await services(second.transport).lifecycle.resendInvitation(A.users.masterkey, created.id);
     const stale = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(first.sent[0], 'invite') });
     expect(stale.error).not.toBeNull();
     const fresh = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(second.sent[0], 'invite') });
@@ -346,8 +351,8 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     const orphan = await admin.createUser({ email, email_confirm: true });
     try {
       const { sent, transport } = inbox();
-      const created = await services(transport).lifecycle.invite(A.users.superAdmin, {
-        email, fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+      const created = await services(transport).lifecycle.invite(A.users.masterkey, {
+        email, fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
       });
       invitedIds.push(created.id);
       expect(created.invitation).toMatchObject({ status: 'pending', lastErrorStep: 'auth', lastErrorCode: 'email_unavailable' });
@@ -361,13 +366,13 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'ensureUser').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
     const email = address();
-    const created = await services(inbox().transport, { authAdmin }).lifecycle.invite(A.users.superAdmin, {
-      email, fullName: 'X', role: UserRole.executive_viewer, language: 'en', subsidiaryIds: [],
+    const created = await services(inbox().transport, { authAdmin }).lifecycle.invite(A.users.masterkey, {
+      email, fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(created.id);
     expect(created.invitation).toMatchObject({ status: 'pending', lastErrorStep: 'auth', lastErrorCode: 'auth_unavailable' });
     const { sent, transport } = inbox();
-    const resent = await services(transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    const resent = await services(transport).lifecycle.resendInvitation(A.users.masterkey, created.id);
     expect(resent.invitation?.status).toBe('sent');
     expect(sent).toHaveLength(1);
   });
@@ -382,7 +387,7 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     expect((await holder.auth.updateUser({ password: 'their-own-pass-123' })).error).toBeNull();
     // …and their acceptance never reached the API: the invitation is still `sent`.
     const again = inbox();
-    await services(again.transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    await services(again.transport).lifecycle.resendInvitation(A.users.masterkey, created.id);
     expect(again.sent).toHaveLength(0);
     expect(await bannedInAuth(created.id)).toBe(false);
     expect((await browser().auth.signInWithPassword({ email: created.email, password: 'their-own-pass-123' })).error).toBeNull();
@@ -393,15 +398,15 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
     const first = inbox();
-    const created = await services(first.transport, { authAdmin }).lifecycle.invite(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.executive_viewer, language: 'en', subsidiaryIds: [],
+    const created = await services(first.transport, { authAdmin }).lifecycle.invite(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(created.id);
     expect(created.invitation).toMatchObject({ status: 'pending', lastErrorStep: 'auth', lastErrorCode: 'auth_unavailable' });
     expect(first.sent).toHaveLength(0);
     expect(await bannedInAuth(created.id)).toBe(true); // born banned, still
     const { sent, transport } = inbox();
-    const resent = await services(transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    const resent = await services(transport).lifecycle.resendInvitation(A.users.masterkey, created.id);
     expect(resent.invitation?.status).toBe('sent');
     expect(sent).toHaveLength(1);
     expect(await bannedInAuth(created.id)).toBe(false);
@@ -414,20 +419,20 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
   it('disables, revokes the open invitation and bans in Auth; enabling lifts the ban', async () => {
     const created = await invite(inbox().transport);
     const s = services(null);
-    const disabled = await s.lifecycle.disable(A.users.superAdmin, created.id);
+    const disabled = await s.lifecycle.disable(A.users.masterkey, created.id);
     expect(disabled).toMatchObject({ status: 'disabled', authSyncPending: false, invitation: { status: 'revoked' } });
     expect(await bannedInAuth(created.id)).toBe(true);
-    await s.lifecycle.disable(A.users.superAdmin, created.id); // idempotent
+    await s.lifecycle.disable(A.users.masterkey, created.id); // idempotent
     expect(await owner.auditLog.count({ where: { entityId: created.id, action: 'disable' } })).toBe(1);
 
     // A revoked invitation is not re-sent while the account is disabled.
-    await expect(s.lifecycle.resendInvitation(A.users.superAdmin, created.id)).rejects.toMatchObject({ response: { code: 'user_disabled' } });
+    await expect(s.lifecycle.resendInvitation(A.users.masterkey, created.id)).rejects.toMatchObject({ response: { code: 'user_disabled' } });
 
-    const enabled = await s.lifecycle.enable(A.users.superAdmin, created.id);
+    const enabled = await s.lifecycle.enable(A.users.masterkey, created.id);
     expect(enabled).toMatchObject({ authSyncPending: false, disabledAt: null, invitation: { status: 'revoked' } });
     expect(await bannedInAuth(created.id)).toBe(false);
     // …and now it can be re-opened and sent again.
-    const resent = await services(inbox().transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    const resent = await services(inbox().transport).lifecycle.resendInvitation(A.users.masterkey, created.id);
     expect(resent).toMatchObject({ status: 'invited', invitation: { status: 'sent' } });
   });
 
@@ -437,12 +442,12 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const s = services(null);
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
       const made = await real.ensureUser(id, email);
-      await s.access.disableMember(A.users.superAdmin, id); // an administrator, at that moment
+      await s.access.disableMember(A.users.masterkey, id); // an administrator, at that moment
       return made;
     });
     const { sent, transport } = inbox();
-    const created = await services(transport, { authAdmin }).lifecycle.invite(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const created = await services(transport, { authAdmin }).lifecycle.invite(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(created.id);
     expect(created).toMatchObject({ status: 'disabled', invitation: { status: 'revoked' } });
@@ -455,13 +460,13 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     let target = '';
     const transport: MailTransport = {
       sendMail: vi.fn(async () => {
-        await s.access.disableMember(A.users.superAdmin, target);
+        await s.access.disableMember(A.users.masterkey, target);
         return {} as never;
       }) as never,
     };
     const authAdmin = new AuthAdminService();
-    const created = await services(transport, { authAdmin }).access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const created = await services(transport, { authAdmin }).access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(created.profileId);
     target = created.profileId;
@@ -473,13 +478,13 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
   it('an enable that commits while the ban is applied keeps the flag for its own run', async () => {
     const created = await invite(inbox().transport);
     const s = services(null);
-    await s.access.disableMember(A.users.superAdmin, created.id);
+    await s.access.disableMember(A.users.masterkey, created.id);
     const real = new AuthAdminService();
     const flipping = new AuthAdminService();
     vi.spyOn(flipping, 'setBanned').mockImplementationOnce(async (id, banned) => {
       await real.setBanned(id, banned);
       // The enable commits while the ban is in flight (it takes the tenant lock, not the sync's).
-      await s.access.enableMember(A.users.superAdmin, id);
+      await s.access.enableMember(A.users.masterkey, id);
     });
     expect(await new AuthSyncService(flipping).apply(runtime, created.id)).toBe(false);
     expect((await owner.profile.findUniqueOrThrow({ where: { id: created.id } })).authSyncPendingSince).not.toBeNull();
@@ -491,13 +496,13 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
   it('a disable that commits while the unban is applied keeps the flag for its own run', async () => {
     const created = await invite(inbox().transport);
     const s = services(null);
-    await s.lifecycle.disable(A.users.superAdmin, created.id);
-    await s.access.enableMember(A.users.superAdmin, created.id); // an enable whose sync is about to run
+    await s.lifecycle.disable(A.users.masterkey, created.id);
+    await s.access.enableMember(A.users.masterkey, created.id); // an enable whose sync is about to run
     const real = new AuthAdminService();
     const flipping = new AuthAdminService();
     vi.spyOn(flipping, 'setBanned').mockImplementationOnce(async (id, banned) => {
       await real.setBanned(id, banned);
-      await s.access.disableMember(A.users.superAdmin, id);
+      await s.access.disableMember(A.users.masterkey, id);
     });
     expect(await new AuthSyncService(flipping).apply(runtime, created.id)).toBe(false);
     expect(await bannedInAuth(created.id)).toBe(false); // the unban landed; the disable is still owed
@@ -512,8 +517,8 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const session = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
     expect(session.error).toBeNull();
     const s = services(null);
-    await s.lifecycle.disable(A.users.superAdmin, created.id);
-    await s.lifecycle.enable(A.users.superAdmin, created.id);
+    await s.lifecycle.disable(A.users.masterkey, created.id);
+    await s.lifecycle.enable(A.users.masterkey, created.id);
     const revived = await browser().auth.refreshSession({ refresh_token: session.data.session!.refresh_token });
     expect(revived.error?.code).toBe('refresh_token_not_found');
     // …and the old password is gone too: the re-enabled user resets it.
@@ -528,17 +533,17 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect(session.error).toBeNull();
     const failing = new AuthAdminService();
     vi.spyOn(failing, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
-    const disabled = await services(null, { authAdmin: failing }).lifecycle.disable(A.users.superAdmin, created.id);
+    const disabled = await services(null, { authAdmin: failing }).lifecycle.disable(A.users.masterkey, created.id);
     expect(disabled.authSyncPending).toBe(true); // the disable never reached Auth
-    await services(null).lifecycle.enable(A.users.superAdmin, created.id); // …and the enable's run does
+    await services(null).lifecycle.enable(A.users.masterkey, created.id); // …and the enable's run does
     expect((await browser().auth.refreshSession({ refresh_token: session.data.session!.refresh_token })).error?.code).toBe('refresh_token_not_found');
     expect((await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' })).error?.code).toBe('invalid_credentials');
   });
 
   it('a corrective ban that loses to an enable leaves the account enabled and unbanned (Codex finding 2, schedule A)', async () => {
     const s = services(null);
-    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const { profileId } = await s.access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(profileId);
     const real = new AuthAdminService();
@@ -546,14 +551,14 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     // Disabled while the Auth user is being made (its own sync bans the new user).
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
       const made = await real.ensureUser(id, email);
-      await s.lifecycle.disable(A.users.superAdmin, id);
+      await s.lifecycle.disable(A.users.masterkey, id);
       return made;
     });
     const hold = holdBefore(runtime, 'Profile', 'updateMany'); // delivery's re-arm, after it saw "disabled"
     const delivering = new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
       .deliver(hold.client, profileId);
     await hold.reached();
-    await s.lifecycle.enable(A.users.superAdmin, profileId); // the enable commits and its sync completes first
+    await s.lifecycle.enable(A.users.masterkey, profileId); // the enable commits and its sync completes first
     hold.release();
     expect(await delivering).toEqual({ delivered: false, skipped: 'disabled' });
     expect(await bannedInAuth(profileId)).toBe(false);
@@ -562,14 +567,14 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
 
   it('a disable whose own sync ran before the Auth user existed is banned by delivery at once (Codex finding 2)', async () => {
     const s = services(null);
-    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const { profileId } = await s.access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(profileId);
     const real = new AuthAdminService();
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
-      await s.lifecycle.disable(A.users.superAdmin, id); // finds no Auth user: nothing banned, flag cleared
+      await s.lifecycle.disable(A.users.masterkey, id); // finds no Auth user: nothing banned, flag cleared
       return real.ensureUser(id, email);
     });
     const outcome = await new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
@@ -581,14 +586,14 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
 
   it('an Auth user whose creation response is lost stays banned for a disabled account (Codex re-review, finding 2)', async () => {
     const s = services(null);
-    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const { profileId } = await s.access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(profileId);
     const real = new AuthAdminService();
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
-      await s.lifecycle.disable(A.users.superAdmin, id); // its sync finds no Auth user: nothing banned, flag cleared
+      await s.lifecycle.disable(A.users.masterkey, id); // its sync finds no Auth user: nothing banned, flag cleared
       await real.ensureUser(id, email); // Auth creates the user…
       throw new AuthAdminError('auth_unavailable'); // …and the response is lost
     });
@@ -599,8 +604,8 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
   });
 
   it('an Auth user is born banned: a delivery interrupted after creating it leaves nothing to sign in with (Codex re-review, finding 2)', async () => {
-    const { profileId, email } = await services(null).access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const { profileId, email } = await services(null).access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     }).then(async (r) => ({ ...r, email: (await owner.profile.findUniqueOrThrow({ where: { id: r.profileId } })).email }));
     invitedIds.push(profileId);
     await new AuthAdminService().ensureUser(profileId, email); // …and the process stops here
@@ -609,12 +614,12 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
 
   it('an enable whose sync is still in flight cannot clear the flag delivery armed for the user it just made (qa re-review of be2b8d9)', async () => {
     const s = services(null);
-    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const { profileId } = await s.access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(profileId);
-    await s.access.disableMember(A.users.superAdmin, profileId); // no Auth user yet
-    await s.access.enableMember(A.users.superAdmin, profileId);
+    await s.access.disableMember(A.users.masterkey, profileId); // no Auth user yet
+    await s.access.enableMember(A.users.masterkey, profileId);
     const real = new AuthAdminService();
     const gated = new AuthAdminService(); // the enable's own sync
     let reachedUnban!: () => void;
@@ -629,7 +634,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     });
     const enabling = new AuthSyncService(gated).apply(runtime, profileId);
     await unbanReached;
-    await s.access.reopenInvitation(A.users.superAdmin, profileId); // the re-send…
+    await s.access.reopenInvitation(A.users.masterkey, profileId); // the re-send…
     const { sent, transport } = inbox();
     const delivering = new InvitationDeliveryService(real, new MailService(transport, MAIL), new AuthSyncService(real)).deliver(runtime, profileId);
     await queuedOnAdvisoryLock(); // …made the user, banned, armed the flag and waits for the enable's sync
@@ -646,8 +651,8 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const real = new AuthAdminService();
     const gated = new AuthAdminService(); // the disable's own sync
     const s = services(null, { authAdmin: gated });
-    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const { profileId } = await s.access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(profileId);
     let reachedBan!: () => void;
@@ -663,7 +668,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     let disabling!: Promise<unknown>;
     const deliveryAuth = new AuthAdminService();
     vi.spyOn(deliveryAuth, 'ensureUser').mockImplementation(async (id, email) => {
-      disabling = s.lifecycle.disable(A.users.superAdmin, id);
+      disabling = s.lifecycle.disable(A.users.masterkey, id);
       await banReached;
       return real.ensureUser(id, email); // the Auth user appears after that ban
     });
@@ -679,15 +684,15 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
 
   it('a corrective ban that fails stays flagged, and reconcile applies it (Codex finding 2, schedule B)', async () => {
     const s = services(null);
-    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
-      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    const { profileId } = await s.access.inviteMember(A.users.masterkey, {
+      email: address(), fullName: 'X', role: UserRole.auditor, language: 'en', access: [],
     });
     invitedIds.push(profileId);
     const real = new AuthAdminService();
     const authAdmin = new AuthAdminService();
     // The disable's own sync runs before the Auth user exists — nothing to ban, flag cleared — then the user is made.
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
-      await s.lifecycle.disable(A.users.superAdmin, id);
+      await s.lifecycle.disable(A.users.masterkey, id);
       return real.ensureUser(id, email);
     });
     vi.spyOn(authAdmin, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable')); // the corrective ban fails
@@ -706,8 +711,8 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const created = await invite(inbox().transport);
     await admin.updateUserById(created.id, { email_confirm: true });
     const s = services(null);
-    await s.lifecycle.disable(A.users.superAdmin, created.id);
-    await s.access.enableMember(A.users.superAdmin, created.id); // an enable whose sync is about to run
+    await s.lifecycle.disable(A.users.masterkey, created.id);
+    await s.access.enableMember(A.users.masterkey, created.id); // an enable whose sync is about to run
     const real = new AuthAdminService();
     const slow = new AuthAdminService();
     let refreshToken: string | undefined;
@@ -718,8 +723,8 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
       const session = await browser().auth.verifyOtp({ type: 'recovery', token_hash: data.properties!.hashed_token });
       refreshToken = session.data.session!.refresh_token;
       // …and a disable and an enable commit meanwhile (the tenant lock, not the sync's).
-      await s.access.disableMember(A.users.superAdmin, id);
-      await s.access.enableMember(A.users.superAdmin, id);
+      await s.access.disableMember(A.users.masterkey, id);
+      await s.access.enableMember(A.users.masterkey, id);
     });
     expect(await new AuthSyncService(slow).apply(runtime, created.id)).toBe(false); // the newer change keeps its flag
     expect(await new AuthSyncService(real).apply(runtime, created.id)).toBe(true); // …and its run rotates again
@@ -728,31 +733,32 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
   });
 
   it('nobody disables their own account', async () => {
-    await expect(services(null).lifecycle.disable(A.users.superAdmin, A.users.superAdmin.id)).rejects.toMatchObject({
+    await expect(services(null).lifecycle.disable(A.users.masterkey, A.users.masterkey.id)).rejects.toMatchObject({
       response: { code: 'own_account_forbidden' },
     });
   });
 
-  it('two administrators cannot disable each other at once — one stays, so the organisation keeps an active super_admin', async () => {
-    const second = await invite(inbox().transport, { role: UserRole.super_admin });
-    const other = await asRequestUser(second.id);
+  it('two administrators cannot disable each other at once — one stays, so the organisation keeps an active masterkey', async () => {
+    // Nobody invites a masterkey (ruling R1): the second one is the owner's.
+    const second = await addMember(owner, A, UserRole.masterkey);
+    const other = second;
     const s = services(null);
     try {
       const results = await Promise.allSettled([
-        s.access.disableMember(A.users.superAdmin, second.id),
-        s.access.disableMember(other, A.users.superAdmin.id),
+        s.access.disableMember(A.users.masterkey, second.id),
+        s.access.disableMember(other, A.users.masterkey.id),
       ]);
       const fulfilled = results.filter((r) => r.status === 'fulfilled');
       const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
       expect(fulfilled).toHaveLength(1);
       expect(rejected[0].reason).toMatchObject({ response: { code: 'account_disabled' } });
       const active = await owner.profile.count({
-        where: { organisationId: A.organisationId, role: UserRole.super_admin, disabledAt: null, id: { in: [A.users.superAdmin.id, second.id] } },
+        where: { organisationId: A.organisationId, role: UserRole.masterkey, disabledAt: null, id: { in: [A.users.masterkey.id, second.id] } },
       });
       expect(active).toBe(1);
     } finally {
       // Put A's administrator back for the tests below (as the fixture owner), pass or fail.
-      await owner.profile.update({ where: { id: A.users.superAdmin.id }, data: { disabledAt: null, authSyncPendingSince: null } });
+      await owner.profile.update({ where: { id: A.users.masterkey.id }, data: { disabledAt: null, authSyncPendingSince: null } });
       await owner.profile.update({ where: { id: second.id }, data: { disabledAt: new Date() } });
     }
   });
@@ -761,7 +767,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const created = await invite(inbox().transport);
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
-    const disabled = await services(null, { authAdmin }).lifecycle.disable(A.users.superAdmin, created.id);
+    const disabled = await services(null, { authAdmin }).lifecycle.disable(A.users.masterkey, created.id);
     expect(disabled).toMatchObject({ status: 'disabled', authSyncPending: true });
     expect(await bannedInAuth(created.id)).toBe(false);
 
@@ -777,15 +783,18 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
 });
 
 describe('roles and subsidiary access', () => {
-  it("replaces a data_entry user's grants with exactly the set, each change audited", async () => {
+  // A masterkey sets a super_admin's companies (ruling R3: not a standard user's).
+  it("replaces a super_admin's grants with exactly the set, each change audited", async () => {
     const extra = await owner.subsidiary.create({ data: { organisationId: A.organisationId, legalName: `Int-test subsidiary 2 ${tag}`, geographyCode: 'UK' } });
-    const target = A.users.dataEntry.id;
+    const target = A.users.superAdmin.id;
     const s = services(null);
     const where = { entityId: target, entity: 'subsidiary_access' };
     const earlier = new Set((await owner.auditLog.findMany({ where, select: { id: true } })).map((r) => r.id));
     try {
-      const updated = await s.lifecycle.replaceAccess(A.users.superAdmin, target, [extra.id, extra.id]);
-      expect(updated.subsidiaryIds).toEqual([extra.id]);
+      // A company named twice is refused, not deduplicated (INC-2.6 DTO).
+      await expect(s.lifecycle.replaceAccess(A.users.masterkey, target, [grant(extra.id), grant(extra.id)])).rejects.toMatchObject({ status: 400 });
+      const updated = await s.lifecycle.replaceAccess(A.users.masterkey, target, [grant(extra.id)]);
+      expect(updated.access).toEqual([grant(extra.id)]);
       // One transaction's rows can share `created_at` to the millisecond (and
       // tied rows come back in storage order), so they are compared as a set,
       // never by their order ("LP3-04 PR D follow-ups" (21)).
@@ -793,30 +802,30 @@ describe('roles and subsidiary access', () => {
       expect(changes.map((r) => `${r.action} ${(r.diff as { subsidiaryId: string }).subsidiaryId}`).sort()).toEqual(
         [`delete ${A.subsidiaryId}`, `create ${extra.id}`].sort(),
       );
-      await s.lifecycle.replaceAccess(A.users.superAdmin, target, [extra.id]); // nothing to change
+      await s.lifecycle.replaceAccess(A.users.masterkey, target, [grant(extra.id)]); // nothing to change
       expect(await owner.auditLog.count({ where })).toBe(earlier.size + 2);
     } finally {
       // Restore the fixture's grant — whatever failed above, so no later test inherits it.
-      await s.lifecycle.replaceAccess(A.users.superAdmin, target, [A.subsidiaryId]);
+      await s.lifecycle.replaceAccess(A.users.masterkey, target, [grant(A.subsidiaryId)]);
     }
   });
 
   it("refuses another tenant's subsidiary, grants for another role, and another tenant's user (404, as none)", async () => {
     const s = services(null);
-    await expect(s.lifecycle.replaceAccess(A.users.superAdmin, A.users.dataEntry.id, [B.subsidiaryId])).rejects.toMatchObject({
+    await expect(s.lifecycle.replaceAccess(A.users.masterkey, A.users.superAdmin.id, [grant(B.subsidiaryId)])).rejects.toMatchObject({
       response: { code: 'subsidiary_not_found' },
     });
-    await expect(s.lifecycle.replaceAccess(A.users.superAdmin, A.users.consultant.id, [A.subsidiaryId])).rejects.toMatchObject({
+    await expect(s.lifecycle.replaceAccess(A.users.masterkey, A.users.auditor.id, [grant(A.subsidiaryId)])).rejects.toMatchObject({
       response: { code: 'access_role_mismatch' },
     });
-    await s.lifecycle.replaceAccess(A.users.superAdmin, A.users.consultant.id, []); // nothing held, nothing to do
-    for (const id of [B.users.dataEntry.id, randomUUID()]) {
-      await expect(s.lifecycle.replaceAccess(A.users.superAdmin, id, [])).rejects.toMatchObject({ response: { code: 'user_not_found' } });
-      await expect(s.lifecycle.disable(A.users.superAdmin, id)).rejects.toMatchObject({ response: { code: 'user_not_found' } });
-      await expect(s.lifecycle.resendInvitation(A.users.superAdmin, id)).rejects.toMatchObject({ response: { code: 'user_not_found' } });
+    await s.lifecycle.replaceAccess(A.users.masterkey, A.users.auditor.id, []); // nothing held, nothing to do
+    for (const id of [B.users.standardUser.id, randomUUID()]) {
+      await expect(s.lifecycle.replaceAccess(A.users.masterkey, id, [])).rejects.toMatchObject({ response: { code: 'user_not_found' } });
+      await expect(s.lifecycle.disable(A.users.masterkey, id)).rejects.toMatchObject({ response: { code: 'user_not_found' } });
+      await expect(s.lifecycle.resendInvitation(A.users.masterkey, id)).rejects.toMatchObject({ response: { code: 'user_not_found' } });
     }
-    expect(await owner.profile.findUniqueOrThrow({ where: { id: B.users.dataEntry.id } })).toMatchObject({ disabledAt: null });
-    await expect(s.lifecycle.setRole(A.users.superAdmin, A.users.superAdmin.id, UserRole.consultant)).rejects.toMatchObject({
+    expect(await owner.profile.findUniqueOrThrow({ where: { id: B.users.standardUser.id } })).toMatchObject({ disabledAt: null });
+    await expect(s.lifecycle.setRole(A.users.masterkey, A.users.masterkey.id, UserRole.auditor)).rejects.toMatchObject({
       response: { code: 'own_account_forbidden' },
     });
   });
@@ -828,36 +837,44 @@ describe('the users list (CursorPage)', () => {
     const seen: string[] = [];
     let cursor: string | undefined;
     do {
-      const page = await q.list(A.users.superAdmin, { limit: 2, cursor });
+      const page = await q.list(A.users.masterkey, { limit: 2, cursor });
       expect(page.limit).toBe(2);
       seen.push(...page.items.map((u) => u.id));
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     const expected = await owner.profile.findMany({ where: { organisationId: A.organisationId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
     expect(seen).toEqual(expected.map((p) => p.id));
-    expect(seen).not.toEqual(expect.arrayContaining([B.users.superAdmin.id]));
-    expect(JSON.stringify(await q.list(A.users.superAdmin, {}))).not.toContain(B.organisationId);
+    expect(seen).not.toEqual(expect.arrayContaining([B.users.masterkey.id]));
+    expect(JSON.stringify(await q.list(A.users.masterkey, {}))).not.toContain(B.organisationId);
   });
 
   it('a page that ends exactly at the last member says so — no cursor to an empty page', async () => {
     const q = services(null).query;
     const total = await owner.profile.count({ where: { organisationId: A.organisationId } });
-    const page = await q.list(A.users.superAdmin, { limit: total });
+    const page = await q.list(A.users.masterkey, { limit: total });
     expect(page.items).toHaveLength(total);
     expect(page.nextCursor).toBeNull();
-    const short = await q.list(A.users.superAdmin, { limit: total - 1 });
+    const short = await q.list(A.users.masterkey, { limit: total - 1 });
     expect(short.nextCursor).not.toBeNull();
+  });
+
+  it('lists to a super_admin the standard users of its companies alone', async () => {
+    const q = services(null).query;
+    const ids = (await q.list(A.users.superAdmin, { limit: 100 })).items.map((u) => u.id);
+    expect(ids).toContain(A.users.standardUser.id);
+    for (const hidden of [A.users.masterkey.id, A.users.auditor.id, A.users.superAdmin.id, B.users.standardUser.id]) expect(ids).not.toContain(hidden);
+    await expect(q.summary(A.users.superAdmin, A.users.auditor.id)).rejects.toMatchObject({ response: { code: 'user_not_found' } });
   });
 
   it('refuses every other role and a malformed or foreign cursor', async () => {
     const q = services(null).query;
-    for (const actor of [A.users.consultant, A.users.dataEntry, A.users.executiveViewer]) {
+    for (const actor of [A.users.standardUser, A.users.auditor]) {
       await expect(q.list(actor, {})).rejects.toMatchObject({ status: 403 });
     }
     for (const cursor of ['nope', Buffer.from(JSON.stringify({ v: 1, k: 'records', t: new Date().toISOString(), i: randomUUID() })).toString('base64url')]) {
-      await expect(q.list(A.users.superAdmin, { cursor })).rejects.toMatchObject({ response: { code: 'validation_failed' } });
+      await expect(q.list(A.users.masterkey, { cursor })).rejects.toMatchObject({ response: { code: 'validation_failed' } });
     }
-    await expect(q.summary(A.users.superAdmin, B.users.superAdmin.id)).rejects.toMatchObject({ response: { code: 'user_not_found' } });
+    await expect(q.summary(A.users.masterkey, B.users.masterkey.id)).rejects.toMatchObject({ response: { code: 'user_not_found' } });
   });
 });
 
@@ -885,7 +902,7 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     await services(null).lifecycle.accept(await asRequestUser(created.id));
     // What `/auth/confirm` tells them about: a spent link, and no re-send to wait for.
     expect((await browser().auth.verifyOtp({ type: 'invite', token_hash: link })).error).not.toBeNull();
-    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.superAdmin, created.id)).rejects.toMatchObject({
+    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.masterkey, created.id)).rejects.toMatchObject({
       response: { code: 'invitation_closed' },
     });
 
@@ -909,7 +926,7 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     const created = await invite(inbox().transport);
     const invitee = await asRequestUser(created.id);
     const hold = holdBefore(runtime, 'Invitation', 'updateMany');
-    const disabling = new AccessAdminService(hold.client, new AuditService(hold.client)).disableMember(A.users.superAdmin, created.id);
+    const disabling = new AccessAdminService(hold.client, new AuditService(hold.client)).disableMember(A.users.masterkey, created.id);
     await hold.reached();
     const accepting = services(null).lifecycle.accept(invitee).then(() => 'accepted' as const, (e: unknown) => e);
     await Promise.race([queuedOnRowLock(), accepting]);
@@ -924,11 +941,11 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
   it('a disabled account accepts nothing; once re-enabled, its invitation is accepted', async () => {
     const created = await invite(inbox().transport);
     const invitee = await asRequestUser(created.id);
-    await services(null).lifecycle.disable(A.users.superAdmin, created.id);
+    await services(null).lifecycle.disable(A.users.masterkey, created.id);
     await expect(services(null).lifecycle.accept(invitee)).rejects.toBeInstanceOf(AccountDisabledError);
     expect((await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } })).status).toBe(InvitationStatus.revoked);
 
-    await services(null).lifecycle.enable(A.users.superAdmin, created.id);
+    await services(null).lifecycle.enable(A.users.masterkey, created.id);
     await services(null).lifecycle.accept(invitee);
     const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
     expect(invitation).toMatchObject({ status: InvitationStatus.accepted, revokedAt: null });
@@ -970,7 +987,7 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     await services(null).lifecycle.accept(await asRequestUser(created.id));
     const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.id } });
     expect(invitation.status).toBe(InvitationStatus.accepted);
-    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.superAdmin, created.id)).rejects.toMatchObject({
+    await expect(services(inbox().transport).lifecycle.resendInvitation(A.users.masterkey, created.id)).rejects.toMatchObject({
       response: { code: 'invitation_closed' },
     });
   });
@@ -990,14 +1007,14 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
 
   it('an unknown or disabled address gets nothing, and nothing is written', async () => {
     const created = await invite(inbox().transport);
-    await services(null).lifecycle.disable(A.users.superAdmin, created.id);
+    await services(null).lifecycle.disable(A.users.masterkey, created.id);
     const { sent, transport } = inbox();
     const resets = new PasswordResetService(runtime, new AuthAdminService(), new MailService(transport, MAIL), new AuditService(runtime), {} as never);
     expect(await resets.run(`int-nobody-${tag}@tonyai.test`)).toBe('skipped');
     expect(await resets.run(created.email)).toBe('skipped');
     // A pattern reaches nobody: `%` and `_` are characters (review P1).
-    expect(await resets.run(A.users.superAdmin.email.replace(/^int-/, 'int%'))).toBe('skipped');
-    expect(await resets.run(A.users.superAdmin.email.replace('admin', 'adm_n'))).toBe('skipped');
+    expect(await resets.run(A.users.masterkey.email.replace(/^int-/, 'int%'))).toBe('skipped');
+    expect(await resets.run(A.users.masterkey.email.replace('admin', 'adm_n'))).toBe('skipped');
     expect(sent).toHaveLength(0);
     expect(await owner.auditLog.count({ where: { entityId: created.id, action: 'password_reset' } })).toBe(0);
   });
@@ -1053,16 +1070,16 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     }
   });
 
-  it('an existing address is provisioned again only as its own organisation’s super_admin, never in an offboarded one', async () => {
+  it('an existing address is provisioned again only as its own organisation’s masterkey, never in an offboarded one', async () => {
     const real = new AuthAdminService();
     const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
     await expect(
-      operator.provision({ organisationId: A.organisationId, adminEmail: A.users.consultant.email, adminName: 'X', language: 'en' }, true),
-    ).rejects.toThrow(/already a consultant/);
+      operator.provision({ organisationId: A.organisationId, adminEmail: A.users.superAdmin.email, adminName: 'X', language: 'en' }, true),
+    ).rejects.toThrow(/already holds the role super_admin/);
     await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: new Date() } });
     try {
       await expect(
-        operator.provision({ organisationId: A.organisationId, adminEmail: A.users.superAdmin.email, adminName: 'X', language: 'en' }, true),
+        operator.provision({ organisationId: A.organisationId, adminEmail: A.users.masterkey.email, adminName: 'X', language: 'en' }, true),
       ).rejects.toThrow(/offboarded/);
     } finally {
       await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: null } });
@@ -1135,6 +1152,8 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     createdOrgs.push(orgId);
     invitedIds.push(first.admin.id!);
     expect(first).toMatchObject({ applied: true, organisation: { created: true }, subsidiary: { created: true }, admin: { created: true }, delivery: { delivered: true } });
+    // Its first administrator is a masterkey (INC-2.6: the organisation-wide role).
+    expect((await owner.profile.findUniqueOrThrow({ where: { id: first.admin.id! } })).role).toBe(UserRole.masterkey);
     // K1: born with its one subsidiary — the company itself — so a facility can be added at once.
     const subsidiaries = await owner.subsidiary.findMany({ where: { organisationId: orgId }, include: { locations: true, access: true, inventoryBoundaries: true } });
     expect(subsidiaries).toHaveLength(1);
@@ -1188,7 +1207,7 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     const dryPattern = await operator.provision({ ...input, adminEmail: input.adminEmail.replace(/^int-/, 'int%') }, false);
     expect(dryPattern.admin).toMatchObject({ id: null, created: true });
     await expect(operator.provision({ ...input, organisation: { ...input.organisation, legalName: 'Another org' } }, true)).rejects.toBeInstanceOf(OperatorRefusal);
-    await expect(operator.provision({ organisationId: orgId, adminEmail: A.users.consultant.email, adminName: 'X', language: 'en' }, true)).rejects.toBeInstanceOf(OperatorRefusal);
+    await expect(operator.provision({ organisationId: orgId, adminEmail: A.users.auditor.email, adminName: 'X', language: 'en' }, true)).rejects.toBeInstanceOf(OperatorRefusal);
 
     const before = await owner.profile.findUniqueOrThrow({ where: { id: first.admin.id! } });
     const off = await operator.offboard(orgId, true);
@@ -1224,7 +1243,7 @@ describe('offboarding and the tenant administrators (architect P2-1)', () => {
       const change = holder.$transaction(async (tx) => {
         await lockTenantAdmin(tx, C.organisationId);
         await tx.profile.create({
-          data: { id: added, email: `int-added-${tag}@tonyai.test`, fullName: 'Added', role: UserRole.consultant, organisationId: C.organisationId },
+          data: { id: added, email: `int-added-${tag}@tonyai.test`, fullName: 'Added', role: UserRole.auditor, organisationId: C.organisationId },
         });
         locked.resolve();
         await release.promise;
@@ -1250,7 +1269,7 @@ describe('offboarding and the tenant administrators (architect P2-1)', () => {
     const pending = await invite(null); // pending, mail not configured
     await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: new Date() } });
     try {
-      await expect(services(null).access.disableMember(A.users.superAdmin, A.users.consultant.id)).rejects.toMatchObject({
+      await expect(services(null).access.disableMember(A.users.masterkey, A.users.auditor.id)).rejects.toMatchObject({
         response: { code: 'account_disabled' },
       });
       const authAdmin = new AuthAdminService();
@@ -1310,9 +1329,9 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
   });
 
   it('a disabled account is refused on its next request — 401 account_disabled — and an offboarded organisation’s too', async () => {
-    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    const created = await invite(inbox().transport, { role: UserRole.auditor });
     expect((await call('GET', '/me', created.id)).status).toBe(200);
-    await services(null).lifecycle.disable(A.users.superAdmin, created.id);
+    await services(null).lifecycle.disable(A.users.masterkey, created.id);
     const refused = await call('GET', '/me', created.id);
     expect(refused).toMatchObject({ status: 401, body: { code: 'account_disabled' } });
 
@@ -1329,15 +1348,15 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
     const withToken = async (bearer: string) =>
       (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
     for (const authFails of [false, true]) {
-      const created = await invite(inbox().transport, { role: UserRole.consultant });
+      const created = await invite(inbox().transport, { role: UserRole.auditor });
       const before = await token(created.id);
       expect(await withToken(before)).toMatchObject({ id: created.id });
       const authAdmin = new AuthAdminService();
       if (authFails) vi.spyOn(authAdmin, 'setBanned').mockRejectedValue(new AuthAdminError('auth_unavailable'));
       const lifecycle = services(null, { authAdmin }).lifecycle;
-      await lifecycle.disable(A.users.superAdmin, created.id);
+      await lifecycle.disable(A.users.masterkey, created.id);
       expect(await withToken(before)).toMatchObject({ code: 'account_disabled' });
-      await lifecycle.enable(A.users.superAdmin, created.id);
+      await lifecycle.enable(A.users.masterkey, created.id);
       expect(await withToken(before)).toMatchObject({ code: 'session_revoked' });
       await new Promise((r) => setTimeout(r, 1_100)); // iat is whole seconds
       expect(await withToken(await token(created.id))).toMatchObject({ id: created.id });
@@ -1352,18 +1371,18 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
       const bearer = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(JWT_SECRET));
       return (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
     };
-    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    const created = await invite(inbox().transport, { role: UserRole.auditor });
     await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
     const signedIn = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
     expect(signedIn.error).toBeNull();
     const failing = new AuthAdminService();
     vi.spyOn(failing, 'setBanned').mockRejectedValue(new AuthAdminError('auth_unavailable'));
     const lifecycle = services(null, { authAdmin: failing }).lifecycle;
-    await lifecycle.disable(A.users.superAdmin, created.id); // neither the ban nor the rotation reaches Auth
+    await lifecycle.disable(A.users.masterkey, created.id); // neither the ban nor the rotation reaches Auth
     await new Promise((r) => setTimeout(r, 1_100)); // a refresh stamped a later second than the revocation
     const refreshed = await browser().auth.refreshSession({ refresh_token: signedIn.data.session!.refresh_token });
     expect(refreshed.error).toBeNull();
-    await lifecycle.enable(A.users.superAdmin, created.id);
+    await lifecycle.enable(A.users.masterkey, created.id);
     expect(await withToken(refreshed.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
     // The session's refresh token is still alive in Auth (both syncs failed): what it mints now is refused too.
     const again = await browser().auth.refreshSession({ refresh_token: refreshed.data.session!.refresh_token });
@@ -1382,13 +1401,13 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
       const bearer = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(JWT_SECRET));
       return (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
     };
-    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    const created = await invite(inbox().transport, { role: UserRole.auditor });
     await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
     const failing = new AuthAdminService();
     vi.spyOn(failing, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
-    await services(null, { authAdmin: failing }).lifecycle.disable(A.users.superAdmin, created.id); // Auth keeps the password
+    await services(null, { authAdmin: failing }).lifecycle.disable(A.users.masterkey, created.id); // Auth keeps the password
     await new Promise((r) => setTimeout(r, 1_100));
-    await services(null).access.enableMember(A.users.superAdmin, created.id); // committed; its sync has not run
+    await services(null).access.enableMember(A.users.masterkey, created.id); // committed; its sync has not run
     await new Promise((r) => setTimeout(r, 1_100));
     const between = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
     expect(between.error).toBeNull();
@@ -1408,14 +1427,14 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
       const bearer = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(JWT_SECRET));
       return (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
     };
-    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    const created = await invite(inbox().transport, { role: UserRole.auditor });
     await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
     const stolen = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
     expect(stolen.error).toBeNull();
     const failing = new AuthAdminService();
     vi.spyOn(failing, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
     const s = services(null, { authAdmin: failing });
-    await s.lifecycle.disable(A.users.superAdmin, created.id); // neither the ban nor the rotation reaches Auth
+    await s.lifecycle.disable(A.users.masterkey, created.id); // neither the ban nor the rotation reaches Auth
     await new Promise((r) => setTimeout(r, 1_100));
     // While disabled: the surviving session sets a password of its own and signs in anew.
     const holder = browser();
@@ -1425,7 +1444,7 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
     expect(begunWhileDisabled.error).toBeNull();
     expect(await withToken(begunWhileDisabled.data.session!.access_token)).toMatchObject({ code: 'account_disabled' });
     await new Promise((r) => setTimeout(r, 1_100));
-    await s.lifecycle.enable(A.users.superAdmin, created.id); // its sync rotates the password; the token lives on
+    await s.lifecycle.enable(A.users.masterkey, created.id); // its sync rotates the password; the token lives on
     expect(await withToken(begunWhileDisabled.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
     await new Promise((r) => setTimeout(r, 1_100));
     const { data } = await admin.generateLink({ type: 'recovery', email: created.email });
@@ -1434,16 +1453,16 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
   });
 
   it('an uppercase spelling of one’s own id is still one’s own; another member’s is stored and banned in the one spelling', async () => {
-    const own = A.users.superAdmin.id.toUpperCase();
-    expect(await call('POST', `/users/${own}/disable`, A.users.superAdmin.id)).toMatchObject({ status: 403, body: { code: 'own_account_forbidden' } });
-    expect(await call('PATCH', `/users/${own}/role`, A.users.superAdmin.id, { role: 'executive_viewer' })).toMatchObject({
+    const own = A.users.masterkey.id.toUpperCase();
+    expect(await call('POST', `/users/${own}/disable`, A.users.masterkey.id)).toMatchObject({ status: 403, body: { code: 'own_account_forbidden' } });
+    expect(await call('PATCH', `/users/${own}/role`, A.users.masterkey.id, { role: 'auditor' })).toMatchObject({
       status: 403,
       body: { code: 'own_account_forbidden' },
     });
-    expect(await owner.profile.findUniqueOrThrow({ where: { id: A.users.superAdmin.id } })).toMatchObject({ role: 'super_admin', disabledAt: null });
+    expect(await owner.profile.findUniqueOrThrow({ where: { id: A.users.masterkey.id } })).toMatchObject({ role: 'masterkey', disabledAt: null });
 
-    const created = await invite(inbox().transport, { role: UserRole.consultant });
-    const disabled = await call('POST', `/users/${created.id.toUpperCase()}/disable`, A.users.superAdmin.id);
+    const created = await invite(inbox().transport, { role: UserRole.auditor });
+    const disabled = await call('POST', `/users/${created.id.toUpperCase()}/disable`, A.users.masterkey.id);
     expect(disabled).toMatchObject({ status: 200, body: { id: created.id, status: 'disabled', authSyncPending: false } });
     expect(await bannedInAuth(created.id)).toBe(true);
     const rows = await owner.auditLog.findMany({ where: { action: 'disable', entityId: { in: [created.id, created.id.toUpperCase()] } } });
@@ -1451,30 +1470,36 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
   });
 
   it('an uppercase subsidiary id is the same grant: re-sending the same set changes and audits nothing', async () => {
-    const target = A.users.dataEntry.id;
+    const target = A.users.superAdmin.id;
     const before = await owner.auditLog.count({ where: { entityId: target, entity: 'subsidiary_access' } });
-    const res = await call('PUT', `/users/${target}/access`, A.users.superAdmin.id, { subsidiaryIds: [A.subsidiaryId.toUpperCase()] });
-    expect(res).toMatchObject({ status: 200, body: { subsidiaryIds: [A.subsidiaryId] } });
+    const res = await call('PUT', `/users/${target}/access`, A.users.masterkey.id, { access: [{ subsidiaryId: A.subsidiaryId.toUpperCase(), categories: [] }] });
+    expect(res).toMatchObject({ status: 200, body: { access: [{ subsidiaryId: A.subsidiaryId, categories: [] }] } });
     expect(await owner.auditLog.count({ where: { entityId: target, entity: 'subsidiary_access' } })).toBe(before);
   });
 
-  it('the users routes: super_admin only, ids validated, another tenant’s id answers like none', async () => {
-    expect((await call('GET', '/users', A.users.superAdmin.id)).status).toBe(200);
-    for (const who of [A.users.consultant.id, A.users.dataEntry.id, A.users.executiveViewer.id]) {
+  it('the users routes: the masterkey and a super_admin, ids validated, a retired role refused, another tenant’s id answers like none', async () => {
+    for (const who of [A.users.masterkey.id, A.users.superAdmin.id]) expect((await call('GET', '/users', who)).status).toBe(200);
+    for (const who of [A.users.standardUser.id, A.users.auditor.id]) {
       expect((await call('GET', '/users', who)).status).toBe(403);
-      expect((await call('POST', '/users/invitations', who, { email: address(), fullName: 'X', role: 'consultant', language: 'en' })).status).toBe(403);
+      expect((await call('POST', '/users/invitations', who, { email: address(), fullName: 'X', role: 'auditor', language: 'en', access: [] })).status).toBe(403);
     }
-    expect((await call('POST', '/users/not-an-id/disable', A.users.superAdmin.id)).body).toMatchObject({ code: 'invalid_id' });
-    expect((await call('POST', '/users/invitations', A.users.superAdmin.id, { email: 'nope', fullName: 'X', role: 'consultant', language: 'en' })).body).toMatchObject({ code: 'validation_failed' });
-    expect((await call('POST', '/users/invitations', A.users.superAdmin.id, { email: address(), fullName: 'X', role: 'consultant', language: 'de' })).body).toMatchObject({ code: 'validation_failed' });
-    const foreign = await call('POST', `/users/${B.users.consultant.id}/disable`, A.users.superAdmin.id);
-    const missing = await call('POST', `/users/${randomUUID()}/disable`, A.users.superAdmin.id);
+    expect((await call('POST', '/users/not-an-id/disable', A.users.masterkey.id)).body).toMatchObject({ code: 'invalid_id' });
+    expect((await call('POST', '/users/invitations', A.users.masterkey.id, { email: 'nope', fullName: 'X', role: 'auditor', language: 'en', access: [] })).body).toMatchObject({ code: 'validation_failed' });
+    expect((await call('POST', '/users/invitations', A.users.masterkey.id, { email: address(), fullName: 'X', role: 'auditor', language: 'de', access: [] })).body).toMatchObject({ code: 'validation_failed' });
+    // A retired role name is no role (INC-2.6): refused before anything is written.
+    for (const retired of ['consultant', 'data_entry', 'executive_viewer']) {
+      const email = address();
+      expect((await call('POST', '/users/invitations', A.users.masterkey.id, { email, fullName: 'X', role: retired, language: 'en', access: [] })).body, retired).toMatchObject({ code: 'validation_failed' });
+      expect(await owner.profile.count({ where: { email } })).toBe(0);
+    }
+    const foreign = await call('POST', `/users/${B.users.auditor.id}/disable`, A.users.masterkey.id);
+    const missing = await call('POST', `/users/${randomUUID()}/disable`, A.users.masterkey.id);
     expect(foreign).toMatchObject({ status: 404, body: { code: 'user_not_found' } });
     expect(foreign.text).toBe(missing.text);
   });
 
   it('the public reset endpoint answers 202 with no body for every address, known or not', async () => {
-    const known = await call('POST', '/auth/password-reset', undefined, { email: A.users.consultant.email });
+    const known = await call('POST', '/auth/password-reset', undefined, { email: A.users.auditor.email });
     const unknown = await call('POST', '/auth/password-reset', undefined, { email: `int-nobody-${tag}@tonyai.test` });
     expect(known).toEqual({ status: 202, text: '', body: undefined });
     expect(unknown).toEqual(known);

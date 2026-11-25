@@ -1,6 +1,6 @@
 import { ApiError } from '@/lib/api';
 import type { ErrorDescription } from '@/lib/i18n/errors';
-import { mayApproveRecords, mayAuthorRecords } from '@/lib/types';
+import { can, mayAuthorRecords, mayDecideRecord, type RecordApprover } from '@/lib/types';
 import type { SubmittingUser } from '@/lib/bulk-submit-view';
 
 export const canSubmitEntry = (
@@ -9,35 +9,71 @@ export const canSubmitEntry = (
   createdBy: string | null,
 ): boolean => !!user && mayAuthorRecords(user) && (!editingId || createdBy === user.id);
 
-/**
- * Approve is offered to an approver role (`consultant` or `super_admin`, K2 —
- * Decisions 2026-11-12) on a record someone else created (D01). The API
- * enforces both; this only decides what the review screen shows.
- */
-export const canApproveRecord = (
-  user: SubmittingUser | null,
-  record: { createdBy: string } | null,
-): boolean => !!user && !!record && mayApproveRecords(user) && record.createdBy !== user.id;
+/** A pending record as the review screen holds it: its author, and who decides
+ *  it (`ActivityRecordDTO.approver`, set by the API on a pending record). */
+export interface DecidableRecord {
+  createdBy: string;
+  approver?: RecordApprover | null;
+}
 
 /**
- * An approver looking at a record they created: Approve is withheld (D01) and
- * the screen says why — for a role-changed consultant as for a super_admin.
+ * The review queue is a masterkey's and a super_admin's (`record.decide`); an
+ * auditor, a standard user, or a user still loading is shown the gate card.
  */
-export const isOwnRecordForApprover = (
-  user: SubmittingUser | null,
-  record: { createdBy: string } | null,
-): boolean => !!user && !!record && mayApproveRecords(user) && record.createdBy === user.id;
+export const mayUseReviewQueue = (user: SubmittingUser | null): boolean => !!user && can(user.role, 'record.decide');
+
+/**
+ * Start review, Return and Approve are offered to the record's approver only
+ * (inc26-roles-approval-chain, design Decision 7): `mayDecideRecord` over the
+ * `approver` the API stated — a super_admin for a standard user's record in a
+ * company with an active super_admin, a masterkey for a super_admin's record
+ * and for the fallback, and the author for a masterkey's own record. The API
+ * decides it again inside the record's lock; this only decides what is shown.
+ */
+export const canApproveRecord = (user: SubmittingUser | null, record: DecidableRecord | null): boolean =>
+  !!user && !!record && mayDecideRecord(user, record, record.approver ?? null);
+
+/**
+ * A decider looking at a record they created and may not decide — a
+ * super_admin's own record, which a masterkey decides: Approve is withheld and
+ * the screen says why. Never a masterkey's own record (theirs to decide, as a
+ * self-approval), and never a role that does not decide at all.
+ */
+export const isOwnRecordForApprover = (user: SubmittingUser | null, record: DecidableRecord | null): boolean =>
+  !!user &&
+  !!record &&
+  can(user.role, 'record.decide') &&
+  record.createdBy === user.id &&
+  !canApproveRecord(user, record);
+
+/**
+ * A masterkey deciding their own record: the approval is written as
+ * `self_approve` and shown to the auditor, which the screen says beside
+ * Approve before it is pressed.
+ */
+export const isSelfApproval = (user: SubmittingUser | null, record: DecidableRecord | null): boolean =>
+  !!record && record.approver === 'author' && canApproveRecord(user, record);
+
+/**
+ * Who a pending record waits for, when it is not this user: the label "awaits
+ * Super Admin / Masterkey / its author" in the queue's "every pending record"
+ * view. Null when the user decides it, or when the record states no approver
+ * (not pending).
+ */
+export const awaitedApprover = (user: SubmittingUser | null, record: DecidableRecord | null): RecordApprover | null =>
+  !record || !record.approver || canApproveRecord(user, record) ? null : record.approver;
 
 /**
  * Does opening this record in the review queue take it into review (WP5,
- * INC-2.6 §1.2)? Only a `submitted` record, and only for a user who may
- * approve it: the record's author (D01) opens it without changing it, so
- * their recall stays open. Built on `canApproveRecord`, so it follows who may
- * approve when the approval chain changes that.
+ * INC-2.6 §1.2)? Only a `submitted` record, and only for the user who decides
+ * it: anyone else — its super_admin author, a masterkey whose decision it is
+ * not, a colleague super_admin — opens it without changing it, so its
+ * author's recall stays open. Built on `canApproveRecord`, so it follows the
+ * record's `approver`.
  */
 export const shouldStartReviewOnOpen = (
   user: SubmittingUser | null,
-  record: { createdBy: string; status: string } | null,
+  record: (DecidableRecord & { status: string }) | null,
 ): boolean => !!record && record.status === 'submitted' && canApproveRecord(user, record);
 
 /**

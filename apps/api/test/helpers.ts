@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { Subsidiary } from '@tonyai/db';
+import { CATEGORIES, type Category } from '@tonyai/shared-types';
 import type { RequestUser } from '../src/auth/auth.types';
 
 /**
@@ -201,26 +202,68 @@ export function makeLocation(
   } as import('@tonyai/db').Location;
 }
 
-export function makeSuperAdmin(overrides: Partial<RequestUser> = {}): RequestUser {
+export function makeMasterkey(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
     fullName: 'Admin User',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3', 'sub-4', 'sub-5'],
+    categoryGrants: {},
     ...overrides,
   };
 }
 
-export function makeDataEntry(overrides: Partial<RequestUser> = {}): RequestUser {
+/** Every category ticked on each of `subsidiaryIds` (a carried-over grant). */
+export function everyCategoryOn(subsidiaryIds: readonly string[]): Record<string, Category[]> {
+  return Object.fromEntries(subsidiaryIds.map((id) => [id, [...CATEGORIES].sort()]));
+}
+
+/**
+ * A standard user granted `sub-1` and `sub-2` (INC-2.6 §1). Unless the
+ * overrides name `categoryGrants`, every category is ticked on every granted
+ * company — the shape of a carried-over account — so a spec about something
+ * else is not narrowed by categories by accident.
+ */
+export function makeStandardUser(overrides: Partial<RequestUser> = {}): RequestUser {
+  const accessibleSubsidiaryIds = overrides.accessibleSubsidiaryIds ?? ['sub-1', 'sub-2'];
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
     fullName: 'Entry User',
-    role: 'data_entry',
+    role: 'standard_user',
+    organisationId: 'org-1',
+    accessibleSubsidiaryIds,
+    categoryGrants: everyCategoryOn(accessibleSubsidiaryIds),
+    ...overrides,
+  };
+}
+
+/** A company-scoped super_admin granted `sub-1` and `sub-2`; categories never narrow it. */
+export function makeSuperAdmin(overrides: Partial<RequestUser> = {}): RequestUser {
+  return {
+    id: 'user-super-admin',
+    email: 'approver@tonyai.local',
+    fullName: 'Super Admin User',
+    role: 'super_admin',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    categoryGrants: {},
+    ...overrides,
+  };
+}
+
+/** An auditor: reads the whole organisation, changes nothing. */
+export function makeAuditor(overrides: Partial<RequestUser> = {}): RequestUser {
+  return {
+    id: 'user-auditor',
+    email: 'review@tonyai.local',
+    fullName: 'Auditor User',
+    role: 'auditor',
+    organisationId: 'org-1',
+    accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3', 'sub-4', 'sub-5'],
+    categoryGrants: {},
     ...overrides,
   };
 }

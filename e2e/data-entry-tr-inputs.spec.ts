@@ -14,7 +14,7 @@ import {
   API_BASE,
   E2E_TR_INPUTS,
   E2E_TR_INPUTS_YEAR,
-  ADMIN_EMAIL,
+  APPROVER_EMAIL,
   ENTRY_EMAIL,
   EVIDENCE_FIXTURE,
   SUB,
@@ -380,7 +380,8 @@ test('evidence: a record submitted before K3 without a file is refused at approv
   try {
     await submitAsOwnerPastEvidenceGate(id);
 
-    await login(page, ADMIN_EMAIL);
+    // Its approver: the standard user's record, so Logistics' super admin.
+    await login(page, APPROVER_EMAIL);
     await page.goto('/review');
     await page
       .locator('table tbody tr', { hasText: 'TonyAI Logistics' })

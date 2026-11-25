@@ -134,7 +134,7 @@ const VOIDED_AT = {
   laterB: new Date('2026-12-30T12:00:00Z'),
 } as const;
 const printed = (n: number) => [String(n), n.toLocaleString('en-GB'), n.toLocaleString('tr-TR')];
-const ROLES = ['superAdmin', 'consultant', 'dataEntry', 'executiveViewer'] as const;
+const ROLES = ['masterkey', 'superAdmin', 'standardUser', 'auditor'] as const;
 type Role = (typeof ROLES)[number];
 
 beforeAll(async () => {
@@ -189,7 +189,7 @@ beforeAll(async () => {
     periodValue: 'November',
     calculation: { tCo2e: B_VOIDED_TCO2E, factorId: 'int-test-placeholder' },
     voidReason: 'Int-test withdrawal only B gave',
-    voidedBy: B.users.superAdmin.id,
+    voidedBy: B.users.masterkey.id,
     voidedAt: VOIDED_AT.firstB,
   });
   const evidenceB = await owner.evidence.create({
@@ -199,32 +199,35 @@ beforeAll(async () => {
       fileName: 'int-test-only-b.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 4,
-      uploadedBy: B.users.dataEntry.id,
+      uploadedBy: B.users.standardUser.id,
     },
   });
   await owner.activityRecordEvidence.create({
-    data: { activityRecordId: approvedB.id, evidenceId: evidenceB.id, subsidiaryId: B.subsidiaryId, linkedBy: B.users.dataEntry.id },
+    data: { activityRecordId: approvedB.id, evidenceId: evidenceB.id, subsidiaryId: B.subsidiaryId, linkedBy: B.users.standardUser.id },
   });
   ({ id: revenueBId } = await owner.subsidiaryDenominator.create({
-    data: { subsidiaryId: B.subsidiaryId, year: 2026, metric: 'revenue', value: B_REVENUE, unit: 'EUR', createdBy: B.users.dataEntry.id },
+    data: { subsidiaryId: B.subsidiaryId, year: 2026, metric: 'revenue', value: B_REVENUE, unit: 'EUR', createdBy: B.users.standardUser.id },
   }));
   await owner.auditLog.create({
     data: {
-      userId: B.users.superAdmin.id,
+      userId: B.users.masterkey.id,
       organisationId: B.organisationId,
-      role: 'super_admin',
+      role: 'masterkey',
       action: 'create',
       entity: 'activity_record',
       entityId: approvedB.id,
     },
   });
   const subB = await owner.subsidiary.findUniqueOrThrow({ where: { id: B.subsidiaryId } });
+  const otherSubB = await owner.subsidiary.findUniqueOrThrow({ where: { id: B.otherSubsidiaryId } });
   const orgB = await owner.organisation.findUniqueOrThrow({ where: { id: B.organisationId } });
   const profilesB = await owner.profile.findMany({ where: { id: { in: B.profileIds } } });
   markersB = [
     B.organisationId,
     B.subsidiaryId,
     subB.legalName,
+    B.otherSubsidiaryId,
+    otherSubB.legalName,
     orgB.legalName,
     ...profilesB.map((p) => p.fullName),
     approvedB.id,
@@ -452,7 +455,7 @@ const voidedIn = () =>
     status: ActivityRecordStatus.voided,
     periodValue: 'November',
     voidReason: 'Int-test withdrawal A gave',
-    voidedBy: A.users.superAdmin.id,
+    voidedBy: A.users.masterkey.id,
     voidedAt: VOIDED_AT.A,
   }, { priced: true });
 
@@ -532,106 +535,118 @@ const dataOf = (res: Res): unknown => (JSON.parse(res.text) as { data?: unknown 
 
 const ID_ROUTES: Route[] = [
   // subsidiaries
-  { name: 'GET /subsidiaries/:id', method: 'GET', path: (i) => `/subsidiaries/${i.subsidiaryId}`, own: { role: 'dataEntry' } },
-  { name: 'GET /subsidiaries/:id/summary', method: 'GET', path: (i) => `/subsidiaries/${i.subsidiaryId}/summary`, own: { role: 'consultant' } },
-  { name: 'PATCH /subsidiaries/:id', method: 'PATCH', path: (i) => `/subsidiaries/${i.subsidiaryId}`, body: () => ({ tradingName: 'renamed' }), own: { role: 'superAdmin' } },
-  { name: 'DELETE /subsidiaries/:id', method: 'DELETE', path: (i) => `/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin', ok: differs } },
+  { name: 'GET /subsidiaries/:id', method: 'GET', path: (i) => `/subsidiaries/${i.subsidiaryId}`, own: { role: 'standardUser' } },
+  { name: 'GET /subsidiaries/:id/summary', method: 'GET', path: (i) => `/subsidiaries/${i.subsidiaryId}/summary`, own: { role: 'auditor' } },
+  { name: 'PATCH /subsidiaries/:id', method: 'PATCH', path: (i) => `/subsidiaries/${i.subsidiaryId}`, body: () => ({ tradingName: 'renamed' }), own: { role: 'masterkey' } },
+  { name: 'DELETE /subsidiaries/:id', method: 'DELETE', path: (i) => `/subsidiaries/${i.subsidiaryId}`, own: { role: 'masterkey', ok: differs } },
   // locations
-  { name: 'GET /locations/:id', method: 'GET', path: (i) => `/locations/${i.locationId}`, own: { role: 'executiveViewer' } },
-  { name: 'PATCH /locations/:id', method: 'PATCH', path: (i) => `/locations/${i.locationId}`, body: () => ({ name: 'renamed' }), own: { role: 'superAdmin' } },
+  { name: 'GET /locations/:id', method: 'GET', path: (i) => `/locations/${i.locationId}`, own: { role: 'auditor' } },
+  { name: 'PATCH /locations/:id', method: 'PATCH', path: (i) => `/locations/${i.locationId}`, body: () => ({ name: 'renamed' }), own: { role: 'masterkey' } },
   // A's own data site is declared in A's boundary version (LP3-04 W9: not
   // deletable), so the positive control deletes a disposable site of A's.
   {
     name: 'DELETE /locations/:id', method: 'DELETE', path: (i) => `/locations/${i.locationId}`,
     own: {
-      role: 'superAdmin',
+      role: 'masterkey',
       prepare: async () => ({
         locationId: (await owner.location.create({ data: { subsidiaryId: A.subsidiaryId, name: 'Int-test disposable site', geographyCode: 'UK' } })).id,
       }),
     },
   },
-  { name: 'POST /locations', method: 'POST', path: () => '/locations', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New site', geographyCode: 'UK' }), own: { role: 'superAdmin', ok: created } },
+  { name: 'POST /locations', method: 'POST', path: () => '/locations', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New site', geographyCode: 'UK' }), own: { role: 'masterkey', ok: created } },
   // activity records
-  { name: 'GET /activity-records/:id', method: 'GET', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'consultant' } },
-  { name: 'PATCH /activity-records/:id', method: 'PATCH', path: (i) => `/activity-records/${i.recordId}`, body: () => ({ activityValue: 7 }), own: { role: 'dataEntry' } },
-  { name: 'DELETE /activity-records/:id', method: 'DELETE', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'dataEntry' } },
+  { name: 'GET /activity-records/:id', method: 'GET', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'auditor' } },
+  { name: 'PATCH /activity-records/:id', method: 'PATCH', path: (i) => `/activity-records/${i.recordId}`, body: () => ({ activityValue: 7 }), own: { role: 'standardUser' } },
+  { name: 'DELETE /activity-records/:id', method: 'DELETE', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'standardUser' } },
   // Into the period B has LOCKED (createTenantData): a create that looked at the
   // period before the tenant would answer 409 for B's id and 404 for a random one.
-  { name: 'POST /activity-records', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'dataEntry', ok: differs } },
+  { name: 'POST /activity-records', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'standardUser', ok: differs } },
   // B's LOCATION inside a record of A's own subsidiary (`qa-auditor`).
-  { name: 'POST /activity-records (B location)', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: A.subsidiaryId, locationId: i.locationId, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'August', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'dataEntry', ok: differs } },
-  { name: 'PATCH /activity-records/:id (B location)', method: 'PATCH', path: () => `/activity-records/${dataA.recordId}`, body: (i) => ({ locationId: i.locationId }), own: { role: 'dataEntry' } },
-  { name: 'POST /activity-records/:id/submit', method: 'POST', path: (i) => `/activity-records/${i.recordId}/submit`, own: { role: 'dataEntry', ok: created } },
-  { name: 'POST /activity-records/:id/review', method: 'POST', path: (i) => `/activity-records/${i.recordId}/review`, own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
+  { name: 'POST /activity-records (B location)', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: A.subsidiaryId, locationId: i.locationId, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'August', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'standardUser', ok: differs } },
+  { name: 'PATCH /activity-records/:id (B location)', method: 'PATCH', path: () => `/activity-records/${dataA.recordId}`, body: (i) => ({ locationId: i.locationId }), own: { role: 'standardUser' } },
+  { name: 'POST /activity-records/:id/submit', method: 'POST', path: (i) => `/activity-records/${i.recordId}/submit`, own: { role: 'standardUser', ok: created } },
+  { name: 'POST /activity-records/:id/review', method: 'POST', path: (i) => `/activity-records/${i.recordId}/review`, own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
   // `seenSubmittedAt` is required over HTTP (BUG-R2-03); the prepared record was never submitted through the API, so it has none.
+  // A standard user's record is decided by its company's super_admin (INC-2.6 §1.1).
   { name: 'POST /activity-records/:id/approve', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, body: () => ({ seenSubmittedAt: null }), own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
-  // A consultant approves since K2 (Decisions 2026-11-12): the same route's positive control through the real guard as that role.
-  { name: 'POST /activity-records/:id/approve (consultant, K2)', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, body: () => ({ seenSubmittedAt: null }), own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
-  { name: 'POST /activity-records/:id/reject', method: 'POST', path: (i) => `/activity-records/${i.recordId}/reject`, body: () => ({ varianceReason: 'please recheck the meter reading', seenSubmittedAt: null }), own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
-  { name: 'POST /activity-records/:id/void', method: 'POST', path: (i) => `/activity-records/${i.recordId}/void`, body: () => ({ voidReason: 'entered against the wrong site' }), own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.approved), ok: created } },
-  { name: 'POST /activity-records/bulk-submit', method: 'POST', path: () => '/activity-records/bulk-submit', body: (i) => ({ recordIds: [i.recordId] }), own: { role: 'dataEntry', ok: differs } },
+  // A masterkey's own record is its self-approval (ruling R1): the same route's positive control through the real guard as that role.
+  {
+    name: 'POST /activity-records/:id/approve (masterkey, self-approval)', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, body: () => ({ seenSubmittedAt: null }),
+    own: {
+      role: 'masterkey',
+      ok: created,
+      prepare: async () => {
+        const record = await createRecord(owner, A, { status: ActivityRecordStatus.submitted, periodValue: 'June', createdBy: A.users.masterkey.id }, { priced: true });
+        await attachEvidence(owner, A, [record.id]);
+        return { recordId: record.id };
+      },
+    },
+  },
+  { name: 'POST /activity-records/:id/reject', method: 'POST', path: (i) => `/activity-records/${i.recordId}/reject`, body: () => ({ varianceReason: 'please recheck the meter reading', seenSubmittedAt: null }), own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
+  { name: 'POST /activity-records/:id/void', method: 'POST', path: (i) => `/activity-records/${i.recordId}/void`, body: () => ({ voidReason: 'entered against the wrong site' }), own: { role: 'masterkey', prepare: recordIn(ActivityRecordStatus.approved), ok: created } },
+  { name: 'POST /activity-records/bulk-submit', method: 'POST', path: () => '/activity-records/bulk-submit', body: (i) => ({ recordIds: [i.recordId] }), own: { role: 'standardUser', ok: differs } },
   // evidence
-  { name: 'GET /activity-records/:recordId/evidence', method: 'GET', path: (i) => `/activity-records/${i.recordId}/evidence`, own: { role: 'executiveViewer' } },
-  { name: 'POST /activity-records/:recordId/evidence', method: 'POST', path: (i) => `/activity-records/${i.recordId}/evidence`, body: () => pdfForm(), own: { role: 'dataEntry', ok: differs } },
-  { name: 'POST /evidence', method: 'POST', path: () => '/evidence', body: (i) => pdfForm([i.recordId]), own: { role: 'dataEntry', ok: differs } },
-  { name: 'DELETE /activity-records/:recordId/evidence/:evidenceId', method: 'DELETE', path: (i) => `/activity-records/${i.recordId}/evidence/${i.evidenceId}`, own: { role: 'dataEntry', ok: differs } },
-  { name: 'GET /evidence/:id/url', method: 'GET', path: (i) => `/evidence/${i.evidenceId}/url`, own: { role: 'consultant', ok: differs } },
-  { name: 'DELETE /evidence/:id', method: 'DELETE', path: (i) => `/evidence/${i.evidenceId}`, own: { role: 'dataEntry', ok: differs } },
+  { name: 'GET /activity-records/:recordId/evidence', method: 'GET', path: (i) => `/activity-records/${i.recordId}/evidence`, own: { role: 'auditor' } },
+  { name: 'POST /activity-records/:recordId/evidence', method: 'POST', path: (i) => `/activity-records/${i.recordId}/evidence`, body: () => pdfForm(), own: { role: 'standardUser', ok: differs } },
+  { name: 'POST /evidence', method: 'POST', path: () => '/evidence', body: (i) => pdfForm([i.recordId]), own: { role: 'standardUser', ok: differs } },
+  { name: 'DELETE /activity-records/:recordId/evidence/:evidenceId', method: 'DELETE', path: (i) => `/activity-records/${i.recordId}/evidence/${i.evidenceId}`, own: { role: 'standardUser', ok: differs } },
+  { name: 'GET /evidence/:id/url', method: 'GET', path: (i) => `/evidence/${i.evidenceId}/url`, own: { role: 'auditor', ok: differs } },
+  { name: 'DELETE /evidence/:id', method: 'DELETE', path: (i) => `/evidence/${i.evidenceId}`, own: { role: 'standardUser', ok: differs } },
   // period locks
-  { name: 'DELETE /period-locks/:id', method: 'DELETE', path: (i) => `/period-locks/${i.periodLockId}`, own: { role: 'superAdmin' } },
-  { name: 'POST /period-locks', method: 'POST', path: () => '/period-locks', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2018, reportingPeriod: 'monthly', periodValue: 'January' }), own: { role: 'superAdmin', ok: created } },
+  { name: 'DELETE /period-locks/:id', method: 'DELETE', path: (i) => `/period-locks/${i.periodLockId}`, own: { role: 'masterkey' } },
+  { name: 'POST /period-locks', method: 'POST', path: () => '/period-locks', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2018, reportingPeriod: 'monthly', periodValue: 'January' }), own: { role: 'masterkey', ok: created } },
   // targets
-  { name: 'PATCH /targets/:id', method: 'PATCH', path: (i) => `/targets/${i.targetId}`, body: () => ({ name: 'renamed' }), own: { role: 'superAdmin' } },
-  { name: 'DELETE /targets/:id', method: 'DELETE', path: (i) => `/targets/${i.targetId}`, own: { role: 'superAdmin' } },
-  { name: 'POST /targets', method: 'POST', path: () => '/targets', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New target', basis: 'internal_annual', scope: 'all', baselineYear: 2024, baselineTCo2e: 10, targetYear: 2030, targetTCo2e: 5 }), own: { role: 'superAdmin', ok: created } },
+  { name: 'PATCH /targets/:id', method: 'PATCH', path: (i) => `/targets/${i.targetId}`, body: () => ({ name: 'renamed' }), own: { role: 'masterkey' } },
+  { name: 'DELETE /targets/:id', method: 'DELETE', path: (i) => `/targets/${i.targetId}`, own: { role: 'masterkey' } },
+  { name: 'POST /targets', method: 'POST', path: () => '/targets', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New target', basis: 'internal_annual', scope: 'all', baselineYear: 2024, baselineTCo2e: 10, targetYear: 2030, targetTCo2e: 5 }), own: { role: 'masterkey', ok: created } },
   // denominators
-  { name: 'PATCH /denominators/:id', method: 'PATCH', path: (i) => `/denominators/${i.denominatorId}`, body: () => ({ value: 11 }), own: { role: 'superAdmin' } },
-  { name: 'DELETE /denominators/:id', method: 'DELETE', path: (i) => `/denominators/${i.denominatorId}`, own: { role: 'superAdmin' } },
-  { name: 'POST /denominators', method: 'POST', path: () => '/denominators', body: (i) => ({ subsidiaryId: i.subsidiaryId, year: 2025, metric: 'headcount', value: 3, unit: 'FTE' }), own: { role: 'superAdmin', ok: created } },
+  { name: 'PATCH /denominators/:id', method: 'PATCH', path: (i) => `/denominators/${i.denominatorId}`, body: () => ({ value: 11 }), own: { role: 'masterkey' } },
+  { name: 'DELETE /denominators/:id', method: 'DELETE', path: (i) => `/denominators/${i.denominatorId}`, own: { role: 'masterkey' } },
+  { name: 'POST /denominators', method: 'POST', path: () => '/denominators', body: (i) => ({ subsidiaryId: i.subsidiaryId, year: 2025, metric: 'headcount', value: 3, unit: 'FTE' }), own: { role: 'masterkey', ok: created } },
   // import batches
-  { name: 'GET /import-batches/:id', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}`, own: { role: 'dataEntry' } },
-  { name: 'GET /import-batches/:id/source-url', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}/source-url`, own: { role: 'dataEntry', ok: differs } },
-  { name: 'POST /import-batches/:id/submit', method: 'POST', path: (i) => `/import-batches/${i.importBatchId}/submit`, own: { role: 'dataEntry', ok: differs } },
+  { name: 'GET /import-batches/:id', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}`, own: { role: 'standardUser' } },
+  { name: 'GET /import-batches/:id/source-url', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}/source-url`, own: { role: 'standardUser', ok: differs } },
+  { name: 'POST /import-batches/:id/submit', method: 'POST', path: (i) => `/import-batches/${i.importBatchId}/submit`, own: { role: 'standardUser', ok: differs } },
   // inventory boundary versions (LP3-04's write path). Each PUT body is a
   // whole, valid declaration, so only the ids in it decide the answer.
-  { name: 'GET /inventory-boundaries/:id', method: 'GET', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'dataEntry' } },
+  { name: 'GET /inventory-boundaries/:id', method: 'GET', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'standardUser' } },
   {
     name: 'POST /inventory-boundaries (copyOf)', method: 'POST', path: () => '/inventory-boundaries',
-    body: (i) => ({ reportingYear: 2027, copyOf: i.boundaryId }), own: { role: 'superAdmin', ok: created },
+    body: (i) => ({ reportingYear: 2027, copyOf: i.boundaryId }), own: { role: 'masterkey', ok: created },
   },
   {
     name: 'PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId', method: 'PUT',
-    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'masterkey' },
   },
   // B's subsidiary declared in A's own version, and B's site in A's own subsidiary's declaration.
   {
     name: "PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's subsidiary in A's version)", method: 'PUT',
-    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'masterkey' },
   },
   {
     name: "PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's site in A's declaration)", method: 'PUT',
     path: () => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${A.subsidiaryId}`,
     body: (i) => ({ ...EMPTY_DECLARATION, sites: [{ locationId: i.locationId, firstMonth: 1, lastMonth: 12 }] }),
-    own: { role: 'superAdmin' },
+    own: { role: 'masterkey' },
   },
   {
     name: 'DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId', method: 'DELETE',
-    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'masterkey' },
   },
   {
     name: "DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's subsidiary in A's version)", method: 'DELETE',
-    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'masterkey' },
   },
   // A's own version has gaps: its confirmation is refused, not unseen.
-  { name: 'POST /inventory-boundaries/:id/confirm', method: 'POST', path: (i) => `/inventory-boundaries/${i.boundaryId}/confirm`, own: { role: 'superAdmin', ok: differs } },
-  { name: 'DELETE /inventory-boundaries/:id', method: 'DELETE', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'superAdmin', ok: (res) => res.status === 204 } },
+  { name: 'POST /inventory-boundaries/:id/confirm', method: 'POST', path: (i) => `/inventory-boundaries/${i.boundaryId}/confirm`, own: { role: 'masterkey', ok: differs } },
+  { name: 'DELETE /inventory-boundaries/:id', method: 'DELETE', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'masterkey', ok: (res) => res.status === 204 } },
   // report datasets (LP3-04 PR C): a capture of B's version. A capture freezes
   // the version it captures, so A's positive control captures a fresh version
   // of its own, not the one the routes above edit.
   {
     name: "POST /report-datasets (B's version)", method: 'POST', path: () => '/report-datasets', body: (i) => ({ boundaryId: i.boundaryId }),
     own: {
-      role: 'superAdmin',
+      role: 'masterkey',
       ok: created,
       prepare: async () => ({ boundaryId: (await createBoundary(owner, A, { locationId: dataA.locationId, reportingYear: 2031 })).boundaryId }),
     },
@@ -639,10 +654,10 @@ const ID_ROUTES: Route[] = [
   // LP4-05 PR C: the page filters and the progress set naming B's ids
   {
     name: 'GET /targets/progress?targetIds=', method: 'GET', path: (i) => `/targets/progress?targetIds=${i.targetId}`,
-    own: { role: 'consultant', ok: (res) => res.status === 200 && (JSON.parse(res.text) as unknown[]).length === 1 },
+    own: { role: 'auditor', ok: (res) => res.status === 200 && (JSON.parse(res.text) as unknown[]).length === 1 },
   },
-  { name: 'GET /activity-records?locationId=', method: 'GET', path: (i) => `/activity-records?locationId=${i.locationId}`, own: { role: 'consultant' } },
-  { name: 'GET /activity-records/metadata?locationId=', method: 'GET', path: (i) => `/activity-records/metadata?locationId=${i.locationId}`, own: { role: 'consultant' } },
+  { name: 'GET /activity-records?locationId=', method: 'GET', path: (i) => `/activity-records?locationId=${i.locationId}`, own: { role: 'auditor' } },
+  { name: 'GET /activity-records/metadata?locationId=', method: 'GET', path: (i) => `/activity-records/metadata?locationId=${i.locationId}`, own: { role: 'auditor' } },
   // filters by subsidiary
   ...(
     [
@@ -667,7 +682,7 @@ const ID_ROUTES: Route[] = [
       name: `GET ${path}?subsidiaryId=`,
       method: 'GET',
       path: (i) => `${path}?subsidiaryId=${i.subsidiaryId}${rest}`,
-      own: { role: 'consultant', ok: (res) => res.status === 200 },
+      own: { role: 'auditor', ok: (res) => res.status === 200 },
     }),
   ),
   // the reporting context (LP3-02): B's subsidiary as the selection
@@ -676,7 +691,7 @@ const ID_ROUTES: Route[] = [
       name: `GET ${path}?subsidiaryId=${filter}`,
       method: 'GET',
       path: (i) => `${path}?year=2026&subsidiaryId=${i.subsidiaryId}${filter}`,
-      own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.approved), ok: (res) => res.status === 200 && live(dataOf(res)) },
+      own: { role: 'auditor', prepare: recordIn(ActivityRecordStatus.approved), ok: (res) => res.status === 200 && live(dataOf(res)) },
     })),
     // HEAD too: Express answers it with the GET handler, so an export refuses
     // it before generating or auditing anything ("LP3-02 context-route
@@ -691,7 +706,7 @@ const ID_ROUTES: Route[] = [
         // records) — which no export for B's selection may print: it names an
         // unresolved selection by its id.
         own: {
-          role: 'consultant',
+          role: 'auditor',
           prepare: recordIn(ActivityRecordStatus.approved),
           ok: (res) => method === 'HEAD' ? headRefused(res) : res.status === 200 && res.text.includes(subsidiaryNameA),
         },
@@ -782,15 +797,18 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
   });
 
   it("a list shows A's own rows to A (control: the lists above were not empty for everyone)", async () => {
-    const res = await call('consultant', 'GET', '/activity-records');
+    const res = await call('auditor', 'GET', '/activity-records');
     expect(res.text).toContain(dataA.recordId);
   });
 
-  it("counts carry no trace of B either: A's dashboard counts exactly A's subsidiary and site", async () => {
+  it("counts carry no trace of B either: A's dashboard counts exactly A's companies and site", async () => {
     for (const role of ROLES) {
       const res = await call(role, 'GET', '/kpi');
       expect(res.status, `${role} GET /kpi`).toBe(200);
-      expect(JSON.parse(res.text), `${role} GET /kpi`).toMatchObject({ totalSubsidiaries: 1, totalLocations: 1 });
+      // The organisation-wide roles count A's two companies (the second has no
+      // site); the granted roles their one company (INC-2.6 fixture).
+      const companies = role === 'masterkey' || role === 'auditor' ? 2 : 1;
+      expect(JSON.parse(res.text), `${role} GET /kpi`).toMatchObject({ totalSubsidiaries: companies, totalLocations: 1 });
     }
   });
 
@@ -799,7 +817,7 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
     await recordIn(ActivityRecordStatus.approved, { locationId: dataA.locationId })();
     await voidedIn();
     await owner.subsidiaryDenominator.create({
-      data: { subsidiaryId: A.subsidiaryId, year: 2026, metric: 'revenue', value: 500000, unit: 'EUR', createdBy: A.users.dataEntry.id },
+      data: { subsidiaryId: A.subsidiaryId, year: 2026, metric: 'revenue', value: 500000, unit: 'EUR', createdBy: A.users.standardUser.id },
     });
     // Business text shaped like the generation metadata, which no mask may
     // touch (Codex P3): a withdrawal's reason written as the PDF's generation
@@ -810,14 +828,14 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       status: ActivityRecordStatus.voided,
       periodValue: 'October',
       voidReason: lookalike,
-      voidedBy: A.users.superAdmin.id,
+      voidedBy: A.users.masterkey.id,
       voidedAt: VOIDED_AT.A,
     }, { priced: true });
     const named = await owner.subsidiary.create({ data: { organisationId: A.organisationId, legalName: 'Generated', geographyCode: 'UK' } });
     const minuteSite = await owner.location.create({ data: { subsidiaryId: named.id, name: '2026-12-30 12:00', geographyCode: 'UK' } });
     await createRecord(owner, A, { subsidiaryId: named.id, locationId: minuteSite.id, status: ActivityRecordStatus.approved, periodValue: 'March' }, { priced: true });
     for (const [path, rest] of CONTEXT_EXPORTS) {
-      const res = await call('consultant', 'GET', `${path}?year=2026${rest}`);
+      const res = await call('auditor', 'GET', `${path}?year=2026${rest}`);
       expect(res.status, `${path}: ${res.text.slice(0, 200)}`).toBe(200);
       expect(res.text, `${path}: the withdrawn ledger`).toContain('Int-test withdrawal A gave');
       expect(res.text, `${path}: the ledger`).toContain(subsidiaryNameA);
@@ -845,7 +863,7 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       for (const marker of markersB) expect(res.text, `${path} leaks ${marker}`).not.toContain(marker);
     }
     // A group intensity reads revenue alone (D14): A's, and only A's.
-    const intensity = JSON.parse((await call('consultant', 'GET', '/intensity/context?year=2026')).text) as { data: ReportingIntensityData };
+    const intensity = JSON.parse((await call('auditor', 'GET', '/intensity/context?year=2026')).text) as { data: ReportingIntensityData };
     expect(intensity.data.metrics).toEqual([
       expect.objectContaining({ metric: 'revenue', denominatorTotal: 500000, contributingSubsidiaryIds: [A.subsidiaryId] }),
     ]);
@@ -861,7 +879,7 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       }
       // Control: A's batch is readable, and lists its own record when one points at it.
       const own = await createRecord(owner, A, { periodValue: 'May', importBatchId: dataA.importBatchId });
-      expect((await call('consultant', 'GET', `/import-batches/${dataA.importBatchId}`)).text).toContain(own.id);
+      expect((await call('auditor', 'GET', `/import-batches/${dataA.importBatchId}`)).text).toContain(own.id);
     } finally {
       await owner.activityRecord.delete({ where: { id: stray.id } });
     }
@@ -910,7 +928,7 @@ describe("pages and cursors (LP4-05 PR C): a page, its cursor and its count reac
   });
 
   it("B's own cursor, handed to A on the same request, positions A among A's rows only", async () => {
-    const pageB = await as(B.users.consultant.id, '/activity-records?limit=1');
+    const pageB = await as(B.users.auditor.id, '/activity-records?limit=1');
     expect(pageB.body.nextCursor, 'B has more than one record').toEqual(expect.any(String));
     const own = new Set((await owner.activityRecord.findMany({ where: { subsidiaryId: A.subsidiaryId }, select: { id: true } })).map((r) => r.id));
     for (const role of ROLES) {
@@ -922,10 +940,10 @@ describe("pages and cursors (LP4-05 PR C): a page, its cursor and its count reac
   });
 
   it("a cursor of another filter is refused alike, whether the filter names B's subsidiary, an unknown one or A's own", async () => {
-    const first = await as(A.users.consultant.id, '/activity-records?limit=1');
+    const first = await as(A.users.auditor.id, '/activity-records?limit=1');
     const cursor = first.body.nextCursor as string;
     const answers = await Promise.all([B.subsidiaryId, randomUUID(), A.subsidiaryId].map((id) =>
-      as(A.users.consultant.id, `/activity-records?limit=1&subsidiaryId=${id}&cursor=${cursor}`)));
+      as(A.users.auditor.id, `/activity-records?limit=1&subsidiaryId=${id}&cursor=${cursor}`)));
     for (const res of answers) expect(res.status).toBe(400);
     expect(new Set(answers.map((r) => r.text)).size).toBe(1);
     noB(answers[0].text, 'refusal');
@@ -944,13 +962,13 @@ describe("pages and cursors (LP4-05 PR C): a page, its cursor and its count reac
     // positive control: nonempty, and only A's. B's id is the tiebreak.
     const later = new Date(Date.now() + 86_400_000);
     const routes: [string, string, Role][] = [
-      ['/activity-records', forged(RECORD_SORTS.newest, {}, [later, dataB.recordId]), 'dataEntry'],
-      ['/activity-records?sort=review_queue', forged(RECORD_SORTS.review_queue, {}, [new Date(0), dataB.recordId]), 'superAdmin'],
-      ['/period-locks', forged(PERIOD_LOCK_SORT, {}, [later, dataB.periodLockId]), 'consultant'],
-      ['/targets', forged(TARGET_SORT, {}, [2000, later, dataB.targetId]), 'consultant'],
-      ['/denominators', forged(DENOMINATOR_SORT, {}, [2100, 'revenue', dataB.denominatorId]), 'consultant'],
-      [`/activity-records/${dataA.recordId}/evidence`, forged(EVIDENCE_SORT, { recordId: dataA.recordId }, [later, dataB.evidenceId]), 'executiveViewer'],
-      ['/users', forged(USERS_SORT, {}, [later, B.users.superAdmin.id]), 'superAdmin'],
+      ['/activity-records', forged(RECORD_SORTS.newest, {}, [later, dataB.recordId]), 'standardUser'],
+      ['/activity-records?sort=review_queue', forged(RECORD_SORTS.review_queue, {}, [new Date(0), dataB.recordId]), 'masterkey'],
+      ['/period-locks', forged(PERIOD_LOCK_SORT, {}, [later, dataB.periodLockId]), 'auditor'],
+      ['/targets', forged(TARGET_SORT, {}, [2000, later, dataB.targetId]), 'auditor'],
+      ['/denominators', forged(DENOMINATOR_SORT, {}, [2100, 'revenue', dataB.denominatorId]), 'auditor'],
+      [`/activity-records/${dataA.recordId}/evidence`, forged(EVIDENCE_SORT, { recordId: dataA.recordId }, [later, dataB.evidenceId]), 'auditor'],
+      ['/users', forged(USERS_SORT, {}, [later, B.users.masterkey.id]), 'masterkey'],
     ];
     for (const [path, cursor, role] of routes) {
       const sep = path.includes('?') ? '&' : '?';
@@ -965,13 +983,13 @@ describe("pages and cursors (LP4-05 PR C): a page, its cursor and its count reac
 
   it("metadata of B's subsidiary or site is the empty answer an unknown one gets", async () => {
     for (const filter of [`subsidiaryId=${B.subsidiaryId}`, `locationId=${dataB.locationId}`]) {
-      const foreign = await as(A.users.consultant.id, `/activity-records/metadata?${filter}`);
+      const foreign = await as(A.users.auditor.id, `/activity-records/metadata?${filter}`);
       expect(foreign.body).toEqual({ total: 0, latestReportingYear: null });
     }
   });
 
   it("progress for A's id, B's id and an unknown one answers A's alone", async () => {
-    const res = await as(A.users.consultant.id, `/targets/progress?targetIds=${dataB.targetId},${randomUUID()},${dataA.targetId}`);
+    const res = await as(A.users.auditor.id, `/targets/progress?targetIds=${dataB.targetId},${randomUUID()},${dataA.targetId}`);
     expect(res.status).toBe(200);
     expect((res.body as unknown as { targetId: string }[]).map((p) => p.targetId)).toEqual([dataA.targetId]);
     noB(res.text, 'progress');
@@ -995,9 +1013,9 @@ describe('POST /bulk-upload/activity-records (dry run): rows naming B are refuse
     const foreignIds = { ...dataB, subsidiaryId: B.subsidiaryId, organisationId: B.organisationId };
     const missingIds = { ...foreignIds, subsidiaryId: randomUUID(), locationId: randomUUID() };
     const before = await snapshotB();
-    // The route is throttled per user (five calls a minute): superAdmin makes two, dataEntry three.
+    // The route is throttled per user (five calls a minute): masterkey makes two, standardUser three.
     let foreign: Res | undefined;
-    for (const role of ['superAdmin', 'dataEntry'] as const) {
+    for (const role of ['masterkey', 'standardUser'] as const) {
       foreign = await call(role, 'POST', '/bulk-upload/activity-records', form(csv(B.subsidiaryId, dataB.locationId)));
       const missing = await call(role, 'POST', '/bulk-upload/activity-records', form(csv(missingIds.subsidiaryId, missingIds.locationId)));
       expect(foreign.status, `${role}: ${foreign.text.slice(0, 300)}`).toBeLessThan(500);
@@ -1007,7 +1025,7 @@ describe('POST /bulk-upload/activity-records (dry run): rows naming B are refuse
       }
     }
     expect(await snapshotB()).toBe(before);
-    const own = await call('dataEntry', 'POST', '/bulk-upload/activity-records', form(csv(A.subsidiaryId, dataA.locationId)));
+    const own = await call('standardUser', 'POST', '/bulk-upload/activity-records', form(csv(A.subsidiaryId, dataA.locationId)));
     expect(own.status, own.text.slice(0, 300)).toBeLessThan(500);
     expect(normalise(own, { ...dataA, subsidiaryId: A.subsidiaryId, organisationId: A.organisationId })).not.toBe(
       normalise(foreign!, foreignIds),
@@ -1015,7 +1033,7 @@ describe('POST /bulk-upload/activity-records (dry run): rows naming B are refuse
   });
 });
 
-describe('inside one organisation: a data_entry user reaches only what it is granted', () => {
+describe('inside one organisation: a standard user reaches only what it is granted', () => {
   it('a batch over a subsidiary of its organisation it is not granted is neither listed nor readable', async () => {
     const ungranted = await owner.subsidiary.create({
       data: { organisationId: A.organisationId, legalName: 'Int-test ungranted subsidiary', geographyCode: 'UK' },
@@ -1023,7 +1041,7 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
     const batch = await owner.importBatch.create({
       data: {
         organisationId: A.organisationId,
-        uploadedBy: A.users.dataEntry.id,
+        uploadedBy: A.users.standardUser.id,
         fileName: 'int-test-two.csv',
         fileFormat: 'csv',
         sizeBytes: 1,
@@ -1032,15 +1050,15 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
         subsidiaryIds: [A.subsidiaryId, ungranted.id],
       },
     });
-    const list = await call('dataEntry', 'GET', '/import-batches');
+    const list = await call('standardUser', 'GET', '/import-batches');
     expect(list.text).toContain(dataA.importBatchId); // control: its own batch over its granted subsidiary
     expect(list.text).not.toContain(batch.id);
-    expect((await call('dataEntry', 'GET', `/import-batches/${batch.id}`)).status).toBe(404);
-    expect((await call('consultant', 'GET', '/import-batches')).text).toContain(batch.id); // organisation-wide readers do see it
+    expect((await call('standardUser', 'GET', `/import-batches/${batch.id}`)).status).toBe(404);
+    expect((await call('auditor', 'GET', '/import-batches')).text).toContain(batch.id); // organisation-wide readers do see it
   });
 
   it('the reporting context answers a subsidiary it is not granted as one that does not exist, and never counts it', async () => {
-    // Committed data where data_entry is granted: a widened selection would count it.
+    // Committed data where the standard user is granted: a widened selection would count it.
     await recordIn(ActivityRecordStatus.approved)();
     // Its whole accessible set, read before the ungranted subsidiary and its
     // record exist — and after: a count carries no marker (`security-rls` P2-1).
@@ -1048,7 +1066,7 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
     const answers = async () => {
       const out: string[] = [];
       for (const path of unfiltered) {
-        const res = await call('dataEntry', 'GET', path);
+        const res = await call('standardUser', 'GET', path);
         expect(res.status, path).toBe(200);
         out.push(`${path} ${res.text}`);
       }
@@ -1056,7 +1074,7 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
     };
     const before = await answers();
     const ungranted = await owner.subsidiary.create({
-      data: { organisationId: A.organisationId, legalName: 'Int-test subsidiary only consultants see', geographyCode: 'UK' },
+      data: { organisationId: A.organisationId, legalName: 'Int-test subsidiary only organisation-wide readers see', geographyCode: 'UK' },
     });
     const UNGRANTED_TCO2E = 135792;
     await createRecord(owner, A, {
@@ -1069,7 +1087,7 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
     const hidden = [ungranted.legalName, ...printed(UNGRANTED_TCO2E)];
     const missingId = randomUUID();
     for (const { path, empty } of CONTEXT_READS) {
-      const selecting = (id: string) => call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${id}`);
+      const selecting = (id: string) => call('standardUser', 'GET', `${path}?year=2026&subsidiaryId=${id}`);
       const foreign = await selecting(ungranted.id);
       const missing = await selecting(missingId);
       expect(foreign.status, `${path}: ${foreign.text.slice(0, 200)}`).toBe(200);
@@ -1079,15 +1097,97 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
         expect(foreign.text.replaceAll(`"subsidiaryId":"${ungranted.id}"`, ''), `${path} shows ${marker}`).not.toContain(marker);
       }
     }
-    // data_entry exports nothing, whatever it selects.
+    // A standard user exports nothing, whatever it selects.
     for (const [path, rest] of CONTEXT_EXPORTS) {
-      const foreign = await call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${ungranted.id}${rest}`);
-      const missing = await call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${missingId}${rest}`);
+      const foreign = await call('standardUser', 'GET', `${path}?year=2026&subsidiaryId=${ungranted.id}${rest}`);
+      const missing = await call('standardUser', 'GET', `${path}?year=2026&subsidiaryId=${missingId}${rest}`);
       expect([foreign.status, foreign.text], path).toStrictEqual([403, missing.text]);
     }
     // Control: an organisation-wide reader counts it.
-    const consultant = await call('consultant', 'GET', `/emissions/context/summary?year=2026&subsidiaryId=${ungranted.id}`);
-    expect(consultant.text).toContain(String(UNGRANTED_TCO2E));
+    const auditor = await call('auditor', 'GET', `/emissions/context/summary?year=2026&subsidiaryId=${ungranted.id}`);
+    expect(auditor.text).toContain(String(UNGRANTED_TCO2E));
+  });
+});
+
+/**
+ * Task 5.5 (INC-2.6 §1): a super_admin is scoped like a standard user — to its
+ * granted companies. A's second company (the fixture's, granted to nobody)
+ * holds a row in every subsidiary-scoped table and an approved figure; as A's
+ * super_admin, granted only the first, every read by id, every list, every
+ * total, every report export and every evidence read of it answers exactly as
+ * for ids that do not exist, and nothing of it appears anywhere.
+ */
+describe("inside one organisation: a super_admin granted one of two companies reaches nothing of the other (task 5.5)", () => {
+  const OTHER_TCO2E = 246813;
+  let other: Ids;
+  let markersOther: string[];
+
+  beforeEach(async () => {
+    const company = { ...A, subsidiaryId: A.otherSubsidiaryId };
+    // The other company's boundary version is the year's second.
+    const data = await createTenantData(owner, company, { priced: true, boundaryVersion: 2 });
+    await owner.location.update({ where: { id: data.locationId }, data: { name: 'Int-test site only the other company has' } });
+    const approved = await createRecord(owner, company, {
+      status: ActivityRecordStatus.approved,
+      periodValue: 'March',
+      locationId: data.locationId,
+      calculation: { tCo2e: OTHER_TCO2E, factorId: 'int-test-placeholder' },
+    });
+    await attachEvidence(owner, company, [approved.id]);
+    const name = (await owner.subsidiary.findUniqueOrThrow({ where: { id: A.otherSubsidiaryId } })).legalName;
+    other = { ...data, subsidiaryId: A.otherSubsidiaryId, organisationId: A.organisationId };
+    markersOther = [
+      A.otherSubsidiaryId,
+      name,
+      approved.id,
+      'Int-test site only the other company has',
+      ...printed(OTHER_TCO2E),
+      ...Object.values(data),
+    ];
+  });
+
+  const READS = [
+    ...ID_ROUTES.filter((route) => route.method === 'GET'),
+    { name: 'GET /activity-records/:id/audit-trail', method: 'GET', path: (i: Ids) => `/activity-records/${i.recordId}/audit-trail`, own: { role: 'auditor' } } as Route,
+  ];
+
+  it.each(READS.map((r) => [r.name, r] as const))('%s answers the other company as an unknown one', async (_name, route) => {
+    const missingIds: Ids = Object.fromEntries(Object.keys(other).map((k) => [k, randomUUID()])) as unknown as Ids;
+    const foreign = await call('superAdmin', route.method, route.path(other), route.body?.(other));
+    const missing = await call('superAdmin', route.method, route.path(missingIds), route.body?.(missingIds));
+    const context = `superAdmin ${route.name}: ${foreign.status} ${foreign.text.slice(0, 200)}`;
+    expect(foreign.status, context).toBeLessThan(500);
+    expect(normalise(foreign, other), context).toBe(normalise(missing, missingIds));
+    const sent = new Set(Object.values(other));
+    for (const marker of markersOther.filter((m) => !sent.has(m))) {
+      expect(`${foreign.headers} ${foreign.text}`, `${context} — shows ${marker}`).not.toContain(marker);
+    }
+  });
+
+  it.each(LIST_ROUTES)('GET %s, unfiltered, shows nothing of the other company', async (path) => {
+    const res = await call('superAdmin', 'GET', path);
+    expect(res.status, `GET ${path}: ${res.text.slice(0, 200)}`).toBeLessThan(500);
+    for (const marker of markersOther) expect(`${res.headers} ${res.text}`, `GET ${path} shows ${marker}`).not.toContain(marker);
+  });
+
+  it("the totals and the exports count the granted company alone; the masterkey's count the other (control)", async () => {
+    await recordIn(ActivityRecordStatus.approved)();
+    const summary = (role: Role) => call(role, 'GET', '/emissions/context/summary?year=2026');
+    const scoped = dataOf(await summary('superAdmin')) as ReportingSummaryResponse['data'];
+    expect(scoped.bySubsidiary.map((s) => s.subsidiaryId)).toEqual([A.subsidiaryId]);
+    expect(JSON.stringify(scoped)).not.toContain(String(OTHER_TCO2E));
+    const whole = dataOf(await summary('masterkey')) as ReportingSummaryResponse['data'];
+    expect(whole.bySubsidiary.map((s) => s.subsidiaryId).sort()).toEqual([A.subsidiaryId, A.otherSubsidiaryId].sort());
+    expect(whole.totals.total).toBeGreaterThanOrEqual(OTHER_TCO2E);
+    for (const [path, rest] of CONTEXT_EXPORTS) {
+      const res = await call('superAdmin', 'GET', `${path}?year=2026${rest}`);
+      expect(res.status, `${path}: ${res.text.slice(0, 200)}`).toBe(200);
+      expect(res.text, `${path}: its own company`).toContain(subsidiaryNameA);
+      for (const marker of markersOther) expect(res.text, `${path} shows ${marker}`).not.toContain(marker);
+    }
+    // Control: the other company's record and evidence are there to be read.
+    expect((await call('masterkey', 'GET', `/activity-records/${other.recordId}`)).status).toBe(200);
+    expect((await call('masterkey', 'GET', `/activity-records/${other.recordId}/evidence`)).text).toContain(other.evidenceId);
   });
 });
 
@@ -1155,10 +1255,10 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
     };
 
     const before = await answers();
-    const progress = JSON.parse((await call('consultant', 'GET', `/targets/progress?targetIds=${dataA.targetId}`)).text) as { targetId: string; currentYear: number }[];
+    const progress = JSON.parse((await call('auditor', 'GET', `/targets/progress?targetIds=${dataA.targetId}`)).text) as { targetId: string; currentYear: number }[];
     expect(progress.find((p) => p.targetId === dataA.targetId)?.currentYear).toBe(2026);
     const completeness = JSON.parse(
-      (await call('consultant', 'GET', `/emissions/completeness?subsidiaryId=${A.subsidiaryId}&year=2026`)).text,
+      (await call('auditor', 'GET', `/emissions/completeness?subsidiaryId=${A.subsidiaryId}&year=2026`)).text,
     ) as { categories: unknown[] };
     expect(completeness.categories.length).toBeGreaterThan(0);
     // B changes in every way an aggregate could pick up: committed figures in
@@ -1185,7 +1285,7 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
             periodValue: 'August',
             calculation: { tCo2e: 4444, factorId: 'int-test-placeholder' },
             voidReason: 'Int-test later withdrawal B gave',
-            voidedBy: B.users.superAdmin.id,
+            voidedBy: B.users.masterkey.id,
             // Later than A's (VOIDED_AT): a time leaking across tenants shows,
             // now that only the generation minute is masked.
             voidedAt: VOIDED_AT.laterB,
@@ -1193,7 +1293,7 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
         ),
       )),
     ];
-    const by = B.users.dataEntry.id;
+    const by = B.users.standardUser.id;
     const denominators = [
       await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2025, metric: 'revenue', value: 2e6, unit: 'EUR', createdBy: by } }),
       await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2025, metric: 'headcount', value: 77, unit: 'FTE', createdBy: by } }),
@@ -1206,7 +1306,7 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       data: { subsidiaryId: B.subsidiaryId, reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'July', lockedBy: by },
     });
     const audit = await owner.auditLog.create({
-      data: { userId: B.users.superAdmin.id, organisationId: B.organisationId, role: 'super_admin', action: 'update', entity: 'subsidiary', entityId: B.subsidiaryId },
+      data: { userId: B.users.masterkey.id, organisationId: B.organisationId, role: 'masterkey', action: 'update', entity: 'subsidiary', entityId: B.subsidiaryId },
     });
     // B's 2026 revenue exists (beforeAll): it changes, last, so a failed create
     // above cannot leave it changed for the rest of the file.
@@ -1291,8 +1391,8 @@ describe("context exports with B's selection, as each of A's roles: the same fil
           expect(normalise(foreign.res, { subsidiaryId: B.subsidiaryId } as Ids), context).toBe(normalise(missing.res, { subsidiaryId: missingId } as Ids));
           continue;
         }
-        if (role === 'dataEntry') {
-          // data_entry exports nothing — for any selection, and leaves no trail.
+        if (role === 'standardUser') {
+          // A standard user exports nothing — for any selection, and leaves no trail.
           expect([foreign.res.status, missing.res.status], context).toStrictEqual([403, 403]);
           expect([foreign.rows, missing.rows], context).toStrictEqual([[], []]);
           continue;
@@ -1341,7 +1441,7 @@ describe("context exports with B's selection, as each of A's roles: the same fil
       // Control: A's own selection names A's subsidiary (in its label, and in
       // its ledger where the template has one), audits its record as counted
       // and its withdrawal as withdrawn, and lists the withdrawal's reason.
-      const own = await audited(() => call('consultant', method, url(A.subsidiaryId)));
+      const own = await audited(() => call('auditor', method, url(A.subsidiaryId)));
       if (method === 'HEAD') {
         expect(headRefused(own.res), `${method} ${path}: ${own.res.status}`).toBe(true);
         expect(own.rows, `${method} ${path}`).toStrictEqual([]);
@@ -1393,7 +1493,7 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
     // Outside the try: on any failure below, `finally` releases the render and
     // waits for its request to settle — its audit row and its lease — before
     // the test ends and afterEach removes A (Codex P3).
-    const rendering = call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
+    const rendering = call('auditor', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
     try {
       // A render refused before the printer says why, instead of timing out (`qa-auditor` P3-3).
       let reached = false;
@@ -1411,7 +1511,7 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
         '/reports/pdf?year=2026&template=executive_summary',
       ]) {
         for (const method of ['GET', 'HEAD'] as const) {
-          const res = await call('superAdmin', method, path);
+          const res = await call('masterkey', method, path);
           expect(res.status, `${method} ${path}: ${res.text.slice(0, 200)}`).toBe(429);
           if (method === 'GET') expect((JSON.parse(res.text) as { code?: unknown }).code, path).toBe('rate_limited');
         }
@@ -1426,11 +1526,11 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
         ['/reports//context/csv', 404],
         ['/reports/context/c%73v', 404],
       ] as const) {
-        const res = await call('superAdmin', 'GET', `${variant}?year=2026&template=executive_summary`);
+        const res = await call('masterkey', 'GET', `${variant}?year=2026&template=executive_summary`);
         expect(res.status, `${variant}: ${res.text.slice(0, 120)}`).toBe(status);
       }
       for (const path of ['/reports/context/meta?year=2026', ...CONTEXT_READS.map((r) => `${r.path}?year=2026`)]) {
-        expect((await call('superAdmin', 'GET', path)).status, path).toBe(200);
+        expect((await call('masterkey', 'GET', path)).status, path).toBe(200);
       }
       hold.resolve();
       expect((await rendering).status).toBe(200);
@@ -1442,7 +1542,7 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
       pdf.entered = undefined;
     }
     // The lease came back with the render.
-    expect((await call('superAdmin', 'GET', csv)).status).toBe(200);
+    expect((await call('masterkey', 'GET', csv)).status).toBe(200);
   });
 
   it('context and legacy exports spend one per-user quota; reads and other users do not', async () => {
@@ -1458,12 +1558,12 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
         ['/reports/context/excel?year=2026&template=executive_summary', 'GET', 200],
         [csv, 'HEAD', 405],
       ];
-      for (const [path, method, status] of spend) expect((await call('consultant', method, path)).status, `${method} ${path}`).toBe(status);
-      const sixth = await call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
+      for (const [path, method, status] of spend) expect((await call('auditor', method, path)).status, `${method} ${path}`).toBe(status);
+      const sixth = await call('auditor', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
       expect(sixth.status, sixth.text.slice(0, 200)).toBe(429);
       expect((JSON.parse(sixth.text) as { code?: unknown }).code).toBe('rate_limited');
-      expect((await call('consultant', 'GET', '/reports/context/meta?year=2026')).status).toBe(200);
-      expect((await call('superAdmin', 'GET', csv)).status).toBe(200);
+      expect((await call('auditor', 'GET', '/reports/context/meta?year=2026')).status).toBe(200);
+      expect((await call('masterkey', 'GET', csv)).status).toBe(200);
     } finally {
       config.RATE_EXPORT_PER_MINUTE = previous;
     }
@@ -1489,31 +1589,31 @@ describe('PATCH /me/preferences (LP3-01): the caller\'s own language, and nothin
   });
 
   it('writes no audit row for a language already set', async () => {
-    await call('dataEntry', 'PATCH', '/me/preferences', { language: 'en' });
-    expect(await owner.auditLog.count({ where: { entity: 'profile', entityId: A.users.dataEntry.id } })).toBe(0);
+    await call('standardUser', 'PATCH', '/me/preferences', { language: 'en' });
+    expect(await owner.auditLog.count({ where: { entity: 'profile', entityId: A.users.standardUser.id } })).toBe(0);
   });
 
   it.each([
     ['an unsupported language', { language: 'de' }],
     ['a locale tag', { language: 'tr-TR' }],
     ['no language', {}],
-    ['another profile column', { language: 'tr', role: 'super_admin' }],
+    ['another profile column', { language: 'tr', role: 'masterkey' }],
     ['another user', { language: 'tr', id: randomUUID() }],
   ])('refuses %s with validation_failed and changes nothing', async (_label, body) => {
-    const res = await call('dataEntry', 'PATCH', '/me/preferences', body);
+    const res = await call('standardUser', 'PATCH', '/me/preferences', body);
     expect(res.status).toBe(400);
     expect(JSON.parse(res.text).code).toBe('validation_failed');
-    const profile = await owner.profile.findUniqueOrThrow({ where: { id: A.users.dataEntry.id } });
-    expect(profile).toMatchObject({ language: 'en', role: 'data_entry' });
+    const profile = await owner.profile.findUniqueOrThrow({ where: { id: A.users.standardUser.id } });
+    expect(profile).toMatchObject({ language: 'en', role: 'standard_user' });
   });
 
   it("leaves every other profile as it was — A's other users and B's", async () => {
     // Only this file's tenants: other spec files create and remove theirs concurrently.
-    const others = [...ROLES.filter((r) => r !== 'dataEntry').map((r) => A.users[r].id), ...ROLES.map((r) => B.users[r].id)];
+    const others = [...ROLES.filter((r) => r !== 'standardUser').map((r) => A.users[r].id), ...ROLES.map((r) => B.users[r].id)];
     const read = () => owner.profile.findMany({ where: { id: { in: others } }, orderBy: { id: 'asc' } });
     const before = await read();
     expect(before).toHaveLength(others.length);
-    expect((await call('dataEntry', 'PATCH', '/me/preferences', { language: 'tr' })).status).toBe(200);
+    expect((await call('standardUser', 'PATCH', '/me/preferences', { language: 'tr' })).status).toBe(200);
     expect(await read()).toEqual(before);
   });
 });

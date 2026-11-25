@@ -8,7 +8,7 @@ import { api, type IssuedFileFormat } from '@/lib/api';
 import { useErrorToast } from '@/lib/i18n/hooks';
 import { formatNumber } from '@/lib/i18n/number';
 import { issuanceGapCounts } from '@/lib/report-coverage-view';
-import { LOCALE_FORMAT_TAGS, REPORT_TEMPLATES, SUPPORTED_LOCALES } from '@/lib/types';
+import { LOCALE_FORMAT_TAGS, REPORT_TEMPLATES, SUPPORTED_LOCALES, can } from '@/lib/types';
 import type {
   InventoryBoundaryVersionSummary,
   Locale,
@@ -40,9 +40,6 @@ import { Skeleton } from '@/components/ui/skeleton';
  * pressed, and one action runs at a time.
  */
 
-const ISSUERS: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant']);
-const READERS: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant', 'executive_viewer']);
-
 interface Loaded {
   datasets: ReportDatasetSummary[];
   datasetsTruncated: boolean;
@@ -63,8 +60,10 @@ export function IssuedReports({ year, role, language }: { year: number; role: Us
   const [issuing, setIssuing] = useState<{ dataset: ReportDatasetSummary; preview: ReportIssuancePreview } | null>(null);
   const seq = useRef(0);
 
-  const canRead = role !== null && READERS.has(role);
-  const canIssue = role !== null && ISSUERS.has(role);
+  // The capability table (design Decision 3): captured datasets and issued
+  // reports are read by a masterkey and an auditor; capture and issue are the masterkey's.
+  const canRead = can(role, 'dataset.read');
+  const canIssue = can(role, 'dataset.capture') && can(role, 'report.issue');
   const date = useMemo(
     () => new Intl.DateTimeFormat(LOCALE_FORMAT_TAGS[locale], { dateStyle: 'medium', timeStyle: 'short' }),
     [locale],
@@ -148,8 +147,10 @@ export function IssuedReports({ year, role, language }: { year: number; role: Us
   }
 
   const newest = loaded?.newest ?? null;
-  // A consultant captures a frozen version only (V1): super_admin freezes an open one by capturing it.
-  const consultantBlocked = role === 'consultant' && newest !== null && newest.frozenAt === null;
+  // A capturer without `dataset.capture_open_boundary` captures a frozen version
+  // only (V1): a masterkey freezes an open one by capturing it.
+  const openCaptureBlocked =
+    canIssue && !can(role, 'dataset.capture_open_boundary') && newest !== null && newest.frozenAt === null;
 
   return (
     <div className="space-y-6" data-testid="issued-reports">
@@ -236,10 +237,10 @@ export function IssuedReports({ year, role, language }: { year: number; role: Us
                   <p className="text-muted-foreground">{t('noBoundary', { year })}</p>
                 ) : (
                   <div className="space-y-1">
-                    <Button className="gap-2" disabled={busy !== null || consultantBlocked} onClick={() => void capture(newest.id)}>
+                    <Button className="gap-2" disabled={busy !== null || openCaptureBlocked} onClick={() => void capture(newest.id)}>
                       <Archive className="h-4 w-4" />{busy === 'capture' ? t('capturing') : t('capture')}
                     </Button>
-                    <p className="text-xs text-muted-foreground">{consultantBlocked ? t('consultantOpen') : t('captureNote')}</p>
+                    <p className="text-xs text-muted-foreground">{openCaptureBlocked ? t('openBoundaryBlocked') : t('captureNote')}</p>
                   </div>
                 )
               )}

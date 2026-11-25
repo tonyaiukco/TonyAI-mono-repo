@@ -73,8 +73,11 @@ import {
   InvitationClosedError,
   OwnAccountError,
   SessionRevokedError,
+  StandardUserSingleCompanyError,
   UserDisabledError,
 } from '../auth/access-errors';
+import { NotRecordApproverError } from '../activity-records/record-approver';
+import { CategoryNotGrantedError } from '../activity-records/record-scope';
 
 vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -129,6 +132,8 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   record_author_forbidden: () => new SubmitAuthorRefusedError(false),
   self_approval_forbidden: () => new SelfApprovalRefusedError(),
   self_review_forbidden: () => new SelfReviewRefusedError(),
+  not_record_approver: () => new NotRecordApproverError('super_admin'),
+  category_not_granted: () => new CategoryNotGrantedError('Electricity'),
   subsidiary_not_found: () => new ResourceNotFoundError('subsidiary_not_found'),
   location_not_found: () => new ResourceNotFoundError('location_not_found'),
   record_not_found: () => new ResourceNotFoundError('record_not_found'),
@@ -153,6 +158,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   session_revoked: () => new SessionRevokedError(),
   own_account_forbidden: () => new OwnAccountError('disable'),
   access_role_mismatch: () => new AccessRoleMismatchError(),
+  standard_user_single_company: () => new StandardUserSingleCompanyError(),
   email_unavailable: () => new EmailUnavailableError(),
   invite_refusals_exhausted: () => new InviteRefusalsExhaustedError(60),
   invitation_closed: () => new InvitationClosedError(),
@@ -204,7 +210,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   evidence_records_refused: () =>
     new BadRequestException(errorBody('evidence_records_refused', 'x', { refused: 1, total: 2 })),
   evidence_backs_locked_records: () =>
-    new ConflictException(errorBody('evidence_backs_locked_records', 'x', { count: 1 })),
+    new ConflictException(errorBody('evidence_backs_locked_records', 'x', { count: 1, reach: 'visible' })),
   record_period_invalid: () =>
     new BadRequestException(errorBody('record_period_invalid', 'x', { granularity: 'monthly' })),
   record_not_editable: () => new BadRequestException(errorBody('record_not_editable', 'x', { status: 'approved' })),
@@ -332,7 +338,7 @@ describe('the filter codes what arrives uncoded', () => {
   it.each([
     [new BadRequestException('nope'), 400, 'bad_request'],
     [new UnauthorizedException('Invalid or expired token'), 401, 'unauthorized'],
-    [new ForbiddenException('Only a super_admin may read the audit trail'), 403, 'forbidden'],
+    [new ForbiddenException('Only a masterkey may read the audit trail'), 403, 'forbidden'],
     [new NotFoundException('Target not found'), 404, 'not_found'],
     [new ConflictException('This reporting period is already locked.'), 409, 'conflict'],
     [new ThrottlerException(), 429, 'rate_limited'],

@@ -7,8 +7,10 @@ import {
   type ImportBatchDetailDTO,
   type ImportBatchDTO,
   type ImportBatchRecordRef,
+  can,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { evidenceReadyWhere } from '../activity-records/activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,8 +25,9 @@ const DEFAULT_LIST_LIMIT = 20;
 /** Seconds a source-file download link stays valid — the evidence module's. */
 const SIGNED_URL_TTL_SECONDS = 60;
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-/** Roles that read every batch of their organisation, as they read its records. */
-const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_viewer']);
+// Roles that read every batch of their organisation, as they read its
+// records: `can(role, 'import_batch.read_all')`. The granted roles see their
+// own uploads within their scope.
 
 /**
  * Applied bulk imports: list, read, download the source file, submit the
@@ -32,7 +35,7 @@ const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_vi
  * (`import_batches_select_scoped`), applied here because the API reads as the
  * runtime role (`tonyai_runtime`, LP1-03), which bypasses RLS:
  *
- *   - super_admin, consultant, executive_viewer: every batch of their
+ *   - masterkey, consultant, executive_viewer: every batch of their
  *     organisation;
  *   - data_entry: a batch THEY uploaded, and only while they can still reach
  *     every subsidiary it names — the source file holds every row, refused
@@ -52,7 +55,7 @@ export class ImportBatchesService {
 
   async list(user: RequestUser, limit = DEFAULT_LIST_LIMIT): Promise<ImportBatchDTO[]> {
     if (!user.organisationId) return [];
-    const organisationReader = ORGANISATION_READERS.has(user.role);
+    const organisationReader = can(user.role, 'import_batch.read_all');
     const rows = await this.prisma.importBatch.findMany({
       where: {
         organisationId: user.organisationId,
@@ -71,9 +74,10 @@ export class ImportBatchesService {
     const batch = await this.visibleBatch(user, id);
     const [dto] = await this.toDtos(user, [batch]);
     const records = await this.prisma.activityRecord.findMany({
-      // Tenant-filtered like every record read: a consultant sees them all,
-      // and a data_entry reader who can see the batch can reach every one.
-      where: { importBatchId: id, subsidiaryId: { in: user.accessibleSubsidiaryIds } },
+      // Scoped like every record read (`recordScopeWhere`): an organisation
+      // reader sees them all, a standard user who can see the batch only the
+      // records of its ticked categories and its own.
+      where: { importBatchId: id, AND: [recordScopeWhere(user)] },
       orderBy: [{ reportingYear: 'asc' }, { createdAt: 'asc' }],
       select: {
         id: true,
@@ -127,7 +131,7 @@ export class ImportBatchesService {
 
   /**
    * Send for review every draft of this batch the caller authored — a
-   * super_admin too, since only the author submits (decision D02). The ids are
+   * masterkey too, since only the author submits (decision D02). The ids are
    * handed to the ordinary bulk submit,
    * whose pre-flight re-checks role, author, status and tenant for each — the
    * batch only names them. A role that may not submit is refused there, with
@@ -166,7 +170,7 @@ export class ImportBatchesService {
 
   private canSee(user: RequestUser, batch: ImportBatch): boolean {
     if (!user.organisationId || batch.organisationId !== user.organisationId) return false;
-    if (ORGANISATION_READERS.has(user.role)) return true;
+    if (can(user.role, 'import_batch.read_all')) return true;
     const accessible = new Set(user.accessibleSubsidiaryIds);
     return (
       batch.uploadedBy === user.id &&

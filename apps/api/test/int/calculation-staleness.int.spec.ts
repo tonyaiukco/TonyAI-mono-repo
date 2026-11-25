@@ -140,7 +140,7 @@ async function withdraw(edition: string): Promise<void> {
  * implicit (`natural_gas`, `water_supply`), which the fixture factors carry.
  */
 async function saved(category: 'Natural Gas' | 'Water', periodValue = 'January'): Promise<ActivityRecordDTO> {
-  const record = await lifecycleServices(runtime).records.create(tenant.users.dataEntry, {
+  const record = await lifecycleServices(runtime).records.create(tenant.users.standardUser, {
     subsidiaryId: tenant.subsidiaryId,
     reportingYear: YEAR,
     reportingPeriod: 'monthly',
@@ -181,17 +181,17 @@ describe('K11 — an erratum between save and submit', () => {
     await erratum(first, [NATURAL_GAS(0.25)]);
     const { records } = lifecycleServices(runtime);
 
-    expect(await failure(records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect(await failure(records.submit(tenant.users.standardUser, record.id))).toBeInstanceOf(CalculationStaleError);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.draft);
     expect(await auditActions(record.id)).toEqual(['create']);
     expect(logged()).toEqual([`calculation_stale: submit of record ${record.id} refused — figure, factor differ`]);
 
-    await records.update(tenant.users.dataEntry, record.id, { activityValue: 100 });
+    await records.update(tenant.users.standardUser, record.id, { activityValue: 100 });
     const update = await owner.auditLog.findFirstOrThrow({ where: { entityId: record.id, action: 'update' } });
     const diff = update.diff as { before: { calculation: { kgCo2e: number } }; after: { calculation: { kgCo2e: number } } };
     expect([diff.before.calculation.kgCo2e, diff.after.calculation.kgCo2e]).toEqual([20, 25]);
 
-    await records.submit(tenant.users.dataEntry, record.id);
+    await records.submit(tenant.users.standardUser, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
   });
 
@@ -201,9 +201,9 @@ describe('K11 — an erratum between save and submit', () => {
     const fresh = await saved('Natural Gas', 'February');
     await erratum(first, [NATURAL_GAS(0.25)]);
     const { records } = lifecycleServices(runtime);
-    await records.update(tenant.users.dataEntry, fresh.id, { activityValue: 100 });
+    await records.update(tenant.users.standardUser, fresh.id, { activityValue: 100 });
 
-    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.dataEntry, [
+    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.standardUser, [
       stale.id,
       fresh.id,
     ]);
@@ -219,16 +219,16 @@ describe('K11 — an erratum between submit and approve', () => {
     const first = await load([NATURAL_GAS(0.2)]);
     const record = await saved('Natural Gas');
     const { records } = lifecycleServices(runtime);
-    await records.submit(tenant.users.dataEntry, record.id);
+    await records.submit(tenant.users.standardUser, record.id);
     await erratum(first, [NATURAL_GAS(0.25)]);
 
     expect(await failure(records.approve(tenant.users.superAdmin, record.id))).toBeInstanceOf(CalculationStaleError);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
     expect(logged()).toEqual([`calculation_stale: approve of record ${record.id} refused — figure, factor differ`]);
 
-    await records.reject(tenant.users.consultant, record.id, 'The factor was corrected — please save it again');
-    await records.update(tenant.users.dataEntry, record.id, { activityValue: 100 });
-    await records.submit(tenant.users.dataEntry, record.id);
+    await records.reject(tenant.users.superAdmin, record.id, 'The factor was corrected — please save it again');
+    await records.update(tenant.users.standardUser, record.id, { activityValue: 100 });
+    await records.submit(tenant.users.standardUser, record.id);
     await records.approve(tenant.users.superAdmin, record.id);
     expect(await row(record.id)).toMatchObject({ status: ActivityRecordStatus.approved, calculation: { kgCo2e: 25 } });
     expect(await auditActions(record.id)).toEqual(['create', 'submit', 'reject', 'update', 'submit', 'approve']);
@@ -243,9 +243,9 @@ describe('K11 — a recompute that refuses', () => {
     await withdraw(edition);
     const { records } = lifecycleServices(runtime);
 
-    expect(await failure(records.submit(tenant.users.dataEntry, single.id))).toBeInstanceOf(CalculationStaleError);
+    expect(await failure(records.submit(tenant.users.standardUser, single.id))).toBeInstanceOf(CalculationStaleError);
     expect(logged()).toEqual([`calculation_stale: submit of record ${single.id} refused — recompute refused (no_factor)`]);
-    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.dataEntry, [
+    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.standardUser, [
       inBulk.id,
     ]);
     expect(report.failed).toEqual([expect.objectContaining({ recordId: inBulk.id, code: 'calculation_stale' })]);
@@ -259,9 +259,9 @@ describe('K11 — an uncalculated record compares as one', () => {
     const edition = await load([WATER(0.3)]);
     const { records } = lifecycleServices(runtime);
 
-    expect(await failure(records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect(await failure(records.submit(tenant.users.standardUser, record.id))).toBeInstanceOf(CalculationStaleError);
     await withdraw(edition);
-    await records.submit(tenant.users.dataEntry, record.id);
+    await records.submit(tenant.users.standardUser, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
   });
 });
@@ -284,7 +284,7 @@ describe('K11 — a snapshot from before LP3-03', () => {
     });
     await attachEvidence(owner, tenant, [legacy.id]);
 
-    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, legacy.id))).toBeInstanceOf(
+    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.standardUser, legacy.id))).toBeInstanceOf(
       CalculationStaleError,
     );
     expect(logged()[0]).toMatch(new RegExp(`^calculation_stale: submit of record ${legacy.id} refused — legacy snapshot`));
@@ -323,15 +323,15 @@ describe('C8 — an untyped record of a typed category is not committed', () => 
     await attachEvidence(owner, tenant, [draft.id]);
     const { records } = lifecycleServices(runtime);
 
-    const refused = await failure(records.submit(tenant.users.dataEntry, draft.id));
+    const refused = await failure(records.submit(tenant.users.standardUser, draft.id));
     expect(refused).toBeInstanceOf(CalculationInputError);
     expect((refused as CalculationInputError).code).toBe('activity_type_required');
     expect(logged()).toEqual([]);
     expect((await row(draft.id)).status).toBe(ActivityRecordStatus.draft);
     expect(await auditActions(draft.id)).toEqual([]);
 
-    await records.update(tenant.users.dataEntry, draft.id, { activityType: 'diesel' });
-    await records.submit(tenant.users.dataEntry, draft.id);
+    await records.update(tenant.users.standardUser, draft.id, { activityType: 'diesel' });
+    await records.submit(tenant.users.standardUser, draft.id);
     expect(await row(draft.id)).toMatchObject({ status: ActivityRecordStatus.submitted, activityType: 'diesel' });
   });
 });
@@ -358,7 +358,7 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
           data: { subsidiaryId: tenant.subsidiaryId, name: `K11 site ${randomUUID().slice(0, 8)}`, geographyCode: siteGeography },
         })
       : null;
-    const record = await lifecycleServices(runtime).records.create(tenant.users.dataEntry, {
+    const record = await lifecycleServices(runtime).records.create(tenant.users.standardUser, {
       subsidiaryId: tenant.subsidiaryId,
       ...(location ? { locationId: location.id } : {}),
       reportingYear: 2026,
@@ -379,7 +379,7 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
   it.each(SAVES)('%s (%s) %s %s, at a %s site: saved, submitted and approved', async (category, activityType, value, unit, site) => {
     const record = await savedAt(category, activityType, value, unit, site);
     const { records } = lifecycleServices(runtime);
-    await records.submit(tenant.users.dataEntry, record.id);
+    await records.submit(tenant.users.standardUser, record.id);
     await records.approve(tenant.users.superAdmin, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.approved);
     expect(logged()).toEqual([]);
@@ -388,10 +388,10 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
   it('a record returned and saved again with another value is fresh too', async () => {
     const record = await savedAt('Electricity', null, 123456.789, 'MWh', null);
     const { records } = lifecycleServices(runtime);
-    await records.submit(tenant.users.dataEntry, record.id);
-    await records.reject(tenant.users.consultant, record.id, 'Please check the meter reading again');
-    await records.update(tenant.users.dataEntry, record.id, { activityValue: 0.30000000000000004 });
-    await records.submit(tenant.users.dataEntry, record.id);
+    await records.submit(tenant.users.standardUser, record.id);
+    await records.reject(tenant.users.superAdmin, record.id, 'Please check the meter reading again');
+    await records.update(tenant.users.standardUser, record.id, { activityValue: 0.30000000000000004 });
+    await records.submit(tenant.users.standardUser, record.id);
     await records.approve(tenant.users.superAdmin, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.approved);
   });
@@ -438,7 +438,7 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     const location = await owner.location.create({
       data: { subsidiaryId: tenant.subsidiaryId, name: `K11 TR ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
     });
-    const record = await lifecycleServices(runtime).records.create(tenant.users.dataEntry, {
+    const record = await lifecycleServices(runtime).records.create(tenant.users.standardUser, {
       subsidiaryId: tenant.subsidiaryId,
       locationId: location.id,
       reportingYear: YEAR_TR,
@@ -465,7 +465,7 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
       snapshotSchema: 3,
       parameters: [{ name: 'ncvKcalPerSm3', value: 8100, origin: 'user' }],
     });
-    await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id);
+    await lifecycleServices(runtime).records.submit(tenant.users.standardUser, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
   });
 
@@ -473,7 +473,7 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     await loadTr();
     const record = await savedTr(gas({ ncvKcalPerSm3: 8100 }));
     await owner.activityRecord.update({ where: { id: record.id }, data: { parameters: { ncvKcalPerSm3: 9000 } } });
-    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.standardUser, record.id))).toBeInstanceOf(CalculationStaleError);
     expect(logged().join()).toMatch(/refused — input/);
   });
 
@@ -481,9 +481,9 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     await loadTr();
     const record = await savedTr(gas({ ncvKcalPerSm3: 8100 }));
     await owner.activityRecord.update({ where: { id: record.id }, data: { parameters: { ncvKcalPerSm3: 8.25 } } });
-    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.standardUser, record.id))).toBeInstanceOf(CalculationStaleError);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.draft);
-    const refused = await failure(lifecycleServices(runtime).records.update(tenant.users.dataEntry, record.id, { parameters: { ncvKcalPerSm3: 8.25 } } as never));
+    const refused = await failure(lifecycleServices(runtime).records.update(tenant.users.standardUser, record.id, { parameters: { ncvKcalPerSm3: 8.25 } } as never));
     expect((refused as { code?: string }).code).toBe('ncv_out_of_range');
   });
 
@@ -493,7 +493,7 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     const fresh = await savedTr({ ...gas({ ncvKcalPerSm3: 8100 }), periodValue: 'February' });
     await owner.activityRecord.update({ where: { id: stale.id }, data: { parameters: { ncvKcalPerSm3: 9000 } } });
     const { records } = lifecycleServices(runtime);
-    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.dataEntry, [stale.id, fresh.id]);
+    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.standardUser, [stale.id, fresh.id]);
     expect(JSON.stringify(report)).toContain('calculation_stale');
     expect((await row(stale.id)).status).toBe(ActivityRecordStatus.draft);
     expect((await row(fresh.id)).status).toBe(ActivityRecordStatus.submitted);
@@ -503,7 +503,7 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     await loadTr();
     const empty = await savedTr(gas());
     await owner.activityRecord.update({ where: { id: empty.id }, data: { parameters: {} } });
-    await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, empty.id);
+    await lifecycleServices(runtime).records.submit(tenant.users.standardUser, empty.id);
     expect((await row(empty.id)).status).toBe(ActivityRecordStatus.submitted);
   });
 
@@ -514,9 +514,9 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     const { parameters: _p, parameterRows: _r, refrigerantTerms: _t, ...v2 } = stored;
     await owner.activityRecord.update({ where: { id: record.id }, data: { calculation: { ...v2, snapshotSchema: 2 } as never } });
     const { records } = lifecycleServices(runtime);
-    expect(await failure(records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
-    await records.update(tenant.users.dataEntry, record.id, { activityValue: 100 });
-    await records.submit(tenant.users.dataEntry, record.id);
+    expect(await failure(records.submit(tenant.users.standardUser, record.id))).toBeInstanceOf(CalculationStaleError);
+    await records.update(tenant.users.standardUser, record.id, { activityValue: 100 });
+    await records.submit(tenant.users.standardUser, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
   });
 
@@ -543,7 +543,7 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     });
     // 1,000 × 8,250 / 9,155 × the fixture's 0.2.
     expect((record.calculation as { kgCo2e: number }).kgCo2e).toBeCloseTo((1000 * 8250 / 9155) * 0.2, 9);
-    await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id);
+    await lifecycleServices(runtime).records.submit(tenant.users.standardUser, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
   });
 
@@ -554,14 +554,14 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     const volume = await savedTr(gas({ cvBasis: null, ncvKcalPerSm3: 8100 }));
     expect(volume.parameters).toEqual({ cvBasis: null, ncvKcalPerSm3: 8100 });
     expect(volume.calculation).toMatchObject({ parameters: [{ name: 'ncvKcalPerSm3', value: 8100, origin: 'user' }] });
-    const patched = await records.update(tenant.users.dataEntry, volume.id, { parameters: { cvBasis: null } } as never);
+    const patched = await records.update(tenant.users.standardUser, volume.id, { parameters: { cvBasis: null } } as never);
     expect(patched.parameters).toEqual({ cvBasis: null });
     // An energy bill: refused as the missing input it is, on create and on update.
     const created = await failure(savedTr(bill({ cvBasis: null }, 'April')));
     expect(created).toMatchObject({ code: 'parameters_required' });
     const energy = await savedTr(bill({ cvBasis: 'net' }, 'May'));
     // The quantity sent too: without it the re-entry rule answers first (its own case).
-    const updated = await failure(records.update(tenant.users.dataEntry, energy.id, { activityValue: 1000, parameters: { cvBasis: null } } as never));
+    const updated = await failure(records.update(tenant.users.standardUser, energy.id, { activityValue: 1000, parameters: { cvBasis: null } } as never));
     expect(updated).toMatchObject({ code: 'parameters_required' });
     expect((await row(energy.id)).parameters).toEqual({ cvBasis: 'net' });
   });
@@ -573,22 +573,22 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     const other = await owner.location.create({
       data: { subsidiaryId: tenant.subsidiaryId, name: `K11 TR ${randomUUID().slice(0, 8)}`, geographyCode: 'TR' },
     });
-    const moved = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id } as never));
+    const moved = await failure(records.update(tenant.users.standardUser, net.id, { locationId: other.id } as never));
     expect(moved).toMatchObject({ response: { code: 'activity_value_reentry_required', statusCode: 400 } });
     // An explicit null quantity inherits the stored figure too (security-rls re-review).
-    const nulled = await failure(records.update(tenant.users.dataEntry, net.id, { locationId: other.id, activityValue: null } as never));
+    const nulled = await failure(records.update(tenant.users.standardUser, net.id, { locationId: other.id, activityValue: null } as never));
     expect(nulled).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
-    const toVolume = await failure(records.update(tenant.users.dataEntry, net.id, { activityUnit: 'standard_cubic_metres', parameters: null } as never));
+    const toVolume = await failure(records.update(tenant.users.standardUser, net.id, { activityUnit: 'standard_cubic_metres', parameters: null } as never));
     expect(toVolume).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
     expect((await row(net.id))).toMatchObject({ activityUnit: 'kWh', activityValue: 1000, parameters: { cvBasis: 'net' } });
     // With the quantity sent again, the move is the user's own figure.
-    const resent = await records.update(tenant.users.dataEntry, net.id, { locationId: other.id, activityValue: 1000 } as never);
+    const resent = await records.update(tenant.users.standardUser, net.id, { locationId: other.id, activityValue: 1000 } as never);
     expect(resent).toMatchObject({ locationId: other.id, parameters: { cvBasis: 'net' } });
     // A gross bill keeps its figure on a move: gross is what every geography prices.
     const gross = await savedTr(bill({ cvBasis: 'gross' }, 'September'));
-    expect(await records.update(tenant.users.dataEntry, gross.id, { locationId: other.id } as never)).toMatchObject({ locationId: other.id });
+    expect(await records.update(tenant.users.standardUser, gross.id, { locationId: other.id } as never)).toMatchObject({ locationId: other.id });
     // ...but not on a new unit: 1,000 kWh is not 1,000 MWh, whatever the basis (second review).
-    const scaled = await failure(records.update(tenant.users.dataEntry, gross.id, { activityUnit: 'MWh' } as never));
+    const scaled = await failure(records.update(tenant.users.standardUser, gross.id, { activityUnit: 'MWh' } as never));
     expect(scaled).toMatchObject({ response: { code: 'activity_value_reentry_required' } });
     expect((await row(gross.id))).toMatchObject({ activityUnit: 'kWh', activityValue: 1000 });
   });
@@ -600,8 +600,8 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     await owner.activityRecord.update({ where: { id: stripped.id }, data: { parameters: Prisma.DbNull } });
     await owner.activityRecord.update({ where: { id: flipped.id }, data: { parameters: { cvBasis: 'net' } } });
     const { records } = lifecycleServices(runtime);
-    expect(await failure(records.submit(tenant.users.dataEntry, stripped.id))).toBeInstanceOf(CalculationStaleError);
-    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.dataEntry, [flipped.id]);
+    expect(await failure(records.submit(tenant.users.standardUser, stripped.id))).toBeInstanceOf(CalculationStaleError);
+    const report = await new BulkSubmitService(runtime, records, new AuditService(runtime)).submitIds(tenant.users.standardUser, [flipped.id]);
     expect(JSON.stringify(report)).toContain('calculation_stale');
     expect((await row(stripped.id)).status).toBe(ActivityRecordStatus.draft);
     expect((await row(flipped.id)).status).toBe(ActivityRecordStatus.draft);
@@ -611,7 +611,7 @@ describe('K11 and the TR rules (LP4-02, D5, D7, D11)', () => {
     await loadTr();
     const record = await savedTr(fm200(EQUIPMENT));
     await owner.activityRecord.update({ where: { id: record.id }, data: { parameters: Prisma.DbNull } });
-    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect(await failure(lifecycleServices(runtime).records.submit(tenant.users.standardUser, record.id))).toBeInstanceOf(CalculationStaleError);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.draft);
   });
 });

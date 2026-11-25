@@ -16,7 +16,8 @@ Subcommands, in workflow order:
   plan            decide whether this commit deploys (image-relevant change)
   wait-ci         after the images are built in parallel: CI must pass for this exact commit
   migrate         apply pending Prisma migrations, then the read-only owner privilege check
-  rollout         drain API, update API then web, verify, smoke; roll back on failure
+  rollout         drain API, update API then web, verify, smoke; roll back on failure,
+                  except across a forward-only migration (`-- tonyai:forward-only`)
   check-github    owner preflight before federation: main ruleset + `qa` admits main only
 
 On demand (owner):
@@ -363,6 +364,42 @@ def fingerprint_at(sha, read_git=git_bytes):
             'migrations': [{'name': p.split('/')[-2], 'sha256': digest(p)} for p in paths]}
 
 
+# A migration whose SQL carries this line cannot be crossed backwards: the previous image
+# misreads (or cannot read) the schema it leaves (inc26-roles-approval-chain renames the
+# role enum in place). The deploy never rolls the apps back across one.
+FORWARD_ONLY_MARK = b'-- tonyai:forward-only'
+
+
+def forward_only_added(candidate, live_sha, read_git=git_bytes):
+    """Names of the migrations `candidate` adds over the live source that mark themselves
+    forward-only. An unreadable live source answers as forward-only: refusing a rollback
+    that might have been safe beats rolling an old image onto a schema it misreads."""
+    names = [m['name'] for m in candidate.get('migrations', [])]
+    sha = candidate.get('source_sha')
+    try:
+        live = {m['name'] for m in fingerprint_at(live_sha, read_git)['migrations']}
+    except SafeFailure:
+        return ['(live source unreadable)']
+    added = [name for name in names if name not in live]
+    marked = []
+    for name in added:
+        sql = read_git('show', sha + ':packages/db/prisma/migrations/' + name + '/migration.sql')
+        if FORWARD_ONLY_MARK in sql:
+            marked.append(name)
+    return marked
+
+
+def forward_only_beyond(candidate, ahead_sha, read_git=git_bytes):
+    """Forward-only migrations committed at `ahead_sha` (main's head) that `candidate`
+    lacks. Any of them may already be applied — a deploy run commits its migrations and
+    can stop before the rollout, leaving the live apps' source tag on the old commit —
+    so a rollback to `candidate` could put an old image on a schema it misreads."""
+    have = {m['name'] for m in candidate.get('migrations', [])}
+    ahead = [m['name'] for m in fingerprint_at(ahead_sha, read_git)['migrations']]
+    return [name for name in ahead if name not in have
+            and FORWARD_ONLY_MARK in read_git('show', ahead_sha + ':packages/db/prisma/migrations/' + name + '/migration.sql')]
+
+
 def bind_at(candidate, inputs, sha, read_git=git_bytes):
     """candidate.bind() without a checkout: the same expected candidate, from git objects."""
     foundation, release = validate_release(inputs)
@@ -553,7 +590,8 @@ def rollback(foundation, candidate, mode, rid, project, read, patch, owns, run_g
     sha = candidate.get('source_sha') if isinstance(candidate, dict) else None
     if not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{40}', sha):
         raise SafeFailure('Candidate has no full source SHA; nothing was changed.')
-    if run_git('merge-base', '--is-ancestor', sha, main_head(run_git))[0] != 0:
+    head = main_head(run_git)
+    if run_git('merge-base', '--is-ancestor', sha, head)[0] != 0:
         raise SafeFailure('Candidate source is not on main; nothing was changed.')
     apps = {kind: show(foundation, kind, read) for kind in ('api', 'web')}
     live_sha, _ = live_identity(foundation, apps, same_revision=False)
@@ -568,6 +606,13 @@ def rollback(foundation, candidate, mode, rid, project, read, patch, owns, run_g
     # and the forward return must not skip one either.
     if fingerprint_at(live_sha, read_git)['migrations'] != candidate['migrations']:
         raise SafeFailure('Rollback would cross a migration; nothing was changed.')
+    # The live tag says what the apps run, not what the database holds (owner's review):
+    # a forward-only migration on main that the target lacks may be applied already.
+    beyond = forward_only_beyond(candidate, head, read_git)
+    if beyond:
+        raise SafeFailure('Rollback refused: main carries forward-only migration(s) ' + ', '.join(beyond)
+                          + ' that the target lacks and the database may already hold; recover by '
+                          're-running the QA deploy from main. Nothing was changed.')
     try:
         rollout(foundation, candidate, sha, rid, read, patch, owns, **rollout_options)
     except SafeFailure as error:
@@ -722,12 +767,16 @@ def budgeted(sleep, clock, deadline):
 
 def rollout(foundation, candidate, sha, rid, read, patch, owns, sleep=time.sleep,
             fetch=fetch_status, log=print, clock=time.monotonic, budget=FORWARD_BUDGET_SECONDS,
-            shield=lambda: None):
+            shield=lambda: None, forward_only=None):
+    """`forward_only(before)` names the forward-only migrations this release crosses (the
+    deploy passes it; a rollback never crosses a migration). With any, a failure is NOT
+    rolled back: the previous images cannot run on the migrated schema."""
     registry = foundation['registry_name'] + '.azurecr.io/tonyai/'
     before = {kind: show(foundation, kind, read) for kind in ('api', 'web')}
     # Refuse an unpatchable target before the API is drained, never after.
     if not all(owns(before[kind]) for kind in ('api', 'web')):
         raise SafeFailure('Live app identifiers differ from the QA target; nothing was changed.')
+    crossed = forward_only(before) if forward_only else []
     attempts = grace_attempts(before['api'])
     images = {kind: registry + kind + '@' + candidate[kind + '_digest'] for kind in ('api', 'web')}
     forward = budgeted(sleep, clock, clock() + budget)
@@ -743,6 +792,12 @@ def rollout(foundation, candidate, sha, rid, read, patch, owns, sleep=time.sleep
     except BaseException as error:  # including a job cancel's KeyboardInterrupt
         shield()  # a second cancel signal must not interrupt the rollback itself
         reason = str(error) if isinstance(error, SafeFailure) else 'rollout failed; details withheld.'
+        if crossed:
+            log('FAIL: ' + reason + ' NOT rolled back: this release crosses forward-only migration(s) '
+                + ', '.join(crossed) + '.')
+            raise SafeFailure('Deploy failed (' + reason + ') and was NOT rolled back: the previous images '
+                              'cannot run on the schema of ' + ', '.join(crossed)
+                              + '. QA is down until the QA deploy is re-run forward from main.') from None
         log('FAIL: ' + reason + ' Rolling back to the previous images.')
         incomplete = []
         # Reverse order: web never depends on the API rollback succeeding.
@@ -967,7 +1022,14 @@ def main(argv=None, env=os.environ):
               + str(checked['platform_default_findings']) + '.')
         return
     signal.signal(signal.SIGTERM, interrupted)
-    rollout(foundation, candidate, args.sha, rid, arm, arm.patch, arm.owns, shield=shield_signals)
+    def crossed(before):
+        try:
+            live_sha, _ = live_identity(foundation, before, same_revision=False)
+        except SafeFailure:
+            return ['(live source unknown)']
+        return forward_only_added(candidate, live_sha)
+    rollout(foundation, candidate, args.sha, rid, arm, arm.patch, arm.owns, shield=shield_signals,
+            forward_only=crossed)
     print('PASS: QA serves ' + args.sha + ' as revision suffix ' + rid + '.')
 
 

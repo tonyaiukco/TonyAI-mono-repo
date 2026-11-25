@@ -8,6 +8,7 @@ import {
   type ReportingPeriod,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from './record-scope';
 import type { KeysetSort } from '../common/keyset-cursor';
 import { scopedSubsidiaryIds } from '../common/page-filters';
 
@@ -47,6 +48,9 @@ export interface RecordFilters {
   locationId?: string | null;
   scope?: 1 | 2 | 3;
   search?: string;
+  /** Only the pending records the caller decides; the condition is built
+   *  from database facts (`awaitingDecisionWhere`), not here. */
+  awaitingMyDecision?: true;
 }
 
 export function normaliseRecordFilters(query: ActivityRecordPageFilters): RecordFilters {
@@ -64,6 +68,7 @@ export function normaliseRecordFilters(query: ActivityRecordPageFilters): Record
     locationId: query.locationId,
     scope: query.scope,
     search: query.search ? query.search : undefined,
+    awaitingMyDecision: query.awaitingMyDecision === true ? true : undefined,
   };
 }
 
@@ -104,6 +109,8 @@ export function recordFilterWhere(user: RequestUser, f: RecordFilters): Prisma.A
   if (subsidiaryIds.length === 0) return null;
   return {
     subsidiaryId: { in: subsidiaryIds },
+    // A standard user's categories (or own records) on top of the company scope.
+    AND: [recordScopeWhere(user)],
     ...(f.year !== undefined ? { reportingYear: f.year } : {}),
     ...(f.period !== undefined ? { reportingPeriod: f.period } : {}),
     ...(f.periodValue !== undefined ? { periodValue: f.periodValue } : {}),

@@ -2,8 +2,8 @@
   "title": "Kullanıcılar",
   "subtitle": "Ana şirketinize kişileri davet edin, rollerini ve erişimlerini yönetin.",
   "invite": "Kullanıcı davet et",
-  "forbiddenTitle": "Kullanıcıları yalnızca süper yöneticiler yönetir",
-  "forbidden": "Kişileri davet etmek, rollerini veya erişimlerini değiştirmek ana şirketinizin süper yöneticilerine aittir. Rolünüz: {role}.",
+  "forbiddenTitle": "Kullanıcıları yalnızca masterkey'ler ve süper yöneticiler yönetir",
+  "forbidden": "Kişileri davet etmek, rollerini veya erişimlerini değiştirmek ana şirketinizin masterkey'lerine ve süper yöneticilerine aittir. Rolünüz: {role}.",
   "loadFailed": "Kullanıcılar yüklenemedi.",
   "empty": "Henüz kullanıcı yok.",
   "loadMore": "Daha fazla yükle",
@@ -16,7 +16,11 @@
     "actions": "İşlemler"
   },
   "roles": {
-    "super_admin": "Süper yönetici",
+    "masterkey": "Masterkey",
+    "super_admin": "Süper Yönetici",
+    "standard_user": "Standart Kullanıcı",
+    "auditor": "Denetçi",
+    "legacy_super_admin": "Super Admin (önceki rol modeli)",
     "consultant": "Danışman",
     "data_entry": "Veri girişi",
     "executive_viewer": "Yönetici izleyici"
@@ -53,41 +57,56 @@
     "name": "Ad soyad",
     "role": "Rol",
     "language": "E-posta dili",
-    "subsidiariesHelp": "Veri Girişi kullanıcıları yalnızca burada işaretlenen bağlı şirketlerde çalışır.",
-    "noSubsidiaries": "Ana şirketinizin henüz bağlı şirketi yok.",
     "cancel": "Vazgeç",
     "submit": "Daveti gönder",
-    "submitting": "Gönderiliyor…"
+    "submitting": "Gönderiliyor…",
+    "superAdminHelp": "Süper yönetici yalnızca burada işaretlenen bağlı şirketlerde, tüm kategorilerde çalışır.",
+    "standardUserHelp": "Standart kullanıcı tek bir bağlı şirkette, yalnızca o şirket için işaretlenen kategorilerde çalışır."
   },
   "picker": {
     "heading": "Bu kullanıcının çalıştığı bağlı şirketler",
+    "singleHeading": "Bu kullanıcının çalıştığı bağlı şirket",
+    "heldHeading": "Bu kullanıcının sahip olduğu bağlı şirketler",
+    "heldNote": "Bu hesap önceki rol modelinden birden fazla bağlı şirketle aktarıldı. Her birinin erişimi kaldırılabilir veya kategorileri değiştirilebilir; yeni bir bağlı şirket eklenemez.",
     "selectedCount": "{count} / {total} seçili",
     "selectAll": "Tümünü seç",
     "clear": "Temizle",
-    "emptyWarning": "En az bir bağlı şirket işaretlenene kadar bu kullanıcı veri giremez."
+    "clearCompany": "Seçilen bağlı şirketi temizle",
+    "noneAssignable": "Henüz atayabileceğiniz bir bağlı şirket yok.",
+    "emptyWarning": "En az bir bağlı şirket işaretlenene kadar bu kullanıcı veri giremez.",
+    "noCategoryWarning": "En az bir kategori işaretlenene kadar bu kullanıcı {name} için çalışamaz.",
+    "categoriesHeading": "{name} kategorileri",
+    "categoriesCount": "{count} / {total} kategori seçili",
+    "selectAllCategoriesFor": "{name} için tüm kategorileri seç",
+    "clearCategoriesFor": "{name} kategorilerini temizle",
+    "withdraw": "Erişimi kaldır",
+    "withdrawFor": "{name} erişimini kaldır",
+    "restore": "Koru",
+    "restoreFor": "{name} erişimini koru",
+    "withdrawn": "Kaydettiğinizde kaldırılacak"
   },
   "roleAccessNote": {
-    "super_admin": "Süper yönetici ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez.",
-    "consultant": "Danışman ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez.",
-    "executive_viewer": "Yönetici izleyici ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez."
+    "auditor": "Denetçi ana şirketin tüm bağlı şirketlerini görür ve hiçbir şeyi değiştirmez. Bağlı şirket seçmek gerekmez."
   },
   "invited": "Davet {email} adresine gönderildi",
   "invitedNotDelivered": "{email} eklendi, ancak davet e-postası gönderilemedi. Listeden yeniden gönderin.",
   "resent": "Davet {email} adresine yeniden gönderildi",
   "roleDialog": {
     "title": "{name} için rolü değiştir",
-    "description": "Başka bir role geçen Veri Girişi kullanıcısı bağlı şirket erişimlerini kaybeder.",
+    "description": "Rol değişikliği hesabın tüm bağlı şirket erişimlerini kaldırır. Burada kimse masterkey yapılamaz.",
     "submit": "Rolü kaydet",
     "submitting": "Kaydediliyor…",
-    "cancel": "Vazgeç"
+    "cancel": "Vazgeç",
+    "placeholder": "Bir rol seçin"
   },
   "roleChanged": "Rol güncellendi",
   "accessDialog": {
     "title": "{name} için bağlı şirket erişimi",
-    "description": "Yalnızca burada işaretlenen bağlı şirketler için veri girip gönderebilir.",
     "submit": "Erişimi kaydet",
     "submitting": "Kaydediliyor…",
-    "cancel": "Vazgeç"
+    "cancel": "Vazgeç",
+    "superAdminDescription": "Yalnızca burada işaretlenen bağlı şirketlerde, tüm kategorilerde çalışabilir.",
+    "standardUserDescription": "Yalnızca burada işaretlenen bağlı şirket ve kategorilerde veri girip görebilir."
   },
   "accessSaved": "Erişim güncellendi",
   "disableDialog": {
@@ -98,5 +117,9 @@
   },
   "disabledToast": "{name} devre dışı bırakıldı",
   "enabledToast": "{name} etkinleştirildi. Yeniden giriş yapmak için “Şifrenizi mi unuttunuz?” ile yeni bir şifre belirlemesi gerekir.",
-  "authSyncWarning": "Kaydedildi. Giriş engeli kısa süre içinde uygulanacak; uygulama hesabı her durumda reddediyor."
+  "authSyncWarning": "Kaydedildi. Giriş engeli kısa süre içinde uygulanacak; uygulama hesabı her durumda reddediyor.",
+  "roleChangedStandardUser": "Kullanıcının bağlı şirketini ve kategorilerini o bağlı şirketin süper yöneticisi atar.",
+  "errors": {
+    "standardUserSingleCompany": "Standart kullanıcı yalnızca bir bağlı şirkette çalışır ve bu değişiklik ona bir bağlı şirket daha verirdi. Hiçbir şey değiştirilmedi."
+  }
 }

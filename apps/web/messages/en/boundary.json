@@ -1,7 +1,7 @@
 {
   "title": "Inventory boundary",
   "subtitle": "The subsidiaries, facilities, categories and named sources a year's inventory covers",
-  "readOnly": "Only a super admin can declare, confirm or delete a boundary. You can view it.",
+  "readOnly": "Only a Masterkey can declare, confirm or delete a boundary. You can view it.",
   "grantedView": "You see only the subsidiaries you have access to; any other subsidiary this version declares is not shown.",
   "openExists": "Version {version} is open. Edit it, or delete it, before you start another.",
   "versions": {

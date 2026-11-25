@@ -1,3 +1,4 @@
+import { can } from "./types";
 import type {
   InventoryBoundaryGapCode,
   InventoryBoundaryVersionDTO,
@@ -9,7 +10,7 @@ import type {
 
 /**
  * What the boundary editor (LP4-03 PR C) may offer and shows, from the API's
- * answers alone. The API decides every write — super_admin's, on an open
+ * answers alone. The API decides every write — masterkey's, on an open
  * version only — so this module only keeps the screen from offering what it
  * would refuse; a refusal it did not foresee is still toasted and reloaded.
  */
@@ -37,13 +38,13 @@ export interface BoundaryActions {
   confirmBlock: ConfirmBlock;
 }
 
-/** Only super_admin writes (`BoundaryWriterGuard`); only the year's open version takes a write. */
+/** Only a `boundary.write` role writes (`BoundaryWriterGuard`; today the masterkey); only the year's open version takes a write. */
 export function boundaryActions(input: {
   role: UserRole | undefined;
   versions: readonly InventoryBoundaryVersionSummary[];
   selected: InventoryBoundaryVersionDTO | null;
 }): BoundaryActions {
-  const writer = input.role === "super_admin";
+  const writer = can(input.role, "boundary.write");
   const open = input.versions.some((v) => v.frozenAt === null);
   const editable = writer && input.selected !== null && input.selected.frozenAt === null
     && input.selected.view === "organisation";

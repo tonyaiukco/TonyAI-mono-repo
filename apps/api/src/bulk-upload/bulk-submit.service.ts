@@ -36,6 +36,7 @@ import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculatio
 import { AuditService } from '../audit/audit.service';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
+import { CategoryNotGrantedError, recordScopeWhere } from '../activity-records/record-scope';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkSubmitActivityRecordsDto } from './dto/bulk-submit-activity-records.dto';
@@ -219,7 +220,7 @@ export class BulkSubmitService {
    * the per-record path cannot give a BATCH:
    *
    * 1. **The author gate, before anything is locked.** `submit` has the same
-   *    gate since decision D02 (only the author submits, `super_admin`
+   *    gate since decision D02 (only the author submits, `masterkey`
    *    included); here it turns a colleague's draft into a `not_author` row
    *    without a transaction per id. It was this route's own rule first: at a
    *    thousand ids, a draft any colleague could submit was a way to sweep
@@ -241,9 +242,11 @@ export class BulkSubmitService {
     const rows = (await this.prisma.activityRecord.findMany({
       where: {
         id: { in: requestedIds },
-        // Mirrors `loadScoped`, so an inaccessible id is indistinguishable
-        // from an absent one here exactly as it is there.
+        // Mirrors `loadScoped` (the record scope: a standard user's ticked
+        // categories and own records), so an id outside it is
+        // indistinguishable from an absent one here exactly as it is there.
         subsidiaryId: { in: user.accessibleSubsidiaryIds },
+        AND: [recordScopeWhere(user)],
       },
       select: {
         id: true,
@@ -279,7 +282,7 @@ export class BulkSubmitService {
         });
         continue;
       }
-      // No `super_admin` exemption: only the author submits (decision D02),
+      // No `masterkey` exemption: only the author submits (decision D02),
       // the same rule `submit` itself enforces.
       if (row.createdBy !== user.id) {
         rejected.push({
@@ -376,6 +379,11 @@ export class BulkSubmitService {
     if (error instanceof SubmitRoleRefusedError) throw error;
     if (error instanceof SubmitAuthorRefusedError) {
       return { recordId, code: 'not_author', message: error.message };
+    }
+    // Before the plain Nest classes: it is a ForbiddenException, and the
+    // single-record submit answers it as its own code.
+    if (error instanceof CategoryNotGrantedError) {
+      return { recordId, code: 'category_not_granted', message: error.message };
     }
     // Changed by someone else between this batch's read and the record's
     // lock — most often no longer a draft, which is what `not_submittable`

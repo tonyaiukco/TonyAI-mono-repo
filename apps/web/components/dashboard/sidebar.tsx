@@ -20,13 +20,13 @@ const navItems = [
   // explains who may review, which a missing nav entry cannot.
   { id: 'review', label: 'review', icon: Stamp, href: '/review' },
   { id: 'reports', label: 'reports', icon: FileText, href: '/reports' },
-  // LP4-03 PR C: every role reads the year's boundary; only super_admin writes,
+  // LP4-03 PR C: every role reads the year's boundary; only masterkey writes,
   // and the page says so rather than hiding.
   { id: 'boundary', label: 'boundary', icon: Waypoints, href: '/inventory-boundary' },
-  // super_admin-only: the API 403s every other role, and the page says so
+  // masterkey-only: the API 403s every other role, and the page says so
   // rather than hiding — a missing nav item reads as a bug to a tester.
   { id: 'audit', label: 'audit', icon: ScrollText, href: '/audit' },
-  // LP4-01, super_admin-only like the audit trail, and shown for the same reason.
+  // LP4-01, masterkey-only like the audit trail, and shown for the same reason.
   { id: 'users', label: 'users', icon: Users, href: '/users' },
 ] as const;
 

@@ -15,11 +15,16 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+/// The four roles of INC-2.6 §1 (inc26-roles-approval-chain). Listed in the
+/// database's order: the migration renamed the earlier values in place
+/// (super_admin → masterkey, consultant → auditor, data_entry →
+/// standard_user) and reused the emptied executive_viewer slot for the new,
+/// company-scoped super_admin. Nothing orders by role.
 enum UserRole {
+  masterkey
+  auditor
+  standard_user
   super_admin
-  consultant
-  data_entry
-  executive_viewer
 }
 
 enum SubsidiaryStatus {
@@ -40,7 +45,7 @@ enum SubsidiaryStatus {
 /// itself on whenever a subsidiary happens to own locations would report almost
 /// every existing tenant as incomplete overnight, and would leave the user with
 /// no way to see WHY. Defaulting to `subsidiary` keeps every existing dashboard
-/// exactly as it was; a super_admin will opt a subsidiary in when its data is
+/// exactly as it was; a masterkey will opt a subsidiary in when its data is
 /// actually keyed by location (API: PATCH /subsidiaries/:id — the UI arrives
 /// with the coverage display in WP17 PR 3).
 enum TrackingGranularity {
@@ -79,7 +84,7 @@ model Profile {
   /// The person's job title, as they typed it at registration; null for an
   /// account that was invited or provisioned (nothing else asks for it yet).
   jobTitle             String?                @map("job_title")
-  role                 UserRole               @default(data_entry)
+  role                 UserRole               @default(standard_user)
   /// A `SUPPORTED_LOCALES` entry (CHECK `profiles_language_supported`, LP3-01);
   /// the user sets their own through PATCH /me/preferences.
   language             String                 @default("en")
@@ -137,6 +142,11 @@ model Organisation {
   /// the guard refuses the organisation's members; the start of D21's 90-day
   /// retention clock. The deletion itself is not built (it waits for D24).
   offboardedAt        DateTime?           @map("offboarded_at") @db.Timestamptz(6)
+  /// When this organisation's accounts were carried to the role model of
+  /// INC-2.6 (inc26-roles-approval-chain); null for one created after it. A
+  /// `super_admin` stored on an audit row before it was the earlier,
+  /// organisation-wide administrator (`displayRole`).
+  roleModelChangedAt  DateTime?           @map("role_model_changed_at") @db.Timestamptz(6)
   createdAt           DateTime            @default(now()) @map("created_at")
   updatedAt           DateTime            @updatedAt @map("updated_at")
 
@@ -526,7 +536,7 @@ model ActivityRecordEvidence {
 // NO records may be created, edited, deleted or submitted for that
 // (subsidiary, year, period, periodValue) — enforced as a gate in the
 // activity-records service. Locking also flips committed records to `locked`
-// status (unlock reverts them to `approved`). super_admin only; every
+// status (unlock reverts them to `approved`). masterkey only; every
 // lock/unlock writes an audit row.
 model PeriodLock {
   id              String     @id @default(uuid()) @db.Uuid
@@ -553,7 +563,7 @@ model PeriodLock {
 // + absolute target tCO₂e; the reduction % is derived, never stored. `scope`
 // filters which emissions count ('all' | 'scope1' | 'scope2' | 'scope3'), `basis`
 // records the target type. Progress is computed live from committed activity
-// records (never a stored snapshot). super_admin only; every write is audited.
+// records (never a stored snapshot). masterkey only; every write is audited.
 model Target {
   id            String     @id @default(uuid()) @db.Uuid
   subsidiaryId  String     @map("subsidiary_id") @db.Uuid
@@ -579,7 +589,7 @@ model Target {
 // Intensity = emissions / denominator (e.g. tCO₂e per M EUR revenue). Kept
 // per-year so intensity over time stays honest. Metric is one of the spec's four
 // (emissions_page.md §2): 'area' | 'revenue' | 'headcount' | 'production_output' | 'sales_output'.
-// super_admin only; every write is audited. The Intensity toggle only offers
+// masterkey only; every write is audited. The Intensity toggle only offers
 // metrics that have a configured value for the year in view.
 model SubsidiaryDenominator {
   id           String     @id @default(uuid()) @db.Uuid
@@ -612,6 +622,11 @@ model UserSubsidiaryAccess {
   organisationId String     @map("organisation_id") @db.Uuid
   profile        Profile    @relation(fields: [userId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
   subsidiary     Subsidiary @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  /// A standard user's ticked categories for this company (INC-2.6 §1, §7.3),
+  /// sorted and unique, each one of `CATEGORIES` (checked by the API, as for
+  /// `activity_records.category`). A super_admin's grant keeps `{}` and covers
+  /// every category; it is never read for one.
+  categories     String[]   @default([])
   createdAt      DateTime   @default(now()) @map("created_at")
 
   @@id([userId, subsidiaryId])

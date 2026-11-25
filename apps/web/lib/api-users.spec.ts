@@ -43,10 +43,13 @@ describe('LP4-01 user management calls', () => {
 
   it('sends each action to its route and method', async () => {
     respond({ id: 'u' });
-    await api.inviteUser({ email: 'a@b.test', fullName: 'A', role: 'data_entry', language: 'tr', subsidiaryIds: ['s'] });
+    await api.inviteUser({
+      email: 'a@b.test', fullName: 'A', role: 'standard_user', language: 'tr',
+      access: [{ subsidiaryId: 's', categories: ['Electricity'] }],
+    });
     await api.resendInvitation('u');
-    await api.setUserRole('u', { role: 'consultant' });
-    await api.replaceUserAccess('u', { subsidiaryIds: [] });
+    await api.setUserRole('u', { role: 'auditor' });
+    await api.replaceUserAccess('u', { access: [{ subsidiaryId: 's', categories: [] }] });
     await api.disableUser('u');
     await api.enableUser('u');
     expect(fetchMock.mock.calls.map((_, i) => `${call(i).init.method} ${call(i).url.pathname}`)).toEqual([
@@ -58,8 +61,24 @@ describe('LP4-01 user management calls', () => {
       'POST /api/v1/users/u/enable',
     ]);
     expect(JSON.parse(call(0).init.body as string)).toEqual({
-      email: 'a@b.test', fullName: 'A', role: 'data_entry', language: 'tr', subsidiaryIds: ['s'],
+      email: 'a@b.test', fullName: 'A', role: 'standard_user', language: 'tr',
+      access: [{ subsidiaryId: 's', categories: ['Electricity'] }],
     });
+    expect(JSON.parse(call(2).init.body as string)).toEqual({ role: 'auditor' });
+    expect(JSON.parse(call(3).init.body as string)).toEqual({ access: [{ subsidiaryId: 's', categories: [] }] });
+  });
+
+  it('sends an auditor invitation with no access field', async () => {
+    respond({ id: 'u' });
+    await api.inviteUser({ email: 'a@b.test', fullName: 'A', role: 'auditor', language: 'en' });
+    expect(JSON.parse(call().init.body as string)).toEqual({ email: 'a@b.test', fullName: 'A', role: 'auditor', language: 'en' });
+  });
+
+  it('surfaces a second company for a standard user as standard_user_single_company (409)', async () => {
+    respond({ statusCode: 409, code: 'standard_user_single_company', message: 'one company' }, 409);
+    await expect(
+      api.replaceUserAccess('u', { access: [{ subsidiaryId: 'a', categories: [] }, { subsidiaryId: 'b', categories: [] }] }),
+    ).rejects.toMatchObject({ status: 409, code: 'standard_user_single_company' });
   });
 
   it('accepts an invitation with the token it is given, not the session read again (204, no body)', async () => {

@@ -73,7 +73,7 @@ const emptyForm = {
   targetYear: '2030',
 };
 
-/** Targets tab (WP5): live reduction targets + progress; super_admin CRUD. */
+/** Targets tab (WP5): live reduction targets + progress; masterkey CRUD. */
 export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }: TargetsPanelProps) {
   const t = useTranslations('targets');
   const tCommon = useTranslations('common');

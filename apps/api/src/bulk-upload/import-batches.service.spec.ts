@@ -6,6 +6,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import { StorageObjectMissingError, type StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
 import { captureException } from '../observability/sentry';
+import { everyCategoryOn } from '../../test/helpers';
 
 vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 
@@ -36,13 +37,15 @@ function batch(over: Record<string, unknown> = {}) {
   };
 }
 
+/** A standard user granted SUB_A, every category ticked unless `categoryGrants` is overridden. */
 const user = (over: Partial<RequestUser> = {}): RequestUser => ({
   id: 'user-entry',
   email: 'entry@tonyai.local',
   fullName: 'Entry User',
-  role: 'data_entry',
+  role: 'standard_user',
   organisationId: ORG,
   accessibleSubsidiaryIds: [SUB_A],
+  categoryGrants: everyCategoryOn(over.accessibleSubsidiaryIds ?? [SUB_A]),
   ...over,
 });
 
@@ -69,8 +72,8 @@ function build() {
 
 describe('ImportBatchesService — who may see a batch (the RLS rule, applied by the API)', () => {
   it.each([
-    ['its data_entry uploader, who reaches every subsidiary it names', user(), true],
-    ['a data_entry colleague who did not upload it', user({ id: 'user-other' }), false],
+    ['its standard_user uploader, who reaches every subsidiary it names', user(), true],
+    ['a standard_user colleague who did not upload it', user({ id: 'user-other' }), false],
     [
       'its uploader after losing one of its subsidiaries',
       user(),
@@ -78,12 +81,28 @@ describe('ImportBatchesService — who may see a batch (the RLS rule, applied by
       { subsidiaryIds: [SUB_A, SUB_B] },
     ],
     ['its uploader, when it names no subsidiary at all', user(), false, { subsidiaryIds: [] }],
-    ['a consultant of the organisation', user({ id: 'u-c', role: 'consultant' }), true],
-    ['an executive viewer of the organisation', user({ id: 'u-x', role: 'executive_viewer' }), true],
-    ['a super_admin of the organisation', user({ id: 'u-a', role: 'super_admin' }), true],
+    ['an auditor of the organisation, who did not upload it', user({ id: 'u-c', role: 'auditor' }), true],
     [
-      'a super_admin of ANOTHER organisation',
-      user({ id: 'u-a', role: 'super_admin', organisationId: 'd4444444-4444-4444-8444-44444444444d' }),
+      'an auditor of ANOTHER organisation',
+      user({ id: 'u-c', role: 'auditor', organisationId: 'd4444444-4444-4444-8444-44444444444d' }),
+      false,
+    ],
+    ['a super_admin who uploaded it, within its companies', user({ role: 'super_admin', categoryGrants: {} }), true],
+    [
+      'a super_admin of the batch company who did not upload it (not an organisation-wide reader)',
+      user({ id: 'u-s', role: 'super_admin', categoryGrants: {} }),
+      false,
+    ],
+    [
+      'a super_admin uploader after losing one of its companies',
+      user({ role: 'super_admin', categoryGrants: {} }),
+      false,
+      { subsidiaryIds: [SUB_A, SUB_B] },
+    ],
+    ['a masterkey of the organisation', user({ id: 'u-a', role: 'masterkey' }), true],
+    [
+      'a masterkey of ANOTHER organisation',
+      user({ id: 'u-a', role: 'masterkey', organisationId: 'd4444444-4444-4444-8444-44444444444d' }),
       false,
     ],
   ] as [string, RequestUser, boolean, Record<string, unknown>?][])(
@@ -134,25 +153,91 @@ describe('ImportBatchesService — who may see a batch (the RLS rule, applied by
 });
 
 describe('ImportBatchesService — what a read returns', () => {
-  it("lists a batch's records only in the caller's subsidiaries", async () => {
+  // Rewritten for INC-2.6: the detail's records used to be filtered by the
+  // caller's subsidiaries alone; they now carry the record scope (design
+  // Decision 6), which for a standard user is per granted company and category.
+  it("lists a standard user's batch records only inside its record scope: ticked categories per company, plus its own", async () => {
     const { prisma, service } = build();
     prisma.importBatch.findUnique.mockResolvedValue(batch());
 
-    await service.detail(user(), BATCH);
+    await service.detail(user({ categoryGrants: { [SUB_A]: ['Electricity'] } }), BATCH);
 
     expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toEqual({
       importBatchId: BATCH,
-      subsidiaryId: { in: [SUB_A] },
+      AND: [
+        {
+          OR: [
+            { subsidiaryId: SUB_A, category: { in: ['Electricity'] } },
+            { subsidiaryId: { in: [SUB_A] }, createdBy: 'user-entry' },
+          ],
+        },
+      ],
     });
   });
 
-  it('reads a margin past the limit for data_entry, whose rows are filtered after', async () => {
+  it("fails closed for a standard user with no grants known: only its own records of the batch", async () => {
+    const { prisma, service } = build();
+    prisma.importBatch.findUnique.mockResolvedValue(batch());
+
+    await service.detail(user({ categoryGrants: undefined }), BATCH);
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toEqual({
+      importBatchId: BATCH,
+      AND: [{ OR: [{ subsidiaryId: { in: [SUB_A] }, createdBy: 'user-entry' }] }],
+    });
+  });
+
+  it.each([
+    ['an auditor', { id: 'u-c', role: 'auditor' as const, accessibleSubsidiaryIds: [SUB_A, SUB_B] }],
+    ['a super_admin', { role: 'super_admin' as const, categoryGrants: {} }],
+    ['a masterkey', { id: 'u-a', role: 'masterkey' as const, accessibleSubsidiaryIds: [SUB_A, SUB_B] }],
+  ])("lists %s's batch records by company alone — no category narrowing", async (_label, over) => {
+    const { prisma, service } = build();
+    prisma.importBatch.findUnique.mockResolvedValue(batch());
+    const caller = user(over);
+
+    await service.detail(caller, BATCH);
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toEqual({
+      importBatchId: BATCH,
+      AND: [{ subsidiaryId: { in: caller.accessibleSubsidiaryIds } }],
+    });
+  });
+
+  it('reads a margin past the limit for a standard user and a super_admin, whose rows are filtered after', async () => {
     const { prisma, service } = build();
     await service.list(user());
-    await service.list(user({ id: 'u-c', role: 'consultant' }));
+    await service.list(user({ id: 'u-c', role: 'auditor' }));
+    await service.list(user({ role: 'super_admin', categoryGrants: {} }));
 
     expect(prisma.importBatch.findMany.mock.calls[0][0].take).toBe(80);
     expect(prisma.importBatch.findMany.mock.calls[1][0].take).toBe(20);
+    expect(prisma.importBatch.findMany.mock.calls[2][0].take).toBe(80);
+  });
+
+  it("an auditor lists every batch of the organisation; a super_admin only its own uploads, within its companies", async () => {
+    const { prisma, service } = build();
+    const rows = [
+      batch({ id: 'mine' }),
+      batch({ id: 'colleague', uploadedBy: 'user-other' }),
+      batch({ id: 'mine-wider', subsidiaryIds: [SUB_A, SUB_B] }),
+    ];
+
+    prisma.importBatch.findMany.mockResolvedValue(rows);
+    const audited = await service.list(user({ id: 'u-c', role: 'auditor' }));
+    expect(audited.map((b) => b.id)).toEqual(['mine', 'colleague', 'mine-wider']);
+    expect(prisma.importBatch.findMany.mock.calls[0][0].where).toEqual({ organisationId: ORG });
+
+    // The query already narrows to its uploads; the rows below are what a
+    // super_admin's query could still return, and the scope check drops the
+    // one naming a company outside its grants.
+    prisma.importBatch.findMany.mockResolvedValue([rows[0], rows[2]]);
+    const scoped = await service.list(user({ role: 'super_admin', categoryGrants: {} }));
+    expect(scoped.map((b) => b.id)).toEqual(['mine']);
+    expect(prisma.importBatch.findMany.mock.calls[1][0].where).toEqual({
+      organisationId: ORG,
+      uploadedBy: 'user-entry',
+    });
   });
 
   it('returns no more than the limit, and says whether a file is kept', async () => {
@@ -253,10 +338,10 @@ describe('ImportBatchesService — submitting a batch', () => {
     expect(bulkSubmit.submitIds).toHaveBeenCalledWith(user(), ['r1', 'r2'], { batchId: BATCH });
   });
 
-  it("hands a super_admin only their OWN drafts too — only the author submits (D02)", async () => {
+  it("hands a masterkey only their OWN drafts too — only the author submits (D02)", async () => {
     const { prisma, service } = build();
     prisma.importBatch.findUnique.mockResolvedValue(batch());
-    const admin = user({ id: 'u-a', role: 'super_admin', accessibleSubsidiaryIds: [SUB_A, SUB_B] });
+    const admin = user({ id: 'u-a', role: 'masterkey', accessibleSubsidiaryIds: [SUB_A, SUB_B] });
 
     await service.submit(admin, BATCH);
 
@@ -266,7 +351,7 @@ describe('ImportBatchesService — submitting a batch', () => {
   it('sends a role that may not submit straight to the bulk submit, which refuses and audits it', async () => {
     const { prisma, bulkSubmit, service } = build();
 
-    await service.submit(user({ id: 'u-c', role: 'consultant' }), BATCH);
+    await service.submit(user({ id: 'u-c', role: 'auditor' }), BATCH);
 
     expect(bulkSubmit.submitIds).toHaveBeenCalledWith(expect.anything(), [], { batchId: BATCH });
     expect(prisma.importBatch.findUnique).not.toHaveBeenCalled();
@@ -303,7 +388,7 @@ describe('ImportBatchesService — submitting a batch', () => {
     const { prisma, service } = build();
     prisma.importBatch.findMany.mockResolvedValue([batch()]);
 
-    const [dto] = await service.list(user({ id: 'u-c', role: 'consultant' }));
+    const [dto] = await service.list(user({ id: 'u-c', role: 'auditor' }));
 
     expect(dto).toMatchObject({ draftCount: 0, submittableDraftCount: 0 });
     expect(prisma.activityRecord.groupBy).not.toHaveBeenCalled();

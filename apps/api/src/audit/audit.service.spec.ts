@@ -1,7 +1,12 @@
+import 'reflect-metadata';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { ForbiddenException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 import { AuditService } from './audit.service';
+import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 
@@ -13,6 +18,7 @@ function createPrismaMock() {
       count: vi.fn().mockResolvedValue(0),
     },
     profile: { findMany: vi.fn().mockResolvedValue([]) },
+    organisation: { findUnique: vi.fn().mockResolvedValue({ roleModelChangedAt: null }) },
   };
 }
 
@@ -22,7 +28,7 @@ function makeRow(overrides: Record<string, unknown> = {}) {
   return {
     id: `audit-${rowSeq}`,
     userId: 'user-1',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     action: 'create',
     entity: 'subsidiary',
@@ -38,7 +44,7 @@ function makeUser(overrides: Partial<RequestUser> = {}): RequestUser {
     id: 'user-1',
     email: 'admin@tonyai.local',
     fullName: '1 User',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1'],
     ...overrides,
@@ -65,7 +71,7 @@ describe('AuditService', () => {
     expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
     expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
       userId: 'user-1',
-      role: 'super_admin',
+      role: 'masterkey',
       organisationId: 'org-1',
       action: 'create',
       entity: 'subsidiary',
@@ -76,12 +82,12 @@ describe('AuditService', () => {
   it('records the role the actor held AT THE TIME, not a lookup', async () => {
     // Roles change; an audit trail that re-derived the role at read time would
     // misstate who was allowed to do what.
-    await service.record(makeUser({ role: 'consultant' }), {
+    await service.record(makeUser({ role: 'super_admin' }), {
       action: 'reject',
       entity: 'activity_record',
       entityId: 'rec-1',
     });
-    expect(prisma.auditLog.create.mock.calls[0][0].data.role).toBe('consultant');
+    expect(prisma.auditLog.create.mock.calls[0][0].data.role).toBe('super_admin');
   });
 
   it('accepts a null entityId (report generation has no persisted row)', async () => {
@@ -171,13 +177,34 @@ describe('AuditService', () => {
   });
 
   describe('list — reading the trail', () => {
-    it('refuses any role other than super_admin', async () => {
-      for (const role of ['consultant', 'data_entry', 'executive_viewer'] as const) {
-        await expect(service.list(makeUser({ role }), {})).rejects.toThrow(
-          /Only a super_admin/,
-        );
+    it('refuses a scoped super_admin and a standard user, reading nothing (audit.read)', async () => {
+      for (const role of ['super_admin', 'standard_user'] as const) {
+        const failure = await service.list(makeUser({ role }), {}).catch((e: unknown) => e);
+        expect(failure).toBeInstanceOf(ForbiddenException);
+        expect((failure as Error).message).toBe('Only a masterkey or an auditor may read the audit trail');
       }
       expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+      expect(prisma.auditLog.count).not.toHaveBeenCalled();
+      expect(prisma.organisation.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('refuses a role this build does not know (a retired name included)', async () => {
+      for (const role of ['consultant', 'data_entry', 'executive_viewer', 'legacy_super_admin', 'owner']) {
+        await expect(service.list(makeUser({ role: role as never }), {})).rejects.toBeInstanceOf(ForbiddenException);
+      }
+      expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+    });
+
+    it('lets a masterkey and an auditor read their organisation\'s trail', async () => {
+      for (const role of ['masterkey', 'auditor'] as const) {
+        prisma.auditLog.findMany.mockClear();
+        prisma.auditLog.findMany.mockResolvedValue([makeRow()]);
+        prisma.auditLog.count.mockResolvedValue(1);
+        const page = await service.list(makeUser({ role }), {});
+        expect(page.total).toBe(1);
+        expect(page.items).toHaveLength(1);
+        expect(prisma.auditLog.findMany.mock.calls[0][0].where).toMatchObject({ organisationId: 'org-1' });
+      }
     });
 
     it('scopes every query to the caller\'s organisation', async () => {
@@ -190,7 +217,7 @@ describe('AuditService', () => {
       });
     });
 
-    it('returns nothing for a super_admin with no organisation, without querying', async () => {
+    it('returns nothing for a masterkey with no organisation, without querying', async () => {
       // A null tenant would otherwise widen the filter to every row ever written.
       const page = await service.list(makeUser({ organisationId: null }), {});
       expect(page).toMatchObject({ items: [], total: 0 });
@@ -198,10 +225,10 @@ describe('AuditService', () => {
     });
 
     it('renders the role STORED on the row, not the actor\'s current role', async () => {
-      // The actor is a super_admin today; the row says they were a consultant
-      // when they acted. The trail must show what was true then.
+      // The actor is a masterkey today; the row says they were a standard
+      // user when they acted. The trail must show what was true then.
       prisma.auditLog.findMany.mockResolvedValue([
-        makeRow({ role: 'consultant', action: 'reject', entity: 'activity_record' }),
+        makeRow({ role: 'standard_user', action: 'submit', entity: 'activity_record' }),
       ]);
       prisma.profile.findMany.mockResolvedValue([
         { id: 'user-1', email: 'a@x', fullName: 'Ada' },
@@ -209,8 +236,8 @@ describe('AuditService', () => {
 
       const page = await service.list(makeUser(), {});
       expect(page.items[0]).toMatchObject({
-        role: 'consultant',
-        action: 'reject',
+        role: 'standard_user',
+        action: 'submit',
         userEmail: 'a@x',
         userFullName: 'Ada',
       });
@@ -264,6 +291,71 @@ describe('AuditService', () => {
       });
     });
 
+    describe('the role as the trail shows it (displayRole, design Decision 10)', () => {
+      const CUT = new Date('2026-11-20T12:00:00.000Z');
+
+      it('shows a super_admin stored BEFORE the cut-over as legacy_super_admin, one after as today\'s', async () => {
+        prisma.organisation.findUnique.mockResolvedValue({ roleModelChangedAt: CUT });
+        prisma.auditLog.findMany.mockResolvedValue([
+          makeRow({ role: 'super_admin', createdAt: new Date('2026-11-20T11:59:59.999Z') }),
+          makeRow({ role: 'super_admin', createdAt: CUT }),
+          makeRow({ role: 'super_admin', createdAt: new Date('2026-11-21T08:00:00.000Z') }),
+        ]);
+        const page = await service.list(makeUser(), {});
+        expect(page.items.map((i) => i.role)).toEqual(['legacy_super_admin', 'super_admin', 'super_admin']);
+      });
+
+      it('shows every stored super_admin as today\'s when the organisation has no cut-over', async () => {
+        prisma.organisation.findUnique.mockResolvedValue({ roleModelChangedAt: null });
+        prisma.auditLog.findMany.mockResolvedValue([
+          makeRow({ role: 'super_admin', createdAt: new Date('2020-01-01T00:00:00.000Z') }),
+        ]);
+        const page = await service.list(makeUser(), {});
+        expect(page.items[0].role).toBe('super_admin');
+      });
+
+      it('shows the retired names as stored and today\'s roles unchanged, on either side of the cut-over', async () => {
+        prisma.organisation.findUnique.mockResolvedValue({ roleModelChangedAt: CUT });
+        const before = new Date('2026-11-01T00:00:00.000Z');
+        prisma.auditLog.findMany.mockResolvedValue([
+          makeRow({ role: 'consultant', createdAt: before }),
+          makeRow({ role: 'data_entry', createdAt: before }),
+          makeRow({ role: 'executive_viewer', createdAt: before }),
+          makeRow({ role: 'masterkey', createdAt: before }),
+          makeRow({ role: 'auditor' }),
+          makeRow({ role: 'standard_user' }),
+        ]);
+        const page = await service.list(makeUser(), {});
+        expect(page.items.map((i) => i.role)).toEqual([
+          'consultant', 'data_entry', 'executive_viewer', 'masterkey', 'auditor', 'standard_user',
+        ]);
+      });
+
+      it('reads the organisation once per request — the caller\'s own, never per row', async () => {
+        prisma.auditLog.findMany.mockResolvedValue([makeRow(), makeRow(), makeRow()]);
+        await service.list(makeUser({ organisationId: 'org-7' }), {});
+        expect(prisma.organisation.findUnique).toHaveBeenCalledTimes(1);
+        expect(prisma.organisation.findUnique.mock.calls[0][0].where).toEqual({ id: 'org-7' });
+      });
+
+      it('falls back to today\'s roles when the organisation row is missing', async () => {
+        prisma.organisation.findUnique.mockResolvedValue(null);
+        prisma.auditLog.findMany.mockResolvedValue([
+          makeRow({ role: 'super_admin', createdAt: new Date('2020-01-01T00:00:00.000Z') }),
+        ]);
+        const page = await service.list(makeUser(), {});
+        expect(page.items[0].role).toBe('super_admin');
+      });
+    });
+
+    it('passes self_approve and role_model_change through as action filters (task 9.1)', async () => {
+      for (const action of ['self_approve', 'role_model_change'] as const) {
+        prisma.auditLog.findMany.mockClear();
+        await service.list(makeUser({ role: 'auditor' }), { action });
+        expect(prisma.auditLog.findMany.mock.calls[0][0].where).toMatchObject({ organisationId: 'org-1', action });
+      }
+    });
+
     it('breaks ties on id so a page cannot repeat or skip a row', async () => {
       // created_at is TIMESTAMP(3) defaulting to the TRANSACTION start time, so
       // every row written in one transaction ties exactly. Postgres gives no
@@ -290,6 +382,22 @@ describe('AuditService', () => {
       await service.list(makeUser(), {});
       expect(prisma.auditLog.findMany.mock.calls[0][0].take).toBe(50);
     });
+  });
+});
+
+describe('ListAuditQueryDto — the action filter', () => {
+  const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true };
+  const errorsOf = (body: Record<string, unknown>) =>
+    validateSync(plainToInstance(ListAuditQueryDto, body) as object, PIPE_OPTIONS);
+
+  it('accepts self_approve and role_model_change (task 9.1)', () => {
+    expect(errorsOf({ action: 'self_approve' })).toHaveLength(0);
+    expect(errorsOf({ action: 'role_model_change' })).toHaveLength(0);
+  });
+
+  it('refuses an action the trail never writes', () => {
+    expect(errorsOf({ action: 'self_approved' })).toHaveLength(1);
+    expect(errorsOf({ action: 'role_change_model' })).toHaveLength(1);
   });
 });
 

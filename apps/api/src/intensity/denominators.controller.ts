@@ -26,13 +26,13 @@ export class DenominatorsController {
     return this.service.listDenominatorPage(user, query);
   }
 
-  /** Configure a denominator — super_admin only, audited. */
+  /** Configure a denominator — masterkey only, audited. */
   @Post()
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateDenominatorDto) {
     return this.service.createDenominator(user, dto);
   }
 
-  /** Update a denominator's value/unit — super_admin only, audited. */
+  /** Update a denominator's value/unit — masterkey only, audited. */
   @Patch(':id')
   update(
     @CurrentUser() user: RequestUser,
@@ -42,7 +42,7 @@ export class DenominatorsController {
     return this.service.updateDenominator(user, id, dto);
   }
 
-  /** Remove a denominator — super_admin only, audited. */
+  /** Remove a denominator — masterkey only, audited. */
   @Delete(':id')
   remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.removeDenominator(user, id);

@@ -34,7 +34,9 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts.
   `record_author_forbidden` or `self_approval_forbidden` thrown before the
   record is loaded through the caller's accessible set would tell a foreign id
   from a missing one. Role-only refusals (`record_create_forbidden`, a
-  `super_admin` gate) do not look at the resource and may come first.
+  capability gate — `can(user.role, …)`) do not look at the resource and may
+  come first; `not_record_approver` and `category_not_granted` look at the
+  record and come after it is loaded through the caller's scope.
 - **Params are canonical values** (a `PERIOD_VALUES` or `CATEGORIES` entry, a
   year) — never caller text, never an id. The web translates the vocabularies.
 - **A 5xx says nothing about its cause** — the filter replaces it; do not try

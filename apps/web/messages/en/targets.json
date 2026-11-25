@@ -22,7 +22,7 @@
   "removed": "Target removed",
   "empty": "No reduction targets yet",
   "emptyManage": "Add a target to track progress against committed emissions.",
-  "emptyView": "A super_admin can define reduction targets.",
+  "emptyView": "A Masterkey can define reduction targets.",
   "progressNa": "Progress n/a",
   "delete": "Delete target",
   "reduction": "−{value}%",

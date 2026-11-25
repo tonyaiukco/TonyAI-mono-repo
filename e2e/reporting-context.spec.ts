@@ -3,7 +3,7 @@ import { DEFAULT_REPORTING_YEAR, selectableReportingYears } from '@tonyai/shared
 import {
   ADMIN_EMAIL,
   API_BASE,
-  CONSULTANT_EMAIL,
+  AUDITOR_EMAIL,
   E2E_YEAR,
   ENTRY_EMAIL,
   OUT_OF_SCOPE_SUB,
@@ -21,7 +21,7 @@ import {
  * link loads nothing (D06's default under a 2027 clock is a unit test:
  * a faked browser clock makes every Supabase session look expired). Read-only: no record is written (the int spec
  * `reporting-context-reconciliation` proves the figures on its own fixture).
- * As the consultant: a non-authoring role that may export, whose catalogue
+ * As an auditor (review@, a former consultant): a non-authoring role that may export, whose catalogue
  * language the last test sets and restores.
  */
 
@@ -37,7 +37,7 @@ async function pick(page: Page, testId: string, option: string | RegExp) {
 }
 
 test('the selection lives in the URL: reload, navigation and the export keep it', async ({ page }) => {
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, AUDITOR_EMAIL);
   // The dashboard writes the resolved default into the canonical URL.
   await expect(page).toHaveURL(new RegExp(`/\\?${CANONICAL_DEFAULT}$`));
 
@@ -93,7 +93,7 @@ test('the selection lives in the URL: reload, navigation and the export keep it'
 });
 
 test('a remembered selection is the signed-in person\'s: the next one to sign in starts from the default', async ({ page }) => {
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, AUDITOR_EMAIL);
   await pick(page, 'context-subsidiary', /^TonyAI Gas/);
   await expect(page).toHaveURL(new RegExp(`subsidiaryId=${SUB.gas}`));
   // Same tab, client-side: sign out, then someone else signs in.
@@ -105,7 +105,7 @@ test('a remembered selection is the signed-in person\'s: the next one to sign in
 });
 
 test('a drawer belongs to its selection: Back closes it instead of mixing two years (Codex B9 P2-3)', async ({ page }) => {
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, AUDITOR_EMAIL);
   await pick(page, 'context-year', '2025');
   await pick(page, 'context-year', String(E2E_YEAR));
   await page.getByRole('button', { name: /TonyAI Energy.*per facility/s }).click();
@@ -182,7 +182,7 @@ test('a mutation that completes after a new selection refreshes the new one, not
 });
 
 test('an invalid link is refused, loads nothing, and offers the default', async ({ page }) => {
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, AUDITOR_EMAIL);
   // The dashboard's own context reads finish first, so only this page's are counted.
   await page.waitForLoadState('networkidle');
   const contextCalls: string[] = [];
@@ -233,11 +233,11 @@ test('Data Entry refuses a link with an invalid year instead of opening the defa
 });
 
 test.describe('in Turkish', () => {
-  /** The consultant's language, set through the API as the user would. */
+  /** The auditor's language, set through the API as the user would. */
   async function setLanguage(language: 'tr' | 'en') {
     const api = await playwrightRequest.newContext();
     try {
-      const token = await getAccessToken(api, CONSULTANT_EMAIL);
+      const token = await getAccessToken(api, AUDITOR_EMAIL);
       const res = await api.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language } });
       if (res.status() !== 200) throw new Error(`language ${language}: ${res.status()}`);
     } finally {
@@ -250,7 +250,7 @@ test.describe('in Turkish', () => {
 
   test('the selection speaks Turkish for a Turkish profile', async ({ page }) => {
     await setLanguage('tr');
-    await login(page, CONSULTANT_EMAIL);
+    await login(page, AUDITOR_EMAIL);
     await expect(page.getByTestId('context-scope')).toHaveText('Tüm kapsamlar');
     await expect(page.getByTestId('context-subsidiary')).toHaveText('Erişilebilir tüm bağlı şirketler');
   });

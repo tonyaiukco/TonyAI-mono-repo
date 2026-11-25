@@ -21,7 +21,7 @@ describe("a code the catalogue knows", () => {
   it("fills its params, period and category in the user's language and the year ungrouped", () => {
     const locked = new ApiError("Reporting period March 2025 is locked", 409, "period_locked", { period: "March", year: 2025 });
     expect(describe_(locked, "tr").title).toBe(
-      "Mart 2025 raporlama dönemi kilitli — içindeki bir şeyin değişebilmesi için bir süper yöneticinin kilidi açması gerekir.",
+      "Mart 2025 raporlama dönemi kilitli — içindeki bir şeyin değişebilmesi için bir Masterkey'in kilidi açması gerekir.",
     );
     expect(describe_(locked, "en").title).toMatch(/^Reporting period March 2025 is locked/);
     const evidence = new ApiError("x", 400, "evidence_required", { category: "Natural Gas" });
@@ -134,8 +134,9 @@ describe("LP4-04 slice 2 PR C's codes (M3)", () => {
 
   it("words the author's refused start of review in both languages (WP5)", () => {
     const e = new ApiError("You created this record, so someone else must review it.", 403, "self_review_forbidden");
-    expect(describe_(e, "en").title).toBe("You created this record, so someone else must review it.");
-    expect(describe_(e, "tr").title).toBe("Bu kaydı siz oluşturdunuz; başka biri incelemeli.");
+    // inc26-roles-approval-chain: only a non-masterkey author meets it, and a masterkey decides that record.
+    expect(describe_(e, "en").title).toBe("You cannot take a record you created into review. A Masterkey decides it.");
+    expect(describe_(e, "tr").title).toBe("Kendi oluşturduğunuz bir kaydı incelemeye alamazsınız. Bu kayda bir Masterkey karar verir.");
   });
 
   it("groups every count param — a period's pending records too", () => {
@@ -161,7 +162,7 @@ describe("LP4-04 slice 2 PR C's codes (M3)", () => {
     for (const [code, status, params] of [
       ["subsidiary_in_use", 409, undefined],
       ["evidence_records_refused", 400, { refused: 1, total: 2 }],
-      ["evidence_backs_locked_records", 409, { count: 1 }],
+      ["evidence_backs_locked_records", 409, { count: 1, reach: "visible" }],
     ] as const) {
       const sentence = "This subsidiary still holds 2 record(s) awaiting review, …";
       const e = new ApiError(sentence, status, code, params);
@@ -169,6 +170,13 @@ describe("LP4-04 slice 2 PR C's codes (M3)", () => {
       expect(describe_(e, "tr").description).toBe(sentence);
       expect(describe_(e, "tr").title).not.toBe(sentence);
     }
+  });
+
+  it("a shared file blocked by records outside the reader's access is refused with no count (inc26, owner's review)", () => {
+    const e = new ApiError("…", 409, "evidence_backs_locked_records", { count: 0, reach: "hidden" });
+    const title = describe_(e, "tr").title;
+    expect(title).toContain("erişiminizin dışında");
+    expect(title).not.toMatch(/\d/);
   });
 
   it("drops a caller's text the server's sentence quoted — the catalogue never echoes it", () => {
@@ -203,15 +211,15 @@ describe("a calculation refusal keeps its lookup-specific English (independent r
 
 describe("a generic code, or none (decision K5)", () => {
   it("English: the server's own sentence, exactly as before LP3-01", () => {
-    const e = new ApiError("Only super_admin may manage targets", 403, "forbidden");
-    expect(describe_(e, "en")).toEqual({ title: "Only super_admin may manage targets" });
+    const e = new ApiError("Only masterkey may manage targets", 403, "forbidden");
+    expect(describe_(e, "en")).toEqual({ title: "Only masterkey may manage targets" });
   });
 
   it("Turkish: the generic sentence, with the server's English beneath it", () => {
-    const e = new ApiError("Only super_admin may manage targets", 403, "forbidden");
+    const e = new ApiError("Only masterkey may manage targets", 403, "forbidden");
     expect(describe_(e, "tr")).toEqual({
       title: "Bu işlem için yetkiniz yok.",
-      description: "Only super_admin may manage targets",
+      description: "Only masterkey may manage targets",
     });
   });
 

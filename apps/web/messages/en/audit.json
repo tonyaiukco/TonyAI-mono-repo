@@ -3,15 +3,17 @@
   "subtitle": "Append-only record of audited changes",
   "subtitleUser": "Append-only record of audited changes · {name} ({role})",
   "forbidden": {
-    "title": "Only a super_admin can read the audit trail",
-    "body": "The trail spans every subsidiary of the parent company, so it is restricted at both the API and the database. Your role is <mono>{role}</mono>."
+    "title": "The audit trail is read by a Masterkey and an Auditor",
+    "body": "The trail spans every subsidiary of the parent company, so it is restricted at both the API and the database. Your role is {role}."
   },
   "filterPlaceholder": "Filter this page…",
   "allEntities": "All entities",
   "allActions": "All actions",
   "actions": {
     "reprice": "Figure recalculated",
-    "reject": "Returned"
+    "reject": "Returned",
+    "self_approve": "Self-approved",
+    "role_model_change": "Role model changed"
   },
   "entriesOne": "{count} entry",
   "entriesMany": "{count} entries",

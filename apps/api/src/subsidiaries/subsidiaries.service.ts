@@ -11,7 +11,7 @@ import {
   type ActivityRecordStatus,
   type Subsidiary,
 } from '@tonyai/db';
-import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
+import { PENDING_REVIEW_STATUSES, can } from '@tonyai/shared-types';
 import type {
   SubsidiaryBlockerCount,
   SubsidiaryBlockerKind,
@@ -21,6 +21,7 @@ import type {
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import { LocationsService, TrustedParent } from '../locations/locations.service';
 import { EDITABLE_STATUSES } from '../activity-records/activity-records.service';
@@ -102,9 +103,10 @@ export class SubsidiariesService {
     };
   }
 
+  /** Companies are organisation structure — a masterkey only (INC-2.6 §6). */
   private assertCanWrite(user: RequestUser): void {
-    if (user.role !== 'super_admin') {
-      throw new ForbiddenException('Only super_admin may modify subsidiaries');
+    if (!can(user.role, 'company.write')) {
+      throw new ForbiddenException('Only a masterkey may modify subsidiaries');
     }
     if (!user.organisationId) {
       throw new ForbiddenException('No organisation context for this user');
@@ -216,7 +218,7 @@ export class SubsidiariesService {
     dto: UpdateSubsidiaryDto,
   ): Promise<SubsidiaryDTO> {
     this.assertCanWrite(user);
-    // Tenant check, not just the role check: without it a super_admin of one
+    // Tenant check, not just the role check: without it a masterkey of one
     // organisation could update another organisation's subsidiary. 404 (never
     // 403) so the response cannot confirm the row exists — the same rule every
     // other scoped read/write in the API follows.
@@ -310,6 +312,9 @@ export class SubsidiariesService {
   private async countDependents(
     db: Prisma.TransactionClient | PrismaService,
     id: string,
+    /** The reader's record scope for the panel's read-only view; none for a
+     *  delete, which must count every record it would cascade. */
+    recordScope: Prisma.ActivityRecordWhereInput = {},
   ): Promise<SubsidiaryDependentCounts> {
     // Annotated, not inferred: assignability is what catches a status that no
     // longer exists in the Prisma enum, and it names the bad one. The same trap
@@ -339,13 +344,13 @@ export class SubsidiariesService {
     ] =
       await Promise.all([
         db.activityRecord.count({
-          where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] } },
+          where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] }, AND: [recordScope] },
         }),
         db.activityRecord.count({
-          where: { subsidiaryId: id, status: { in: reviewable } },
+          where: { subsidiaryId: id, status: { in: reviewable }, AND: [recordScope] },
         }),
         db.activityRecord.count({
-          where: { subsidiaryId: id, status: { in: editable } },
+          where: { subsidiaryId: id, status: { in: editable }, AND: [recordScope] },
         }),
         db.location.count({ where: { subsidiaryId: id } }),
         db.location.count({
@@ -380,13 +385,14 @@ export class SubsidiariesService {
    * Tenant-scoped but NOT role-gated, matching `get()` and SUB-2's note that
    * "reads remain tenant-scoped for other roles" — it exposes nothing a caller
    * could not already obtain by listing the child collections they can see,
-   * only far more cheaply.
+   * only far more cheaply. The record counts take the reader's record scope,
+   * so a standard user's counts its ticked categories and own records only.
    */
   async summary(user: RequestUser, id: string): Promise<SubsidiarySummaryDTO> {
     await this.loadScoped(user, id);
     // `this.prisma` is directly assignable — the delegates a transaction client
     // exposes are the ones used here. Verified: removing the cast typechecks.
-    const counts = await this.countDependents(this.prisma, id);
+    const counts = await this.countDependents(this.prisma, id, recordScopeWhere(user));
     const refusal = SubsidiariesService.describeBlockers(counts);
     const {
       locationsHoldingForeignRecords: _alarm,
@@ -437,7 +443,7 @@ export class SubsidiariesService {
    * 'inactive'` is how an entity gets retired. But `submitted`/`under_review`
    * look terminal and are not: a reviewer rejects the record, and it becomes
    * deletable — measured, delete then went through with 200. Lumping those in
-   * with `approved` told a super_admin that a mistyped subsidiary was
+   * with `approved` told a masterkey that a mistyped subsidiary was
    * permanently in the register, which forecloses an action the API grants. It
    * is the same error as promising a delete that cannot happen, pointing the
    * other way.

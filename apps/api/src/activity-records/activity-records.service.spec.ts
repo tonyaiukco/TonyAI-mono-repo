@@ -56,6 +56,9 @@ import {
 } from '../calculations/errors';
 import { QueryTooBroadError, ResourceNotFoundError } from '../common/api-error';
 import type { RequestUser } from '../auth/auth.types';
+import { everyCategoryOn } from '../../test/helpers';
+import { CategoryNotGrantedError, recordScopeWhere } from './record-scope';
+import { awaitingDecisionWhere, NotRecordApproverError } from './record-approver';
 
 import { AuditService } from '../audit/audit.service';
 import { EvidenceService } from '../evidence/evidence.service';
@@ -73,7 +76,69 @@ beforeEach(() => audit.record.mockClear());
 
 // --- Local, DB-free mocks --------------------------------------------------
 
+/**
+ * The accounts the approver rule reads (inc26-roles-approval-chain, INC-2.6
+ * §1.1): each one's CURRENT role, disabled state, company grants and
+ * invitation. The default directory is the seed's shape — a masterkey, a
+ * super_admin granted `sub-1` and `sub-2` (so both companies have an active
+ * super_admin), a standard user and an auditor — so a standard user's record
+ * routes to the super_admin, a super_admin's to the masterkey and a
+ * masterkey's to its author. A case about routing edits `prisma.people`.
+ */
+interface Person {
+  role: string;
+  disabledAt?: Date | null;
+  grants?: string[];
+  /** `null`: never invited (seeded, provisioned). */
+  invitation?: 'pending' | 'accepted' | null;
+  organisationId?: string;
+}
+function defaultPeople(): Map<string, Person> {
+  return new Map<string, Person>([
+    ['user-admin', { role: 'masterkey' }],
+    ['user-admin-2', { role: 'masterkey' }],
+    ['user-super-admin', { role: 'super_admin', grants: ['sub-1', 'sub-2'] }],
+    ['user-entry', { role: 'standard_user', grants: ['sub-1', 'sub-2'] }],
+    ['user-auditor', { role: 'auditor' }],
+  ]);
+}
+type ProfileQuery = { where?: any; select?: any } | undefined;
+type AccessQuery = { where?: any } | undefined;
+const isActive = (p: Person) => !p.disabledAt && p.invitation !== 'pending';
+function peopleRows(people: Map<string, Person>, args: ProfileQuery) {
+  // The actor-name lookup: nothing resolves unless a case stubs it.
+  if (!args?.select?.role) return [];
+  const where = args.where ?? {};
+  return [...people.entries()]
+    .filter(([id, p]) =>
+      (where.id?.in ? where.id.in.includes(id) : true) &&
+      (where.organisationId ? (p.organisationId ?? 'org-1') === where.organisationId : true) &&
+      (where.disabledAt === null ? !p.disabledAt : true) &&
+      (where.role?.in ? where.role.in.includes(p.role) : true))
+    .map(([id, p]) => ({ id, role: p.role, disabledAt: p.disabledAt ?? null }));
+}
+function personRow(people: Map<string, Person>, args: ProfileQuery) {
+  const p = people.get(args?.where?.id);
+  if (!p) return null;
+  const only = args?.select?.subsidiaryAccess?.where?.subsidiaryId;
+  return {
+    role: p.role,
+    disabledAt: p.disabledAt ?? null,
+    subsidiaryAccess: (p.grants ?? []).filter((s) => s === only).map((subsidiaryId) => ({ subsidiaryId })),
+  };
+}
+function staffedRows(people: Map<string, Person>, args: AccessQuery) {
+  const ids: string[] = args?.where?.subsidiaryId?.in ?? [];
+  const staffed = new Set(
+    [...people.values()]
+      .filter((p) => p.role === 'super_admin' && isActive(p))
+      .flatMap((p) => p.grants ?? []),
+  );
+  return ids.filter((id) => staffed.has(id)).map((subsidiaryId) => ({ subsidiaryId }));
+}
+
 function createPrismaMock() {
+  const people = defaultPeople();
   const client = {
     // The lifecycle locks (`lifecycle-lock.ts`): row locks read back one row
     // — the record was there to lock — and the period's advisory lock runs as
@@ -114,10 +179,21 @@ function createPrismaMock() {
       // The record's earlier `submit` rows (WP5's submission number): none by default.
       count: vi.fn().mockResolvedValue(0),
     },
-    // Default []: no actor resolves, so every resolved name reads null — the
-    // deleted-profile case. Tests that care about a real name stub it.
+    // Two readers share this namespace. The actor-name lookup
+    // (`resolveProfiles`, selecting `email`) answers [] by default: no actor
+    // resolves, so every resolved name reads null — the deleted-profile case;
+    // tests that care about a real name stub it. The approver rule's readers
+    // (`approversFor`, `awaitingDecisionWhere`, selecting `role`) and the
+    // decision's re-read (`findUnique`) answer from `people` below.
     profile: {
-      findMany: vi.fn().mockResolvedValue([]),
+      // Loosely typed on purpose: cases stub the name lookup's own row shape.
+      findMany: vi.fn((args: any): any => Promise.resolve(peopleRows(people, args))),
+      findUnique: vi.fn((args: any): any => Promise.resolve(personRow(people, args))),
+    },
+    // "Which of these companies has an active super_admin" — the one query of
+    // `companiesWithActiveSuperAdmin` — answered from `people` too.
+    userSubsidiaryAccess: {
+      findMany: vi.fn((args: any): any => Promise.resolve(staffedRows(people, args))),
     },
   };
   // Every write runs in one interactive transaction (the lifecycle protocol).
@@ -129,6 +205,7 @@ function createPrismaMock() {
   const tx = { ...client };
   return {
     ...client,
+    people,
     tx,
     $transaction: vi.fn(async (fn: (c: typeof tx) => unknown) => fn(tx)),
   };
@@ -272,50 +349,64 @@ function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary {
   } as Subsidiary;
 }
 
-function superAdmin(overrides: Partial<RequestUser> = {}): RequestUser {
+function masterkey(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
     fullName: 'Admin User',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    categoryGrants: {},
     ...overrides,
   };
 }
 
-function dataEntry(overrides: Partial<RequestUser> = {}): RequestUser {
+/**
+ * A standard user granted `sub-1` (INC-2.6 §1). Unless the overrides name
+ * `categoryGrants`, every category is ticked on every granted company — the
+ * shape of a carried-over account — so a case about something else is not
+ * narrowed by categories by accident.
+ */
+function standardUser(overrides: Partial<RequestUser> = {}): RequestUser {
+  const accessibleSubsidiaryIds = overrides.accessibleSubsidiaryIds ?? ['sub-1'];
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
     fullName: 'Entry User',
-    role: 'data_entry',
+    role: 'standard_user',
     organisationId: 'org-1',
-    accessibleSubsidiaryIds: ['sub-1'],
+    accessibleSubsidiaryIds,
+    categoryGrants: everyCategoryOn(accessibleSubsidiaryIds),
     ...overrides,
   };
 }
 
-function consultant(overrides: Partial<RequestUser> = {}): RequestUser {
+/** A company-scoped super_admin granted `sub-1` and `sub-2`: the approver of a
+ *  standard user's record in those companies (the default `people`). */
+function superAdmin(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
-    id: 'user-consultant',
-    email: 'consultant@tonyai.local',
-    fullName: 'Consultant User',
-    role: 'consultant',
+    id: 'user-super-admin',
+    email: 'approver@tonyai.local',
+    fullName: 'Super Admin User',
+    role: 'super_admin',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    categoryGrants: {},
     ...overrides,
   };
 }
 
-function executiveViewer(overrides: Partial<RequestUser> = {}): RequestUser {
+/** An auditor: reads the whole organisation, changes nothing. */
+function auditor(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
-    id: 'user-viewer',
-    email: 'viewer@tonyai.local',
-    fullName: 'Viewer User',
-    role: 'executive_viewer',
+    id: 'user-auditor',
+    email: 'review@tonyai.local',
+    fullName: 'Auditor User',
+    role: 'auditor',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    categoryGrants: {},
     ...overrides,
   };
 }
@@ -371,7 +462,7 @@ describe('ActivityRecordsService — tenant scoping', () => {
   });
 
   it('a page scopes to accessibleSubsidiaryIds when no filter is given, and fetches one row more than it returns', async () => {
-    await service.listPage(dataEntry(), {});
+    await service.listPage(standardUser(), {});
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ subsidiaryId: { in: ['sub-1'] } }),
@@ -382,13 +473,13 @@ describe('ActivityRecordsService — tenant scoping', () => {
   });
 
   it('a subsidiaryId outside the accessible set is an empty, final page (no DB hit)', async () => {
-    const result = await service.listPage(dataEntry(), { subsidiaryId: 'sub-2', limit: 5 });
+    const result = await service.listPage(standardUser(), { subsidiaryId: 'sub-2', limit: 5 });
     expect(result).toEqual({ items: [], limit: 5, nextCursor: null });
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
 
   it('a page filters on a SET of statuses (the reviewer queue), in the queue order', async () => {
-    await service.listPage(superAdmin(), { status: [...PENDING_REVIEW_STATUSES], sort: 'review_queue' });
+    await service.listPage(masterkey(), { status: [...PENDING_REVIEW_STATUSES], sort: 'review_queue' });
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ status: { in: ['submitted', 'under_review'] } }),
@@ -400,13 +491,16 @@ describe('ActivityRecordsService — tenant scoping', () => {
   it('omits every absent filter entirely', async () => {
     // Not `{ in: [] }` — Prisma reads an empty `in` as "match nothing", so a
     // careless refactor here would silently empty every unfiltered list.
-    await service.listPage(superAdmin(), {});
+    await service.listPage(masterkey(), {});
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
-    expect(Object.keys(where)).toEqual(['subsidiaryId']);
+    // The company scope and the record scope (inc26-roles-approval-chain,
+    // design Decision 6) — which for a masterkey is the company scope again.
+    expect(Object.keys(where)).toEqual(['subsidiaryId', 'AND']);
+    expect(where.AND).toEqual([{ subsidiaryId: { in: ['sub-1', 'sub-2'] } }]);
   });
 
   it('applies the added filters: company-level, scope, canonical period value and a literal search', async () => {
-    await service.listPage(superAdmin(), {
+    await service.listPage(masterkey(), {
       locationId: null, scope: 2, period: 'monthly', periodValue: 'JANUARY', search: '50%_off\\',
     });
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
@@ -429,17 +523,17 @@ describe('ActivityRecordsService — tenant scoping', () => {
     prisma.periodLock.findMany.mockResolvedValueOnce([
       { subsidiaryId: 'sub-1', reportingYear: rows[0].reportingYear, reportingPeriod: rows[0].reportingPeriod, periodValue: 'January' },
     ]);
-    const first = await service.listPage(dataEntry(), { limit: 2 });
+    const first = await service.listPage(standardUser(), { limit: 2 });
     expect(first.items.map((r) => [r.id, r.periodLocked])).toEqual([[rows[0].id, true], [rows[1].id, false]]);
     expect(first.nextCursor).toEqual(expect.any(String));
     // The lock lookup asked about the PAGE's periods only, never the extra row's.
     expect(prisma.periodLock.findMany.mock.calls[0][0].where.OR).toHaveLength(2);
 
     prisma.activityRecord.findMany.mockResolvedValueOnce([]);
-    await service.listPage(dataEntry(), { limit: 2, cursor: first.nextCursor! });
+    await service.listPage(standardUser(), { limit: 2, cursor: first.nextCursor! });
     expect(prisma.activityRecord.findMany.mock.calls[1][0].where).toEqual({
       AND: [
-        { subsidiaryId: { in: ['sub-1'] } },
+        { subsidiaryId: { in: ['sub-1'] }, AND: [recordScopeWhere(standardUser())] },
         { OR: [{ createdAt: { lt: t } }, { createdAt: t, id: { lt: rows[1].id } }] },
       ],
     });
@@ -449,13 +543,13 @@ describe('ActivityRecordsService — tenant scoping', () => {
     prisma.activityRecord.findMany.mockResolvedValueOnce(
       [1, 2].map((n) => ({ ...makeRecord({ id: `00000000-0000-4000-8000-00000000000${n}` }), _count: { evidenceLinks: 0 } })),
     );
-    const { nextCursor } = await service.listPage(dataEntry(), { limit: 1, year: 2026 });
+    const { nextCursor } = await service.listPage(standardUser(), { limit: 1, year: 2026 });
     const refused = expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) });
-    await expect(service.listPage(dataEntry(), { limit: 1, year: 2025, cursor: nextCursor! })).rejects.toThrow(refused);
-    await expect(service.listPage(dataEntry(), { limit: 1, year: 2026, sort: 'review_queue', cursor: nextCursor! })).rejects.toThrow(refused);
-    await expect(service.listPage(dataEntry(), { limit: 1, year: 2025, subsidiaryId: 'sub-2', cursor: nextCursor! })).rejects.toThrow(refused);
+    await expect(service.listPage(standardUser(), { limit: 1, year: 2025, cursor: nextCursor! })).rejects.toThrow(refused);
+    await expect(service.listPage(standardUser(), { limit: 1, year: 2026, sort: 'review_queue', cursor: nextCursor! })).rejects.toThrow(refused);
+    await expect(service.listPage(standardUser(), { limit: 1, year: 2025, subsidiaryId: 'sub-2', cursor: nextCursor! })).rejects.toThrow(refused);
     // The same request's cursor is accepted, whatever the caller's access now is.
-    await expect(service.listPage(dataEntry({ accessibleSubsidiaryIds: [] }), { limit: 1, year: 2026, cursor: nextCursor! }))
+    await expect(service.listPage(standardUser({ accessibleSubsidiaryIds: [] }), { limit: 1, year: 2026, cursor: nextCursor! }))
       .resolves.toEqual({ items: [], limit: 1, nextCursor: null });
   });
 
@@ -470,7 +564,7 @@ describe('ActivityRecordsService — tenant scoping', () => {
     const refused = expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) });
     const mint = async () => {
       prisma.activityRecord.findMany.mockResolvedValueOnce(twoRows());
-      const { nextCursor } = await service.listPage(dataEntry(), { ...base, limit: 1 });
+      const { nextCursor } = await service.listPage(standardUser(), { ...base, limit: 1 });
       expect(nextCursor).toEqual(expect.any(String));
       return nextCursor!;
     };
@@ -489,13 +583,13 @@ describe('ActivityRecordsService — tenant scoping', () => {
       ['sort', { sort: 'review_queue' as const }],
     ])('another %s is refused', async (_label, change) => {
       const cursor = await mint();
-      await expect(service.listPage(dataEntry(), { ...base, ...change, limit: 1, cursor })).rejects.toThrow(refused);
+      await expect(service.listPage(standardUser(), { ...base, ...change, limit: 1, cursor })).rejects.toThrow(refused);
     });
 
     it('another spelling of the same request binds alike — the status set in any order, the period value in any case', async () => {
       const cursor = await mint();
       await expect(
-        service.listPage(dataEntry(), { ...base, status: ['draft', 'draft'], periodValue: 'JANUARY', limit: 1, cursor }),
+        service.listPage(standardUser(), { ...base, status: ['draft', 'draft'], periodValue: 'JANUARY', limit: 1, cursor }),
       ).resolves.toMatchObject({ limit: 1 });
     });
   });
@@ -503,9 +597,9 @@ describe('ActivityRecordsService — tenant scoping', () => {
   it('metadata counts the whole filtered set inside the access, up to the work budget', async () => {
     prisma.activityRecord.count.mockResolvedValueOnce(42);
     prisma.activityRecord.aggregate.mockResolvedValueOnce({ _max: { reportingYear: 2026 } });
-    await expect(service.metadata(dataEntry(), { status: ['draft'] })).resolves.toEqual({ total: 42, latestReportingYear: 2026 });
+    await expect(service.metadata(standardUser(), { status: ['draft'] })).resolves.toEqual({ total: 42, latestReportingYear: 2026 });
     expect(prisma.activityRecord.count).toHaveBeenCalledWith({
-      where: { subsidiaryId: { in: ['sub-1'] }, status: { in: ['draft'] } },
+      where: { subsidiaryId: { in: ['sub-1'] }, AND: [recordScopeWhere(standardUser())], status: { in: ['draft'] } },
       take: 100_001,
     });
   });
@@ -514,21 +608,21 @@ describe('ActivityRecordsService — tenant scoping', () => {
     prisma.activityRecord.findMany.mockResolvedValueOnce(
       [1, 2].map((n) => ({ ...makeRecord({ id: `00000000-0000-4000-8000-00000000000${n}` }), _count: { evidenceLinks: 0 } })),
     );
-    expect((await service.listPage(dataEntry(), { limit: 2 })).nextCursor).toBeNull();
+    expect((await service.listPage(standardUser(), { limit: 2 })).nextCursor).toBeNull();
     prisma.activityRecord.count.mockResolvedValueOnce(100_000);
-    await expect(service.metadata(superAdmin(), {})).resolves.toMatchObject({ total: 100_000 });
+    await expect(service.metadata(masterkey(), {})).resolves.toMatchObject({ total: 100_000 });
   });
 
   it('metadata over the budget is query_too_broad, with no partial count', async () => {
     prisma.activityRecord.count.mockResolvedValueOnce(100_001);
-    await expect(service.metadata(superAdmin(), {})).rejects.toBeInstanceOf(QueryTooBroadError);
+    await expect(service.metadata(masterkey(), {})).rejects.toBeInstanceOf(QueryTooBroadError);
     expect(prisma.activityRecord.aggregate).not.toHaveBeenCalled();
   });
 
   it('metadata of an inaccessible or empty set is zero and no year, before any budget', async () => {
-    await expect(service.metadata(dataEntry(), { subsidiaryId: 'sub-2' })).resolves.toEqual({ total: 0, latestReportingYear: null });
+    await expect(service.metadata(standardUser(), { subsidiaryId: 'sub-2' })).resolves.toEqual({ total: 0, latestReportingYear: null });
     expect(prisma.activityRecord.count).not.toHaveBeenCalled();
-    await expect(service.metadata(dataEntry(), {})).resolves.toEqual({ total: 0, latestReportingYear: null });
+    await expect(service.metadata(standardUser(), {})).resolves.toEqual({ total: 0, latestReportingYear: null });
     expect(prisma.activityRecord.aggregate).not.toHaveBeenCalled();
   });
 
@@ -536,7 +630,7 @@ describe('ActivityRecordsService — tenant scoping', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ subsidiaryId: 'sub-2' }),
     );
-    await expect(service.get(dataEntry(), 'rec-x')).rejects.toBeInstanceOf(
+    await expect(service.get(standardUser(), 'rec-x')).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
@@ -546,7 +640,7 @@ describe('ActivityRecordsService — tenant scoping', () => {
       makeRecord({ id: 'rec-in', subsidiaryId: 'sub-1' }),
     );
     prisma.activityRecordEvidence.count.mockResolvedValue(2);
-    const dto = await service.get(dataEntry(), 'rec-in');
+    const dto = await service.get(standardUser(), 'rec-in');
     expect(dto.id).toBe('rec-in');
     expect(dto.evidenceCount).toBe(2);
     expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({
@@ -565,7 +659,7 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    const dto = await service.create(dataEntry(), CREATE_DTO);
+    const dto = await service.create(standardUser(), CREATE_DTO);
 
     // compute() called with resolved geography + engine input.
     expect(calc.compute).toHaveBeenCalledWith(
@@ -621,7 +715,7 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), { ...CREATE_DTO, locationId: 'loc-1' });
+    await service.create(standardUser(), { ...CREATE_DTO, locationId: 'loc-1' });
 
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ geographyCode: 'UK' }),
@@ -643,7 +737,7 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
     });
 
     await expect(
-      service.create(dataEntry(), { ...CREATE_DTO, locationId: 'loc-x' }),
+      service.create(standardUser(), { ...CREATE_DTO, locationId: 'loc-x' }),
     ).rejects.toThrow(/Location not found/);
     expect(calc.compute).not.toHaveBeenCalled();
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
@@ -661,19 +755,19 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
       }),
     );
     await expect(
-      service.create(dataEntry(), CREATE_DTO),
+      service.create(standardUser(), CREATE_DTO),
     ).rejects.toBeInstanceOf(ConflictException);
     // And the CLASS the bulk importer branches on — the only place that
     // contract can fail, since the bulk specs mock this service.
     await expect(
-      service.create(dataEntry(), CREATE_DTO),
+      service.create(standardUser(), CREATE_DTO),
     ).rejects.toBeInstanceOf(DuplicateActivityRecordError);
   });
 
   it('cannot create against an inaccessible subsidiary (NotFound, no compute)', async () => {
     const { prisma, calc, service } = build();
     await expect(
-      service.create(dataEntry(), { ...CREATE_DTO, subsidiaryId: 'sub-2' }),
+      service.create(standardUser(), { ...CREATE_DTO, subsidiaryId: 'sub-2' }),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(calc.compute).not.toHaveBeenCalled();
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
@@ -683,7 +777,7 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
     const { service } = build();
     await expect(
       service.create(
-        superAdmin({ role: 'executive_viewer' }),
+        masterkey({ role: 'auditor' }),
         CREATE_DTO,
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -736,7 +830,7 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
       location: null,
     }));
 
-    const dto = await service.create(dataEntry(), {
+    const dto = await service.create(standardUser(), {
       subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
       category: 'Natural Gas', activityValue: 10, activityUnit: 'kWh', parameters: GAS,
     } as never);
@@ -748,7 +842,7 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
 
   it('create refuses parameters the category takes none of, before anything is written', async () => {
     const { prisma, service } = build(1);
-    await expect(service.create(dataEntry(), {
+    await expect(service.create(standardUser(), {
       subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
       category: 'Electricity', activityValue: 10, activityUnit: 'kWh', parameters: GAS,
     } as never)).rejects.toMatchObject({ code: 'record_parameters_invalid' });
@@ -758,7 +852,7 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
   it('an edit that names no category is held to the stored one, and audits the change on both sides', async () => {
     const { prisma, service } = editing(storedGas({ parameters: { ncvKcalPerSm3: 8250 } as never }));
 
-    await service.update(dataEntry(), 'rec-p', { parameters: GAS });
+    await service.update(standardUser(), 'rec-p', { parameters: GAS });
 
     expect(updatedData(prisma).parameters).toEqual(GAS);
     const diff = audit.record.mock.calls[0][1].diff as any;
@@ -768,31 +862,31 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
 
   it('refuses another category\'s fields on that same edit', async () => {
     const { prisma, service } = editing(storedGas());
-    await expect(service.update(dataEntry(), 'rec-p', { parameters: { refillKg: 1 } as never }))
+    await expect(service.update(standardUser(), 'rec-p', { parameters: { refillKg: 1 } as never }))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
   it('null clears them as SQL NULL, which is what the CHECK means by none', async () => {
     const { prisma, service } = editing(storedGas({ parameters: GAS as never }));
-    await service.update(dataEntry(), 'rec-p', { parameters: null });
+    await service.update(standardUser(), 'rec-p', { parameters: null });
     expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
   });
 
   it('an edit that does not name them leaves them alone', async () => {
     const { prisma, service } = editing(storedGas({ parameters: GAS as never }));
-    await service.update(dataEntry(), 'rec-p', { activityValue: 12 });
+    await service.update(standardUser(), 'rec-p', { activityValue: 12 });
     expect(updatedData(prisma)).not.toHaveProperty('parameters');
   });
 
   it('refuses moving a record to a category its stored parameters do not fit, until they are cleared', async () => {
     const { prisma, service } = editing(storedGas({ parameters: GAS as never }));
-    await expect(service.update(dataEntry(), 'rec-p', { category: 'Electricity' }))
+    await expect(service.update(standardUser(), 'rec-p', { category: 'Electricity' }))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
 
     // The quantity sent too: a kWh gas bill re-filed without it is asked for it (ng-kwh-engine review).
-    await service.update(dataEntry(), 'rec-p', { category: 'Electricity', parameters: null, activityValue: 100 });
+    await service.update(standardUser(), 'rec-p', { category: 'Electricity', parameters: null, activityValue: 100 });
     expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
   });
 
@@ -802,7 +896,7 @@ describe('ActivityRecordsService — parameters are stored, audited and held to 
     const { prisma, service } = editing(storedGas({
       category: 'Refrigerants', activityType: 'HFC-227ea', activityUnit: 'kg', parameters: CHILLER as never,
     }));
-    await expect(service.update(dataEntry(), 'rec-p', { category: 'Fire Suppression' }))
+    await expect(service.update(standardUser(), 'rec-p', { category: 'Fire Suppression' }))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -825,25 +919,25 @@ describe('ActivityRecordsService — the engine reads the effective parameters a
 
   it('an edit naming them prices with them', async () => {
     const { calc, service } = editing(stored());
-    await service.update(dataEntry(), 'rec-e', { parameters: GAS });
+    await service.update(standardUser(), 'rec-e', { parameters: GAS });
     expect(lastInput(calc)).toMatchObject({ parameters: GAS });
   });
 
   it('an edit not naming them prices with the stored ones', async () => {
     const { calc, service } = editing(stored({ parameters: GAS as never }));
-    await service.update(dataEntry(), 'rec-e', { activityValue: 12 });
+    await service.update(standardUser(), 'rec-e', { activityValue: 12 });
     expect(lastInput(calc)).toMatchObject({ parameters: GAS });
   });
 
   it('an edit clearing them prices with none', async () => {
     const { calc, service } = editing(stored({ parameters: GAS as never }));
-    await service.update(dataEntry(), 'rec-e', { parameters: null });
+    await service.update(standardUser(), 'rec-e', { parameters: null });
     expect(lastInput(calc)).toMatchObject({ parameters: null });
   });
 
   it('an edit moving the period prices under the new one', async () => {
     const { calc, service } = editing(stored({ reportingPeriod: 'monthly', periodValue: 'January' }));
-    await service.update(dataEntry(), 'rec-e', { reportingPeriod: 'annual', periodValue: 'Annual' });
+    await service.update(standardUser(), 'rec-e', { reportingPeriod: 'annual', periodValue: 'Annual' });
     expect(lastInput(calc)).toMatchObject({ reportingPeriod: 'annual' });
   });
 });
@@ -887,7 +981,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
       location: null,
     }));
 
-    const dto = await service.create(dataEntry(), {
+    const dto = await service.create(standardUser(), {
       subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
       category: 'Electricity', activityValue: 600000, activityUnit: 'kWh', parameters: BLOCK,
     } as never);
@@ -901,7 +995,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
 
   it('a PATCH that omits parameters keeps the stored block, and prices with it', async () => {
     const { prisma, calc, service } = editing(stored());
-    await service.update(dataEntry(), 'rec-sg', { activityValue: 550000 });
+    await service.update(standardUser(), 'rec-sg', { activityValue: 550000 });
     expect(updatedData(prisma)).not.toHaveProperty('parameters');
     expect(lastInput(calc)).toMatchObject({ value: 550000, parameters: BLOCK });
   });
@@ -910,7 +1004,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
     const row = stored();
     const { prisma, calc, service } = editing(row);
     const next = { ...BLOCK, selfGeneratedKwh: 450000, exportedToGridKwh: 10000 };
-    await service.update(dataEntry(), 'rec-sg', { parameters: next, seenUpdatedAt: seen(row) });
+    await service.update(standardUser(), 'rec-sg', { parameters: next, seenUpdatedAt: seen(row) });
     expect(calc.compute).toHaveBeenCalledTimes(1);
     expect(lastInput(calc)).toMatchObject({ parameters: next });
     expect(updatedData(prisma).parameters).toEqual(next);
@@ -923,13 +1017,13 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
   it('refuses moving the record to another category with its block, and accepts it with parameters: null', async () => {
     const row = stored();
     const { prisma, service } = editing(row);
-    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', seenUpdatedAt: seen(row) }))
+    await expect(service.update(standardUser(), 'rec-sg', { category: 'Natural Gas', seenUpdatedAt: seen(row) }))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
-    await expect(service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: BLOCK, seenUpdatedAt: seen(row) } as never))
+    await expect(service.update(standardUser(), 'rec-sg', { category: 'Natural Gas', parameters: BLOCK, seenUpdatedAt: seen(row) } as never))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
 
-    await service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: null, seenUpdatedAt: seen(row) });
+    await service.update(standardUser(), 'rec-sg', { category: 'Natural Gas', parameters: null, seenUpdatedAt: seen(row) });
     expect(updatedData(prisma).category).toBe('Natural Gas');
     expect(updatedData(prisma).parameters).toBe(Prisma.DbNull);
   });
@@ -937,7 +1031,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
   it('refuses another category\'s fields on an Electricity edit, before anything is written', async () => {
     const row = stored();
     const { prisma, service } = editing(row);
-    await expect(service.update(dataEntry(), 'rec-sg', { parameters: { cvBasis: 'net' } as never, seenUpdatedAt: seen(row) }))
+    await expect(service.update(standardUser(), 'rec-sg', { parameters: { cvBasis: 'net' } as never, seenUpdatedAt: seen(row) }))
       .rejects.toMatchObject({ code: 'record_parameters_invalid' });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -947,7 +1041,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
       const row = stored();
       const { prisma, calc, service } = editing(row);
       const older = new Date(row.updatedAt.getTime() - 1000).toISOString();
-      await expect(service.update(dataEntry(), 'rec-sg', { activityValue: 5200, seenUpdatedAt: older }))
+      await expect(service.update(standardUser(), 'rec-sg', { activityValue: 5200, seenUpdatedAt: older }))
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_changed' }) });
       expect(calc.compute).not.toHaveBeenCalled();
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -957,7 +1051,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
     it('applies to every record, a plain one too', async () => {
       const row = stored({ parameters: null });
       const { prisma, service } = editing(row);
-      await expect(service.update(dataEntry(), 'rec-sg', { activityValue: 1, seenUpdatedAt: '2000-01-01T00:00:00.000Z' }))
+      await expect(service.update(standardUser(), 'rec-sg', { activityValue: 1, seenUpdatedAt: '2000-01-01T00:00:00.000Z' }))
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_changed' }) });
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
@@ -966,7 +1060,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
       const row = stored();
       const { prisma, service } = editing(row);
       const sameInstant = row.updatedAt.toISOString().replace('Z', '+00:00');
-      await service.update(dataEntry(), 'rec-sg', { activityValue: 5200, seenUpdatedAt: sameInstant });
+      await service.update(standardUser(), 'rec-sg', { activityValue: 5200, seenUpdatedAt: sameInstant });
       expect(prisma.activityRecord.update).toHaveBeenCalledTimes(1);
     });
 
@@ -977,7 +1071,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
       ['moves the record to Natural Gas', { category: 'Natural Gas', parameters: null }],
     ])('refuses an edit that names no version and %s, as record_changed', async (_what, change) => {
       const { prisma, calc, service } = editing(stored());
-      await expect(service.update(dataEntry(), 'rec-sg', change as never))
+      await expect(service.update(standardUser(), 'rec-sg', change as never))
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_changed' }) });
       expect(calc.compute).not.toHaveBeenCalled();
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -986,7 +1080,7 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
     it('lets an edit that names no version through when it leaves the stored block as it is', async () => {
       for (const change of [{ activityValue: 5200 }, { parameters: { ...BLOCK } }, { parameters: { ...BLOCK, facilityConsumptionKwh: null } }]) {
         const { prisma, service } = editing(stored());
-        await service.update(dataEntry(), 'rec-sg', change as never);
+        await service.update(standardUser(), 'rec-sg', change as never);
         expect(prisma.activityRecord.update, JSON.stringify(change)).toHaveBeenCalledTimes(1);
       }
     });
@@ -994,10 +1088,10 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
     it('answers a tenant, role or author refusal before a stale version, never 409 (security-rls, architect)', async () => {
       const stale = '2000-01-01T00:00:00.000Z';
       const cases: [string, RequestUser, string][] = [
-        ['another tenant', dataEntry({ accessibleSubsidiaryIds: ['sub-9'] }), 'record_not_found'],
-        ['an executive viewer', executiveViewer(), 'forbidden'],
-        ['a data entry user who is not the author', dataEntry({ id: 'user-other' }), 'record_author_forbidden'],
-        ['a super_admin who is not the author', superAdmin(), 'record_author_forbidden'],
+        ['another tenant', standardUser({ accessibleSubsidiaryIds: ['sub-9'] }), 'record_not_found'],
+        ['an executive viewer', auditor(), 'forbidden'],
+        ['a data entry user who is not the author', standardUser({ id: 'user-other' }), 'record_author_forbidden'],
+        ['a masterkey who is not the author', masterkey(), 'record_author_forbidden'],
       ];
       for (const [who, user, code] of cases) {
         const { prisma, service } = editing(stored());
@@ -1011,14 +1105,14 @@ describe('ActivityRecordsService — an Electricity self-generation block (self-
 
     it('asks no version of a record that holds no block', async () => {
       const { prisma, service } = editing(stored({ parameters: null }));
-      await service.update(dataEntry(), 'rec-sg', { category: 'Natural Gas', parameters: null });
+      await service.update(standardUser(), 'rec-sg', { category: 'Natural Gas', parameters: null });
       expect(prisma.activityRecord.update).toHaveBeenCalledTimes(1);
     });
 
     it('lets a client that names no version add a block to a record holding none, or a block of nulls (qa-auditor re-review)', async () => {
       for (const storedParameters of [null, {}, { generationTopology: null, selfGeneratedKwh: null }]) {
         const { prisma, service } = editing(stored({ parameters: storedParameters as never }));
-        await service.update(dataEntry(), 'rec-sg', { parameters: BLOCK });
+        await service.update(standardUser(), 'rec-sg', { parameters: BLOCK });
         expect(prisma.activityRecord.update, JSON.stringify(storedParameters)).toHaveBeenCalledTimes(1);
       }
     });
@@ -1053,7 +1147,7 @@ describe('ActivityRecordsService — an Electricity record\'s supplier is bounde
     return built;
   };
   const create = (service: ActivityRecordsService, category: string, input: unknown) =>
-    service.create(dataEntry(), {
+    service.create(standardUser(), {
       subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'January',
       category, activityValue: 10, activityUnit: 'kWh', input,
     } as never);
@@ -1081,28 +1175,28 @@ describe('ActivityRecordsService — an Electricity record\'s supplier is bounde
 
   it('an edit of another field of an old record keeps its long supplier', async () => {
     const { prisma, service } = editing(stored({ input: { utility_provider: LEGACY, notes: 'old' } as never }));
-    await service.update(dataEntry(), 'rec-el', { input: { utility_provider: LEGACY, notes: 'edited' } });
+    await service.update(standardUser(), 'rec-el', { input: { utility_provider: LEGACY, notes: 'edited' } });
     expect(updatedData(prisma).input).toEqual({ utility_provider: LEGACY, notes: 'edited' });
   });
 
   it('an edit that sends no input is not asked about the stored one', async () => {
     const { prisma, service } = editing(stored({ input: { utility_provider: LEGACY } as never }));
-    await service.update(dataEntry(), 'rec-el', { activityValue: 12 });
+    await service.update(standardUser(), 'rec-el', { activityValue: 12 });
     expect(updatedData(prisma)).not.toHaveProperty('input');
   });
 
   it('an edit that changes the supplier is held to the bound, whatever the record held', async () => {
     const { prisma, service } = editing(stored({ input: { utility_provider: LEGACY } as never }));
-    await expect(service.update(dataEntry(), 'rec-el', { input: { utility_provider: `${LEGACY}!` } })).rejects.toMatchObject(refused);
-    await expect(service.update(dataEntry(), 'rec-el', { input: { utility_provider: LONG } })).rejects.toMatchObject(refused);
+    await expect(service.update(standardUser(), 'rec-el', { input: { utility_provider: `${LEGACY}!` } })).rejects.toMatchObject(refused);
+    await expect(service.update(standardUser(), 'rec-el', { input: { utility_provider: LONG } })).rejects.toMatchObject(refused);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
-    await service.update(dataEntry(), 'rec-el', { input: { utility_provider: 'Enerjisa' } });
+    await service.update(standardUser(), 'rec-el', { input: { utility_provider: 'Enerjisa' } });
     expect(updatedData(prisma).input).toEqual({ utility_provider: 'Enerjisa' });
   });
 
   it('is asked of the effective category: a record moved to Electricity with a new long supplier is refused', async () => {
     const { prisma, service } = editing(stored({ category: 'Water', activityUnit: 'cubic_metres', input: null }));
-    await expect(service.update(dataEntry(), 'rec-el', { category: 'Electricity', activityUnit: 'kWh', input: { utility_provider: LONG } }))
+    await expect(service.update(standardUser(), 'rec-el', { category: 'Electricity', activityUnit: 'kWh', input: { utility_provider: LONG } }))
       .rejects.toMatchObject(refused);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -1140,7 +1234,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       location: { name: 'Ankara Plant' },
     }));
 
-    const dto = await service.create(dataEntry(), located);
+    const dto = await service.create(standardUser(), located);
 
     expect(dto.locationName).toBe('Ankara Plant');
     const diff = audit.record.mock.calls[0][1].diff as any;
@@ -1168,7 +1262,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       location: { name: 'Ankara Plant' },
     }));
 
-    const dto = await service.update(dataEntry(), 'rec-u', { activityValue: 5000 });
+    const dto = await service.update(standardUser(), 'rec-u', { activityValue: 5000 });
 
     expect(dto.locationName).toBe('Ankara Plant');
     const diff = audit.record.mock.calls[0][1].diff as any;
@@ -1212,7 +1306,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         location: { name: 'Ankara Plant' },
       }));
 
-      await service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+      await service.update(standardUser(), 'rec-move', { locationId: 'loc-1' });
 
       // The same row, its site column rewritten: the record MOVES. A scalar
       // write, never the relation's `connect` — since LP4-01 the site key is
@@ -1240,7 +1334,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', { code: 'P2003', clientVersion: 'test' }),
       );
 
-      await expect(service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' })).rejects.toMatchObject({ code: 'location_not_found' });
+      await expect(service.update(standardUser(), 'rec-move', { locationId: 'loc-1' })).rejects.toMatchObject({ code: 'location_not_found' });
     });
 
     it('detaches a site record back to the whole company', async () => {
@@ -1253,7 +1347,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         location: null,
       }));
 
-      await service.update(dataEntry(), 'rec-move', { locationId: null });
+      await service.update(standardUser(), 'rec-move', { locationId: null });
 
       // `null` in the column alone: the relation's `disconnect` would NULL
       // the subsidiary half of the composite site key too (P2011, a 500).
@@ -1280,7 +1374,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         location: { name: 'Ankara Plant' },
       }));
 
-      await service.update(dataEntry(), 'rec-move', { activityValue: 5000 });
+      await service.update(standardUser(), 'rec-move', { activityValue: 5000 });
 
       // The third arm of the tri-state: no `location` key at all, so an
       // unrelated edit cannot silently re-home the record...
@@ -1309,7 +1403,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       // someone tried to resolve one by moving. A 409, never a second row —
       // and never a silent overwrite of the record already sitting there.
       await expect(
-        service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' }),
+        service.update(standardUser(), 'rec-move', { locationId: 'loc-1' }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -1326,7 +1420,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
 
       await expect(
-        service.update(dataEntry(), 'rec-move', { locationId: 'loc-x' }),
+        service.update(standardUser(), 'rec-move', { locationId: 'loc-x' }),
       ).rejects.toBeInstanceOf(NotFoundException);
       // Tenant isolation: a cross-tenant id must not be probeable through a
       // half-applied write, so nothing may reach the database.
@@ -1352,7 +1446,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       // `approved`, so the records that most need moving are exactly the ones
       // this refuses. Repairing them needs the audited correction path (PR 3).
       await expect(
-        service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' }),
+        service.update(standardUser(), 'rec-move', { locationId: 'loc-1' }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
@@ -1367,7 +1461,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         location: { name: 'Ankara Plant' },
       }));
 
-      await service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+      await service.update(standardUser(), 'rec-move', { locationId: 'loc-1' });
 
       // The baseline is keyed on the reporting ENTITY (subsidiary + location +
       // category + granularity), and whole-company records form their own pool.
@@ -1388,7 +1482,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       // Without the `!location` half of the guard this reaches `connect` and
       // Prisma raises P2025 — a 500 for what is plainly a bad request.
       await expect(
-        service.update(dataEntry(), 'rec-move', { locationId: 'loc-nope' }),
+        service.update(standardUser(), 'rec-move', { locationId: 'loc-nope' }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
@@ -1409,7 +1503,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       // database failed for any reason at all — a specific, checkable claim,
       // and a false one.
       await expect(
-        service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' }),
+        service.update(standardUser(), 'rec-move', { locationId: 'loc-1' }),
       ).rejects.not.toBeInstanceOf(ConflictException);
     });
 
@@ -1427,7 +1521,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         }),
       );
 
-      const refusal = service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+      const refusal = service.update(standardUser(), 'rec-move', { locationId: 'loc-1' });
       await expect(refusal).rejects.toBeInstanceOf(RecordChangedError);
       await expect(refusal).rejects.not.toBeInstanceOf(DuplicateActivityRecordError);
     });
@@ -1442,7 +1536,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         location: { name: 'Ankara Plant' },
       }));
 
-      await service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+      await service.update(standardUser(), 'rec-move', { locationId: 'loc-1' });
 
       // `audit_log` is append-only and has no correction path, so a move that
       // was not captured on both sides would be unreconstructable.
@@ -1463,7 +1557,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       location: { name: 'Ankara Plant' },
     });
 
-    const dto = await service.get(dataEntry(), 'rec-g');
+    const dto = await service.get(standardUser(), 'rec-g');
 
     expect(dto.locationName).toBe('Ankara Plant');
     expect(prisma.activityRecord.findUnique).toHaveBeenCalledWith({
@@ -1480,7 +1574,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       location: { name: 'Ankara Plant' },
     }));
 
-    await service.create(dataEntry(), located);
+    await service.create(standardUser(), located);
 
     expect(prisma.activityRecord.create.mock.calls[0][0].include).toEqual({
       location: { select: { name: true } },
@@ -1517,7 +1611,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
     evidence.deleteUnlinkedRows.mockResolvedValue([{ id: 'ev-2', storagePath: 'sub-1/ev-2.pdf' }]);
 
-    await service.remove(dataEntry(), 'rec-del');
+    await service.remove(standardUser(), 'rec-del');
 
     // Everything inside goes through the TRANSACTION's client.
     expect(evidence.fileIdsFor).toHaveBeenCalledWith('rec-del', prisma.tx);
@@ -1553,7 +1647,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
     evidence.deleteUnlinkedRows.mockResolvedValue([{ id: 'ev-2', storagePath: 'sub-1/ev-2.pdf' }]);
 
-    await service.remove(dataEntry(), 'rec-del');
+    await service.remove(standardUser(), 'rec-del');
 
     const [, row, client] = audit.record.mock.calls.at(-1)! as [
       unknown,
@@ -1573,7 +1667,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     evidence.deleteUnlinkedRows.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/ev-1.pdf' }]);
     audit.record.mockRejectedValueOnce(new Error('audit down'));
 
-    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/audit down/);
+    await expect(service.remove(standardUser(), 'rec-del')).rejects.toThrow(/audit down/);
     expect(evidence.removeBlobs).not.toHaveBeenCalled();
   });
 
@@ -1584,7 +1678,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
       .mockResolvedValueOnce(seen)
       .mockResolvedValueOnce({ ...seen, status: ActivityRecordStatus.submitted });
 
-    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(service.remove(standardUser(), 'rec-del')).rejects.toBeInstanceOf(RecordChangedError);
     expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(evidence.fileIdsFor).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
@@ -1595,7 +1689,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     deletableRecord(prisma);
     prisma.tx.$queryRaw.mockResolvedValue([]); // woke to no row
 
-    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.remove(standardUser(), 'rec-del')).rejects.toBeInstanceOf(NotFoundException);
     expect(evidence.fileIdsFor).not.toHaveBeenCalled();
     expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(evidence.deleteUnlinkedRows).not.toHaveBeenCalled();
@@ -1608,7 +1702,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     deletableRecord(prisma);
     evidence.fileIdsFor.mockRejectedValue(new Error('db down'));
 
-    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/db down/);
+    await expect(service.remove(standardUser(), 'rec-del')).rejects.toThrow(/db down/);
     expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
     expect(evidence.deleteUnlinkedRows).not.toHaveBeenCalled();
@@ -1621,7 +1715,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
       makeRecord({ id: 'rec-a', status: ActivityRecordStatus.approved, createdBy: 'user-entry' }),
     );
 
-    await expect(service.remove(dataEntry(), 'rec-a')).rejects.toBeInstanceOf(
+    await expect(service.remove(standardUser(), 'rec-a')).rejects.toBeInstanceOf(
       BadRequestException,
     );
     expect(evidence.fileIdsFor).not.toHaveBeenCalled();
@@ -1632,34 +1726,34 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
 });
 
 describe('ActivityRecordsService — RBAC', () => {
-  it('data_entry cannot approve -> Forbidden', async () => {
+  it('a standard user cannot approve -> Forbidden', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ status: ActivityRecordStatus.submitted, subsidiaryId: 'sub-1' }),
     );
-    await expect(service.approve(dataEntry(), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.approve(standardUser(), 'rec-1')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('executive_viewer cannot approve -> Forbidden, naming both approver roles', async () => {
+  it('an auditor cannot approve -> Forbidden, naming both deciding roles', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted }),
     );
 
-    const refusal = await service.approve(executiveViewer(), 'rec-a').catch((e) => e);
+    const refusal = await service.approve(auditor(), 'rec-a').catch((e) => e);
     expect(refusal).toBeInstanceOf(ForbiddenException);
-    expect(refusal.message).toBe('Only a consultant or super_admin may approve records');
+    expect(refusal.message).toBe('Only a masterkey or a super_admin may approve records');
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['data_entry', dataEntry],
-    ['executive_viewer', executiveViewer],
-  ] as const)('%s cannot reject -> Forbidden, nothing written (reject stays consultant / super_admin)', async (_role, as) => {
+    ['standard_user', standardUser],
+    ['auditor', auditor],
+  ] as const)('%s cannot reject -> Forbidden, nothing written (returning stays with the deciders)', async (_role, as) => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted, createdBy: 'someone-else' }),
@@ -1670,10 +1764,11 @@ describe('ActivityRecordsService — RBAC', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('a consultant approves another user\'s submission (K2, Decisions 2026-11-12)', async () => {
-    // The consultant does not author (`mayAuthorRecords`), but since K2 is the
-    // approver a one-person customer can have. Recorded like any approval: the
-    // consultant is the reviewer, and the audit row is written as that user.
+  it('a super_admin approves a standard user\'s submission in its company (INC-2.6 §1.1)', async () => {
+    // Rewritten from the retired K2 case (a consultant approved): the
+    // consultant role is gone, and a standard user's record in a company with
+    // an active super_admin is that super_admin's to decide. Recorded like any
+    // approval: the super_admin is the reviewer, and the audit row is its.
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted, createdBy: 'user-entry' }),
@@ -1682,30 +1777,31 @@ describe('ActivityRecordsService — RBAC', () => {
       makeRecord({ id: 'rec-a', status: data.status, reviewedBy: data.reviewedBy }),
     );
 
-    const dto = await service.approve(consultant(), 'rec-a');
+    const dto = await service.approve(superAdmin(), 'rec-a');
     expect(dto.status).toBe(ActivityRecordStatus.approved);
     expect(prisma.activityRecord.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: ActivityRecordStatus.approved, reviewedBy: 'user-consultant' }),
+        data: expect.objectContaining({ status: ActivityRecordStatus.approved, reviewedBy: 'user-super-admin' }),
       }),
     );
     expect(audit.record).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'user-consultant', role: 'consultant' }),
+      expect.objectContaining({ id: 'user-super-admin', role: 'super_admin' }),
       expect.objectContaining({ action: 'approve', entity: 'activity_record' }),
       prisma.tx,
     );
   });
 
-  it('super_admin approves a submitted record (audited as `approve`)', async () => {
+  it('masterkey approves a super_admin\'s submitted record (audited as `approve`)', async () => {
+    // A super_admin's record is the masterkey's to decide (INC-2.6 §1.1).
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
-      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted }),
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted, createdBy: 'user-super-admin' }),
     );
     prisma.activityRecord.update.mockImplementation(({ data }: any) =>
       makeRecord({ id: 'rec-a', status: data.status }),
     );
 
-    const dto = await service.approve(superAdmin(), 'rec-a');
+    const dto = await service.approve(masterkey(), 'rec-a');
     expect(dto.status).toBe(ActivityRecordStatus.approved);
     expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ id: expect.any(String) }),
@@ -1718,7 +1814,7 @@ describe('ActivityRecordsService — RBAC', () => {
       );
   });
 
-  it('non-owner data_entry cannot edit a peer record -> Forbidden', async () => {
+  it('non-owner standard user cannot edit a peer record -> Forbidden', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({
@@ -1728,12 +1824,12 @@ describe('ActivityRecordsService — RBAC', () => {
       }),
     );
     await expect(
-      service.update(dataEntry(), 'rec-1', { activityValue: 1 }),
+      service.update(standardUser(), 'rec-1', { activityValue: 1 }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('super_admin may NOT edit a record created by someone else (BUG-R2-03: author only)', async () => {
-    // Before 2026-11-10 a super_admin could change a colleague's draft and,
+  it('masterkey may NOT edit a record created by someone else (BUG-R2-03: author only)', async () => {
+    // Before 2026-11-10 a masterkey could change a colleague's draft and,
     // once its author submitted it, approve it — D01 compares the approver with
     // the creator only, so it could not see the edit.
     const { prisma, service } = build();
@@ -1747,7 +1843,7 @@ describe('ActivityRecordsService — RBAC', () => {
     );
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
 
-    const refusal = await service.update(superAdmin(), 'rec-o', { activityValue: 100 }).catch((e) => e);
+    const refusal = await service.update(masterkey(), 'rec-o', { activityValue: 100 }).catch((e) => e);
     expect(refusal).toBeInstanceOf(AuthorOnlyRefusedError);
     expect(errorCodeOf(refusal)).toBe('record_author_forbidden');
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -1755,7 +1851,7 @@ describe('ActivityRecordsService — RBAC', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('super_admin edits a record they created', async () => {
+  it('masterkey edits a record they created', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({
@@ -1770,16 +1866,16 @@ describe('ActivityRecordsService — RBAC', () => {
       makeRecord({ id: 'rec-own', createdBy: 'user-admin', ...data }),
     );
 
-    const dto = await service.update(superAdmin(), 'rec-own', { activityValue: 100 });
+    const dto = await service.update(masterkey(), 'rec-own', { activityValue: 100 });
     expect(dto.id).toBe('rec-own');
   });
 
-  it('super_admin still deletes a colleague\'s draft — the author-only rule is for edits', async () => {
+  it('masterkey still deletes a colleague\'s draft — the author-only rule is for edits', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-d', subsidiaryId: 'sub-1', createdBy: 'someone-else', status: ActivityRecordStatus.draft }),
     );
-    await service.remove(superAdmin(), 'rec-d');
+    await service.remove(masterkey(), 'rec-d');
     expect(prisma.tx.activityRecord.delete).toHaveBeenCalledWith({ where: { id: 'rec-d' } });
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'user-admin' }),
@@ -1791,12 +1887,13 @@ describe('ActivityRecordsService — RBAC', () => {
   // The API's edit gate and the contract's `mayEditRecord`, which the screens
   // read to offer Edit, must never disagree (BUG-R2-03 review).
   const ROLES = [
-    ['data_entry author', dataEntry(), 'user-entry'],
-    ['data_entry, not the author', dataEntry(), 'someone-else'],
-    ['super_admin author', superAdmin(), 'user-admin'],
+    ['standard_user author', standardUser(), 'user-entry'],
+    ['standard_user, not the author', standardUser(), 'someone-else'],
+    ['masterkey author', masterkey(), 'user-admin'],
+    ['masterkey, not the author', masterkey(), 'user-entry'],
+    ['super_admin author', superAdmin(), 'user-super-admin'],
     ['super_admin, not the author', superAdmin(), 'user-entry'],
-    ['consultant author', consultant(), 'user-consultant'],
-    ['executive_viewer author', consultant({ role: 'executive_viewer', id: 'user-exec' }), 'user-exec'],
+    ['auditor author', auditor({ id: 'user-exec' }), 'user-exec'],
   ] as const;
   const STATUSES = Object.values(ActivityRecordStatus);
   it.each(ROLES.flatMap(([name, user, createdBy]) => STATUSES.map((status) => [name, user, createdBy, status] as const)))(
@@ -1815,17 +1912,17 @@ describe('ActivityRecordsService — RBAC', () => {
     },
   );
 
-  it('a rejected record is edited by its author, but not by a super_admin', async () => {
+  it('a rejected record is edited by its author, but not by a masterkey', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-rj', subsidiaryId: 'sub-1', createdBy: 'user-entry', status: ActivityRecordStatus.rejected }),
     );
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
-    await expect(service.update(superAdmin(), 'rec-rj', { activityValue: 7 })).rejects.toBeInstanceOf(AuthorOnlyRefusedError);
+    await expect(service.update(masterkey(), 'rec-rj', { activityValue: 7 })).rejects.toBeInstanceOf(AuthorOnlyRefusedError);
     prisma.activityRecord.update.mockImplementation(({ data }: any) =>
       makeRecord({ id: 'rec-rj', status: ActivityRecordStatus.rejected, ...data }),
     );
-    const dto = await service.update(dataEntry(), 'rec-rj', { activityValue: 7 });
+    const dto = await service.update(standardUser(), 'rec-rj', { activityValue: 7 });
     expect(dto.id).toBe('rec-rj');
   });
 });
@@ -1849,7 +1946,7 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
     editable(prisma, evidence, ['ev-1', 'ev-2']);
     evidence.detachLinksInTx.mockResolvedValue([{ id: 'ev-2', storagePath: 'sub-1/ev-2.pdf' }]);
 
-    const dto = await service.update(dataEntry(), 'rec-e', {
+    const dto = await service.update(standardUser(), 'rec-e', {
       category: 'Electricity', activityUnit: 'kWh', detachEvidenceIds: ['ev-2', 'ev-1'],
     } as never);
 
@@ -1865,7 +1962,7 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, ['ev-1', 'ev-2']);
 
-    const refusal = await service.update(dataEntry(), 'rec-e', {
+    const refusal = await service.update(standardUser(), 'rec-e', {
       category: 'Electricity', activityUnit: 'kWh', detachEvidenceIds: ['ev-1'],
     } as never).catch((e) => e);
 
@@ -1882,14 +1979,14 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, ['ev-1']);
     await expect(
-      service.update(dataEntry(), 'rec-e', { category: 'Electricity', activityUnit: 'kWh' } as never),
+      service.update(standardUser(), 'rec-e', { category: 'Electricity', activityUnit: 'kWh' } as never),
     ).rejects.toBeInstanceOf(EvidenceDetachRequiredError);
   });
 
   it('a category change needs no list when the record has no file', async () => {
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, []);
-    await service.update(dataEntry(), 'rec-e', { category: 'Electricity', activityUnit: 'kWh' } as never);
+    await service.update(standardUser(), 'rec-e', { category: 'Electricity', activityUnit: 'kWh' } as never);
     expect(evidence.detachLinksInTx).toHaveBeenCalledWith(prisma.tx, expect.anything(), 'rec-e', []);
     expect(evidence.removeBlobs).toHaveBeenCalledWith([]);
   });
@@ -1897,7 +1994,7 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
   it('a year move with no list keeps every file', async () => {
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, ['ev-1', 'ev-2']);
-    const dto = await service.update(dataEntry(), 'rec-e', { reportingYear: 2023 } as never);
+    const dto = await service.update(standardUser(), 'rec-e', { reportingYear: 2023 } as never);
     expect(evidence.detachLinksInTx).toHaveBeenCalledWith(prisma.tx, expect.anything(), 'rec-e', []);
     expect(dto.evidenceCount).toBe(2);
     expect(auditOfUpdate().diff.evidence).toBeUndefined();
@@ -1906,7 +2003,7 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
   it('a year move naming one file detaches only that one', async () => {
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, ['ev-1', 'ev-2']);
-    const dto = await service.update(dataEntry(), 'rec-e', { reportingYear: 2023, detachEvidenceIds: ['ev-1'] } as never);
+    const dto = await service.update(standardUser(), 'rec-e', { reportingYear: 2023, detachEvidenceIds: ['ev-1'] } as never);
     expect(evidence.detachLinksInTx).toHaveBeenCalledWith(prisma.tx, expect.anything(), 'rec-e', ['ev-1']);
     expect(dto.evidenceCount).toBe(1);
   });
@@ -1914,7 +2011,7 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
   it('a value-only edit may name a file too', async () => {
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, ['ev-1']);
-    const dto = await service.update(dataEntry(), 'rec-e', { activityValue: 12, detachEvidenceIds: ['ev-1'] } as never);
+    const dto = await service.update(standardUser(), 'rec-e', { activityValue: 12, detachEvidenceIds: ['ev-1'] } as never);
     expect(evidence.detachLinksInTx).toHaveBeenCalledWith(prisma.tx, expect.anything(), 'rec-e', ['ev-1']);
     expect(dto.evidenceCount).toBe(0);
   });
@@ -1922,7 +2019,7 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
   it('a file that is not linked to the record is evidence_not_found, writing nothing', async () => {
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, ['ev-1']);
-    const refusal = await service.update(dataEntry(), 'rec-e', { activityValue: 12, detachEvidenceIds: ['ev-foreign'] } as never).catch((e) => e);
+    const refusal = await service.update(standardUser(), 'rec-e', { activityValue: 12, detachEvidenceIds: ['ev-foreign'] } as never).catch((e) => e);
     expect(refusal).toBeInstanceOf(NotFoundException);
     expect(errorCodeOf(refusal)).toBe('evidence_not_found');
     expect(prisma.tx.activityRecord.update).not.toHaveBeenCalled();
@@ -1933,7 +2030,7 @@ describe('ActivityRecordsService — evidence on edit (BUG-R2-03, owner decision
   it('names one file once, however often the body repeats it', async () => {
     const { prisma, service, evidence } = build(2);
     editable(prisma, evidence, ['ev-1', 'ev-2']);
-    await service.update(dataEntry(), 'rec-e', { activityValue: 12, detachEvidenceIds: ['ev-1', 'ev-1'] } as never);
+    await service.update(standardUser(), 'rec-e', { activityValue: 12, detachEvidenceIds: ['ev-1', 'ev-1'] } as never);
     expect(evidence.detachLinksInTx).toHaveBeenCalledWith(prisma.tx, expect.anything(), 'rec-e', ['ev-1']);
   });
 });
@@ -1950,29 +2047,29 @@ describe('ActivityRecordsService — a decision names the submission it saw (BUG
   it('refuses an approval of a submission the reviewer did not see — recalled and resubmitted since', async () => {
     const { prisma, service } = build();
     pending(prisma);
-    await expect(service.approve(superAdmin(), 'rec-v', '2026-11-10T08:00:00.000Z')).rejects.toBeInstanceOf(RecordChangedError);
-    await expect(service.approve(superAdmin(), 'rec-v', null)).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(service.approve(masterkey(), 'rec-v', '2026-11-10T08:00:00.000Z')).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(service.approve(masterkey(), 'rec-v', null)).rejects.toBeInstanceOf(RecordChangedError);
     expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('refuses a rejection the same way', async () => {
     const { prisma, service } = build();
     pending(prisma, ActivityRecordStatus.under_review);
-    await expect(service.reject(consultant(), 'rec-v', 'reason', '2026-11-10T08:00:00.000Z')).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(service.reject(superAdmin(), 'rec-v', 'reason', '2026-11-10T08:00:00.000Z')).rejects.toBeInstanceOf(RecordChangedError);
     expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('a decision on the submission seen goes ahead, in any ISO spelling of the same instant', async () => {
     const { prisma, service } = build();
     pending(prisma);
-    const dto = await service.reject(consultant(), 'rec-v', 'reason', '2026-11-10T11:00:00+02:00');
+    const dto = await service.reject(superAdmin(), 'rec-v', 'reason', '2026-11-10T11:00:00+02:00');
     expect(dto.status).toBe(ActivityRecordStatus.rejected);
   });
 
   it('compares nothing when the client names nothing', async () => {
     const { prisma, service } = build();
     pending(prisma);
-    const dto = await service.reject(consultant(), 'rec-v', 'reason');
+    const dto = await service.reject(superAdmin(), 'rec-v', 'reason');
     expect(dto.status).toBe(ActivityRecordStatus.rejected);
   });
 
@@ -1980,8 +2077,8 @@ describe('ActivityRecordsService — a decision names the submission it saw (BUG
     const { prisma, service } = build();
     pending(prisma);
     for (const call of [
-      () => service.approve(superAdmin(), 'rec-v', SUBMISSION_NOT_NAMED),
-      () => service.reject(consultant(), 'rec-v', 'reason', SUBMISSION_NOT_NAMED),
+      () => service.approve(masterkey(), 'rec-v', SUBMISSION_NOT_NAMED),
+      () => service.reject(superAdmin(), 'rec-v', 'reason', SUBMISSION_NOT_NAMED),
     ]) {
       const refusal = await call().catch((e) => e);
       expect(refusal).toBeInstanceOf(ReviewVersionRequiredError);
@@ -1992,16 +2089,16 @@ describe('ActivityRecordsService — a decision names the submission it saw (BUG
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('names the role before the missing submission: a data_entry user approving is still a 403', async () => {
+  it('names the role before the missing submission: a standard user approving is still a 403', async () => {
     const { prisma, service } = build();
     pending(prisma);
-    await expect(service.approve(dataEntry(), 'rec-v', SUBMISSION_NOT_NAMED)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.approve(standardUser(), 'rec-v', SUBMISSION_NOT_NAMED)).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('a consultant passes the role check, so a missing submission is `record_changed` (K2)', async () => {
+  it('a super_admin passes the role check, so a missing submission is `record_changed`', async () => {
     const { prisma, service } = build();
     pending(prisma);
-    const refusal = await service.approve(consultant(), 'rec-v', SUBMISSION_NOT_NAMED).catch((e) => e);
+    const refusal = await service.approve(superAdmin(), 'rec-v', SUBMISSION_NOT_NAMED).catch((e) => e);
     expect(refusal).toBeInstanceOf(ReviewVersionRequiredError);
     expect(errorCodeOf(refusal)).toBe('record_changed');
     expect(prisma.tx.activityRecord.update).not.toHaveBeenCalled();
@@ -2010,7 +2107,7 @@ describe('ActivityRecordsService — a decision names the submission it saw (BUG
   it('names a wrong status before a stale submission', async () => {
     const { prisma, service } = build();
     pending(prisma, ActivityRecordStatus.approved);
-    await expect(service.reject(consultant(), 'rec-v', 'reason', '2026-11-10T08:00:00.000Z')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.reject(superAdmin(), 'rec-v', 'reason', '2026-11-10T08:00:00.000Z')).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
@@ -2028,7 +2125,7 @@ describe('ActivityRecordsService — recall (BUG-R2-03)', () => {
       makeRecord({ id: 'rec-rc', status: data.status, submittedAt: data.submittedAt }),
     );
 
-    const dto = await service.recall(dataEntry(), 'rec-rc');
+    const dto = await service.recall(standardUser(), 'rec-rc');
 
     expect(dto.status).toBe(ActivityRecordStatus.draft);
     const write = (prisma.tx.activityRecord.update.mock.calls[0] ?? prisma.activityRecord.update.mock.calls[0])[0];
@@ -2047,10 +2144,10 @@ describe('ActivityRecordsService — recall (BUG-R2-03)', () => {
     );
   });
 
-  it('refuses a super_admin who is not the author (record_author_forbidden), writing nothing', async () => {
+  it('refuses a masterkey who is not the author (record_author_forbidden), writing nothing', async () => {
     const { prisma, service } = build();
     submitted(prisma);
-    const refusal = await service.recall(superAdmin(), 'rec-rc').catch((e) => e);
+    const refusal = await service.recall(masterkey(), 'rec-rc').catch((e) => e);
     expect(refusal).toBeInstanceOf(AuthorOnlyRefusedError);
     expect(errorCodeOf(refusal)).toBe('record_author_forbidden');
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -2058,18 +2155,20 @@ describe('ActivityRecordsService — recall (BUG-R2-03)', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('lets a super_admin recall a record they authored', async () => {
+  it('lets a masterkey recall a record they authored', async () => {
     const { prisma, service } = build();
     submitted(prisma, { createdBy: 'user-admin' });
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-rc', status: data.status }));
-    const dto = await service.recall(superAdmin(), 'rec-rc');
+    const dto = await service.recall(masterkey(), 'rec-rc');
     expect(dto.status).toBe(ActivityRecordStatus.draft);
   });
 
-  it.each(['consultant', 'executive_viewer'] as const)('refuses a %s by role, even on a record they authored', async (role) => {
+  // The retired consultant seat is gone; the auditor is the one role left
+  // that authors nothing (INC-2.6 §1).
+  it('refuses an auditor by role, even on a record they authored', async () => {
     const { prisma, service } = build();
     submitted(prisma, { createdBy: 'user-seat' });
-    await expect(service.recall(consultant({ role, id: 'user-seat' }), 'rec-rc')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.recall(auditor({ id: 'user-seat' }), 'rec-rc')).rejects.toBeInstanceOf(ForbiddenException);
     expect(audit.record).not.toHaveBeenCalled();
   });
 
@@ -2083,7 +2182,7 @@ describe('ActivityRecordsService — recall (BUG-R2-03)', () => {
   ])('refuses a %s record with record_not_recallable naming the status', async (status) => {
     const { prisma, service } = build();
     submitted(prisma, { status });
-    const refusal = await service.recall(dataEntry(), 'rec-rc').catch((e) => e);
+    const refusal = await service.recall(standardUser(), 'rec-rc').catch((e) => e);
     expect(refusal).toBeInstanceOf(RecordNotRecallableError);
     expect(errorCodeOf(refusal)).toBe('record_not_recallable');
     expect((refusal.getResponse() as { params: unknown }).params).toEqual({ status });
@@ -2093,26 +2192,26 @@ describe('ActivityRecordsService — recall (BUG-R2-03)', () => {
   it('names the status before the author: a colleague recalling a record in review hears it is in review', async () => {
     const { prisma, service } = build();
     submitted(prisma, { status: ActivityRecordStatus.under_review, createdBy: 'someone-else' });
-    await expect(service.recall(dataEntry(), 'rec-rc')).rejects.toBeInstanceOf(RecordNotRecallableError);
+    await expect(service.recall(standardUser(), 'rec-rc')).rejects.toBeInstanceOf(RecordNotRecallableError);
   });
 
   it('refuses in a locked period with the lock\'s own answer', async () => {
     const { prisma, service } = build();
     submitted(prisma);
     prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
-    await expect(service.recall(dataEntry(), 'rec-rc')).rejects.toBeInstanceOf(PeriodLockedError);
+    await expect(service.recall(standardUser(), 'rec-rc')).rejects.toBeInstanceOf(PeriodLockedError);
     expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('answers 404 for another tenant\'s record', async () => {
     const { prisma, service } = build();
     submitted(prisma, { subsidiaryId: 'sub-foreign' });
-    await expect(service.recall(dataEntry(), 'rec-rc')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.recall(standardUser(), 'rec-rc')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
 describe('ActivityRecordsService — start review (FR §6.3)', () => {
-  it('consultant takes a submitted record into under_review (audited)', async () => {
+  it('a super_admin takes a standard user\'s submitted record into under_review (audited)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-r', status: ActivityRecordStatus.submitted }),
@@ -2120,8 +2219,11 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     prisma.activityRecord.update.mockImplementation(({ data }: any) =>
       makeRecord({ id: 'rec-r', status: data.status }),
     );
-    const dto = await service.startReview(consultant(), 'rec-r');
+    const dto = await service.startReview(superAdmin(), 'rec-r');
     expect(dto.status).toBe(ActivityRecordStatus.under_review);
+    expect(prisma.tx.activityRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ reviewedBy: 'user-super-admin' }) }),
+    );
     // The action taxonomy is the point of the change: a transition must no
     // longer be logged as a blanket 'update'.
     expect(audit.record).toHaveBeenCalledWith(
@@ -2132,15 +2234,16 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     );
   });
 
-  it.each(['consultant', 'executive_viewer'] as const)(
-    'refuses a %s edit and delete even on a record they authored — the role gate alone',
-    async (role) => {
-      // A seat that authored drafts as data_entry and was then moved: the
-      // record is theirs and still editable, so only the role gate in
-      // `assertCanMutate` refuses. The test above cannot see that gate — its
-      // record belongs to someone else, and the author check answers first.
+  it(
+    'refuses an auditor edit and delete even on a record they authored — the role gate alone',
+    async () => {
+      // A seat that authored drafts as a standard user and was then made an
+      // auditor: the record is theirs and still editable, so only the role
+      // gate refuses. The test above cannot see that gate — its record belongs
+      // to someone else, and the author check answers first. (The retired
+      // consultant seat was the other row of this case.)
       const { prisma, service } = build();
-      const seat = consultant({ role, id: 'user-seat' });
+      const seat = auditor({ id: 'user-seat' });
       prisma.activityRecord.findUnique.mockResolvedValue(
         makeRecord({ id: 'rec-own', status: ActivityRecordStatus.draft, createdBy: 'user-seat' }),
       );
@@ -2154,17 +2257,16 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     },
   );
 
-  it('consultant does not author: may NOT create, update, delete or submit', async () => {
-    // Decision 2026-07-30 — the consultant seat is advisory (review, anomaly
-    // flagging, guidance) and typically sits outside the holding company; data
-    // preparation belongs to the tenant's own data_entry staff.
+  it('an auditor does not author: may NOT create, update, delete or submit', async () => {
+    // INC-2.6 §1: the auditor reads the whole organisation and changes
+    // nothing (formerly the consultant's case, decision 2026-07-30).
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-c', status: ActivityRecordStatus.draft }),
     );
 
     await expect(
-      service.create(consultant(), {
+      service.create(auditor(), {
         subsidiaryId: 'sub-1',
         locationId: null,
         reportingYear: 2024,
@@ -2177,16 +2279,16 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     await expect(
-      service.update(consultant(), 'rec-c', { activityValue: 200 } as never),
+      service.update(auditor(), 'rec-c', { activityValue: 200 } as never),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
-    await expect(service.remove(consultant(), 'rec-c')).rejects.toBeInstanceOf(
+    await expect(service.remove(auditor(), 'rec-c')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
 
     // The CLASSES the bulk paths branch on: a role refusal is one 403 for a
     // whole batch, so both bulk services re-throw it by class.
-    await expect(service.create(consultant(), {
+    await expect(service.create(auditor(), {
       subsidiaryId: 'sub-1',
       locationId: null,
       reportingYear: 2024,
@@ -2196,10 +2298,10 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
       activityValue: 100,
       activityUnit: 'kWh',
     } as never)).rejects.toBeInstanceOf(CreateRoleRefusedError);
-    await expect(service.submit(consultant(), 'rec-c')).rejects.toThrow(
+    await expect(service.submit(auditor(), 'rec-c')).rejects.toThrow(
       SUBMIT_ROLE_REFUSAL,
     );
-    await expect(service.submit(consultant(), 'rec-c')).rejects.toBeInstanceOf(
+    await expect(service.submit(auditor(), 'rec-c')).rejects.toBeInstanceOf(
       SubmitRoleRefusedError,
     );
 
@@ -2209,7 +2311,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('consultant KEEPS review and reject (the seat is not read-only)', async () => {
+  it('a super_admin takes a standard user\'s record into review and returns it with a comment', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-k', status: ActivityRecordStatus.submitted }),
@@ -2218,20 +2320,20 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
       makeRecord({ id: 'rec-k', status: data.status, reviewNote: data.reviewNote }),
     );
 
-    const reviewed = await service.startReview(consultant(), 'rec-k');
+    const reviewed = await service.startReview(superAdmin(), 'rec-k');
     expect(reviewed.status).toBe(ActivityRecordStatus.under_review);
 
-    const rejected = await service.reject(consultant(), 'rec-k', 'missing invoice');
+    const rejected = await service.reject(superAdmin(), 'rec-k', 'missing invoice');
     expect(rejected.status).toBe(ActivityRecordStatus.rejected);
     expect(rejected.reviewNote).toBe('missing invoice');
   });
 
-  it('data_entry cannot start a review -> Forbidden', async () => {
+  it('a standard user cannot start a review -> Forbidden', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ status: ActivityRecordStatus.submitted, subsidiaryId: 'sub-1' }),
     );
-    await expect(service.startReview(dataEntry(), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.startReview(standardUser(), 'rec-1')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -2242,7 +2344,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ status: ActivityRecordStatus.draft }),
     );
-    await expect(service.startReview(consultant(), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.startReview(superAdmin(), 'rec-1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });
@@ -2253,17 +2355,19 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
       makeRecord({ status: ActivityRecordStatus.submitted }),
     );
     prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
-    await expect(service.startReview(consultant(), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.startReview(superAdmin(), 'rec-1')).rejects.toBeInstanceOf(
       ConflictException,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  // WP5 (`uat4-review-resubmit`): the author is refused the start of review.
+  // WP5 (`uat4-review-resubmit`): the author is refused the start of review —
+  // since INC-2.6 every author but a masterkey (whose own record is theirs to
+  // decide, a self-approval). Rewritten from the masterkey case.
   it('refuses a super_admin taking their own record into review, writing nothing', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
-      makeRecord({ id: 'rec-own', status: ActivityRecordStatus.submitted, createdBy: 'user-admin' }),
+      makeRecord({ id: 'rec-own', status: ActivityRecordStatus.submitted, createdBy: 'user-super-admin' }),
     );
     const refusal = service.startReview(superAdmin(), 'rec-own');
     await expect(refusal).rejects.toBeInstanceOf(SelfReviewRefusedError);
@@ -2278,40 +2382,44 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('refuses a former author, now a consultant, whatever role they hold now', async () => {
+  it('refuses a former author, now a super_admin, whatever role they hold now', async () => {
     const { prisma, service } = build();
+    prisma.people.set('user-moved', { role: 'super_admin', grants: ['sub-1'] });
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-old', status: ActivityRecordStatus.submitted, createdBy: 'user-moved' }),
     );
     await expect(
-      service.startReview(consultant({ id: 'user-moved' }), 'rec-old'),
+      service.startReview(superAdmin({ id: 'user-moved' }), 'rec-old'),
     ).rejects.toBeInstanceOf(SelfReviewRefusedError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('gives a data_entry author the plain role refusal, not self_review_forbidden', async () => {
+  it('gives a standard user author the plain role refusal, not self_review_forbidden', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ status: ActivityRecordStatus.submitted, createdBy: 'user-entry' }),
     );
-    const refusal = service.startReview(dataEntry(), 'rec-1');
+    const refusal = service.startReview(standardUser(), 'rec-1');
     await expect(refusal).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(service.startReview(dataEntry(), 'rec-1')).rejects.not.toBeInstanceOf(
+    await expect(service.startReview(standardUser(), 'rec-1')).rejects.not.toBeInstanceOf(
       SelfReviewRefusedError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('still lets a super_admin take another user\'s record into review', async () => {
+  it('still lets a masterkey take a super_admin\'s record into review', async () => {
+    // A super_admin's record is the masterkey's (INC-2.6 §1.1); a standard
+    // user's, in a company with an active super_admin, is not (see the
+    // approver chain below).
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
-      makeRecord({ id: 'rec-other', status: ActivityRecordStatus.submitted, createdBy: 'user-entry' }),
+      makeRecord({ id: 'rec-other', status: ActivityRecordStatus.submitted, createdBy: 'user-super-admin' }),
     );
     prisma.activityRecord.update.mockImplementation(({ data }: any) =>
       makeRecord({ id: 'rec-other', status: data.status }),
     );
-    const dto = await service.startReview(superAdmin(), 'rec-other');
+    const dto = await service.startReview(masterkey(), 'rec-other');
     expect(dto.status).toBe(ActivityRecordStatus.under_review);
   });
 });
@@ -2322,7 +2430,7 @@ describe('ActivityRecordsService — transition rules', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ status: ActivityRecordStatus.draft }),
     );
-    await expect(service.approve(superAdmin(), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.approve(masterkey(), 'rec-1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });
@@ -2337,7 +2445,7 @@ describe('ActivityRecordsService — transition rules', () => {
       }),
     );
     await expect(
-      service.update(dataEntry(), 'rec-1', { activityValue: 1 }),
+      service.update(standardUser(), 'rec-1', { activityValue: 1 }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -2350,7 +2458,7 @@ describe('ActivityRecordsService — transition rules', () => {
         status: ActivityRecordStatus.locked,
       }),
     );
-    await expect(service.remove(dataEntry(), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.remove(standardUser(), 'rec-1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });
@@ -2364,7 +2472,7 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-s', status: data.status }),
     );
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
@@ -2392,7 +2500,7 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-r', status: data.status, reviewNote: data.reviewNote }),
     );
 
-    const dto = await service.submit(dataEntry(), 'rec-r');
+    const dto = await service.submit(standardUser(), 'rec-r');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     // The note is NOT destroyed: it is the reviewer's only in-record signal that
     // this record has been round the loop before, and `/review` renders it as
@@ -2415,21 +2523,21 @@ describe('ActivityRecordsService — transition rules', () => {
       }),
     );
 
-    await expect(service.submit(dataEntry(), 'rec-n')).rejects.toThrow(
+    await expect(service.submit(standardUser(), 'rec-n')).rejects.toThrow(
       RESUBMIT_AUTHOR_REFUSAL,
     );
-    await expect(service.submit(dataEntry(), 'rec-n')).rejects.toBeInstanceOf(
+    await expect(service.submit(standardUser(), 'rec-n')).rejects.toBeInstanceOf(
       SubmitAuthorRefusedError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
   // Decision D02 (2026-09-29): only the author submits — a draft as much as a
-  // rejected record, and super_admin is not exempt. Before it, any colleague
+  // rejected record, and masterkey is not exempt. Before it, any colleague
   // who could see the subsidiary could submit someone else's draft.
   it.each([
-    ['a colleague', dataEntry],
-    ['a super_admin', superAdmin],
+    ['a colleague', standardUser],
+    ['a masterkey', masterkey],
   ] as const)("%s may not submit someone else's draft (D02)", async (_who, caller) => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
@@ -2441,7 +2549,7 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('a super_admin may not resubmit a record they did not author either (D02)', async () => {
+  it('a masterkey may not resubmit a record they did not author either (D02)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({
@@ -2451,13 +2559,13 @@ describe('ActivityRecordsService — transition rules', () => {
       }),
     );
 
-    await expect(service.submit(superAdmin(), 'rec-sa')).rejects.toBeInstanceOf(
+    await expect(service.submit(masterkey(), 'rec-sa')).rejects.toBeInstanceOf(
       SubmitAuthorRefusedError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('a super_admin submits a record they authored', async () => {
+  it('a masterkey submits a record they authored', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-own', status: ActivityRecordStatus.draft, createdBy: 'user-admin' }),
@@ -2466,16 +2574,19 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-own', status: data.status, createdBy: 'user-admin' }),
     );
 
-    const dto = await service.submit(superAdmin(), 'rec-own');
+    const dto = await service.submit(masterkey(), 'rec-own');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
   });
 
   // Decision D01 (2026-09-29): segregation of duties — the approver is neither
-  // the record's creator nor its submitter, super_admin included.
+  // the record's creator nor its submitter. Since INC-2.6 (ruling R1) a
+  // masterkey is the one exception: their own record is theirs alone, as a
+  // self-approval (see "the approver chain" below). Rewritten from the
+  // masterkey case, whose premise that rule retired.
   it('a super_admin may not approve a record they created (D01)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
-      makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-admin' }),
+      makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-super-admin' }),
     );
 
     await expect(service.approve(superAdmin(), 'rec-self')).rejects.toBeInstanceOf(
@@ -2488,21 +2599,21 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('D01 binds a consultant too: a former author whose role changed may not approve their own record', async () => {
-    // A consultant cannot author, so `createdBy` is a consultant's id only when
-    // the user created the record under another role and was later changed to
-    // consultant (`PATCH /users/:id/role` keeps the id). D01 compares the id.
+  it('D01 binds a former author whose role changed: now a super_admin, they may not approve their own record', async () => {
+    // Created as a standard user, then made a super_admin granted the company
+    // (`PATCH /users/:id/role` keeps the id). D01 compares the id.
     const { prisma, service } = build();
+    prisma.people.set('user-moved', { role: 'super_admin', grants: ['sub-1'] });
     prisma.activityRecord.findUnique.mockResolvedValue(
-      makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-consultant' }),
+      makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-moved' }),
     );
 
-    await expect(service.approve(consultant(), 'rec-self')).rejects.toBeInstanceOf(SelfApprovalRefusedError);
+    await expect(service.approve(superAdmin({ id: 'user-moved' }), 'rec-self')).rejects.toBeInstanceOf(SelfApprovalRefusedError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('D01 does not stop a creator from reviewing or rejecting — only approving', async () => {
+  it('a masterkey author returns their own record — it is theirs to decide (INC-2.6 ruling R1)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-admin' }),
@@ -2511,7 +2622,7 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-self', status: data.status, createdBy: 'user-admin' }),
     );
 
-    await expect(service.reject(superAdmin(), 'rec-self', 'Wrong meter')).resolves.toMatchObject({
+    await expect(service.reject(masterkey(), 'rec-self', 'Wrong meter')).resolves.toMatchObject({
       status: ActivityRecordStatus.rejected,
     });
   });
@@ -2525,7 +2636,7 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-d', status: data.status }),
     );
 
-    await service.submit(dataEntry(), 'rec-d');
+    await service.submit(standardUser(), 'rec-d');
     const data = prisma.activityRecord.update.mock.calls[0][0].data;
     expect('reviewNote' in data).toBe(false);
   });
@@ -2553,7 +2664,7 @@ describe('ActivityRecordsService — transition rules', () => {
         makeRecord({ id: 'rec-v', ...data }),
       );
 
-      await service.void(superAdmin(), 'rec-v', 'Duplicate of the site invoice for January');
+      await service.void(masterkey(), 'rec-v', 'Duplicate of the site invoice for January');
 
       // The whole point: an UPDATE, never a delete. The row, its evidence and
       // its immutable calculation snapshot all survive — what changes is that
@@ -2577,11 +2688,11 @@ describe('ActivityRecordsService — transition rules', () => {
 
       // Tenant isolation on the newest mutation endpoint, which had none. Not
       // found rather than forbidden, and refused before any write, so a
-      // super_admin of one tenant cannot use the response to confirm that a
+      // masterkey of one tenant cannot use the response to confirm that a
       // record exists in another.
       await expect(
         service.void(
-          superAdmin({ accessibleSubsidiaryIds: ['sub-1'] }),
+          masterkey({ accessibleSubsidiaryIds: ['sub-1'] }),
           'rec-v',
           'A reason long enough to pass',
         ),
@@ -2595,13 +2706,13 @@ describe('ActivityRecordsService — transition rules', () => {
         approved({ subsidiaryId: 'sub-other' } as Partial<ActivityRecord>),
       );
 
-      // A consultant asking about someone else's record must get the same
-      // answer as a consultant asking about a record that does not exist.
+      // A super_admin asking about another company's record must get the same
+      // answer as one asking about a record that does not exist.
       // Ordering the role gate first would leak existence through the
       // difference between 403 and 404.
       await expect(
         service.void(
-          consultant({ accessibleSubsidiaryIds: ['sub-1'] }),
+          superAdmin({ accessibleSubsidiaryIds: ['sub-1'] }),
           'rec-v',
           'A reason long enough to pass',
         ),
@@ -2615,9 +2726,9 @@ describe('ActivityRecordsService — transition rules', () => {
         makeRecord({ id: 'rec-v', ...data }),
       );
 
-      const dto = await service.void(superAdmin(), 'rec-v', 'Superseded by the site invoice');
+      const dto = await service.void(masterkey(), 'rec-v', 'Superseded by the site invoice');
 
-      // `/audit` is super_admin-only, so for every other seat the record itself
+      // `/audit` is masterkey-only, so for every other seat the record itself
       // is the only place the withdrawal is visible at all.
       expect(dto.voidReason).toBe('Superseded by the site invoice');
       expect(dto.voidedBy).toBe('user-admin');
@@ -2632,7 +2743,7 @@ describe('ActivityRecordsService — transition rules', () => {
         makeRecord({ id: 'rec-v', ...data }),
       );
 
-      const dto = await service.void(superAdmin(), 'rec-v', 'Superseded by the site invoice');
+      const dto = await service.void(masterkey(), 'rec-v', 'Superseded by the site invoice');
 
       // The exact regression three review seats independently found on the
       // reviewer column in WP22 PR D: both screens splice a write response into
@@ -2654,7 +2765,7 @@ describe('ActivityRecordsService — transition rules', () => {
         makeRecord({ subsidiaryId: 'sub-1', voidedBy: 'user-ghost' }),
       );
 
-      const dto = await service.get(consultant(), 'rec-1');
+      const dto = await service.get(auditor(), 'rec-1');
 
       // Both read `voidedByName: null`; `voidedBy` is the discriminator, which
       // is why it stays on the DTO beside the name. Rendering a never-withdrawn
@@ -2667,25 +2778,29 @@ describe('ActivityRecordsService — transition rules', () => {
       prisma.activityRecord.findUnique.mockResolvedValue(
         makeRecord({ subsidiaryId: 'sub-1', voidedBy: null }),
       );
-      const never = await service.get(consultant(), 'rec-1');
+      const never = await service.get(auditor(), 'rec-1');
       expect(never.voidedByName).toBeNull();
       expect(never.voidedBy).toBeNull();
     });
 
-    it('is super_admin only — a consultant may reject, never withdraw', async () => {
+    it('is masterkey only — a super_admin may approve and return, never withdraw (INC-2.6 R4)', async () => {
       const { prisma, service } = build();
       prisma.activityRecord.findUnique.mockResolvedValue(approved());
 
-      // A consultant reviews, sends a record BACK and — since K2 — approves it.
-      // Taking an accepted figure out of the client's reported inventory stays
-      // the holding company's decision: approving does not grant voiding.
+      // A super_admin reviews, returns and approves records of their company.
+      // Taking an accepted figure out of the reported inventory stays the
+      // organisation-wide administrator's: approving does not grant voiding.
       await expect(
-        service.void(consultant(), 'rec-v', 'Not my call to make'),
+        service.void(superAdmin(), 'rec-v', 'Not my call to make'),
       ).rejects.toBeInstanceOf(ForbiddenException);
       await expect(
-        service.void(dataEntry(), 'rec-v', 'Not my call to make'),
+        service.void(standardUser(), 'rec-v', 'Not my call to make'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.void(auditor(), 'rec-v', 'Not my call to make'),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
     });
 
     it('refuses anything that is not approved, naming the unlock path', async () => {
@@ -2699,7 +2814,7 @@ describe('ActivityRecordsService — transition rules', () => {
       ]) {
         prisma.activityRecord.findUnique.mockResolvedValue(approved({ status }));
         await expect(
-          service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+          service.void(masterkey(), 'rec-v', 'A reason long enough to pass'),
         ).rejects.toBeInstanceOf(BadRequestException);
       }
       // `locked` is the one worth naming: it means the period is closed, and
@@ -2708,7 +2823,7 @@ describe('ActivityRecordsService — transition rules', () => {
         approved({ status: ActivityRecordStatus.locked }),
       );
       await expect(
-        service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+        service.void(masterkey(), 'rec-v', 'A reason long enough to pass'),
       ).rejects.toThrow(/unlocked first/i);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
@@ -2723,20 +2838,20 @@ describe('ActivityRecordsService — transition rules', () => {
       // so there is no route back in. That is deliberate: re-entering a figure
       // means recording it again, with its own provenance, not resurrecting a
       // withdrawn one.
-      // Its author is refused for the status (a super_admin, since BUG-R2-03,
+      // Its author is refused for the status (a masterkey, since BUG-R2-03,
       // for not being the author).
       await expect(
-        service.update(dataEntry({ id: approved({}).createdBy ?? 'user-entry' }), 'rec-v', { activityValue: 5000 }),
+        service.update(standardUser({ id: approved({}).createdBy ?? 'user-entry' }), 'rec-v', { activityValue: 5000 }),
       ).rejects.toBeInstanceOf(BadRequestException);
       await expect(
-        service.update(superAdmin(), 'rec-v', { activityValue: 5000 }),
+        service.update(masterkey(), 'rec-v', { activityValue: 5000 }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       // Nor can it be recalled: recall leaves `submitted` only.
-      await expect(service.recall(dataEntry(), 'rec-v')).rejects.toBeInstanceOf(RecordNotRecallableError);
-      await expect(service.submit(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(
+      await expect(service.recall(standardUser(), 'rec-v')).rejects.toBeInstanceOf(RecordNotRecallableError);
+      await expect(service.submit(masterkey(), 'rec-v')).rejects.toBeInstanceOf(
         BadRequestException,
       );
-      await expect(service.remove(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(
+      await expect(service.remove(masterkey(), 'rec-v')).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
@@ -2747,7 +2862,7 @@ describe('ActivityRecordsService — transition rules', () => {
       prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
 
       await expect(
-        service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+        service.void(masterkey(), 'rec-v', 'A reason long enough to pass'),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
@@ -2759,7 +2874,7 @@ describe('ActivityRecordsService — transition rules', () => {
         makeRecord({ id: 'rec-v', ...data }),
       );
 
-      await service.void(superAdmin(), 'rec-v', 'A reason long enough to pass');
+      await service.void(masterkey(), 'rec-v', 'A reason long enough to pass');
 
       // The status is part of the WHERE, not just the guard above it. Every
       // other transition writes on the id alone and is safe doing so, because
@@ -2788,7 +2903,7 @@ describe('ActivityRecordsService — transition rules', () => {
       // being `approved`, in practice because a lock landed in the window, so
       // the honest answer is the lock's own refusal rather than a server error.
       await expect(
-        service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+        service.void(masterkey(), 'rec-v', 'A reason long enough to pass'),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -2799,7 +2914,7 @@ describe('ActivityRecordsService — transition rules', () => {
         makeRecord({ id: 'rec-v', ...data }),
       );
 
-      await service.void(superAdmin(), 'rec-v', 'Duplicate of the site invoice');
+      await service.void(masterkey(), 'rec-v', 'Duplicate of the site invoice');
 
       const call = audit.record.mock.calls[0][1];
       // Its own verb, not a generic `update`: "what was restated and why" has
@@ -2822,7 +2937,7 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-a', status: ActivityRecordStatus.approved }),
     );
 
-    await expect(service.submit(dataEntry(), 'rec-a')).rejects.toThrow(
+    await expect(service.submit(standardUser(), 'rec-a')).rejects.toThrow(
       /draft or returned/i,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -2847,7 +2962,7 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-u', { varianceReason: 'a note' });
+    await service.update(standardUser(), 'rec-u', { varianceReason: 'a note' });
 
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ unit: 'MWh' }),
@@ -2864,10 +2979,10 @@ describe('ActivityRecordsService — transition rules', () => {
 
     // The sentence is user-facing copy (the web mirrors it); the bulk submit
     // tells this refusal from the status one by its CLASS, asserted below.
-    await expect(service.submit(dataEntry(), 'rec-e')).rejects.toThrow(
+    await expect(service.submit(standardUser(), 'rec-e')).rejects.toThrow(
       EVIDENCE_REFUSAL_FRAGMENT,
     );
-    await expect(service.submit(dataEntry(), 'rec-e')).rejects.toBeInstanceOf(
+    await expect(service.submit(standardUser(), 'rec-e')).rejects.toBeInstanceOf(
       EvidenceRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -2894,7 +3009,7 @@ describe('ActivityRecordsService — transition rules', () => {
       }),
     );
 
-    const dto = await service.reject(consultant(), 'rec-r', 'invoice mismatch');
+    const dto = await service.reject(superAdmin(), 'rec-r', 'invoice mismatch');
     expect(dto.status).toBe(ActivityRecordStatus.rejected);
     const updateArg = prisma.activityRecord.update.mock.calls[0][0];
     // The reviewer's reason is its own field; the author's variance
@@ -2928,7 +3043,7 @@ describe('ActivityRecordsService — transition rules', () => {
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-u', { activityValue: 90000 });
+    await service.update(standardUser(), 'rec-u', { activityValue: 90000 });
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ value: 90000, geographyCode: 'TR' }),
       expect.anything(),
@@ -2975,7 +3090,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    const dto = await service.create(dataEntry(), MONTHLY_DTO);
+    const dto = await service.create(standardUser(), MONTHLY_DTO);
 
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(true);
     expect(dto.anomalyFlag).toBe(true);
@@ -2994,7 +3109,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(false);
   });
 
@@ -3006,7 +3121,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(false);
   });
 
@@ -3021,7 +3136,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
 
     const { data } = prisma.activityRecord.create.mock.calls[0][0];
     expect(data.anomalyBaselinePriorCount).toBe(1);
@@ -3043,7 +3158,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
     // The intruder's VALUE is load-bearing. At 19 this test could not fail: an
     // admitted April gives a baseline of 13, and 19.8 is +52% of that — still
     // flagged, still green. At 40 an admitted April gives 20, and 19.8 is -1%,
@@ -3058,7 +3173,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
 
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
@@ -3092,7 +3207,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), { ...MONTHLY_DTO, periodValue: 'May' });
+    await service.create(standardUser(), { ...MONTHLY_DTO, periodValue: 'May' });
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(true);
   });
 
@@ -3121,7 +3236,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
 
     // `>` vs `>=` on the threshold survived the whole suite until this test:
     // every other fixture sits far from the boundary, so the one comparison
@@ -3147,7 +3262,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    const dto = await service.create(dataEntry(), MONTHLY_DTO);
+    const dto = await service.create(standardUser(), MONTHLY_DTO);
 
     const { data } = prisma.activityRecord.create.mock.calls[0][0];
     expect(data.anomalyFlag).toBe(true);
@@ -3172,7 +3287,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
 
     const { data } = prisma.activityRecord.create.mock.calls[0][0];
     expect(data.anomalyFlag).toBe(flagged);
@@ -3188,7 +3303,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
 
     const { data } = prisma.activityRecord.create.mock.calls[0][0];
     expect(data.anomalyFlag).toBe(false);
@@ -3208,7 +3323,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    const dto = await service.create(dataEntry(), MONTHLY_DTO);
+    const dto = await service.create(standardUser(), MONTHLY_DTO);
 
     expect(dto.anomalyBaselinePriorCount).toBe(3);
     expect(dto.anomalyBaselineTCo2e).toBe(10);
@@ -3237,7 +3352,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
 
     // Two figures out of three slots → judged on those two, even though a
     // fourth comparable period exists just outside the window.
@@ -3259,7 +3374,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), MONTHLY_DTO);
+    await service.create(standardUser(), MONTHLY_DTO);
 
     // No ratio is computable against zero, so no warning — but three priors of
     // zero is a fact about the series, and the record says so instead of
@@ -3285,7 +3400,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), { ...CREATE_DTO, reportingPeriod: 'quarterly', periodValue: 'Q3' });
+    await service.create(standardUser(), { ...CREATE_DTO, reportingPeriod: 'quarterly', periodValue: 'Q3' });
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(true);
   });
 
@@ -3304,7 +3419,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-u', { activityValue: 5000 });
+    await service.update(standardUser(), 'rec-u', { activityValue: 5000 });
     const updateArg = prisma.activityRecord.update.mock.calls[0][0];
     expect(updateArg.data.anomalyFlag).toBe(true);
     expect(prisma.activityRecord.findMany.mock.calls[0][0].where.id).toEqual({ not: 'rec-u' });
@@ -3329,7 +3444,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), {
+    await service.create(standardUser(), {
       ...MONTHLY_DTO,
       category: 'Water',
       activityUnit: 'cubic_metres',
@@ -3369,7 +3484,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-u', {
+    await service.update(standardUser(), 'rec-u', {
       category: 'Water',
       activityUnit: 'cubic_metres',
     } as never);
@@ -3398,7 +3513,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ id: 'rec-w', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-w', { category: 'Electricity' } as never);
+    await service.update(standardUser(), 'rec-w', { category: 'Electricity' } as never);
 
     // Without this the stored `cubic_metres` was re-read under Electricity,
     // normalised at the natural-gas calorific value and multiplied by the grid
@@ -3412,7 +3527,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
   it('rejects a non-canonical periodValue for its granularity (VAR data integrity)', async () => {
     const { service } = build(2);
     await expect(
-      service.create(dataEntry(), { ...MONTHLY_DTO, periodValue: 'Mar' }),
+      service.create(standardUser(), { ...MONTHLY_DTO, periodValue: 'Mar' }),
     ).rejects.toThrow(/not a valid period/i);
   });
 
@@ -3439,10 +3554,10 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
 
     // The whole constant (it is what the user reads), and the CLASS — which
     // is what the bulk submit branches on.
-    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toThrow(
+    await expect(service.submit(standardUser(), 'rec-s')).rejects.toThrow(
       VARIANCE_REFUSAL,
     );
-    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(
+    await expect(service.submit(standardUser(), 'rec-s')).rejects.toBeInstanceOf(
       VarianceReasonRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -3454,7 +3569,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([priorMonth('December', 10, 2023), priorMonth('January', 10), priorMonth('February', 10)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', ...data }));
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(true);
   });
@@ -3468,7 +3583,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit());
     prisma.activityRecord.findMany.mockResolvedValue(priors());
 
-    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(
+    await expect(service.submit(standardUser(), 'rec-s')).rejects.toBeInstanceOf(
       VarianceReasonRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -3481,7 +3596,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 10)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', ...data }));
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
 
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     const { data } = prisma.activityRecord.update.mock.calls[0][0];
@@ -3500,7 +3615,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     );
     prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 10)]);
 
-    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(
+    await expect(service.submit(standardUser(), 'rec-s')).rejects.toBeInstanceOf(
       VarianceReasonRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -3512,7 +3627,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([priorMonth('February', 0)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', ...data }));
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
   });
@@ -3572,7 +3687,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    const dto = await service.update(dataEntry(), 'rec-u', { activityValue: 5000 });
+    const dto = await service.update(standardUser(), 'rec-u', { activityValue: 5000 });
 
     const { data } = prisma.activityRecord.update.mock.calls[0][0];
     expect(data.anomalyBaselinePriorCount).toBe(3);
@@ -3597,7 +3712,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ id: 'rec-s', ...data }),
     );
 
-    await service.submit(dataEntry(), 'rec-s');
+    await service.submit(standardUser(), 'rec-s');
 
     const { data } = prisma.activityRecord.update.mock.calls[0][0];
     expect(data.anomalyBaselinePriorCount).toBe(2);
@@ -3617,7 +3732,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ id: 'rec-s', ...data }),
     );
 
-    await service.submit(dataEntry(), 'rec-s');
+    await service.submit(standardUser(), 'rec-s');
 
     const { data } = prisma.activityRecord.update.mock.calls[0][0];
     expect(data.anomalyBaselinePriorCount).toBe(0);
@@ -3655,7 +3770,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       makeRecord({ id: 'rec-s', ...data }),
     );
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
 
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
@@ -3673,7 +3788,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([]); // no comparable priors
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', ...data }));
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
   });
@@ -3701,7 +3816,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    const dto = await service.create(dataEntry(), { ...CREATE_DTO, ...BIG });
+    const dto = await service.create(standardUser(), { ...CREATE_DTO, ...BIG });
 
     const { data } = prisma.activityRecord.create.mock.calls[0][0];
     expect(data.anomalyFlag).toBe(true);
@@ -3718,7 +3833,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
       prisma.activityRecord.create.mockImplementation(({ data }: any) =>
         makeRecord({ ...data, id: 'rec-new' }),
       );
-      await service.create(dataEntry(), { ...CREATE_DTO, activityValue, activityUnit: 'mwh' });
+      await service.create(standardUser(), { ...CREATE_DTO, activityValue, activityUnit: 'mwh' });
       expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(flagged);
     }
   });
@@ -3728,7 +3843,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findUnique.mockResolvedValue(draft(BIG));
     prisma.activityRecord.findMany.mockResolvedValue([]);
 
-    const refusal = await service.submit(dataEntry(), 'rec-c').catch((e: unknown) => e);
+    const refusal = await service.submit(standardUser(), 'rec-c').catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(VarianceReasonRequiredError);
     expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
       code: 'variance_reason_required',
@@ -3745,7 +3860,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
 
-    const dto = await service.submit(dataEntry(), 'rec-c');
+    const dto = await service.submit(standardUser(), 'rec-c');
 
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     const { data } = prisma.activityRecord.update.mock.calls[0][0];
@@ -3759,7 +3874,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findUnique.mockResolvedValue(draft());
     prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 10)]);
 
-    const refusal = await service.submit(dataEntry(), 'rec-c').catch((e: unknown) => e);
+    const refusal = await service.submit(standardUser(), 'rec-c').catch((e: unknown) => e);
     expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
       message: VARIANCE_REFUSAL,
       params: { basis: 'history' },
@@ -3774,7 +3889,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
 
-    await service.update(dataEntry(), 'rec-c', { activityValue: 450_000 } as never);
+    await service.update(standardUser(), 'rec-c', { activityValue: 450_000 } as never);
 
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
   });
@@ -3790,7 +3905,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
 
-    await service.update(dataEntry(), 'rec-c', { varianceReason: null } as never);
+    await service.update(standardUser(), 'rec-c', { varianceReason: null } as never);
 
     expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
       anomalyFlag: true,
@@ -3807,7 +3922,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 19.8)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
 
-    const dto = await service.submit(dataEntry(), 'rec-c');
+    const dto = await service.submit(standardUser(), 'rec-c');
 
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
@@ -3823,7 +3938,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findUnique.mockResolvedValue(draft(BIG));
     prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
 
-    const refusal = await service.submit(dataEntry(), 'rec-c').catch((e: unknown) => e);
+    const refusal = await service.submit(standardUser(), 'rec-c').catch((e: unknown) => e);
     expect((refusal as VarianceReasonRequiredError).getResponse()).toMatchObject({
       code: 'variance_reason_required',
       params: { basis: 'ceiling' },
@@ -3837,7 +3952,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
 
-    await service.submit(dataEntry(), 'rec-c');
+    await service.submit(standardUser(), 'rec-c');
 
     expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
       anomalyFlag: true,
@@ -3852,7 +3967,7 @@ describe('ActivityRecordsService — first-period typo ceiling (BUG-R2-07 tier 3
     prisma.activityRecord.findMany.mockResolvedValue([priorAnnual(2023, 0)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-c', ...data }));
 
-    const dto = await service.submit(dataEntry(), 'rec-c');
+    const dto = await service.submit(standardUser(), 'rec-c');
 
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data).toMatchObject({
@@ -3907,7 +4022,7 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
     prisma.activityRecord.create.mockImplementation(({ data }: never) =>
       makeRecord({ id: 'rec-1', ...(data as object) }),
     );
-    await service.create(dataEntry(), dto as never);
+    await service.create(standardUser(), dto as never);
     return prisma;
   };
 
@@ -3939,14 +4054,14 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
   it('looks the period lock up by the canonical spelling', async () => {
     // The sharpest consequence, and not a data-quality one: a lock stored as
     // `"January"` did not block a record sent as `"january"`, because the gate
-    // is raw Postgres equality. A period a super_admin believes is closed went
+    // is raw Postgres equality. A period a masterkey believes is closed went
     // on accepting writes.
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1', subsidiaryId: 'sub-1' });
 
-    await expect(service.create(dataEntry(), monthly('january'))).rejects.toThrow(
+    await expect(service.create(standardUser(), monthly('january'))).rejects.toThrow(
       /period .* is locked/i,
     );
     expect(prisma.periodLock.findFirst.mock.calls[0][0].where).toMatchObject({
@@ -3966,13 +4081,13 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
       makeRecord({ id: 'rec-1', ...(data as object) }),
     );
 
-    await service.update(dataEntry(), 'rec-1', { periodValue: 'april' } as never);
+    await service.update(standardUser(), 'rec-1', { periodValue: 'april' } as never);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.periodValue).toBe('April');
 
     // An edit that does not mention the period must not rewrite it — that would
     // put a change into the append-only audit diff that the user never made.
     prisma.activityRecord.update.mockClear();
-    await service.update(dataEntry(), 'rec-1', { activityValue: 12 } as never);
+    await service.update(standardUser(), 'rec-1', { activityValue: 12 } as never);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.periodValue).toBeUndefined();
   });
 
@@ -3980,10 +4095,10 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
     const { service } = build(2);
     // Canonicalising must not become "accept anything and guess". An
     // abbreviation names no period, so it is a 400 exactly as before.
-    await expect(service.create(dataEntry(), monthly('Mar'))).rejects.toThrow(
+    await expect(service.create(standardUser(), monthly('Mar'))).rejects.toThrow(
       /not a valid period/i,
     );
-    await expect(service.create(dataEntry(), monthly('2024-03'))).rejects.toThrow(
+    await expect(service.create(standardUser(), monthly('2024-03'))).rejects.toThrow(
       /not a valid period/i,
     );
   });
@@ -3996,13 +4111,13 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
     const rlo = String.fromCharCode(0x202e);
 
     await expect(
-      service.create(dataEntry(), monthly(`Ma${rlo}r${'x'.repeat(60)}`)),
+      service.create(standardUser(), monthly(`Ma${rlo}r${'x'.repeat(60)}`)),
     ).rejects.toThrow(
       `"Ma<U+202E>r${'x'.repeat(36)}…" is not a valid period for a monthly record.`,
     );
     // Coded with the canonical granularity only; the value never rides along.
     const response = await service
-      .create(dataEntry(), monthly(`Ma${rlo}r`))
+      .create(standardUser(), monthly(`Ma${rlo}r`))
       .catch((e: BadRequestException) => e.getResponse());
     expect(response).toMatchObject({ code: 'record_period_invalid', params: { granularity: 'monthly' } });
     expect(JSON.stringify((response as { params: unknown }).params)).not.toContain('Ma');
@@ -4013,7 +4128,7 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
     // pipe, keeps the file's text out of `params` (security-rls P3-2).
     const { service } = build(2);
     const response = await service
-      .create(dataEntry(), { ...monthly('January'), reportingPeriod: 'weekly<b>' as never })
+      .create(standardUser(), { ...monthly('January'), reportingPeriod: 'weekly<b>' as never })
       .catch((e: BadRequestException) => e.getResponse());
     expect(response).toMatchObject({ code: 'record_period_invalid' });
     expect((response as { params?: unknown }).params).toBeUndefined();
@@ -4027,7 +4142,7 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
     const { prisma, service } = build(2);
     prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
 
-    await expect(service.create(dataEntry(), CREATE_DTO)).rejects.toThrow(
+    await expect(service.create(standardUser(), CREATE_DTO)).rejects.toThrow(
       /period .* is locked/i,
     );
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
@@ -4041,10 +4156,10 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
     prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
 
     await expect(
-      service.update(dataEntry(), 'rec-l', { activityValue: 1 }),
+      service.update(standardUser(), 'rec-l', { activityValue: 1 }),
     ).rejects.toThrow(/period .* is locked/i);
     await expect(
-      service.update(dataEntry(), 'rec-l', { activityValue: 1 }),
+      service.update(standardUser(), 'rec-l', { activityValue: 1 }),
     ).rejects.toBeInstanceOf(PeriodLockedError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -4060,7 +4175,7 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
       .mockResolvedValueOnce(LOCK_ROW);
 
     await expect(
-      service.update(dataEntry(), 'rec-m', { periodValue: 'April' }),
+      service.update(standardUser(), 'rec-m', { periodValue: 'April' }),
     ).rejects.toThrow(/period .* is locked/i);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -4072,7 +4187,7 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
     );
     prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
 
-    await expect(service.remove(dataEntry(), 'rec-d')).rejects.toThrow(
+    await expect(service.remove(standardUser(), 'rec-d')).rejects.toThrow(
       /period .* is locked/i,
     );
     expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
@@ -4085,7 +4200,7 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
     );
     prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
 
-    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toThrow(
+    await expect(service.submit(standardUser(), 'rec-s')).rejects.toThrow(
       /period .* is locked/i,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -4098,7 +4213,7 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), CREATE_DTO);
+    await service.create(standardUser(), CREATE_DTO);
     expect(prisma.periodLock.findFirst).toHaveBeenCalledWith({
       where: {
         subsidiaryId: 'sub-1',
@@ -4143,8 +4258,8 @@ describe('ActivityRecordsService — actor names are resolved', () => {
       { ...makeRecord({ id: 'r2', reviewedBy: 'user-admin' }), _count: { evidenceLinks: 0 } },
     ]);
 
-    // A consultant, so neither actor is the caller and both need looking up.
-    const rows = (await service.listPage(consultant(), {})).items;
+    // An auditor, so neither actor is the caller and both need looking up.
+    const rows = (await service.listPage(auditor(), {})).items;
 
     expect(rows.map((r) => r.createdByName)).toEqual(['Entry User', 'Entry User']);
     expect(rows.map((r) => r.reviewedByName)).toEqual(['Admin User', 'Admin User']);
@@ -4167,7 +4282,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
       makeRecord({ id: 'rec-in', subsidiaryId: 'sub-1', reviewedBy: 'user-admin' }),
     );
 
-    const dto = await service.get(consultant(), 'rec-in');
+    const dto = await service.get(auditor(), 'rec-in');
     expect(dto.createdByName).toBe('Entry User');
     expect(dto.reviewedByName).toBe('Admin User');
   });
@@ -4181,7 +4296,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    const dto = await service.create(dataEntry(), CREATE_DTO);
+    const dto = await service.create(standardUser(), CREATE_DTO);
 
     // `created_by` on a create is always the caller, and the auth guard has
     // already loaded that whole profile to build `RequestUser`. This is the
@@ -4212,7 +4327,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     // read. When these responses omitted the names, the actor column emptied
     // the instant a reviewer acted — and "Reviewed by —" appeared on a record
     // whose reviewer had just been set by that very click.
-    const updated = await service.update(dataEntry(), 'rec-u', { activityValue: 5000 });
+    const updated = await service.update(standardUser(), 'rec-u', { activityValue: 5000 });
     expect(updated.createdByName).toBe('Entry User');
 
     prisma.activityRecord.findUnique.mockResolvedValue({
@@ -4221,8 +4336,8 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     });
     const reviewed = await service.approve(superAdmin(), 'rec-u');
     expect(reviewed.createdByName).toBe('Entry User');
-    expect(reviewed.reviewedByName).toBe('Admin User');
-    expect(reviewed.reviewedBy).toBe('user-admin');
+    expect(reviewed.reviewedByName).toBe('Super Admin User');
+    expect(reviewed.reviewedBy).toBe('user-super-admin');
   });
 
   it('resolves a withdrawal by SOMEONE ELSE, which the acting-user shortcut cannot', async () => {
@@ -4243,7 +4358,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     // on a withdrawal the actor is the requesting user, who is seeded into the
     // actor map from the request itself, so the write response resolves the
     // name whether or not the column is gathered at all.
-    const dto = await service.get(consultant(), 'rec-1');
+    const dto = await service.get(auditor(), 'rec-1');
     expect(dto.voidedByName).toBe('Admin User');
   });
 
@@ -4254,7 +4369,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
       makeRecord({ subsidiaryId: 'sub-1', reviewedBy: 'user-admin' }),
     );
 
-    const dto = await service.get(consultant(), 'rec-1');
+    const dto = await service.get(auditor(), 'rec-1');
     // Erasure has to remove the NAME and keep the row. Leaking the uuid back
     // as a display value would undo exactly what read-time resolution buys.
     expect(dto.createdByName).toBeNull();
@@ -4270,7 +4385,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
       makeRecord({ subsidiaryId: 'sub-1', reviewedBy: null }),
     );
 
-    const dto = await service.get(consultant(), 'rec-1');
+    const dto = await service.get(auditor(), 'rec-1');
     // Both read `reviewedByName: null`. `reviewedBy` is what tells them apart,
     // which is why it stays on the DTO next to the name — rendering an
     // unreviewed record as "deleted user" would claim someone decided it.
@@ -4287,7 +4402,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
-    await service.create(dataEntry(), CREATE_DTO);
+    await service.create(standardUser(), CREATE_DTO);
 
     // A WHOLE-KEY-SET assertion, not a list of forbidden names. The first cut
     // checked three known keys were absent, and a review proved that a FOURTH
@@ -4346,7 +4461,7 @@ describe('ActivityRecordsService — submittedAt', () => {
     const { prisma, service } = arrange();
     prisma.activityRecord.findUnique.mockResolvedValue(submittable());
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
 
     const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
     expect(written.submittedAt).toBeInstanceOf(Date);
@@ -4368,7 +4483,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       }),
     );
 
-    await service.submit(dataEntry(), 'rec-s');
+    await service.submit(standardUser(), 'rec-s');
 
     const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
     expect(written.submittedAt).toBeInstanceOf(Date);
@@ -4386,7 +4501,7 @@ describe('ActivityRecordsService — submittedAt', () => {
     ['startReview', (svc) => svc.startReview(superAdmin(), 'rec-s'), ActivityRecordStatus.submitted],
     ['approve', (svc) => svc.approve(superAdmin(), 'rec-s'), ActivityRecordStatus.submitted],
     ['reject', (svc) => svc.reject(superAdmin(), 'rec-s', 'Meter reading does not match.'), ActivityRecordStatus.submitted],
-    ['void', (svc) => svc.void(superAdmin(), 'rec-s', 'Duplicate of the site invoice for the month.'), ActivityRecordStatus.approved],
+    ['void', (svc) => svc.void(masterkey(), 'rec-s', 'Duplicate of the site invoice for the month.'), ActivityRecordStatus.approved],
   ];
 
   it.each(NON_SUBMIT)('leaves it alone on %s', async (_name, act, from) => {
@@ -4418,7 +4533,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       _count: { evidenceLinks: 1 },
     }));
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
 
     const call = prisma.activityRecord.update.mock.calls.at(-1)![0];
     expect(call.data.submissionCount).toBe(1);
@@ -4445,7 +4560,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       _count: { evidenceLinks: 1 },
     }));
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
 
     expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(2);
     expect(dto.submissionCount).toBe(2);
@@ -4466,7 +4581,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       _count: { evidenceLinks: 1 },
     }));
 
-    const dto = await service.submit(dataEntry(), 'rec-s');
+    const dto = await service.submit(standardUser(), 'rec-s');
 
     expect(prisma.auditLog.count).toHaveBeenCalledWith({ where: submitRowsOf('rec-s', 'org-1') });
     // Both shapes the migration counts (a pre-taxonomy `update` moving to
@@ -4499,7 +4614,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
       _count: { evidenceLinks: 1 },
     }));
-    await service.submit(dataEntry(), 'rec-s');
+    await service.submit(standardUser(), 'rec-s');
     expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(4);
   });
 
@@ -4512,7 +4627,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', varianceReason: 'New chiller since March', ...data }),
       _count: { evidenceLinks: 1 },
     }));
-    await service.submit(dataEntry(), 'rec-s');
+    await service.submit(standardUser(), 'rec-s');
     const diff = audit.record.mock.calls.at(-1)![1].diff;
     expect(diff).toMatchObject({ submission: 1, varianceReason: 'New chiller since March' });
     // The column is not rewritten by the submit.
@@ -4522,7 +4637,7 @@ describe('ActivityRecordsService — submittedAt', () => {
   it('writes no reason into a submit row when the record has none', async () => {
     const { prisma, service } = arrange();
     prisma.activityRecord.findUnique.mockResolvedValue(submittable({ varianceReason: null }));
-    await service.submit(dataEntry(), 'rec-s');
+    await service.submit(standardUser(), 'rec-s');
     expect(audit.record.mock.calls.at(-1)![1].diff).not.toHaveProperty('varianceReason');
   });
 
@@ -4532,7 +4647,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       submittable({ status: ActivityRecordStatus.submitted, submissionCount: 1, submittedAt: new Date('2026-02-01T09:00:00.000Z') }),
     );
 
-    await service.recall(dataEntry(), 'rec-s');
+    await service.recall(standardUser(), 'rec-s');
 
     const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
     expect(written).not.toHaveProperty('submissionCount');
@@ -4545,7 +4660,7 @@ describe('ActivityRecordsService — submittedAt', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(submittable());
     prisma.activityRecordEvidence.count.mockResolvedValue(0); // the gate refuses before any write
 
-    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(EvidenceRequiredError);
+    await expect(service.submit(standardUser(), 'rec-s')).rejects.toBeInstanceOf(EvidenceRequiredError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
@@ -4559,7 +4674,7 @@ describe('ActivityRecordsService — submittedAt', () => {
     // Every seeded record is in this state: the seed writes straight to
     // `approved` and never calls the submit path, so the backfill found
     // nothing for any of them. The screen has to render that as unknown.
-    expect((await service.get(dataEntry(), 'rec-1')).submittedAt).toBeNull();
+    expect((await service.get(standardUser(), 'rec-1')).submittedAt).toBeNull();
   });
 });
 
@@ -4600,7 +4715,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
   }
 
   it('returns the decisions create would make, and writes nothing', async () => {
-    const prepared = await service.previewCreate(dataEntry(), CREATE_DTO);
+    const prepared = await service.previewCreate(standardUser(), CREATE_DTO);
 
     expect(prepared.periodValue).toBe('Annual');
     expect(prepared.scope).toBe(2);
@@ -4617,7 +4732,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     // The stored spelling IS the identity of the period, so a dry-run that
     // reported on " annual " would be answering about a different slot than
     // the apply would write to.
-    const prepared = await service.previewCreate(dataEntry(), {
+    const prepared = await service.previewCreate(standardUser(), {
       ...CREATE_DTO,
       periodValue: '  aNNual ',
     });
@@ -4627,7 +4742,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
 
   it('refuses a period value that names no period of that granularity', async () => {
     await expect(
-      service.previewCreate(dataEntry(), {
+      service.previewCreate(standardUser(), {
         ...CREATE_DTO,
         periodValue: 'Michaelmas',
       }),
@@ -4636,13 +4751,13 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
   });
 
   it('enforces the role gate BEFORE it queries anything', async () => {
-    // a consultant does not author records, and asking the
+    // an auditor does not author records, and asking the
     // server to price one is authoring it in every sense but the write.
     // The query assertion is the half that matters: asserting only that a
     // ForbiddenException eventually emerges leaves the gate free to move
     // below the lock lookup, which a mutation proved survives the suite.
     await expect(
-      service.previewCreate(consultant(), CREATE_DTO),
+      service.previewCreate(auditor(), CREATE_DTO),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
     expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
@@ -4658,7 +4773,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
 
     await expect(
-      service.previewCreate(dataEntry(), {
+      service.previewCreate(standardUser(), {
         ...CREATE_DTO,
         subsidiaryId: 'sub-99',
       }),
@@ -4675,7 +4790,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     // throws P2023, which the exception filter turns into a 500. In a bulk
     // import that is one 500 and one Sentry event per bad cell.
     await expect(
-      service.previewCreate(dataEntry(), {
+      service.previewCreate(standardUser(), {
         ...CREATE_DTO,
         subsidiaryId: 'not-a-uuid',
       }),
@@ -4689,7 +4804,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     // re-read the dto the way `create` does. If the preview hands back only
     // the derived half, an unvalidated subsidiaryId can carry a snapshot that
     // WAS validated, and nothing downstream re-checks it.
-    const prepared = await service.previewCreate(dataEntry(), CREATE_DTO);
+    const prepared = await service.previewCreate(standardUser(), CREATE_DTO);
     expect(prepared.subsidiaryId).toBe('sub-1');
     expect(prepared.locationId).toBeNull();
   });
@@ -4697,7 +4812,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
   it('still enforces the period-lock gate', async () => {
     prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
     await expect(
-      service.previewCreate(dataEntry(), CREATE_DTO),
+      service.previewCreate(standardUser(), CREATE_DTO),
     ).rejects.toBeInstanceOf(ConflictException);
     expectNothingWritten();
   });
@@ -4724,7 +4839,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     ]);
 
     // Baseline avg = 5; the calc stub returns 19.8 → +296%.
-    const prepared = await service.previewCreate(dataEntry(), {
+    const prepared = await service.previewCreate(standardUser(), {
       ...CREATE_DTO,
       reportingPeriod: 'monthly' as const,
       periodValue: 'March',
@@ -4745,7 +4860,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
     prisma.activityRecord.create.mockResolvedValue(makeRecord());
 
-    await service.create(dataEntry(), CREATE_DTO);
+    await service.create(standardUser(), CREATE_DTO);
 
     // Twice, deliberately: the read half's early answer, and the lifecycle
     // protocol's check once the period is held — a lock committed between
@@ -4769,7 +4884,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
     prisma.activityRecord.create.mockResolvedValue(makeRecord());
 
-    await service.create(dataEntry(), {
+    await service.create(standardUser(), {
       ...CREATE_DTO,
       varianceReason: 'Meter replaced mid-period',
     });
@@ -4797,7 +4912,7 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
       makeRecord({ id: 'rec-unit', ...data }),
     );
 
-    await service.create(dataEntry(), { ...CREATE_DTO, activityUnit: 'kw h' } as never);
+    await service.create(standardUser(), { ...CREATE_DTO, activityUnit: 'kw h' } as never);
 
     expect(prisma.activityRecord.create.mock.calls[0][0].data.activityUnit).toBe('kWh');
     expect(calc.compute).toHaveBeenCalledWith(
@@ -4819,7 +4934,7 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
         makeRecord({ id: 'rec-unit', ...data }),
       );
 
-      await service.create(dataEntry(), { ...CREATE_DTO, activityUnit: entered } as never);
+      await service.create(standardUser(), { ...CREATE_DTO, activityUnit: entered } as never);
 
       expect(prisma.activityRecord.create.mock.calls[0][0].data.activityUnit).toBe(stored);
     }
@@ -4841,7 +4956,7 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-u', { activityUnit: 'MWH' } as never);
+    await service.update(standardUser(), 'rec-u', { activityUnit: 'MWH' } as never);
 
     expect(prisma.activityRecord.update.mock.calls[0][0].data.activityUnit).toBe('MWh');
     expect(calc.compute).toHaveBeenCalledWith(
@@ -4871,7 +4986,7 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-u', { varianceReason: 'a note' } as never);
+    await service.update(standardUser(), 'rec-u', { varianceReason: 'a note' } as never);
 
     expect(prisma.activityRecord.update.mock.calls[0][0].data.activityUnit).toBe('kw h');
     // The engine is handed the stored spelling and told the unit was not
@@ -4891,13 +5006,13 @@ describe('ActivityRecordsService — import provenance', () => {
       makeRecord({ id: 'rec-p', ...data }),
     );
 
-    const imported = await service.create(dataEntry(), CREATE_DTO as never, {
+    const imported = await service.create(standardUser(), CREATE_DTO as never, {
       importBatchId: 'batch-1',
     });
     expect(prisma.activityRecord.create.mock.calls[0][0].data.importBatchId).toBe('batch-1');
     expect(imported.importBatchId).toBe('batch-1');
 
-    await service.create(dataEntry(), { ...CREATE_DTO, periodValue: 'Annual' } as never);
+    await service.create(standardUser(), { ...CREATE_DTO, periodValue: 'Annual' } as never);
     expect(prisma.activityRecord.create.mock.calls[1][0].data.importBatchId).toBeNull();
   });
 
@@ -4911,7 +5026,7 @@ describe('ActivityRecordsService — import provenance', () => {
       makeRecord({ id: 'rec-u', ...data }),
     );
 
-    await service.update(dataEntry(), 'rec-u', { varianceReason: 'x', importBatchId: 'forged' } as never);
+    await service.update(standardUser(), 'rec-u', { varianceReason: 'x', importBatchId: 'forged' } as never);
 
     expect(prisma.activityRecord.update.mock.calls[0][0].data).not.toHaveProperty('importBatchId');
   });
@@ -4987,7 +5102,7 @@ describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
         updatedAt: new Date(seen.updatedAt.getTime() + 1),
       });
 
-    await expect(service.startReview(consultant(), 'rec-r')).rejects.toBeInstanceOf(
+    await expect(service.startReview(superAdmin(), 'rec-r')).rejects.toBeInstanceOf(
       RecordChangedError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -5000,7 +5115,7 @@ describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
       makeRecord({ id: 'rec-r', status: ActivityRecordStatus.approved }),
     );
 
-    await expect(service.startReview(consultant(), 'rec-r')).rejects.toThrow(
+    await expect(service.startReview(superAdmin(), 'rec-r')).rejects.toThrow(
       /Only a submitted record can be taken into review/,
     );
   });
@@ -5009,23 +5124,23 @@ describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
   // the record's canonical status, so a screen words it; the English stays.
   it.each([
     ['update', 'record_not_editable', ActivityRecordStatus.approved, (s: ActivityRecordsService) =>
-      s.update(dataEntry(), 'rec-s', { activityValue: 1 })],
+      s.update(standardUser(), 'rec-s', { activityValue: 1 })],
     ['recall', 'record_not_recallable', ActivityRecordStatus.under_review, (s: ActivityRecordsService) =>
-      s.recall(dataEntry(), 'rec-s')],
+      s.recall(standardUser(), 'rec-s')],
     ['submit', 'record_not_submittable', ActivityRecordStatus.approved, (s: ActivityRecordsService) =>
-      s.submit(dataEntry(), 'rec-s')],
+      s.submit(standardUser(), 'rec-s')],
     ['startReview', 'record_not_reviewable', ActivityRecordStatus.approved, (s: ActivityRecordsService) =>
-      s.startReview(consultant(), 'rec-s')],
+      s.startReview(superAdmin(), 'rec-s')],
     ['approve', 'record_not_approvable', ActivityRecordStatus.draft, (s: ActivityRecordsService) =>
       s.approve(superAdmin(), 'rec-s')],
     ['void', 'record_not_voidable', ActivityRecordStatus.locked, (s: ActivityRecordsService) =>
-      s.void(superAdmin(), 'rec-s', 'reason')],
+      s.void(masterkey(), 'rec-s', 'reason')],
     ['reject', 'record_not_rejectable', ActivityRecordStatus.draft, (s: ActivityRecordsService) =>
-      s.reject(consultant(), 'rec-s', 'reason')],
+      s.reject(superAdmin(), 'rec-s', 'reason')],
   ] as const)('%s refuses a record in the wrong status as %s, naming the status', async (_name, code, status, call) => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
-      makeRecord({ id: 'rec-s', status, createdBy: dataEntry().id }),
+      makeRecord({ id: 'rec-s', status, createdBy: standardUser().id }),
     );
     const response = await call(service).then(
       () => { throw new Error('expected a refusal'); },
@@ -5064,7 +5179,7 @@ describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
       .mockResolvedValueOnce({ ...seen, updatedAt: new Date(seen.updatedAt.getTime() + 5) });
 
     await expect(
-      service.update(dataEntry(), 'rec-e', { activityValue: 7 }),
+      service.update(standardUser(), 'rec-e', { activityValue: 7 }),
     ).rejects.toBeInstanceOf(RecordChangedError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -5100,7 +5215,7 @@ describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
     // Open for the early answer, locked by the time the period is held.
     prisma.periodLock.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'lock-1' });
 
-    await expect(service.create(dataEntry(), CREATE_DTO)).rejects.toBeInstanceOf(PeriodLockedError);
+    await expect(service.create(standardUser(), CREATE_DTO)).rejects.toBeInstanceOf(PeriodLockedError);
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
     expect(order(prisma.$executeRaw)).toBeLessThan(order(prisma.periodLock.findFirst, 1));
   });
@@ -5149,20 +5264,20 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
   it('refuses a new record in a typed category that names no activity type — before any lookup or write', async () => {
     const { prisma, calc, service } = build(1);
     arrangeCreate(prisma);
-    await expect(service.create(dataEntry(), FUEL_DTO)).rejects.toMatchObject({
+    await expect(service.create(standardUser(), FUEL_DTO)).rejects.toMatchObject({
       code: 'activity_type_required',
       status: 400,
     });
     expect(calc.compute).not.toHaveBeenCalled();
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
     // The bulk dry run asks the same question through previewCreate.
-    await expect(service.previewCreate(dataEntry(), FUEL_DTO)).rejects.toBeInstanceOf(CalculationInputError);
+    await expect(service.previewCreate(standardUser(), FUEL_DTO)).rejects.toBeInstanceOf(CalculationInputError);
   });
 
   it('stores the named type, prices by it, and baselines it against its own series', async () => {
     const { prisma, calc, service } = build(1);
     arrangeCreate(prisma);
-    await service.create(dataEntry(), { ...FUEL_DTO, activityType: 'diesel' });
+    await service.create(standardUser(), { ...FUEL_DTO, activityType: 'diesel' });
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ category: 'Fuel', activityType: 'diesel' }),
       { enforceCategoryUnit: true },
@@ -5174,7 +5289,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
   it('pools an untyped record only with untyped ones — an explicit null, never a dropped key', async () => {
     const { prisma, service } = build(2);
     arrangeCreate(prisma);
-    await service.create(dataEntry(), CREATE_DTO);
+    await service.create(standardUser(), CREATE_DTO);
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     // Prisma drops an `undefined` filter, which would pool diesel with petrol.
     expect(where).toHaveProperty('activityType', null);
@@ -5185,11 +5300,11 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
     const { prisma, service } = build(1);
     arrangeCreate(prisma);
     prisma.activityRecord.create.mockRejectedValue(triggerError('TA002'));
-    await expect(service.create(dataEntry(), { ...FUEL_DTO, activityType: 'diesel' })).rejects.toMatchObject({
+    await expect(service.create(standardUser(), { ...FUEL_DTO, activityType: 'diesel' })).rejects.toMatchObject({
       status: 409,
       message: SLOT_HOLDS_UNTYPED_MESSAGE,
     });
-    await expect(service.create(dataEntry(), { ...FUEL_DTO, activityType: 'diesel' })).rejects.toBeInstanceOf(
+    await expect(service.create(standardUser(), { ...FUEL_DTO, activityType: 'diesel' })).rejects.toBeInstanceOf(
       ActivityTypeSlotConflictError,
     );
   });
@@ -5197,7 +5312,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
   it('lets a pre-LP3-03 untyped Fuel record be edited without naming a type', async () => {
     const { prisma, calc, service } = build(1);
     arrangeUpdate(prisma, { category: 'Fuel', activityType: null, activityUnit: 'litres', scope: 1 });
-    await service.update(dataEntry(), 'rec-t', { activityValue: 12 });
+    await service.update(standardUser(), 'rec-t', { activityValue: 12 });
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ category: 'Fuel', activityType: null }),
       expect.anything(),
@@ -5210,12 +5325,12 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
     const moved = build(1);
     arrangeUpdate(moved.prisma, { category: 'Electricity', activityType: null });
     await expect(
-      moved.service.update(dataEntry(), 'rec-t', { category: 'Fuel', activityUnit: 'litres' }),
+      moved.service.update(standardUser(), 'rec-t', { category: 'Fuel', activityUnit: 'litres' }),
     ).rejects.toMatchObject({ code: 'activity_type_required' });
 
     const cleared = build(1);
     arrangeUpdate(cleared.prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
-    await expect(cleared.service.update(dataEntry(), 'rec-t', { activityType: null })).rejects.toMatchObject({
+    await expect(cleared.service.update(standardUser(), 'rec-t', { activityType: null })).rejects.toMatchObject({
       code: 'activity_type_required',
     });
     expect(cleared.prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -5224,7 +5339,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
   it('checks a kept type against the EFFECTIVE category, so the engine refuses diesel Electricity', async () => {
     const { prisma, calc, service } = build(2);
     arrangeUpdate(prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
-    await service.update(dataEntry(), 'rec-t', { category: 'Electricity', activityUnit: 'kWh' });
+    await service.update(standardUser(), 'rec-t', { category: 'Electricity', activityUnit: 'kWh' });
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ category: 'Electricity', activityType: 'diesel' }),
       expect.anything(),
@@ -5234,7 +5349,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
   it('saves a PATCHed activity type, so the column, slot and pool follow the recomputed snapshot', async () => {
     const { prisma, calc, service } = build(1);
     arrangeUpdate(prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
-    await service.update(dataEntry(), 'rec-t', { activityType: 'gas_oil' });
+    await service.update(standardUser(), 'rec-t', { activityType: 'gas_oil' });
     expect(calc.compute).toHaveBeenCalledWith(expect.objectContaining({ activityType: 'gas_oil' }), expect.anything());
     expect(prisma.activityRecord.update.mock.calls[0][0].data.activityType).toBe('gas_oil');
     expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject({ activityType: 'gas_oil' });
@@ -5244,7 +5359,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
     const { prisma, service } = build(1);
     arrangeUpdate(prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
     prisma.activityRecord.update.mockRejectedValue(triggerError('TA002'));
-    await expect(service.update(dataEntry(), 'rec-t', { periodValue: 'Annual' })).rejects.toBeInstanceOf(
+    await expect(service.update(standardUser(), 'rec-t', { periodValue: 'Annual' })).rejects.toBeInstanceOf(
       ActivityTypeSlotConflictError,
     );
   });
@@ -5264,7 +5379,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
       }),
     );
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', status: data.status }));
-    await service.submit(dataEntry(), 'rec-s');
+    await service.submit(standardUser(), 'rec-s');
     expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject({ category: 'Fuel', activityType: 'diesel' });
   });
 
@@ -5272,7 +5387,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
     const { prisma, service } = build(2);
     arrangeUpdate(prisma, {});
     prisma.activityRecord.update.mockRejectedValue(triggerError('TA001'));
-    await expect(service.update(dataEntry(), 'rec-t', { activityValue: 5 })).rejects.toBeInstanceOf(SnapshotImmutableError);
+    await expect(service.update(standardUser(), 'rec-t', { activityValue: 5 })).rejects.toBeInstanceOf(SnapshotImmutableError);
   });
 });
 
@@ -5333,7 +5448,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     const { prisma, calc, service } = arrange(record);
     prisma.location.findUnique.mockResolvedValue({ id: 'loc-1', subsidiaryId: 'sub-1', geographyCode: 'TR' });
 
-    const dto = await service.submit(dataEntry(), 'rec-k');
+    const dto = await service.submit(standardUser(), 'rec-k');
 
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(calc.compute).toHaveBeenCalledTimes(1);
@@ -5362,7 +5477,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
 
   it('refuses a rewritten figure: 409 calculation_stale with no params, nothing written or audited', async () => {
     const { prisma, service } = arrange(draft({ calculation: STALE_FIGURE }));
-    const body = await staleBody(service.submit(dataEntry(), 'rec-k'));
+    const body = await staleBody(service.submit(standardUser(), 'rec-k'));
     expect(body).toEqual(STALE_BODY);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
@@ -5378,12 +5493,12 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
 
   it('a pre-LP3-03 snapshot is stale even when its figure matches', async () => {
     const { service } = arrange(draft({ calculation: { tCo2e: 19.8, factorId: 'factor-1' } }));
-    await staleBody(service.submit(dataEntry(), 'rec-k'));
+    await staleBody(service.submit(standardUser(), 'rec-k'));
   });
 
   it('a snapshot that kept the unit as entered (`kwh`) is the same unit as the stored `kWh`', async () => {
     const { service } = arrange(draft({ calculation: { ...FRESH_SNAPSHOT, inputUnit: 'kwh' } }));
-    const dto = await service.submit(dataEntry(), 'rec-k');
+    const dto = await service.submit(standardUser(), 'rec-k');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
   });
 
@@ -5391,7 +5506,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     const record = draft({ category: 'Water', scope: 3, activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
     const { prisma, calc, service } = arrange(record);
     calc.compute.mockResolvedValue(WATER);
-    const dto = await service.submit(dataEntry(), 'rec-k');
+    const dto = await service.submit(standardUser(), 'rec-k');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
@@ -5399,7 +5514,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   it('an uncalculated record a factor has since covered is stale', async () => {
     const record = draft({ category: 'Water', scope: 3, activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
     const { service } = arrange(record);
-    await staleBody(service.submit(dataEntry(), 'rec-k'));
+    await staleBody(service.submit(standardUser(), 'rec-k'));
   });
 
   it.each([
@@ -5411,7 +5526,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   ])('a recompute that refuses — %s — answers calculation_stale, never its own code', async (_label, refusal) => {
     const onSubmit = arrange(draft());
     onSubmit.calc.compute.mockRejectedValue(refusal());
-    expect(await staleBody(onSubmit.service.submit(dataEntry(), 'rec-k'))).toEqual(STALE_BODY);
+    expect(await staleBody(onSubmit.service.submit(standardUser(), 'rec-k'))).toEqual(STALE_BODY);
     const onApprove = arrange(submitted());
     onApprove.calc.compute.mockRejectedValue(refusal());
     expect(await staleBody(onApprove.service.approve(superAdmin(), 'rec-k'))).toEqual(STALE_BODY);
@@ -5426,8 +5541,8 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   ])('an engine defect (%s) is not stale: it propagates', async (_label, defect) => {
     const { prisma, calc, service } = arrange(draft());
     calc.compute.mockRejectedValue(defect());
-    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toThrow(/Engine defect/);
-    await expect(service.submit(dataEntry(), 'rec-k')).rejects.not.toBeInstanceOf(CalculationStaleError);
+    await expect(service.submit(standardUser(), 'rec-k')).rejects.toThrow(/Engine defect/);
+    await expect(service.submit(standardUser(), 'rec-k')).rejects.not.toBeInstanceOf(CalculationStaleError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
@@ -5435,7 +5550,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
 
   it('a record outside the caller’s subsidiaries answers 404 and is never recomputed', async () => {
     const { calc, service } = arrange(draft({ subsidiaryId: 'sub-9', calculation: STALE_FIGURE }));
-    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.submit(standardUser(), 'rec-k')).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.approve(superAdmin({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-k')).rejects.toBeInstanceOf(
       NotFoundException,
     );
@@ -5444,31 +5559,35 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
 
   it('a role refusal comes before the recompute', async () => {
     const { calc, service } = arrange(submitted({ calculation: STALE_FIGURE }));
-    await expect(service.submit(consultant(), 'rec-k')).rejects.toBeInstanceOf(SubmitRoleRefusedError);
-    await expect(service.approve(executiveViewer(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(service.approve(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.submit(auditor(), 'rec-k')).rejects.toBeInstanceOf(SubmitRoleRefusedError);
+    await expect(service.approve(auditor(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.approve(standardUser(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
     expect(calc.compute).not.toHaveBeenCalled();
   });
 
   it.each([
     [
       'submit by someone other than the author',
-      (s: ActivityRecordsService) => s.submit(dataEntry({ id: 'user-other' }), 'rec-k'),
+      (s: ActivityRecordsService) => s.submit(standardUser({ id: 'user-other' }), 'rec-k'),
       draft,
       SubmitAuthorRefusedError,
     ],
-    ['submit of an approved record', (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-k'), (o: RecordOver) => draft({ ...o, status: ActivityRecordStatus.approved }), BadRequestException],
+    ['submit of an approved record', (s: ActivityRecordsService) => s.submit(standardUser(), 'rec-k'), (o: RecordOver) => draft({ ...o, status: ActivityRecordStatus.approved }), BadRequestException],
     ['approve of a draft', (s: ActivityRecordsService) => s.approve(superAdmin(), 'rec-k'), draft, BadRequestException],
     ['approve of one’s own record', (s: ActivityRecordsService) => s.approve(superAdmin({ id: 'user-entry' }), 'rec-k'), submitted, SelfApprovalRefusedError],
   ] as const)('%s keeps its own answer over a stale figure', async (_label, act, fixture, refusal) => {
     const { prisma, service } = arrange(fixture({ calculation: STALE_FIGURE }));
+    // The own-record row: the author, since made a super_admin, approves (a
+    // masterkey's own record is a self-approval since INC-2.6, not a refusal).
+    // The other rows never reach the approver check.
+    prisma.people.set('user-entry', { role: 'super_admin', grants: ['sub-1'] });
     await expect(act(service)).rejects.toBeInstanceOf(refusal);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
   it('a locked period keeps its own answer over a stale figure, on submit and on approve', async () => {
     for (const [record, act] of [
-      [draft({ calculation: STALE_FIGURE }), (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-k')],
+      [draft({ calculation: STALE_FIGURE }), (s: ActivityRecordsService) => s.submit(standardUser(), 'rec-k')],
       [submitted({ calculation: STALE_FIGURE }), (s: ActivityRecordsService) => s.approve(superAdmin(), 'rec-k')],
     ] as const) {
       const { prisma, service } = arrange(record);
@@ -5480,7 +5599,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   it('a missing evidence file is named before a stale figure (the contract’s order)', async () => {
     const { prisma, service } = arrange(draft({ calculation: STALE_FIGURE }));
     prisma.activityRecordEvidence.count.mockResolvedValue(0);
-    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(EvidenceRequiredError);
+    await expect(service.submit(standardUser(), 'rec-k')).rejects.toBeInstanceOf(EvidenceRequiredError);
   });
 
   it('a stale anomalous record answers 409, and its baseline is never queried', async () => {
@@ -5488,7 +5607,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
       draft({ reportingPeriod: 'monthly', periodValue: 'March', calculation: STALE_FIGURE }),
     );
     prisma.activityRecord.findMany.mockResolvedValue([{ tCo2e: 1 }]);
-    await staleBody(service.submit(dataEntry(), 'rec-k'));
+    await staleBody(service.submit(standardUser(), 'rec-k'));
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
 
@@ -5497,7 +5616,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   // read — so a direct writer's Electricity row filed under Scope 3 passed
   // K11 with an honest figure and moved its tCO₂e between scopes.
   it.each([
-    ['submit', 3, (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-k'), draft],
+    ['submit', 3, (s: ActivityRecordsService) => s.submit(standardUser(), 'rec-k'), draft],
     ['approve', 1, (s: ActivityRecordsService) => s.approve(superAdmin(), 'rec-k'), submitted],
   ] as const)('%s refuses a record whose scope is not its category’s (Electricity filed as Scope %s)', async (op, scope, act, fixture) => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -5522,7 +5641,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {
       const { prisma, service } = arrange(draft(period));
-      await staleBody(service.submit(dataEntry(), 'rec-k'));
+      await staleBody(service.submit(standardUser(), 'rec-k'));
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
       expect(String(warn.mock.calls[0][0])).toBe('calculation_stale: submit of record rec-k refused — input differ');
       const onApprove = arrange(submitted(period));
@@ -5540,20 +5659,20 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     const seen = draft();
     const scope = arrange(seen);
     scope.prisma.activityRecord.findUnique.mockResolvedValueOnce(seen).mockResolvedValueOnce({ ...seen, scope: 3 });
-    await staleBody(scope.service.submit(dataEntry(), 'rec-k'));
+    await staleBody(scope.service.submit(standardUser(), 'rec-k'));
     const period = arrange(seen);
     period.prisma.activityRecord.findUnique.mockResolvedValueOnce(seen).mockResolvedValueOnce({ ...seen, periodValue: 'annual' });
-    await expect(period.service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(period.service.submit(standardUser(), 'rec-k')).rejects.toBeInstanceOf(RecordChangedError);
   });
 
   it('a scope mismatch beside a figure mismatch logs both, input first', async () => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {
       const { service } = arrange(draft({ scope: 3, calculation: STALE_FIGURE }));
-      await staleBody(service.submit(dataEntry(), 'rec-k'));
+      await staleBody(service.submit(standardUser(), 'rec-k'));
       expect(String(warn.mock.calls[0][0])).toBe('calculation_stale: submit of record rec-k refused — input, figure differ');
       const both = arrange(draft({ scope: 3, calculation: { ...FRESH_SNAPSHOT, inputValue: 1 } }));
-      await staleBody(both.service.submit(dataEntry(), 'rec-k'));
+      await staleBody(both.service.submit(standardUser(), 'rec-k'));
       expect(String(warn.mock.calls[1][0])).toBe('calculation_stale: submit of record rec-k refused — input differ');
     } finally {
       warn.mockRestore();
@@ -5568,7 +5687,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     prisma.activityRecord.findUnique
       .mockResolvedValueOnce(seen)
       .mockResolvedValueOnce({ ...seen, activityValue: 50000, updatedAt: new Date('2026-02-01T00:00:00.000Z') });
-    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(service.submit(standardUser(), 'rec-k')).rejects.toBeInstanceOf(RecordChangedError);
     expect(calc.compute).toHaveBeenCalledWith(expect.objectContaining({ value: 45000 }), { enforceCategoryUnit: false });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -5605,7 +5724,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     const seen = draft({ calculation: STALE_FIGURE });
     const { prisma, service } = arrange(seen);
     prisma.activityRecord.findUnique.mockResolvedValueOnce(seen).mockResolvedValueOnce(draft());
-    const dto = await service.submit(dataEntry(), 'rec-k');
+    const dto = await service.submit(standardUser(), 'rec-k');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
   });
 
@@ -5615,7 +5734,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {
       const { service } = arrange(draft({ calculation: { ...STALE_FIGURE, factorValue: 0.0000022 } }));
-      await staleBody(service.submit(dataEntry(), 'rec-k'));
+      await staleBody(service.submit(standardUser(), 'rec-k'));
       expect(warn).toHaveBeenCalledTimes(1);
       const line = String(warn.mock.calls[0][0]);
       expect(line).toBe('calculation_stale: submit of record rec-k refused — figure, factor differ');
@@ -5632,7 +5751,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
       await staleBody(legacy.service.approve(superAdmin(), 'rec-k'));
       const refused = arrange(draft());
       refused.calc.compute.mockRejectedValue(new NoEmissionFactorError('No emission factor found', { code: 'no_factor' }));
-      await staleBody(refused.service.submit(dataEntry(), 'rec-k'));
+      await staleBody(refused.service.submit(standardUser(), 'rec-k'));
       expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
         expect.stringMatching(/^calculation_stale: approve of record rec-k refused — legacy snapshot/),
         'calculation_stale: submit of record rec-k refused — recompute refused (no_factor)',
@@ -5688,7 +5807,7 @@ describe('ActivityRecordsService — a typed category’s record names its type 
       const { prisma, calc, service } = build(1);
       const record = untyped(category, { calculation: calc.snapshot });
       prisma.activityRecord.findUnique.mockResolvedValue(record);
-      const error = await refusalOf(service.submit(dataEntry(), 'rec-t'));
+      const error = await refusalOf(service.submit(standardUser(), 'rec-t'));
       expect(error.getStatus()).toBe(400);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
@@ -5709,7 +5828,7 @@ describe('ActivityRecordsService — a typed category’s record names its type 
     prisma.activityRecord.findUnique.mockResolvedValue(
       untyped('Fuel', { status: ActivityRecordStatus.rejected, calculation: calc.snapshot }),
     );
-    await refusalOf(service.submit(dataEntry(), 'rec-t'));
+    await refusalOf(service.submit(standardUser(), 'rec-t'));
   });
 
   it('named the type, the record submits; an untyped record of an untyped category is unaffected', async () => {
@@ -5717,7 +5836,7 @@ describe('ActivityRecordsService — a typed category’s record names its type 
     typed.prisma.activityRecord.findUnique.mockResolvedValue(
       untyped('Fuel', { activityType: 'diesel', calculation: typed.calc.snapshot }),
     );
-    expect((await typed.service.submit(dataEntry(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
+    expect((await typed.service.submit(standardUser(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
     // The record's own type reaches the engine (`qa-auditor` A5): priced as
     // `unspecified` instead, a diesel record would be refused by every recompute.
     expect(typed.calc.compute).toHaveBeenCalledWith(
@@ -5728,7 +5847,7 @@ describe('ActivityRecordsService — a typed category’s record names its type 
     water.prisma.activityRecord.findUnique.mockResolvedValue(
       untyped('Water', { activityUnit: 'cubic_metres', calculation: water.calc.snapshot }),
     );
-    expect((await water.service.submit(dataEntry(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
+    expect((await water.service.submit(standardUser(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
   });
 
   it('is checked before K11 at approve too: the reviewer is told the record lacks its type, not to have it saved again', async () => {
@@ -5754,7 +5873,7 @@ describe('ActivityRecordsService — a typed category’s record names its type 
       prisma.activityRecord.findUnique.mockResolvedValue(
         untyped('Fuel', { calculation: { ...FRESH_SNAPSHOT, tCo2e: 0.0001 } }),
       );
-      await refusalOf(service.submit(dataEntry(), 'rec-t'));
+      await refusalOf(service.submit(standardUser(), 'rec-t'));
       expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -5762,11 +5881,13 @@ describe('ActivityRecordsService — a typed category’s record names its type 
   });
 
   it.each([
-    ['a submit by someone else', (s: ActivityRecordsService) => s.submit(dataEntry({ id: 'user-other' }), 'rec-t'), ActivityRecordStatus.draft, SubmitAuthorRefusedError],
-    ['a submit of an approved record', (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-t'), ActivityRecordStatus.approved, BadRequestException],
+    ['a submit by someone else', (s: ActivityRecordsService) => s.submit(standardUser({ id: 'user-other' }), 'rec-t'), ActivityRecordStatus.draft, SubmitAuthorRefusedError],
+    ['a submit of an approved record', (s: ActivityRecordsService) => s.submit(standardUser(), 'rec-t'), ActivityRecordStatus.approved, BadRequestException],
     ['an approve of one’s own record', (s: ActivityRecordsService) => s.approve(superAdmin({ id: 'user-entry' }), 'rec-t'), ActivityRecordStatus.submitted, SelfApprovalRefusedError],
   ] as const)('%s keeps its own answer over a missing type', async (_label, act, status, refusal) => {
     const { prisma, calc, service } = build(1);
+    // As above: the own-record row's author is since a super_admin.
+    prisma.people.set('user-entry', { role: 'super_admin', grants: ['sub-1'] });
     prisma.activityRecord.findUnique.mockResolvedValue(untyped('Fuel', { status, calculation: calc.snapshot }));
     const error = await act(service).then(
       () => null,
@@ -5780,11 +5901,11 @@ describe('ActivityRecordsService — a typed category’s record names its type 
     const locked = build(1);
     locked.prisma.activityRecord.findUnique.mockResolvedValue(untyped('Fuel', { calculation: locked.calc.snapshot }));
     locked.prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
-    await expect(locked.service.submit(dataEntry(), 'rec-t')).rejects.toBeInstanceOf(PeriodLockedError);
+    await expect(locked.service.submit(standardUser(), 'rec-t')).rejects.toBeInstanceOf(PeriodLockedError);
     const bare = build(1);
     bare.prisma.activityRecord.findUnique.mockResolvedValue(untyped('Fuel', { calculation: bare.calc.snapshot }));
     bare.prisma.activityRecordEvidence.count.mockResolvedValue(0);
-    await expect(bare.service.submit(dataEntry(), 'rec-t')).rejects.toBeInstanceOf(EvidenceRequiredError);
+    await expect(bare.service.submit(standardUser(), 'rec-t')).rejects.toBeInstanceOf(EvidenceRequiredError);
   });
 });
 
@@ -5839,7 +5960,7 @@ describe('ActivityRecordsService — every Scope 1–2 category needs a file bef
   describe('submit', () => {
     it.each(NEW_SET)('refuses a %s draft with no file — evidence_required, nothing written', async (category) => {
       const { prisma, service } = arrange(category);
-      const error = await caught(service.submit(dataEntry(), 'rec-v'));
+      const error = await caught(service.submit(standardUser(), 'rec-v'));
       expect(error).toBeInstanceOf(EvidenceRequiredError);
       expect((error as EvidenceRequiredError).getResponse()).toMatchObject({
         code: 'evidence_required',
@@ -5853,24 +5974,24 @@ describe('ActivityRecordsService — every Scope 1–2 category needs a file bef
 
     it.each(NEW_SET)('submits a %s draft with one file', async (category) => {
       const { service } = arrange(category, {}, 1);
-      expect((await service.submit(dataEntry(), 'rec-v')).status).toBe(ActivityRecordStatus.submitted);
+      expect((await service.submit(standardUser(), 'rec-v')).status).toBe(ActivityRecordStatus.submitted);
     });
 
     it('refuses a rejected Refrigerants record resubmitted without a file', async () => {
       const { prisma, service } = arrange('Refrigerants', { status: ActivityRecordStatus.rejected });
-      await expect(service.submit(dataEntry(), 'rec-v')).rejects.toBeInstanceOf(EvidenceRequiredError);
+      await expect(service.submit(standardUser(), 'rec-v')).rejects.toBeInstanceOf(EvidenceRequiredError);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
 
     it('names a locked period before the missing file at submit', async () => {
       const { prisma, service } = arrange('Mobile Combustion');
       prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
-      await expect(service.submit(dataEntry(), 'rec-v')).rejects.toBeInstanceOf(PeriodLockedError);
+      await expect(service.submit(standardUser(), 'rec-v')).rejects.toBeInstanceOf(PeriodLockedError);
     });
 
     it('submits a Waste draft with no file, and never counts its files', async () => {
       const { prisma, service } = arrange('Waste');
-      expect((await service.submit(dataEntry(), 'rec-v')).status).toBe(ActivityRecordStatus.submitted);
+      expect((await service.submit(standardUser(), 'rec-v')).status).toBe(ActivityRecordStatus.submitted);
       expect(prisma.activityRecordEvidence.count).not.toHaveBeenCalled();
     });
   });
@@ -5909,20 +6030,20 @@ describe('ActivityRecordsService — every Scope 1–2 category needs a file bef
       expect(prisma.activityRecordEvidence.count).not.toHaveBeenCalled();
     });
 
-    it('holds a consultant approver to the same gates: no file, then a locked period (K2)', async () => {
+    it('holds a super_admin approver to the same gates: no file, then a locked period', async () => {
       const noFile = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted });
-      await expect(noFile.service.approve(consultant(), 'rec-v')).rejects.toBeInstanceOf(ApprovalEvidenceMissingError);
+      await expect(noFile.service.approve(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(ApprovalEvidenceMissingError);
       expect(noFile.prisma.activityRecord.update).not.toHaveBeenCalled();
       const locked = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted }, 1);
       locked.prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
-      await expect(locked.service.approve(consultant(), 'rec-v')).rejects.toBeInstanceOf(PeriodLockedError);
+      await expect(locked.service.approve(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(PeriodLockedError);
       expect(locked.prisma.activityRecord.update).not.toHaveBeenCalled();
       const ok = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted }, 1);
-      expect((await ok.service.approve(consultant(), 'rec-v')).status).toBe(ActivityRecordStatus.approved);
+      expect((await ok.service.approve(superAdmin(), 'rec-v')).status).toBe(ActivityRecordStatus.approved);
     });
 
     it('names self-approval and a locked period before the missing file', async () => {
-      const self = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted, createdBy: 'user-admin' });
+      const self = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted, createdBy: 'user-super-admin' });
       await expect(self.service.approve(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(SelfApprovalRefusedError);
       const locked = arrange('Mobile Combustion', { status: ActivityRecordStatus.submitted });
       locked.prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
@@ -6031,7 +6152,7 @@ describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design
       { ...makeRecord({ id: 'c', category: 'Electricity' }), _count: { evidenceLinks: 0 }, location: null },
     ];
     prisma.activityRecord.findMany.mockImplementation(async (args: any) => (isFuelLookup(args) ? [gasAtSite] : rows));
-    const page = await service.listPage(dataEntry(), {});
+    const page = await service.listPage(standardUser(), {});
     expect(page.items.map((r) => [r.id, r.generationFuelRecord])).toEqual([
       ['a', 'present'],
       ['b', 'missing'],
@@ -6045,9 +6166,9 @@ describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue({ ...chpRecord(), location: null });
     fuelRows(prisma, []);
-    expect((await service.get(dataEntry(), 'rec-chp')).generationFuelRecord).toBe('missing');
+    expect((await service.get(standardUser(), 'rec-chp')).generationFuelRecord).toBe('missing');
     fuelRows(prisma, [gasAtSite]);
-    expect((await service.get(dataEntry(), 'rec-chp')).generationFuelRecord).toBe('present');
+    expect((await service.get(standardUser(), 'rec-chp')).generationFuelRecord).toBe('present');
   });
 
   it('a create answers the state and never audits it', async () => {
@@ -6060,7 +6181,7 @@ describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design
       location: null,
     }));
     fuelRows(prisma, [gasAtSite]);
-    const dto = await service.create(dataEntry(), {
+    const dto = await service.create(standardUser(), {
       subsidiaryId: 'sub-1', locationId: 'loc-1', reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1',
       category: 'Electricity', activityValue: 600000, activityUnit: 'kWh', parameters: CHP,
     } as never);
@@ -6076,7 +6197,7 @@ describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design
     prisma.activityRecord.findUnique.mockResolvedValue(row);
     prisma.activityRecord.update.mockImplementation(async ({ data }: any) => ({ ...row, ...data }));
     fuelRows(prisma, []);
-    const dto = await service.update(dataEntry(), 'rec-chp', { activityValue: 550000 });
+    const dto = await service.update(standardUser(), 'rec-chp', { activityValue: 550000 });
     expect(dto.generationFuelRecord).toBe('missing');
     const diff = audit.record.mock.calls[0][1].diff as any;
     expect(Object.keys(diff.before).sort()).toEqual(PERSISTED_KEYS);
@@ -6091,7 +6212,7 @@ describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design
       _count: { evidenceLinks: 0 },
     }));
     fuelRows(prisma, []);
-    const dto = await service.startReview(consultant(), 'rec-chp');
+    const dto = await service.startReview(superAdmin(), 'rec-chp');
     expect(dto.status).toBe(ActivityRecordStatus.under_review);
     expect(dto.generationFuelRecord).toBe('missing');
   });
@@ -6103,7 +6224,7 @@ describe('ActivityRecordsService — generationFuelRecord (self-gen-form, design
       location: null,
     });
     fuelRows(prisma, [gasAtSite]);
-    expect((await service.get(dataEntry(), 'rec-chp')).generationFuelRecord).toBeNull();
+    expect((await service.get(standardUser(), 'rec-chp')).generationFuelRecord).toBeNull();
     expect(lookups(prisma)).toHaveLength(0);
   });
 });
@@ -6127,7 +6248,7 @@ describe('ActivityRecordsService — start review names the submission it saw (s
   it('refuses a resubmitted record as record_changed, writing nothing', async () => {
     const { prisma, service } = build();
     submittedRecord(prisma);
-    await expect(service.startReview(consultant(), 'rec-sr', '2026-11-19T10:00:00.000Z')).rejects.toMatchObject({
+    await expect(service.startReview(superAdmin(), 'rec-sr', '2026-11-19T10:00:00.000Z')).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'record_changed' }),
     });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -6137,9 +6258,760 @@ describe('ActivityRecordsService — start review names the submission it saw (s
   it('takes the submission it saw into review, and compares nothing when none is named', async () => {
     const { prisma, service } = build();
     submittedRecord(prisma);
-    expect((await service.startReview(consultant(), 'rec-sr', SUBMITTED_AT.toISOString())).status).toBe(
+    expect((await service.startReview(superAdmin(), 'rec-sr', SUBMITTED_AT.toISOString())).status).toBe(
       ActivityRecordStatus.under_review,
     );
-    expect((await service.startReview(consultant(), 'rec-sr')).status).toBe(ActivityRecordStatus.under_review);
+    expect((await service.startReview(superAdmin(), 'rec-sr')).status).toBe(ActivityRecordStatus.under_review);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inc26-roles-approval-chain (INC-2.6 §1.1, design Decision 7): who decides a
+// record. Every refusal below asserts that nothing was written — no record
+// update and no audit row (the mock's transaction client shares these spies).
+// ---------------------------------------------------------------------------
+
+describe('ActivityRecordsService — the approver chain (inc26-roles-approval-chain)', () => {
+  const SUBMITTED_AT = new Date('2026-11-25T09:00:00.000Z');
+  const SEEN = SUBMITTED_AT.toISOString();
+
+  function arrange(over: Partial<ActivityRecord> = {}) {
+    const ctx = build();
+    const record = makeRecord({
+      id: 'rec-p',
+      subsidiaryId: 'sub-1',
+      status: ActivityRecordStatus.submitted,
+      submittedAt: SUBMITTED_AT,
+      createdBy: 'user-entry',
+      ...over,
+    });
+    ctx.prisma.activityRecord.findUnique.mockResolvedValue(record);
+    ctx.prisma.activityRecord.update.mockImplementation(({ data }: any) => ({ ...record, ...data, _count: { evidenceLinks: 1 } }));
+    return { ...ctx, record };
+  }
+  function nothingWritten(prisma: PrismaMock) {
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  }
+  async function refusal(promise: Promise<unknown>) {
+    return promise.then(() => null, (e: unknown) => e as any);
+  }
+  it('a role that decides nothing is refused 403 even for a record it cannot read — the role refusal comes first (owner\'s review)', async () => {
+    const { service, prisma } = arrange({ subsidiaryId: 'sub-hidden' });
+    for (const decide of [
+      () => service.approve(auditor({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-p', SEEN),
+      () => service.reject(auditor({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-p', 'why', SEEN),
+      () => service.startReview(auditor({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-p', SEEN),
+    ]) {
+      const error = await refusal(decide());
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(error).not.toBeInstanceOf(ResourceNotFoundError);
+    }
+    expect(prisma.activityRecord.findUnique).not.toHaveBeenCalled();
+    nothingWritten(prisma);
+  });
+
+  function expectNotApprover(error: unknown, approver: string) {
+    expect(error).toBeInstanceOf(NotRecordApproverError);
+    expect((error as NotRecordApproverError).getStatus()).toBe(403);
+    expect(errorCodeOf(error)).toBe('not_record_approver');
+    expect((error as NotRecordApproverError).getResponse()).toMatchObject({ params: { approver } });
+  }
+  /** The one audit row a decision wrote: its actor and its action. */
+  function onlyAuditRow() {
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    const [actor, entry, client] = audit.record.mock.calls[0] as [RequestUser, any, unknown];
+    return { actor, entry, client };
+  }
+
+  describe('Only a masterkey or a super_admin decides records', () => {
+    it.each([
+      ['review', (s: ActivityRecordsService, u: RequestUser) => s.startReview(u, 'rec-p'), 'Only a masterkey or a super_admin may review records'],
+      ['return', (s: ActivityRecordsService, u: RequestUser) => s.reject(u, 'rec-p', 'Wrong meter', SEEN), 'Only a masterkey or a super_admin may return records'],
+      ['approve', (s: ActivityRecordsService, u: RequestUser) => s.approve(u, 'rec-p', SEEN), 'Only a masterkey or a super_admin may approve records'],
+    ] as const)('a standard user and an auditor are refused to %s as forbidden, naming both roles, and nothing changes', async (_kind, act, message) => {
+      for (const user of [standardUser(), auditor()]) {
+        const { prisma, service } = arrange({ createdBy: 'someone-else' });
+        const error = await refusal(act(service, user));
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect(error).not.toBeInstanceOf(NotRecordApproverError);
+        expect(error.message).toBe(message);
+        nothingWritten(prisma);
+        // The role gate is answered before the decision's transaction opens.
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      }
+    });
+  });
+
+  describe("A record's approver follows its author's role", () => {
+    it("a standard user's record: approved by a super_admin granted its company, audited as `approve` by a super_admin", async () => {
+      const { prisma, service } = arrange();
+      const dto = await service.approve(superAdmin(), 'rec-p', SEEN);
+      expect(dto.status).toBe(ActivityRecordStatus.approved);
+      expect(prisma.tx.activityRecord.update.mock.calls[0][0].data.reviewedBy).toBe('user-super-admin');
+      const { actor, entry, client } = onlyAuditRow();
+      expect(actor).toMatchObject({ id: 'user-super-admin', role: 'super_admin' });
+      expect(entry).toMatchObject({ action: 'approve', entity: 'activity_record', entityId: 'rec-p' });
+      expect(client).toBe(prisma.tx);
+    });
+
+    it("a super_admin's record: approved by a masterkey, who is its reviewer", async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin' });
+      const dto = await service.approve(masterkey(), 'rec-p', SEEN);
+      expect(dto.status).toBe(ActivityRecordStatus.approved);
+      expect(prisma.tx.activityRecord.update.mock.calls[0][0].data.reviewedBy).toBe('user-admin');
+      expect(onlyAuditRow().entry.action).toBe('approve');
+    });
+
+    it("another masterkey's record: refused not_record_approver naming the author, the record stays submitted", async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-admin-2' });
+      expectNotApprover(await refusal(service.approve(masterkey(), 'rec-p', SEEN)), 'author');
+      nothingWritten(prisma);
+    });
+
+    it('an author since made a super_admin: a masterkey approves it', async () => {
+      const { prisma, service } = arrange();
+      prisma.people.set('user-entry', { role: 'super_admin', grants: ['sub-1'] });
+      expect((await service.approve(masterkey(), 'rec-p', SEEN)).status).toBe(ActivityRecordStatus.approved);
+      // …and the company's super_admin no longer may.
+      const again = arrange();
+      again.prisma.people.set('user-entry', { role: 'super_admin', grants: ['sub-1'] });
+      expectNotApprover(await refusal(again.service.approve(superAdmin(), 'rec-p', SEEN)), 'masterkey');
+    });
+
+    it('an author since made an auditor: a super_admin granted the company approves it', async () => {
+      const { prisma, service } = arrange();
+      prisma.people.set('user-entry', { role: 'auditor' });
+      expect((await service.approve(superAdmin(), 'rec-p', SEEN)).status).toBe(ActivityRecordStatus.approved);
+    });
+
+    it("a masterkey author's account disabled since: a super_admin granted the company approves it, as `approve`", async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-admin-2' });
+      prisma.people.set('user-admin-2', { role: 'masterkey', disabledAt: new Date('2026-11-25T10:00:00.000Z') });
+      expect((await service.approve(superAdmin(), 'rec-p', SEEN)).status).toBe(ActivityRecordStatus.approved);
+      expect(onlyAuditRow().entry.action).toBe('approve');
+    });
+  });
+
+  describe('A company without an active super_admin falls back to the masterkey', () => {
+    it.each([
+      ['no super_admin is assigned', (p: PrismaMock) => p.people.delete('user-super-admin')],
+      ['its only super_admin has not accepted the invitation', (p: PrismaMock) => p.people.set('user-super-admin', { role: 'super_admin', grants: ['sub-1', 'sub-2'], invitation: 'pending' })],
+      ['its only super_admin is disabled', (p: PrismaMock) => p.people.set('user-super-admin', { role: 'super_admin', grants: ['sub-1', 'sub-2'], disabledAt: new Date() })],
+    ] as const)("%s: a masterkey approves a standard user's record, audited as `approve` by a masterkey", async (_label, unstaff) => {
+      const { prisma, service } = arrange();
+      unstaff(prisma);
+      expect((await service.approve(masterkey(), 'rec-p', SEEN)).status).toBe(ActivityRecordStatus.approved);
+      const { actor, entry } = onlyAuditRow();
+      expect(actor).toMatchObject({ role: 'masterkey' });
+      expect(entry.action).toBe('approve');
+    });
+
+    it('is evaluated at the decision: a super_admin appointed since the submit takes the record from the masterkey', async () => {
+      const { prisma, service } = arrange();
+      prisma.people.delete('user-super-admin');
+      expect((await service.get(masterkey(), 'rec-p')).approver).toBe('masterkey');
+      // Appointed and accepted before the masterkey decides.
+      prisma.people.set('user-new-sa', { role: 'super_admin', grants: ['sub-1'], invitation: 'accepted' });
+      expectNotApprover(await refusal(service.approve(masterkey(), 'rec-p', SEEN)), 'super_admin');
+      nothingWritten(prisma);
+    });
+  });
+
+  describe("Only a record's approver approves it", () => {
+    it("a masterkey approving a standard user's record in a company with a super_admin: not_record_approver naming super_admin", async () => {
+      const { prisma, service } = arrange();
+      expectNotApprover(await refusal(service.approve(masterkey(), 'rec-p', SEEN)), 'super_admin');
+      nothingWritten(prisma);
+    });
+
+    it("a super_admin approving a colleague super_admin's record: not_record_approver naming masterkey", async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin-2' });
+      prisma.people.set('user-super-admin-2', { role: 'super_admin', grants: ['sub-1'] });
+      expectNotApprover(await refusal(service.approve(superAdmin(), 'rec-p', SEEN)), 'masterkey');
+      nothingWritten(prisma);
+    });
+
+    it('a super_admin approving in a company they are not granted is answered exactly as a record that does not exist', async () => {
+      const outside = arrange({ subsidiaryId: 'sub-3' });
+      const foreign = await refusal(outside.service.approve(superAdmin(), 'rec-p', SEEN));
+      const missing = arrange();
+      missing.prisma.activityRecord.findUnique.mockResolvedValue(null);
+      const absent = await refusal(missing.service.approve(superAdmin(), 'rec-p', SEEN));
+      expect(foreign).toBeInstanceOf(NotFoundException);
+      expect(errorCodeOf(foreign)).toBe(errorCodeOf(absent));
+      expect(foreign.getResponse()).toEqual(absent.getResponse());
+      nothingWritten(outside.prisma);
+    });
+
+    it("a super_admin approving a standard user's record into a locked period hears the period lock", async () => {
+      const { prisma, service } = arrange();
+      prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+      expect(await refusal(service.approve(superAdmin(), 'rec-p', SEEN))).toBeInstanceOf(PeriodLockedError);
+      nothingWritten(prisma);
+    });
+
+    it("a masterkey approving a super_admin's record without evidence hears the evidence refusal", async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin' });
+      prisma.activityRecordEvidence.count.mockResolvedValue(0);
+      expect(await refusal(service.approve(masterkey(), 'rec-p', SEEN))).toBeInstanceOf(ApprovalEvidenceMissingError);
+      nothingWritten(prisma);
+    });
+
+    it('the approver check comes before the period lock and the evidence: a masterkey who is not the approver hears not_record_approver', async () => {
+      const { prisma, service } = arrange();
+      prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+      prisma.activityRecordEvidence.count.mockResolvedValue(0);
+      expectNotApprover(await refusal(service.approve(masterkey(), 'rec-p', SEEN)), 'super_admin');
+      nothingWritten(prisma);
+    });
+  });
+
+  describe('Nobody but a masterkey approves a record they created', () => {
+    it('a super_admin approving their own record: self_approval_forbidden, nothing changes', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin' });
+      const error = await refusal(service.approve(superAdmin(), 'rec-p', SEEN));
+      expect(error).toBeInstanceOf(SelfApprovalRefusedError);
+      expect(errorCodeOf(error)).toBe('self_approval_forbidden');
+      nothingWritten(prisma);
+    });
+
+    it('a former standard user, now a super_admin granted the company, approving their own old record: self_approval_forbidden', async () => {
+      const { prisma, service } = arrange();
+      prisma.people.set('user-entry', { role: 'super_admin', grants: ['sub-1'] });
+      expect(await refusal(service.approve(superAdmin({ id: 'user-entry' }), 'rec-p', SEEN))).toBeInstanceOf(SelfApprovalRefusedError);
+      nothingWritten(prisma);
+    });
+  });
+
+  describe("A masterkey's approval of their own record is a self-approval", () => {
+    it('approves, the reviewer and the author the same user, with exactly one `self_approve` row by a masterkey', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-admin', status: ActivityRecordStatus.under_review });
+      const dto = await service.approve(masterkey(), 'rec-p', SEEN);
+      expect(dto.status).toBe(ActivityRecordStatus.approved);
+      const write = prisma.tx.activityRecord.update.mock.calls[0][0];
+      expect(write.data.reviewedBy).toBe('user-admin');
+      expect(dto.createdBy).toBe('user-admin');
+      const { actor, entry, client } = onlyAuditRow();
+      expect(actor).toMatchObject({ id: 'user-admin', role: 'masterkey' });
+      expect(entry.action).toBe('self_approve');
+      expect(client).toBe(prisma.tx);
+    });
+
+    it("its row carries the same content as an approval's: another masterkey's approval of a super_admin's record writes `approve` with the same diff", async () => {
+      const self = arrange({ createdBy: 'user-admin' });
+      await self.service.approve(masterkey(), 'rec-p', SEEN);
+      const selfRow = onlyAuditRow().entry;
+      audit.record.mockClear();
+
+      const other = arrange({ createdBy: 'user-super-admin' });
+      await other.service.approve(masterkey(), 'rec-p', SEEN);
+      const otherRow = onlyAuditRow().entry;
+
+      expect(selfRow.action).toBe('self_approve');
+      expect(otherRow.action).toBe('approve');
+      const { action: _a, ...selfRest } = selfRow;
+      const { action: _b, ...otherRest } = otherRow;
+      expect(selfRest).toEqual(otherRest);
+      expect(selfRest.diff).toEqual({ transition: { from: 'submitted', to: 'approved' }, reviewNote: null });
+    });
+
+    it('a self-approval without evidence is refused with the evidence refusal, and no audit row is written', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-admin' });
+      prisma.activityRecordEvidence.count.mockResolvedValue(0);
+      expect(await refusal(service.approve(masterkey(), 'rec-p', SEEN))).toBeInstanceOf(ApprovalEvidenceMissingError);
+      nothingWritten(prisma);
+    });
+
+    it('a self-approval into a locked period is refused with the lock, and no audit row is written', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-admin' });
+      prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+      expect(await refusal(service.approve(masterkey(), 'rec-p', SEEN))).toBeInstanceOf(PeriodLockedError);
+      nothingWritten(prisma);
+    });
+
+    it('a self-approval of a stale figure is refused as calculation_stale, and no audit row is written', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-admin', calculation: { tCo2e: 0.0001, factorId: 'factor-1' } as never });
+      expect(await refusal(service.approve(masterkey(), 'rec-p', SEEN))).toBeInstanceOf(CalculationStaleError);
+      nothingWritten(prisma);
+    });
+
+    it('a former super_admin, now a masterkey, approving their own old record writes `self_approve`', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-promoted' });
+      prisma.people.set('user-promoted', { role: 'masterkey' });
+      expect((await service.approve(masterkey({ id: 'user-promoted' }), 'rec-p', SEEN)).status).toBe(ActivityRecordStatus.approved);
+      expect(onlyAuditRow().entry.action).toBe('self_approve');
+    });
+
+    it('a masterkey takes their own record into review and returns it — ordinary `review` and `reject` rows', async () => {
+      const reviewed = arrange({ createdBy: 'user-admin' });
+      expect((await reviewed.service.startReview(masterkey(), 'rec-p', SEEN)).status).toBe(ActivityRecordStatus.under_review);
+      expect(onlyAuditRow().entry.action).toBe('review');
+      audit.record.mockClear();
+      const returned = arrange({ createdBy: 'user-admin', status: ActivityRecordStatus.under_review });
+      expect((await returned.service.reject(masterkey(), 'rec-p', 'Wrong meter', SEEN)).status).toBe(ActivityRecordStatus.rejected);
+      expect(onlyAuditRow().entry.action).toBe('reject');
+    });
+  });
+
+  describe("Taking into review and returning belong to the record's approver", () => {
+    it("a super_admin takes a standard user's record into review, as its reviewer", async () => {
+      const { prisma, service } = arrange();
+      const dto = await service.startReview(superAdmin(), 'rec-p', SEEN);
+      expect(dto.status).toBe(ActivityRecordStatus.under_review);
+      expect(prisma.tx.activityRecord.update.mock.calls[0][0].data.reviewedBy).toBe('user-super-admin');
+    });
+
+    it("a super_admin returns a standard user's record with a comment, naming the submission seen", async () => {
+      const { prisma, service } = arrange({ status: ActivityRecordStatus.under_review });
+      const dto = await service.reject(superAdmin(), 'rec-p', 'Attach the March invoice', SEEN);
+      expect(dto.status).toBe(ActivityRecordStatus.rejected);
+      expect(prisma.tx.activityRecord.update.mock.calls[0][0].data.reviewNote).toBe('Attach the March invoice');
+    });
+
+    it.each([
+      ['takes into review', (s: ActivityRecordsService) => s.startReview(masterkey(), 'rec-p', SEEN)],
+      ['returns', (s: ActivityRecordsService) => s.reject(masterkey(), 'rec-p', 'Wrong meter', SEEN)],
+    ] as const)("a masterkey who %s a standard user's record in a company with a super_admin: not_record_approver naming super_admin", async (_label, act) => {
+      const { prisma, service } = arrange();
+      expectNotApprover(await refusal(act(service)), 'super_admin');
+      nothingWritten(prisma);
+    });
+
+    it("a masterkey returning another masterkey's record: not_record_approver naming the author", async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-admin-2' });
+      expectNotApprover(await refusal(service.reject(masterkey(), 'rec-p', 'Wrong meter', SEEN)), 'author');
+      nothingWritten(prisma);
+    });
+
+    it('a super_admin taking their own record into review: self_review_forbidden, no reviewer, no audit row', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin' });
+      const error = await refusal(service.startReview(superAdmin(), 'rec-p', SEEN));
+      expect(error).toBeInstanceOf(SelfReviewRefusedError);
+      expect(errorCodeOf(error)).toBe('self_review_forbidden');
+      nothingWritten(prisma);
+    });
+
+    it('a super_admin returning their own record: not_record_approver naming masterkey — and the author can still recall it', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin' });
+      expectNotApprover(await refusal(service.reject(superAdmin(), 'rec-p', 'Mine', SEEN)), 'masterkey');
+      nothingWritten(prisma);
+      expect((await service.recall(superAdmin(), 'rec-p')).status).toBe(ActivityRecordStatus.draft);
+      expect(onlyAuditRow().entry.action).toBe('recall');
+    });
+
+    it('a decision started by a super_admin who then lost the grant: another super_admin granted the company approves it', async () => {
+      const { prisma, service } = arrange({ status: ActivityRecordStatus.under_review, reviewedBy: 'user-super-admin' });
+      prisma.people.set('user-super-admin', { role: 'super_admin', grants: ['sub-2'] });
+      prisma.people.set('user-super-admin-2', { role: 'super_admin', grants: ['sub-1'] });
+      // The first, still holding a token that names sub-1, is answered as for
+      // an unknown record by the decision's own re-read.
+      expect(await refusal(service.approve(superAdmin(), 'rec-p', SEEN))).toBeInstanceOf(ResourceNotFoundError);
+      nothingWritten(prisma);
+      const dto = await service.approve(superAdmin({ id: 'user-super-admin-2' }), 'rec-p', SEEN);
+      expect(dto.status).toBe(ActivityRecordStatus.approved);
+      expect(prisma.tx.activityRecord.update.mock.calls[0][0].data.reviewedBy).toBe('user-super-admin-2');
+    });
+  });
+
+  describe('the refusal order, pairwise', () => {
+    const STALE = '2026-11-25T08:00:00.000Z';
+
+    it('the role gate before record_changed: a standard user or an auditor with a stale or missing submission hears forbidden', async () => {
+      for (const seen of [STALE, SUBMISSION_NOT_NAMED] as const) {
+        for (const user of [standardUser(), auditor()]) {
+          const { prisma, service } = arrange();
+          const error = await refusal(service.approve(user, 'rec-p', seen));
+          expect(error).toBeInstanceOf(ForbiddenException);
+          expect(errorCodeOf(error)).not.toBe('record_changed');
+          const returned = await refusal(service.reject(user, 'rec-p', 'x', seen));
+          expect(returned).toBeInstanceOf(ForbiddenException);
+          expect(errorCodeOf(returned)).not.toBe('record_changed');
+          nothingWritten(prisma);
+        }
+      }
+    });
+
+    it('record_changed before self_approval_forbidden and self_review_forbidden: a super_admin acting on their own resubmitted record', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin' });
+      expect(await refusal(service.approve(superAdmin(), 'rec-p', STALE))).toBeInstanceOf(RecordChangedError);
+      expect(await refusal(service.startReview(superAdmin(), 'rec-p', STALE))).toBeInstanceOf(RecordChangedError);
+      nothingWritten(prisma);
+    });
+
+    it('record_changed before not_record_approver: a masterkey who is not the approver, naming a submission the record no longer has', async () => {
+      const { prisma, service } = arrange();
+      expect(await refusal(service.approve(masterkey(), 'rec-p', STALE))).toBeInstanceOf(RecordChangedError);
+      expect(await refusal(service.reject(masterkey(), 'rec-p', 'x', STALE))).toBeInstanceOf(RecordChangedError);
+      expect(await refusal(service.startReview(masterkey(), 'rec-p', STALE))).toBeInstanceOf(RecordChangedError);
+      nothingWritten(prisma);
+    });
+
+    it('a wrong status before the approver check too (the re-gate)', async () => {
+      const { prisma, service } = arrange({ status: ActivityRecordStatus.approved });
+      expect(await refusal(service.approve(masterkey(), 'rec-p', SEEN))).toBeInstanceOf(BadRequestException);
+      nothingWritten(prisma);
+    });
+
+    it('self_* before not_record_approver: a super_admin\'s own record, which a masterkey decides, answers self_approval_forbidden and self_review_forbidden', async () => {
+      const { prisma, service } = arrange({ createdBy: 'user-super-admin' });
+      const approve = await refusal(service.approve(superAdmin(), 'rec-p', SEEN));
+      expect(approve).toBeInstanceOf(SelfApprovalRefusedError);
+      expect(approve).not.toBeInstanceOf(NotRecordApproverError);
+      const review = await refusal(service.startReview(superAdmin(), 'rec-p', SEEN));
+      expect(review).toBeInstanceOf(SelfReviewRefusedError);
+      expect(review).not.toBeInstanceOf(NotRecordApproverError);
+      nothingWritten(prisma);
+    });
+  });
+
+  describe('A pending record states who decides it', () => {
+    it.each([
+      ["a standard user's record in a company with an active super_admin", {}, () => undefined, 'super_admin'],
+      ["a standard user's record in a company without one (the fallback)", {}, (p: PrismaMock) => p.people.delete('user-super-admin'), 'masterkey'],
+      ["a super_admin's record", { createdBy: 'user-super-admin' }, () => undefined, 'masterkey'],
+      ["a masterkey's record", { createdBy: 'user-admin' }, () => undefined, 'author'],
+    ] as const)('%s states %s, submitted or under review', async (_label, over, setup, approver) => {
+      for (const status of [ActivityRecordStatus.submitted, ActivityRecordStatus.under_review]) {
+        const { prisma, service } = arrange({ ...over, status });
+        setup(prisma);
+        expect((await service.get(auditor(), 'rec-p')).approver).toBe(approver);
+      }
+    });
+
+    it.each([
+      ActivityRecordStatus.draft,
+      ActivityRecordStatus.rejected,
+      ActivityRecordStatus.approved,
+      ActivityRecordStatus.locked,
+      ActivityRecordStatus.voided,
+    ])('a %s record states none, and asks nothing about approvers', async (status) => {
+      const { prisma, service } = arrange({ status });
+      expect((await service.get(auditor(), 'rec-p')).approver).toBeNull();
+      expect(prisma.userSubsidiaryAccess.findMany).not.toHaveBeenCalled();
+    });
+
+    it("a decision's answer states the approver of the record it left: under review keeps one, approved none", async () => {
+      const reviewed = arrange();
+      expect((await reviewed.service.startReview(superAdmin(), 'rec-p', SEEN)).approver).toBe('super_admin');
+      const approved = arrange();
+      expect((await approved.service.approve(superAdmin(), 'rec-p', SEEN)).approver).toBeNull();
+    });
+
+    it('a list page of 50 pending records asks two approver queries — the same as a page of 5', async () => {
+      const authors = ['user-entry', 'user-super-admin', 'user-admin', 'user-admin-2', 'user-gone'];
+      const page = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({
+          ...makeRecord({
+            id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+            subsidiaryId: i % 2 ? 'sub-1' : 'sub-2',
+            status: i % 3 ? ActivityRecordStatus.submitted : ActivityRecordStatus.under_review,
+            createdBy: authors[i % authors.length],
+          }),
+          _count: { evidenceLinks: 1 },
+        }));
+      const approverQueries = (prisma: PrismaMock) => ({
+        authors: prisma.profile.findMany.mock.calls.filter(([args]: any) => args?.select?.role).length,
+        companies: prisma.userSubsidiaryAccess.findMany.mock.calls.length,
+      });
+
+      const big = build();
+      big.prisma.activityRecord.findMany.mockResolvedValueOnce(page(50));
+      const items = (await big.service.listPage(masterkey(), { limit: 50 })).items;
+      expect(items).toHaveLength(50);
+      expect(new Set(items.map((r) => r.approver))).toEqual(new Set(['super_admin', 'masterkey', 'author']));
+      expect(approverQueries(big.prisma)).toEqual({ authors: 1, companies: 1 });
+
+      const small = build();
+      small.prisma.activityRecord.findMany.mockResolvedValueOnce(page(5));
+      await small.service.listPage(masterkey(), { limit: 50 });
+      expect(approverQueries(small.prisma)).toEqual(approverQueries(big.prisma));
+    });
+  });
+
+  describe('The review queue: "awaiting my decision" is a filter the database applies', () => {
+    it('a super_admin\'s page ANDs the awaiting-decision where onto its scoped where', async () => {
+      const { prisma, service } = build();
+      await service.listPage(superAdmin(), { awaitingMyDecision: true });
+      const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+      const expected = await awaitingDecisionWhere(prisma as never, superAdmin());
+      expect(where.AND).toHaveLength(2);
+      expect(where.AND[0]).toMatchObject({ subsidiaryId: { in: ['sub-1', 'sub-2'] } });
+      expect(where.AND[1]).toEqual(expected);
+      // The default people: the masterkeys and the super_admin route elsewhere.
+      expect(where.AND[1]).toEqual({
+        status: { in: ['submitted', 'under_review'] },
+        AND: [
+          { createdBy: { notIn: ['user-admin', 'user-admin-2', 'user-super-admin'] } },
+          { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+        ],
+      });
+    });
+
+    it('a masterkey\'s page names its own records, the active super_admins\' and the unstaffed companies\' records', async () => {
+      const { prisma, service } = build();
+      await service.listPage(masterkey(), { awaitingMyDecision: true });
+      const mine = prisma.activityRecord.findMany.mock.calls[0][0].where.AND[1];
+      expect(mine).toEqual({
+        status: { in: ['submitted', 'under_review'] },
+        OR: [
+          { createdBy: 'user-admin' },
+          { createdBy: { in: ['user-super-admin'] } },
+          {
+            AND: [
+              { createdBy: { notIn: ['user-admin', 'user-admin-2', 'user-super-admin'] } },
+              { subsidiaryId: { notIn: ['sub-1', 'sub-2'] } },
+            ],
+          },
+        ],
+      });
+    });
+
+    it('metadata counts the same filtered set', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.count.mockResolvedValueOnce(3);
+      prisma.activityRecord.aggregate.mockResolvedValueOnce({ _max: { reportingYear: 2026 } });
+      await service.metadata(superAdmin(), { awaitingMyDecision: true });
+      expect(prisma.activityRecord.count.mock.calls[0][0].where.AND[1]).toEqual(await awaitingDecisionWhere(prisma as never, superAdmin()));
+    });
+
+    it.each([
+      ['a standard user', standardUser()],
+      ['an auditor', auditor()],
+    ] as const)('%s, who decides nothing, gets an empty page and count without a records query', async (_label, user) => {
+      const { prisma, service } = build();
+      expect(await service.listPage(user, { awaitingMyDecision: true })).toEqual({ items: [], limit: DEFAULT_PAGE_LIMIT, nextCursor: null });
+      expect(await service.metadata(user, { awaitingMyDecision: true })).toEqual({ total: 0, latestReportingYear: null });
+      expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.count).not.toHaveBeenCalled();
+    });
+
+    it('without the filter the page is the scoped list, with no approver where', async () => {
+      const { prisma, service } = build();
+      await service.listPage(superAdmin(), {});
+      const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+      expect(JSON.stringify(where)).not.toContain('notIn');
+    });
+  });
+
+  describe('Void stays with the masterkey', () => {
+    it('a super_admin voiding an approved record of their company is refused as forbidden; the record stays approved', async () => {
+      const { prisma, service } = arrange({ status: ActivityRecordStatus.approved, createdBy: 'user-entry', reviewedBy: 'user-super-admin' });
+      const error = await refusal(service.void(superAdmin(), 'rec-p', 'A reason long enough to pass'));
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(error.message).toBe('Only a masterkey may void records');
+      nothingWritten(prisma);
+    });
+
+    it('a masterkey voids a record they approved themselves, with an ordinary `void` row', async () => {
+      const { prisma, service } = arrange({ status: ActivityRecordStatus.approved, createdBy: 'user-admin', reviewedBy: 'user-admin' });
+      expect((await service.void(masterkey(), 'rec-p', 'Duplicate of the site invoice')).status).toBe(ActivityRecordStatus.voided);
+      expect(onlyAuditRow().entry.action).toBe('void');
+      expect(prisma.tx.activityRecord.update.mock.calls[0][0].data.voidedBy).toBe('user-admin');
+    });
+  });
+
+  describe('Deleting a draft stays open to its author and the masterkey', () => {
+    it("a super_admin deleting a standard user's draft is refused record_author_forbidden; the draft is unchanged", async () => {
+      const { prisma, service } = arrange({ status: ActivityRecordStatus.draft, submittedAt: null });
+      const error = await refusal(service.remove(superAdmin(), 'rec-p'));
+      expect(error).toBeInstanceOf(AuthorOnlyRefusedError);
+      expect(errorCodeOf(error)).toBe('record_author_forbidden');
+      expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
+      nothingWritten(prisma);
+    });
+
+    it("a masterkey deletes a standard user's draft and a returned record, each audited", async () => {
+      for (const status of [ActivityRecordStatus.draft, ActivityRecordStatus.rejected]) {
+        audit.record.mockClear();
+        const { prisma, service } = arrange({ status });
+        await service.remove(masterkey(), 'rec-p');
+        expect(prisma.tx.activityRecord.delete).toHaveBeenCalledWith({ where: { id: 'rec-p' } });
+        expect(onlyAuditRow().entry).toMatchObject({ action: 'delete', entityId: 'rec-p' });
+      }
+    });
+
+    it('a super_admin deletes their own draft', async () => {
+      const { prisma, service } = arrange({ status: ActivityRecordStatus.draft, createdBy: 'user-super-admin' });
+      await service.remove(superAdmin(), 'rec-p');
+      expect(prisma.tx.activityRecord.delete).toHaveBeenCalledWith({ where: { id: 'rec-p' } });
+    });
+  });
+});
+
+describe("ActivityRecordsService — a standard user's categories (inc26-roles-approval-chain, INC-2.6 §1, §7.3)", () => {
+  /** Granted company A (`sub-1`) with Electricity, company B (`sub-2`) with Fuel. */
+  const narrow = (over: Partial<RequestUser> = {}) =>
+    standardUser({
+      accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+      categoryGrants: { 'sub-1': ['Electricity'], 'sub-2': ['Fuel'] },
+      ...over,
+    });
+  /** Electricity unticked on A since the record was made. */
+  const withdrawn = () => narrow({ categoryGrants: { 'sub-1': ['Water'], 'sub-2': ['Fuel'] } });
+
+  function expectCategoryRefusal(error: unknown, category: string) {
+    expect(error).toBeInstanceOf(CategoryNotGrantedError);
+    expect((error as CategoryNotGrantedError).getStatus()).toBe(403);
+    expect(errorCodeOf(error)).toBe('category_not_granted');
+    expect((error as CategoryNotGrantedError).getResponse()).toMatchObject({ params: { category } });
+  }
+  function arrangeCreate(prisma: PrismaMock) {
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }));
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new' }));
+  }
+  function arrangeRecord(prisma: PrismaMock, over: Partial<ActivityRecord> = {}) {
+    const record = makeRecord({ id: 'rec-own', subsidiaryId: 'sub-1', category: 'Electricity', createdBy: 'user-entry', ...over });
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findUnique.mockResolvedValue(record);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({ ...record, ...data, _count: { evidenceLinks: 1 } }));
+    return record;
+  }
+  const caught = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e);
+
+  describe('A standard user authors only in granted categories', () => {
+    it('creates in a granted category', async () => {
+      const { prisma, service } = build();
+      arrangeCreate(prisma);
+      expect((await service.create(narrow(), CREATE_DTO)).status).toBe(ActivityRecordStatus.draft);
+      expect(prisma.tx.activityRecord.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses another category with category_not_granted naming it, before any query, and creates nothing', async () => {
+      const { prisma, calc, service } = build();
+      arrangeCreate(prisma);
+      const error = await caught(service.create(narrow(), { ...CREATE_DTO, category: 'Fuel', activityType: 'diesel' } as never));
+      expectCategoryRefusal(error, 'Fuel');
+      expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
+      expect(calc.compute).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('a category differs by company: Fuel is granted on B, not on A', async () => {
+      const { prisma, service } = build();
+      arrangeCreate(prisma);
+      expectCategoryRefusal(await caught(service.create(narrow(), { ...CREATE_DTO, subsidiaryId: 'sub-1', category: 'Fuel' } as never)), 'Fuel');
+      // …and Electricity, ticked on A, is not ticked on B.
+      expectCategoryRefusal(await caught(service.create(narrow(), { ...CREATE_DTO, subsidiaryId: 'sub-2' })), 'Electricity');
+      expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    });
+
+    it('the read-only preview is refused the same way (the bulk upload\'s dry run)', async () => {
+      const { prisma, service } = build();
+      expectCategoryRefusal(await caught(service.previewCreate(narrow(), { ...CREATE_DTO, category: 'Water' } as never)), 'Water');
+      expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('re-filing a draft under an ungranted category is refused; the draft keeps its category', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.draft });
+      expectCategoryRefusal(await caught(service.update(narrow(), 'rec-own', { category: 'Water', activityUnit: 'cubic_metres' } as never)), 'Water');
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('an edit that keeps the granted category goes ahead', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.draft });
+      expect((await service.update(narrow(), 'rec-own', { activityValue: 100 })).id).toBe('rec-own');
+    });
+
+    it('an edit of a draft whose category was since withdrawn is refused: checked on the category after the edit', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.draft });
+      expectCategoryRefusal(await caught(service.update(withdrawn(), 'rec-own', { activityValue: 100 })), 'Electricity');
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('submitting after the category was withdrawn is refused; the record stays a draft', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.draft });
+      expectCategoryRefusal(await caught(service.submit(withdrawn(), 'rec-own')), 'Electricity');
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('the submit gate comes after the author check: a colleague\'s draft answers record_author_forbidden-style, not the category', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.draft, createdBy: 'someone-else' });
+      // A colleague's Electricity draft in A is in scope (Electricity is ticked).
+      expect(await caught(service.submit(narrow(), 'rec-own'))).toBeInstanceOf(SubmitAuthorRefusedError);
+    });
+
+    it.each([
+      ['a super_admin', superAdmin()],
+      ['a masterkey', masterkey()],
+    ] as const)('%s is never refused by category: creates in a category no grant ticks', async (_label, user) => {
+      const { prisma, service } = build();
+      arrangeCreate(prisma);
+      expect((await service.create(user, CREATE_DTO)).status).toBe(ActivityRecordStatus.draft);
+      // Even holding a grant that names other categories.
+      expect((await service.create({ ...user, categoryGrants: { 'sub-1': ['Water'] } }, CREATE_DTO)).status).toBe(ActivityRecordStatus.draft);
+    });
+
+    it.each([
+      ['a super_admin', superAdmin()],
+      ['a masterkey', masterkey()],
+    ] as const)('%s edits and submits its own record whatever its grants say', async (_label, user) => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.draft, createdBy: user.id });
+      const narrowed = { ...user, categoryGrants: { 'sub-1': ['Water' as const] } };
+      expect((await service.update(narrowed, 'rec-own', { activityValue: 100 })).id).toBe('rec-own');
+      expect((await service.submit(narrowed, 'rec-own')).status).toBe(ActivityRecordStatus.submitted);
+    });
+
+    it('a hand-built standard user with no categoryGrants authors nothing (fail closed)', async () => {
+      const { prisma, service } = build();
+      arrangeCreate(prisma);
+      expectCategoryRefusal(await caught(service.create(standardUser({ categoryGrants: undefined }), CREATE_DTO)), 'Electricity');
+    });
+  });
+
+  describe("A withdrawn category leaves the author's own records reachable", () => {
+    it('the author reads and recalls its submitted record after Electricity was unticked', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.submitted });
+      expect((await service.get(withdrawn(), 'rec-own')).id).toBe('rec-own');
+      expect((await service.recall(withdrawn(), 'rec-own')).status).toBe(ActivityRecordStatus.draft);
+    });
+
+    it('the author deletes its draft after the withdrawal', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.draft });
+      await service.remove(withdrawn(), 'rec-own');
+      expect(prisma.tx.activityRecord.delete).toHaveBeenCalledWith({ where: { id: 'rec-own' } });
+    });
+
+    it("a colleague's record of the withdrawn category is no longer shown: a read answers not found", async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { createdBy: 'someone-else' });
+      expect((await service.get(narrow(), 'rec-own')).id).toBe('rec-own');
+      expect(await caught(service.get(withdrawn(), 'rec-own'))).toBeInstanceOf(NotFoundException);
+    });
+
+    it('the records list keeps the author\'s own records of A and drops the category branch for A', async () => {
+      const { prisma, service } = build();
+      await service.listPage(withdrawn(), {});
+      const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+      expect(where.AND).toEqual([
+        {
+          OR: [
+            { subsidiaryId: 'sub-1', category: { in: ['Water'] } },
+            { subsidiaryId: 'sub-2', category: { in: ['Fuel'] } },
+            { subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' },
+          ],
+        },
+      ]);
+    });
+
+    it('a submitted record stays in review and its approver can still decide it', async () => {
+      const { prisma, service } = build();
+      arrangeRecord(prisma, { status: ActivityRecordStatus.submitted });
+      // The author's grants never enter the approver's decision.
+      prisma.people.set('user-entry', { role: 'standard_user', grants: ['sub-1'] });
+      expect((await service.approve(superAdmin(), 'rec-own')).status).toBe(ActivityRecordStatus.approved);
+    });
   });
 });

@@ -6,9 +6,9 @@ import { ISSUANCE_LIST_LIMIT, readIssuanceRows, toIssuance, type IssuanceRow } f
  * The issuances' read rule, in SQL (LP3-04 PR D; `security-rls` F1): the
  * caller's organisation, then a non-empty referenced set wholly inside the
  * caller's current access — applied before the limit, so an unreadable
- * issuance never takes a readable one's place. Pinned here because every
- * reader role but data_entry is organisation-wide today, so the int spec alone
- * would not notice the subset rule gone.
+ * issuance never takes a readable one's place. Pinned here because both
+ * reader roles (masterkey, auditor) are organisation-wide, so the int spec
+ * alone would not notice the subset rule gone.
  */
 
 const query = () => ({ $queryRaw: vi.fn(async () => [] as IssuanceRow[]) });

@@ -31,20 +31,33 @@ export class OwnAccountError extends ForbiddenException {
       errorBody(
         'own_account_forbidden',
         what === 'role'
-          ? 'You cannot change your own role; ask another super_admin.'
-          : 'You cannot disable your own account; ask another super_admin.',
+          ? 'You cannot change your own role; ask another masterkey.'
+          : 'You cannot disable your own account; ask another masterkey.',
       ),
     );
   }
 }
 
-/** Grants belong to data_entry users only (LP1-03). */
+/** Company grants belong to super_admin and standard_user accounts, and
+ *  categories to a standard user's (INC-2.6 §1). */
 export class AccessRoleMismatchError extends ConflictException {
   constructor() {
     super(
       errorBody(
         'access_role_mismatch',
-        'Only data_entry users are granted subsidiaries; other roles read their whole organisation.',
+        'Only super_admin and standard_user accounts are granted companies, and only a standard user\'s grant names categories; the other roles read their whole organisation.',
+      ),
+    );
+  }
+}
+
+/** A standard user is assigned one company (INC-2.6 §1, ruling R6). */
+export class StandardUserSingleCompanyError extends ConflictException {
+  constructor() {
+    super(
+      errorBody(
+        'standard_user_single_company',
+        'A standard user is assigned one company; withdraw the one they hold before adding another.',
       ),
     );
   }

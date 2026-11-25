@@ -4,8 +4,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   createPrismaMock,
   makeSubsidiary,
+  makeMasterkey,
+  makeStandardUser,
   makeSuperAdmin,
-  makeDataEntry,
   type PrismaMock,
 } from '../../test/helpers';
 
@@ -20,7 +21,7 @@ describe('KpiService.summary', () => {
   });
 
   it('scopes the queries to the caller\'s accessible subsidiary ids', async () => {
-    const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
     await service.summary(user);
@@ -35,7 +36,7 @@ describe('KpiService.summary', () => {
   });
 
   it('counts locations across the accessible subsidiaries', async () => {
-    const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.subsidiary.findMany.mockResolvedValue([]);
     prisma.location.count.mockResolvedValue(7);
 
@@ -45,7 +46,7 @@ describe('KpiService.summary', () => {
   });
 
   it('counts total/active/pending and breaks down geography (known input -> known output)', async () => {
-    const user = makeSuperAdmin();
+    const user = makeMasterkey();
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ reportingStatus: 'active', geographyCode: 'UK' }),
       makeSubsidiary({ reportingStatus: 'active', geographyCode: 'UK' }),
@@ -69,7 +70,7 @@ describe('KpiService.summary', () => {
   });
 
   it('returns all-zero KPIs for an empty accessible set', async () => {
-    const user = makeDataEntry({ accessibleSubsidiaryIds: [] });
+    const user = makeStandardUser({ accessibleSubsidiaryIds: [] });
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
     const kpi = await service.summary(user);
@@ -83,10 +84,10 @@ describe('KpiService.summary', () => {
     });
   });
 
-  it('reflects tenant scope: a data_entry user only sees their own subset counts', async () => {
-    // Data-entry user can see 2 of the org's subsidiaries — KPIs must reflect
+  it('reflects tenant scope: a standard user only sees their own subset counts', async () => {
+    // A standard user can see 2 of the org's subsidiaries — KPIs must reflect
     // only those, never the full org.
-    const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ reportingStatus: 'active', geographyCode: 'UK' }),
       makeSubsidiary({ reportingStatus: 'pending', geographyCode: 'TR' }),
@@ -97,5 +98,15 @@ describe('KpiService.summary', () => {
     expect(kpi.totalSubsidiaries).toBe(2);
     expect(kpi.activeSubsidiaries).toBe(1);
     expect(kpi.pendingSubsidiaries).toBe(1);
+  });
+
+  it('scopes a super_admin to its granted companies only — it is not an organisation-wide reader', async () => {
+    const user = makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-2'] });
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+
+    await service.summary(user);
+
+    expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['sub-2'] } });
+    expect(prisma.location.count.mock.calls[0][0].where).toEqual({ subsidiaryId: { in: ['sub-2'] } });
   });
 });

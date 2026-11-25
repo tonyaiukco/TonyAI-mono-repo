@@ -108,7 +108,7 @@ const cases: Case[] = [
     name: 'create',
     arrange: async () => ({}),
     act: (s) =>
-      s.records.create(tenant.users.dataEntry, {
+      s.records.create(tenant.users.standardUser, {
         subsidiaryId: tenant.subsidiaryId,
         ...period,
         reportingPeriod: 'monthly',
@@ -124,7 +124,7 @@ const cases: Case[] = [
       const r = await createRecord(prisma, tenant, { category: 'Water', activityUnit: 'cubic_metres' });
       return { record: r.id };
     },
-    act: (s, ids) => s.records.update(tenant.users.dataEntry, ids.record, { activityValue: 20 }),
+    act: (s, ids) => s.records.update(tenant.users.standardUser, ids.record, { activityValue: 20 }),
     audit: { action: 'update', entity: 'activity_record' },
   },
   {
@@ -134,7 +134,7 @@ const cases: Case[] = [
       await attachEvidence(prisma, tenant, [r.id]);
       return { record: r.id };
     },
-    act: (s, ids) => s.records.remove(tenant.users.dataEntry, ids.record),
+    act: (s, ids) => s.records.remove(tenant.users.standardUser, ids.record),
     audit: { action: 'delete', entity: 'activity_record' },
     removesBlob: true,
   },
@@ -146,7 +146,7 @@ const cases: Case[] = [
       await attachEvidence(prisma, tenant, [r.id]);
       return { record: r.id };
     },
-    act: (s, ids) => s.records.submit(tenant.users.dataEntry, ids.record),
+    act: (s, ids) => s.records.submit(tenant.users.standardUser, ids.record),
     audit: { action: 'submit', entity: 'activity_record' },
   },
   {
@@ -155,7 +155,7 @@ const cases: Case[] = [
       const r = await createRecord(prisma, tenant, { status: ActivityRecordStatus.submitted });
       return { record: r.id };
     },
-    act: (s, ids) => s.records.startReview(tenant.users.consultant, ids.record),
+    act: (s, ids) => s.records.startReview(tenant.users.superAdmin, ids.record),
     audit: { action: 'review', entity: 'activity_record' },
   },
   {
@@ -175,7 +175,7 @@ const cases: Case[] = [
       const r = await createRecord(prisma, tenant, { status: ActivityRecordStatus.under_review });
       return { record: r.id };
     },
-    act: (s, ids) => s.records.reject(tenant.users.consultant, ids.record, 'Wrong meter'),
+    act: (s, ids) => s.records.reject(tenant.users.superAdmin, ids.record, 'Wrong meter'),
     audit: { action: 'reject', entity: 'activity_record' },
   },
   {
@@ -184,7 +184,7 @@ const cases: Case[] = [
       const r = await createRecord(prisma, tenant, { status: ActivityRecordStatus.approved });
       return { record: r.id };
     },
-    act: (s, ids) => s.records.void(tenant.users.superAdmin, ids.record, 'Entered in error'),
+    act: (s, ids) => s.records.void(tenant.users.masterkey, ids.record, 'Entered in error'),
     audit: { action: 'void', entity: 'activity_record' },
   },
   {
@@ -193,7 +193,7 @@ const cases: Case[] = [
       const r = await createRecord(prisma, tenant);
       return { record: r.id };
     },
-    act: (s, ids) => s.evidence.upload(tenant.users.dataEntry, ids.record, pdfFile()),
+    act: (s, ids) => s.evidence.upload(tenant.users.standardUser, ids.record, pdfFile()),
     audit: { action: 'create', entity: 'evidence' },
   },
   {
@@ -203,7 +203,7 @@ const cases: Case[] = [
       const f = await attachEvidence(prisma, tenant, [r.id]);
       return { record: r.id, file: f.id };
     },
-    act: (s, ids) => s.evidence.detach(tenant.users.dataEntry, ids.record, ids.file),
+    act: (s, ids) => s.evidence.detach(tenant.users.standardUser, ids.record, ids.file),
     audit: { action: 'delete', entity: 'evidence' },
     removesBlob: true,
   },
@@ -215,7 +215,7 @@ const cases: Case[] = [
       const f = await attachEvidence(prisma, tenant, [r1.id, r2.id]);
       return { record: r1.id, file: f.id };
     },
-    act: (s, ids) => s.evidence.detach(tenant.users.dataEntry, ids.record, ids.file),
+    act: (s, ids) => s.evidence.detach(tenant.users.standardUser, ids.record, ids.file),
     audit: { action: 'detach', entity: 'evidence' },
   },
   {
@@ -225,7 +225,7 @@ const cases: Case[] = [
       const f = await attachEvidence(prisma, tenant, [r.id]);
       return { file: f.id };
     },
-    act: (s, ids) => s.evidence.remove(tenant.users.dataEntry, ids.file),
+    act: (s, ids) => s.evidence.remove(tenant.users.standardUser, ids.file),
     audit: { action: 'delete', entity: 'evidence' },
     removesBlob: true,
   },
@@ -236,7 +236,7 @@ const cases: Case[] = [
       return {};
     },
     act: (s) =>
-      s.periodLocks.lock(tenant.users.superAdmin, {
+      s.periodLocks.lock(tenant.users.masterkey, {
         subsidiaryId: tenant.subsidiaryId,
         ...period,
         reportingPeriod: 'monthly',
@@ -248,11 +248,11 @@ const cases: Case[] = [
     arrange: async () => {
       await createRecord(prisma, tenant, { status: ActivityRecordStatus.locked });
       const lock = await prisma.periodLock.create({
-        data: { subsidiaryId: tenant.subsidiaryId, ...period, lockedBy: tenant.users.superAdmin.id },
+        data: { subsidiaryId: tenant.subsidiaryId, ...period, lockedBy: tenant.users.masterkey.id },
       });
       return { lock: lock.id };
     },
-    act: (s, ids) => s.periodLocks.unlock(tenant.users.superAdmin, ids.lock),
+    act: (s, ids) => s.periodLocks.unlock(tenant.users.masterkey, ids.lock),
     audit: { action: 'unlock', entity: 'period_lock' },
   },
 ];
@@ -309,7 +309,7 @@ describe('F02 — the importer reuses these paths (bulk submit)', () => {
     const bulk = (client: PrismaService) =>
       new BulkSubmitService(client, lifecycleServices(client).records, new AuditService(client));
 
-    const report = await bulk(failing).submitIds(tenant.users.dataEntry, [record.id]);
+    const report = await bulk(failing).submitIds(tenant.users.standardUser, [record.id]);
     expect(report.submitted).toEqual([]);
     expect(report.failed).toEqual([expect.objectContaining({ recordId: record.id, code: 'unexpected' })]);
     expect((await prisma.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).status).toBe(
@@ -317,7 +317,7 @@ describe('F02 — the importer reuses these paths (bulk submit)', () => {
     );
     expect(await prisma.auditLog.count({ where: { entityId: record.id } })).toBe(0);
 
-    const again = await bulk(prisma).submitIds(tenant.users.dataEntry, [record.id]);
+    const again = await bulk(prisma).submitIds(tenant.users.standardUser, [record.id]);
     expect(again.submitted).toHaveLength(1);
     expect(await prisma.auditLog.count({ where: { entityId: record.id } })).toBe(1);
   });

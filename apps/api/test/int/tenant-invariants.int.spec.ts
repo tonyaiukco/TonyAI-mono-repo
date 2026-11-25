@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Prisma } from '@tonyai/db';
+import { Prisma, UserRole } from '@tonyai/db';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SupabaseAuthGuard } from '../../src/auth/auth.guard';
 import type { RequestUser } from '../../src/auth/auth.types';
 import { tokenVerifier } from '../../src/auth/token-verifier';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { connect, connectOwner, createTenant, createTenantData, type Tenant, type TenantData, withRollback } from './db';
+import { addMember, connect, connectOwner, createTenant, createTenantData, type Tenant, type TenantData, withRollback } from './db';
 
 /**
  * LP1-03 (F06): a grant of a subsidiary to a profile never crosses an
@@ -72,7 +72,7 @@ const DROP_GRANT_KEYS = [
  */
 async function plantCrossTenantGrant(
   tx: Prisma.TransactionClient,
-  userId = a.users.dataEntry.id,
+  userId = a.users.standardUser.id,
   label: 'profile' | 'subsidiary' = 'profile',
 ) {
   for (const sql of DROP_GRANT_KEYS) await tx.$executeRawUnsafe(sql);
@@ -90,7 +90,7 @@ describe('the database refuses a grant across organisations', () => {
     for (const client of [owner, runtime]) {
       const error = await failure(client, (tx) =>
         tx.userSubsidiaryAccess.create({
-          data: { userId: a.users.dataEntry.id, subsidiaryId: b.subsidiaryId, organisationId: org() },
+          data: { userId: a.users.standardUser.id, subsidiaryId: b.subsidiaryId, organisationId: org() },
         }),
       );
       expect(error).toMatch(FK_VIOLATION);
@@ -104,7 +104,7 @@ describe('the database refuses a grant across organisations', () => {
     expect(
       await failure(runtime, (tx) =>
         tx.userSubsidiaryAccess.create({
-          data: { userId: a.users.dataEntry.id, subsidiaryId: extra.id, organisationId: a.organisationId },
+          data: { userId: a.users.standardUser.id, subsidiaryId: extra.id, organisationId: a.organisationId },
         }),
       ),
     ).toBeNull();
@@ -125,7 +125,7 @@ describe('the database refuses a grant across organisations', () => {
   it('a profile holding a grant cannot move to another organisation, nor drop its organisation', async () => {
     for (const organisationId of [b.organisationId, null]) {
       const error = await failure(owner, (tx) =>
-        tx.profile.update({ where: { id: a.users.dataEntry.id }, data: { organisationId } }),
+        tx.profile.update({ where: { id: a.users.standardUser.id }, data: { organisationId } }),
       );
       expect(error).toMatch(FK_VIOLATION);
     }
@@ -143,7 +143,7 @@ describe('the database refuses a grant across organisations', () => {
       // Its records first: no foreign key's action reaches a record (LP4-01).
       await tx.activityRecord.deleteMany({ where: { subsidiaryId: a.subsidiaryId } });
       await tx.organisation.delete({ where: { id: a.organisationId } });
-      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.dataEntry.id } });
+      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.standardUser.id } });
     });
     expect(left).toBe(0);
   });
@@ -155,11 +155,11 @@ describe('the database refuses a grant across organisations', () => {
       // W9): the version goes first, as its records do.
       await tx.inventoryBoundary.delete({ where: { id: dataA.boundaryId } });
       await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
-      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.dataEntry.id } });
+      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.standardUser.id } });
     });
     const afterProfile = await withRollback(owner, async (tx) => {
-      await tx.profile.delete({ where: { id: a.users.dataEntry.id } });
-      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.dataEntry.id } });
+      await tx.profile.delete({ where: { id: a.users.standardUser.id } });
+      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.standardUser.id } });
     });
     expect([afterSubsidiary, afterProfile]).toEqual([0, 0]);
   });
@@ -177,7 +177,7 @@ const SCOPED: [table: string, idOf: (t: Tenant, d: TenantData) => string, column
   ['subsidiary_denominators', (_t, d) => d.denominatorId, 'id'],
   ['import_batches', (_t, d) => d.importBatchId, 'id'],
   // LP3-04 PR B: the boundary version's header (scoped by a declared,
-  // granted subsidiary for a data_entry user) and its five row tables, one
+  // granted subsidiary for a granted user) and its five row tables, one
   // row each in the tenant's version.
   ['inventory_boundaries', (_t, d) => d.boundaryId, 'id'],
   ['inventory_boundary_subsidiaries', (_t, d) => d.boundaryId, 'boundary_id'],
@@ -207,7 +207,7 @@ async function visibleAs(tx: Prisma.TransactionClient, userId: string, tenant: T
 const everyTable = (n: number) => Object.fromEntries(SCOPED.map(([table]) => [table, n]));
 
 describe('RLS: a grant reaches only its own organisation — even when the keys are gone', () => {
-  it("A's data_entry user, granted B's subsidiary: sees none of B's rows, and still all of its own", async () => {
+  it("A's standard user, granted B's subsidiary: sees none of B's rows, and still all of its own", async () => {
     const seen = await withRollback(owner, async (tx) => {
       await plantCrossTenantGrant(tx);
       // A batch A's user uploaded that names B's subsidiary: the grant row exists,
@@ -215,7 +215,7 @@ describe('RLS: a grant reaches only its own organisation — even when the keys 
       const foreignBatch = await tx.importBatch.create({
         data: {
           organisationId: a.organisationId,
-          uploadedBy: a.users.dataEntry.id,
+          uploadedBy: a.users.standardUser.id,
           fileName: 'int-test-foreign.csv',
           fileFormat: 'csv',
           sizeBytes: 1,
@@ -224,9 +224,9 @@ describe('RLS: a grant reaches only its own organisation — even when the keys 
           subsidiaryIds: [b.subsidiaryId],
         },
       });
-      const ofB = await visibleAs(tx, a.users.dataEntry.id, b, dataB);
-      const ofA = await visibleAs(tx, a.users.dataEntry.id, a, dataA);
-      const foreign = await visibleAs(tx, a.users.dataEntry.id, a, { ...dataA, importBatchId: foreignBatch.id });
+      const ofB = await visibleAs(tx, a.users.standardUser.id, b, dataB);
+      const ofA = await visibleAs(tx, a.users.standardUser.id, a, dataA);
+      const foreign = await visibleAs(tx, a.users.standardUser.id, a, { ...dataA, importBatchId: foreignBatch.id });
       return { ofB, ofA, foreignBatch: foreign.import_batches };
     });
     // B's import batch belongs to B and was uploaded by B's user: never A's either way.
@@ -235,7 +235,7 @@ describe('RLS: a grant reaches only its own organisation — even when the keys 
     expect(seen.foreignBatch).toBe(0);
   });
 
-  it.each(['superAdmin', 'consultant', 'executiveViewer'] as const)(
+  it.each(['masterkey', 'superAdmin', 'auditor'] as const)(
     "A's %s, holding a stray grant of B's subsidiary: sees none of B's rows, all of its own",
     async (role) => {
       const seen = await withRollback(owner, async (tx) => {
@@ -246,13 +246,15 @@ describe('RLS: a grant reaches only its own organisation — even when the keys 
         };
       });
       expect(seen.ofB).toEqual(everyTable(0));
-      // An organisation-wide reader sees its organisation's batches; the batch here was uploaded by A's data_entry user.
-      expect(seen.ofA).toEqual(everyTable(1));
+      // An organisation-wide reader sees its organisation's batches; the batch
+      // here was uploaded by A's standard user, so a super_admin (who sees
+      // only its own uploads) does not.
+      expect(seen.ofA).toEqual({ ...everyTable(1), ...(role === 'superAdmin' ? { import_batches: 0 } : {}) });
     },
   );
 
-  it("B's own data_entry user sees B's rows (control: the probe can see a row at all)", async () => {
-    const seen = await withRollback(owner, (tx) => visibleAs(tx, b.users.dataEntry.id, b, dataB));
+  it("B's own standard user sees B's rows (control: the probe can see a row at all)", async () => {
+    const seen = await withRollback(owner, (tx) => visibleAs(tx, b.users.standardUser.id, b, dataB));
     expect(seen).toEqual(everyTable(1));
   });
 });
@@ -275,31 +277,92 @@ async function guardUser(client: PrismaService | Prisma.TransactionClient, userI
 
 describe("the API's guard on a real database: a grant counts only inside the user's organisation", () => {
   it.each(['profile', 'subsidiary'] as const)(
-    "A's data_entry user with a stray grant of B's subsidiary (labelled with the %s's organisation) reaches only A's",
+    "A's standard user with a stray grant of B's subsidiary (labelled with the %s's organisation) reaches only A's",
     async (label) => {
       const user = await withRollback(owner, async (tx) => {
-        await plantCrossTenantGrant(tx, a.users.dataEntry.id, label);
-        return guardUser(tx, a.users.dataEntry.id);
+        await plantCrossTenantGrant(tx, a.users.standardUser.id, label);
+        return guardUser(tx, a.users.standardUser.id);
       });
       expect(user.accessibleSubsidiaryIds).toEqual([a.subsidiaryId]);
     },
   );
 
-  it('a data_entry user whose organisation is gone reaches nothing, whatever it was granted', async () => {
+  it('a standard user whose organisation is gone reaches nothing, whatever it was granted', async () => {
     const user = await withRollback(owner, async (tx) => {
       for (const sql of DROP_GRANT_KEYS) await tx.$executeRawUnsafe(sql);
-      await tx.profile.update({ where: { id: a.users.dataEntry.id }, data: { organisationId: null } });
-      return guardUser(tx, a.users.dataEntry.id);
+      await tx.profile.update({ where: { id: a.users.standardUser.id }, data: { organisationId: null } });
+      return guardUser(tx, a.users.standardUser.id);
     });
     expect(user.accessibleSubsidiaryIds).toEqual([]);
   });
 
-  it.each(['superAdmin', 'consultant', 'executiveViewer', 'dataEntry'] as const)(
-    "A's %s, on the runtime role: A's subsidiary, never B's",
+  it.each(['masterkey', 'superAdmin', 'auditor', 'standardUser'] as const)(
+    "A's %s, on the runtime role: its companies of A — every one for an organisation-wide role, its grant for a scoped one — never B's",
     async (role) => {
       const user = await guardUser(runtime, a.users[role].id);
       expect(user.organisationId).toBe(a.organisationId);
-      expect(user.accessibleSubsidiaryIds).toEqual([a.subsidiaryId]);
+      const organisationWide = role === 'masterkey' || role === 'auditor';
+      expect([...user.accessibleSubsidiaryIds].sort()).toEqual(
+        (organisationWide ? [a.subsidiaryId, a.otherSubsidiaryId] : [a.subsidiaryId]).sort(),
+      );
+      // Categories ride on a standard user's grant only (INC-2.6 §1).
+      expect(Object.keys(user.categoryGrants ?? {})).toEqual(role === 'standardUser' ? [a.subsidiaryId] : []);
     },
   );
+});
+
+/**
+ * Task 5.5: the SCOPED tables under `SET LOCAL ROLE authenticated`, for each
+ * of the four roles, over the organisation's two companies — the fixture's
+ * granted one and the one granted to nobody, which gets a row in every table
+ * here (inside the rolled-back transaction only).
+ */
+describe('RLS: the four roles over two companies of one organisation (INC-2.6, task 5.5)', () => {
+  async function seenByRole(extra?: (tx: Prisma.TransactionClient) => Promise<{ label: string; id: string }>) {
+    return withRollback(owner, async (tx) => {
+      // The other company's boundary version is the year's second.
+      const other = await createTenantData(tx as unknown as PrismaService, { ...a, subsidiaryId: a.otherSubsidiaryId }, { boundaryVersion: 2 });
+      const readers: { label: string; id: string }[] = (['masterkey', 'superAdmin', 'standardUser', 'auditor'] as const)
+        .map((role) => ({ label: role, id: a.users[role].id }));
+      if (extra) readers.push(await extra(tx));
+      const out: Record<string, { own: Record<string, number>; other: Record<string, number> }> = {};
+      for (const reader of readers) {
+        out[reader.label] = {
+          own: await visibleAs(tx, reader.id, a, dataA),
+          other: await visibleAs(tx, reader.id, { ...a, subsidiaryId: a.otherSubsidiaryId }, other),
+        };
+      }
+      return out;
+    });
+  }
+
+  it('the masterkey and the auditor see both companies; the super_admin and the standard user their granted one alone', async () => {
+    const seen = await seenByRole();
+    for (const role of ['masterkey', 'auditor']) {
+      expect(seen[role], role).toEqual({ own: everyTable(1), other: everyTable(1) });
+    }
+    // A super_admin sees import batches it uploaded itself (the batches here
+    // are the standard user's), every other row of its company.
+    expect(seen.superAdmin).toEqual({ own: { ...everyTable(1), import_batches: 0 }, other: everyTable(0) });
+    // The other company's batch is the standard user's upload, but it names a
+    // company the standard user is not granted: invisible.
+    expect(seen.standardUser).toEqual({ own: everyTable(1), other: everyTable(0) });
+  });
+
+  // `evidence_select_scoped` (owner ruling, 412f99fe): a standard user sees a
+  // file it uploaded, or one linked to a record of a ticked category or of its own.
+  it("a standard user granted only another category of the company sees the company's rows but not a colleague's record of that category, nor its file or evidence link", async () => {
+    const seen = await seenByRole(async (tx) => {
+      const narrow = await addMember(tx as unknown as PrismaService, a, UserRole.standard_user, {
+        grants: [a.subsidiaryId],
+        categories: ['Fuel'],
+      });
+      return { label: 'narrow', id: narrow.id };
+    });
+    expect(seen.narrow).toEqual({
+      // The record is an Electricity record of the fixture's standard user.
+      own: { ...everyTable(1), activity_records: 0, evidence: 0, activity_record_evidence: 0, import_batches: 0 },
+      other: everyTable(0),
+    });
+  });
 });

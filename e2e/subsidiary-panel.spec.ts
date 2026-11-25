@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
+import enSubsidiaries from '../apps/web/messages/en/subsidiaries.json';
 import {
   login, bearer, getAccessToken, pickByFieldLabel, cleanupE2ESubsidiaries,
-  ADMIN_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL, API_BASE, SUB, E2E_YEAR, E2E_PERIOD,
+  ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, AUDITOR_EMAIL, API_BASE, SUB, E2E_YEAR, E2E_PERIOD,
 } from './helpers';
 
 /**
- * WP16 PR 2b — `/subsidiaries/[id]`, the super_admin control panel (round-1 UAT
+ * WP16 PR 2b — `/subsidiaries/[id]`, the masterkey control panel (round-1 UAT
  * SUB-2). It replaces the row-level Edit dialog, so this file inherits the edit
  * coverage that used to live in `smoke.spec.ts` and `grid-regions.spec.ts`.
  */
@@ -110,7 +111,7 @@ test('the contact section round-trips, and says what it is for', async ({ page, 
   await page.goto(`/subsidiaries/${sub.id}`);
 
   // The labels carry the legal framing: these values are visible to everyone in
-  // the tenant (including an external consultant) and are kept in an
+  // the tenant (including an auditor from outside the group) and are kept in an
   // append-only audit trail, so the copy steers toward a role mailbox.
   await expect(page.getByText(/prepares or coordinates the inventory/)).toBeVisible();
   await expect(page.getByText(/role mailbox/)).toBeVisible();
@@ -218,7 +219,7 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
   }
 });
 
-test('a data_entry user can read the panel but change nothing', async ({ page, request }) => {
+test('a standard user can read the panel but change nothing', async ({ page, request }) => {
   // This replaces `rbac-tenant.spec.ts`'s assertion that the row-level "Edit
   // subsidiary" button renders zero times. That button no longer exists for
   // anyone, so the old check would have passed while proving nothing — a
@@ -226,7 +227,7 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
   await login(page, ENTRY_EMAIL);
   await page.goto(`/subsidiaries/${SUB.energy}`);
 
-  await expect(page.getByText(/only a super_admin can change it/i)).toBeVisible();
+  await expect(page.getByText(/only a masterkey can change it/i)).toBeVisible();
 
   // By rule, not by sample: asserting two named fields left eight other write
   // controls ungated, and removing `disabled` from them stayed green.
@@ -238,13 +239,13 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
   }
   await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add facility' })).toHaveCount(0);
-  await expect(page.getByText('Only a super_admin can add or modify facilities.')).toBeVisible();
+  await expect(page.getByText(enSubsidiaries.locations.readOnly)).toBeVisible();
 
   // The period-locks drawer is mounted by this page too, and its gating was
   // only ever checked on the register. Flipping its canManage to true here
   // stayed green.
   await page.getByRole('button', { name: 'Reporting periods' }).click();
-  await expect(page.getByText(/only a super_admin can lock or unlock/i)).toBeVisible();
+  await expect(page.getByText(/only a masterkey can lock or unlock/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Lock period' })).toHaveCount(0);
   await page.keyboard.press('Escape');
 
@@ -270,23 +271,50 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
   await expect(committedRow).toContainText(String(expected.terminalRecords));
 });
 
-test('a data_entry user is refused at the API too, not just in the UI', async ({ request }) => {
-  // The panel is what puts editable-looking fields in front of this user, so
+test('a standard user and a super admin are refused at the API too, not just in the UI', async ({ request }) => {
+  // The panel is what puts editable-looking fields in front of these users, so
   // the API-level negative belongs beside it. `rbac-tenant.spec.ts` only ever
   // patched a FOREIGN id, which 404s for tenancy rather than 403 for role.
-  const token = await getAccessToken(request, ENTRY_EMAIL);
-  const res = await request.patch(`${API_BASE}/subsidiaries/${SUB.energy}`, {
-    headers: bearer(token),
-    data: { contactEmail: 'nope@example.com' },
-  });
-  expect(res.status(), 'in-scope but wrong role is 403, not 404').toBe(403);
+  // Company writes are the masterkey's alone (`company.write`), the super
+  // admin's own granted company included.
+  for (const email of [ENTRY_EMAIL, APPROVER_EMAIL]) {
+    const token = await getAccessToken(request, email);
+    const res = await request.patch(`${API_BASE}/subsidiaries/${SUB.energy}`, {
+      headers: bearer(token),
+      data: { contactEmail: 'nope@example.com' },
+    });
+    expect(res.status(), `${email}: in-scope but wrong role is 403, not 404`).toBe(403);
+  }
 });
 
-test('an external consultant sees the contact but cannot change it', async ({ page }) => {
+test('a super admin reads its company\'s panel read-only, and may manage its facilities', async ({ page, request }) => {
+  // Facilities are the one panel write a super admin holds, in its granted
+  // companies only (`location.write`, INC-2.6 §6).
+  await login(page, APPROVER_EMAIL);
+  await page.goto(`/subsidiaries/${SUB.energy}`);
+  await expect(page.getByText(enSubsidiaries.detail.readOnly)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add facility' })).toBeVisible();
+  await expect(page.getByText(enSubsidiaries.locations.readOnly)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Reporting periods' }).click();
+  await expect(page.getByText(enSubsidiaries.locks.readOnly)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lock period' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  // A facility outside its grants reads as an unknown company.
+  const superAdmin = await getAccessToken(request, APPROVER_EMAIL);
+  const outside = await request.post(`${API_BASE}/locations`, {
+    headers: bearer(superAdmin),
+    data: { subsidiaryId: SUB.trading, name: 'E2E Not Granted Site', geographyCode: 'UK' },
+  });
+  expect(outside.status()).toBe(404);
+});
+
+test('an auditor sees the contact but cannot change it', async ({ page }) => {
   // `permissions_and_roles.md` §6.4 makes this the headline of the visibility
-  // decision — the consultant seat is typically filled from outside the holding
+  // decision — the auditor seat is typically filled from outside the holding
   // company. A decision nothing tests is a decision that can quietly reverse.
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, AUDITOR_EMAIL);
   await page.goto(`/subsidiaries/${SUB.energy}`);
   await expect(page.getByLabel('Work email')).toHaveValue('aylin.demir@example.com');
   await expect(page.getByLabel('Work email')).toBeDisabled();

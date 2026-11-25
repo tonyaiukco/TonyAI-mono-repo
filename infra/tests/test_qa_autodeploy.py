@@ -498,6 +498,31 @@ class RolloutTests(unittest.TestCase):
             self.assertNotIn('secrets', json.dumps(body))
         self.assertEqual([r['name'] for r in azure.api_revisions if r['properties']['active']], [STEM + '-api--ci42-1'])
 
+    def test_a_release_crossing_a_forward_only_migration_is_never_rolled_back(self):
+        # inc26-roles-approval-chain: the previous API image misreads the renamed role enum,
+        # so a failed rollout must leave the new images in place and say so.
+        azure = FakeAzure()
+        log = []
+        with self.assertRaises(SafeFailure) as caught:
+            qa.rollout(FOUNDATION, CANDIDATE, SHA, 'ci42-1', azure.read, azure.patch, qa.Arm(FOUNDATION).owns,
+                       sleep=lambda s: None, fetch=statuses({'/login': 500}), log=log.append, clock=lambda: 0.0,
+                       shield=lambda: None, forward_only=lambda before: ['20261125180000_inc26_roles_approval_chain'])
+        self.assertIn('NOT rolled back', str(caught.exception))
+        self.assertIn('20261125180000_inc26_roles_approval_chain', str(caught.exception))
+        self.assertEqual([b['properties']['template']['revisionSuffix'] for _, b in azure.patches], ['ci42-1', 'ci42-1'])
+        for kind in ('api', 'web'):
+            self.assertNotIn('-rb', azure.apps[kind]['properties']['template']['revisionSuffix'])
+
+    def test_a_release_crossing_no_forward_only_migration_still_rolls_back(self):
+        azure = FakeAzure()
+        with self.assertRaises(SafeFailure) as caught:
+            qa.rollout(FOUNDATION, CANDIDATE, SHA, 'ci42-1', azure.read, azure.patch, qa.Arm(FOUNDATION).owns,
+                       sleep=lambda s: None, fetch=statuses({'/login': 500}), log=[].append, clock=lambda: 0.0,
+                       shield=lambda: None, forward_only=lambda before: [])
+        self.assertIn('rollback applied', str(caught.exception))
+        self.assertEqual([b['properties']['template']['revisionSuffix'] for _, b in azure.patches],
+                         ['ci42-1', 'ci42-1', 'ci42-1-rb', 'ci42-1-rb'])
+
     def test_smoke_failure_rolls_back_web_then_api_and_smokes_again(self):
         azure = FakeAzure()
         def fetch(url):
@@ -1121,7 +1146,8 @@ class RollbackTests(unittest.TestCase):
     """Live: source OLD with OLD_DIGEST images (FakeAzure). Target: an earlier/later main candidate."""
     def run_rollback(self, candidate, mode='candidate', trees=None, ancestor=0, azure=None, fetch=None, rid='rb42-1'):
         self.azure = azure or FakeAzure()
-        trees = trees or {OLD: TREE, TARGET: TREE}
+        # Main's head (`SHA`) carries the same chain unless a case says otherwise.
+        trees = {SHA: TREE, **(trees or {OLD: TREE, TARGET: TREE})}
         self.fetched = []
         def record(url):
             self.fetched.append((len(self.azure.patches), url))
@@ -1142,6 +1168,20 @@ class RollbackTests(unittest.TestCase):
     def assert_untouched(self):
         self.assertEqual(self.azure.patches, [])
         self.assertNotIn(('containerapp', 'revision', 'deactivate'), self.azure.calls)
+
+    def test_refused_when_main_carries_a_forward_only_migration_the_target_lacks(self):
+        # A run applied it and stopped before the rollout: the live tag still says OLD,
+        # whose chain equals the target's, yet the database holds the forward-only one.
+        ahead = dict(TREE, **{EXTRA_MIGRATION: b'-- tonyai:forward-only\nALTER TYPE x RENAME VALUE a TO b;\n'})
+        with self.assertRaises(SafeFailure) as caught:
+            self.run_rollback(self.target(), trees={OLD: TREE, TARGET: TREE, SHA: ahead})
+        self.assertIn('forward-only migration(s) 20261101000000_more', str(caught.exception))
+        self.assertIn('re-running the QA deploy from main', str(caught.exception))
+        self.assert_untouched()
+
+    def test_an_expand_only_migration_ahead_on_main_does_not_block_a_rollback(self):
+        ahead = dict(TREE, **{EXTRA_MIGRATION: b'ALTER TABLE a ADD COLUMN b int;\n'})
+        self.assertEqual(self.run_rollback(self.target(), trees={OLD: TREE, TARGET: TREE, SHA: ahead}), TARGET)
 
     def test_rollback_id_marks_the_revision(self):
         self.assertEqual(qa.rollback_id(QA_ENV), 'rb42-1')
@@ -1240,3 +1280,39 @@ class RollbackTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ForwardOnlyTests(unittest.TestCase):
+    MIGRATIONS = 'packages/db/prisma/migrations'
+
+    def reader(self, live, candidate_sql):
+        """A git reader: `live` names the live source's migrations; `candidate_sql` maps each
+        candidate migration to its SQL bytes at the candidate source."""
+        def read_git(*args):
+            if args[0] == 'ls-tree':
+                return '\0'.join(f'{self.MIGRATIONS}/{n}/migration.sql' for n in live).encode()
+            path = args[1].split(':', 1)[1]
+            if path == 'pnpm-lock.yaml':
+                return b'lock'
+            return candidate_sql.get(path.split('/')[-2], b'-- old')
+        return read_git
+
+    def candidate(self, names):
+        return {'source_sha': SHA, 'migrations': [{'name': n, 'sha256': '0' * 64} for n in names]}
+
+    def test_names_an_added_migration_marked_forward_only(self):
+        read = self.reader(['a_old'], {'b_new': b'-- tonyai:forward-only\nALTER TYPE x;'})
+        self.assertEqual(qa.forward_only_added(self.candidate(['a_old', 'b_new']), OLD, read), ['b_new'])
+
+    def test_an_added_expand_only_migration_is_not_forward_only(self):
+        read = self.reader(['a_old'], {'b_new': b'ALTER TABLE x ADD COLUMN y int;'})
+        self.assertEqual(qa.forward_only_added(self.candidate(['a_old', 'b_new']), OLD, read), [])
+
+    def test_a_marked_migration_already_live_is_not_crossed_again(self):
+        read = self.reader(['a_old', 'b_new'], {'b_new': b'-- tonyai:forward-only'})
+        self.assertEqual(qa.forward_only_added(self.candidate(['a_old', 'b_new']), OLD, read), [])
+
+    def test_an_unreadable_live_source_answers_as_forward_only(self):
+        def read_git(*args):
+            raise SafeFailure('Cannot read the source commit from git; fetch full history first.')
+        self.assertEqual(qa.forward_only_added(self.candidate(['b_new']), OLD, read_git), ['(live source unreadable)'])

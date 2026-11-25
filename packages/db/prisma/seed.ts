@@ -11,6 +11,7 @@ import {
 } from '../generated/client';
 import {
   ANOMALY_THRESHOLD,
+  CATEGORIES,
   COUNTED_STATUSES,
   computeAnomalyVerdict,
   withFirstPeriodCeiling,
@@ -159,7 +160,7 @@ interface ActivitySpec {
   anomaly?: { month: number; multiplier: number }; // optional one-off spike
 }
 
-// Chosen so both data_entry-visible subsidiaries (index 0 and 3) have data,
+// Chosen so both standard-user-visible subsidiaries (index 0 and 3) have data,
 // and both scopes are represented (Scope 1: Natural Gas + Fuel, Scope 2:
 // Electricity). Gas peaks in winter, fuel/electricity in summer.
 const ACTIVITY_SPECS: ActivitySpec[] = [
@@ -683,25 +684,30 @@ async function main() {
   const adminId = await ensureAuthUser('admin@tonyai.local', SEED_PASSWORD, 'Tony Admin');
   const entryId = await ensureAuthUser('entry@tonyai.local', SEED_PASSWORD, 'Eda Entry');
   const reviewId = await ensureAuthUser('review@tonyai.local', SEED_PASSWORD, 'Cem Consultant');
-  // A second super_admin, because the approver may not be the record's
-  // creator (decision D01, 2026-09-29): with one super_admin, nothing that
-  // super_admin entered could ever be approved. The e2e suite and the UAT
-  // catalogue approve as this user whatever admin@ created.
+  // The company-scoped super_admin of INC-2.6 §1 (inc26-roles-approval-chain):
+  // decides the records standard users enter in its companies (§1.1). Granted
+  // every seed company but TonyAI Trading, which keeps no super_admin so the
+  // fallback to the masterkey has a home (chosen by grepping e2e/: Trading is
+  // the inactive company, and no spec there decides a standard user's record).
   const approverId = await ensureAuthUser('approver@tonyai.local', SEED_PASSWORD, 'Arda Approver');
-  // Read-only (LP4-04 slice 2 PR C, M5): the fourth role the UAT catalogue's
-  // journeys cover — dashboards, Emissions and reports, no writes anywhere.
+  // Read-only (LP4-04 slice 2 PR C, M5): an auditor — dashboards, Emissions,
+  // reports and the audit log, no writes anywhere.
   const viewerId = await ensureAuthUser('viewer@tonyai.local', SEED_PASSWORD, 'Vera Viewer');
 
+  // The organisation-wide administrator ("godmode", INC-2.6 §1). Holds no grant.
   await prisma.profile.upsert({
     where: { id: adminId },
-    update: { role: UserRole.super_admin, organisationId: ORG_ID },
-    create: { id: adminId, email: 'admin@tonyai.local', fullName: 'Tony Admin', role: UserRole.super_admin, organisationId: ORG_ID },
+    update: { role: UserRole.masterkey, organisationId: ORG_ID },
+    create: { id: adminId, email: 'admin@tonyai.local', fullName: 'Tony Admin', role: UserRole.masterkey, organisationId: ORG_ID },
   });
 
+  // The seed's carried-over standard user: two companies, every category, the
+  // shape an account of the earlier role model keeps until
+  // inc26-central-reporter-onboarding converts it (ruling R6).
   await prisma.profile.upsert({
     where: { id: entryId },
-    update: { role: UserRole.data_entry, organisationId: ORG_ID },
-    create: { id: entryId, email: 'entry@tonyai.local', fullName: 'Eda Entry', role: UserRole.data_entry, organisationId: ORG_ID },
+    update: { role: UserRole.standard_user, organisationId: ORG_ID },
+    create: { id: entryId, email: 'entry@tonyai.local', fullName: 'Eda Entry', role: UserRole.standard_user, organisationId: ORG_ID },
   });
 
   await prisma.profile.upsert({
@@ -710,37 +716,49 @@ async function main() {
     create: { id: approverId, email: 'approver@tonyai.local', fullName: 'Arda Approver', role: UserRole.super_admin, organisationId: ORG_ID },
   });
 
-  // Consultant: may take records into review, reject and — since K2
-  // (Decisions 2026-11-12) — approve them (never their own, D01); may NOT
-  // enter, edit or submit (decision 2026-07-30), void or unlock. Deliberately given NO
-  // userSubsidiaryAccess rows — a consultant's visibility comes from the
-  // organisation, not from per-subsidiary grants, so seeding grants here would
-  // hide a regression in that guard branch behind data that papers over it.
+  // Two auditors (a former consultant and a former executive viewer, ruling
+  // R2): read the whole organisation, change nothing. Deliberately given NO
+  // userSubsidiaryAccess rows — their visibility comes from the organisation,
+  // not from grants, so seeding grants here would hide a regression in that
+  // guard branch behind data that papers over it.
   await prisma.profile.upsert({
     where: { id: reviewId },
-    update: { role: UserRole.consultant, organisationId: ORG_ID },
-    create: { id: reviewId, email: 'review@tonyai.local', fullName: 'Cem Consultant', role: UserRole.consultant, organisationId: ORG_ID },
+    update: { role: UserRole.auditor, organisationId: ORG_ID },
+    create: { id: reviewId, email: 'review@tonyai.local', fullName: 'Cem Consultant', role: UserRole.auditor, organisationId: ORG_ID },
   });
 
-  // Like the consultant, NO userSubsidiaryAccess rows: grants belong to
-  // data_entry users only (LP1-03, `access_role_mismatch`); an executive
-  // viewer reads the whole organisation.
   await prisma.profile.upsert({
     where: { id: viewerId },
-    update: { role: UserRole.executive_viewer, organisationId: ORG_ID },
-    create: { id: viewerId, email: 'viewer@tonyai.local', fullName: 'Vera Viewer', role: UserRole.executive_viewer, organisationId: ORG_ID },
+    update: { role: UserRole.auditor, organisationId: ORG_ID },
+    create: { id: viewerId, email: 'viewer@tonyai.local', fullName: 'Vera Viewer', role: UserRole.auditor, organisationId: ORG_ID },
   });
 
-  // data_entry user can only access two of the five subsidiaries (tenant isolation demo)
+  // The standard user can only access two of the five subsidiaries (tenant
+  // isolation demo), with every category ticked. A re-run restores both the
+  // grants and their categories.
   const accessibleForEntry = [SUBSIDIARIES[0].id, SUBSIDIARIES[3].id];
+  const everyCategory = [...CATEGORIES].sort();
   for (const subsidiaryId of accessibleForEntry) {
     await prisma.userSubsidiaryAccess.upsert({
       where: { userId_subsidiaryId: { userId: entryId, subsidiaryId } },
-      update: {},
+      update: { categories: everyCategory },
       // Same organisation as the profile — the composite keys refuse anything else.
-      create: { userId: entryId, subsidiaryId, organisationId: ORG_ID },
+      create: { userId: entryId, subsidiaryId, organisationId: ORG_ID, categories: everyCategory },
     });
   }
+
+  // The super_admin's companies: every seed company but TonyAI Trading (the
+  // fallback company). A super_admin's grant carries no category list.
+  const FALLBACK_SUBSIDIARY_ID = SUBSIDIARIES[4].id; // TonyAI Trading Ltd.
+  for (const { id: subsidiaryId } of SUBSIDIARIES.filter((s) => s.id !== FALLBACK_SUBSIDIARY_ID)) {
+    await prisma.userSubsidiaryAccess.upsert({
+      where: { userId_subsidiaryId: { userId: approverId, subsidiaryId } },
+      update: { categories: [] },
+      create: { userId: approverId, subsidiaryId, organisationId: ORG_ID },
+    });
+  }
+  // A re-run against a database where the super_admin held Trading drops it.
+  await prisma.userSubsidiaryAccess.deleteMany({ where: { userId: approverId, subsidiaryId: FALLBACK_SUBSIDIARY_ID } });
 
   console.log('Seeding demo activity records (prototype data, Scope 1 & 2)...');
   await ensureEvidenceBucket();
@@ -1121,11 +1139,11 @@ const LOCATION_ACTIVITY = [
 
   console.log('\nSeed complete.');
   const passwordLabel = process.env.TONYAI_TEST_PASSWORD === undefined ? SEED_PASSWORD : '<configured test password>';
-  console.log(`  super_admin -> admin@tonyai.local / ${passwordLabel} (sees all 5 subsidiaries)`);
-  console.log(`  super_admin -> approver@tonyai.local / ${passwordLabel} (a second approver: nobody approves a record they created)`);
-  console.log(`  data_entry  -> entry@tonyai.local / ${passwordLabel} (sees 2 subsidiaries)`);
-  console.log(`  consultant  -> review@tonyai.local / ${passwordLabel} (org-wide read; reviews, rejects and approves, never enters data)`);
-  console.log(`  executive_viewer -> viewer@tonyai.local / ${passwordLabel} (org-wide read only)`);
+  console.log(`  masterkey     -> admin@tonyai.local / ${passwordLabel} (sees all 5 subsidiaries; decides super_admin records, its own, and the fallback)`);
+  console.log(`  super_admin   -> approver@tonyai.local / ${passwordLabel} (granted 4 subsidiaries, not TonyAI Trading; decides standard users' records there)`);
+  console.log(`  standard_user -> entry@tonyai.local / ${passwordLabel} (sees 2 subsidiaries, every category)`);
+  console.log(`  auditor       -> review@tonyai.local / ${passwordLabel} (org-wide read only)`);
+  console.log(`  auditor       -> viewer@tonyai.local / ${passwordLabel} (org-wide read only)`);
 }
 
 main()

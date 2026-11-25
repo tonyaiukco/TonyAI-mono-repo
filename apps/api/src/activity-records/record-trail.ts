@@ -1,12 +1,11 @@
 import {
+  displayRole,
   isCalculated,
-  USER_ROLES,
   type ActivityCalculationSnapshot,
   type RecordTrailChangeDTO,
   type RecordTrailEventDTO,
   type RecordTrailEventKind,
   type RecordTrailValue,
-  type UserRole,
 } from '@tonyai/shared-types';
 
 /**
@@ -34,6 +33,10 @@ export interface TrailLookups {
   names: ReadonlyMap<string, string>;
   /** Location id → name, confined to the record's subsidiary. */
   locations: ReadonlyMap<string, string>;
+  /** The organisation's role-model cut-over (`role_model_changed_at`), null
+   *  for an organisation created after it: a stored `super_admin` older than
+   *  it is the earlier, organisation-wide role (`displayRole`). */
+  cutOver: Date | null;
 }
 
 /**
@@ -64,6 +67,8 @@ const KIND_BY_ACTION: Readonly<Record<string, RecordTrailEventKind>> = {
   review: 'review_started',
   reject: 'returned',
   approve: 'approved',
+  // A masterkey's approval of their own record (inc26-roles-approval-chain).
+  self_approve: 'self_approved',
   void: 'voided',
 };
 
@@ -87,9 +92,6 @@ function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined 
 
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function asRole(role: string | null): UserRole | null {
-  return role && (USER_ROLES as readonly string[]).includes(role) ? (role as UserRole) : null;
-}
 
 function text(v: unknown): string | null {
   return typeof v === 'string' && v.trim().length > 0 ? v : null;
@@ -270,7 +272,7 @@ export function buildRecordTrail(
       kind,
       action: row.action,
       actor: row.userId
-        ? { name: lookups.names.get(row.userId) ?? null, role: asRole(row.role) }
+        ? { name: lookups.names.get(row.userId) ?? null, role: displayRole(row.role, row.createdAt, lookups.cutOver) }
         : null,
       submission,
       reason,

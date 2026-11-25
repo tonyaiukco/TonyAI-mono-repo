@@ -102,7 +102,8 @@ interface DataStatusCardProps {
   subsidiaries: number;
   /** null while the KPI endpoint hasn't loaded yet. */
   locations: number | null;
-  completionRate: number;
+  /** Null: no category cell to complete (shown as not applicable). */
+  completionRate: number | null;
   reportingYear?: number | null;
   /** How many rows are measured by the invoice rule — the denominator behind
    *  `completionRate` differs for those, and the card has to say so. */
@@ -133,9 +134,10 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
         </p>
         <span className={cn(
           'text-base font-bold font-mono tabular-nums',
-          completionRate >= 70 ? 'text-[#1D7A5F]' : completionRate >= 40 ? 'text-[#92400E]' : 'text-[#B91C1C]'
+          completionRate === null ? 'text-[#6E6E73]'
+            : completionRate >= 70 ? 'text-[#1D7A5F]' : completionRate >= 40 ? 'text-[#92400E]' : 'text-[#B91C1C]'
         )}>
-          {t('entryProgress', { rate: completionRate })}
+          {completionRate === null ? t('entryProgressNone') : t('entryProgress', { rate: completionRate })}
         </span>
       </div>
       

@@ -189,7 +189,7 @@ describe('HttpExceptionFilter — Nest\'s body, plus a code', () => {
 
   it.each([
     ['BadRequest', new BadRequestException('Category requires evidence'), 400, 'bad_request'],
-    ['Forbidden', new ForbiddenException('Only super_admin may manage targets'), 403, 'forbidden'],
+    ['Forbidden', new ForbiddenException('Only masterkey may manage targets'), 403, 'forbidden'],
     ['Conflict', new ConflictException('Reporting period Q1 2024 is locked'), 409, 'conflict'],
   ])('passes a %s through with its generic code (frontend reads body.message)', (_label, exception, status, code) => {
     const { res, sent } = createResponse();

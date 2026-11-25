@@ -3,6 +3,7 @@
 import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } from "@/lib/i18n/message-keys";
 import { conversionNote, grossToNetRatioOf } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
+import { categoryGate, categoryGateMessage, fallbackCategory } from "@/lib/entry-categories-view";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -300,6 +301,10 @@ function DataEntryPageInner() {
     useState<ReportingPeriod>("quarterly");
   const [periodValue, setPeriodValue] = useState("Q1");
   const [category, setCategory] = useState<Category>("Electricity");
+  // The category a link asked for (inc26-roles-approval-chain): one not ticked
+  // on a standard user's grant for the company opens the not-assigned message,
+  // never the form. Cleared by a choice in the picker or another company.
+  const [linkedCategory, setLinkedCategory] = useState<Category | null>(null);
   // The fuel or gas of a typed category (Fuel, Mobile Combustion,
   // Refrigerants — LP3-03); "" = none chosen. Never defaulted: a silently
   // pre-selected diesel would price petrol as diesel.
@@ -1006,6 +1011,7 @@ function DataEntryPageInner() {
 
         if (wantedCategory) {
           if ((CATEGORIES as readonly string[]).includes(wantedCategory)) {
+            setLinkedCategory(wantedCategory as Category);
             setCategory(wantedCategory as Category);
             resetInputs(null, null, wantedCategory);
           } else {
@@ -1350,7 +1356,7 @@ function DataEntryPageInner() {
       toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;
     }
-    // Only a record's author edits it, super_admin included (BUG-R2-03,
+    // Only a record's author edits it, masterkey included (BUG-R2-03,
     // `mayEditRecord`), so a colleague's draft would open, accept typing, and
     // only then 403. On a deep link this happens with no click at all — the
     // user would be looking at someone else's figures believing they were
@@ -2015,6 +2021,55 @@ function DataEntryPageInner() {
 
   const isBusy = saving !== null;
 
+  /** The picker's choice: the form's category and everything read by category. */
+  function chooseCategory(next: Category) {
+    setLinkedCategory(null);
+    // Another category reads the figure as something else (ng-kwh-engine review).
+    if (next !== category && activity.text.trim() !== "") {
+      activity.setValue(null);
+      toast.info(t("inputs.categoryReset"));
+    }
+    setCategory(next);
+    setContext({});
+    setContextEpoch((n) => n + 1);
+    resetInputs(null, null, next);
+    // Each typed category has its own list; a type chosen
+    // for Fuel means nothing for Refrigerants.
+    setActivityType("");
+    // The unit list is category-scoped, so a unit that is
+    // not offered for the new category would otherwise stay
+    // selected and bind the Select to a value with no item —
+    // a silently blank control, and a request the API now
+    // rejects.
+    const allowed = unitsForRecord(next, effectiveGeography);
+    // In Edit mode the unit is chosen afresh for the new
+    // category (BUG-R2-03): a kWh figure must not slide
+    // into another category's kWh unnoticed.
+    if (editMode || !allowed.some((u) => u.value === activityUnit)) {
+      setActivityUnit(allowed[0]?.value ?? "kWh");
+    }
+  }
+
+  // Which categories the picker offers (inc26-roles-approval-chain, Decision
+  // 6): a standard user only those ticked on their grant for the company.
+  const categoryChoice = categoryGate(user, subsidiaryId, linkedCategory);
+  const categoryGateText = categoryGateMessage(
+    categoryChoice,
+    {
+      company: selectedSubsidiary?.tradingName ?? selectedSubsidiary?.legalName ?? t("thisSubsidiary"),
+      category: (value) => tCategories(value),
+    },
+    { t },
+  );
+  // A company whose grant does not tick the category the form holds moves the
+  // form to the first one it ticks — never an open record or a copy, whose
+  // category is the record's.
+  const categoryFallback = editingId || copying ? null : fallbackCategory(categoryChoice, category);
+  useEffect(() => {
+    if (categoryFallback) chooseCategory(categoryFallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the fallback itself re-runs it
+  }, [categoryFallback]);
+
   // The refusal's code says WHICH gap it is — no factor, a placeholder
   // refused, a conversion not loaded (LP3-03) — and is worded here, in the
   // current language. It names no "covered" year: the library's coverage is
@@ -2076,6 +2131,7 @@ function DataEntryPageInner() {
                           // is dropped rather than refilling it (review P2).
                           beginFormSession();
                           setSubsidiaryId(v);
+                          setLinkedCategory(null);
                           setLocationId("");
                           // A copy of a voided record may be filed under another
                           // subsidiary (BUG-R2-03): its values stay, and only the
@@ -2154,47 +2210,30 @@ function DataEntryPageInner() {
                   </Field>
 
                   <Field label={t("category")}>
+                    {categoryChoice.kind === "none" ? (
+                      // Nothing ticked for this company: no picker to offer.
+                      <p className="text-sm text-muted-foreground" data-testid="category-none-assigned">
+                        {t("categoryGate.noneShort")}
+                      </p>
+                    ) : (
                     <Select
-                      value={category}
-                      onValueChange={(v) => {
-                        const next = v as Category;
-                        // Another category reads the figure as something else (ng-kwh-engine review).
-                        if (next !== category && activity.text.trim() !== "") {
-                          activity.setValue(null);
-                          toast.info(t("inputs.categoryReset"));
-                        }
-                        setCategory(next);
-                        setContext({});
-                        setContextEpoch((n) => n + 1);
-                        resetInputs(null, null, next);
-                        // Each typed category has its own list; a type chosen
-                        // for Fuel means nothing for Refrigerants.
-                        setActivityType("");
-                        // The unit list is category-scoped, so a unit that is
-                        // not offered for the new category would otherwise stay
-                        // selected and bind the Select to a value with no item —
-                        // a silently blank control, and a request the API now
-                        // rejects.
-                        const allowed = unitsForRecord(next, effectiveGeography);
-                        // In Edit mode the unit is chosen afresh for the new
-                        // category (BUG-R2-03): a kWh figure must not slide
-                        // into another category's kWh unnoticed.
-                        if (editMode || !allowed.some((u) => u.value === activityUnit)) {
-                          setActivityUnit(allowed[0]?.value ?? "kWh");
-                        }
-                      }}
+                      // A link's ungranted category is not shown as chosen:
+                      // the picker offers only what may be entered.
+                      value={categoryChoice.kind === "not_granted" ? "" : category}
+                      onValueChange={(v) => chooseCategory(v as Category)}
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder={t("chooseOne")} />
                       </SelectTrigger>
                       <SelectContent>
-                        {CATEGORIES.map((c) => (
+                        {categoryChoice.categories.map((c) => (
                           <SelectItem key={c} value={c}>
                             {tCategories(c)}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    )}
                     {selfGenerationRemovalNotice(editMode, openedWithSelfGeneration, category) && (
                       <p
                         role="status"
@@ -2207,6 +2246,7 @@ function DataEntryPageInner() {
                     )}
                   </Field>
 
+                  {categoryGateText === null && (<>
                   {isTypedCategory && (
                     // Labelled "Fuel or gas", never with the word "category":
                     // the e2e suite finds the Category field by that text. A
@@ -2334,9 +2374,24 @@ function DataEntryPageInner() {
                     </p>
                   )}
                   <FactorCoverageLegend coverage={factorCoverage} geography={effectiveGeography} year={reportingYear} />
+                  </>)}
                 </CardContent>
               </Card>
 
+              {/* Not assigned (inc26-roles-approval-chain): a standard user is
+                  offered only the categories ticked on their grant for the
+                  company; with none, or on a link to another, the page says
+                  who assigns them and shows no form. */}
+              {categoryGateText !== null && (
+                <Card className="border-amber-300 bg-amber-50/60" data-testid="category-not-assigned">
+                  <CardContent className="flex items-start gap-2 pt-5 text-sm text-amber-900">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                    <span role="status">{categoryGateText}</span>
+                  </CardContent>
+                </Card>
+              )}
+
+              {categoryGateText === null && (<>
               {/* Activity value — the calc driver */}
               <Card>
                 <CardHeader>
@@ -2503,8 +2558,8 @@ function DataEntryPageInner() {
                 category={category}
                 onCountChange={handleEvidenceCountChange}
                 onShareWithYear={gasShortcut?.offered ? startShareWithYear : null}
-                // A consultant does not author records (decision 2026-07-30;
-                // they review, reject and approve) and the evidence API 403s
+                // An auditor does not author records (`record.author`; they
+                // only read) and the evidence API 403s
                 // them, so offering upload/delete controls here only produced
                 // a button that always failed.
                 canManage={mayAuthorRecords(user)}
@@ -2790,7 +2845,9 @@ function DataEntryPageInner() {
                     </Button>
                   </span>
                 )}
-                <Button
+                {/* A role that authors nothing (an auditor) is offered no
+                    save: the API would refuse it (owner's review). */}
+                {mayAuthorRecords(user) && <Button
                   variant="outline"
                   className="gap-2"
                   onClick={handleSaveDraft}
@@ -2798,7 +2855,7 @@ function DataEntryPageInner() {
                 >
                   <Save className="h-4 w-4" />
                   {saving === "draft" ? t("saving") : t("saveDraft")}
-                </Button>
+                </Button>}
                 {canSubmit && <Button
                   className="gap-2"
                   onClick={handleSubmit}
@@ -2808,6 +2865,7 @@ function DataEntryPageInner() {
                   {saving === "submit" ? t("submitting") : t("submit")}
                 </Button>}
               </div>
+              </>)}
 
               {/* Many records at once — the alternative to the form above. Below
                   the form since BUG-R2-05 (QA's order: scope, activity, evidence,

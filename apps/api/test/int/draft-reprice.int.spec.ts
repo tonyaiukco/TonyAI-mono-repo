@@ -120,7 +120,7 @@ describe('draft repricing with PostgreSQL lifecycle locks', () => {
       where: { id: approved.id }, data: { calculation: newSnapshot },
     })).rejects.toThrow(/TA001/);
     await attachEvidence(runtime, tenant, [draft.id]);
-    await expect(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, draft.id))
+    await expect(lifecycleServices(runtime).records.submit(tenant.users.standardUser, draft.id))
       .resolves.toMatchObject({ status: 'submitted' });
   });
 
@@ -128,7 +128,7 @@ describe('draft repricing with PostgreSQL lifecycle locks', () => {
     const draft = await stored('draft', oldSnapshot, true);
     await owner.periodLock.create({ data: {
       subsidiaryId: tenant.subsidiaryId, reportingYear: YEAR, reportingPeriod: 'annual', periodValue: 'Annual',
-      lockedBy: tenant.users.superAdmin.id,
+      lockedBy: tenant.users.masterkey.id,
     } });
     expect((await operator().service.run(true)).records).toMatchObject([
       { id: draft.id, outcome: 'skipped', reason: 'locked_period' },

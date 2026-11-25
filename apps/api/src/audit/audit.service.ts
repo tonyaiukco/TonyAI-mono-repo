@@ -1,18 +1,19 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@tonyai/db';
-import type {
-  AuditAction,
-  AuditEntity,
-  AuditLogDTO,
-  Paginated,
-  UserRole,
+import {
+  displayRole,
+  type AuditAction,
+  type AuditEntity,
+  type AuditLogDTO,
+  type Paginated,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveProfiles } from '../common/resolve-profiles';
 import type { RequestUser } from '../auth/auth.types';
 import { DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT } from './audit.constants';
 import { ListAuditQueryDto } from './dto/list-audit-query.dto';
+import { can } from '@tonyai/shared-types';
 
 /**
  * The single place an audit row is written.
@@ -30,10 +31,10 @@ import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 // The taxonomy lives in @tonyai/shared-types — one source of truth. Writers
 // import it from there directly rather than through this module.
 
-/** Reading the trail is super_admin-only, matching the RLS policy exactly.
+/** Reading the trail is masterkey-only, matching the RLS policy exactly.
  * The API is the primary control (Prisma connects as the runtime role, which
  * bypasses RLS — LP1-03), so this check is what actually enforces it. */
-const READ_ROLES = new Set<UserRole>(['super_admin']);
+// Readers: `can(role, 'audit.read')` — a masterkey and an auditor (INC-2.6 §6, ruling R4).
 
 /** Accepts a transaction client so the audit row commits with the mutation. */
 type Writer = Pick<Prisma.TransactionClient, 'auditLog'>;
@@ -140,8 +141,8 @@ export class AuditService {
     user: RequestUser,
     query: ListAuditQueryDto,
   ): Promise<Paginated<AuditLogDTO>> {
-    if (!READ_ROLES.has(user.role)) {
-      throw new ForbiddenException('Only a super_admin may read the audit trail');
+    if (!can(user.role, 'audit.read')) {
+      throw new ForbiddenException('Only a masterkey or an auditor may read the audit trail');
     }
     if (!user.organisationId) {
       // Default-deny, mirroring the guard's treatment of an org-less profile.
@@ -189,7 +190,12 @@ export class AuditService {
 
     // `audit_log.user_id` has no FK (the row must survive the actor's deletion),
     // so the actor is resolved separately — one query for the page, not per row.
-    const byId = await resolveProfiles(this.prisma, rows.map((r) => r.userId));
+    const [byId, organisation] = await Promise.all([
+      resolveProfiles(this.prisma, rows.map((r) => r.userId)),
+      // The role-model cut-over, read once per request (design Decision 10).
+      this.prisma.organisation.findUnique({ where: { id: user.organisationId }, select: { roleModelChangedAt: true } }),
+    ]);
+    const cutOver = organisation?.roleModelChangedAt ?? null;
 
     return {
       items: rows.map((r) => {
@@ -204,8 +210,9 @@ export class AuditService {
           userFullName: profile?.fullName ?? null,
           // The role STORED on the row, never the profile's current role: an
           // audit trail that re-derived it would misstate who was allowed to
-          // do what at the time.
-          role: (r.role as UserRole | null) ?? null,
+          // do what at the time. Shown under its own role model: a
+          // `super_admin` from before the cut-over was organisation-wide.
+          role: displayRole(r.role, r.createdAt, cutOver),
           diff: (r.diff as Record<string, unknown> | null) ?? null,
           createdAt: r.createdAt.toISOString(),
         };

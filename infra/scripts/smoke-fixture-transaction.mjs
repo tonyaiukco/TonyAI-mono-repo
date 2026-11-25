@@ -17,7 +17,7 @@ export async function provisionRows(target, prisma) {
         } })],
         ['profile', tenant.userId, () => tx.profile.create({ data: {
           id: tenant.userId, email: tenant.email, fullName: 'LP2 synthetic smoke',
-          organisationId: tenant.organisationId, role: 'super_admin',
+          organisationId: tenant.organisationId, role: 'masterkey',
         } })],
       ];
       for (const [entity, entityId, mutate] of mutations) {

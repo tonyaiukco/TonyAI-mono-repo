@@ -37,6 +37,8 @@ export const EDIT_AUTHOR_REFUSAL =
   'You may only edit activity records you created';
 export const RECALL_AUTHOR_REFUSAL =
   'You may only recall activity records you created';
+export const DELETE_AUTHOR_REFUSAL =
+  'You may only delete activity records you created; a masterkey removes a colleague\'s draft';
 export const SELF_APPROVAL_REFUSAL =
   'You created this record, so someone else must approve it.';
 export const SELF_REVIEW_REFUSAL =
@@ -86,7 +88,7 @@ export class SubmitRoleRefusedError extends ForbiddenException {
 
 /**
  * Only a record's author submits it — a draft (decision D02, 2026-09-29) or a
- * rejected record — per record, so a batch keeps going. `super_admin` is not
+ * rejected record — per record, so a batch keeps going. `masterkey` is not
  * exempt: submitting is the author's statement that the figure is ready, and
  * because no one else can make it, the submitter IS the creator, which is what
  * lets the approval gate (D01) compare against `createdBy` alone.
@@ -99,14 +101,20 @@ export class SubmitAuthorRefusedError extends ForbiddenException {
 
 /**
  * Only a record's author edits or recalls it (BUG-R2-03, decision 2026-11-10
- * (fourth), 5) — `super_admin` included, the same rule as submitting (D02).
- * It closes the gap where a super_admin edited a colleague's draft and then
- * approved it, which D01 alone could not see. Deleting a draft is NOT covered:
- * a super_admin may still remove one (see `assertCanDelete`).
+ * (fourth), 5) — `masterkey` included, the same rule as submitting (D02).
+ * It closes the gap where a masterkey edited a colleague's draft and then
+ * approved it, which D01 alone could not see. Deleting a draft is narrower:
+ * a masterkey may still remove a colleague's (`record.delete_any_draft`, see
+ * `assertCanDelete`); anyone else only their own.
  */
 export class AuthorOnlyRefusedError extends ForbiddenException {
-  constructor(action: 'edit' | 'recall') {
-    super(errorBody('record_author_forbidden', action === 'edit' ? EDIT_AUTHOR_REFUSAL : RECALL_AUTHOR_REFUSAL));
+  constructor(action: 'edit' | 'recall' | 'delete') {
+    super(
+      errorBody(
+        'record_author_forbidden',
+        action === 'edit' ? EDIT_AUTHOR_REFUSAL : action === 'recall' ? RECALL_AUTHOR_REFUSAL : DELETE_AUTHOR_REFUSAL,
+      ),
+    );
   }
 }
 
@@ -147,7 +155,7 @@ export class EvidenceDetachRequiredError extends BadRequestException {
 
 /**
  * Segregation of duties (decision D01, 2026-09-29): the approver is neither the
- * record's creator nor its submitter, `super_admin` included. One comparison
+ * record's creator nor its submitter, `masterkey` included. One comparison
  * covers both because only the author may submit (`SubmitAuthorRefusedError`).
  */
 export class SelfApprovalRefusedError extends ForbiddenException {

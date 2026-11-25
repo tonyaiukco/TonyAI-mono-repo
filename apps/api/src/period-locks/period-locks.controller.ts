@@ -24,13 +24,13 @@ export class PeriodLocksController {
     return this.service.listPage(user, query);
   }
 
-  /** Close a reporting period (FR §4.2) — super_admin only. */
+  /** Close a reporting period (FR §4.2) — masterkey only. */
   @Post()
   lock(@CurrentUser() user: RequestUser, @Body() dto: CreatePeriodLockDto) {
     return this.service.lock(user, dto);
   }
 
-  /** Reopen a period — super_admin only, audited. */
+  /** Reopen a period — masterkey only, audited. */
   @Delete(':id')
   unlock(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.unlock(user, id);

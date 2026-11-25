@@ -5,7 +5,7 @@ import {
   type ActivityRecord,
   type Subsidiary,
 } from '@tonyai/db';
-import { ACCEPTED_STATUSES, COUNTED_STATUSES } from '@tonyai/shared-types';
+import { ACCEPTED_STATUSES, CATEGORIES, COUNTED_STATUSES } from '@tonyai/shared-types';
 import {
   computeInvoiceCoverage,
   deriveCellStatus,
@@ -15,6 +15,7 @@ import {
 import { LIMIT_DEFAULTS } from '../common/runtime-config';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { everyCategoryOn } from '../../test/helpers';
 
 // --- Local, DB-free mocks --------------------------------------------------
 
@@ -100,26 +101,28 @@ function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary {
   } as Subsidiary;
 }
 
-function superAdmin(overrides: Partial<RequestUser> = {}): RequestUser {
+function masterkey(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
     fullName: 'Admin User',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
     ...overrides,
   };
 }
 
-function dataEntry(overrides: Partial<RequestUser> = {}): RequestUser {
+/** A standard user granted sub-1 and sub-2, every category ticked unless `categoryGrants` is overridden. */
+function standardUser(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
     fullName: 'Entry User',
-    role: 'data_entry',
+    role: 'standard_user',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    categoryGrants: everyCategoryOn(overrides.accessibleSubsidiaryIds ?? ['sub-1', 'sub-2']),
     ...overrides,
   };
 }
@@ -158,7 +161,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
     vi.stubEnv('REPORT_RECORD_LIMIT', '2');
     try {
       const bounded = new EmissionsService(prisma as unknown as PrismaService);
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.activityRecord.findMany.mockResolvedValue([invoice('loc-1', 'January'), invoice('loc-1', 'February')]);
       await expect(bounded.completeness(user, { subsidiaryId: 'sub-1', year: 2024 })).resolves.toBeDefined();
       expect(prisma.activityRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 3 }));
@@ -172,7 +175,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('is not found for a subsidiary outside the access set, and never queries', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
 
     await expect(
       service.completeness(user, { subsidiaryId: 'sub-999', year: 2024 }),
@@ -184,7 +187,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('returns no categories for a subsidiary measured as a whole', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findUnique.mockResolvedValue({ trackingGranularity: 'subsidiary' });
 
     const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
@@ -197,7 +200,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('marks each (location, month) slot, closed and open', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([
       invoice('loc-1', 'January'),
       invoice('loc-1', 'March'),
@@ -224,7 +227,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
     // same records. Reading a voided row as presence here (and its stale
     // anomaly flag) put `incomplete` on this panel against `missing` on the
     // dashboard, for the same cell.
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([
       invoice('loc-1', 'January', {
         status: ActivityRecordStatus.voided,
@@ -240,7 +243,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('separates a month awaiting review from one that is accepted (DE-2)', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([
       invoice('loc-1', 'January'),
       invoice('loc-1', 'February', {
@@ -277,7 +280,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
     // reviewer while its tonnage already counts. Without `awaitingReviewRecords`
     // on this response the panel shows an amber verdict and every sentence it
     // can build would read identically if that record were approved.
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     const months = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December',
@@ -303,7 +306,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('agrees with the matrix cell it drills into', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     // One of the three is UNREVIEWED on purpose. With every fixture `approved`
     // the two endpoints agreed in the only case where they cannot disagree,
     // which is not a guarantee — it is a tautology with an assertion around it.
@@ -363,7 +366,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('counts only locations that existed by the end of the reported year', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
 
     await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
 
@@ -377,7 +380,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('queries only the reported year and only committed statuses', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
 
     await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
 
@@ -386,6 +389,8 @@ describe('EmissionsService.completeness (drill-down)', () => {
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.reportingYear).toBe(2024);
     expect(where.subsidiaryId).toBe('sub-1');
+    // The record scope (INC-2.6, Decision 6): a masterkey's is its companies alone.
+    expect(where.AND).toEqual([{ subsidiaryId: { in: ['sub-1'] } }]);
     // The status filter is deliberately ABSENT now, where it used to be
     // asserted here. The response carries FR §2.2's verdict, and two of the
     // three caps behind it — a draft in the cell, an anomaly flag — are
@@ -396,7 +401,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('still refuses to let a draft close a slot, now that SQL no longer filters', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([
       invoice('loc-1', 'January', {
         status: ActivityRecordStatus.draft,
@@ -420,7 +425,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('does not warn about a whole-company month that is only a draft', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([
       invoice(null as unknown as string, 'February', {
         status: ActivityRecordStatus.draft,
@@ -439,7 +444,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('names the months that already hold a whole-company entry', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([
       invoice('loc-1', 'January'),
       // Company-level: closes no site slot, but the screen must not invite the
@@ -460,7 +465,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('never counts an invoice at a site outside the denominator', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     // A location created after the year ended is dropped from the denominator.
     // Its invoices used to count into the numerator anyway, giving
     // `covered 1, required 0` — a green "Complete" cell reading 1/0, over a
@@ -480,7 +485,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
   });
 
   it('reports every invoice-tracked category, including one with nothing recorded', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
 
     const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
 
@@ -509,7 +514,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('scopes the record query to the accessible set and only counts committed statuses', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
@@ -517,6 +522,17 @@ describe('EmissionsService.summary', () => {
 
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+    // ...and the standard user's record scope: per granted company, its ticked
+    // categories (every one here), plus its own records.
+    expect(where.AND).toEqual([
+      {
+        OR: [
+          { subsidiaryId: 'sub-1', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: 'sub-2', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' },
+        ],
+      },
+    ]);
     expect(where.status).toEqual({
       in: [
         ActivityRecordStatus.submitted,
@@ -533,7 +549,7 @@ describe('EmissionsService.summary', () => {
     // ACCEPTED and someone later withdrew: if any total still included it, the
     // withdrawal would be cosmetic and the inventory would be overstated by
     // exactly the amount someone decided did not belong in it.
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
@@ -579,7 +595,7 @@ describe('EmissionsService.summary', () => {
     // `recs.length` — both are 1 when the only record is voided. A mixed cell
     // is what distinguishes them, and it also pins the three things a voided
     // row must not leak into: the tonnage, the anomaly flag, and "Updated".
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
     ]);
@@ -617,7 +633,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('returns an empty summary for an inaccessible subsidiary without hitting the DB', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1'] });
 
     const summary = await service.summary(user, { subsidiaryId: 'sub-999' });
 
@@ -627,7 +643,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('returns an empty summary for an empty accessible set', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: [] });
+    const user = standardUser({ accessibleSubsidiaryIds: [] });
 
     const summary = await service.summary(user, {});
 
@@ -652,7 +668,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('aggregates scope totals, category and subsidiary breakdowns (known input -> known output)', async () => {
-    const user = superAdmin();
+    const user = masterkey();
     prisma.activityRecord.findMany.mockResolvedValue([
       makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 60, factorId: 'f-1' } }),
       makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', scope: 1, calculation: { tCo2e: 30, factorId: 'f-1' } }),
@@ -691,13 +707,13 @@ describe('EmissionsService.summary', () => {
       makeRecord({ subsidiaryId: 'sub-1', category: 'Fire Suppression', activityType: 'dry_powder_or_foam', scope: 1, calculation: { tCo2e: 0, factorId: 'f-3' } }),
     ]);
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' })]);
-    const s = await service.summary(superAdmin(), {});
+    const s = await service.summary(masterkey(), {});
     expect(s.totals).toEqual({ scope1: 4, scope2: 0, scope3: 0, total: 4 });
     expect(s.byCategory.map((c) => [c.category, c.tCo2e])).toEqual([['Refrigerants', 3], ['Fire Suppression', 1]]);
   });
 
   it('excludes a record with no calculated figure from every total, and declares it', async () => {
-    const user = superAdmin();
+    const user = masterkey();
     prisma.activityRecord.findMany.mockResolvedValue([
       makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 60, factorId: 'f-1' } }),
       // An invoice-tracked category with no factor (WP17 — Water): the snapshot
@@ -739,7 +755,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('counts the figures that are not authoritative now — placeholder, conversion, withdrawn since, pre-release (QA L10)', async () => {
-    const user = superAdmin();
+    const user = masterkey();
     const release = (id: string, status: string) => ({ id, publisher: 'p', title: 't', edition: 'e', ordinal: 1, status, sourceUrl: null, licence: null, publishedAt: null, gwpSet: null });
     const v2 = (tCo2e: number, factorRelease: object, conversion: object | null = null) => ({
       tCo2e, factorId: `f-${tCo2e}`, factorValue: 1, factorUnit: 'kgCO2e/kWh', methodology: 'm', source: 's', version: 'e',
@@ -776,7 +792,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('keeps Scope 3 beside the main total: totals, shares, subsidiaries, trends and counts', async () => {
-    const user = superAdmin();
+    const user = masterkey();
     const figure = (tCo2e: number) => ({ tCo2e, factorId: 'f' });
     prisma.activityRecord.findMany.mockResolvedValue([
       makeRecord({ subsidiaryId: 'sub-1', category: 'Fuel', scope: 1, reportingPeriod: 'monthly', periodValue: 'January', calculation: figure(10) }),
@@ -807,7 +823,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('buckets monthly records into monthly, quarterly and yearly trends', async () => {
-    const user = superAdmin();
+    const user = masterkey();
     prisma.activityRecord.findMany.mockResolvedValue([
       makeRecord({ reportingPeriod: 'monthly', periodValue: 'January', scope: 2, calculation: { tCo2e: 5, factorId: 'f-1' } }),
       makeRecord({ reportingPeriod: 'monthly', periodValue: 'February', scope: 1, calculation: { tCo2e: 7, factorId: 'f-1' } }),
@@ -835,7 +851,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('includes annual records in the yearly trend but not monthly/quarterly', async () => {
-    const user = superAdmin();
+    const user = masterkey();
     prisma.activityRecord.findMany.mockResolvedValue([
       makeRecord({ reportingPeriod: 'annual', periodValue: 'Annual', scope: 1, calculation: { tCo2e: 40, factorId: 'f-1' } }),
     ]);
@@ -862,7 +878,7 @@ describe('EmissionsService.trackingMatrix', () => {
   it('filters category-only Fuel cells without relying on the scope filter', async () => {
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary()]);
     prisma.activityRecord.findMany.mockResolvedValue([makeRecord({ category: 'Fuel', scope: 1 })]);
-    const matrix = await service.trackingMatrix(superAdmin(), { year: 2027, category: 'Fuel' });
+    const matrix = await service.trackingMatrix(masterkey(), { year: 2027, category: 'Fuel' });
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ reportingYear: 2027, category: 'Fuel' }),
     }));
@@ -878,9 +894,15 @@ describe('EmissionsService.trackingMatrix', () => {
       makeRecord({ periodValue: 'February', calculation: { reasonCode: 'no_emission_factor' } }),
       makeRecord({ periodValue: 'March', status: ActivityRecordStatus.draft }),
     ]);
-    const matrix = await service.trackingMatrix(superAdmin(), { year: 2027, subsidiaryId: 'sub-1', scope: 2, category: 'Electricity' });
+    const matrix = await service.trackingMatrix(masterkey(), { year: 2027, subsidiaryId: 'sub-1', scope: 2, category: 'Electricity' });
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { subsidiaryId: 'sub-1', reportingYear: 2027, scope: 2, category: 'Electricity' },
+      where: {
+        subsidiaryId: 'sub-1',
+        AND: [{ subsidiaryId: { in: ['sub-1', 'sub-2'] } }],
+        reportingYear: 2027,
+        scope: 2,
+        category: 'Electricity',
+      },
     }));
     expect(matrix.reportingYear).toBe(2027);
     expect(matrix.rows[0]).toMatchObject({ categoryCount: 1, completeCount: 0, totalTCo2e: 10, uncalculatedRecordCount: 1 });
@@ -891,14 +913,14 @@ describe('EmissionsService.trackingMatrix', () => {
   it('emits only categories belonging to a selected scope, with no phantom missing cells', async () => {
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary()]);
     prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
-    const matrix = await service.trackingMatrix(superAdmin(), { year: 2027, scope: 2 });
+    const matrix = await service.trackingMatrix(masterkey(), { year: 2027, scope: 2 });
     expect(matrix.rows[0]).toMatchObject({ categoryCount: 1, completeCount: 1, totalTCo2e: 10, uncalculatedRecordCount: 0 });
     expect(matrix.rows[0].cells.map((cell) => cell.category)).toEqual(['Electricity']);
     expect(matrix.totals).toEqual({ complete: 1, incomplete: 0, missing: 0 });
   });
 
   it('counts committed records the anomaly rule never ran on, without capping the cell', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
     ]);
@@ -959,7 +981,7 @@ describe('EmissionsService.trackingMatrix', () => {
 
   // BUG-R2-07 (2026-11-11): a record checked on one or two periods IS checked.
   it('counts only unchecked records: a limited-history verdict leaves the not-evaluated count', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
     ]);
@@ -1005,7 +1027,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('turns the cell amber for a flag on limited history, exactly as for any flag', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
     ]);
@@ -1029,7 +1051,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('turns the cell amber for a first-period ceiling flag, and does not count it as not checked', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
     ]);
@@ -1063,7 +1085,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('returns an empty matrix for an empty accessible set without hitting the DB', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: [] });
+    const user = standardUser({ accessibleSubsidiaryIds: [] });
 
     const m = await service.trackingMatrix(user, {});
 
@@ -1076,7 +1098,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('scopes both queries to the accessible set and fetches ALL statuses', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
@@ -1084,12 +1106,21 @@ describe('EmissionsService.trackingMatrix', () => {
 
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+    expect(where.AND).toEqual([
+      {
+        OR: [
+          { subsidiaryId: 'sub-1', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: 'sub-2', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' },
+        ],
+      },
+    ]);
     expect(where.reportingYear).toBe(2024);
     expect(where.status).toBeUndefined(); // drafts must be visible (yellow cells)
   });
 
   it('derives FR §2.2 cell statuses: missing / incomplete / complete', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' }),
     ]);
@@ -1132,7 +1163,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('keeps an evidence-required cell incomplete until a file is attached (FR §2.2)', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
     prisma.activityRecord.findMany.mockResolvedValue([
       // Approved Electricity (evidence-required) with NO evidence -> incomplete.
@@ -1154,7 +1185,7 @@ describe('EmissionsService.trackingMatrix', () => {
   it.each(['Mobile Combustion', 'Refrigerants', 'Fugitive Gas'])(
     'keeps an approved %s cell incomplete with no file attached (K3)',
     async (category) => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
       prisma.activityRecord.findMany.mockResolvedValue([
         // An approved record from before K3: committed without a file, and it
@@ -1175,7 +1206,7 @@ describe('EmissionsService.trackingMatrix', () => {
   );
 
   it('a factor-less record leaves its cell short of complete until the invoice is attached', async () => {
-    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
     prisma.activityRecord.findMany.mockResolvedValue([
       // What a real Water record looks like post-WP17: approved, no figure.
@@ -1240,7 +1271,7 @@ describe('EmissionsService.trackingMatrix', () => {
       } as Partial<ActivityRecord>);
 
     it('requires locations × 12 per invoice-tracked category, and reports the shortfall', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
         invoice('loc-1', 'January'),
@@ -1269,7 +1300,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('turns complete only when every location has all twelve months', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([
         makeSubsidiary({
           id: 'sub-1',
@@ -1319,7 +1350,7 @@ describe('EmissionsService.trackingMatrix', () => {
         } as Partial<Subsidiary>);
 
       const matrixFor = async (records: ActivityRecord[]) => {
-        const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+        const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
         prisma.subsidiary.findMany.mockResolvedValue([oneLocationSub()]);
         prisma.activityRecord.findMany.mockResolvedValue(records);
         const m = await service.trackingMatrix(user, { year: 2024 });
@@ -1485,7 +1516,7 @@ describe('EmissionsService.trackingMatrix', () => {
         } as Partial<ActivityRecord>);
 
       const cellFor = async (records: ActivityRecord[], category = 'Waste') => {
-        const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+        const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
         prisma.subsidiary.findMany.mockResolvedValue([plainSub()]);
         prisma.activityRecord.findMany.mockResolvedValue(records);
         const m = await service.trackingMatrix(user, { year: 2024 });
@@ -1511,7 +1542,7 @@ describe('EmissionsService.trackingMatrix', () => {
         // row, or to the whole matrix — makes one unreviewed record turn every
         // later category amber, and every test that inspects only the cell it
         // wrote to stays green through it. Same shape as the leak WP18 found.
-        const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+        const user = masterkey({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
         prisma.subsidiary.findMany.mockResolvedValue([
           plainSub(),
           makeSubsidiary({
@@ -1675,7 +1706,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('counts a second invoice for the same location and month once', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
         invoice('loc-1', 'January'),
@@ -1690,7 +1721,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('closes no slot without an invoice attached', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
         invoice('loc-1', 'January', { _count: { evidenceLinks: 0 } } as Partial<ActivityRecord>),
@@ -1705,7 +1736,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('reports subsidiary-level and non-monthly records instead of silently ignoring them', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
         // Attached to no location: 96 of the 102 seeded records look like this.
@@ -1729,7 +1760,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('keeps a subsidiary-granularity row off the invoice denominator, locations or not', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([
         makeSubsidiary({
         id: 'sub-1',
@@ -1753,7 +1784,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('a DRAFT invoice closes no slot', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
         invoice('loc-1', 'January', {
@@ -1771,7 +1802,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('caps a fully covered cell below complete when something is flagged or unfinished', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       const months = [
         'January', 'February', 'March', 'April', 'May', 'June',
         'July', 'August', 'September', 'October', 'November', 'December',
@@ -1813,7 +1844,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('counts a committed monthly record with no file, so the numbers reconcile', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
         invoice('loc-1', 'January', { _count: { evidenceLinks: 0 } } as Partial<ActivityRecord>),
@@ -1833,7 +1864,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('emits no coverage for a year-less query, because the denominator is per-year', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([invoice('loc-1', 'January')]);
 
@@ -1847,7 +1878,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('counts only locations that existed by the end of the reported year', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([]);
 
@@ -1865,7 +1896,7 @@ describe('EmissionsService.trackingMatrix', () => {
     });
 
     it('scopes to one subsidiary, and returns empty for one outside the access set', async () => {
-      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = masterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([]);
 
@@ -1881,7 +1912,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('gives every accessible subsidiary a row even with zero records', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' }),
       makeSubsidiary({ id: 'sub-2', tradingName: null, legalName: 'Gas Legal Ltd.' }),
@@ -2070,16 +2101,129 @@ it('bounds every summary read — the caller\'s limit, else the reports\' budget
   prisma.subsidiary.findMany.mockResolvedValue([]);
   prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), makeRecord()]);
   const service = new EmissionsService(prisma as never);
-  await expect(service.summary(superAdmin(), { year: 2024 }, 2)).resolves.toMatchObject({ recordCount: 2 });
+  await expect(service.summary(masterkey(), { year: 2024 }, 2)).resolves.toMatchObject({ recordCount: 2 });
   expect(prisma.activityRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 3, select: SUMMARY_RECORD_SELECT }));
   expect(prisma.activityRecord.findMany.mock.lastCall?.[0].select).not.toHaveProperty('input');
   prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), makeRecord(), makeRecord()]);
-  await expect(service.summary(superAdmin(), { year: 2024 }, 2)).rejects.toMatchObject({ status: 422 });
+  await expect(service.summary(masterkey(), { year: 2024 }, 2)).rejects.toMatchObject({ status: 422 });
   // No caller limit: the analytics route (LP4-05 follow-up (17)) is bounded too.
   prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
-  await service.summary(superAdmin(), { year: 2024 });
+  await service.summary(masterkey(), { year: 2024 });
   expect(prisma.activityRecord.findMany.mock.lastCall?.[0]).toHaveProperty('take', LIMIT_DEFAULTS.REPORT_RECORD_LIMIT + 1);
   // A year-less read — the history's trend, every year — has the metadata reads' budget (architect P2-5).
-  await service.summary(superAdmin(), {});
+  await service.summary(masterkey(), {});
   expect(prisma.activityRecord.findMany.mock.lastCall?.[0]).toHaveProperty('take', LIMIT_DEFAULTS.ACTIVITY_RECORD_METADATA_MAX_ROWS + 1);
+});
+
+// INC-2.6 §1, ruling R5, design Decision 6; access-roles spec "A standard
+// user sees only the categories of their grant": every figure built from
+// records takes the record scope, so a standard user's totals, matrix and
+// drill-down never count a category it was not granted.
+describe('EmissionsService — the record scope (a standard user\'s categories)', () => {
+  let prisma: PrismaMock;
+  let service: EmissionsService;
+
+  /** Granted Electricity on sub-1 and Fuel on sub-2: a category differs by company. */
+  const narrow = () =>
+    standardUser({ categoryGrants: { 'sub-1': ['Electricity'], 'sub-2': ['Fuel'] } });
+  const NARROW_SCOPE = {
+    OR: [
+      { subsidiaryId: 'sub-1', category: { in: ['Electricity'] } },
+      { subsidiaryId: 'sub-2', category: { in: ['Fuel'] } },
+      { subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' },
+    ],
+  };
+
+  beforeEach(() => {
+    seq = 0;
+    prisma = createPrismaMock();
+    service = new EmissionsService(prisma as unknown as PrismaService);
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+    prisma.location.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findUnique.mockResolvedValue({ trackingGranularity: 'location' });
+  });
+
+  it('a standard user\'s summary query carries its category scope, per company, beside the company filter', async () => {
+    await service.summary(narrow(), {});
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+    expect(where.AND).toEqual([NARROW_SCOPE]);
+  });
+
+  it('keeps the scope when the caller also filters by a category it was not granted — the filter cannot widen it', async () => {
+    await service.summary(narrow(), { category: 'Water' });
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.category).toBe('Water');
+    expect(where.AND).toEqual([NARROW_SCOPE]);
+  });
+
+  it('fails closed with no grants known: the summary counts only its own records', async () => {
+    await service.summary(standardUser({ categoryGrants: undefined }), {});
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.AND).toEqual([
+      { OR: [{ subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' }] },
+    ]);
+  });
+
+  it('a super_admin\'s summary does not narrow by category — its companies only', async () => {
+    const superAdmin = standardUser({ id: 'user-sa', role: 'super_admin', categoryGrants: {} });
+
+    await service.summary(superAdmin, {});
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual([{ subsidiaryId: { in: ['sub-1', 'sub-2'] } }]);
+    expect(JSON.stringify(where)).not.toContain('category');
+  });
+
+  it('an auditor\'s summary does not narrow by category either', async () => {
+    const auditor = standardUser({ id: 'user-auditor', role: 'auditor', categoryGrants: {} });
+
+    await service.summary(auditor, {});
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.AND).toEqual([
+      { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+    ]);
+  });
+
+  it('the tracking matrix query carries the same scope', async () => {
+    await service.trackingMatrix(narrow(), { year: 2024 });
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.AND).toEqual([NARROW_SCOPE]);
+  });
+
+  it('the tracking matrix shows a standard user only the categories it may see per company — no ungranted cell, none counted missing', async () => {
+    const sub = (id: string) => ({
+      id, legalName: id, tradingName: id, sector: null, designatedPerson: null,
+      trackingGranularity: 'subsidiary', locations: [],
+    });
+    prisma.subsidiary.findMany.mockResolvedValue([sub('sub-1'), sub('sub-2')]);
+    // Its own Natural Gas draft on sub-1 (a category since withdrawn) stays visible.
+    prisma.activityRecord.findMany.mockResolvedValue([
+      { ...makeRecord({ id: 'own', subsidiaryId: 'sub-1', category: 'Natural Gas', createdBy: 'user-entry', status: 'draft' }), _count: { evidenceLinks: 0 } },
+    ]);
+
+    const m = await service.trackingMatrix(narrow(), { year: 2024 });
+
+    const row = (id: string) => m.rows.find((r) => r.subsidiaryId === id)!;
+    expect(row('sub-1').cells.map((c) => c.category)).toEqual(['Electricity', 'Natural Gas']);
+    expect(row('sub-1').categoryCount).toBe(2);
+    expect(row('sub-2').cells.map((c) => c.category)).toEqual(['Fuel']);
+    expect(m.totals.complete + m.totals.incomplete + m.totals.missing).toBe(3);
+  });
+
+  it('the completeness drill-down lists only the invoice categories a standard user may see', async () => {
+    const c = await service.completeness(narrow(), { subsidiaryId: 'sub-1', year: 2024 });
+    expect(c.categories.map((x) => x.category)).toEqual(['Electricity']);
+  });
+
+  it('the completeness drill-down query carries the same scope', async () => {
+    await service.completeness(narrow(), { subsidiaryId: 'sub-1', year: 2024 });
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.subsidiaryId).toBe('sub-1');
+    expect(where.AND).toEqual([NARROW_SCOPE]);
+  });
 });

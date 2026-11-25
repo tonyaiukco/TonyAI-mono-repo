@@ -44,7 +44,6 @@ import {
   mayAuthorRecords,
   mayReadRecordTrail,
   RECORD_TRAIL_EVENT_KINDS,
-  mayApproveRecords,
   mayEditRecord,
   mayRecallRecord,
   mayCopyVoidedRecord,
@@ -1233,6 +1232,8 @@ describe('bulk submit — the code list', () => {
       'not_submittable',
       'not_author',
       'period_locked',
+      // inc26-roles-approval-chain: a standard user's withdrawn category.
+      'category_not_granted',
       'evidence_required',
       'calculation_stale',
       'variance_reason_required',
@@ -1321,11 +1322,15 @@ describe('needsEvidenceBeforeSubmit', () => {
 
 describe('mayAuthorRecords — the one record-write rule', () => {
   it.each([
-    ['data_entry', true],
+    ['masterkey', true],
     ['super_admin', true],
+    ['standard_user', true],
+    ['auditor', false],
+    // Retired names of the earlier role model author nothing.
+    ['data_entry', false],
     ['consultant', false],
     ['executive_viewer', false],
-    ['DATA_ENTRY', false],
+    ['STANDARD_USER', false],
     ['', false],
   ])('%s → %s', (role, allowed) => {
     expect(mayAuthorRecords({ role })).toBe(allowed);
@@ -1337,66 +1342,47 @@ describe('mayAuthorRecords — the one record-write rule', () => {
   });
 });
 
-describe('mayReadRecordTrail — who reads one record\'s history (WP5, INC-2.6 §6)', () => {
-  const author = { id: 'u-author', role: 'data_entry' };
+describe('mayReadRecordTrail — who reads one record\'s history (INC-2.6 §6, ruling R4)', () => {
+  const author = { id: 'u-author', role: 'standard_user' };
   const record = { createdBy: 'u-author' };
 
   it.each([
+    ['masterkey', true],
+    ['auditor', true],
     ['super_admin', true],
-    ['consultant', true],
-    ['executive_viewer', true],
   ])('%s reads any record it can read → %s', (role, allowed) => {
     expect(mayReadRecordTrail({ id: 'someone-else', role }, record)).toBe(allowed);
   });
 
-  it('a data_entry author reads their own record', () => {
+  it('a standard user author reads their own record', () => {
     expect(mayReadRecordTrail(author, record)).toBe(true);
   });
 
-  it('a data_entry user may not read a colleague\'s record', () => {
-    expect(mayReadRecordTrail({ id: 'u-colleague', role: 'data_entry' }, record)).toBe(false);
+  it('a standard user may not read a colleague\'s record', () => {
+    expect(mayReadRecordTrail({ id: 'u-colleague', role: 'standard_user' }, record)).toBe(false);
   });
 
-  it('refuses an unknown role, a mis-cased role and a signed-out shell', () => {
-    expect(mayReadRecordTrail({ id: 'u-author', role: 'DATA_ENTRY' }, record)).toBe(false);
-    expect(mayReadRecordTrail({ id: 'u-author', role: 'auditor' }, record)).toBe(false);
+  it('refuses an unknown role, a retired role, a mis-cased role and a signed-out shell', () => {
+    expect(mayReadRecordTrail({ id: 'u-author', role: 'STANDARD_USER' }, record)).toBe(false);
+    for (const retired of ['data_entry', 'consultant', 'executive_viewer']) {
+      expect(mayReadRecordTrail({ id: 'u-author', role: retired }, record)).toBe(false);
+    }
     expect(mayReadRecordTrail(null, record)).toBe(false);
     expect(mayReadRecordTrail(author, null)).toBe(false);
   });
 
-  it('lists the trail kinds once each, `other` last', () => {
+  it('lists the trail kinds once each, `other` last, `self_approved` among them', () => {
     expect(new Set(RECORD_TRAIL_EVENT_KINDS).size).toBe(RECORD_TRAIL_EVENT_KINDS.length);
     expect(RECORD_TRAIL_EVENT_KINDS.at(-1)).toBe('other');
-  });
-});
-
-describe('mayApproveRecords — who may approve (K2, Decisions 2026-11-12)', () => {
-  it.each([
-    ['super_admin', true],
-    ['consultant', true],
-    ['data_entry', false],
-    ['executive_viewer', false],
-    ['CONSULTANT', false],
-    ['', false],
-  ])('%s → %s', (role, allowed) => {
-    expect(mayApproveRecords({ role })).toBe(allowed);
-  });
-
-  it('refuses a signed-out shell', () => {
-    expect(mayApproveRecords(null)).toBe(false);
-    expect(mayApproveRecords(undefined)).toBe(false);
-  });
-
-  it('approving grants no authoring: a consultant still may not write', () => {
-    expect(mayApproveRecords({ role: 'consultant' })).toBe(true);
-    expect(mayAuthorRecords({ role: 'consultant' })).toBe(false);
+    expect(RECORD_TRAIL_EVENT_KINDS).toContain('self_approved');
   });
 });
 
 describe('record edit, recall and copy (BUG-R2-03)', () => {
-  const author = { id: 'u-author', role: 'data_entry' };
-  const admin = { id: 'u-admin', role: 'super_admin' };
-  const consultant = { id: 'u-consultant', role: 'consultant' };
+  const author = { id: 'u-author', role: 'standard_user' };
+  const admin = { id: 'u-admin', role: 'masterkey' };
+  const superAdmin = { id: 'u-sa', role: 'super_admin' };
+  const auditor = { id: 'u-auditor', role: 'auditor' };
   const ALL = ['draft', 'submitted', 'under_review', 'approved', 'rejected', 'locked', 'voided'];
 
   it('pins the edit and recall sets at the source', () => {
@@ -1407,14 +1393,16 @@ describe('record edit, recall and copy (BUG-R2-03)', () => {
     for (const junk of ['', 'Submitted', ' submitted']) expect(isRecallable(junk)).toBe(false);
   });
 
-  it('lets only the author edit, in an editable status — super_admin is not exempt', () => {
+  it('lets only the author edit, in an editable status — masterkey is not exempt', () => {
     for (const status of ALL) {
       const editable = status === 'draft' || status === 'rejected';
       expect(mayEditRecord(author, { status, createdBy: author.id })).toBe(editable);
       expect(mayEditRecord(admin, { status, createdBy: author.id })).toBe(false);
+      expect(mayEditRecord(superAdmin, { status, createdBy: author.id })).toBe(false);
     }
     expect(mayEditRecord(admin, { status: 'draft', createdBy: admin.id })).toBe(true);
-    expect(mayEditRecord(consultant, { status: 'draft', createdBy: consultant.id })).toBe(false);
+    expect(mayEditRecord(superAdmin, { status: 'draft', createdBy: superAdmin.id })).toBe(true);
+    expect(mayEditRecord(auditor, { status: 'draft', createdBy: auditor.id })).toBe(false);
     expect(mayEditRecord(null, { status: 'draft', createdBy: author.id })).toBe(false);
     expect(mayEditRecord(author, { status: 'draft', createdBy: null })).toBe(false);
   });
@@ -1424,14 +1412,15 @@ describe('record edit, recall and copy (BUG-R2-03)', () => {
       expect(mayRecallRecord(author, { status, createdBy: author.id })).toBe(status === 'submitted');
       expect(mayRecallRecord(admin, { status, createdBy: author.id })).toBe(false);
     }
-    expect(mayRecallRecord(consultant, { status: 'submitted', createdBy: consultant.id })).toBe(false);
+    expect(mayRecallRecord(auditor, { status: 'submitted', createdBy: auditor.id })).toBe(false);
   });
 
-  it('offers copy on a voided record to its author and to super_admin only', () => {
+  it('offers copy on a voided record to its author and to a masterkey only', () => {
     expect(mayCopyVoidedRecord(author, { status: 'voided', createdBy: author.id })).toBe(true);
     expect(mayCopyVoidedRecord(admin, { status: 'voided', createdBy: author.id })).toBe(true);
-    expect(mayCopyVoidedRecord({ id: 'u-other', role: 'data_entry' }, { status: 'voided', createdBy: author.id })).toBe(false);
-    expect(mayCopyVoidedRecord(consultant, { status: 'voided', createdBy: consultant.id })).toBe(false);
+    expect(mayCopyVoidedRecord(superAdmin, { status: 'voided', createdBy: author.id })).toBe(false);
+    expect(mayCopyVoidedRecord({ id: 'u-other', role: 'standard_user' }, { status: 'voided', createdBy: author.id })).toBe(false);
+    expect(mayCopyVoidedRecord(auditor, { status: 'voided', createdBy: auditor.id })).toBe(false);
     for (const status of ALL.filter((s) => s !== 'voided')) {
       expect(mayCopyVoidedRecord(author, { status, createdBy: author.id })).toBe(false);
     }

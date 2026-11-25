@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma, type InventoryBoundary } from '@tonyai/db';
-import { inventoryReportingPeriodsFor } from '@tonyai/shared-types';
+import { inventoryReportingPeriodsFor, can } from '@tonyai/shared-types';
 import type {
   CreateInventoryBoundaryRequest,
   InventoryBoundaryVersionDTO,
@@ -33,7 +33,7 @@ import {
  * boundary versions, one subsidiary's declaration at a time, and their
  * confirmation.
  *
- * `super_admin` alone writes and confirms (E2), every write in READ COMMITTED
+ * `masterkey` alone writes and confirms (E2), every write in READ COMMITTED
  * — the only isolation the guard admits a row write or a freeze in (TA014) —
  * with the version's header locked FOR UPDATE as its first statement (W8, PR
  * B's (6)). Every rule the guard holds is checked here first: the version
@@ -80,15 +80,16 @@ export class InventoryBoundariesService {
     private readonly audit: AuditService,
   ) {}
 
-  /** One year's versions, newest first; a data_entry user's, only those
-   * declaring a subsidiary it is granted (the boundary's RLS, W3). */
+  /** One year's versions, newest first; a granted reader's (a super_admin or
+   * a standard user), only those declaring a company it is granted (the
+   * boundary's RLS, W3). */
   async list(user: RequestUser, query: ListInventoryBoundariesParams): Promise<InventoryBoundaryVersionSummary[]> {
     if (!user.organisationId) return [];
     const headers = await this.prisma.inventoryBoundary.findMany({
       where: {
         organisationId: user.organisationId,
         reportingYear: query.reportingYear,
-        ...(user.role === 'data_entry'
+        ...(can(user.role, 'scope.granted')
           ? { subsidiaries: { some: { subsidiaryId: { in: user.accessibleSubsidiaryIds } } } }
           : {}),
       },
@@ -287,10 +288,10 @@ export class InventoryBoundariesService {
     });
   }
 
-  /** The organisation a super_admin writes in; anyone else is refused before
+  /** The organisation a masterkey writes in; anyone else is refused before
    * anything is read (E2). */
   private writerOrganisation(user: RequestUser): string {
-    if (user.role !== 'super_admin') throw new ForbiddenException('Only super_admin may change an inventory boundary');
+    if (!can(user.role, 'boundary.write')) throw new ForbiddenException('Only a masterkey may change an inventory boundary');
     if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
     return user.organisationId;
   }

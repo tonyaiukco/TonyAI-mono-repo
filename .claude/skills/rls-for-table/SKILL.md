@@ -17,7 +17,15 @@ roles), client-role grants, and the runtime role's grants (step 2c).
   the API (runtime role) — do **not** add INSERT/UPDATE/DELETE policies for client roles.
 - The explicit-grant branch **joins the caller's profile and requires the same organisation** (LP1-03) — never
   a bare `user_subsidiary_access` lookup, even though the composite keys already refuse cross-organisation grants.
-- Audit-style tables: SELECT only for `super_admin`; append-only (never any UPDATE/DELETE policy).
+- Audit-style tables: SELECT only for the organisation-wide readers, `p.role IN ('masterkey','auditor')` (as
+  `audit_log_select_scoped`); append-only (never any UPDATE/DELETE policy).
+- **Roles in a policy:** the organisation-wide branch names exactly `('masterkey','auditor')`; `super_admin`
+  and `standard_user` read through the grant branch only. Never add a role to the organisation-wide branch
+  to give it more — the scoped `super_admin` must never appear there. A condition that NARROWS one role
+  names the role that passes whole, not the one narrowed (`activity_records_select_scoped`'s category
+  clause: `p.role = 'super_admin' OR <row's category in usa.categories> OR <row is the holder's own>`), so a
+  role added later fails closed. The role lists mirror `ROLE_CAPABILITIES['scope.organisation']` and
+  `['scope.granted']` in `@tonyai/shared-types`.
 
 ## Steps
 1. Create an empty migration:
@@ -53,12 +61,17 @@ roles), client-role grants, and the runtime role's grants (step 2c).
          EXISTS (SELECT 1 FROM user_subsidiary_access a JOIN profiles p ON p.id = a.user_id
                  WHERE a.subsidiary_id = s.id AND a.user_id = (SELECT auth.uid())
                    AND p.organisation_id = s.organisation_id)
-         OR EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid()
-                    AND p.role IN ('super_admin','consultant','executive_viewer')
+         OR EXISTS (SELECT 1 FROM profiles p WHERE p.id = (SELECT auth.uid())
+                    AND p.role IN ('masterkey','auditor')   -- the organisation-wide branch
                     AND p.organisation_id = s.organisation_id)
        )
    ));
    ```
+   The first branch is the grant branch (a `super_admin` or `standard_user` granted the row's company,
+   same organisation); the second the organisation-wide branch (a `masterkey` or an `auditor` of the row's
+   organisation). A table whose rows carry an activity-record category must add the standard user's
+   category condition to its grant branch, as `activity_records_select_scoped` does.
+
    **(c) Grant the runtime role exactly what the API does with the table** — never `ALL`, never TRUNCATE;
    an append-only table gets `SELECT, INSERT` only; a table the API row-locks (`FOR UPDATE`) needs UPDATE:
    ```sql
@@ -77,8 +90,9 @@ roles), client-role grants, and the runtime role's grants (step 2c).
 SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = '<table>';  -- expect t, f
 SELECT tablename, policyname, cmd FROM pg_policies WHERE schemaname = 'public' AND tablename = '<table>';
 ```
-Then prove containment via PostgREST as the seeded `data_entry` user (anon key + Bearer token): a cross-tenant
-row must return `[]`, while the API (runtime role) still sees all rows. Check the runtime grants:
+Then prove containment via PostgREST as the seeded `standard_user` (`entry@tonyai.local`) and the seeded
+`super_admin` (`approver@tonyai.local`, which is not granted TonyAI Trading) (anon key + Bearer token): a
+cross-tenant row, and a row of a company outside the user's grants, must return `[]`, while the API (runtime role) still sees all rows. Check the runtime grants:
 ```bash
 set -a; source packages/db/.env; set +a; node packages/db/scripts/runtime-role.mjs check
 ```
@@ -128,15 +142,17 @@ cross-organisation grant) and, if it has routes, to `apps/api/test/int/tenant-is
 
 A new **table** comes up invisible to client roles until its migration grants
 them: default privileges are granted to `service_role` only. A new **column**
-needs nothing — grants in this database are table-level (`pg_attribute.attacl`
-is null on every column in `public`, and there is no such thing as a default
+needs nothing — grants in this database are table-level for every client role
+(`pg_attribute.attacl` is null on every column in `public` but
+`user_subsidiary_access.categories`, where the runtime role holds a column-level
+UPDATE since `inc26-roles-approval-chain`, which changes no read, and there is no such thing as a default
 privilege for a future column), and RLS is row-level, so an existing policy
 governs a new column identically the instant `ALTER TABLE` commits.
 
 The consequence worth remembering: **you cannot add a private column.** Anything
 added to a tenant table is readable by every role that can already read the row.
 Verified against the live database when WP21 added `anomaly_baseline_*` to
-`activity_records` — a `data_entry` JWT read both new columns with no grant in
+`activity_records` — a JWT of the role then called `data_entry` (today's `standard_user`) read both new columns with no grant in
 the migration, and `anon` read none.
 
 **Learned on LP3-04 PR D (the report issuances, a row bound to a parent row):**

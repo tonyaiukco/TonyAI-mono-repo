@@ -170,7 +170,7 @@ function holdingDeclaration(): PutInventoryBoundarySubsidiaryRequest {
   };
 }
 
-const admin = () => t.users.superAdmin;
+const admin = () => t.users.masterkey;
 /** A user as the guard would build it: every subsidiary of the organisation, now. */
 async function withAccess(user: RequestUser): Promise<RequestUser> {
   const subs = await owner.subsidiary.findMany({ where: { organisationId: user.organisationId! }, select: { id: true } });
@@ -340,18 +340,18 @@ describe('an issuance over HTTP', () => {
     });
 
     // Read back by every reader, as issued.
-    expect(JSON.parse((await call(t.users.executiveViewer, 'GET', `/report-issuances/${issued.issuanceId}`)).text)).toEqual(issued);
+    expect(JSON.parse((await call(t.users.auditor, 'GET', `/report-issuances/${issued.issuanceId}`)).text)).toEqual(issued);
     // The list names it by summary (LP4-03 K7): gaps counted, the current final named.
-    const list = JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text) as ReportIssuanceList;
+    const list = JSON.parse((await call(t.users.auditor, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text) as ReportIssuanceList;
     expect(list).toMatchObject({ truncated: false, currentFinalIssuanceId: issued.issuanceId });
     expect(list.items).toEqual([expect.objectContaining({
       issuanceId: issued.issuanceId, datasetId, status: 'final', gapCount: 0, gapCounts: {}, reportingYear: FINAL_YEAR,
       datasetFingerprint: issued.datasetFingerprint, pdf: { sizeBytes: row.sizeBytes, fingerprint: issued.pdf.fingerprint },
       dataset: expect.objectContaining({ selection: 'inventory', boundary: expect.objectContaining({ decision: 'confirmed' }) }),
     })]);
-    expect(JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${FINAL_YEAR}&status=partial`)).text))
+    expect(JSON.parse((await call(t.users.auditor, 'GET', `/report-issuances?year=${FINAL_YEAR}&status=partial`)).text))
       .toEqual({ items: [], truncated: false, currentFinalIssuanceId: issued.issuanceId });
-    const served = await download(t.users.executiveViewer, issued.issuanceId);
+    const served = await download(t.users.auditor, issued.issuanceId);
     expect(served.status).toBe(200);
     expect(served.headers.get('content-type')).toBe('application/pdf');
     const name = `tonyai-report-${FINAL_YEAR}-executive_summary-en-final-${issued.issuedAt.slice(0, 10)}-${issued.issuanceId.slice(0, 8)}`;
@@ -360,7 +360,7 @@ describe('an issuance over HTTP', () => {
 
     // Its Excel and CSV (K5): the retained dataset, the PDF's figures, one name.
     const retained = JSON.parse(dataset.content) as ReportDataset;
-    const csv = await download(t.users.executiveViewer, issued.issuanceId, 'csv');
+    const csv = await download(t.users.auditor, issued.issuanceId, 'csv');
     expect(csv.status).toBe(200);
     expect(csv.headers.get('content-disposition')).toBe(`attachment; filename="${name}.csv"`);
     expect(csv.headers.get('cache-control')).toBe('no-store');
@@ -372,7 +372,7 @@ describe('an issuance over HTTP', () => {
       const counted = rows.filter((r) => r.row_kind === 'counted' && r.scope === String(scope) && r.tco2e !== 'Not calculated');
       expect(counted.reduce((s, r) => s + Number(r.tco2e), 0)).toBeCloseTo(retained.scopes[scope - 1].tCo2e ?? 0, 9);
     }
-    const xlsx = await download(t.users.executiveViewer, issued.issuanceId, 'xlsx');
+    const xlsx = await download(t.users.auditor, issued.issuanceId, 'xlsx');
     expect(xlsx.status).toBe(200);
     expect(xlsx.headers.get('content-disposition')).toBe(`attachment; filename="${name}.xlsx"`);
     expect(xlsx.bytes.subarray(0, 2).toString()).toBe('PK');
@@ -381,10 +381,9 @@ describe('an issuance over HTTP', () => {
     // And the preview of that dataset derives what was issued.
     expect(JSON.parse((await call(admin(), 'GET', `/report-datasets/${datasetId}/issuance-preview`)).text))
       .toEqual({ datasetId, status: 'final', gaps: [], finalAllowed: true });
-    expect(JSON.parse((await call(t.users.consultant, 'GET', `/report-datasets/${datasetId}/issuance-preview`)).text))
-      .toMatchObject({ status: 'final', finalAllowed: false });
 
-    // data_entry reads and issues nothing (W3, W4).
+    // A standard user and a super_admin read and issue nothing (W3, W4;
+    // INC-2.6 §6: `dataset.read` is the masterkey's and the auditor's).
     for (const [method, path, body] of [
       ['POST', '/report-issuances', { datasetId, template: 'ghg_protocol_detail' }],
       ['GET', `/report-issuances?year=${FINAL_YEAR}`, undefined],
@@ -394,39 +393,43 @@ describe('an issuance over HTTP', () => {
       ['GET', `/report-issuances/${issued.issuanceId}/csv`, undefined],
       ['GET', `/report-datasets/${datasetId}/issuance-preview`, undefined],
     ] as const) {
-      expect((await call(t.users.dataEntry, method, path, body)).status).toBe(403);
+      for (const user of [t.users.standardUser, t.users.superAdmin]) {
+        expect((await call(user, method, path, body)).status, `${user.role} ${method} ${path}`).toBe(403);
+      }
     }
-    // An executive viewer reads issued reports and issues nothing — no preview either.
-    expect((await call(t.users.executiveViewer, 'GET', `/report-datasets/${datasetId}/issuance-preview`)).status).toBe(403);
+    // An auditor reads issued reports and issues nothing — no preview either.
+    expect((await call(t.users.auditor, 'GET', `/report-datasets/${datasetId}/issuance-preview`)).status).toBe(403);
   }, 60_000);
 
-  it('refuses a consultant a final — nothing rendered, stored or written', async () => {
+  // INC-2.6 §6: `report.issue` is the masterkey's alone. The consultant's
+  // partial-only issuing (and its `report_final_forbidden`) went with the role.
+  it.each(['superAdmin', 'auditor', 'standardUser'] as const)('refuses a %s any issuance — nothing rendered, stored or written', async (role) => {
     const datasetId = await finalDataset();
-    const answer = await issue(t.users.consultant, { datasetId, template: 'executive_summary' });
+    const answer = await issue(t.users[role], { datasetId, template: 'executive_summary' });
     expect(answer.status).toBe(403);
-    expect(answer.code).toBe('report_final_forbidden');
+    expect(answer.code).toBe('forbidden');
     expect(await issuanceRows()).toEqual([]);
     expect(await artifacts()).toEqual([]);
     expect(await artifactIntents()).toEqual([]);
     expect(await issueAudits()).toEqual([]);
   }, 60_000);
 
-  it('lets a consultant issue a partial; a repeat is report_already_issued; another language is another issuance of the dataset', async () => {
+  it('lets the masterkey issue a partial; a repeat is report_already_issued; another language is another issuance of the dataset', async () => {
     const { datasetId, recordIds } = await partialDataset();
-    const first = await issue(t.users.consultant, { datasetId, template: 'ghg_protocol_detail' });
+    const first = await issue(admin(), { datasetId, template: 'ghg_protocol_detail' });
     expect(first.status, first.text).toBe(201);
     const issued = issuanceOf(first);
     // Approved, locked and covered — the fixture release alone keeps it partial.
     expect(issued.status).toBe('partial');
     expect(issued.gaps).toEqual([{ code: 'non_authoritative_calculation', sourceIds: [], obligationIds: [], recordIds }]);
 
-    const repeat = await issue(t.users.consultant, { datasetId, template: 'ghg_protocol_detail' });
+    const repeat = await issue(admin(), { datasetId, template: 'ghg_protocol_detail' });
     expect(repeat.status).toBe(409);
     expect(repeat.code).toBe('report_already_issued');
     expect(await issuanceRows()).toHaveLength(1);
     expect(await artifacts()).toHaveLength(1);
 
-    const turkish = await issue(t.users.consultant, { datasetId, template: 'ghg_protocol_detail', language: 'tr' });
+    const turkish = await issue(admin(), { datasetId, template: 'ghg_protocol_detail', language: 'tr' });
     expect(turkish.status, turkish.text).toBe(201);
     expect(issuanceOf(turkish)).toMatchObject({ language: 'tr', datasetFingerprint: issued.datasetFingerprint });
     expect(issuanceOf(turkish).issuanceId).not.toBe(issued.issuanceId);
@@ -438,22 +441,22 @@ describe('an issuance over HTTP', () => {
     const issued = issuanceOf(await issue(admin(), { datasetId, template: 'executive_summary' }));
     const other = await createTenant();
     try {
-      const foreign = await issue(other.users.superAdmin, { datasetId, template: 'executive_summary' });
-      const missing = await issue(other.users.superAdmin, { datasetId: randomUUID(), template: 'executive_summary' });
+      const foreign = await issue(other.users.masterkey, { datasetId, template: 'executive_summary' });
+      const missing = await issue(other.users.masterkey, { datasetId: randomUUID(), template: 'executive_summary' });
       expect(foreign.status).toBe(404);
       expect(foreign.code).toBe('report_dataset_not_found');
       expect(foreign.text).toBe(missing.text);
       for (const suffix of ['', '/pdf', '/xlsx', '/csv']) {
-        const theirs = await call(other.users.superAdmin, 'GET', `/report-issuances/${issued.issuanceId}${suffix}`);
-        const none = await call(other.users.superAdmin, 'GET', `/report-issuances/${randomUUID()}${suffix}`);
+        const theirs = await call(other.users.masterkey, 'GET', `/report-issuances/${issued.issuanceId}${suffix}`);
+        const none = await call(other.users.masterkey, 'GET', `/report-issuances/${randomUUID()}${suffix}`);
         expect(theirs.status).toBe(404);
         expect(theirs.code).toBe('report_issuance_not_found');
         expect(theirs.text).toBe(none.text);
       }
-      expect(JSON.parse((await call(other.users.superAdmin, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text))
+      expect(JSON.parse((await call(other.users.masterkey, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text))
         .toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
-      const theirPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${datasetId}/issuance-preview`);
-      const noPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${randomUUID()}/issuance-preview`);
+      const theirPreview = await call(other.users.masterkey, 'GET', `/report-datasets/${datasetId}/issuance-preview`);
+      const noPreview = await call(other.users.masterkey, 'GET', `/report-datasets/${randomUUID()}/issuance-preview`);
       expect(theirPreview.status).toBe(404);
       expect(theirPreview.code).toBe('report_dataset_not_found');
       expect(theirPreview.text).toBe(noPreview.text);
@@ -576,8 +579,8 @@ describe('one organisation, a reader short of one referenced subsidiary (LP4-03,
     const datasetId = await finalDataset();
     const issued = issuanceOf(await issue(admin(), { datasetId, template: 'executive_summary' }));
     const service = issuer();
-    // Past the role guards, as no HTTP caller can be today (only data_entry is
-    // ever partially granted, and it reads no issuance): the SQL's own rule.
+    // Past the role guards, as no HTTP caller can be today (only the granted
+    // roles are ever partially granted, and they read no issuance): the SQL's own rule.
     const short = { ...admin(), accessibleSubsidiaryIds: [S2] };
     expect(await service.list(short, FINAL_YEAR)).toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
     for (const read of [
@@ -716,12 +719,12 @@ describe('the guard (TA017) — every writer, the owner included', () => {
     const otherS2 = (await owner.subsidiary.create({ data: { organisationId: other.organisationId, legalName: `Int-test holding ${randomUUID().slice(0, 8)}`, geographyCode: 'UK' } })).id;
     try {
       const service = new InventoryBoundariesService(runtime, new AuditService(runtime));
-      const user = await withAccess(other.users.superAdmin);
+      const user = await withAccess(other.users.masterkey);
       const { id } = await service.create(user, { reportingYear: YEAR });
       await service.putSubsidiary(user, id, otherS2, holdingDeclaration());
       await service.confirm(user, id);
-      const capture = await call(other.users.superAdmin, 'POST', '/report-datasets', { boundaryId: id });
-      const issued = issuanceOf(await issue(other.users.superAdmin, { datasetId: (JSON.parse(capture.text) as { datasetId: string }).datasetId, template: 'executive_summary' }));
+      const capture = await call(other.users.masterkey, 'POST', '/report-datasets', { boundaryId: id });
+      const issued = issuanceOf(await issue(other.users.masterkey, { datasetId: (JSON.parse(capture.text) as { datasetId: string }).datasetId, template: 'executive_summary' }));
       const path = `${other.organisationId}/${issued.pdf.artifactId}.pdf`;
       await other.cleanup();
       expect(await owner.reportIssuance.count({ where: { id: issued.issuanceId } })).toBe(0);

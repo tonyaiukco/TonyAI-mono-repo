@@ -79,12 +79,12 @@ describe('K3 — submit', () => {
     const record = await mgoRecord();
     const before = await auditCount(record.id);
 
-    await expect(s.records.submit(tenant.users.dataEntry, record.id)).rejects.toBeInstanceOf(EvidenceRequiredError);
+    await expect(s.records.submit(tenant.users.standardUser, record.id)).rejects.toBeInstanceOf(EvidenceRequiredError);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
     expect(await auditCount(record.id)).toBe(before);
 
     await attachEvidence(runtime, tenant, [record.id]);
-    await s.records.submit(tenant.users.dataEntry, record.id);
+    await s.records.submit(tenant.users.standardUser, record.id);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.submitted);
   });
 });
@@ -112,7 +112,7 @@ describe('K3 — approve', () => {
     // file (allowed again once the record is rejected) and submits it.
     await s.records.reject(tenant.users.superAdmin, record.id, 'Attach the bunker delivery note');
     await attachEvidence(runtime, tenant, [record.id]);
-    await s.records.submit(tenant.users.dataEntry, record.id);
+    await s.records.submit(tenant.users.standardUser, record.id);
     await s.records.approve(tenant.users.superAdmin, record.id);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.approved);
   });

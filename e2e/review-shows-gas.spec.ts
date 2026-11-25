@@ -10,7 +10,6 @@ import trReview from '../apps/web/messages/tr/review.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
-  CONSULTANT_EMAIL,
   E2E_TR_INPUTS,
   E2E_TR_INPUTS_YEAR,
   E2E_YEAR,
@@ -30,8 +29,9 @@ import {
  * gas, so the review queue row and the review sheet name the record's activity
  * type beside its category, in every typed category, in English and Turkish.
  *
- * Lanes, both written by the admin (a consultant never enters data) and
- * reviewed by the consultant:
+ * Lanes, both written by the admin and reviewed by the admin too: a
+ * masterkey's record is decided by its author (`recordApprover`), and an
+ * auditor is shown no queue:
  * - `SUB.logistics`, Refrigerants, annual `E2E_TR_INPUTS_YEAR`, the whole
  *   subsidiary: two records that differ ONLY by gas, priced by the TR inputs
  *   fixture's two gases. R-410A's one line is above the first-period ceiling
@@ -39,22 +39,22 @@ import {
  *   and deletes it; files run one at a time.
  * - `SUB.mfg`, Fuel diesel, quarterly Q3 of `E2E_YEAR`, priced by the seed's
  *   placeholder (EU diesel).
- * Every record is deleted in `finally`; the consultant's language is restored
+ * Every record is deleted in `finally`; the reviewer's language is restored
  * in `afterAll`.
  */
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => seedTrInputsFixture());
 test.afterAll(async () => {
-  await setConsultantLanguage('en');
+  await setReviewerLanguage('en');
   await cleanupTrInputsFixture();
 });
 
 // On its own request context, so a timed-out test still leaves the seed user in English.
-async function setConsultantLanguage(language: 'tr' | 'en') {
+async function setReviewerLanguage(language: 'tr' | 'en') {
   const api = await playwrightRequest.newContext();
   try {
-    const token = await getAccessToken(api, CONSULTANT_EMAIL);
+    const token = await getAccessToken(api, ADMIN_EMAIL);
     const res = await api.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language } });
     if (res.status() !== 200) throw new Error(`language ${language}: ${res.status()}`);
   } finally {
@@ -121,8 +121,8 @@ test('the review queue and sheet name each record’s gas or fuel, in English an
     created.push(await createCommittedRecord(request, token, diesel));
 
     // English: the two gas records read apart, and the fuel names its type too.
-    await setConsultantLanguage('en');
-    await login(page, CONSULTANT_EMAIL);
+    await setReviewerLanguage('en');
+    await login(page, ADMIN_EMAIL);
     await page.goto('/review');
     const enGas = (gas: string) =>
       row(page, LOGISTICS, enPeriods.values.Annual, E2E_TR_INPUTS_YEAR, `${enCategories.Refrigerants} (${enDataEntry.activityTypes[gas as 'R-410A']})`);
@@ -145,7 +145,7 @@ test('the review queue and sheet name each record’s gas or fuel, in English an
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
     // Turkish: the same rows by their Turkish labels, read from the catalogue.
-    await setConsultantLanguage('tr');
+    await setReviewerLanguage('tr');
     await page.reload();
     const trGas = (gas: string) =>
       row(page, LOGISTICS, trPeriods.values.Annual, E2E_TR_INPUTS_YEAR, `${trCategories.Refrigerants} (${trDataEntry.activityTypes[gas as 'R-410A']})`);

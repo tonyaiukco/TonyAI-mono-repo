@@ -8,7 +8,7 @@ import {
   ADMIN_EMAIL,
   API_BASE,
   bearer,
-  CONSULTANT_EMAIL,
+  AUDITOR_EMAIL,
   ENTRY_EMAIL,
   buildBulkCsv,
   deleteRecordsAsService,
@@ -40,7 +40,7 @@ import {
  *
  * Budget: the import route allows five requests per minute per user. This file
  * makes SEVEN imports — one per test — split `admin@` x4, `entry@` x3 and
- * `consultant@` x1, which the lane allows because `SUB.energy` is inside the
+ * `review@` (an auditor) x1, which the lane allows because `SUB.energy` is inside the
  * entry user's access set. The extra one is the 413 at the END of this file;
  * it joins `admin@`, whose three were the smallest group, because a refused
  * request still spends a unit (the throttle is a GUARD, so it runs before the
@@ -345,20 +345,20 @@ test('the row-level refusals arrive with the codes the contract names', async ({
 test('a role that may not author records is refused before its file is parsed — and audited', async ({
   request,
 }) => {
-  // The claim the unit suite can only make against a mocked audit writer. A
-  // consultant's import used to be refused from inside the row loop, past the
+  // The claim the unit suite can only make against a mocked audit writer. An
+  // auditor's (then a consultant's) import used to be refused from inside the row loop, past the
   // audited pre-flight, so it left no row on the trail — and a file whose every
   // row was invalid came back as a 200 report. A roles guard added on the route
   // later would bring that back with every unit test green; this would fail.
   //
-  // Budget: the throttle is keyed per user, so the consultant spends none of
+  // Budget: the throttle is keyed per user, so the auditor spends none of
   // the six imports the header counts.
-  const token = await getAccessToken(request, CONSULTANT_EMAIL);
+  const token = await getAccessToken(request, AUDITOR_EMAIL);
   // A margin and a name only this test writes: the database clock (a Docker VM
   // on a laptop) can lag the runner's, and a bare `since` would then miss the
   // very row this test exists to find.
   const since = new Date(Date.now() - 60_000).toISOString();
-  const fileName = `consultant-probe-${Date.now()}.txt`;
+  const fileName = `auditor-probe-${Date.now()}.txt`;
 
   const res = await postBulkImport(request, token, {
     // Not a spreadsheet, on purpose: a file refusal is a 400, so a 403 here can

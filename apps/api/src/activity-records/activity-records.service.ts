@@ -18,8 +18,6 @@ import {
   EvidenceRequiredError,
   PeriodLockedError,
   RecordChangedError,
-  SelfApprovalRefusedError,
-  SelfReviewRefusedError,
   SubmitAuthorRefusedError,
   AuthorOnlyRefusedError,
   EvidenceDetachRequiredError,
@@ -54,7 +52,8 @@ import {
   type RecordParameters,
   type ReportingPeriod,
   mayAuthorRecords,
-  mayApproveRecords,
+  can,
+  type RecordApprover,
   isRecallable,
   EDITABLE_RECORD_STATUSES,
   normalizeRecordParameters,
@@ -98,7 +97,12 @@ import {
   ActivityRecordPageQueryDto,
 } from './dto/activity-record-page-query.dto';
 import { closedRecordIds } from './closed-periods';
-import { normaliseRecordFilters, RECORD_SORTS, recordFilterWhere } from './record-page';
+import { normaliseRecordFilters, RECORD_SORTS, recordFilterWhere, type RecordFilters } from './record-page';
+import { approversFor, awaitingDecisionWhere, deciderFor } from './record-approver';
+import { assertCategoryGranted, inRecordScope } from './record-scope';
+
+/** A write that leaves a record in draft or returned: no record of it is pending. */
+const NO_APPROVERS: ReadonlyMap<string, RecordApprover | null> = new Map();
 import {
   cursorBinding,
   decodeCursor,
@@ -191,18 +195,14 @@ export function evidenceReadyWhere() {
     ],
   };
 }
-// Roles allowed to take a record into review and to reject it ("flag for
-// revision" in permissions_and_roles.md §3).
-const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
-// Who may APPROVE is `mayApproveRecords` (@tonyai/shared-types): `consultant`
-// or `super_admin`. Until 2026-11-12 approval was super_admin only; the owner
-// reversed that (Decisions 2026-11-12, K2) so that a one-person customer's
-// approver can be its external consultant. D01 still applies to every approver
-// (see `approve`), and every other approval gate is role-blind.
+// Who may take a record into review, return it or approve it is
+// `can(role, 'record.decide')` — a masterkey or a super_admin (INC-2.6 §1.1)
+// — and, of those, only the record's approver (`recordApprover`). Every other
+// approval gate is role-blind.
 //
-// Roles allowed to VOID — `super_admin` only, and deliberately NOT derived from
-// the approval rule: widening approval must never widen void (see `void`).
-const VOID_ROLES = new Set(['super_admin']);
+// Who may VOID is `can(role, 'record.void')` — a masterkey only, and
+// deliberately a capability of its own: deciding records must never widen
+// void (see `void`; INC-2.6 ruling R4).
 /**
  * A review decision is about the submission the reviewer saw (BUG-R2-03
  * review, P1). Since an author may recall a submitted record, edit it and
@@ -479,9 +479,14 @@ export class ActivityRecordsService {
     evidenceCount = 0,
     actors: Map<string, ResolvedProfile>,
     fuelRecords: Map<string, GenerationFuelRecordState>,
+    approvers: ReadonlyMap<string, RecordApprover | null>,
   ): ActivityRecordDTO {
     return {
       ...this.toAuditSnapshot(r, evidenceCount),
+      // Who decides it now (inc26-roles-approval-chain): a pending record's
+      // approver, worked out on every read; null on every other status.
+      // Required like the names: a write's answer replaces the screen's row.
+      approver: approvers.get(r.id) ?? null,
       // Resolved at read time, the same way the audit trail resolves an actor's
       // name: uniqueness includes `location_id`, so two pending records in the
       // same subsidiary/period/category can differ ONLY by location — and the
@@ -564,11 +569,13 @@ export class ActivityRecordsService {
     user: RequestUser,
     id: string,
   ): Promise<ActivityRecord & { location: { name: string } | null }> {
+    // The caller's record scope (company, and a standard user's categories or
+    // own records): a record outside it answers as one that does not exist.
     const record = await this.prisma.activityRecord.findUnique({
       where: { id },
       include: { location: { select: { name: true } } },
     });
-    if (!record || !user.accessibleSubsidiaryIds.includes(record.subsidiaryId)) {
+    if (!record || !inRecordScope(user, record)) {
       throw new ResourceNotFoundError('record_not_found');
     }
     return record;
@@ -617,9 +624,9 @@ export class ActivityRecordsService {
   }
 
   /**
-   * The edit gate: an author role, the record's own author — `super_admin`
+   * The edit gate: an author role, the record's own author — `masterkey`
    * included, never exempt (BUG-R2-03, decision 2026-11-10 (fourth), 5) — and
-   * an editable status. Before, a super_admin could edit a colleague's draft
+   * an editable status. Before, a masterkey could edit a colleague's draft
    * and approve it once submitted, which D01 (creator ≠ approver) could not
    * see. `mayEditRecord` in the contract is the same rule for the screens.
    */
@@ -636,9 +643,10 @@ export class ActivityRecordsService {
   }
 
   /**
-   * The delete gate: author or `super_admin`, as before BUG-R2-03. A draft
-   * counts towards nothing, so an administrator removing a colleague's
-   * abandoned draft changes no figure anyone will approve.
+   * The delete gate: the author, or a masterkey (`record.delete_any_draft`,
+   * INC-2.6 ruling R4) — never a super_admin for a colleague's. A draft
+   * counts towards nothing, so the organisation's administrator removing a
+   * colleague's abandoned draft changes no figure anyone will approve.
    */
   private assertCanDelete(user: RequestUser, record: ActivityRecord): void {
     if (!mayAuthorRecords(user)) {
@@ -646,10 +654,8 @@ export class ActivityRecordsService {
         'Your role may not modify activity records',
       );
     }
-    if (user.role !== 'super_admin' && record.createdBy !== user.id) {
-      throw new ForbiddenException(
-        'You may only modify activity records you created',
-      );
+    if (!can(user.role, 'record.delete_any_draft') && record.createdBy !== user.id) {
+      throw new AuthorOnlyRefusedError('delete');
     }
     this.assertEditableStatus(record);
   }
@@ -720,7 +726,7 @@ export class ActivityRecordsService {
   /**
    * Period-lock gate (FR §4.2): while a `period_locks` row exists for the
    * record's (subsidiary, year, period, periodValue), NO create/update/delete/
-   * submit is allowed — the period is closed. super_admin must unlock first.
+   * submit is allowed — the period is closed. masterkey must unlock first.
    */
   private async assertPeriodNotLocked(
     period: PeriodKey,
@@ -730,7 +736,7 @@ export class ActivityRecordsService {
     const lock = await client.periodLock.findFirst({ where: periodOf(period) });
     if (lock) {
       throw new PeriodLockedError(
-        `Reporting period ${periodValue} ${reportingYear} is locked — a super_admin must unlock it before records can change.`,
+        `Reporting period ${periodValue} ${reportingYear} is locked — a masterkey must unlock it before records can change.`,
         { periodValue, reportingYear },
       );
     }
@@ -753,7 +759,9 @@ export class ActivityRecordsService {
     // Decoded before the scope is known, so a cursor's acceptance depends only
     // on the cursor and the request — never on what the caller may see.
     const after = query.cursor !== undefined ? decodeCursor(sort, binding, query.cursor) : null;
-    const where = recordFilterWhere(user, filters);
+    const scoped = recordFilterWhere(user, filters);
+    if (!scoped) return { items: [], limit, nextCursor: null };
+    const where = await this.withAwaitingDecision(user, filters, scoped);
     if (!where) return { items: [], limit, nextCursor: null };
 
     const rows = await this.prisma.activityRecord.findMany({
@@ -770,13 +778,15 @@ export class ActivityRecordsService {
     const locked = await closedRecordIds(this.prisma, page);
     const actors = await this.actorsFor(user, page);
     const fuelRecords = await this.fuelRecordsFor(user, page);
+    // Two queries for the whole page (its authors, its companies), never one per row.
+    const approvers = await approversFor(this.prisma, page);
     return toCursorPage(
       rows,
       limit,
       sort,
       binding,
       (r) => sort.keys.map((k) => r[k.field as 'createdAt' | 'submittedAt' | 'id']),
-      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors, fuelRecords), periodLocked: locked.has(r.id) }),
+      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors, fuelRecords, approvers), periodLocked: locked.has(r.id) }),
     );
   }
 
@@ -790,7 +800,9 @@ export class ActivityRecordsService {
     user: RequestUser,
     query: ActivityRecordFiltersQueryDto,
   ): Promise<ActivityRecordListMetadataDTO> {
-    const where = recordFilterWhere(user, normaliseRecordFilters(query));
+    const filters = normaliseRecordFilters(query);
+    const scoped = recordFilterWhere(user, filters);
+    const where = scoped && (await this.withAwaitingDecision(user, filters, scoped));
     if (!where) return { total: 0, latestReportingYear: null };
     const budget = this.limits.ACTIVITY_RECORD_METADATA_MAX_ROWS;
     const total = await this.prisma.activityRecord.count({ where, take: budget + 1 });
@@ -802,12 +814,25 @@ export class ActivityRecordsService {
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    const [evidenceCount, actors, fuelRecords] = await Promise.all([
+    const [evidenceCount, actors, fuelRecords, approvers] = await Promise.all([
       this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } }),
       this.actorsFor(user, [record]),
       this.fuelRecordsFor(user, [record]),
+      approversFor(this.prisma, [record]),
     ]);
-    return this.toDTO(record, evidenceCount, actors, fuelRecords);
+    return this.toDTO(record, evidenceCount, actors, fuelRecords, approvers);
+  }
+
+  /** `scoped` narrowed to the pending records the caller decides, when the
+   *  filter asks for it; null when that leaves nothing. */
+  private async withAwaitingDecision(
+    user: RequestUser,
+    filters: RecordFilters,
+    scoped: Prisma.ActivityRecordWhereInput,
+  ): Promise<Prisma.ActivityRecordWhereInput | null> {
+    if (!filters.awaitingMyDecision) return scoped;
+    const mine = await awaitingDecisionWhere(this.prisma, user);
+    return mine ? { AND: [scoped, mine] } : null;
   }
 
   /**
@@ -885,6 +910,9 @@ export class ActivityRecordsService {
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
       throw new ResourceNotFoundError('subsidiary_not_found');
     }
+    // A standard user enters only in the categories ticked on its grant for
+    // the company (INC-2.6 §1, §7.3) — after the role and scope checks.
+    assertCategoryGranted(user, dto.subsidiaryId, dto.category);
     // Canonicalised, not merely validated. Everything downstream compares RAW
     // strings — the uniqueness index, both period-lock lookups, the seed's own
     // de-duplication key — so the spelling that gets stored IS the identity of
@@ -1031,7 +1059,7 @@ export class ActivityRecordsService {
       }
       throw asLostRace(e);
     }
-    return this.toDTO(created, 0, await this.actorsFor(user, [created]), created.fuelRecords);
+    return this.toDTO(created, 0, await this.actorsFor(user, [created]), created.fuelRecords, NO_APPROVERS);
   }
 
   async update(
@@ -1045,6 +1073,9 @@ export class ActivityRecordsService {
 
     // Resolve the effective values (dto overrides existing) so we can recompute.
     const category = (dto.category ?? existing.category) as Category;
+    // Checked on the category the record would hold after the edit: a draft
+    // cannot be re-filed under a category the author is not granted.
+    assertCategoryGranted(user, existing.subsidiaryId, category);
     const reportingYear = dto.reportingYear ?? existing.reportingYear;
     const activityValue = dto.activityValue ?? existing.activityValue;
     const activityUnit = dto.activityUnit ?? existing.activityUnit;
@@ -1264,7 +1295,7 @@ export class ActivityRecordsService {
     }
     // Only the files that went with the commit; their rows are already gone.
     await this.evidence.removeBlobs(removedFiles.map((f) => f.storagePath));
-    return this.toDTO(updated, evidenceCount, await this.actorsFor(user, [updated]), updated.fuelRecords);
+    return this.toDTO(updated, evidenceCount, await this.actorsFor(user, [updated]), updated.fuelRecords, NO_APPROVERS);
   }
 
   async remove(
@@ -1349,7 +1380,7 @@ export class ActivityRecordsService {
           );
         }
         // Only the author submits (decision D02, 2026-09-29) — a draft as much
-        // as a rejected record, and `super_admin` is not exempt. Resubmitting
+        // as a rejected record, and `masterkey` is not exempt. Resubmitting
         // REVERSES a reviewer's decision, and submitting at all moves a
         // colleague's half-finished figure out of their hands into review. It
         // is also what makes the submitter always the creator, which the
@@ -1360,6 +1391,9 @@ export class ActivityRecordsService {
           );
         }
       });
+      // A category withdrawn since the draft was made stops its submit (the
+      // author can still recall or delete it): on the row as locked.
+      assertCategoryGranted(user, record.subsidiaryId, record.category);
       // Period-lock gate (FR §4.2): no submissions into a closed period.
       await this.assertPeriodNotLocked(periodOf(record), tx);
       // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
@@ -1437,7 +1471,7 @@ export class ActivityRecordsService {
    * (fourth), 1): its author takes it back before review starts, edits it and
    * submits it again. Only from `submitted` — once a reviewer has taken it into
    * review, the reviewer returns it (reject), so nobody approves a figure that
-   * changed while they were looking at it. Only the author, `super_admin`
+   * changed while they were looking at it. Only the author, `masterkey`
    * included, as with submit (D02).
    *
    * The inputs and the figure do not change: the database freezes them on
@@ -1482,12 +1516,14 @@ export class ActivityRecordsService {
    * none still takes the record into review, which decides nothing.
    */
   async startReview(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<ActivityRecordDTO> {
-    const seen = await this.loadScoped(user, id);
-    if (!REVIEW_ROLES.has(user.role)) {
+    // The role refusal comes before every other answer (record-lifecycle spec):
+    // a role that decides nothing is refused even for a record it cannot read.
+    if (!can(user.role, 'record.decide')) {
       throw new ForbiddenException(
-        'Only a consultant or super_admin may review records',
+        'Only a masterkey or a super_admin may review records',
       );
     }
+    const seen = await this.loadScoped(user, id);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
         if (record.status !== ActivityRecordStatus.submitted) {
@@ -1501,24 +1537,24 @@ export class ActivityRecordsService {
         }
         assertSameSubmission(record, seenSubmittedAt);
       });
-      // Segregation of duties at the start of review (WP5): the same check
-      // approve makes (D01), on the row as locked, after the role gate above —
-      // so a data_entry author still gets the plain role refusal — and before
-      // anything is written.
-      if (record.createdBy === user.id) {
-        throw new SelfReviewRefusedError();
-      }
+      // The approver check (INC-2.6 §1.1), on the row as locked, after the role
+      // gate and the re-gate, before anything is written: a non-masterkey
+      // author is refused `self_review_forbidden` (WP5), anyone but the
+      // record's approver `not_record_approver`.
+      const decider = await deciderFor(tx, user, record, 'review');
       await this.assertPeriodNotLocked(periodOf(record), tx);
-      return this.transition(tx, user, record, ActivityRecordStatus.under_review);
+      return this.transition(tx, decider, record, ActivityRecordStatus.under_review);
     });
     return this.writtenDTO(user, updated);
   }
 
   async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
-    const seen = await this.loadScoped(user, id);
-    if (!mayApproveRecords(user)) {
-      throw new ForbiddenException('Only a consultant or super_admin may approve records');
+    // The role refusal comes before every other answer (record-lifecycle spec):
+    // a role that decides nothing is refused even for a record it cannot read.
+    if (!can(user.role, 'record.decide')) {
+      throw new ForbiddenException('Only a masterkey or a super_admin may approve records');
     }
+    const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
@@ -1537,14 +1573,13 @@ export class ActivityRecordsService {
         }
         assertSameSubmission(record, seenSubmittedAt);
       });
-      // Segregation of duties (decision D01, 2026-09-29): the approver is
-      // neither the creator nor the submitter, whatever the approver's role —
-      // `super_admin` and `consultant` included, and a user whose role changed
-      // since they created the record. Only the author may submit, so the
-      // submitter IS the creator and one comparison covers both.
-      if (record.createdBy === user.id) {
-        throw new SelfApprovalRefusedError();
-      }
+      // Who approves (INC-2.6 §1.1): segregation of duties (D01) for every
+      // author but a masterkey — `self_approval_forbidden`, whatever role the
+      // author held when creating it — and then only the record's approver
+      // (`not_record_approver`). A masterkey approving their own record is a
+      // self-approval, logged as such by `transition`. Only the author may
+      // submit, so the submitter IS the creator and one comparison covers both.
+      const decider = await deciderFor(tx, user, record, 'approve');
       // Period-lock gate (defense-in-depth): no review transitions in a closed
       // period.
       await this.assertPeriodNotLocked(periodOf(record), tx);
@@ -1569,7 +1604,7 @@ export class ActivityRecordsService {
       this.assertFresh('approve', seen, record, recomputed);
       // Clear any earlier rejection note: an approved record showing last
       // round's rejection reason would misread as "approved, but rejected".
-      return this.transition(tx, user, record, ActivityRecordStatus.approved, {
+      return this.transition(tx, decider, record, ActivityRecordStatus.approved, {
         reviewNote: null,
       });
     });
@@ -1582,7 +1617,7 @@ export class ActivityRecordsService {
    * `approved` and `locked` are immutable, and that is correct: a figure a
    * reviewer accepted must not be quietly edited away. But it left a record
    * entered in error with no exit at all — update, remove, submit, review,
-   * approve and reject all refuse both statuses, and `super_admin` does not
+   * approve and reject all refuse both statuses, and `masterkey` does not
    * override it, because `assertCanEdit` checks role and status
    * independently. Deleting was the only remedy and the API refuses that too.
    *
@@ -1592,11 +1627,10 @@ export class ActivityRecordsService {
    * baseline excludes it by construction rather than by a filter each call site
    * has to remember.
    *
-   * `super_admin` only, narrower than `REVIEW_ROLES` on purpose: a consultant
-   * may send a record back for revision (`reject`), but removing an accepted
-   * figure from the client's reported inventory is the holding company's own
-   * decision. A consultant may approve (Decisions 2026-11-12, K2) but not
-   * void: hence `VOID_ROLES`, separate from `mayApproveRecords`.
+   * A masterkey only (`record.void`), narrower than `record.decide` on
+   * purpose: a super_admin may return or approve a record of their company,
+   * but removing an accepted figure from the reported inventory is the
+   * organisation-wide administrator's decision (INC-2.6 ruling R4).
    *
    * The pilot's correction procedure (decision D04, 2026-09-29) is an audited
    * unlock → void → re-entry: the voided row leaves the uniqueness index, so
@@ -1608,8 +1642,8 @@ export class ActivityRecordsService {
     reason: string,
   ): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
-    if (!VOID_ROLES.has(user.role)) {
-      throw new ForbiddenException('Only a super_admin may void records');
+    if (!can(user.role, 'record.void')) {
+      throw new ForbiddenException('Only a masterkey may void records');
     }
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
@@ -1645,12 +1679,14 @@ export class ActivityRecordsService {
     varianceReason: string,
     seenSubmittedAt?: SeenSubmission,
   ): Promise<ActivityRecordDTO> {
-    const seen = await this.loadScoped(user, id);
-    if (!REVIEW_ROLES.has(user.role)) {
+    // The role refusal comes before every other answer (record-lifecycle spec):
+    // a role that decides nothing is refused even for a record it cannot read.
+    if (!can(user.role, 'record.decide')) {
       throw new ForbiddenException(
-        'Only a consultant or super_admin may return records',
+        'Only a masterkey or a super_admin may return records',
       );
     }
+    const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
@@ -1668,11 +1704,13 @@ export class ActivityRecordsService {
         }
         assertSameSubmission(record, seenSubmittedAt);
       });
+      // Returning belongs to the record's approver too (INC-2.6 §1.1, §1.2).
+      const decider = await deciderFor(tx, user, record, 'reject');
       // Period-lock gate (defense-in-depth): symmetric with approve.
       await this.assertPeriodNotLocked(periodOf(record), tx);
       // The reviewer's reason goes in reviewNote — overwriting varianceReason
       // would destroy the author's own anomaly justification (VAR §4).
-      return this.transition(tx, user, record, ActivityRecordStatus.rejected, {
+      return this.transition(tx, decider, record, ActivityRecordStatus.rejected, {
         reviewNote: varianceReason,
       });
     });
@@ -1725,7 +1763,8 @@ export class ActivityRecordsService {
 
   /** The response for a committed write: resolved actor names, after the transaction. */
   private async writtenDTO(user: RequestUser, row: WrittenRecord & FuelResolved): Promise<ActivityRecordDTO> {
-    return this.toDTO(row, row._count.evidenceLinks, await this.actorsFor(user, [row]), row.fuelRecords);
+    const [actors, approvers] = await Promise.all([this.actorsFor(user, [row]), approversFor(this.prisma, [row])]);
+    return this.toDTO(row, row._count.evidenceLinks, actors, row.fuelRecords, approvers);
   }
 
   /**
@@ -1822,7 +1861,12 @@ export class ActivityRecordsService {
     await this.audit.record(
       user,
       {
-        action: ActivityRecordsService.TRANSITION_ACTIONS[status] ?? 'update',
+        // A masterkey approving their own record (the only author who reaches
+        // that line) is a self-approval, its own action (INC-2.6 §1.1).
+        action:
+          status === ActivityRecordStatus.approved && record.createdBy === user.id
+            ? 'self_approve'
+            : (ActivityRecordsService.TRANSITION_ACTIONS[status] ?? 'update'),
         entity: 'activity_record',
         entityId: record.id,
         diff: {

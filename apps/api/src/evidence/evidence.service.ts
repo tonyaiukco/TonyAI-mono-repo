@@ -22,6 +22,7 @@ import {
   type EvidenceLinkRefusedDTO,
   mayAuthorRecords,
   EDITABLE_RECORD_STATUSES,
+  can,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
@@ -29,6 +30,7 @@ import { StorageIntentsService, type ObjectRef } from '../storage/storage-intent
 import { EVIDENCE_BUCKET } from '../storage/buckets';
 import { captureException } from '../observability/sentry';
 import type { RequestUser } from '../auth/auth.types';
+import { inRecordScope } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
 import {
@@ -88,6 +90,9 @@ const WITH_LINKED_RECORDS = {
       activityRecord: {
         select: {
           id: true,
+          // For the reader's record scope (a standard user's categories).
+          subsidiaryId: true,
+          createdBy: true,
           category: true,
           reportingYear: true,
           periodValue: true,
@@ -201,13 +206,19 @@ export class EvidenceService {
     const record = await this.prisma.activityRecord.findUnique({
       where: { id: recordId },
     });
-    if (!record || !user.accessibleSubsidiaryIds.includes(record.subsidiaryId)) {
+    // The record scope: a standard user reads evidence only through a record
+    // of a ticked category, or one it created (INC-2.6 §1, ruling R5).
+    if (!record || !inRecordScope(user, record)) {
       throw new ResourceNotFoundError('record_not_found');
     }
     return record;
   }
 
-  /** Load a file through its own subsidiary (out-of-set → 404, the same as a missing id). */
+  /**
+   * Load a file through its own subsidiary (out-of-set → 404, the same as a
+   * missing id). A standard user reads a file only as the evidence of a
+   * record it reads — or one it uploaded itself (an upload not yet linked).
+   */
   private async loadEvidenceScoped(
     user: RequestUser,
     id: string,
@@ -217,6 +228,13 @@ export class EvidenceService {
       include: WITH_LINKED_RECORDS,
     });
     if (!evidence || !user.accessibleSubsidiaryIds.includes(evidence.subsidiaryId)) {
+      throw new ResourceNotFoundError('evidence_not_found');
+    }
+    if (
+      can(user.role, 'scope.categories') &&
+      evidence.uploadedBy !== user.id &&
+      !evidence.links.some((l) => inRecordScope(user, l.activityRecord))
+    ) {
       throw new ResourceNotFoundError('evidence_not_found');
     }
     return evidence;
@@ -237,12 +255,12 @@ export class EvidenceService {
   /**
    * Why this caller may not change the evidence on `record`, or null.
    *
-   * The record's author only — `super_admin` included — on a still-editable
+   * The record's author only — `masterkey` included — on a still-editable
    * record, in an open period: the same three rules a record's own edit obeys
    * since BUG-R2-03. Author-only since Decisions 2026-11-12 (option A): with a
-   * `super_admin` exception, a `super_admin` could change a colleague's draft's
+   * `masterkey` exception, a `masterkey` could change a colleague's draft's
    * evidence and then approve it, which D01 (`createdBy` only) cannot see.
-   * Deleting a whole draft stays author-or-`super_admin` (the record service).
+   * Deleting a whole draft stays author-or-`masterkey` (the record service).
    * The period lock is new here (WP8 PR7): until then a rejected record inside
    * a locked period could still gain or lose a file.
    */
@@ -267,7 +285,7 @@ export class EvidenceService {
     }
     if (locked) {
       return new PeriodLockedError(
-        `Reporting period ${record.periodValue} ${record.reportingYear} is locked — a super_admin must unlock it before its evidence can change.`,
+        `Reporting period ${record.periodValue} ${record.reportingYear} is locked — a masterkey must unlock it before its evidence can change.`,
         record,
       );
     }
@@ -313,7 +331,11 @@ export class EvidenceService {
     if (rows.slice(0, limit).reduce((n, e) => n + e.links.length, 0) > this.limits.REPORT_EVIDENCE_LINK_LIMIT) {
       throw new QueryTooBroadError();
     }
-    return toCursorPage(rows, limit, EVIDENCE_SORT, binding, (e) => [e.createdAt, e.id], (e) => this.toDTO(e));
+    // A file may back records the reader does not see (another category):
+    // those are left out of its list, never named.
+    return toCursorPage(rows, limit, EVIDENCE_SORT, binding, (e) => [e.createdAt, e.id], (e) =>
+      this.toDTO({ ...e, links: e.links.filter((l) => inRecordScope(user, l.activityRecord)) }),
+    );
   }
 
   /** `POST /activity-records/:recordId/evidence` — one file for one record, with that record's own refusals. */
@@ -348,7 +370,8 @@ export class EvidenceService {
     const found = await this.prisma.activityRecord.findMany({
       where: { id: { in: ids }, subsidiaryId: { in: user.accessibleSubsidiaryIds } },
     });
-    const byId = new Map(found.map((r) => [r.id, r]));
+    // A record outside the caller's record scope answers as one that does not exist.
+    const byId = new Map(found.filter((r) => inRecordScope(user, r)).map((r) => [r.id, r]));
 
     const refused: EvidenceLinkRefusal[] = ids
       .filter((id) => !byId.has(id))
@@ -612,13 +635,18 @@ export class EvidenceService {
       .filter((x): x is { record: ActivityRecord; refusal: HttpException } => x.refusal !== null);
     if (refusals.length > 0) {
       if (records.length === 1) throw refusals[0].refusal;
+      // The decision reads every record the file backs; the answer names only
+      // those the caller may see (owner's review: a shared file must not
+      // reveal a hidden record's category, period or count).
+      const visible = refusals.filter(({ record }) => inRecordScope(user, record));
+      const hidden = refusals.length - visible.length;
+      const named = visible.map(({ record, refusal }) => `${recordLabel(record)} — ${refusal.message}`);
+      if (hidden > 0) named.push('records outside your access');
       throw new ConflictException(
         errorBody(
           'evidence_backs_locked_records',
-          `This file also backs records that can no longer change, so it cannot be deleted: ${refusals
-            .map(({ record, refusal }) => `${recordLabel(record)} — ${refusal.message}`)
-            .join('; ')}. Remove it from each editable record instead.`,
-          { count: refusals.length },
+          `This file also backs records that can no longer change, so it cannot be deleted: ${named.join('; ')}. Remove it from each editable record instead.`,
+          { count: visible.length, reach: hidden > 0 ? 'hidden' : 'visible' },
         ),
       );
     }

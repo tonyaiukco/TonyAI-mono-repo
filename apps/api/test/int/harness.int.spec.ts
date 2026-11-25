@@ -75,18 +75,20 @@ describe('createTenant', () => {
     await createRecord(a, tenant);
     await a.auditLog.create({
       data: {
-        userId: tenant.users.superAdmin.id,
+        userId: tenant.users.masterkey.id,
         organisationId: tenant.organisationId,
-        role: 'super_admin',
+        role: 'masterkey',
         action: 'create',
         entity: 'activity_record',
       },
     });
     expect(await countTenantRows(a, tenant)).toEqual({
       organisations: 1,
-      subsidiaries: 1,
+      // The granted company and the one granted to nobody (INC-2.6 fixture).
+      subsidiaries: 2,
       profiles: 4,
-      grants: 1,
+      // The super_admin's and the standard user's grant of the first.
+      grants: 2,
       records: 1,
       audit: 1,
     });

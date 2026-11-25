@@ -1,7 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
   ADMIN_EMAIL,
-  APPROVER_EMAIL,
   API_BASE,
   E2E_PERIOD,
   E2E_YEAR,
@@ -109,7 +108,7 @@ test('a closed period is closed whatever spelling closed it', async ({ request }
   // The sharper consequence, and the one the uniqueness half does not cover.
   // The lock gate and the `approved -> locked` flip are raw Postgres equality,
   // so a lock recorded under one spelling neither blocked, counted, nor flipped
-  // records recorded under another: a period a super_admin believed closed went
+  // records recorded under another: a period a masterkey believed closed went
   // on accepting writes.
   const token = await getAccessToken(request, ADMIN_EMAIL);
 
@@ -124,8 +123,9 @@ test('a closed period is closed whatever spelling closed it', async ({ request }
     periodValue: PERIOD,
     activityValue: 260,
   });
-  // The other super_admin approves: nobody approves a record they created (D01).
-  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
+  // Its approver approves it: the admin is a masterkey, so this is a
+  // self-approval (`recordApprover`).
+  await approveRecord(request, id);
 
   // Locked with a DIFFERENT spelling from the record it must cover.
   const lockId = await lockPeriod(request, token, {

@@ -10,6 +10,7 @@ import { IntensityService } from './intensity.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
+import { makeAuditor, makeSuperAdmin } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -57,13 +58,13 @@ type PrismaMock = ReturnType<typeof createPrismaMock>;
 
 const admin: RequestUser = {
   id: 'admin-1',
-  role: 'super_admin',
+  role: 'masterkey',
   accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
 } as RequestUser;
 
 const entry: RequestUser = {
   id: 'entry-1',
-  role: 'data_entry',
+  role: 'standard_user',
   accessibleSubsidiaryIds: ['sub-1'],
 } as RequestUser;
 
@@ -132,10 +133,30 @@ describe('IntensityService', () => {
     expect(prisma.subsidiaryDenominator.findMany).not.toHaveBeenCalled();
   });
 
-  it('createDenominator is forbidden for non-super_admin', async () => {
+  it('createDenominator is forbidden for non-masterkey', async () => {
     await expect(
       service.createDenominator(entry, createInput),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it.each([
+    ['a scoped super_admin, even in its granted company', makeSuperAdmin()],
+    ['an auditor', makeAuditor()],
+    ['a standard_user', entry],
+  ])('refuses %s every denominator write before reading anything (intensity.write)', async (_who, user) => {
+    prisma.subsidiaryDenominator.findUnique.mockResolvedValue({ id: 'den-1', subsidiaryId: 'sub-1' });
+    for (const write of [
+      () => service.createDenominator(user, createInput),
+      () => service.updateDenominator(user, 'den-1', { value: 1 }),
+      () => service.removeDenominator(user, 'den-1'),
+    ]) {
+      const e = await write().catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as Error).message).toBe('Only a masterkey may manage intensity denominators');
+    }
+    expect(prisma.subsidiaryDenominator.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('createDenominator rejects a subsidiary outside the accessible set (404)', async () => {

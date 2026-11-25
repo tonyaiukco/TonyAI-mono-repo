@@ -191,7 +191,7 @@ test('a late Cancel of one record never refills the form over the record opened 
   await page.unroute(`**/api/v1/activity-records/${first}`);
 });
 
-test('the author recalls a submitted record, edits it and submits it again; a super_admin is offered neither', async ({ page, request }) => {
+test('the author recalls a submitted record, edits it and submits it again; a masterkey is offered neither', async ({ page, request }) => {
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const id = await createWasteDraft(request, token, 'December');
   await post(request, token, `/activity-records/${id}/submit`);
@@ -234,7 +234,8 @@ test('a voided evidence-required record is copied into a new draft, which needs 
   const bare = await request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(adminToken) });
   expect(bare.status()).toBe(409);
   expect((await bare.json()).code).toBe('record_changed');
-  await approveRecord(request, adminToken, id);
+  // The standard user's record is decided by its company's super_admin.
+  await approveRecord(request, id);
   await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: wrong meter reading' });
 
   await login(page, ENTRY_EMAIL);
@@ -280,12 +281,12 @@ test('a second Copy answering after a subsidiary switch never overwrites the swi
   for (const month of ['September', 'November']) {
     const id = await createDraft(request, entryToken, month, E2E_BULK_CATEGORY, E2E_BULK_UNIT);
     await post(request, entryToken, `/activity-records/${id}/submit`);
-    await approveRecord(request, adminToken, id);
+    await approveRecord(request, id);
     await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: copy race' });
     voided.push(id);
   }
 
-  // A super_admin: Copy is theirs on any voided record, and they see a second subsidiary.
+  // A masterkey: Copy is theirs on any voided record, and they see a second subsidiary.
   await login(page, ADMIN_EMAIL);
   await openDataEntry(page);
   await listOf(page).getByRole('button', { name: `Copy September ${E2E_YEAR} ${E2E_BULK_CATEGORY} to a new draft` }).click();

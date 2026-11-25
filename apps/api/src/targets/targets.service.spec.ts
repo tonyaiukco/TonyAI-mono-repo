@@ -9,6 +9,7 @@ import { TargetsService } from './targets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
+import { makeAuditor, makeSuperAdmin } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -72,7 +73,7 @@ const admin: RequestUser = {
   id: 'admin-1',
   email: 'admin@tonyai.local',
   fullName: 'Admin User',
-  role: 'super_admin',
+  role: 'masterkey',
   accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
 } as RequestUser;
 
@@ -80,7 +81,7 @@ const entry: RequestUser = {
   id: 'entry-1',
   email: 'entry@tonyai.local',
   fullName: 'Entry User',
-  role: 'data_entry',
+  role: 'standard_user',
   accessibleSubsidiaryIds: ['sub-1'],
 } as RequestUser;
 
@@ -112,6 +113,17 @@ describe('TargetsService', () => {
       emissions as unknown as EmissionsService,
       auditMock(),
     );
+  });
+
+  it('reads the latest committed year inside the reader\'s record scope (a standard user learns no other category\'s year)', async () => {
+    prisma.target.findMany.mockResolvedValue([makeTarget()]);
+    const narrowed: RequestUser = {
+      ...admin, id: 'user-entry', role: 'standard_user', accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] },
+    };
+    await service.progress(narrowed, IDS);
+    expect(prisma.activityRecord.groupBy.mock.calls[0][0].where.AND).toEqual([
+      { OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: 'user-entry' }] },
+    ]);
   });
 
   it('counts exactly what the dashboard counts — one list, not a copy', async () => {
@@ -194,11 +206,31 @@ describe('TargetsService', () => {
     expect(prisma.target.findMany).not.toHaveBeenCalled();
   });
 
-  it('create is forbidden for non-super_admin (and writes nothing)', async () => {
+  it('create is forbidden for non-masterkey (and writes nothing)', async () => {
     await expect(service.create(entry, validInput)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a scoped super_admin, even in its granted company', makeSuperAdmin()],
+    ['an auditor', makeAuditor()],
+    ['a standard_user', entry],
+  ])('refuses %s every target write before reading anything (target.write)', async (_who, user) => {
+    prisma.target.findUnique.mockResolvedValue(makeTarget());
+    for (const write of [
+      () => service.create(user, validInput),
+      () => service.update(user, 'tgt-1', { name: 'x' }),
+      () => service.remove(user, 'tgt-1'),
+    ]) {
+      const e = await write().catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as Error).message).toBe('Only a masterkey may manage targets');
+    }
+    expect(prisma.target.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('create rejects a subsidiary outside the accessible set (404)', async () => {

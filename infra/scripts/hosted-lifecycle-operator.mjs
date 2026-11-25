@@ -26,8 +26,11 @@ export async function execute(input, deps) {
   try {
     const org = await db.organisation.findUnique({ where: { id: target.organisationId } });
     const rows = await db.profile.findMany({ where: { organisationId: target.organisationId }, orderBy: { id: 'asc' } });
-    const expected = [{ id: target.userId, email: target.email, role: 'super_admin' },
-      ...input.invitees.map(x => ({ ...x, role: x.language === 'tr' ? 'super_admin' : 'executive_viewer' }))];
+    // The bootstrap's account is the organisation's masterkey; it invites a
+    // super_admin (tr) and an auditor (en) — the roles a masterkey may invite
+    // (inc26-roles-approval-chain, INC-2.6 §6).
+    const expected = [{ id: target.userId, email: target.email, role: 'masterkey' },
+      ...input.invitees.map(x => ({ ...x, role: x.language === 'tr' ? 'super_admin' : 'auditor' }))];
     if (!org || org.legalName !== target.name || org.offboardedAt !== null || rows.length !== expected.length
         || !expected.every(x => rows.some(r => r.id === x.id && r.email === x.email && (input.step.startsWith('offboard') || r.role === x.role)))) throw fail();
     const enId = input.invitees.find(x => x.language === 'en')?.id;

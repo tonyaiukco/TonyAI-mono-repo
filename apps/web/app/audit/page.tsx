@@ -43,8 +43,10 @@ import {
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
   isUserRole,
+  LEGACY_ROLES,
   LOCALE_FORMAT_TAGS,
   type AuditAction,
+  type DisplayRole,
   type AuditLogDTO,
   type Locale,
 } from "@/lib/types";
@@ -114,6 +116,14 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   capture: "bg-violet-500/15 text-violet-700 border-violet-500/30",
   // Violet too: LP3-04 PR D — a retained dataset issued as a retained PDF.
   issue: "bg-violet-500/15 text-violet-700 border-violet-500/30",
+  // Fuchsia, its own (inc26-roles-approval-chain): an approval whose approver
+  // is the author. Decisive like `approve`, and the one approval an auditor
+  // looks for, so it is never emerald — the trail's self-approved colour.
+  self_approve: "bg-fuchsia-500/15 text-fuchsia-700 border-fuchsia-500/30",
+  // Sky: the carry-over to the four-role model, written once per account with
+  // no actor. Not a person's act and not a change of access in use; a reader
+  // looks for it only to date the roles shown before it.
+  role_model_change: "bg-sky-500/15 text-sky-700 border-sky-500/30",
 };
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";
@@ -166,14 +176,24 @@ export default function AuditPage() {
   const tRoles = useTranslations("users");
   const t = useTranslations("audit");
   const tCommon = useTranslations("common");
-  const actionLabels = { reprice: t("actions.reprice"), reject: t("actions.reject") };
+  const actionLabels = {
+    reprice: t("actions.reprice"),
+    reject: t("actions.reject"),
+    self_approve: t("actions.self_approve"),
+    role_model_change: t("actions.role_model_change"),
+  };
   const displayAction = (action: string) => auditActionLabel(action, actionLabels, humanise(action));
   const locale = useLocale();
   const recordWords = useRecordWords();
   const showStableError = useStableErrorToast();
   const actorWords: AuditActorWords = { system: t("system"), deleted: tCommon("actor.deleted") };
-  /** A role as the trail names it; a retired one as stored. */
-  const roleName = (role: string) => (isUserRole(role) ? tRoles(`roles.${role}`) : role);
+  /** A role as history names it (design Decision 10): today's four, the
+   *  earlier model's `super_admin` and the three retired names by their labels;
+   *  any other text as stored. */
+  const roleName = (role: string) =>
+    isUserRole(role) || (LEGACY_ROLES as readonly string[]).includes(role)
+      ? tRoles(`roles.${role as DisplayRole}`)
+      : role;
   const signOut = useSignOut();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
@@ -292,10 +312,7 @@ export default function AuditPage() {
                 <div className="space-y-1">
                   <p className="font-medium">{t("forbidden.title")}</p>
                   <p className="text-sm text-muted-foreground">
-                    {t.rich("forbidden.body", {
-                      role: user?.role ?? "",
-                      mono: (chunks) => <span className="font-mono">{chunks}</span>,
-                    })}
+                    {t("forbidden.body", { role: user ? tRoles(`roles.${user.role}`) : "" })}
                   </p>
                 </div>
               </CardContent>

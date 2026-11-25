@@ -6,7 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toErrorBody } from '../common/api-error';
 import type { PrismaService } from '../prisma/prisma.service';
-import { makeDataEntry, makeSuperAdmin } from '../../test/helpers';
+import { makeAuditor, makeMasterkey, makeStandardUser, makeSuperAdmin } from '../../test/helpers';
 import { readInventoryBoundary } from '../inventory-boundary/boundary-reader';
 import { readCaptureContext, readCaptureFacts } from './dataset-reader';
 import { canonicalDatasetContent, reportDatasetFingerprint } from './dataset-fingerprint';
@@ -31,8 +31,8 @@ vi.mock('./dataset-reader', async (actual) => ({
 const BOUNDARY_ID = '0b1d0000-0000-4000-8000-000000000001';
 const ORG = 'org-1';
 
-const consultant = (over: Partial<RequestUser> = {}) => makeSuperAdmin({ id: 'user-consultant', role: 'consultant', ...over });
-const viewer = () => makeSuperAdmin({ id: 'user-viewer', role: 'executive_viewer' });
+const auditor = () => makeAuditor();
+const superAdmin = () => makeSuperAdmin();
 
 const header = (over: Record<string, unknown> = {}) => ({
   id: BOUNDARY_ID, reportingYear: 2026, version: 2, frozenAt: null as Date | null,
@@ -93,7 +93,7 @@ const failure = async (p: Promise<unknown>) => p.then(() => { throw new Error('r
 describe('ReportDatasetsService.capture', () => {
   let db: ReturnType<typeof mockDb>;
   let service: ReportDatasetsService;
-  const admin = makeSuperAdmin();
+  const admin = makeMasterkey();
 
   beforeEach(() => {
     vi.mocked(readInventoryBoundary).mockReset().mockResolvedValue(snapshotBoundary());
@@ -108,15 +108,18 @@ describe('ReportDatasetsService.capture', () => {
   const audited = () => db.tx.auditLog.create.mock.calls.map((c) => (c[0] as { data: { action: string } }).data.action);
 
   describe('refusals before anything is frozen (V2)', () => {
-    it('refuses data_entry and executive_viewer outright, reading nothing', async () => {
-      for (const user of [makeDataEntry(), viewer()]) {
-        expect(await failure(service.capture(user, { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
+    it('refuses a scoped super_admin, an auditor and a standard_user outright, reading nothing (dataset.capture)', async () => {
+      for (const user of [superAdmin(), auditor(), makeStandardUser()]) {
+        const refused = await failure(service.capture(user, { boundaryId: BOUNDARY_ID }));
+        expect(refused).toBeInstanceOf(ForbiddenException);
+        expect((refused as Error).message).toBe('Only a masterkey may capture a report dataset');
       }
       expect(db.prisma.$transaction).not.toHaveBeenCalled();
+      expect(vi.mocked(readCaptureFacts)).not.toHaveBeenCalled();
     });
 
     it('refuses a caller with no organisation', async () => {
-      expect(await failure(service.capture(makeSuperAdmin({ organisationId: null }), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
+      expect(await failure(service.capture(makeMasterkey({ organisationId: null }), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
       expect(db.prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -171,15 +174,26 @@ describe('ReportDatasetsService.capture', () => {
       });
     });
 
-    it('lets only super_admin freeze an open version — a consultant is refused, nothing frozen (V1)', async () => {
-      expect(await failure(service.capture(consultant(), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
+    // Before INC-2.6 a consultant captured a frozen version (and only the
+    // freeze of an open one was the admin's). Ruling R4 makes capture the
+    // masterkey's alone, so the auditor that inherits the consultant's reads
+    // is refused both — before the freeze transaction opens.
+    it('refuses an auditor an open version — nothing frozen, no transaction opened (V1, ruling R4)', async () => {
+      expect(await failure(service.capture(auditor(), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
       expect(db.tx.inventoryBoundary.updateMany).not.toHaveBeenCalled();
-      expect(db.order).toEqual(['ReadCommitted']);
+      expect(db.order).toEqual([]);
     });
 
-    it('lets a consultant capture a version already frozen, writing no freeze', async () => {
+    it('refuses an auditor even a version already frozen — nothing captured or audited (ruling R4)', async () => {
       db.tx.inventoryBoundary.findUniqueOrThrow.mockResolvedValueOnce(header({ frozenAt: new Date() }));
-      await service.capture(consultant(), { boundaryId: BOUNDARY_ID });
+      expect(await failure(service.capture(auditor(), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
+      expect(db.tx.reportDataset.create).not.toHaveBeenCalled();
+      expect(audited()).toEqual([]);
+    });
+
+    it('lets a masterkey capture a version already frozen, writing no freeze', async () => {
+      db.tx.inventoryBoundary.findUniqueOrThrow.mockResolvedValueOnce(header({ frozenAt: new Date() }));
+      await service.capture(admin, { boundaryId: BOUNDARY_ID });
       expect(db.tx.inventoryBoundary.updateMany).not.toHaveBeenCalled();
       expect(audited()).toEqual(['capture']);
     });
@@ -325,38 +339,44 @@ describe('ReportDatasetsService reads', () => {
     service = new ReportDatasetsService(db.prisma as unknown as PrismaService, new AuditService(db.prisma as unknown as PrismaService));
   });
 
-  it('refuses data_entry on every read (W3, V7)', async () => {
-    expect(await failure(service.get(makeDataEntry(), BOUNDARY_ID))).toBeInstanceOf(ForbiddenException);
-    expect(await failure(service.list(makeDataEntry(), 2026))).toBeInstanceOf(ForbiddenException);
+  it('refuses a standard_user and a scoped super_admin on every read, reading nothing (dataset.read; W3, V7)', async () => {
+    for (const user of [makeStandardUser(), superAdmin()]) {
+      for (const read of [service.get(user, BOUNDARY_ID), service.list(user, 2026)]) {
+        const refused = await failure(read);
+        expect(refused).toBeInstanceOf(ForbiddenException);
+        expect((refused as Error).message).toBe('Only a masterkey or an auditor reads report datasets');
+      }
+    }
+    expect(db.prisma.$transaction).not.toHaveBeenCalled();
+    expect(db.tx.reportDataset.findFirst).not.toHaveBeenCalled();
   });
 
   it('answers the stored text verbatim to a reader holding every referenced subsidiary', async () => {
     db.tx.reportDataset.findFirst.mockResolvedValueOnce({ content: '{"x":0.30000000000000004}', referencedSubsidiaryIds: ['sub-1'] });
-    expect(await service.get(viewer(), 'd-1')).toBe('{"x":0.30000000000000004}');
+    expect(await service.get(auditor(), 'd-1')).toBe('{"x":0.30000000000000004}');
   });
 
   it('answers report_dataset_not_found alike for an unknown one and one partly outside access', async () => {
     db.tx.reportDataset.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ content: '{}', referencedSubsidiaryIds: ['sub-1', 'sub-9'] });
-    expect(answered(await failure(service.get(viewer(), 'd-1')))).toBe('report_dataset_not_found');
-    expect(answered(await failure(service.get(viewer(), 'd-1')))).toBe('report_dataset_not_found');
+    expect(answered(await failure(service.get(auditor(), 'd-1')))).toBe('report_dataset_not_found');
+    expect(answered(await failure(service.get(auditor(), 'd-1')))).toBe('report_dataset_not_found');
   });
 
   it('lists nothing for a caller with no organisation', async () => {
-    expect(await service.list(makeSuperAdmin({ organisationId: null }), 2026)).toEqual({ items: [], truncated: false });
+    expect(await service.list(makeMasterkey({ organisationId: null }), 2026)).toEqual({ items: [], truncated: false });
   });
 });
 
 describe('the dataset routes\' guards', () => {
   const context = (user?: RequestUser) => ({ switchToHttp: () => ({ getRequest: () => ({ user }) }) }) as never;
-  it('admits super_admin and consultant to capture, and no one else', () => {
-    expect(new DatasetCapturerGuard().canActivate(context(makeSuperAdmin()))).toBe(true);
-    expect(new DatasetCapturerGuard().canActivate(context(consultant()))).toBe(true);
-    for (const user of [makeDataEntry(), viewer(), undefined]) {
+  it('admits a masterkey alone to capture — an auditor, a scoped super_admin and a standard_user are refused (ruling R4)', () => {
+    expect(new DatasetCapturerGuard().canActivate(context(makeMasterkey()))).toBe(true);
+    for (const user of [auditor(), superAdmin(), makeStandardUser(), undefined]) {
       expect(() => new DatasetCapturerGuard().canActivate(context(user))).toThrow(ForbiddenException);
     }
   });
-  it('admits every role but data_entry to read', () => {
-    for (const user of [makeSuperAdmin(), consultant(), viewer()]) expect(new DatasetReaderGuard().canActivate(context(user))).toBe(true);
-    for (const user of [makeDataEntry(), undefined]) expect(() => new DatasetReaderGuard().canActivate(context(user))).toThrow(ForbiddenException);
+  it('admits a masterkey and an auditor to read — a scoped super_admin and a standard_user are refused', () => {
+    for (const user of [makeMasterkey(), auditor()]) expect(new DatasetReaderGuard().canActivate(context(user))).toBe(true);
+    for (const user of [superAdmin(), makeStandardUser(), undefined]) expect(() => new DatasetReaderGuard().canActivate(context(user))).toThrow(ForbiddenException);
   });
 });

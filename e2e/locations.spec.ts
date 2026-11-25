@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import {
   login, bearer, getAccessToken, pickByFieldLabel, cleanupE2ESubsidiaries,
-  ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD, EVIDENCE_FIXTURE,
-  seenSubmittedAt,
+  ADMIN_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD, EVIDENCE_FIXTURE,
+  approveRecord, seenSubmittedAt,
 } from './helpers';
 
 /**
@@ -95,12 +95,9 @@ test('a subsidiary holding committed records cannot be deleted', async ({ reques
     multipart: { file: { name: 'guard.pdf', mimeType: 'application/pdf', buffer: readFileSync(EVIDENCE_FIXTURE) } },
   });
   await request.post(`${API_BASE}/activity-records/${rec.id}/submit`, { headers: bearer(token) });
-  // The other super_admin approves: nobody approves a record they created (D01).
-  const approver = await getAccessToken(request, APPROVER_EMAIL);
-  const approved = await request.post(`${API_BASE}/activity-records/${rec.id}/approve`, {
-    headers: bearer(approver),
-    data: { seenSubmittedAt: await seenSubmittedAt(request, approver, rec.id) },
-  });
+  // Its approver approves it: the admin, a masterkey, as a self-approval.
+  await approveRecord(request, rec.id);
+  const approved = await request.get(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) });
   expect((await approved.json()).status).toBe('approved');
 
   const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
@@ -306,7 +303,7 @@ test('locationName is a read-time field and never enters the audit trail', async
   await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
 });
 
-test('only a super_admin may write locations', async ({ page, request }) => {
+test('a standard user may not write locations', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const entry = await getAccessToken(request, ENTRY_EMAIL);
   const sub = await makeSubsidiary(request, token, 'E2E Test Co Loc RBAC');

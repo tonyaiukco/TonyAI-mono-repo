@@ -9,6 +9,7 @@ import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import { PeriodLocksService } from './period-locks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { makeAuditor, makeSuperAdmin } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -67,24 +68,24 @@ const LOCK_ROW = {
   createdAt: now,
 };
 
-function superAdmin(over: Partial<RequestUser> = {}): RequestUser {
+function masterkey(over: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
     fullName: 'Admin User',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
     ...over,
   };
 }
 
-function dataEntry(over: Partial<RequestUser> = {}): RequestUser {
+function standardUser(over: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
     fullName: 'Entry User',
-    role: 'data_entry',
+    role: 'standard_user',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1'],
     ...over,
@@ -109,34 +110,52 @@ describe('PeriodLocksService', () => {
     service = new PeriodLocksService(prisma as unknown as PrismaService, auditMock());
   });
 
-  it('only super_admin may lock (RBAC 403, nothing written)', async () => {
-    await expect(service.lock(dataEntry(), CREATE_DTO)).rejects.toBeInstanceOf(
+  it('only masterkey may lock (RBAC 403, nothing written)', async () => {
+    await expect(service.lock(standardUser(), CREATE_DTO)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('only super_admin may unlock (RBAC 403)', async () => {
-    await expect(service.unlock(dataEntry(), 'lock-1')).rejects.toBeInstanceOf(
+  it('only masterkey may unlock (RBAC 403)', async () => {
+    await expect(service.unlock(standardUser(), 'lock-1')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
   });
 
+  it.each([
+    ['a scoped super_admin, even in its granted company', makeSuperAdmin()],
+    ['an auditor', makeAuditor()],
+    ['a standard_user', standardUser()],
+  ])('refuses %s lock and unlock before reading anything (period_lock.write)', async (_who, user) => {
+    prisma.periodLock.findUnique.mockResolvedValue(LOCK_ROW);
+    for (const write of [() => service.lock(user, CREATE_DTO), () => service.unlock(user, 'lock-1')]) {
+      const e = await write().catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as Error).message).toBe('Only a masterkey may lock or unlock reporting periods');
+    }
+    expect(prisma.periodLock.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.tx.periodLock.create).not.toHaveBeenCalled();
+    expect(prisma.tx.periodLock.deleteMany).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
   it('cannot lock a period of an inaccessible subsidiary (404)', async () => {
     await expect(
-      service.lock(superAdmin(), { ...CREATE_DTO, subsidiaryId: 'sub-999' }),
+      service.lock(masterkey(), { ...CREATE_DTO, subsidiaryId: 'sub-999' }),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('rejects a non-canonical periodValue (400)', async () => {
     await expect(
-      service.lock(superAdmin(), { ...CREATE_DTO, periodValue: 'Quarter1' }),
+      service.lock(masterkey(), { ...CREATE_DTO, periodValue: 'Quarter1' }),
     ).rejects.toBeInstanceOf(BadRequestException);
     // Coded with the canonical granularity only — the value sent never rides
     // in the params (caller text).
     const refusal = await service
-      .lock(superAdmin(), { ...CREATE_DTO, periodValue: 'Quarter1' })
+      .lock(masterkey(), { ...CREATE_DTO, periodValue: 'Quarter1' })
       .catch((e: BadRequestException) => e.getResponse());
     expect(refusal).toMatchObject({
       code: 'period_lock_value_invalid',
@@ -145,7 +164,7 @@ describe('PeriodLocksService', () => {
     expect(JSON.stringify((refusal as { params: unknown }).params)).not.toMatch(/Quarter1/);
     // A granularity past the DTO is not echoed either (security-rls P3-1).
     const past = await service
-      .lock(superAdmin(), { ...CREATE_DTO, reportingPeriod: 'weekly<b>' as never })
+      .lock(masterkey(), { ...CREATE_DTO, reportingPeriod: 'weekly<b>' as never })
       .catch((e: BadRequestException) => e.getResponse());
     expect(past).toMatchObject({ code: 'period_lock_value_invalid' });
     expect((past as { params?: unknown }).params).toBeUndefined();
@@ -158,7 +177,7 @@ describe('PeriodLocksService', () => {
     const rlo = String.fromCharCode(0x202e);
 
     await expect(
-      service.lock(superAdmin(), {
+      service.lock(masterkey(), {
         ...CREATE_DTO,
         periodValue: `Quarter${rlo}${'x'.repeat(60)}`,
       }),
@@ -173,7 +192,7 @@ describe('PeriodLocksService', () => {
     prisma.tx.periodLock.create.mockResolvedValue(LOCK_ROW);
     prisma.tx.activityRecord.updateMany.mockResolvedValue({ count: 1 });
 
-    await service.lock(superAdmin(), { ...CREATE_DTO, periodValue: '  q1  ' });
+    await service.lock(masterkey(), { ...CREATE_DTO, periodValue: '  q1  ' });
 
     expect(prisma.tx.activityRecord.groupBy.mock.calls[0][0].where).toMatchObject({
       periodValue: 'Q1',
@@ -190,7 +209,7 @@ describe('PeriodLocksService', () => {
     prisma.tx.periodLock.create.mockResolvedValue(LOCK_ROW);
     prisma.tx.activityRecord.updateMany.mockResolvedValue({ count: 3 });
 
-    const dto = await service.lock(superAdmin(), CREATE_DTO);
+    const dto = await service.lock(masterkey(), CREATE_DTO);
 
     expect(dto.periodValue).toBe('Q1');
     // Committed → locked, scoped to the exact period tuple.
@@ -218,10 +237,10 @@ describe('PeriodLocksService', () => {
       { status: 'under_review', _count: { _all: 1 } },
     ]);
 
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toThrow(
       /^2 record\(s\) in this period are still awaiting review/,
     );
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toMatchObject({
       response: { code: 'period_records_awaiting_review', params: { pending: 2 } },
     });
     expect(prisma.tx.periodLock.create).not.toHaveBeenCalled();
@@ -230,7 +249,7 @@ describe('PeriodLocksService', () => {
 
     // Assert WHICH statuses were counted, not just that a count happened. With
     // the count mocked, an empty or truncated status list still produced a
-    // green suite — and an empty one means a super_admin can close a period
+    // green suite — and an empty one means a masterkey can close a period
     // holding undecided records, flipping them to the immutable `locked`
     // state unreviewed. That is the exact failure this gate exists to stop.
     expect(prisma.tx.activityRecord.groupBy).toHaveBeenCalledWith(
@@ -247,7 +266,7 @@ describe('PeriodLocksService', () => {
     // the lock row put an unreviewed record inside a closed period.
     prisma.tx.periodLock.create.mockResolvedValue(LOCK_ROW);
 
-    await service.lock(superAdmin(), CREATE_DTO);
+    await service.lock(masterkey(), CREATE_DTO);
 
     expect((prisma.tx.$executeRaw.mock.calls[0][0] as string[]).join('?')).toMatch(
       /pg_advisory_xact_lock\(/,
@@ -263,11 +282,11 @@ describe('PeriodLocksService', () => {
       { status: 'rejected', _count: { _all: 1 } },
     ]);
 
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toThrow(
       /^1 returned record\(s\) are waiting for their authors/,
     );
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toBeInstanceOf(ConflictException);
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toMatchObject({
       response: { code: 'period_records_rejected', params: { rejected: 1 } },
     });
     expect(prisma.tx.periodLock.create).not.toHaveBeenCalled();
@@ -279,10 +298,10 @@ describe('PeriodLocksService', () => {
       { status: 'rejected', _count: { _all: 1 } },
     ]);
 
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toThrow(
       /2 record\(s\).*awaiting review.*; 1 returned record\(s\).* before locking\.$/,
     );
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toMatchObject({
       response: { code: 'period_records_open', params: { pending: 2, rejected: 1 } },
     });
   });
@@ -294,10 +313,10 @@ describe('PeriodLocksService', () => {
         clientVersion: 'test',
       }),
     );
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toBeInstanceOf(
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toBeInstanceOf(
       ConflictException,
     );
-    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+    await expect(service.lock(masterkey(), CREATE_DTO)).rejects.toMatchObject({
       response: { code: 'period_already_locked', message: 'This reporting period is already locked.' },
     });
   });
@@ -306,7 +325,7 @@ describe('PeriodLocksService', () => {
     prisma.periodLock.findUnique.mockResolvedValue(LOCK_ROW);
     prisma.tx.activityRecord.updateMany.mockResolvedValue({ count: 3 });
 
-    const res = await service.unlock(superAdmin(), 'lock-1');
+    const res = await service.unlock(masterkey(), 'lock-1');
 
     expect(res).toEqual({ id: 'lock-1', deleted: true });
     // The period held exclusively before the row goes.
@@ -336,7 +355,7 @@ describe('PeriodLocksService', () => {
     prisma.periodLock.findUnique.mockResolvedValue(LOCK_ROW);
     prisma.tx.periodLock.deleteMany.mockResolvedValue({ count: 0 });
 
-    await expect(service.unlock(superAdmin(), 'lock-1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.unlock(masterkey(), 'lock-1')).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.tx.activityRecord.updateMany).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
@@ -347,13 +366,13 @@ describe('PeriodLocksService', () => {
       subsidiaryId: 'sub-999',
     });
     await expect(
-      service.unlock(superAdmin(), 'lock-1'),
+      service.unlock(masterkey(), 'lock-1'),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('a page scopes to the accessible set, newest first, and is empty for a foreign subsidiary', async () => {
-    const user = dataEntry();
+    const user = standardUser();
     await service.listPage(user, {});
     expect(prisma.periodLock.findMany).toHaveBeenCalledWith({
       where: { subsidiaryId: { in: ['sub-1'] } },
@@ -378,14 +397,14 @@ describe('PeriodLocksService', () => {
       [1, 2].map((n) => ({ id: `00000000-0000-4000-8000-00000000000${n}`, subsidiaryId: 'sub-1', reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1', lockedBy: 'u', createdAt: at })),
     );
     const base = { subsidiaryId: 'sub-1', year: 2026, period: 'quarterly' as const, periodValue: 'Q1' };
-    const { nextCursor } = await service.listPage(dataEntry(), { ...base, limit: 1 });
-    await expect(service.listPage(dataEntry(), { ...base, ...change, limit: 1, cursor: nextCursor! })).rejects.toThrow(
+    const { nextCursor } = await service.listPage(standardUser(), { ...base, limit: 1 });
+    await expect(service.listPage(standardUser(), { ...base, ...change, limit: 1, cursor: nextCursor! })).rejects.toThrow(
       expect.objectContaining({ response: expect.objectContaining({ code: 'validation_failed' }) }),
     );
   });
 
   it('the exact query addresses one lock: its period value canonicalised', async () => {
-    await service.listPage(dataEntry(), { subsidiaryId: 'sub-1', year: 2026, period: 'monthly', periodValue: 'march', limit: 1 });
+    await service.listPage(standardUser(), { subsidiaryId: 'sub-1', year: 2026, period: 'monthly', periodValue: 'march', limit: 1 });
     expect(prisma.periodLock.findMany.mock.calls[0][0].where).toEqual({
       subsidiaryId: { in: ['sub-1'] }, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'March',
     });

@@ -84,8 +84,9 @@ describe("versionState", () => {
   });
 });
 
-describe("boundaryActions — only super_admin writes, only on the open version", () => {
-  const ROLES: UserRole[] = ["consultant", "data_entry", "executive_viewer"];
+describe("boundaryActions — only masterkey writes, only on the open version", () => {
+  // `boundary.write` is the masterkey's (a super_admin's own company waits for inc26-group-tree).
+  const ROLES: UserRole[] = ["super_admin", "standard_user", "auditor"];
 
   it.each(ROLES)("%s may not create, edit or confirm", (role) => {
     const a = boundaryActions({ role, versions: [summary(1, CONFIRMED)], selected: dto() });
@@ -97,25 +98,25 @@ describe("boundaryActions — only super_admin writes, only on the open version"
     expect(boundaryActions({ role: undefined, versions: [], selected: null })).toEqual({ create: false, edit: false, confirmBlock: null });
   });
 
-  it("super_admin starts a version only when the year has no open one (boundary_draft_open)", () => {
-    expect(boundaryActions({ role: "super_admin", versions: [], selected: null }).create).toBe(true);
-    expect(boundaryActions({ role: "super_admin", versions: [summary(1, CONFIRMED)], selected: null }).create).toBe(true);
-    expect(boundaryActions({ role: "super_admin", versions: [summary(2), summary(1, CONFIRMED)], selected: null }).create).toBe(false);
+  it("masterkey starts a version only when the year has no open one (boundary_draft_open)", () => {
+    expect(boundaryActions({ role: "masterkey", versions: [], selected: null }).create).toBe(true);
+    expect(boundaryActions({ role: "masterkey", versions: [summary(1, CONFIRMED)], selected: null }).create).toBe(true);
+    expect(boundaryActions({ role: "masterkey", versions: [summary(2), summary(1, CONFIRMED)], selected: null }).create).toBe(false);
   });
 
   it("says why a confirmation would be refused, for whoever looks", () => {
-    expect(boundaryActions({ role: "consultant", versions: [summary(2)], selected: dto() }).confirmBlock).toBe("gaps");
-    expect(boundaryActions({ role: "super_admin", versions: [summary(2)], selected: dto({}, ["gas"]) }).confirmBlock).toBeNull();
+    expect(boundaryActions({ role: "auditor", versions: [summary(2)], selected: dto() }).confirmBlock).toBe("gaps");
+    expect(boundaryActions({ role: "masterkey", versions: [summary(2)], selected: dto({}, ["gas"]) }).confirmBlock).toBeNull();
   });
 
-  it("super_admin edits the open version, never a frozen one (boundary_frozen)", () => {
-    expect(boundaryActions({ role: "super_admin", versions: [summary(2)], selected: dto() }).edit).toBe(true);
-    expect(boundaryActions({ role: "super_admin", versions: [summary(2, CONFIRMED)], selected: dto(CONFIRMED) }).edit).toBe(false);
-    expect(boundaryActions({ role: "super_admin", versions: [summary(2, CAPTURED)], selected: dto(CAPTURED) }).edit).toBe(false);
+  it("masterkey edits the open version, never a frozen one (boundary_frozen)", () => {
+    expect(boundaryActions({ role: "masterkey", versions: [summary(2)], selected: dto() }).edit).toBe(true);
+    expect(boundaryActions({ role: "masterkey", versions: [summary(2, CONFIRMED)], selected: dto(CONFIRMED) }).edit).toBe(false);
+    expect(boundaryActions({ role: "masterkey", versions: [summary(2, CAPTURED)], selected: dto(CAPTURED) }).edit).toBe(false);
   });
 
   it("a partial view is never edited — a whole-subsidiary PUT from it would be one", () => {
-    expect(boundaryActions({ role: "super_admin", versions: [summary(2)], selected: dto({ view: "granted_subsidiaries" }) }).edit)
+    expect(boundaryActions({ role: "masterkey", versions: [summary(2)], selected: dto({ view: "granted_subsidiaries" }) }).edit)
       .toBe(false);
   });
 });

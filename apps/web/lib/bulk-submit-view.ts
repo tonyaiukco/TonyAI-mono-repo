@@ -291,7 +291,7 @@ export type SubmittableRow = Pick<
 /** Who is asking. `null` while `api.me()` is still in flight. */
 export type SubmittingUser = Pick<AuthUser, 'id' | 'role'>;
 
-/** Only the author may submit, including when the caller is a super_admin. */
+/** Only the author may submit, including when the caller is a masterkey. */
 export function authoredBy(row: SubmittableRow, user: SubmittingUser): boolean {
   return row.createdBy === user.id;
 }

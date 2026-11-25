@@ -31,7 +31,8 @@
     "returned": "Returned",
     "approved": "Approved",
     "voided": "Voided",
-    "other": "{action}"
+    "other": "{action}",
+    "self_approved": "Self-approved"
   },
   "actions": {
     "reprice": "Figure recalculated"

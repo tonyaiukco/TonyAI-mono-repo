@@ -284,7 +284,7 @@ export function assertAuthConfig(): void {
   if (strict && secret === DEMO_JWT_SECRET) {
     throw new Error(
       'SUPABASE_JWT_SECRET is still the publicly known Supabase demo secret. ' +
-        'Anyone could forge a super_admin token.' +
+        'Anyone could forge a masterkey token.' +
         localHint,
     );
   }

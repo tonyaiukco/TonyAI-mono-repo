@@ -81,7 +81,7 @@ test('Subsidiaries, Review and Audit speak Turkish', async ({ page }) => {
   await expect(page.getByRole('heading', { name: trAudit.title })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: trAudit.columns.role })).toBeVisible();
   await expect(page.locator('table tbody tr').first()).toBeVisible();
-  await expect(page.getByText(trUsers.roles.super_admin, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(trUsers.roles.masterkey, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(new RegExp(`^${trAudit.page.split('{page}')[0]}1 / `))).toBeVisible();
 
   // English through the switcher.

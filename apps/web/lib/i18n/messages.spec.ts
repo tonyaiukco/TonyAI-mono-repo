@@ -10,6 +10,7 @@ import {
   API_ERROR_SENTENCE_SELECTORS,
   VARIANCE_BASES,
   PARAMETERS_REQUIRED_INPUTS,
+  RECORD_APPROVERS,
   BULK_UPLOAD_ISSUE_CODES,
   CATEGORIES,
   CATEGORY_ACTIVITY_TYPES,
@@ -114,6 +115,8 @@ describe("the catalogues", () => {
       ...['subsidiaries.monthRange', 'gaps.line', 'gaps.lineWithSources'].map((key) => `boundary.${key}`),
       // Units and formats with no words, and a name spelled alike (LP4-04 slice 2).
       'anomaly.tonnes',
+      // A role name spelled alike in both languages (INC-2.6 §1: "masterkey").
+      'users.roles.masterkey',
       'bulkUpload.groupHeading',
       'bulkUpload.sizeCap',
       'bulkUpload.tonnes.figure',
@@ -219,6 +222,16 @@ describe("the error codes", () => {
       for (const locale of SUPPORTED_LOCALES) {
         const variants = (MESSAGES[locale].errors as { variants?: Record<string, Record<string, string>> }).variants;
         expect(variants?.parameters_required?.[input], `${locale}: ${input}`).toBeTruthy();
+      }
+    }
+  });
+
+  it("every record approver has its own not_record_approver sentence (inc26-roles-approval-chain)", () => {
+    // The code's own sentence is only the fallback for an approver this build does not know.
+    for (const approver of RECORD_APPROVERS) {
+      for (const locale of SUPPORTED_LOCALES) {
+        const variants = (MESSAGES[locale].errors as { variants?: Record<string, Record<string, string>> }).variants;
+        expect(variants?.not_record_approver?.[approver], `${locale}: ${approver}`).toBeTruthy();
       }
     }
   });

@@ -94,8 +94,10 @@ How a request travels from sign-in to the database:
 - **Tenant isolation in three layers:** the API scopes every query to the caller's
   subsidiaries, composite foreign keys keep every grant inside its own organisation,
   and Row Level Security confines direct database clients.
-- **Four roles:** `super_admin`, `consultant`, `data_entry` and `executive_viewer`.
-  Only a `super_admin` changes organisation structure.
+- **Four roles:** `masterkey` (the whole organisation), `super_admin` (its assigned
+  companies), `standard_user` (one company, its assigned categories) and `auditor`
+  (reads everything, changes nothing). Only a `masterkey` changes organisation
+  structure, and a record is approved along an approval chain set by who entered it.
 - **Append-only audit log:** every change writes one row; nothing updates or deletes it.
 - **Immutable calculations:** emission factors are versioned and cite their source;
   a historic result never changes.
@@ -151,11 +153,11 @@ All seed users share the password `TonyAI-CI!2026`, the seed's `TONYAI_TEST_PASS
 
 | Email | Role | Sees |
 | --- | --- | --- |
-| `admin@tonyai.local` | `super_admin` | All 5 subsidiaries |
-| `approver@tonyai.local` | `super_admin` | All 5 — the second approver |
-| `entry@tonyai.local` | `data_entry` | 2 subsidiaries (isolation demo) |
-| `review@tonyai.local` | `consultant` | Organisation-wide; review, reject and approve (never enters data) |
-| `viewer@tonyai.local` | `executive_viewer` | Organisation-wide, read only |
+| `admin@tonyai.local` | `masterkey` | All 5 subsidiaries |
+| `approver@tonyai.local` | `super_admin` | 4 subsidiaries — all but TonyAI Trading; approves the standard user's records there |
+| `entry@tonyai.local` | `standard_user` | 2 subsidiaries, every category (isolation demo) |
+| `review@tonyai.local` | `auditor` | Organisation-wide, read only |
+| `viewer@tonyai.local` | `auditor` | Organisation-wide, read only |
 
 > [!WARNING]
 > The seeded emission factors are **placeholders, not authoritative values**. The API

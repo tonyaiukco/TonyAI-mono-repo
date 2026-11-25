@@ -81,7 +81,7 @@ function fuel(data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {}, on:
   });
 }
 
-const reader = (): RequestUser => tenant.users.superAdmin;
+const reader = (): RequestUser => tenant.users.masterkey;
 const stateOf = async (id: string, user: RequestUser = reader()) => (await s.records.get(user, id)).generationFuelRecord;
 
 describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
@@ -147,7 +147,7 @@ describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
       category: 'Natural Gas', reportingPeriod: 'monthly', periodValue: 'January', activityValue: 1, activityUnit: 'cubic_metres',
     });
     const both: RequestUser = {
-      ...tenant.users.superAdmin,
+      ...tenant.users.masterkey,
       accessibleSubsidiaryIds: [tenant.subsidiaryId, sister.id, other.subsidiaryId],
     };
     expect(await stateOf(chp.id, both)).toBe('missing');
@@ -183,14 +183,14 @@ describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
     const present = await electricity('natural_gas_chp', { status: ActivityRecordStatus.submitted });
     const missing = await electricity('natural_gas_chp', { status: ActivityRecordStatus.submitted, locationId: otherSite });
     await fuel();
-    const page = await s.records.listPage(tenant.users.consultant, {
+    const page = await s.records.listPage(tenant.users.superAdmin, {
       sort: 'review_queue',
       status: [ActivityRecordStatus.submitted, ActivityRecordStatus.under_review],
     } as never);
     const states = Object.fromEntries(page.items.map((r) => [r.id, r.generationFuelRecord]));
     expect(states).toEqual({ [present.id]: 'present', [missing.id]: 'missing' });
 
-    const reviewed = await s.records.startReview(tenant.users.consultant, missing.id);
+    const reviewed = await s.records.startReview(tenant.users.superAdmin, missing.id);
     expect(reviewed.status).toBe(ActivityRecordStatus.under_review);
     expect(reviewed.generationFuelRecord).toBe('missing');
   });
@@ -200,7 +200,7 @@ describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
     const before = await owner.auditLog.count({ where: { entityId: chp.id } });
     await stateOf(chp.id);
     expect(await owner.auditLog.count({ where: { entityId: chp.id } })).toBe(before);
-    await s.records.startReview(tenant.users.consultant, chp.id);
+    await s.records.startReview(tenant.users.superAdmin, chp.id);
     const rows = await owner.auditLog.findMany({ where: { entityId: chp.id } });
     expect(rows.length).toBe(before + 1);
     expect(JSON.stringify(rows.map((r) => r.diff))).not.toContain('generationFuelRecord');
@@ -225,25 +225,25 @@ describe('the fuel-record read belongs to the write (outside review of 833db34c)
 
   it('a submit whose answer cannot be read is rolled back whole: the record stays a draft, no audit row', async () => {
     // Created through the service, so its snapshot is the engine's own (K11 at submit).
-    const chp = await s.records.create(tenant.users.dataEntry, {
+    const chp = await s.records.create(tenant.users.standardUser, {
       subsidiaryId: tenant.subsidiaryId, locationId: site, reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1',
       category: 'Electricity', activityValue: 5000, activityUnit: 'kWh', parameters: block('natural_gas_chp'),
     } as never);
     await attachEvidence(owner, tenant, [chp.id]);
     const before = await owner.auditLog.count({ where: { entityId: chp.id } });
 
-    await expect(lifecycleServices(failingFuelRead()).records.submit(tenant.users.dataEntry, chp.id)).rejects.toThrow(INJECTED);
+    await expect(lifecycleServices(failingFuelRead()).records.submit(tenant.users.standardUser, chp.id)).rejects.toThrow(INJECTED);
 
     expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: chp.id } })).status).toBe(ActivityRecordStatus.draft);
     expect(await owner.auditLog.count({ where: { entityId: chp.id } })).toBe(before);
     // The same submit, with the read working, commits.
-    expect((await s.records.submit(tenant.users.dataEntry, chp.id)).status).toBe(ActivityRecordStatus.submitted);
+    expect((await s.records.submit(tenant.users.standardUser, chp.id)).status).toBe(ActivityRecordStatus.submitted);
   });
 
   it('a create whose answer cannot be read writes nothing', async () => {
     const failing = lifecycleServices(failingFuelRead());
     await expect(
-      failing.records.create(tenant.users.dataEntry, {
+      failing.records.create(tenant.users.standardUser, {
         subsidiaryId: tenant.subsidiaryId, locationId: site, reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q2',
         category: 'Electricity', activityValue: 5000, activityUnit: 'kWh', parameters: block('natural_gas_chp'),
       } as never),

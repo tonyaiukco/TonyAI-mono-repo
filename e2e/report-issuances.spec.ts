@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { ADMIN_EMAIL, API_BASE, ENTRY_EMAIL, SUB, bearer, getAccessToken, login } from './helpers';
+import { ADMIN_EMAIL, API_BASE, APPROVER_EMAIL, ENTRY_EMAIL, SUB, bearer, getAccessToken, login } from './helpers';
 
 /**
  * LP4-03 PR B: the Reports screen's issued side, end to end — a boundary
@@ -153,9 +153,13 @@ test('the dashboard reads "Not covered" for a Scope 3 selection, and its total i
   await expect(page.getByTestId('coverage-card')).toBeVisible();
 });
 
-test('data_entry reads no issued report', async ({ page }) => {
-  await login(page, ENTRY_EMAIL);
-  await page.goto(issuedUrl);
-  await expect(page.getByTestId('issued-not-for-role')).toHaveText('Your role does not read issued reports.');
-  await expect(page.getByRole('button', { name: 'Capture the inventory' })).toHaveCount(0);
-});
+for (const [who, email] of [['a standard user', ENTRY_EMAIL], ['a super admin', APPROVER_EMAIL]] as const) {
+  test(`${who} reads no issued report`, async ({ page }) => {
+    // Captured datasets and issued reports are the masterkey's and the
+    // auditor's (`dataset.read`, ruling R4).
+    await login(page, email);
+    await page.goto(issuedUrl);
+    await expect(page.getByTestId('issued-not-for-role')).toHaveText('Issued reports are read by a Masterkey and an Auditor.');
+    await expect(page.getByRole('button', { name: 'Capture the inventory' })).toHaveCount(0);
+  });
+}

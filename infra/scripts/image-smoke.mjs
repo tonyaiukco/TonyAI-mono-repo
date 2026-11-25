@@ -14,7 +14,7 @@ async function probe(target, tenant, other, token, publicKey) {
   const meResponse = await request(`${target.api}/me`, { headers });
   requireThat(meResponse.status === 200);
   const me = await meResponse.json();
-  requireThat(me.id === tenant.userId && me.organisationId === tenant.organisationId && me.role === 'super_admin');
+  requireThat(me.id === tenant.userId && me.organisationId === tenant.organisationId && me.role === 'masterkey');
   const own = await request(`${target.api}/subsidiaries/${tenant.subsidiaryId}`, { headers });
   requireThat(own.status === 200);
   const row = await own.json();

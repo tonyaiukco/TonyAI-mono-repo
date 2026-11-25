@@ -55,11 +55,18 @@ export interface AuditActionLabels {
   reprice: string;
   /** The stored action stays `reject`; screens call it a return (WP5). */
   reject: string;
+  /** A masterkey's approval of their own record (inc26-roles-approval-chain):
+   *  the same words as the trail's kind, so a filter reads as the timeline does. */
+  self_approve: string;
+  /** One account carried over to the four-role model (no actor). */
+  role_model_change: string;
 }
+
+const WORDED_ACTIONS = ['reprice', 'reject', 'self_approve', 'role_model_change'] as const;
 
 /** Use the localized label of an action the page words, and keep the caller's display of other actions. */
 export function auditActionLabel(action: string, labels: AuditActionLabels, fallbackLabel = action): string {
-  return action === 'reprice' ? labels.reprice : action === 'reject' ? labels.reject : fallbackLabel;
+  return (WORDED_ACTIONS as readonly string[]).includes(action) ? labels[action as keyof AuditActionLabels] : fallbackLabel;
 }
 
 /**

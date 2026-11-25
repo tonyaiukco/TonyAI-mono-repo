@@ -5,7 +5,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { errorCodeOf, toErrorBody } from '../common/api-error';
 import type { PrismaService } from '../prisma/prisma.service';
-import { makeDataEntry, makeSuperAdmin } from '../../test/helpers';
+import { makeAuditor, makeMasterkey, makeStandardUser, makeSuperAdmin } from '../../test/helpers';
 import { InventoryBoundariesService } from './inventory-boundaries.service';
 
 /**
@@ -67,7 +67,7 @@ const BODY = { firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applica
 describe('InventoryBoundariesService', () => {
   let db: ReturnType<typeof mockDb>;
   let service: InventoryBoundariesService;
-  const admin = makeSuperAdmin();
+  const admin = makeMasterkey();
 
   beforeEach(() => {
     db = mockDb();
@@ -84,14 +84,16 @@ describe('InventoryBoundariesService', () => {
 
   describe('who writes (E2)', () => {
     it.each([
-      ['consultant', makeSuperAdmin({ role: 'consultant' })],
-      ['executive_viewer', makeSuperAdmin({ role: 'executive_viewer' })],
-      ['data_entry', makeDataEntry()],
-      ['a super_admin with no organisation', makeSuperAdmin({ organisationId: null })],
+      ['a scoped super_admin (boundary.write is the masterkey\'s)', makeSuperAdmin()],
+      ['an auditor', makeAuditor()],
+      ['a standard_user', makeStandardUser()],
+      ['a masterkey with no organisation', makeMasterkey({ organisationId: null })],
     ])('refuses %s every write, before reading anything', async (_who, user) => {
       for (const write of writes(user)) {
         await expect(write()).rejects.toBeInstanceOf(ForbiddenException);
       }
+      expect(db.tx.auditLog.create).not.toHaveBeenCalled();
+      expect(db.prisma.auditLog.create).not.toHaveBeenCalled();
       expect(db.prisma.$transaction).not.toHaveBeenCalled();
       expect(db.tx.$queryRaw).not.toHaveBeenCalled();
     });
@@ -269,9 +271,12 @@ describe('InventoryBoundariesService', () => {
   });
 
   describe('reads', () => {
-    it("lists a data_entry user's versions declaring a granted subsidiary — and nothing with no organisation", async () => {
+    it.each([
+      ['a standard_user', makeStandardUser()],
+      ['a scoped super_admin (a granted reader, like a standard user)', makeSuperAdmin()],
+    ])("lists %s's versions declaring a granted subsidiary only", async (_who, user) => {
       db.prisma.inventoryBoundary.findMany.mockResolvedValue([header()]);
-      await service.list(makeDataEntry(), { reportingYear: 2026 });
+      await service.list(user, { reportingYear: 2026 });
       expect(db.prisma.inventoryBoundary.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: {
           organisationId: 'org-1',
@@ -280,12 +285,18 @@ describe('InventoryBoundariesService', () => {
         },
         orderBy: { version: 'desc' },
       }));
-      await service.list(admin, { reportingYear: 2026 });
-      expect(db.prisma.inventoryBoundary.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
-        where: { organisationId: 'org-1', reportingYear: 2026 },
-      }));
+    });
+
+    it("lists the organisation's versions to a masterkey and an auditor — and nothing with no organisation", async () => {
+      db.prisma.inventoryBoundary.findMany.mockResolvedValue([header()]);
+      for (const user of [admin, makeAuditor()]) {
+        await service.list(user, { reportingYear: 2026 });
+        expect(db.prisma.inventoryBoundary.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+          where: { organisationId: 'org-1', reportingYear: 2026 },
+        }));
+      }
       db.prisma.inventoryBoundary.findMany.mockClear();
-      expect(await service.list(makeDataEntry({ organisationId: null }), { reportingYear: 2026 })).toEqual([]);
+      expect(await service.list(makeStandardUser({ organisationId: null }), { reportingYear: 2026 })).toEqual([]);
       expect(db.prisma.inventoryBoundary.findMany).not.toHaveBeenCalled();
     });
 
@@ -297,7 +308,7 @@ describe('InventoryBoundariesService', () => {
         expect.objectContaining({ isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }),
       );
       db.prisma.$transaction.mockClear();
-      await expect(service.get(makeSuperAdmin({ organisationId: null }), ID)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_not_found');
+      await expect(service.get(makeMasterkey({ organisationId: null }), ID)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_not_found');
       expect(db.prisma.$transaction).not.toHaveBeenCalled();
     });
   });

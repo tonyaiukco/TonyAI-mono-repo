@@ -22,7 +22,7 @@
   "removed": "Hedef kaldırıldı",
   "empty": "Henüz azaltım hedefi yok",
   "emptyManage": "Sayılan emisyonlara karşı ilerlemeyi izlemek için bir hedef ekleyin.",
-  "emptyView": "Azaltım hedeflerini bir super_admin tanımlayabilir.",
+  "emptyView": "Azaltım hedeflerini bir Masterkey tanımlayabilir.",
   "progressNa": "İlerleme yok",
   "delete": "Hedefi sil",
   "reduction": "−%{value}",

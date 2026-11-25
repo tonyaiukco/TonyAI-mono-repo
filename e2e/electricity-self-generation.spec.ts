@@ -12,8 +12,6 @@ import trPeriods from '../apps/web/messages/tr/periods.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
-  APPROVER_EMAIL,
-  CONSULTANT_EMAIL,
   E2E_PERIOD,
   E2E_YEAR,
   EVIDENCE_FIXTURE,
@@ -381,12 +379,12 @@ test('an edit that names no version cannot change or remove a stored block, as a
 test('a voided record copied to a new draft keeps its block', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token);
-  // Electricity needs its evidence at submit and approval (K3); a second
-  // super_admin approves, since nobody approves their own record (D01).
+  // Electricity needs its evidence at submit and approval (K3); its approver
+  // approves it — the admin, a masterkey, as a self-approval.
   await attachEvidence(request, token, id);
   const submitted = await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(token) });
   expect(submitted.ok(), await submitted.text()).toBe(true);
-  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
+  await approveRecord(request, id);
   const voided = await request.post(`${API_BASE}/activity-records/${id}/void`, {
     headers: bearer(token),
     data: { voidReason: 'e2e: copied to a new draft' },
@@ -724,8 +722,9 @@ test('the review sheet shows a CHP block, notes a missing gas record and a balan
     await expect(page.getByRole('dialog').getByTestId('review-self-generation-source')).toHaveText(RS.sources.natural_gas_chp);
   };
 
-  // A consultant reviews a record the admin entered.
-  await login(page, CONSULTANT_EMAIL);
+  // The admin entered it, and a masterkey's record is decided by its author
+  // (`recordApprover`): the admin reviews it, as a self-approval.
+  await login(page, ADMIN_EMAIL);
   await openSheet();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByTestId('review-self-generation-generated')).toHaveText('4,000 kWh');
@@ -955,7 +954,7 @@ test('the review sheet holds its decisions until it has read the record, and dro
   const dialog = page.getByRole('dialog');
   const approve = dialog.getByRole('button', { name: enReview.sheet.approve, exact: true });
 
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, ADMIN_EMAIL);
   await page.goto('/review');
 
   // A read that fails: the decisions wait, and Retry reads it again.
@@ -1011,7 +1010,7 @@ const siteRow = (page: Page) =>
 test('the start of review an opening sends names the submission it saw; refused, the sheet reads again once and never starts again', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await submittedAtSite(request, token);
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, ADMIN_EMAIL);
   await page.goto('/review');
   // The open's start of review is held until the author has sent a newer submission.
   let release!: () => void;
@@ -1058,7 +1057,7 @@ test('the start of review an opening sends names the submission it saw; refused,
 test('a review step answered after the sheet was closed and opened again leaves the new opening alone', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await submittedAtSite(request, token);
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, ADMIN_EMAIL);
   await page.goto('/review');
   const dialog = page.getByRole('dialog');
 
@@ -1128,7 +1127,7 @@ test('a page of files answered after the list started again is not added to it',
     return route.continue();
   });
 
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, ADMIN_EMAIL);
   await page.goto('/review');
   const dialog = page.getByRole('dialog');
   await siteRow(page).click();
@@ -1150,7 +1149,7 @@ test('a page of files answered after the list started again is not added to it',
 test('a record gone since the queue was read leaves it, with no Retry', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await submittedAtSite(request, token);
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, ADMIN_EMAIL);
   await page.goto('/review');
   const RECORD = `**/api/v1/activity-records/${id}`;
   await page.route(RECORD, (route) =>

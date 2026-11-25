@@ -17,7 +17,7 @@ interface LocationsDrawerProps {
   /** Doubles as the open/closed signal. */
   subsidiary: SubsidiaryDTO | null;
   locations: LocationDTO[];
-  /** Only super_admin may add/edit/delete (org structure). */
+  /** Only masterkey may add/edit/delete (org structure). */
   canManage: boolean;
   onClose: () => void;
   /** Called after any successful mutation so the parent can refetch. */

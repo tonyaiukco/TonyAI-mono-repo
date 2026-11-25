@@ -74,7 +74,7 @@ afterEach(async () => {
   await t?.cleanup();
 });
 
-const admin = () => t.users.superAdmin;
+const admin = () => t.users.masterkey;
 async function withAccess(user: RequestUser): Promise<RequestUser> {
   const subs = await owner.subsidiary.findMany({ where: { organisationId: t.organisationId }, select: { id: true } });
   return { ...user, accessibleSubsidiaryIds: subs.map((s) => s.id) };
@@ -217,7 +217,7 @@ describe('one selection, three formats (K4)', () => {
     await createRecord(owner, t, {
       reportingYear: YEAR, category: 'Water', scope: 3, periodValue: 'January', status: ActivityRecordStatus.approved, calculation: priced(999),
     });
-    const viewer = t.users.consultant;
+    const viewer = t.users.auditor;
     const meta = JSON.parse((await get(viewer, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     expect(meta.data.summary.totals).toEqual({ scope1: 0, scope2: 19.75, scope3: 0, total: 19.75 });
     // `priced` is a pre-release snapshot (no release), so its figure is not authoritative (QA L10).
@@ -248,7 +248,7 @@ describe('one selection, three formats (K4)', () => {
 describe('coverage is the boundary\'s, never a count of what exists (K3)', () => {
   it('says no boundary is declared, and never calls the year complete', async () => {
     await record('January', ActivityRecordStatus.approved, 1);
-    const meta = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
+    const meta = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     // Reviewed is not covered: the one record is approved, the year unknown.
     expect(meta.data.status).toBe('approved');
     expect(meta.data.coverage).toEqual({ state: 'no_boundary' });
@@ -257,7 +257,7 @@ describe('coverage is the boundary\'s, never a count of what exists (K3)', () =>
   it('a one-record partial year is not complete; a full year is not either until the version is confirmed', async () => {
     const boundaryId = await openVersion();
     await record('January', ActivityRecordStatus.approved, 1);
-    const one = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
+    const one = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     expect(one.data.status).toBe('approved');
     expect(one.data.coverage).toMatchObject({
       state: 'assessed', selection: 'inventory', boundary: { id: boundaryId, version: 1, decision: 'unconfirmed', frozen: false },
@@ -266,7 +266,7 @@ describe('coverage is the boundary\'s, never a count of what exists (K3)', () =>
     expect(one.data.coverage.state === 'assessed' && one.data.coverage.gapCounts.missing_record).toBe(11);
 
     for (const periodValue of MONTHS.slice(1)) await record(periodValue, ActivityRecordStatus.approved, 1);
-    const full = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
+    const full = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     expect(full.data.coverage).toMatchObject({ state: 'assessed', satisfiedObligationCount: 12, reading: 'gaps', gapCounts: { boundary_unconfirmed: 1 } });
 
     // The PDF says it in words.
@@ -277,7 +277,7 @@ describe('coverage is the boundary\'s, never a count of what exists (K3)', () =>
 
     // Confirmed: complete — the one positive reading, and still not a certification.
     await new InventoryBoundariesService(runtime, new AuditService(runtime)).confirm(await withAccess(admin()), boundaryId);
-    const confirmed = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
+    const confirmed = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     expect(confirmed.data.coverage).toMatchObject({ state: 'assessed', reading: 'complete', gapCounts: {}, boundary: { decision: 'confirmed', frozen: true } });
 
     // A subsidiary the boundary leaves out counts in the live total, so it is a gap here (architect P1-1).
@@ -285,16 +285,16 @@ describe('coverage is the boundary\'s, never a count of what exists (K3)', () =>
       data: { organisationId: t.organisationId, legalName: `Int-test outside ${randomUUID().slice(0, 8)}`, geographyCode: 'UK' },
     })).id;
     await createRecord(owner, t, { subsidiaryId: S2, reportingYear: YEAR, periodValue: 'January', status: ActivityRecordStatus.approved, calculation: priced(5) });
-    const outside = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
+    const outside = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     expect(outside.data.summary.totals.total).toBe(17);
     expect(outside.data.coverage).toMatchObject({ state: 'assessed', reading: 'gaps', gapCounts: { unmapped_record: 1 } });
     // Its extract: outside the boundary.
-    const extract = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}&subsidiaryId=${S2}`)).text) as ReportingMetaResponse;
+    const extract = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}&subsidiaryId=${S2}`)).text) as ReportingMetaResponse;
     expect(extract.data.coverage).toMatchObject({ state: 'assessed', selection: 'extract', reading: 'outside_boundary' });
     // Scope 3 reads no boundary at all.
-    const scope3 = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}&scope=3`)).text) as ReportingMetaResponse;
+    const scope3 = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}&scope=3`)).text) as ReportingMetaResponse;
     expect(scope3.data.coverage).toEqual({ state: 'not_covered' });
-    const water = JSON.parse((await get(t.users.consultant, `/reports/context/meta?year=${YEAR}&category=Water`)).text) as ReportingMetaResponse;
+    const water = JSON.parse((await get(t.users.auditor, `/reports/context/meta?year=${YEAR}&category=Water`)).text) as ReportingMetaResponse;
     expect(water.data.coverage).toEqual({ state: 'not_covered' });
   }, 30_000);
 
@@ -311,8 +311,8 @@ describe('coverage is the boundary\'s, never a count of what exists (K3)', () =>
       applicability: (['Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants', 'Fire Suppression', 'Fugitive Gas'] as const).map((category) => ({ locationId: null, category, applicability: 'excluded' as const, reason: 'Holding' })),
       sources: [],
     });
-    // data_entry is granted S alone.
-    const meta = JSON.parse((await get(t.users.dataEntry, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
+    // The standard user is granted S alone.
+    const meta = JSON.parse((await get(t.users.standardUser, `/reports/context/meta?year=${YEAR}`)).text) as ReportingMetaResponse;
     expect(meta.data.coverage).toEqual({ state: 'not_readable' });
     expect(JSON.stringify(meta)).not.toContain(version.id);
   }, 30_000);

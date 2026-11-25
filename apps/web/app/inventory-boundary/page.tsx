@@ -46,6 +46,7 @@ import {
 } from "@/lib/inventory-boundary-view";
 import { useAuthStore } from "@/lib/store";
 import {
+  can,
   LOCALE_FORMAT_TAGS,
   PERIOD_VALUES,
   REPORTING_YEAR_MIN,
@@ -90,10 +91,10 @@ export default function InventoryBoundaryPage() {
 /**
  * The inventory boundary editor (LP4-03 PR C, Decisions 2026-10-24 D1–D10):
  * a year's versions, and in the selected one each subsidiary's declaration.
- * Every write is super_admin's on the year's open version; a frozen version —
+ * Every write is masterkey's on the year's open version; a frozen version —
  * confirmed, or captured into a report dataset — is read-only, and new facts
- * start a new version (a copy). Every other role reads; a data_entry user
- * reads only its granted subsidiaries' part (the API's `granted_subsidiaries`).
+ * start a new version (a copy). Every other role reads; a super_admin or a
+ * standard user reads only its granted subsidiaries' part (the API's `granted_subsidiaries`).
  */
 function InventoryBoundaryScreen() {
   const t = useTranslations("boundary");
@@ -215,7 +216,8 @@ function InventoryBoundaryScreen() {
   const rows = detail ? subsidiaryRows(detail, subsidiaries) : [];
   const state = detail ? versionState(detail) : null;
   const openVersion = versions?.find((v) => v.frozenAt === null) ?? null;
-  const readOnlyRole = user !== null && user.role !== "super_admin";
+  const canWriteBoundary = can(user?.role, "boundary.write");
+  const readOnlyRole = user !== null && !canWriteBoundary;
 
   async function create(copyOf?: InventoryBoundaryVersionSummary) {
     if (year === null) return;
@@ -425,7 +427,7 @@ function InventoryBoundaryScreen() {
                 )}
               </CardHeader>
               <CardContent className="space-y-3">
-                {user?.role === "super_admin" && openVersion && openVersion.id !== selectedId && (
+                {canWriteBoundary && openVersion && openVersion.id !== selectedId && (
                   <p className="text-sm text-muted-foreground">{t("openExists", { version: openVersion.version })}</p>
                 )}
                 {versions === null ? (

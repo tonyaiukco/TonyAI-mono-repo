@@ -23,7 +23,7 @@ describe('watchSession', () => {
     location.assign.mockReset();
     location.reload.mockReset();
     endingSessionHere(false);
-    useAuthStore.getState().setUser({ id: 'user-a', role: 'super_admin' } as never);
+    useAuthStore.getState().setUser({ id: 'user-a', role: 'masterkey' } as never);
     useReportingContextStore.getState().remember('user-a', { year: 2026 } as never);
     watchSession();
     // Every test starts from a tab that has seen user A's session.

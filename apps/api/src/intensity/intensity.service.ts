@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { Prisma, type SubsidiaryDenominator } from '@tonyai/db';
-import { GROUP_INTENSITY_METRICS } from '@tonyai/shared-types';
+import { GROUP_INTENSITY_METRICS, can } from '@tonyai/shared-types';
 import type {
   CursorPage,
   ReportingContext,
@@ -73,10 +73,10 @@ export class IntensityService {
     };
   }
 
-  /** Denominators are org configuration — super_admin only (perm §5.3). */
+  /** Denominators are org configuration — a masterkey only (perm §5.3; INC-2.6 ruling R4). */
   private assertCanManage(user: RequestUser): void {
-    if (user.role !== 'super_admin') {
-      throw new ForbiddenException('Only super_admin may manage intensity denominators');
+    if (!can(user.role, 'intensity.write')) {
+      throw new ForbiddenException('Only a masterkey may manage intensity denominators');
     }
   }
 

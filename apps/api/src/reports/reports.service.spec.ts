@@ -226,7 +226,7 @@ const admin: RequestUser = {
   id: 'admin-1',
   email: 'admin@tonyai.local',
   fullName: 'Admin User',
-  role: 'super_admin',
+  role: 'masterkey',
   organisationId: 'org-1',
   accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
 } as RequestUser;
@@ -284,7 +284,8 @@ describe('ReportsService', () => {
     expect(data.evidenceSummary.flatMap((row) => row.fileNames)).toEqual(['invoice-jan.pdf']);
     expect(data.factors.map((factor) => factor.source)).not.toContain('excluded-source');
     expect(prisma.activityRecord.groupBy).toHaveBeenCalledWith(expect.objectContaining({
-      where: { subsidiaryId: { in: ['sub-1'] }, reportingYear: 2024, scope: 2, category: 'Electricity' },
+      // The caller's record scope rides along (a masterkey's is its companies).
+      where: { subsidiaryId: { in: ['sub-1'] }, reportingYear: 2024, scope: 2, category: 'Electricity', AND: [{ subsidiaryId: { in: ['sub-1', 'sub-2'] } }] },
     }));
     for (const [args] of prisma.activityRecord.findMany.mock.calls) {
       expect(args.where).toMatchObject({ reportingYear: 2024, scope: 2, category: 'Electricity' });
@@ -359,6 +360,29 @@ describe('ReportsService', () => {
   });
 
   // --- meta / status --------------------------------------------------------
+
+  it('meta reads a standard user\'s records inside its record scope: no other category counts (security review P1)', async () => {
+    prisma.activityRecord.groupBy.mockResolvedValue([]);
+    const narrowed: RequestUser = {
+      id: 'user-entry', email: 'entry@tonyai.local', fullName: 'Entry User', role: 'standard_user',
+      organisationId: 'org-1', accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] },
+    };
+    await service.meta(narrowed, 2024);
+    const scope = { OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: narrowed.id }] };
+    expect(prisma.activityRecord.groupBy).toHaveBeenCalled();
+    for (const [args] of prisma.activityRecord.groupBy.mock.calls) expect(args.where.AND).toEqual([scope]);
+    for (const [args] of prisma.activityRecord.findMany.mock.calls) expect(args.where.AND).toEqual([scope]);
+  });
+
+  it('meta answers a category-narrowed caller\'s coverage as not_readable: the company-wide assessment is not read for it', async () => {
+    prisma.activityRecord.groupBy.mockResolvedValue([{ status: 'approved', _count: { _all: 1 } }]);
+    const narrowed: RequestUser = {
+      id: 'user-entry', email: 'entry@tonyai.local', fullName: 'Entry User', role: 'standard_user',
+      organisationId: 'org-1', accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] },
+    };
+    const m = await service.meta(narrowed, 2024);
+    expect((m as { coverage?: unknown }).coverage).toEqual({ state: 'not_readable' });
+  });
 
   it('meta reports approved when every record is approved/locked', async () => {
     prisma.activityRecord.groupBy.mockResolvedValue([
@@ -707,10 +731,60 @@ describe('ReportsService', () => {
     expect(m.status).toBe('contains_incomplete_data');
   });
 
-  it('generation is forbidden for data_entry (permissions matrix)', async () => {
-    const entry = { ...admin, role: 'data_entry' } as RequestUser;
-    await expect(service.generateCsv(entry, q)).rejects.toMatchObject({ status: 403 });
+  it('generation is forbidden for a standard_user — every format, nothing read or audited (report.generate)', async () => {
+    const entry = { ...admin, role: 'standard_user' } as RequestUser;
+    for (const generate of [
+      () => service.generateCsv(entry, q),
+      () => service.generateExcel(entry, q),
+      () => service.generatePdf(entry, q),
+    ]) {
+      const e = await generate().catch((err: unknown) => err);
+      expect(e).toMatchObject({ status: 403 });
+      expect((e as Error).message).toBe('Only a masterkey, an auditor or a super_admin may generate or export reports');
+    }
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  describe('live reports by role (INC-2.6 §6)', () => {
+    // Granted sub-1 and sub-2 only; sub-3 is the same organisation's.
+    const superAdmin = { ...admin, id: 'sa-1', role: 'super_admin', accessibleSubsidiaryIds: ['sub-1', 'sub-2'] } as RequestUser;
+    const auditor = { ...admin, id: 'au-1', role: 'auditor', accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3'] } as RequestUser;
+    const records = () => [
+      makeRecord({ id: 'rec-granted', subsidiaryId: 'sub-1', periodValue: 'GrantedPeriod' }),
+      makeRecord({ id: 'rec-ungranted', subsidiaryId: 'sub-3', periodValue: 'UngrantedPeriod' }),
+    ];
+
+    it("lets a scoped super_admin export — confined to its granted companies' records", async () => {
+      stubRecords(prisma, records());
+      const csv = await service.generateCsv(superAdmin, q);
+      expect(csv).toContain('GrantedPeriod');
+      expect(csv).not.toContain('UngrantedPeriod');
+      for (const [args] of prisma.activityRecord.findMany.mock.calls) {
+        expect(args.where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+      }
+      expect(audit.record).toHaveBeenCalledWith(
+        superAdmin,
+        expect.objectContaining({ entity: 'report', action: 'generate', diff: expect.objectContaining({ exportType: 'csv' }) }),
+      );
+    });
+
+    it('answers a super_admin who names an ungranted company of its organisation with an empty export, reading no record', async () => {
+      stubRecords(prisma, records());
+      const data = await service.assemble(superAdmin, { ...q, subsidiaryId: 'sub-3' } as ReportQueryDto);
+      expect(data.records).toEqual([]);
+      expect(data.withdrawn).toEqual([]);
+      expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+      const csv = await service.generateCsv(superAdmin, { ...q, subsidiaryId: 'sub-3' } as ReportQueryDto);
+      expect(csv).not.toContain('UngrantedPeriod');
+    });
+
+    it('lets an auditor export the organisation it reads', async () => {
+      stubRecords(prisma, records());
+      const csv = await service.generateCsv(auditor, q);
+      expect(csv).toContain('GrantedPeriod');
+      expect(csv).toContain('UngrantedPeriod');
+    });
   });
 
   it('generateExcel builds the three audit sheets', async () => {

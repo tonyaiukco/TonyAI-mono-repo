@@ -1,5 +1,6 @@
 {
   "entryProgress": "%{rate} veri girişi ilerlemesi",
+  "entryProgressNone": "— veri girişi ilerlemesi (tamamlanacak kategori yok)",
   "entryNote": "Veri girişi ilerlemesi, verileri bir incelemeci tarafından onaylanmış kategorileri sayar; incelemeyi bekleyen her şey kısmi sayılır. Envanter kapsamı değildir — sınırın kapsamı aşağıda gösterilir.",
   "nonAuthoritative": "Bu sayfada yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanan rakamlar: <strong>{count} / {of}</strong>, Kapsam 3 dahil. Bunlar yetkili değildir.",
   "scope3Description": "Kapsanmıyor — toplama dahil değil",
@@ -134,6 +135,7 @@
   "grid": {
     "loadFailed": "Fatura dökümü yüklenemedi.",
     "wholeCompany": "{name} bağlı şirketin tamamı olarak ölçülüyor; bu yüzden tesis bazında fatura dökümü yok.",
+    "noVisibleCategory": "Fatura ile izlenen kategorilerin hiçbiri {name} için size atanmadı, bu yüzden gösterilecek fatura dökümü yok. Kategorileri bağlı şirketin bir süper yöneticisi atar.",
     "accepted": "fatura eklendi ve onaylandı",
     "open": "eksik",
     "awaiting": "inceleme bekliyor",

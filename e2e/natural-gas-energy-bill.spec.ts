@@ -8,7 +8,6 @@ import {
   ADMIN_EMAIL,
   API_BASE,
   APPROVER_EMAIL,
-  CONSULTANT_EMAIL,
   E2E_TR_INPUTS,
   E2E_TR_INPUTS_YEAR,
   ENTRY_EMAIL,
@@ -189,8 +188,9 @@ test('an imported gross kWh bill keeps its basis through an edit on Data Entry, 
   const submitted = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })).json();
   expect(submitted).toMatchObject({ status: 'submitted', parameters: { cvBasis: 'gross' } });
 
-  // The review sheet shows the basis beside the quantity.
-  await switchUser(page, CONSULTANT_EMAIL);
+  // The review sheet shows the basis beside the quantity, to the record's
+  // approver: the standard user's record, decided by Logistics' super_admin.
+  await switchUser(page, APPROVER_EMAIL);
   await page.goto('/review');
   await page
     .locator('table tbody tr')
@@ -214,8 +214,8 @@ test('a voided net kWh bill is copied with its unit, quantity and basis, and mov
   created.push(id);
   await attachEvidence(request, token, id);
   await post(request, token, `/activity-records/${id}/submit`);
-  // A second super_admin approves: nobody approves their own record.
-  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
+  // Its approver approves it: the admin, a masterkey, as a self-approval.
+  await approveRecord(request, id);
   await post(request, token, `/activity-records/${id}/void`, { voidReason: 'e2e: copied to a new draft' });
 
   await login(page, ADMIN_EMAIL);

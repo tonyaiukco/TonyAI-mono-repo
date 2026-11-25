@@ -13,7 +13,7 @@ import { reviewBadge } from '@/lib/completeness-view';
 import { useCompletenessCopy, useRecordWords } from '@/lib/i18n/hooks';
 import { formatNumber } from '@/lib/i18n/number';
 import { formatTimeAgo } from '@/lib/i18n/relative-time';
-import { scope12Total } from '@/lib/dashboard-view';
+import { scope12Total, completionRate } from '@/lib/dashboard-view';
 import { useLocale, useTranslations } from 'use-intl';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
@@ -102,7 +102,8 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
   const completenessCopy = useCompletenessCopy();
   if (!row) return null;
 
-  const completionRate = Math.round((row.completeCount / row.categoryCount) * 100);
+  // Null when the row holds no category the reader may see (shown as "—").
+  const rate = completionRate(row);
   // Not covered (a Scope 3 selection) reads as a word, never 0 tCO₂e.
   const total = scope12Total(row);
   const totalCalculated = row.cells.filter((c) => c.tCo2e !== null).length;
@@ -147,12 +148,12 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                 <span className="text-sm font-medium text-foreground">{tDashboard('drawer.overall')}</span>
                 <span 
                   className="text-sm font-semibold font-mono"
-                  style={{ color: getCompletionColor(completionRate) }}
+                  style={rate === null ? undefined : { color: getCompletionColor(rate) }}
                 >
-                  {tDashboard('percent', { value: completionRate })}
+                  {rate === null ? '—' : tDashboard('percent', { value: rate })}
                 </span>
               </div>
-              <Progress value={completionRate} className="h-2.5" />
+              <Progress value={rate ?? 0} className="h-2.5" />
             </div>
 
             {/* Quick Stats */}

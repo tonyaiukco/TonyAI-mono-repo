@@ -92,7 +92,7 @@ test('a subsidiary on a hidden geography opens on it, and a mis-click is reversi
 test('the locations drawer keeps a hidden geography reachable too', async ({ page, request }) => {
   // Half of this PR's fix lived here with no guard at all: reverting the drawer
   // to raw codes without the escape hatch left the whole suite green, while a
-  // super_admin adding a location under an EU subsidiary would face a blank
+  // masterkey adding a location under an EU subsidiary would face a blank
   // REQUIRED control and save a geography they never chose.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   await login(page, ADMIN_EMAIL);

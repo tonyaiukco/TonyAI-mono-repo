@@ -2,7 +2,7 @@
  * LP3-04's write path on the real database (W1, W13; Decisions 2026-10-15
  * (fifth), E1–E9): the seven routes through the deployed app as the runtime
  * role — who may do what (E2), a version's life from create to confirm (E3,
- * E4), data_entry's granted view and the versions it never sees (W3), whose
+ * E4), a granted user's view and the versions it never sees (W3), whose
  * subsidiary and site a declaration may name — and the service against
  * concurrent writers: the header lock serialises every write (W8, PR B's
  * (6)), a copy is never torn, a lost race is `conflict`, a failed write leaves
@@ -37,7 +37,7 @@ let owner: PrismaService;
 let observer: PrismaService;
 let runtime: PrismaService;
 
-/** A tenant per test: subsidiary S (granted to its data_entry user) with
+/** A tenant per test: subsidiary S (granted to its super_admin and standard user) with
  * sites L1 and L2, and a sibling S2 — not granted — with site M1. */
 let t: Tenant;
 let S: string;
@@ -79,7 +79,7 @@ afterAll(async () => {
 beforeEach(async () => {
   t = await createTenant();
   S = t.subsidiaryId;
-  admin = t.users.superAdmin;
+  admin = t.users.masterkey;
   const site = async (subsidiaryId: string, name: string) =>
     (await owner.location.create({ data: { subsidiaryId, name, geographyCode: 'UK' } })).id;
   L1 = await site(S, 'Int-test L1');
@@ -244,11 +244,11 @@ const auditOf = (entityId: string) =>
 
 // --------------------------------------------------------------------------
 
-describe('who may do what (E2): super_admin writes and confirms; everyone else reads', () => {
-  it('refuses every write by consultant, executive_viewer and data_entry with forbidden — changing nothing — and lets each read', async () => {
+describe('who may do what (E2): masterkey writes and confirms; everyone else reads', () => {
+  it('refuses every write by super_admin, auditor and standard_user with forbidden — changing nothing — and lets each read', async () => {
     const id = await versionWith([[S, completeS()]]);
     const before = await boundaryState();
-    for (const role of ['consultant', 'executiveViewer', 'dataEntry'] as const) {
+    for (const role of ['superAdmin', 'auditor', 'standardUser'] as const) {
       const user = t.users[role];
       for (const [method, path, body] of [
         ['POST', '/inventory-boundaries', { reportingYear: 2027 }],
@@ -272,7 +272,7 @@ describe('who may do what (E2): super_admin writes and confirms; everyone else r
     const empties = (n: number) => ({ firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applicability: [], sources: Array(n).fill({}) });
     const flood = empties(340_000);
     expect(Buffer.byteLength(JSON.stringify(flood))).toBeLessThan(1_048_576);
-    for (const role of ['consultant', 'executiveViewer', 'dataEntry'] as const) {
+    for (const role of ['superAdmin', 'auditor', 'standardUser'] as const) {
       const answer = await call(t.users[role], 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, flood);
       expect([answer.status, answer.code], role).toEqual([403, 'forbidden']);
       expect(answer.text.length, role).toBeLessThan(1_000);
@@ -285,7 +285,7 @@ describe('who may do what (E2): super_admin writes and confirms; everyone else r
     expect(await declared(id, S)).toBeNull();
   });
 
-  it('lets super_admin do every one of them', async () => {
+  it('lets masterkey do every one of them', async () => {
     const created = await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026 });
     expect(created.status).toBe(201);
     const { id } = json<InventoryBoundaryVersionDTO>(created);
@@ -408,7 +408,7 @@ describe("a version's life (E3, E4, W7, W10)", () => {
     // Another year is its own sequence.
     expect(json<InventoryBoundaryVersionDTO>(await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2027 })).version).toBe(1);
 
-    const list = json<InventoryBoundaryVersionSummary[]>(await call(t.users.consultant, 'GET', '/inventory-boundaries?reportingYear=2026'));
+    const list = json<InventoryBoundaryVersionSummary[]>(await call(t.users.auditor, 'GET', '/inventory-boundaries?reportingYear=2026'));
     expect(list.map((v) => [v.version, v.id])).toEqual([[2, again.id], [1, v1.id]]);
     expect(Object.keys(list[0]).sort()).toEqual(
       ['createdAt', 'createdBy', 'decidedAt', 'decidedBy', 'decision', 'frozenAt', 'id', 'reportingYear', 'version'],
@@ -417,7 +417,7 @@ describe("a version's life (E3, E4, W7, W10)", () => {
     // One audit row per write, in its own transaction's order.
     const trail = await auditOf(v1.id);
     expect(trail.map((r) => r.action)).toEqual(['create', 'update', 'update', 'update', 'confirm']);
-    expect(trail.every((r) => r.userId === admin.id && r.role === 'super_admin' && r.organisationId === t.organisationId)).toBe(true);
+    expect(trail.every((r) => r.userId === admin.id && r.role === 'masterkey' && r.organisationId === t.organisationId)).toBe(true);
     const [, firstS2, secondS2] = trail.slice(1);
     expect(firstS2.diff).toMatchObject({ subsidiaryId: S2, before: null });
     expect((secondS2.diff as { before: unknown }).before).toEqual((firstS2.diff as { after: unknown }).after);
@@ -481,19 +481,25 @@ describe("a version's life (E3, E4, W7, W10)", () => {
   });
 });
 
-describe("data_entry's view (W3): its granted subsidiaries' part, and nothing of a version declaring none", () => {
+describe("a granted user's view (W3): its granted subsidiaries' part, and nothing of a version declaring none", () => {
   it('lists only versions declaring a granted subsidiary, filters every collection, and answers the rest as missing', async () => {
     const both = await versionWith([[S, completeS()], [S2, excludedAll('Only the sibling says this')]]);
     await serviceOn(runtime).confirm(admin, both);
     const siblingOnly = await versionWith([[S2, excludedAll()]]);
     const empty = await versionWith([], 2025);
-    const entry = t.users.dataEntry;
+    const entry = t.users.standardUser;
 
     const list2026 = json<InventoryBoundaryVersionSummary[]>(await call(entry, 'GET', '/inventory-boundaries?reportingYear=2026'));
     expect(list2026.map((v) => v.id)).toEqual([both]);
     expect(json<InventoryBoundaryVersionSummary[]>(await call(entry, 'GET', '/inventory-boundaries?reportingYear=2025'))).toEqual([]);
-    expect(json<InventoryBoundaryVersionSummary[]>(await call(t.users.consultant, 'GET', '/inventory-boundaries?reportingYear=2026')).map((v) => v.id))
+    expect(json<InventoryBoundaryVersionSummary[]>(await call(t.users.auditor, 'GET', '/inventory-boundaries?reportingYear=2026')).map((v) => v.id))
       .toEqual([siblingOnly, both]);
+    // A super_admin is scoped as the standard user is (INC-2.6 §1): its granted part only.
+    expect(json<InventoryBoundaryVersionSummary[]>(await call(t.users.superAdmin, 'GET', '/inventory-boundaries?reportingYear=2026')).map((v) => v.id))
+      .toEqual([both]);
+    const scoped = json<InventoryBoundaryVersionDTO>(await call(t.users.superAdmin, 'GET', `/inventory-boundaries/${both}`));
+    expect([scoped.view, scoped.boundary.subsidiaryIds]).toEqual(['granted_subsidiaries', [S]]);
+    expect((await call(t.users.superAdmin, 'GET', `/inventory-boundaries/${siblingOnly}`)).status).toBe(404);
 
     const view = await call(entry, 'GET', `/inventory-boundaries/${both}`);
     const dto = json<InventoryBoundaryVersionDTO>(view);
@@ -505,7 +511,7 @@ describe("data_entry's view (W3): its granted subsidiaries' part, and nothing of
       expect(view.text, marker).not.toContain(marker);
     }
     // Everyone else reads the whole inventory.
-    const whole = json<InventoryBoundaryVersionDTO>(await call(t.users.executiveViewer, 'GET', `/inventory-boundaries/${both}`));
+    const whole = json<InventoryBoundaryVersionDTO>(await call(t.users.auditor, 'GET', `/inventory-boundaries/${both}`));
     expect([whole.view, whole.boundary.subsidiaryIds.length]).toEqual(['organisation', 2]);
 
     const missing = await call(entry, 'GET', `/inventory-boundaries/${randomUUID()}`);

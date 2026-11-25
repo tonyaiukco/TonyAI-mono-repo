@@ -39,7 +39,9 @@ export function EmissionsCharts({ subsidiaries, notCovered = false }: EmissionsC
   const t = useTranslations('dashboard');
   const locale = useLocale();
   // Emissions by subsidiary data
-  const emissionsBySubsidiary = subsidiaries.map((sub) => ({
+  // A row with no Scope 1/2 cell the reader may see has no measured figure:
+  // it is left out, never drawn as 0 tCO₂e (owner's review).
+  const emissionsBySubsidiary = subsidiaries.filter((sub) => !sub.emissionsNotCovered).map((sub) => ({
     name: sub.shortName,
     emissions: sub.totalEmissions,
     fullName: sub.name,

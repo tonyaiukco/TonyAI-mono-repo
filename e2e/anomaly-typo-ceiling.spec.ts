@@ -6,9 +6,7 @@ import {
   API_BASE,
   bearer,
   login,
-  switchUser,
   ADMIN_EMAIL,
-  CONSULTANT_EMAIL,
   EVIDENCE_FIXTURE,
   getAccessToken,
   deleteRecordsAsService,
@@ -40,10 +38,12 @@ import {
 const YEAR = 2026;
 const VARIANCE = 'New plant commissioned; meter read checked against the invoice.';
 
+/** The reviewer is the admin: it enters these records, and a masterkey's
+ *  record is decided by its author (`recordApprover`). */
 async function setReviewerLanguage(language: 'tr' | 'en') {
   const api = await playwrightRequest.newContext();
   try {
-    const token = await getAccessToken(api, CONSULTANT_EMAIL);
+    const token = await getAccessToken(api, ADMIN_EMAIL);
     const res = await api.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language } });
     if (res.status() !== 200) throw new Error(`language ${language}: ${res.status()}`);
   } finally {
@@ -144,7 +144,6 @@ test('a first period above its ceiling is flagged, gated and stated; one below i
 
     // The reviewer reads the same statement, in Turkish, beside the reason.
     await setReviewerLanguage('tr');
-    await switchUser(page, CONSULTANT_EMAIL);
     await page.goto('/review');
     await page.locator('table tbody tr', { hasText: name }).first().click();
     await expect(page.getByText(anomalyTr.ceiling.headline)).toBeVisible();

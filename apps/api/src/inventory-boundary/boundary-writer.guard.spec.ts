@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, type ExecutionContext } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { errorCodeOf } from '../common/api-error';
-import { makeDataEntry, makeSuperAdmin } from '../../test/helpers';
+import { makeAuditor, makeMasterkey, makeStandardUser, makeSuperAdmin } from '../../test/helpers';
 import { BoundaryWriterGuard, DeclarationSizeGuard } from './boundary-writer.guard';
 import { INVENTORY_DECLARATION_LIMITS } from './dto/inventory-boundary.dto';
 
@@ -18,10 +18,11 @@ const context = (request: Record<string, unknown>) =>
 
 describe('BoundaryWriterGuard', () => {
   it.each([
-    ['consultant', makeSuperAdmin({ role: 'consultant' })],
-    ['executive_viewer', makeSuperAdmin({ role: 'executive_viewer' })],
-    ['data_entry', makeDataEntry()],
-    ['a super_admin with no organisation', makeSuperAdmin({ organisationId: null })],
+    ['a scoped super_admin', makeSuperAdmin()],
+    ['an auditor', makeAuditor()],
+    ['a standard_user', makeStandardUser()],
+    ['a retired role name', makeMasterkey({ role: 'consultant' as never })],
+    ['a masterkey with no organisation', makeMasterkey({ organisationId: null })],
     ['no one', undefined],
   ])('refuses %s with forbidden — whatever the body', (_who, user) => {
     const failure = (() => {
@@ -34,11 +35,11 @@ describe('BoundaryWriterGuard', () => {
     })();
     // The filter answers it `forbidden`, as it does the service's own refusal.
     expect(failure).toBeInstanceOf(ForbiddenException);
-    expect((failure as ForbiddenException).message).toMatch(/^(Only super_admin may change an inventory boundary|No organisation context for this user)$/);
+    expect((failure as ForbiddenException).message).toMatch(/^(Only a masterkey may change an inventory boundary|No organisation context for this user)$/);
   });
 
-  it("lets a super_admin of an organisation through", () => {
-    expect(new BoundaryWriterGuard().canActivate(context({ user: makeSuperAdmin() }))).toBe(true);
+  it("lets a masterkey of an organisation through", () => {
+    expect(new BoundaryWriterGuard().canActivate(context({ user: makeMasterkey() }))).toBe(true);
   });
 });
 

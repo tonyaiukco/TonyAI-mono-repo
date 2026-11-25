@@ -1,7 +1,7 @@
 {
   "title": "Envanter sınırı",
   "subtitle": "Bir yılın envanterinin kapsadığı bağlı şirketler, tesisler, kategoriler ve adlandırılmış kaynaklar",
-  "readOnly": "Bir sınırı yalnızca bir süper yönetici beyan edebilir, onaylayabilir ya da silebilir. Siz görüntüleyebilirsiniz.",
+  "readOnly": "Bir sınırı yalnızca bir Masterkey beyan edebilir, onaylayabilir ya da silebilir. Siz görüntüleyebilirsiniz.",
   "grantedView": "Yalnızca erişiminiz olan bağlı şirketleri görüyorsunuz; bu sürümün beyan ettiği diğer bağlı şirketler gösterilmez.",
   "openExists": "Sürüm {version} açık. Başka bir sürüme başlamadan önce onu düzenleyin ya da silin.",
   "versions": {

@@ -121,7 +121,7 @@ export interface ReportIssuanceSummary {
 /** `GET /report-datasets/:id/issuance-preview` (K7): what issuing this
  * dataset would derive — the gate's own pure derivation over the retained
  * dataset, nothing written. `finalAllowed` is whether the caller's role may
- * issue that final (W4: `super_admin` only); a partial is a consultant's too. */
+ * issue that final (W4: `masterkey` only); a partial is a consultant's too. */
 export interface ReportIssuancePreview {
   datasetId: string;
   status: 'final' | 'partial';

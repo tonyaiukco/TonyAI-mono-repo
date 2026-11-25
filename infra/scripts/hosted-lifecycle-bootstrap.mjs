@@ -25,7 +25,7 @@ export async function bootstrap(input, Client) {
       await tx.auditLog.create({ data: { action: 'create', entity: 'organisation', entityId: target.organisationId,
         organisationId: target.organisationId, diff: { purpose: 'L10 no-mail synthetic bootstrap; no customer inventory' } } });
       await tx.profile.create({ data: { id: target.userId, email: target.email, fullName: 'L10 bootstrap administrator',
-        organisationId: target.organisationId, role: 'super_admin' } });
+        organisationId: target.organisationId, role: 'masterkey' } });
       await tx.auditLog.create({ data: { action: 'create', entity: 'profile', entityId: target.userId,
         organisationId: target.organisationId, diff: { purpose: 'L10 no-mail synthetic bootstrap; no invitation delivered' } } });
     });

@@ -6,8 +6,10 @@
 // still mapped here is what `EmissionsCharts` (matrixToSubsidiaries),
 // `KPICards` (buildKpiData) and `AlertsPanel` (matrixToAlerts) consume.
 // Retiring the remaining three view models is a separate change.
+import { CATEGORIES } from "@/lib/types";
 import type {
   Alert,
+  Category,
   CategoryData,
   EmissionsSummary,
   KPIData,
@@ -60,7 +62,10 @@ function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
     // 0 for a row the selection leaves uncovered: the chart is told so on its
     // own (`notCovered`) and draws no bar at all.
     totalEmissions: scope12Total(row) ?? 0,
-    completionRate: Math.round((row.completeCount / row.categoryCount) * 100),
+    // Not a measured 0: the chart leaves such a row out (owner's review).
+    emissionsNotCovered: scope12Total(row) === null,
+    // 0 for a row with no category the reader may see (`completionRate` null).
+    completionRate: completionRate(row) ?? 0,
     categories,
   };
 }
@@ -91,8 +96,10 @@ export function buildKpiData(
     // Scope 1 + 2, as every report prints it (LP4-03 K4): Scope 3 is recorded,
     // shown on its own card, and not covered by the inventory.
     totalEmissions: summary.totals.scope1 + summary.totals.scope2,
+    // Null with no cell to complete — not applicable, as the company detail
+    // shows it (owner's review): never 0 % of nothing.
     calculationCompletionRate:
-      cellCount > 0 ? Math.round((complete / cellCount) * 100) : 0,
+      cellCount > 0 ? Math.round((complete / cellCount) * 100) : null,
     emissions: {
       scope1: summary.totals.scope1,
       scope2: summary.totals.scope2,
@@ -172,3 +179,48 @@ export function matrixCellLinks(subsidiaryId: string, category: string, year: nu
     history: `/emissions?${history.toString()}`,
   };
 }
+
+/**
+ * The matrix's columns: the categories any row holds, in the product's order
+ * (every category for a reader categories never narrow). A standard user's
+ * rows hold only the categories it may see in each company (INC-2.6 §1,
+ * `inc26-roles-approval-chain`), so the header follows the rows rather than
+ * the full list; a matrix with no row keeps the full list.
+ */
+export function matrixColumns(rows: readonly TrackingMatrixRow[]): Category[] {
+  if (rows.length === 0) return [...CATEGORIES];
+  const held = new Set<string>(rows.flatMap((row) => row.cells.map((cell) => cell.category)));
+  return CATEGORIES.filter((category) => held.has(category));
+}
+
+/** A row's cell under each column, or null where the row holds none (a category
+ *  the reader may not see in that company). */
+export function cellsByColumn(
+  row: TrackingMatrixRow,
+  columns: readonly Category[],
+): (TrackingMatrixRow["cells"][number] | null)[] {
+  const byCategory = new Map(row.cells.map((cell) => [cell.category as string, cell]));
+  return columns.map((category) => byCategory.get(category) ?? null);
+}
+
+/**
+ * A row's completion as a whole percentage, or null when the row holds no
+ * category to complete — a standard user granted a company with no category
+ * ticked and no record of its own there (`categoryCount` 0). "Not applicable",
+ * never 0 % and never NaN.
+ */
+export function completionRate(row: Pick<TrackingMatrixRow, "completeCount" | "categoryCount">): number | null {
+  if (row.categoryCount <= 0) return null;
+  return Math.round((row.completeCount / row.categoryCount) * 100);
+}
+
+/**
+ * Which sentence an invoice breakdown with no category shows: a subsidiary
+ * measured as a whole has none at all; a location-measured one has categories
+ * this reader is not granted (owner's review: never explain a reader's access
+ * as the company's measurement).
+ */
+export function emptyInvoiceGridKey(trackingGranularity: string): "grid.wholeCompany" | "grid.noVisibleCategory" {
+  return trackingGranularity === "subsidiary" ? "grid.wholeCompany" : "grid.noVisibleCategory";
+}
+

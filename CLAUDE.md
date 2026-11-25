@@ -22,7 +22,7 @@ in a **Turborepo** monorepo with shared types. Overview in `README.md`; API cont
 - `pnpm setup` — one-command local bootstrap (Supabase up → sync `.env` → migrate → seed)
 - `pnpm dev` — web :3000 + api :3001 · `pnpm typecheck` · `pnpm build` · `pnpm test` (Vitest) · `pnpm e2e` (Playwright)
 - `pnpm db:migrate | db:deploy | db:seed | db:reset`
-- Local-first: requires Docker + `supabase start`. Seed users: `admin@tonyai.local` / `approver@tonyai.local` (second super_admin — nobody approves their own record) / `entry@tonyai.local` / `review@tonyai.local` (consultant: reviews, rejects and approves; never enters data) / `viewer@tonyai.local` (executive_viewer, read-only) — pwd `TonyAI-CI!2026` (the seed's `TONYAI_TEST_PASSWORD`; Auth needs 12+ characters).
+- Local-first: requires Docker + `supabase start`. Seed users: `admin@tonyai.local` (masterkey: the whole organisation; decides super_admin records, its own and the fallback) / `approver@tonyai.local` (super_admin, granted every seed company but TonyAI Trading, which keeps none so the fallback has a home; decides the standard user's records) / `entry@tonyai.local` (standard_user, two companies, every category) / `review@tonyai.local` and `viewer@tonyai.local` (auditors: organisation-wide, read-only) — pwd `TonyAI-CI!2026` (the seed's `TONYAI_TEST_PASSWORD`; Auth needs 12+ characters).
 
 ## Architecture rules (do not break)
 - **One source of truth for types:** add domain/API types to `@tonyai/shared-types`; never duplicate. On web, import via `@/lib/types` (re-exports it).
@@ -33,9 +33,9 @@ in a **Turborepo** monorepo with shared types. Overview in `README.md`; API cont
 
 ## Security & data rules (non-negotiable)
 - **Tenant isolation:** the NestJS guard + every service's `accessibleSubsidiaryIds` scoping is the ONLY filter on the API's queries (the API runs as `tonyai_runtime`, BYPASSRLS); Supabase **RLS** confines direct PostgREST clients; composite FKs keep grants same-organisation. Never weaken any. Never `FORCE` RLS. `DATABASE_URL` = runtime role, `DIRECT_URL` = owner (migrations, seed); a new table needs its runtime grant in the migration and an entry in `packages/db/scripts/runtime-role.mjs`. Roles and grants change only through `AccessAdminService`.
-- **RBAC:** only `super_admin` may create/update/delete subsidiaries; reads are tenant-scoped for everyone.
+- **RBAC:** only a `masterkey` may create/update/delete subsidiaries; reads are scoped for everyone (`masterkey`/`auditor` the organisation, `super_admin`/`standard_user` their grants, a standard user's activity records also by ticked category). Every role-keyed power is a row of `ROLE_CAPABILITIES` asked via `can(role, …)` in `@tonyai/shared-types` — never a role literal.
 - **`audit_log` is append-only:** write one row on every mutation; never add UPDATE/DELETE paths to it.
-- **Canonical `user_role`:** `super_admin | consultant | data_entry | executive_viewer` — keep web, shared-types and Prisma in sync.
+- **Canonical `user_role`:** `masterkey | super_admin | standard_user | auditor` — keep web, shared-types and Prisma in sync.
 - **No secrets in git:** `.env*` is ignored; only `.env.example` is committed.
 - **Emission factors / data integrity:** never invent factor values; cite source + version; historic calculations are immutable (factor versioning). **Never present demo/prototype values as authoritative** — label placeholders explicitly. This is a compliance product; wrong numbers are a liability.
 

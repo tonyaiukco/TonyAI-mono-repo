@@ -33,7 +33,7 @@ const rowsFor = (userId: string) => owner.auditLog.findMany({ where: { action: '
 describe('one password_set row per change', () => {
   it('two records of the same change at once write one row; another change writes its own', async () => {
     const service = new PreferencesService(runtime, new AuditService(runtime));
-    const user = tenant.users.dataEntry;
+    const user = tenant.users.standardUser;
     const change = randomUUID();
 
     await Promise.all([service.recordPasswordSet(user, 'invite', change), service.recordPasswordSet(user, 'invite', change)]);

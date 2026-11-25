@@ -54,7 +54,7 @@ import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { reportingContextKey } from '@/lib/reporting-context-url';
 import { ReportingContextBar, ReportingContextInvalid, selectionAvailable } from '@/components/reporting-context/reporting-context-bar';
-import { CATEGORY_SCOPE_MAP, REPORT_TEMPLATES } from '@/lib/types';
+import { CATEGORY_SCOPE_MAP, REPORT_TEMPLATES, can } from '@/lib/types';
 import { liveReportNonAuthoritative } from '@/lib/emissions-view';
 import { NonAuthoritativeWarning } from '@/components/non-authoritative-warning';
 import type {
@@ -97,6 +97,7 @@ function ReportsPageInner() {
   const tContext = useTranslations('reportingContext');
   const tCategory = useTranslations('categories');
   const t = useTranslations('reports');
+  const tRoles = useTranslations('users');
   const locale = useLocale() as Locale;
   const showError = useErrorToast();
   const fmt = (value: number) => formatNumber(value, locale, { maximumFractionDigits: 1 });
@@ -216,7 +217,7 @@ function ReportsPageInner() {
     await signOut();
   }
 
-  const canGenerate = !!user && user.role !== 'data_entry'; // permissions §"Generate and export reports"
+  const canGenerate = can(user?.role, 'report.generate'); // capability table: live reports and exports
   const exportReady = !!shown && !!context && !loading && reportingContextKey(shown) === reportingContextKey(context);
   const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
   const templateName = REPORT_TEMPLATES.some((r) => r.id === template) ? t(`templates.${template}`) : template;
@@ -271,7 +272,7 @@ function ReportsPageInner() {
             <div>
               <h1 className="text-2xl font-semibold text-foreground">{t('title')}</h1>
               <p className="mt-1 text-muted-foreground">
-                {user ? t('subtitleUser', { name: user.fullName, role: user.role }) : t('subtitle')}
+                {user ? t('subtitleUser', { name: user.fullName, role: tRoles(`roles.${user.role}`) }) : t('subtitle')}
               </p>
             </div>
             <SignOutButton onClick={handleLogout} />

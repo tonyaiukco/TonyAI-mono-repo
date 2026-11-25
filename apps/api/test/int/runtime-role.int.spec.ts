@@ -265,7 +265,7 @@ describe('the runtime role', () => {
     const tenant = await createTenant();
     try {
       expect(await runtime.subsidiary.count({ where: { id: tenant.subsidiaryId } })).toBe(1);
-      expect(await runtime.userSubsidiaryAccess.count({ where: { userId: tenant.users.dataEntry.id } })).toBe(1);
+      expect(await runtime.userSubsidiaryAccess.count({ where: { userId: tenant.users.standardUser.id } })).toBe(1);
     } finally {
       await tenant.cleanup();
     }
@@ -840,7 +840,7 @@ describe('the runtime role is refused', () => {
     ).toBeNull();
     // An invitation's profile, and the state it moves through.
     expect(
-      await attempt(`INSERT INTO profiles (id, email, full_name, role, language, theme, auth_sync_generation, organisation_id, created_at, updated_at) SELECT gen_random_uuid(), 'x@x.test', 'x', 'data_entry', 'en', 'light', 0, NULL, now(), now() WHERE false`),
+      await attempt(`INSERT INTO profiles (id, email, full_name, role, language, theme, auth_sync_generation, organisation_id, created_at, updated_at) SELECT gen_random_uuid(), 'x@x.test', 'x', 'standard_user', 'en', 'light', 0, NULL, now(), now() WHERE false`),
     ).toBeNull();
     expect(
       await attempt(`UPDATE invitations SET status = 'sent', attempts = attempts + 1, sent_at = now(), last_attempt_at = now(), last_error_step = NULL, last_error_code = NULL, updated_at = now() WHERE false`),

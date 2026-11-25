@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, type CanActivate, 
 import type { RequestUser } from '../auth/auth.types';
 import { errorBody } from '../common/api-error';
 import { INVENTORY_DECLARATION_LIMITS } from './dto/inventory-boundary.dto';
+import { can } from '@tonyai/shared-types';
 
 /**
  * The boundary's writes, refused before their body is transformed and
@@ -13,12 +14,12 @@ import { INVENTORY_DECLARATION_LIMITS } from './dto/inventory-boundary.dto';
  * (`forbidden`, E2; `validation_failed`), and the service keeps its own check.
  */
 
-/** super_admin alone writes a boundary (E2) — refused here before the body is read. */
+/** masterkey alone writes a boundary (E2) — refused here before the body is read. */
 @Injectable()
 export class BoundaryWriterGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const user = context.switchToHttp().getRequest<{ user?: RequestUser }>().user;
-    if (user?.role !== 'super_admin') throw new ForbiddenException('Only super_admin may change an inventory boundary');
+    if (!user || !can(user.role, 'boundary.write')) throw new ForbiddenException('Only a masterkey may change an inventory boundary');
     if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
     return true;
   }

@@ -1,7 +1,8 @@
 'use client';
 
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { CATEGORIES, type TrackingMatrixRow } from '@/lib/types';
+import { type TrackingMatrixRow } from '@/lib/types';
+import { cellsByColumn, completionRate, matrixColumns } from '@/lib/dashboard-view';
 import { StatusCell } from './status-cell';
 import type { MatrixCellLinks } from '@/lib/dashboard-view';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -42,6 +43,8 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, cellLin
   const t = useTranslations('dashboard');
   const locale = useLocale();
   const words = useRecordWords();
+  const columns = matrixColumns(rows);
+  const gridTemplate = `200px repeat(${Math.max(columns.length, 1)}, minmax(0, 1fr)) 40px`;
   return (
     <Card className="border-[#D2D2D7] bg-white rounded-xl shadow-sm overflow-hidden">
       <CardHeader className="pb-0 pt-5 px-6">
@@ -79,11 +82,14 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, cellLin
         <ScrollArea className="w-full">
           <div className="min-w-[1000px]">
             {/* Header Row */}
-            <div className="grid grid-cols-[200px_repeat(11,1fr)_40px] gap-2 px-6 py-3 bg-[#F5F5F7] border-y border-[#E5E5EA]">
+            <div
+              className="grid gap-2 px-6 py-3 bg-[#F5F5F7] border-y border-[#E5E5EA]"
+              style={{ gridTemplateColumns: gridTemplate }}
+            >
               <div className="text-xs font-bold text-[#6E6E73] uppercase tracking-wider">
                 {t('matrix.subsidiary')}
               </div>
-              {CATEGORIES.map((cat) => (
+              {columns.map((cat) => (
                 <div 
                   key={cat} 
                   className="text-center text-xs font-bold text-[#6E6E73] uppercase tracking-wider"
@@ -103,7 +109,8 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, cellLin
                 return (
                   <div
                     key={row.subsidiaryId}
-                    className="grid grid-cols-[200px_repeat(11,1fr)_40px] items-center gap-2 px-6 py-3 transition-colors duration-200 hover:bg-[#F5F5F7] group"
+                    className="grid items-center gap-2 px-6 py-3 transition-colors duration-200 hover:bg-[#F5F5F7] group"
+                    style={{ gridTemplateColumns: gridTemplate }}
                   >
                     {/* Subsidiary Info */}
                     <button
@@ -116,7 +123,8 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, cellLin
                       <div className="flex items-center gap-2 mt-1">
                         <span className={cn(
                           'text-sm font-bold tabular-nums font-mono',
-                          getCompletionColor((row.completeCount / row.categoryCount) * 100)
+                          // A row with no category the reader may see is neutral, not 0 %.
+                          completionRate(row) === null ? 'text-[#8E8E93]' : getCompletionColor(completionRate(row)!)
                         )}>
                           {formatNumber(row.completeCount, locale)}/{formatNumber(row.categoryCount, locale)}
                         </span>
@@ -137,17 +145,23 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, cellLin
                     </button>
 
                     {/* Status Cells */}
-                    {row.cells.map((cell) => (
-                      <StatusCell
-                        key={`${row.subsidiaryId}-${cell.category}`}
-                        cell={cell}
-                        responsible={row.designatedPerson ?? '—'}
-                        reportingYear={reportingYear}
-                        label={`${row.subsidiaryName} ${words.category(cell.category)}`}
-                        links={cellLinks(row, cell.category)}
-                        compact
-                      />
-                    ))}
+                    {/* One cell per column, by category: a category the
+                        reader may not see in this company is left blank. */}
+                    {cellsByColumn(row, columns).map((cell, i) =>
+                      cell ? (
+                        <StatusCell
+                          key={`${row.subsidiaryId}-${cell.category}`}
+                          cell={cell}
+                          responsible={row.designatedPerson ?? '—'}
+                          reportingYear={reportingYear}
+                          label={`${row.subsidiaryName} ${words.category(cell.category)}`}
+                          links={cellLinks(row, cell.category)}
+                          compact
+                        />
+                      ) : (
+                        <div key={`${row.subsidiaryId}-${columns[i]}`} aria-hidden />
+                      ),
+                    )}
 
                     {/* Row Action */}
                     <button

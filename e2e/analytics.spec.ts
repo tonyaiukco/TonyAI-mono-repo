@@ -14,7 +14,7 @@ import {
 
 /**
  * P1 smoke: the two read-only analytics surfaces render live data for a
- * super_admin. Cheap guards against a regression that blanks the pages.
+ * masterkey. Cheap guards against a regression that blanks the pages.
  */
 
 /**

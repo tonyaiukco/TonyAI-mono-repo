@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import {
-  ADMIN_EMAIL, API_BASE, APPROVER_EMAIL, E2E_YEAR, SUB, bearer, createCommittedRecord, deleteRecordsAsService, getAccessToken, login,
+  ADMIN_EMAIL, API_BASE, E2E_YEAR, SUB, bearer, createCommittedRecord, deleteRecordsAsService, getAccessToken, login,
 } from './helpers';
 
 /**
@@ -9,7 +9,7 @@ import {
  * TonyAI Gas, company-level Natural Gas, quarterly; `review-queue.spec.ts` also
  * writes this lane's Q1, which is safe only because this file runs first
  * (alphabetical, one worker) and removes its records — they go in `afterAll`; the switch target is TonyAI Mfg. The admin enters
- * them and takes them into review (starting a review has no authorship rule).
+ * them and, as their approver (a masterkey decides its own records, `recordApprover`), takes them into review.
  */
 const YEAR = E2E_YEAR;
 const created: string[] = [];
@@ -75,9 +75,9 @@ test('a decision that settles after a switch refreshes the selection on screen, 
   const id = await pending(request, 'Q2');
   const mfg = await legalName(request, SUB.mfg);
   const gasName = await legalName(request, SUB.gas);
-  // The second super_admin: the admin authored the record, and its author
-  // neither takes it into review nor approves it (D01, WP5).
-  await login(page, APPROVER_EMAIL);
+  // The record's approver: the admin authored it, and a masterkey decides
+  // its own record (a self-approval).
+  await login(page, ADMIN_EMAIL);
   await page.goto('/review');
   const rowA = page.locator('table tbody tr').filter({ hasText: `Q2 ${YEAR}` }).filter({ hasText: gasName });
   // Opening it takes it into review (WP5); the decision held here is the approval.

@@ -79,7 +79,7 @@ test.describe('self-service registration', () => {
     await expect.poll(async () => (await registeredAccount(email))?.consents ?? 0, { timeout: 15_000 }).toBe(1);
     const account = (await registeredAccount(email))!;
     expect(account).toMatchObject({
-      role: 'super_admin',
+      role: 'masterkey',
       jobTitle: 'Sustainability Manager',
       language: 'en',
       legalName: company,
@@ -134,7 +134,7 @@ test.describe('self-service registration', () => {
     // Signed in as the first administrator of the new organisation, with the invitation closed.
     const token = await getAccessToken(request, email, password);
     const me = await (await request.get(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${token}` } })).json();
-    expect(me).toMatchObject({ email, fullName: 'Ada Yilmaz', role: 'super_admin', organisationId: account.organisationId });
+    expect(me).toMatchObject({ email, fullName: 'Ada Yilmaz', role: 'masterkey', organisationId: account.organisationId });
     await expect.poll(async () => (await registeredAccount(email))?.invitationStatus).toBe('accepted');
 
     // K1: the new company is born with one subsidiary — itself. Before any

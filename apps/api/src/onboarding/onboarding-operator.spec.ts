@@ -20,7 +20,7 @@ function ownerDb(invitationUpdates: number) {
       profile: {
         findUnique: vi.fn(async () => ({
           id: ADMIN,
-          role: UserRole.super_admin,
+          role: UserRole.masterkey,
           organisationId: ORG,
           organisation: { id: ORG, legalName: 'Org', offboardedAt: null },
           invitation: { status: InvitationStatus.sent },

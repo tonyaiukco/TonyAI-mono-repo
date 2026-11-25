@@ -9,7 +9,7 @@ import enPeriods from '../apps/web/messages/en/periods.json';
 import enUnits from '../apps/web/messages/en/units.json';
 import {
   API_BASE,
-  CONSULTANT_EMAIL,
+  APPROVER_EMAIL,
   E2E_TR_INPUTS,
   E2E_TR_INPUTS_YEAR,
   ENTRY_EMAIL,
@@ -112,8 +112,10 @@ test('a first-period record is named, needs no variance reason, and shows its pa
     await page.getByRole('button', { name: 'Submit for review' }).click();
     await expect(page.getByText('Submitted for review')).toBeVisible();
 
-    // The reviewer's queue marks it apart from a flag; the sheet names it and its seal date.
-    await switchUser(page, CONSULTANT_EMAIL);
+    // The reviewer's queue marks it apart from a flag; the sheet names it and
+    // its seal date. The reviewer is the record's approver: the standard
+    // user's record, so Logistics' super_admin.
+    await switchUser(page, APPROVER_EMAIL);
     await page.goto('/review');
     const row = page.locator('table tbody tr', { hasText: 'TonyAI Logistics' }).filter({ hasText: `Q1 ${YEAR}` });
     await expect(row.getByTestId('first-period-marker')).toBeVisible();

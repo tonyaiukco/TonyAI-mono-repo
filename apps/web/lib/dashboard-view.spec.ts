@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { axisThousands, buildKpiData, compactTonnes, matrixCellLinks, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { axisThousands, buildKpiData, cellsByColumn, compactTonnes, completionRate, emptyInvoiceGridKey, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { CATEGORIES } from '@/lib/types';
 import { initialEmissionsTab } from './emissions-view';
 import { copyFor } from '@/lib/i18n/testing';
 import type {
@@ -159,12 +160,12 @@ describe('buildKpiData', () => {
     expect(kpi.calculationCompletionRate).toBe(0);
   });
 
-  it('reports 0%, not NaN, for a tenant with no cells at all', () => {
-    // Reachable on a fresh organisation with no subsidiaries. The card divided
-    // by this total to size its bar and rendered a literal `NaN%`.
+  it('reports not applicable (null), never 0% or NaN, with no cell to complete', () => {
+    // A fresh organisation with no subsidiaries, or a standard user granted a
+    // company with no category ticked and no record of its own (owner's
+    // review): there is nothing to complete. The card once rendered `NaN%`.
     const kpi = buildKpiData(summary, matrix([], { complete: 0, incomplete: 0, missing: 0 }), null);
-    expect(kpi.calculationCompletionRate).toBe(0);
-    expect(Number.isNaN(kpi.calculationCompletionRate)).toBe(false);
+    expect(kpi.calculationCompletionRate).toBeNull();
   });
 
   it('totals Scope 1 + 2 as every report does — Scope 3 on its own card, outside the total (LP4-03 K4)', () => {
@@ -254,3 +255,54 @@ describe('matrixCellLinks (BUG-R2-06)', () => {
     expect(initialEmissionsTab(new URLSearchParams('tab=HISTORY'))).toBe('summary');
   });
 });
+
+describe("matrixColumns and cellsByColumn (inc26: a standard user's rows hold only the categories it may see)", () => {
+  const cell = (category: string) => ({ category }) as unknown as TrackingMatrixRow["cells"][number];
+  const row = (id: string, categories: string[]) =>
+    ({ subsidiaryId: id, cells: categories.map(cell) }) as unknown as TrackingMatrixRow;
+
+  it("lists the categories any row holds, in the product's order", () => {
+    expect(matrixColumns([row("a", ["Fuel", "Electricity"]), row("b", ["Water"])])).toEqual(["Electricity", "Fuel", "Water"]);
+  });
+
+  it("keeps the full list for a matrix with no row", () => {
+    expect(matrixColumns([])).toEqual([...CATEGORIES]);
+  });
+
+  it("places each cell under its column and leaves a hidden category blank", () => {
+    const columns = matrixColumns([row("a", ["Electricity"]), row("b", ["Fuel"])]);
+    expect(cellsByColumn(row("a", ["Electricity"]), columns).map((c) => c?.category ?? null)).toEqual(["Electricity", null]);
+    expect(cellsByColumn(row("b", ["Fuel"]), columns).map((c) => c?.category ?? null)).toEqual([null, "Fuel"]);
+  });
+});
+
+describe("completionRate (owner's review: no NaN % for a company with no visible category)", () => {
+  it("is a whole percentage of the categories the row holds", () => {
+    expect(completionRate({ completeCount: 1, categoryCount: 3 })).toBe(33);
+    expect(completionRate({ completeCount: 0, categoryCount: 2 })).toBe(0);
+  });
+  it("is null — not applicable — when the row holds no category", () => {
+    expect(completionRate({ completeCount: 0, categoryCount: 0 })).toBeNull();
+  });
+});
+
+describe("emptyInvoiceGridKey (owner's review: a reader's access is not the company's measurement)", () => {
+  it("explains a subsidiary measured as a whole", () => {
+    expect(emptyInvoiceGridKey("subsidiary")).toBe("grid.wholeCompany");
+  });
+  it("explains a location-measured subsidiary whose invoice categories the reader is not granted", () => {
+    expect(emptyInvoiceGridKey("location")).toBe("grid.noVisibleCategory");
+  });
+});
+
+describe("matrixToSubsidiaries — a row with nothing the reader may see is not a measured 0 (owner's review)", () => {
+  it("marks a row with no Scope 1 or 2 cell as not covered, and a row with one as covered", () => {
+    const empty = { subsidiaryId: "a", subsidiaryName: "A", sector: null, designatedPerson: null, totalTCo2e: 0, completeCount: 0, categoryCount: 0, trackingGranularity: "subsidiary", locationCount: 0, uncalculatedRecordCount: 0, cells: [] };
+    const covered = { ...empty, subsidiaryId: "b", categoryCount: 1, cells: [{ category: "Electricity", scope: 2, status: "complete", tCo2e: 5, lastUpdate: null }] };
+    const [a, b] = matrixToSubsidiaries({ reportingYear: 2026, rows: [empty, covered], totals: { complete: 1, incomplete: 0, missing: 0 } } as never);
+    expect(a.emissionsNotCovered).toBe(true);
+    expect(b.emissionsNotCovered).toBe(false);
+    expect(b.totalEmissions).toBe(5);
+  });
+});
+

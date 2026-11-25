@@ -53,6 +53,7 @@ import { storedUnit } from '../calculations/storable-unit';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { assertCategoryGranted, CategoryNotGrantedError } from '../activity-records/record-scope';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
@@ -494,6 +495,21 @@ export class BulkUploadService {
             : `Leave the activityType column blank for ${dto.category}.`),
       });
       return;
+    }
+
+    // A standard user's row outside its categories is refused BEFORE the slot
+    // checks: answering `duplicate_existing` for it would tell the user, slot
+    // by slot, whether a record of a category it may not see exists (INC-2.6
+    // §1, ruling R5). The same refusal `previewCreate` raises; a company the
+    // caller cannot see is left to that path's own `not_found`.
+    if (user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
+      try {
+        assertCategoryGranted(user, dto.subsidiaryId, dto.category);
+      } catch (error) {
+        if (!(error instanceof CategoryNotGrantedError)) throw error;
+        out.errors.push({ row, column: 'category', code: 'category_not_granted', message: error.message });
+        return;
+      }
     }
 
     // The canonical spelling IS the slot's identity. When the value names no
@@ -1400,6 +1416,11 @@ export class BulkUploadService {
     }
     if (error instanceof PeriodLockedError) {
       return { row, column: null, code: 'period_locked', message: error.message };
+    }
+    // Before the generic 403s: a standard user's row outside its categories
+    // is that user's own answer, in the dry run and the apply alike.
+    if (error instanceof CategoryNotGrantedError) {
+      return { row, column: 'category', code: 'category_not_granted', message: error.message };
     }
     if (error instanceof BadRequestException) {
       const response = error.getResponse();
