@@ -1,3 +1,7 @@
+-- tonyai:forward-only
+-- (read by infra/scripts/qa_autodeploy.py: a failed rollout of the release that
+-- carries this migration is never rolled back to the previous images, which
+-- misread the renamed role enum.)
 -- WP6 (`inc26-roles-approval-chain`) — the role model of INC-2.6 §1 and §6.
 --
 -- The stored roles become the document's: `masterkey`, `super_admin`,
@@ -104,6 +108,36 @@ $$;
 -- The emptied slot becomes the new, company-scoped role, which no account
 -- holds. The type ends with exactly four values.
 ALTER TYPE "UserRole" RENAME VALUE 'executive_viewer' TO 'super_admin';
+
+-- A super_admin presupposes its organisation's masterkey: a masterkey
+-- appoints it (INC-2.6 §6; nobody is made a masterkey in the product). The
+-- guard closes the deploy window too: the previous API image, still live until
+-- the rollout, creates a registration's first administrator as `super_admin`
+-- (its name for the organisation-wide role) — which would now be a scoped
+-- account in an organisation with no masterkey. Such a write is refused.
+CREATE FUNCTION "profiles_super_admin_needs_masterkey"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  -- A profile leaving its organisation (the organisation's delete sets it
+  -- null) is not an appointment: only a profile in an organisation is checked.
+  IF NEW."role" = 'super_admin'::"public"."UserRole" AND NEW."organisation_id" IS NOT NULL AND (
+    NOT EXISTS (
+      SELECT 1 FROM "public"."profiles" m
+      WHERE m."organisation_id" = NEW."organisation_id" AND m."role" = 'masterkey'::"public"."UserRole" AND m."id" <> NEW."id"
+    )
+  ) THEN
+    RAISE EXCEPTION 'A super_admin needs a masterkey in its organisation'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+REVOKE ALL ON FUNCTION "profiles_super_admin_needs_masterkey"() FROM PUBLIC;
+CREATE TRIGGER "profiles_super_admin_needs_masterkey"
+  BEFORE INSERT OR UPDATE OF "role" ON "profiles"
+  FOR EACH ROW EXECUTE FUNCTION "profiles_super_admin_needs_masterkey"();
 
 -- ---------------------------------------------------------------------------
 -- 4. A standard user's categories (design Decision 5)
