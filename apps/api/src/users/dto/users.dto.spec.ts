@@ -8,26 +8,60 @@ import { InviteUserDto, ListUsersQueryDto, PasswordResetDto, RegistrationDto, Re
 const errorsOf = async (cls: new () => object, body: object) =>
   (await validate(plainToInstance(cls, body), { whitelist: true, forbidNonWhitelisted: true })).map((e) => e.property);
 
-const INVITE = { email: 'a@b.test', fullName: 'A', role: 'data_entry', language: 'tr' };
+const INVITE = { email: 'a@b.test', fullName: 'A', role: 'standard_user', language: 'tr' };
+/** The seed's fixed ids are not RFC 4122 conformant; the 8-4-4-4-12 shape is what is checked. */
+const SEED_SUB = '22222222-2222-2222-2222-222222220001';
 
 describe('the users DTOs refuse what would otherwise reach Prisma or a mailbox', () => {
   it('accepts a complete invitation, the seed’s fixed ids among its grants', async () => {
-    expect(await errorsOf(InviteUserDto, { ...INVITE, subsidiaryIds: ['22222222-2222-2222-2222-222222220001'] })).toEqual([]);
+    expect(await errorsOf(InviteUserDto, { ...INVITE, access: [{ subsidiaryId: SEED_SUB, categories: ['Electricity', 'Fuel'] }] })).toEqual([]);
+  });
+
+  it('accepts an invitation with no access (an auditor), and a grant with no category ticked', async () => {
+    expect(await errorsOf(InviteUserDto, { ...INVITE, role: 'auditor' })).toEqual([]);
+    expect(await errorsOf(InviteUserDto, { ...INVITE, access: [{ subsidiaryId: SEED_SUB, categories: [] }] })).toEqual([]);
+  });
+
+  it.each(['masterkey', 'super_admin', 'standard_user', 'auditor'])('accepts the role %s (the service decides who may invite it)', async (role) => {
+    expect(await errorsOf(InviteUserDto, { ...INVITE, role })).toEqual([]);
+  });
+
+  it('lowercases a grant\'s company id — the database\'s spelling', () => {
+    const dto = plainToInstance(InviteUserDto, { ...INVITE, access: [{ subsidiaryId: SEED_SUB.replace(/2/g, 'A'), categories: [] }] });
+    expect(dto.access?.[0].subsidiaryId).toBe(SEED_SUB.replace(/2/g, 'a'));
   });
 
   it.each([
     ['an address that is not one', { ...INVITE, email: 'nope' }, 'email'],
     ['a blank name', { ...INVITE, fullName: '   ' }, 'fullName'],
     ['an unknown role', { ...INVITE, role: 'platform_admin' }, 'role'],
+    ['the retired role consultant', { ...INVITE, role: 'consultant' }, 'role'],
+    ['the retired role data_entry', { ...INVITE, role: 'data_entry' }, 'role'],
+    ['the retired role executive_viewer', { ...INVITE, role: 'executive_viewer' }, 'role'],
     ['a language the product does not speak', { ...INVITE, language: 'de' }, 'language'],
-    ['a grant that is not an id (a 500 from Prisma otherwise)', { ...INVITE, subsidiaryIds: ['nope'] }, 'subsidiaryIds'],
+    ['a grant that is not an id (a 500 from Prisma otherwise)', { ...INVITE, access: [{ subsidiaryId: 'nope', categories: [] }] }, 'access'],
+    ['an unknown category', { ...INVITE, access: [{ subsidiaryId: SEED_SUB, categories: ['Steam'] }] }, 'access'],
+    ['a grant with no category list', { ...INVITE, access: [{ subsidiaryId: SEED_SUB }] }, 'access'],
+    ['a grant with an extra field', { ...INVITE, access: [{ subsidiaryId: SEED_SUB, categories: [], role: 'masterkey' }] }, 'access'],
+    ['access that is not a list', { ...INVITE, access: { subsidiaryId: SEED_SUB, categories: [] } }, 'access'],
+    ['the removed subsidiaryIds field', { ...INVITE, subsidiaryIds: [SEED_SUB] }, 'subsidiaryIds'],
     ['an extra field', { ...INVITE, organisationId: '11111111-1111-1111-1111-111111111111' }, 'organisationId'],
   ])('refuses %s', async (_label, body, property) => {
     expect(await errorsOf(InviteUserDto, body)).toContain(property);
   });
 
+  it('a replace states the whole access: required, a list of grants, the empty list accepted', async () => {
+    expect(await errorsOf(ReplaceUserAccessDto, { access: [] })).toEqual([]);
+    expect(await errorsOf(ReplaceUserAccessDto, { access: [{ subsidiaryId: SEED_SUB, categories: ['Water'] }] })).toEqual([]);
+    expect(await errorsOf(ReplaceUserAccessDto, {})).toContain('access');
+    expect(await errorsOf(ReplaceUserAccessDto, { access: [{ subsidiaryId: 'x', categories: [] }] })).toContain('access');
+    expect(await errorsOf(ReplaceUserAccessDto, { access: [{ subsidiaryId: SEED_SUB, categories: ['Steam'] }] })).toContain('access');
+    expect(await errorsOf(ReplaceUserAccessDto, { subsidiaryIds: [SEED_SUB] })).toEqual(expect.arrayContaining(['access', 'subsidiaryIds']));
+  });
+
   it('bounds the access set, the page and the reset address', async () => {
-    expect(await errorsOf(ReplaceUserAccessDto, { subsidiaryIds: ['x'] })).toContain('subsidiaryIds');
+    const many = Array.from({ length: 501 }, () => ({ subsidiaryId: SEED_SUB, categories: [] }));
+    expect(await errorsOf(ReplaceUserAccessDto, { access: many })).toContain('access');
     expect(await errorsOf(ListUsersQueryDto, { limit: '101' })).toContain('limit');
     expect(await errorsOf(ListUsersQueryDto, { cursor: '' })).toContain('cursor');
     expect(await errorsOf(PasswordResetDto, { email: `${'a'.repeat(250)}@b.test` })).toContain('email');

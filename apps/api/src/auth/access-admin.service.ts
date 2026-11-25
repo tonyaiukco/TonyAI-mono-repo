@@ -495,8 +495,18 @@ export class AccessAdminService {
       const admin = await lockAndReadActor(tx, actor, organisationId, 'users.invite');
       const target = await findMember(tx, organisationId, profileId);
       // Re-sending is inviting again: the actor must be one who may invite
-      // the account's role.
+      // the account's role — and a super_admin only an account it
+      // administers (a grant in its companies, or none), the users list's rule.
       assertMayInvite(admin.role, target.role);
+      if (admin.scope !== null) {
+        const grants = await tx.userSubsidiaryAccess.findMany({
+          where: { userId: profileId, organisationId },
+          select: { subsidiaryId: true },
+        });
+        if (grants.length > 0 && !grants.some((g) => admin.scope!.has(g.subsidiaryId))) {
+          throw new ResourceNotFoundError('user_not_found');
+        }
+      }
       const invitation = await tx.invitation.findUnique({ where: { profileId }, select: { status: true } });
       if (!invitation) throw new ResourceNotFoundError('invitation_not_found');
       if (invitation.status === InvitationStatus.accepted) throw new InvitationClosedError();
@@ -718,11 +728,17 @@ function assertMayInvite(actorRole: string, role: string): void {
  * `access_role_mismatch` when access is asked for it, and nothing otherwise.
  */
 function assertMaySetAccessOf(admin: AdminActor, targetRole: string, asksForAccess: boolean): void {
+  const assignable = isUserRole(admin.role) ? ACCESS_ASSIGNABLE_ROLES[admin.role] : [];
+  // A scoped actor administers only the roles it assigns: any other account
+  // answers as one it cannot see, as its users list and summary do — never
+  // revealing which accounts are organisation-wide.
+  if (admin.scope !== null && !(assignable as readonly string[]).includes(targetRole)) {
+    throw new ResourceNotFoundError('user_not_found');
+  }
   if (!can(targetRole, 'scope.granted')) {
     if (asksForAccess) throw new AccessRoleMismatchError();
     return;
   }
-  const assignable = isUserRole(admin.role) ? ACCESS_ASSIGNABLE_ROLES[admin.role] : [];
   if (!(assignable as readonly string[]).includes(targetRole)) {
     throw new ForbiddenException(
       admin.role === 'masterkey'

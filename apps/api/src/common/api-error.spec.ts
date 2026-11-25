@@ -73,8 +73,11 @@ import {
   InvitationClosedError,
   OwnAccountError,
   SessionRevokedError,
+  StandardUserSingleCompanyError,
   UserDisabledError,
 } from '../auth/access-errors';
+import { NotRecordApproverError } from '../activity-records/record-approver';
+import { CategoryNotGrantedError } from '../activity-records/record-scope';
 
 vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -129,6 +132,8 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   record_author_forbidden: () => new SubmitAuthorRefusedError(false),
   self_approval_forbidden: () => new SelfApprovalRefusedError(),
   self_review_forbidden: () => new SelfReviewRefusedError(),
+  not_record_approver: () => new NotRecordApproverError('super_admin'),
+  category_not_granted: () => new CategoryNotGrantedError('Electricity'),
   subsidiary_not_found: () => new ResourceNotFoundError('subsidiary_not_found'),
   location_not_found: () => new ResourceNotFoundError('location_not_found'),
   record_not_found: () => new ResourceNotFoundError('record_not_found'),
@@ -153,6 +158,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   session_revoked: () => new SessionRevokedError(),
   own_account_forbidden: () => new OwnAccountError('disable'),
   access_role_mismatch: () => new AccessRoleMismatchError(),
+  standard_user_single_company: () => new StandardUserSingleCompanyError(),
   email_unavailable: () => new EmailUnavailableError(),
   invite_refusals_exhausted: () => new InviteRefusalsExhaustedError(60),
   invitation_closed: () => new InvitationClosedError(),

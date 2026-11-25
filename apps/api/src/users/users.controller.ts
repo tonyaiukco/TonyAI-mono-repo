@@ -8,9 +8,11 @@ import { UserLifecycleService } from './user-lifecycle.service';
 import { UsersQueryService } from './users-query.service';
 
 /**
- * User and access management (LP4-01) — the caller's own organisation, a
- * `masterkey`'s alone; every other role is refused (403) and an id of
- * another tenant answers 404, exactly as one that does not exist.
+ * User and access management (LP4-01; INC-2.6 §6) — the caller's own
+ * organisation: a masterkey administers super_admins and auditors, a
+ * super_admin the standard users of its companies (`AccessAdminService`);
+ * a standard user and an auditor are refused (403), and an id of another
+ * tenant answers 404, exactly as one that does not exist.
  */
 @Controller('users')
 export class UsersController {
