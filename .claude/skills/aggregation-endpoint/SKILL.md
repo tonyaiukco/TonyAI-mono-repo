@@ -16,7 +16,12 @@ One source of truth: the same numbers feed dashboards, analytics and (later) rep
 re-derive aggregation math in the browser — pages consume the DTO as-is (map to view models if needed).
 
 ## Rules (must hold)
-- **Tenant scope:** filter by `subsidiaryId: { in: user.accessibleSubsidiaryIds }`. If the caller requests
+- **Tenant scope:** filter by `subsidiaryId: { in: user.accessibleSubsidiaryIds }` — and for any rollup of
+  **activity records**, take the filter from `recordScopeWhere(user)` (`recordScopeSql(user, alias)` in raw
+  SQL; `apps/api/src/activity-records/record-scope.ts`) instead, so a `standard_user`'s figures count only
+  the categories ticked on its grants plus its own records. Who may call a rollup that is not open to every
+  role is a capability (`can(user.role, '<capability>')` from `ROLE_CAPABILITIES`), never a role literal.
+  If the caller requests
   a specific `subsidiaryId` outside their set, return the **empty result** (never 403 — don't leak existence).
   If the accessible set is empty, return the empty result **without querying**.
 - **Committed statuses only** for emission figures: `submitted | under_review | approved | locked`
@@ -48,4 +53,6 @@ re-derive aggregation math in the browser — pages consume the DTO as-is (map t
 ```bash
 pnpm --filter @tonyai/api typecheck && pnpm --filter @tonyai/api test
 ```
-Then hit the endpoint with a `data_entry` token and confirm it only reflects that user's subsidiaries.
+Then hit the endpoint with a `standard_user` token (`entry@tonyai.local`) and a `super_admin` token
+(`approver@tonyai.local`, not granted TonyAI Trading) and confirm each reflects only that user's
+subsidiaries — and, for the standard user, only its ticked categories (narrow one grant in a test).

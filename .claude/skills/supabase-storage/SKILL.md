@@ -23,8 +23,10 @@ Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, 
   then check the content IS that type (`apps/api/src/evidence/file-content.ts`: signatures, XLSX without macros,
   CSV as text), clean the name (`sanitiseCallerText`), and store the SHA-256 (`CHAR(64)`, CHECKed lowercase hex).
   Reject before anything is stored. Downloads go out as attachments under the checked type's extension (`downloadName`).
-- **Writes are gated like the parent.** Reuse the parent entity's write rules (e.g. the parent's author only, `super_admin` included — evidence since Decisions 2026-11-12, and
-  only while the parent is still editable). Audit create/delete (`entity: '<file-entity>'`).
+- **Writes are gated like the parent.** Reuse the parent entity's write rules (e.g. the parent's author only, a `masterkey` included — evidence since Decisions 2026-11-12, and
+  only while the parent is still editable; read through the parent's own scope — for a record's file,
+  `inRecordScope`, so a `standard_user` reads only files of records of its ticked categories or its own).
+  Write capability comes from `ROLE_CAPABILITIES` via `can(...)`, never a role literal. Audit create/delete (`entity: '<file-entity>'`).
 - **Every Storage write or removal goes through `StorageIntentsService` — never `StorageService.upload/remove`
   around a transaction by hand** (LP1-02; Storage has no transaction, and a hand-rolled "remove on failure" has
   deleted the bytes of a COMMITTED row when its acknowledgement was lost):

@@ -225,7 +225,7 @@ N1 adds them. `reporting-context-reconciliation.int.spec.ts` runs two years × t
 subsidiaries × three filters, plus an empty 2027, on the real database, auth and
 runtime role: summary, matrix, intensity numerator, report meta, CSV ledger and
 generation audit each match a figure computed from the fixture; a 2027
-calculation is refused with `no_factor`; a data_entry granted one subsidiary is
+calculation is refused with `no_factor`; a `standard_user` granted one subsidiary is
 never broadened. It also proves HEAD 405 on all six exports and a NUL, markup or bidi selector
 refused with no audit row. `e2e/reporting-context.spec.ts` covers
 canonicalisation, Back and Forward (with their data), reload and sidebar

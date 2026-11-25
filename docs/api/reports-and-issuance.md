@@ -52,8 +52,8 @@ a subsidiary the boundary leaves out included, its records `unmapped_record`
 gaps, because the live total counts them (unlike a capture, which reads the
 version's declared subsidiaries alone). States: `no_boundary` (coverage
 unknown), `not_readable` (the version declares a subsidiary outside the
-caller's access — nothing of it is disclosed; a partially granted data_entry
-user's usual answer), `not_covered` (a Scope 3 selection — no boundary is
+caller's access — nothing of it is disclosed; a partially granted `super_admin`'s
+or `standard_user`'s usual answer), `not_covered` (a Scope 3 selection — no boundary is
 read), `too_broad` (more records or evidence links than one report reads — the
 figures stand, coverage unknown), or `assessed` — the version, its decision,
 the selection's included obligations and how many are satisfied, excluded
@@ -143,7 +143,7 @@ boundary and capture time), `truncated` when more are readable, and
 `currentFinalIssuanceId` — the year's newest readable final, whether or not it is
 on the page. `GET /report-datasets/:id/issuance-preview` runs the issue's own
 read, verification and gate (`deriveIssuance`) and answers status, gaps and
-`finalAllowed` (super_admin only), writing nothing; issuers only. The tables
+`finalAllowed` (the `masterkey` only), writing nothing; issuers only (the `masterkey`). The tables
 and the preview take the EXPORT quota and lease, as the PDF download does.
 
 **Analytics budgets (K11).** `GET /emissions/summary`, the context summary
@@ -171,9 +171,9 @@ the URL (`?tab=issued`, kept beside the reporting context):
   first — issuing is irreversible —, then template, language — the caller's
   by default —, options; a final the caller may not issue is not offered);
   **Capture the
-  inventory** of the year's newest boundary version (super_admin; a consultant
-  once the version is frozen). An executive viewer reads; data_entry is told
-  its role reads no issued report.
+  inventory** of the year's newest boundary version (the `masterkey`). An
+  `auditor` reads; a `super_admin` and a `standard_user` are told their role
+  reads no issued report.
 
 The dashboard's figure is **data entry progress**, never coverage, with the
 same coverage card beside it, and its Total is Scope 1 + 2 as every report's
@@ -185,7 +185,7 @@ for capacity is retried once when the server's `Retry-After` is short
 (`lib/report-preview.ts`; a longer one is not retried early), then the card
 says the coverage is unavailable — never left out. Data Entry
 shows the selected subsidiary's coverage card beside the invoice panel; a
-data_entry user granted part of an organisation whose boundary declares other
+`super_admin` or `standard_user` granted part of an organisation whose boundary declares other
 subsidiaries reads `not_readable` there — the expected answer (Decisions
 2026-10-24, follow-up (1): option A). The Reports screen's copy is in the
 `reports` catalogue (TR/EN), the dashboard's changed words in `dashboard`;
@@ -199,17 +199,17 @@ never deleted, so it declares a new version each run.
 **The boundary editor (LP4-03 PR C; Decisions 2026-10-24, D1–D10).**
 `/inventory-boundary?year=` (sidebar "Inventory Boundary"; the coverage card
 and the Issued tab link to it — "Declare or edit the boundary" for a
-super_admin, "View the boundary" for every other role) lists the year's
+`masterkey`, "View the boundary" for every other role) lists the year's
 versions with their state — open, confirmed, or frozen unconfirmed by a
 capture — and, for the selected one, each subsidiary (named as the version
 names it: the trading name, else the legal one — live while open, frozen
-once frozen): declared or not, its months, sites, sources and gaps. A super_admin starts a version (empty, a
+once frozen): declared or not, its months, sites, sources and gaps. The `masterkey` starts a version (empty, a
 copy of the selected frozen one, or of the previous year's newest when the
 year has none), declares, edits or removes a subsidiary, confirms the open
 version (the dialog names the undeclared subsidiaries a confirmation leaves
 out and is disabled while the version is empty or has gaps) and deletes it;
-every other role reads, a data_entry user only its granted subsidiaries'
-part, and a frozen version is read-only for everyone. The declaration form
+every other role reads, a `super_admin` or `standard_user` only its granted
+subsidiaries' part, and a frozen version is read-only for everyone. The declaration form
 (`components/inventory-boundary/declaration-editor.tsx`) holds every field
 the PUT takes — months; sites (each with its months); per category the
 attribution (company or sites, and a cadence that is never defaulted) and a
@@ -234,5 +234,4 @@ shown over it. Copy in the
 `deleteInventoryBoundary`. `e2e/inventory-boundary-editor.spec.ts` declares,
 is refused, resolves the gaps and confirms through the UI, copies, meets a
 concurrent change (to a save and to a confirmation) and deletes, and reads
-as a consultant and a data_entry
-user, on a year no other spec reads (2028; each run confirms one version).
+as an `auditor` and a `standard_user`, on a year no other spec reads (2028; each run confirms one version).

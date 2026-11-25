@@ -17,6 +17,7 @@ import type {
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import { CreateTargetDto } from './dto/create-target.dto';
@@ -257,7 +258,13 @@ export class TargetsService {
     if (rows.length === 0) return [];
     const years = await this.prisma.activityRecord.groupBy({
       by: ['subsidiaryId', 'scope'],
-      where: { subsidiaryId: { in: [...new Set(rows.map((t) => t.subsidiaryId))] }, status: { in: COMMITTED_STATUSES } },
+      // In the reader's record scope, like the figures `emissions.summary`
+      // builds next: a standard user never learns another category's latest year.
+      where: {
+        subsidiaryId: { in: [...new Set(rows.map((t) => t.subsidiaryId))] },
+        status: { in: COMMITTED_STATUSES },
+        AND: [recordScopeWhere(user)],
+      },
       _max: { reportingYear: true },
     });
     // The latest committed year of a subsidiary's records in one scope, or in

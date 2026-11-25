@@ -49,16 +49,20 @@ in `e2e/helpers.ts`.
   gate, use `submitAsOwnerPastEvidenceGate`. Anything a bulk import produces needs a file too;
   `seedE2EFactor` opens a non-evidence lane (Waste) for the cases that need one.
 - **Opening a record in `/review` takes it into review** (WP5, since 2026-11-25): when the user may
-  approve it (an approver role, and not its author), the sheet sends `POST /:id/review` by itself, so
+  decide it (its routed approver, and not its author unless a masterkey), the sheet sends `POST /:id/review` by itself, so
   the record is `under_review` from then on and its author can no longer recall it. A spec that opens a
   row and then expects `submitted`, or a recall, must expect `under_review` instead; the author's own
   open changes nothing. "Start review" is only a fallback button after a failed start. To hold or
   count that start, install the `page.route` on `**/activity-records/<id>/review` BEFORE the row click.
 - **Approve via the API** — `getAccessToken` + `approveRecord` for any flow that needs an approved
-  record (`/review` has an Approve button; `review-queue.spec.ts` covers it). **The approver may not be
-  the record's creator** (decision D01): a record created with `ADMIN_EMAIL`'s token is approved with
-  `APPROVER_EMAIL`'s, the seed's second super_admin. And only the author submits (D02), so submit with
-  the creating token.
+  record (`/review` has an Approve button; `review-queue.spec.ts` covers it). **Approval is routed by
+  the author's role** (`recordApprover` in shared-types; the record's `approver` field says who decides
+  it): a record created by `entry@tonyai.local` (the `standard_user`) in a company `APPROVER_EMAIL` (the
+  seed's `super_admin`) is granted is approved with `APPROVER_EMAIL`'s token; one in TonyAI Trading (no
+  super_admin, the fallback company) with `ADMIN_EMAIL`'s (the `masterkey`); one created with
+  `ADMIN_EMAIL`'s token by `ADMIN_EMAIL` itself — a self-approval, audited `self_approve` — and by nobody
+  else (`not_record_approver`). `review@` and `viewer@` are auditors: they read and never decide. And only
+  the author submits (D02), so submit with the creating token.
 - **Select shadcn/Radix dropdowns by their field Label, not the trigger's accessible name.** Use
   `pickByFieldLabel(page, 'Value', 'Q3')` / `selectSubsidiary`. Matching the trigger by accessible name is
   unreliable (Radix composes it) and the Subsidiary field is a Skeleton until data loads — the

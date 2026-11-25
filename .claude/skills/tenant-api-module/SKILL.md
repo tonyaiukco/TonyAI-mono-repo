@@ -8,7 +8,7 @@ description: Scaffold a new tenant-scoped NestJS resource in apps/api (module + 
 Create a new backend resource that follows TonyAI's conventions. Two **canonical references** — pick the
 one matching your resource type and mirror its structure:
 
-- `apps/api/src/subsidiaries/` — **admin-managed** resource (org structure; `super_admin`-only writes)
+- `apps/api/src/subsidiaries/` — **admin-managed** resource (org structure; writes gated by `can(user.role, 'company.write')`, the `masterkey` alone)
 - `apps/api/src/activity-records/` — **workflow** resource (user-generated rows with a status lifecycle)
 
 ## When to use
@@ -19,14 +19,31 @@ For an endpoint that ingests MANY rows from an uploaded file into an existing re
 
 ## Rules (must hold)
 - **Tenant scope every read.** The owning subsidiary id must be in `RequestUser.accessibleSubsidiaryIds`
-  (set by `SupabaseAuthGuard`). For the subsidiary itself that's its own id; for a child entity use
-  `where: { subsidiaryId: { in: user.accessibleSubsidiaryIds } }`. Ids outside the set → `NotFoundException`.
-- **Gate writes by resource type** (both patterns throw `ForbiddenException` on failure):
-  - *Admin-managed* (subsidiaries, locations): writes require `super_admin` via `assertCanWrite(user)`.
-  - *Workflow* (activity records, evidence): writes allowed to a `WRITE_ROLES` set
-    (`data_entry` / `consultant` / `super_admin`); rows carry `createdBy`; edits/deletes restricted to
-    **author-or-`super_admin`** and to editable statuses only (e.g. `draft`/`rejected`) — mirror
-    `assertCanMutate` in the activity-records service.
+  (set by `SupabaseAuthGuard`: the whole organisation for a `masterkey` and an `auditor`, the granted
+  companies for a `super_admin` and a `standard_user`). For the subsidiary itself that's its own id; for a
+  child entity use `where: { subsidiaryId: { in: user.accessibleSubsidiaryIds } }`. Ids outside the set →
+  `NotFoundException`. A resource that reads **activity records, or figures built from them**, takes its
+  filter from `recordScopeWhere(user)` (`apps/api/src/activity-records/record-scope.ts`; `recordScopeSql`
+  for raw SQL, `inRecordScope` in memory) — never `accessibleSubsidiaryIds` alone, which would show a
+  standard user every category of its company.
+- **Gate writes by capability, never by a role literal.** Every role-keyed power is a row of
+  `ROLE_CAPABILITIES` in `@tonyai/shared-types`, asked as `can(user.role, '<capability>')`. **A new
+  power is a new capability:** add its row to `ROLE_CAPABILITIES` (the roles that hold it, read from the
+  access matrix, INC-2.6 §6; a power no document gives a `super_admin` stays with the `masterkey`) **and**
+  its pinned row to `MATRIX` in `packages/shared-types/src/roles.spec.ts` (`M`/`S`/`U`/`A` per role), so a
+  changed cell fails by name. Never write `user.role === '…'`, a per-module role set or a role list in a
+  service or a page; reuse an existing capability when one already means the same power. Both
+  patterns throw `ForbiddenException` on failure:
+  - *Admin-managed* (subsidiaries, period locks, targets): `assertCanWrite(user)` asks the resource's
+    capability (`company.write`, `period_lock.write`, `target.write`). A capability a scoped role holds
+    (`location.write`: `masterkey`, and a `super_admin` in its granted companies) is confined by the
+    tenant scope above — a company outside the set answers as unknown.
+  - *Workflow* (activity records, evidence): authoring is `mayAuthorRecords(user)` (`record.author`:
+    `masterkey`, `super_admin`, `standard_user`); a standard user also passes `assertCategoryGranted`
+    (`category_not_granted`) on create, edit and submit; rows carry `createdBy`; edits are the
+    author's only, deletes the author's or a `can(role, 'record.delete_any_draft')` holder's, and only in
+    editable statuses (e.g. `draft`/`rejected`) — mirror `assertCanMutate` in the activity-records
+    service. An `auditor` holds no write capability.
   - *A body that scales with rows* (lists in a DTO, a raised body cap): the global pipe builds and
     validates every element before a role check in the service runs, so also refuse the write in a
     guard — `@UseGuards(...)` runs before pipes — and bound each list by its length there
@@ -51,8 +68,10 @@ For an endpoint that ingests MANY rows from an uploaded file into an existing re
 5. **Controller** — `@Controller('<res>')`, use the `@CurrentUser()` param decorator, keep methods thin.
 6. **Module** — register controller + service, and import the module in `apps/api/src/app.module.ts`.
 7. **Test** — `apps/api/src/<res>/<res>.service.spec.ts` with a mocked Prisma (see `apps/api/test/helpers.ts`):
-   assert tenant scoping, `NotFound` for an out-of-set id (without hitting the DB), `Forbidden` for non-`super_admin`
-   writes, and that a successful mutation calls `auditLog.create`.
+   assert tenant scoping, `NotFound` for an out-of-set id (without hitting the DB), `Forbidden` for every
+   role that does not hold the write capability (loop over `USER_ROLES` with `can(...)`, so a new role is
+   covered), a `super_admin` confined to its granted companies, and that a successful mutation calls
+   `auditLog.create`.
 
 ## Skeleton (service core)
 ```ts
@@ -64,8 +83,9 @@ async list(user: RequestUser) {
   return rows.map((r) => this.toDTO(r));
 }
 
+// `can` from '@tonyai/shared-types'; '<res>.write' is a row of ROLE_CAPABILITIES, pinned in roles.spec.ts.
 private assertCanWrite(user: RequestUser) {
-  if (user.role !== 'super_admin') throw new ForbiddenException('Only super_admin may modify <res>');
+  if (!can(user.role, '<res>.write')) throw new ForbiddenException('Your role may not modify <res>');
 }
 
 private async audit(userId: string, action: 'create' | 'update' | 'delete', entityId: string, diff: Record<string, unknown>) {
