@@ -223,6 +223,9 @@ ${DIM}Start the apps:${RESET}  ${BOLD}pnpm dev${RESET}   ${DIM}(web :3000 · api
 ${DIM}Run tests:${RESET}      ${BOLD}pnpm test${RESET}   ${DIM}· ${RESET}${BOLD}pnpm e2e${RESET}
 
 ${BOLD}Seed users${RESET} (password: ${BOLD}TONYAI_TEST_PASSWORD${RESET}, default ${BOLD}TonyAI-CI!2026${RESET})
-  admin@tonyai.local   masterkey   sees all 5 subsidiaries
-  entry@tonyai.local   data_entry    sees 2 subsidiaries
+  admin@tonyai.local     masterkey       sees all 5 subsidiaries
+  approver@tonyai.local  super_admin     granted 4 subsidiaries (not TonyAI Trading)
+  entry@tonyai.local     standard_user   sees 2 subsidiaries, every category
+  review@tonyai.local    auditor         org-wide read only
+  viewer@tonyai.local    auditor         org-wide read only
 EOF
