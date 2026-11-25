@@ -379,3 +379,21 @@ export function appendPage(list: UserSummaryDTO[], page: UserSummaryDTO[]): User
   const seen = new Set(list.map((u) => u.id));
   return [...list, ...page.filter((u) => !seen.has(u.id))];
 }
+
+/**
+ * After an access save, whether the screen re-reads the list rather than
+ * putting the answer in the row (owner's review): a super_admin who withdraws
+ * the last grant it can see may have taken the account out of its list — it
+ * may still hold a grant elsewhere, which this reader is never shown — so the
+ * API decides whether the account stays listed. A masterkey sees every account
+ * and every grant, so its answer is always the row.
+ */
+export function reloadAfterAccessSave(
+  reader: Reader | null | undefined,
+  before: Pick<UserSummaryDTO, "access">,
+  after: Pick<UserSummaryDTO, "access">,
+): boolean {
+  if (!reader || can(reader.role, "scope.organisation")) return false;
+  return before.access.length > 0 && after.access.length === 0;
+}
+

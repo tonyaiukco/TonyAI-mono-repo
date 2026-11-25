@@ -34,6 +34,7 @@ import {
   withdrawCompany,
   type InviteForm,
   type Reader,
+  reloadAfterAccessSave,
 } from './users-view';
 
 const invitation = (over: Partial<InvitationStateDTO> = {}): InvitationStateDTO => ({
@@ -471,5 +472,22 @@ describe('list updates', () => {
     const b = member({ id: 'b' });
     expect(replaceUser([a, b], { ...b, fullName: 'B2' }).map((u) => u.fullName)).toEqual(['A', 'B2']);
     expect(appendPage([a], [a, b]).map((u) => u.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe("reloadAfterAccessSave (owner's review: a withdrawn last visible grant re-reads the list)", () => {
+  const sa = { id: "sa", role: "super_admin" as const, accessibleSubsidiaryIds: ["A"] };
+  const mk = { id: "mk", role: "masterkey" as const, accessibleSubsidiaryIds: ["A", "C"] };
+  const grant = (id: string) => ({ subsidiaryId: id, categories: [] });
+
+  it("re-reads when a super_admin's save leaves the row with no grant it can see", () => {
+    expect(reloadAfterAccessSave(sa, { access: [grant("A")] }, { access: [] })).toBe(true);
+  });
+  it("keeps the row when a grant it can see remains, or when there was none to withdraw", () => {
+    expect(reloadAfterAccessSave(sa, { access: [grant("A")] }, { access: [grant("A")] })).toBe(false);
+    expect(reloadAfterAccessSave(sa, { access: [] }, { access: [grant("A")] })).toBe(false);
+  });
+  it("never re-reads for a masterkey, who sees every account and grant", () => {
+    expect(reloadAfterAccessSave(mk, { access: [grant("A")] }, { access: [] })).toBe(false);
   });
 });

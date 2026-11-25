@@ -86,6 +86,7 @@ import {
   withdrawCompany,
   type AccessDraft,
   type InviteDrafts,
+  reloadAfterAccessSave,
 } from "@/lib/users-view";
 import { cn } from "@/lib/utils";
 import { useSignOut } from "@/lib/use-sign-out";
@@ -474,9 +475,12 @@ export default function UsersPage() {
         names={subsidiaryNames}
         onClose={() => setAccessTarget(null)}
         onSave={(target, draft) =>
-          act(target, () => api.replaceUserAccess(target.id, { access: accessPayload(target.role, draft) }), () => {
+          act(target, () => api.replaceUserAccess(target.id, { access: accessPayload(target.role, draft) }), (updated) => {
             setAccessTarget(null);
             toast.success(t("accessSaved"));
+            // The last grant this super_admin could see is gone: the API, not
+            // the row, says whether the account is still listed.
+            if (reloadAfterAccessSave(user, target, updated)) void load();
           })
         }
       />
