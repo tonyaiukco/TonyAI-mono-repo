@@ -646,7 +646,7 @@ export class EvidenceService {
         errorBody(
           'evidence_backs_locked_records',
           `This file also backs records that can no longer change, so it cannot be deleted: ${named.join('; ')}. Remove it from each editable record instead.`,
-          { count: Math.max(visible.length, 1) },
+          { count: visible.length, reach: hidden > 0 ? 'hidden' : 'visible' },
         ),
       );
     }

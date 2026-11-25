@@ -210,7 +210,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   evidence_records_refused: () =>
     new BadRequestException(errorBody('evidence_records_refused', 'x', { refused: 1, total: 2 })),
   evidence_backs_locked_records: () =>
-    new ConflictException(errorBody('evidence_backs_locked_records', 'x', { count: 1 })),
+    new ConflictException(errorBody('evidence_backs_locked_records', 'x', { count: 1, reach: 'visible' })),
   record_period_invalid: () =>
     new BadRequestException(errorBody('record_period_invalid', 'x', { granularity: 'monthly' })),
   record_not_editable: () => new BadRequestException(errorBody('record_not_editable', 'x', { status: 'approved' })),

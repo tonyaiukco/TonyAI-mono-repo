@@ -3221,7 +3221,10 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     evidence_file_mismatch: Object.freeze(['kind']),
     evidence_record_not_editable: Object.freeze(['status']),
     evidence_records_refused: Object.freeze(['refused', 'total']),
-    evidence_backs_locked_records: Object.freeze(['count']),
+    /** `count`: the blocking records the caller may see; `reach` (`visible` |
+     *  `hidden`): a SENTENCE SELECTOR — `hidden` when records outside the
+     *  caller's access block it too, whose sentence names no number. */
+    evidence_backs_locked_records: Object.freeze(['count', 'reach']),
     record_period_invalid: Object.freeze(['granularity']),
     record_not_editable: Object.freeze(['status']),
     record_not_submittable: Object.freeze(['status']),
@@ -3264,6 +3267,7 @@ export const API_ERROR_SENTENCE_SELECTORS: Readonly<Partial<Record<ApiErrorCode,
   variance_reason_required: 'basis',
   parameters_required: 'input',
   not_record_approver: 'approver',
+  evidence_backs_locked_records: 'reach',
 });
 
 export type ApiErrorParams = Readonly<Record<string, string | number>>;

@@ -174,6 +174,9 @@
       "super_admin": "Bu kayda siz değil, şirketinin bir Süper Yöneticisi karar verir.",
       "masterkey": "Bu kayda siz değil, bir Masterkey karar verir.",
       "author": "Bu kayda onu giren Masterkey, kendi kaydını onaylayarak karar verir; başka kimse karar veremez."
+    },
+    "evidence_backs_locked_records": {
+      "hidden": "Bu dosya artık değişemeyen başka kayıtları da destekliyor, bunların bir kısmı erişiminizin dışında; bu yüzden silinemez. Bunun yerine her düzenlenebilir kayıttan ayrı ayrı kaldırın."
     }
   },
   "bulkOutcomes": {

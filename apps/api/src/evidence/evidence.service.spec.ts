@@ -1235,7 +1235,8 @@ describe('EvidenceService', () => {
 
       const refusal = await service.remove(user, 'ev-1').catch((e) => e);
 
-      expect(refusal.getResponse()).toMatchObject({ code: 'evidence_backs_locked_records', params: { count: 1 } });
+      // No count of what the caller cannot see: the `hidden` sentence names no number.
+      expect(refusal.getResponse()).toMatchObject({ code: 'evidence_backs_locked_records', params: { count: 0, reach: 'hidden' } });
       expect(refusal.message).toContain('records outside your access');
       expect(refusal.message).not.toMatch(/Fuel|Q3/);
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
@@ -1255,7 +1256,7 @@ describe('EvidenceService', () => {
       prisma.activityRecord.findMany.mockResolvedValue([open, locked]);
       await expect(service.remove(standardUser(), 'ev-1')).rejects.toThrow(/can no longer change.*is locked/);
       await expect(service.remove(standardUser(), 'ev-1')).rejects.toMatchObject({
-        response: { code: 'evidence_backs_locked_records', params: { count: 1 } },
+        response: { code: 'evidence_backs_locked_records', params: { count: 1, reach: 'visible' } },
       });
       expect(intents.runNow).not.toHaveBeenCalled();
       expect(prisma.evidence.delete).not.toHaveBeenCalled();

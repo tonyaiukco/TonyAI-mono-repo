@@ -162,7 +162,7 @@ describe("LP4-04 slice 2 PR C's codes (M3)", () => {
     for (const [code, status, params] of [
       ["subsidiary_in_use", 409, undefined],
       ["evidence_records_refused", 400, { refused: 1, total: 2 }],
-      ["evidence_backs_locked_records", 409, { count: 1 }],
+      ["evidence_backs_locked_records", 409, { count: 1, reach: "visible" }],
     ] as const) {
       const sentence = "This subsidiary still holds 2 record(s) awaiting review, …";
       const e = new ApiError(sentence, status, code, params);
@@ -170,6 +170,13 @@ describe("LP4-04 slice 2 PR C's codes (M3)", () => {
       expect(describe_(e, "tr").description).toBe(sentence);
       expect(describe_(e, "tr").title).not.toBe(sentence);
     }
+  });
+
+  it("a shared file blocked by records outside the reader's access is refused with no count (inc26, owner's review)", () => {
+    const e = new ApiError("…", 409, "evidence_backs_locked_records", { count: 0, reach: "hidden" });
+    const title = describe_(e, "tr").title;
+    expect(title).toContain("erişiminizin dışında");
+    expect(title).not.toMatch(/\d/);
   });
 
   it("drops a caller's text the server's sentence quoted — the catalogue never echoes it", () => {
