@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
+import enReview from '../apps/web/messages/en/review.json';
 import { ADMIN_EMAIL, API_BASE, SUB, bearer, getAccessToken, listAllPages, login } from './helpers';
 
 /**
@@ -86,19 +87,35 @@ test('target progress answers the ids it was given, in their order, and never ev
 
 test('the review queue counts the whole queue, not the rows on screen', async ({ page: browser, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
-  const meta = await (await request.get(`${API_BASE}/activity-records/metadata?status=submitted,under_review`, { headers: bearer(token) })).json();
+  // The default view is what awaits the reader's decision (`awaitingMyDecision`,
+  // applied by the API so the count is the whole of it).
+  const meta = await (await request.get(`${API_BASE}/activity-records/metadata?status=submitted,under_review&awaitingMyDecision=true`, { headers: bearer(token) })).json();
   await login(browser, ADMIN_EMAIL);
   await browser.goto('/review');
   await expect(browser.getByTestId('review-queue-total')).toHaveText(`${meta.total} awaiting review`);
   if (meta.total === 0) {
-    await expect(browser.getByText('Nothing is waiting for review.')).toBeVisible();
+    await expect(browser.getByText(enReview.emptyMine)).toBeVisible();
+  } else {
+    // The rows shown are at most one page, and say how many of the whole they are.
+    await expect(browser.getByTestId('review-queue-shown')).toHaveText(
+      `Showing ${Math.min(50, meta.total)} of ${meta.total} — the longest wait first`,
+    );
+    expect(await browser.locator('table tbody tr').count()).toBeLessThanOrEqual(Math.min(50, meta.total));
+  }
+
+  // "Every pending record" counts the whole pending set the reader can read.
+  const all = await (await request.get(`${API_BASE}/activity-records/metadata?status=submitted,under_review`, { headers: bearer(token) })).json();
+  expect(all.total).toBeGreaterThanOrEqual(meta.total);
+  await browser.getByTestId('review-show-all').click();
+  await expect(browser.getByTestId('review-queue-total')).toHaveText(`${all.total} awaiting review`);
+  if (all.total === 0) {
+    await expect(browser.getByText(enReview.empty)).toBeVisible();
     return;
   }
-  // The rows shown are at most one page, and say how many of the whole they are.
   await expect(browser.getByTestId('review-queue-shown')).toHaveText(
-    `Showing ${Math.min(50, meta.total)} of ${meta.total} — the longest wait first`,
+    `Showing ${Math.min(50, all.total)} of ${all.total} — the longest wait first`,
   );
-  expect(await browser.locator('table tbody tr').count()).toBeLessThanOrEqual(Math.min(50, meta.total));
+  expect(await browser.locator('table tbody tr').count()).toBeLessThanOrEqual(Math.min(50, all.total));
 });
 
 test('the records table says which records a selection covers', async ({ page: browser, request }) => {

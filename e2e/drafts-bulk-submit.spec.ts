@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import {
   ADMIN_EMAIL,
   API_BASE,
+  APPROVER_EMAIL,
   bearer,
   deleteRecordsAsService,
   E2E_PERIOD as PERIOD,
@@ -280,7 +281,8 @@ test('a rejected record is not offered, and the row says to open it alone', asyn
   // and a route that would flip a thousand of them at once is not what "the
   // other half of an import" means.
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);
-  const adminToken = await getAccessToken(request, ADMIN_EMAIL);
+  // The standard user's record is returned by its approver, Logistics' super admin.
+  const approverToken = await getAccessToken(request, APPROVER_EMAIL);
   const created: string[] = [];
 
   try {
@@ -292,8 +294,8 @@ test('a rejected record is not offered, and the row says to open it alone', asyn
     });
     if (!submitted.ok()) throw new Error(`submit failed: ${submitted.status()}`);
     const rejected = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
-      headers: bearer(adminToken),
-      data: { varianceReason: 'E2E: sent back so the row can be looked at.', seenSubmittedAt: await seenSubmittedAt(request, adminToken, id) },
+      headers: bearer(approverToken),
+      data: { varianceReason: 'E2E: sent back so the row can be looked at.', seenSubmittedAt: await seenSubmittedAt(request, approverToken, id) },
     });
     if (!rejected.ok()) throw new Error(`reject failed: ${rejected.status()}`);
 

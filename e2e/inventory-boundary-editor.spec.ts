@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
-import { ADMIN_EMAIL, API_BASE, CONSULTANT_EMAIL, ENTRY_EMAIL, SUB, bearer, getAccessToken, login } from './helpers';
+import { ADMIN_EMAIL, API_BASE, AUDITOR_EMAIL, ENTRY_EMAIL, SUB, bearer, getAccessToken, login } from './helpers';
 
 /**
  * LP4-03 PR C: the inventory boundary editor, end to end — a version started,
@@ -178,11 +178,11 @@ test('a new version copies the confirmed one, refuses a save over a concurrent c
     await expect(trading.getByRole('cell').nth(1)).toHaveText('January – December');
     await expect(page.getByRole('button', { name: 'Start an empty version' })).toHaveCount(0);
 
-    // An open version is still read-only for a consultant: nothing to declare, confirm or delete.
-    const consultant = await browser.newContext();
+    // An open version is still read-only for an auditor: nothing to declare, confirm or delete.
+    const auditor = await browser.newContext();
     try {
-      const reader = await consultant.newPage();
-      await login(reader, CONSULTANT_EMAIL);
+      const reader = await auditor.newPage();
+      await login(reader, AUDITOR_EMAIL);
       await reader.goto(pageUrl);
       const readerDetail = reader.getByTestId('boundary-detail');
       await expect(readerDetail).toHaveAttribute('data-state', 'open');
@@ -192,7 +192,7 @@ test('a new version copies the confirmed one, refuses a save over a concurrent c
         await expect(reader.getByRole('button', { name })).toHaveCount(0);
       }
     } finally {
-      await consultant.close();
+      await auditor.close();
     }
 
     // Opened, then changed by someone else: the save is refused, not written over it.
@@ -245,7 +245,7 @@ test('a new version copies the confirmed one, refuses a save over a concurrent c
 });
 
 test('the roles that may not write read the boundary, each as far as its access goes', async ({ page }) => {
-  await login(page, CONSULTANT_EMAIL);
+  await login(page, AUDITOR_EMAIL);
   await page.goto(pageUrl);
   await expect(page.getByTestId('boundary-read-only')).toBeVisible();
   const detail = page.getByTestId('boundary-detail');
@@ -260,7 +260,7 @@ test('the roles that may not write read the boundary, each as far as its access 
   await expect(subsidiaryRow(page, ENERGY)).toContainText('Not declared');
   await expect(subsidiaryRow(page, ENERGY).getByRole('button')).toHaveCount(0);
 
-  // data_entry reads a version only through a granted subsidiary it declares; 2028 declares only Trading.
+  // A standard user reads a version only through a granted subsidiary it declares; 2028 declares only Trading.
   await page.getByRole('button', { name: 'Sign out' }).click();
   await page.waitForURL('**/login');
   await login(page, ENTRY_EMAIL);

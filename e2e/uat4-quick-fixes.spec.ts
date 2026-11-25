@@ -3,7 +3,7 @@ import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enReview from '../apps/web/messages/en/review.json';
 import {
   API_BASE,
-  CONSULTANT_EMAIL,
+  APPROVER_EMAIL,
   E2E_TR_INPUTS,
   E2E_TR_INPUTS_YEAR,
   ENTRY_EMAIL,
@@ -171,8 +171,9 @@ test.describe('a record\'s invoice number and supplier (BUG-16)', () => {
       expect(submitted.input).toEqual({ invoice_no: INVOICE_NO, supplier: SUPPLIER });
       expect(submitted.calculation.kgCo2e).toBeCloseTo(before.calculation.kgCo2e, 9);
 
-      // The reviewer sees both beside the quantity, to match against the evidence file.
-      await switchUser(page, CONSULTANT_EMAIL);
+      // The reviewer sees both beside the quantity, to match against the evidence
+      // file: the standard user's record, so Logistics' super_admin.
+      await switchUser(page, APPROVER_EMAIL);
       await page.goto('/review');
       await page
         .locator('table tbody tr')

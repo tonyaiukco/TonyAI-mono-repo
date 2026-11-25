@@ -1,9 +1,13 @@
 import { test, expect } from '@playwright/test';
-import type { BulkUploadReportDTO } from '@tonyai/shared-types';
+import type { BulkUploadReportDTO, UserSummaryDTO } from '@tonyai/shared-types';
 import { randomUUID } from 'node:crypto';
 import {
   ADMIN_EMAIL,
   API_BASE,
+  APPROVER_EMAIL,
+  SEED_ENTRY_CATEGORIES,
+  listAllPages,
+  resetSeedAccess,
   bearer,
   buildBulkCsv,
   deleteRecordsAsService,
@@ -282,6 +286,63 @@ test('the bulk-submit body is validated by its DTO', async ({ request }) => {
   expect((await post({ recordIds: [] })).status()).toBe(400);
   expect((await post({})).status()).toBe(400);
   expect((await post({ recordIds: [randomUUID()], force: true })).status()).toBe(400);
+});
+
+test('a super admin\'s file naming a company outside its grants is refused WHOLE', async ({ request }) => {
+  // The scoped super_admin of the four roles: every seed company but Trading.
+  // Its own budget (one import in this file).
+  const token = await getAccessToken(request, APPROVER_EMAIL);
+  const before = (await serviceReadRecords(request, `subsidiary_id=eq.${SUB.trading}&reporting_period=eq.${E2E_PERIOD}`)).length;
+  const res = await postBulkImport(request, token, {
+    buffer: buildBulkCsv([
+      { subsidiaryId: SUB.energy, periodValue: 'Q3', activityValue: 5 },
+      { subsidiaryId: SUB.trading, periodValue: 'Q3', activityValue: 5 },
+    ]),
+    dryRun: 'false',
+  });
+  expect(res.status()).toBe(400);
+  expect((await res.json()).message).toMatch(/Row\(s\) 3\b/);
+  expect(
+    await serviceReadRecords(
+      request,
+      `subsidiary_id=eq.${SUB.energy}&reporting_period=eq.${E2E_PERIOD}&period_value=eq.Q3&category=eq.${E2E_BULK_CATEGORY}`,
+    ),
+  ).toHaveLength(0);
+  expect((await serviceReadRecords(request, `subsidiary_id=eq.${SUB.trading}&reporting_period=eq.${E2E_PERIOD}`)).length).toBe(before);
+});
+
+test('a standard user\'s row in a category not ticked for its company is refused on its row (category_not_granted)', async ({ request }) => {
+  // The categories bound what a standard user enters (INC-2.6 §1, §7.3): its
+  // super admin unticks this file's category for Energy, Logistics keeps it.
+  const approver = await getAccessToken(request, APPROVER_EMAIL);
+  const users = await listAllPages<UserSummaryDTO>(request, approver, '/users');
+  const entry = users.find((u) => u.email === ENTRY_EMAIL)!;
+  try {
+    const narrowed = await request.put(`${API_BASE}/users/${entry.id}/access`, {
+      headers: bearer(approver),
+      data: {
+        access: [
+          { subsidiaryId: SUB.energy, categories: SEED_ENTRY_CATEGORIES.filter((c) => c !== E2E_BULK_CATEGORY) },
+          { subsidiaryId: SUB.logistics, categories: [...SEED_ENTRY_CATEGORIES] },
+        ],
+      },
+    });
+    expect(narrowed.status(), await narrowed.text()).toBe(200);
+
+    const res = await postBulkImport(request, await getAccessToken(request, ENTRY_EMAIL), {
+      buffer: buildBulkCsv([
+        { subsidiaryId: SUB.energy, periodValue: 'Q3', activityValue: 5 },
+        { subsidiaryId: SUB.logistics, periodValue: 'Q3', activityValue: 5 },
+      ]),
+      dryRun: 'true',
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+    const report = (await res.json()) as BulkUploadReportDTO;
+    expect(report.errors).toEqual([expect.objectContaining({ row: 2, column: 'category', code: 'category_not_granted' })]);
+    expect(report.accepted.map((r) => r.row)).toEqual([3]);
+  } finally {
+    await resetSeedAccess(request);
+  }
 });
 
 test('the import throttle fires, and each user has their own budget', async ({ request }) => {

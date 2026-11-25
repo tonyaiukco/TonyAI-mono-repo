@@ -174,7 +174,7 @@ test('summary tells a non-admin nothing they could not already count themselves'
   // The justification for leaving this endpoint tenant-scoped but NOT
   // role-gated is that it is a cheaper form of what the caller already had.
   // That is a property of SEVEN other services, not of this one — narrow any
-  // of those lists later (author-scoping a data_entry user's record list is a
+  // of those lists later (author-scoping a standard user's record list is a
   // plausible ask) and the summary silently becomes a leak with nothing to
   // catch it. So the equivalence is asserted, not asserted-in-a-comment.
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);
@@ -225,7 +225,7 @@ test('summary is tenant-scoped, and a bad id is a 400 not a 500', async ({ reque
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);
   const sub = await makeSubsidiary(request, adminToken, 'E2E Test Co Scope');
 
-  // data_entry has explicit access to two seeded subsidiaries only.
+  // The standard user has explicit access to two seeded subsidiaries only.
   const outOfScope = await request.get(`${API_BASE}/subsidiaries/${sub.id}/summary`, {
     headers: bearer(entryToken),
   });

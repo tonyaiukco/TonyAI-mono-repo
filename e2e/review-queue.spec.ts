@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import enReview from '../apps/web/messages/en/review.json';
 import {
   login,
   switchUser,
@@ -8,7 +9,7 @@ import {
   createCommittedRecord,
   ADMIN_EMAIL,
   APPROVER_EMAIL,
-  CONSULTANT_EMAIL,
+  AUDITOR_EMAIL,
   ENTRY_EMAIL,
   VIEWER_EMAIL,
   API_BASE,
@@ -23,12 +24,13 @@ import {
  * WP7 PR 3 — the reviewer UI at `/review`.
  *
  * The rule this file exists to defend is who decides, against the real guard
- * rather than mocks: a consultant or a masterkey takes a record into review,
- * sends it back or approves it (a consultant approves since K2, Decisions
- * 2026-11-12), and nobody approves a record they created (D01). Until the seed
- * grew a consultant user there was no way to exercise the consultant's branch
- * against the real guard, and unit tests could not have caught a guard wired
- * to the wrong role set.
+ * rather than mocks: only a record's approver (`recordApprover`, INC-2.6 §1.1)
+ * takes it into review, sends it back or approves it — the company's
+ * super_admin for a standard user's record, the masterkey for a super_admin's
+ * record (and for a company with no super_admin), and a masterkey alone for
+ * its own record, as a self-approval. Nobody but a masterkey decides a record
+ * they created (D01), and an auditor decides nothing. Unit tests could not
+ * have caught a guard wired to the wrong role set.
  *
  * Two collision rules, both learned by breaking them: every test writes a tuple
  * (subsidiary+category+period) no other spec touches — sharing one is a 409 on
@@ -39,35 +41,57 @@ import {
  * test's own record untouched.
  */
 
-test('a submitted record reaches the queue and approving clears it', async ({
+test("a super admin's record waits for the masterkey, and the masterkey's approval clears it", async ({
   page,
   request,
 }) => {
-  const token = await getAccessToken(request, ADMIN_EMAIL);
+  // A super_admin's record is decided by a masterkey (`recordApprover`).
+  const token = await getAccessToken(request, APPROVER_EMAIL);
+  // Gas·Natural Gas·Q1: Mfg's Natural Gas is `review-gate`'s whole cell, and
+  // `review-queue-races` writes Q3 and Q4 here.
   const id = await createCommittedRecord(request, token, {
-    subsidiaryId: SUB.trading,
+    subsidiaryId: SUB.gas,
     category: 'Natural Gas',
-    periodValue: 'Q4',
+    periodValue: 'Q1',
     activityValue: 7400,
+    // A committed neighbour in the lane may flag it; the reason keeps submit open.
+    varianceReason: 'e2e: approval chain lane',
   });
+  const gasRow = () =>
+    page.locator('table tbody tr', { hasText: 'TonyAI Gas' }).filter({ hasText: 'Natural Gas' }).filter({ hasText: 'Q1 2026' });
 
-  // The creator can inspect their submitted record, but cannot approve it.
-  await login(page, ADMIN_EMAIL);
+  // The creator's default view is what awaits THEIR decision, so their own
+  // record is not in it; "every pending record" shows it, with whom it awaits.
+  await login(page, APPROVER_EMAIL);
   await page.goto('/review');
-  await page.locator('table tbody tr', { hasText: 'TonyAI Trading' })
-    .filter({ hasText: 'Q4 2026' }).click();
-  await expect(page.getByText('You cannot approve a record you entered.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
+  await expect(page.getByTestId('review-queue-total')).not.toContainText('—');
+  await expect(gasRow()).toHaveCount(0);
+  await page.getByTestId('review-show-all').click();
+  await expect(gasRow().getByTestId('review-row-awaits')).toHaveText(enReview.awaits.masterkey);
+  await gasRow().click();
+  await expect(page.getByTestId('review-sheet-own-record')).toHaveText(enReview.sheet.selfApproval);
   await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Return', exact: true })).toHaveCount(0);
+  // Opening it took nothing into review: it is not theirs to decide.
+  await expect(page.getByTestId('review-sheet-status')).toContainText('submitted');
   await page.keyboard.press('Escape');
-  // A different masterkey still has the approval action.
-  await switchUser(page, APPROVER_EMAIL);
+  // ...and the API says the same, by the routing's own code.
+  const own = await request.post(`${API_BASE}/activity-records/${id}/approve`, {
+    headers: bearer(token),
+    data: { seenSubmittedAt: await seenSubmittedAt(request, token, id) },
+  });
+  expect(own.status()).toBe(403);
+  expect((await own.json()).code).toBe('self_approval_forbidden');
+
+  // The masterkey's default view holds it.
+  await switchUser(page, ADMIN_EMAIL);
   await page.goto('/review');
   await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
 
-  const row = page
-    .locator('table tbody tr', { hasText: 'TonyAI Trading' })
-    .filter({ hasText: 'Q4 2026' });
+  const row = gasRow();
   await expect(row).toContainText('submitted');
+  await expect(row.getByTestId('review-row-awaits')).toHaveCount(0);
   // The Waiting cell reads a real number, not an em dash. That is the whole
   // chain: the submit path stamped `submitted_at`, the DTO carried it, and the
   // column counted from it. Before the column existed this cell counted from
@@ -87,9 +111,7 @@ test('a submitted record reaches the queue and approving clears it', async ({
   // because a test-created record is drafted and submitted in the same second.
   await backdateCreatedAt(request, id, 30);
   await page.reload();
-  const backdated = page
-    .locator('table tbody tr', { hasText: 'TonyAI Trading' })
-    .filter({ hasText: 'Q4 2026' });
+  const backdated = gasRow();
   await expect(backdated).toContainText('0d');
   await expect(backdated).not.toContainText('30d');
 
@@ -99,9 +121,8 @@ test('a submitted record reaches the queue and approving clears it', async ({
   // "not reviewed yet" is a fact about the record, and a field that appeared
   // only once populated would hide it.
   //
-  // Labels only here; the VALUE is asserted in the consultant test below. (The
-  // viewer used to BE the creator, which made a value assertion unable to tell
-  // "shows the record's author" from "shows whoever is logged in".)
+  // Labels only here; the VALUE is asserted in the super admin's test below
+  // and in the readback at the end of this one.
   // Scoped to the sheet, not the page: renaming the queue's column header to
   // "Entered by" put a second copy of that exact string in the table head, and
   // an unscoped `getByText` is then a strict-mode violation. The same duplicate
@@ -120,26 +141,27 @@ test('a submitted record reaches the queue and approving clears it', async ({
   await expect(page.getByText('Record approved')).toBeVisible();
 
   // The queue is defined by status, so an approved record must be gone from it.
-  await expect(
-    page
-      .locator('table tbody tr', { hasText: 'TonyAI Trading' })
-      .filter({ hasText: 'Q4 2026' }),
-  ).toHaveCount(0);
+  await expect(gasRow()).toHaveCount(0);
 
   // Cross-check the actual state rather than trusting the screen.
   const after = await request.get(`${API_BASE}/activity-records/${id}`, {
     headers: bearer(token),
   });
-  expect((await after.json()).status).toBe('approved');
+  const approved = await after.json();
+  expect(approved.status).toBe('approved');
+  expect(approved.reviewedByName).toBe('Tony Admin');
+  expect(approved.createdByName).toBe('Arda Approver');
 });
 
 test('rejecting requires a reason, and that reason reaches the submitter', async ({
   page,
   request,
 }) => {
+  // The admin's own record: a masterkey decides its own (`recordApprover`), so
+  // the admin both enters and returns it.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await createCommittedRecord(request, token, {
-    // Logistics is inside the data_entry user's access set, so the submitter can
+    // Logistics is inside the standard user's access set, so a colleague can
     // actually open the rejected record afterwards — the point of the test.
     subsidiaryId: SUB.logistics,
     category: 'Electricity',
@@ -189,7 +211,7 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
   // The discriminating placement for `/emissions`: this drawer is open as the
   // ENTRY user on a record the ADMIN created, so the name has to be the
   // author's and not the viewer's. `/review` is covered the same way in the
-  // consultant test; this is the other screen that renders actors.
+  // super admin's test; this is the other screen that renders actors.
   const drawer = page.getByRole('dialog');
   await expect(drawer.getByText('Entered by')).toBeVisible();
   // The admin both entered and rejected this record, so the name stands twice.
@@ -226,86 +248,84 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
   expect(back.reviewNote).toBe('Invoice total does not match the meter reading');
 });
 
-test('a consultant takes another user\'s record into review and approves it (K2)', async ({
+test("the company's super admin takes a standard user's record into review and approves it", async ({
   page,
   request,
 }) => {
-  const token = await getAccessToken(request, ADMIN_EMAIL);
-  const id = await createCommittedRecord(request, token, {
-    subsidiaryId: SUB.gas,
-    category: 'Natural Gas',
+  // A standard user's record in a company with an active super_admin is that
+  // super_admin's to decide (`recordApprover`). Energy·Fuel·Q1 is no other
+  // spec's tuple (Q2 is the ordering test's, Q3 and Q4 `drafts-bulk-submit-evidence`'s).
+  const entry = await getAccessToken(request, ENTRY_EMAIL);
+  const id = await createCommittedRecord(request, entry, {
+    subsidiaryId: SUB.energy,
+    category: 'Fuel',
     periodValue: 'Q1',
-    activityValue: 5200,
-    activityUnit: 'm3',
+    activityValue: 700,
+    activityUnit: 'litres',
+    varianceReason: 'e2e: approval chain lane',
   });
+  try {
+    const record = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(entry) })).json();
+    expect(record.approver).toBe('super_admin');
 
-  await login(page, CONSULTANT_EMAIL);
-  await page.goto('/review');
-  await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
+    await login(page, APPROVER_EMAIL);
+    await page.goto('/review');
+    await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
 
-  const row = page
-    .locator('table tbody tr', { hasText: 'TonyAI Gas' })
-    .filter({ hasText: 'Natural Gas' })
-    .filter({ hasText: 'Q1 2026' });
+    // In the default view: it awaits this user's decision.
+    const row = page
+      .locator('table tbody tr', { hasText: 'TonyAI Energy' })
+      .filter({ hasText: 'Fuel' })
+      .filter({ hasText: 'Q1 2026' });
 
-  // The discriminating case for the actor column: this record was created with
-  // the ADMIN's token and is being read by the CONSULTANT. So the name has to
-  // be the author's, and must NOT be the viewer's — an implementation that
-  // rendered the logged-in user would be indistinguishable from a correct one
-  // in the two tests above, where the viewer is also the creator.
-  await expect(row).toContainText('Tony Admin');
-  // The negative is only meaningful because the positive above runs first on
-  // the SAME locator: `not.toContainText` passes vacuously against a locator
-  // matching zero elements. Do not reorder these.
-  await expect(row).not.toContainText('Cem Consultant');
+    // The discriminating case for the actor column: this record was created
+    // with the STANDARD USER's token and is being read by the SUPER ADMIN. So
+    // the name has to be the author's, and must NOT be the viewer's.
+    await expect(row).toContainText('Eda Entry');
+    // The negative is only meaningful because the positive above runs first on
+    // the SAME locator: `not.toContainText` passes vacuously against a locator
+    // matching zero elements. Do not reorder these.
+    await expect(row).not.toContainText('Arda Approver');
+    await expect(row.getByTestId('review-row-awaits')).toHaveCount(0);
 
-  await row.click();
+    await row.click();
 
-  // Since K2 a consultant approves a record someone else created, so Approve is
-  // offered, and neither the old "reserved for a masterkey" note nor the
-  // self-approval hint is shown.
-  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
-  await expect(page.getByText(/Approval is reserved for a masterkey/)).toHaveCount(0);
-  await expect(page.getByText('You cannot approve a record you entered.')).toHaveCount(0);
+    // Approve is offered, and neither the own-record note nor the "decided by
+    // someone else" note is shown.
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+    await expect(page.getByTestId('review-sheet-own-record')).toHaveCount(0);
+    await expect(page.getByTestId('review-sheet-awaits')).toHaveCount(0);
+    await expect(page.getByTestId('review-sheet-self-approval-note')).toHaveCount(0);
 
-  // The sheet must carry what a decision needs. Both of these were implemented
-  // and asserted by nothing — removing either left the suite green.
-  await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
-  await expect(page.getByText(/prototype demo factors.*v2026\.1/)).toBeVisible();
+    // The sheet must carry what a decision needs: the file and the factor.
+    await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
+    await expect(page.getByRole('dialog')).toContainText(`${record.calculation.source} v${record.calculation.version}`);
 
-  // Opening it took it into review (WP5): no button, no toast — the status is the news.
-  await expect(page.getByTestId('review-sheet-status')).toContainText('under review');
-  await expect(page.getByRole('button', { name: 'Start review' })).toHaveCount(0);
+    // Opening it took it into review (WP5): no button, no toast — the status is the news.
+    await expect(page.getByTestId('review-sheet-status')).toContainText('under review');
+    await expect(page.getByRole('button', { name: 'Start review' })).toHaveCount(0);
 
-  // `review` leaves the record PENDING, so it must stay in the queue and change
-  // status. Dropping it instead also passed before this assertion existed —
-  // a reviewer would have watched a record they had merely opened vanish.
-  await expect(row).toBeVisible();
-  await expect(row).toContainText('under review');
-  // ...and the author is STILL named. This is the exact click at which the
-  // actor column emptied: `review` leaves the record pending, so the write
-  // response is spliced straight into the row, and while the name fields were
-  // optional that response omitted them — the column fell back to an em dash on
-  // the very action that made this consultant the reviewer. Three review seats
-  // found it independently; the fields are required now, so there is no shape
-  // a write path can forget to fill.
-  await expect(row).toContainText('Tony Admin');
+    // `review` leaves the record PENDING, so it must stay in the queue and
+    // change status, with its author still named (the write response is
+    // spliced straight into the row, and once omitted the names).
+    await expect(row).toBeVisible();
+    await expect(row).toContainText('under review');
+    await expect(row).toContainText('Eda Entry');
 
-  const mid = await request.get(`${API_BASE}/activity-records/${id}`, {
-    headers: bearer(token),
-  });
-  expect((await mid.json()).status).toBe('under_review');
+    const mid = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(entry) });
+    expect((await mid.json()).status).toBe('under_review');
 
-  // The consultant then approves it from the same sheet; the queue, defined by
-  // status, drops it, and the stored record names the consultant as reviewer.
-  await page.getByRole('button', { name: 'Approve', exact: true }).click();
-  await expect(page.getByText('Record approved')).toBeVisible();
-  await expect(row).toHaveCount(0);
-  const after = await (
-    await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) })
-  ).json();
-  expect(after.status).toBe('approved');
-  expect(after.reviewedByName).toBe('Cem Consultant');
+    // The super admin then approves it from the same sheet; the queue, defined
+    // by status, drops it, and the stored record names them as reviewer.
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(page.getByText('Record approved')).toBeVisible();
+    await expect(row).toHaveCount(0);
+    const after = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(entry) })).json();
+    expect(after.status).toBe('approved');
+    expect(after.reviewedByName).toBe('Arda Approver');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
 });
 
 test('the queue is ordered by longest WAIT, not by oldest draft', async ({ page, request }) => {
@@ -372,88 +392,113 @@ test('the queue is ordered by longest WAIT, not by oldest draft', async ({ page,
   expect(text[draftedEarlier]).not.toContain('365d');
 });
 
-test('the API decides who approves: a consultant yes, with the submission seen; others no', async ({
+test("the API decides who approves: the record's approver, with the submission seen; an auditor, the masterkey and the author no", async ({
   request,
 }) => {
   const admin = await getAccessToken(request, ADMIN_EMAIL);
-  const consultant = await getAccessToken(request, CONSULTANT_EMAIL);
-  const viewer = await getAccessToken(request, VIEWER_EMAIL);
-  const id = await createCommittedRecord(request, admin, {
-    subsidiaryId: SUB.gas,
-    category: 'Fuel',
-    periodValue: 'Q1',
-    activityValue: 900,
-    activityUnit: 'litres',
+  const superAdmin = await getAccessToken(request, APPROVER_EMAIL);
+  const entry = await getAccessToken(request, ENTRY_EMAIL);
+  // Logistics·Water·Q3: no other spec's tuple. Water is evidence-required and
+  // priced by no factor, so nothing in the lane can flag it.
+  const id = await createCommittedRecord(request, entry, {
+    subsidiaryId: SUB.logistics,
+    category: 'Water',
+    periodValue: 'Q3',
+    activityValue: 120,
+    activityUnit: 'cubic_metres',
+    varianceReason: 'e2e: approval chain lane',
   });
-  const approveAs = (token: string, data?: Record<string, unknown>) =>
-    request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(token), data });
+  try {
+    const approveAs = (token: string, data?: Record<string, unknown>) =>
+      request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(token), data });
+    const seen = async () => ({ seenSubmittedAt: await seenSubmittedAt(request, admin, id) });
 
-  // A role that may not approve is refused on the role, before anything else.
-  const byViewer = await approveAs(viewer, { seenSubmittedAt: await seenSubmittedAt(request, admin, id) });
-  expect(byViewer.status()).toBe(403);
-  expect((await byViewer.json()).message).toMatch(/Only a consultant or masterkey may approve records/);
+    // Both auditors (a former consultant and a former executive viewer) read
+    // it and are refused on the role, before anything else.
+    for (const email of [AUDITOR_EMAIL, VIEWER_EMAIL]) {
+      const auditor = await getAccessToken(request, email);
+      const byAuditor = await approveAs(auditor, await seen());
+      expect(byAuditor.status(), email).toBe(403);
+      expect((await byAuditor.json()).message).toMatch(/Only a masterkey or a super_admin may approve records/);
+      const reviewByAuditor = await request.post(`${API_BASE}/activity-records/${id}/review`, { headers: bearer(auditor), data: await seen() });
+      expect(reviewByAuditor.status(), email).toBe(403);
+    }
+    // The author holds no decision at all.
+    const byAuthor = await approveAs(entry, await seen());
+    expect(byAuthor.status()).toBe(403);
 
-  // A consultant passes the role check, so a request that names no submission
-  // (a review tab from before BUG-R2-03) is `record_changed`, not 403.
-  const unnamed = await approveAs(consultant);
-  expect(unnamed.status()).toBe(409);
-  expect((await unnamed.json()).code).toBe('record_changed');
+    // The masterkey decides records, but not this one: Energy and Logistics
+    // have an active super_admin, whose decision it is.
+    const byMasterkey = await approveAs(admin, await seen());
+    expect(byMasterkey.status()).toBe(403);
+    const refusal = await byMasterkey.json();
+    expect(refusal.code).toBe('not_record_approver');
+    expect(refusal.message).toMatch(/decided by a super_admin of its company/);
 
-  // A consultant still cannot write data (decision 2026-07-30): approving is
-  // not authoring.
-  const write = await request.post(`${API_BASE}/activity-records`, {
-    headers: bearer(consultant),
-    data: {
-      subsidiaryId: SUB.gas,
-      locationId: null,
-      reportingYear: 2026,
-      reportingPeriod: 'quarterly',
-      periodValue: 'Q4',
-      category: 'Electricity',
-      activityValue: 10,
-      activityUnit: 'kWh',
-      varianceReason: null,
-      input: null,
-    },
-  });
-  expect(write.status()).toBe(403);
+    // The super admin passes the role check, so a request that names no
+    // submission (a review tab from before BUG-R2-03) is `record_changed`, not 403.
+    const unnamed = await approveAs(superAdmin);
+    expect(unnamed.status()).toBe(409);
+    expect((await unnamed.json()).code).toBe('record_changed');
 
-  // Reject stays open to the consultant; the author resubmits.
-  const reject = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
-    headers: bearer(consultant),
-    data: { varianceReason: 'meter reading missing', seenSubmittedAt: await seenSubmittedAt(request, consultant, id) },
-  });
-  expect(reject.status()).toBe(200);
-  expect((await reject.json()).status).toBe('rejected');
-  const resubmit = await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(admin) });
-  expect(resubmit.status()).toBe(200);
+    // An auditor cannot write data either: reading everything is not authoring.
+    const write = await request.post(`${API_BASE}/activity-records`, {
+      headers: bearer(await getAccessToken(request, AUDITOR_EMAIL)),
+      data: {
+        subsidiaryId: SUB.gas,
+        locationId: null,
+        reportingYear: 2026,
+        reportingPeriod: 'quarterly',
+        periodValue: 'Q4',
+        category: 'Electricity',
+        activityValue: 10,
+        activityUnit: 'kWh',
+        varianceReason: null,
+        input: null,
+      },
+    });
+    expect(write.status()).toBe(403);
 
-  // Naming the submission seen, the consultant's approval goes through.
-  const approved = await approveAs(consultant, { seenSubmittedAt: await seenSubmittedAt(request, consultant, id) });
-  expect(approved.status()).toBe(200);
-  expect((await approved.json()).status).toBe('approved');
+    // The approver returns it; the author resubmits.
+    const reject = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
+      headers: bearer(superAdmin),
+      data: { varianceReason: 'meter reading missing', ...(await seen()) },
+    });
+    expect(reject.status()).toBe(200);
+    expect((await reject.json()).status).toBe('rejected');
+    const resubmit = await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(entry) });
+    expect(resubmit.status()).toBe(200);
 
-  // Approving is not voiding: void stays masterkey only.
-  const voided = await request.post(`${API_BASE}/activity-records/${id}/void`, {
-    headers: bearer(consultant),
-    data: { voidReason: 'consultant tries to withdraw' },
-  });
-  expect(voided.status()).toBe(403);
-  const still = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(admin) });
-  expect((await still.json()).status).toBe('approved');
+    // Naming the submission seen, the approver's approval goes through.
+    const approved = await approveAs(superAdmin, await seen());
+    expect(approved.status()).toBe(200);
+    const body = await approved.json();
+    expect(body.status).toBe('approved');
+    expect(body.reviewedByName).toBe('Arda Approver');
+
+    // Approving is not voiding: void stays the masterkey's.
+    const voided = await request.post(`${API_BASE}/activity-records/${id}/void`, {
+      headers: bearer(superAdmin),
+      data: { voidReason: 'a super admin tries to withdraw' },
+    });
+    expect(voided.status()).toBe(403);
+    const still = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(admin) });
+    expect((await still.json()).status).toBe('approved');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
 });
 
-test('data_entry is told the decision is not theirs, not shown a broken page', async ({
-  page,
-}) => {
-  await login(page, ENTRY_EMAIL);
-  await page.goto('/review');
+for (const [who, email] of [['a standard user', ENTRY_EMAIL], ['an auditor', AUDITOR_EMAIL]] as const) {
+  test(`${who} is told the decision is not theirs, not shown a broken page`, async ({ page }) => {
+    await login(page, email);
+    await page.goto('/review');
 
-  await expect(
-    page.getByText(/Reviewing is done by a consultant or a masterkey/i),
-  ).toBeVisible();
-  await expect(page.locator('table')).toHaveCount(0);
-});
+    await expect(page.getByText(enReview.gate.title)).toBeVisible();
+    await expect(page.locator('table')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // WP5 (`uat4-review-resubmit`): opening a record takes it into review; a
@@ -485,11 +530,12 @@ test("a reviewer's open closes the author's recall: the refusal names the status
     const recall = list.getByRole('button', { name: `Recall Q1 ${E2E_YEAR} Electricity` });
     await expect(recall).toBeVisible();
 
-    // A consultant opens it in the review queue, in a browser of their own.
+    // Its approver, Logistics' super_admin, opens it in the review queue, in a
+    // browser of their own.
     const reviewer = await browser.newContext({ baseURL: test.info().project.use.baseURL });
   try {
       const rp = await reviewer.newPage();
-      await login(rp, CONSULTANT_EMAIL);
+      await login(rp, APPROVER_EMAIL);
       await rp.goto('/review');
       const started = rp.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
       await reviewRow(rp, 'TonyAI Logistics', 'Q1', 'Electricity').click();
@@ -514,7 +560,47 @@ test("a reviewer's open closes the author's recall: the refusal names the status
   }
 });
 
-test('a masterkey opening their own submitted record leaves it submitted, with no Start review', async ({ page, request }) => {
+test('a super admin opening their own submitted record leaves it submitted, with no Start review', async ({ page, request }) => {
+  // Mfg·Water·Q2: Mfg's Electricity is `gates`'s (Q1 to Q4), its Fuel
+  // `void-record`'s; `roles-approval-chain` writes Water Q1 and deletes it.
+  const own = await getAccessToken(request, APPROVER_EMAIL);
+  const id = await createCommittedRecord(request, own, {
+    subsidiaryId: SUB.mfg,
+    category: 'Water',
+    periodValue: 'Q2',
+    activityValue: 210,
+    activityUnit: 'cubic_metres',
+    // A committed neighbour in the lane may flag it; the reason keeps submit open.
+    varianceReason: 'e2e: WP5 review lane',
+  });
+  try {
+    const starts: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`)) starts.push(r.url());
+    });
+
+    await login(page, APPROVER_EMAIL);
+    await page.goto('/review');
+    // Not in the default view (a masterkey decides it): every pending record shows it.
+    await page.getByTestId('review-show-all').click();
+    const read = page.waitForResponse((r) => r.request().method() === 'GET' && r.url().endsWith(`/activity-records/${id}`));
+    await reviewRow(page, 'TonyAI Manufacturing', 'Q2', 'Water').click();
+    await read;
+    await expect(page.getByText('You cannot approve a record you entered.')).toBeVisible();
+    await expect(page.getByTestId('review-sheet-status')).toContainText('submitted');
+    await expect(page.getByRole('button', { name: 'Start review' })).toHaveCount(0);
+    expect(starts).toEqual([]);
+
+    // ...and the author can still recall it.
+    const recalled = await request.post(`${API_BASE}/activity-records/${id}/recall`, { headers: bearer(own) });
+    expect(recalled.status()).toBe(200);
+    expect((await recalled.json()).status).toBe('draft');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
+});
+
+test('a masterkey opening their own submitted record takes it into review, told that approving it is a self-approval', async ({ page, request }) => {
   const admin = await getAccessToken(request, ADMIN_EMAIL);
   const id = await createCommittedRecord(request, admin, {
     subsidiaryId: SUB.trading,
@@ -525,25 +611,19 @@ test('a masterkey opening their own submitted record leaves it submitted, with n
     varianceReason: 'e2e: WP5 review lane',
   });
   try {
-    const starts: string[] = [];
-    page.on('request', (r) => {
-      if (r.method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`)) starts.push(r.url());
-    });
+    const record = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(admin) })).json();
+    expect(record.approver).toBe('author');
 
     await login(page, ADMIN_EMAIL);
     await page.goto('/review');
-    const read = page.waitForResponse((r) => r.request().method() === 'GET' && r.url().endsWith(`/activity-records/${id}`));
+    // In the default view: a masterkey's own record awaits its own decision.
+    const started = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
     await reviewRow(page, 'TonyAI Trading', 'Q3', 'Electricity').click();
-    await read;
-    await expect(page.getByText('You cannot approve a record you entered.')).toBeVisible();
-    await expect(page.getByTestId('review-sheet-status')).toContainText('submitted');
-    await expect(page.getByRole('button', { name: 'Start review' })).toHaveCount(0);
-    expect(starts).toEqual([]);
-
-    // ...and the author can still recall it.
-    const recalled = await request.post(`${API_BASE}/activity-records/${id}/recall`, { headers: bearer(admin) });
-    expect(recalled.status()).toBe(200);
-    expect((await recalled.json()).status).toBe('draft');
+    expect((await started).status()).toBe(200);
+    await expect(page.getByTestId('review-sheet-status')).toContainText('under review');
+    await expect(page.getByTestId('review-sheet-self-approval-note')).toHaveText(enReview.sheet.selfApprovalNote);
+    await expect(page.getByTestId('review-sheet-own-record')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
   } finally {
     await deleteRecordsAsService(request, [id]);
   }
@@ -570,7 +650,8 @@ test('a recalled, edited and resubmitted record is marked Revised in the queue a
     const resubmitted = await ok('/submit');
     expect(resubmitted.submissionCount).toBe(2);
 
-    await login(page, CONSULTANT_EMAIL);
+    // Its approver: Logistics' super_admin.
+    await login(page, APPROVER_EMAIL);
     await page.goto('/review');
     const row = reviewRow(page, 'TonyAI Logistics', 'Q4', 'Electricity');
     await expect(row.getByTestId('revised-badge')).toHaveText('Revised');
@@ -604,7 +685,8 @@ test('a start of review that fails for another reason keeps the sheet usable, wi
     page.on('requestfailed', (r) => {
       if (r.method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`)) failedStarts += 1;
     });
-    await login(page, CONSULTANT_EMAIL);
+    // Its approver: Logistics' super_admin.
+    await login(page, APPROVER_EMAIL);
     await page.goto('/review');
     await reviewRow(page, 'TonyAI Logistics', 'Q1', 'Electricity').click();
     const sheet = page.getByRole('dialog');

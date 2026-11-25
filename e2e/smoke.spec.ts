@@ -131,7 +131,7 @@ test.describe('Milestone-1 slice', () => {
     await expect(subsidiaryRows(page)).toHaveCount(5);
   });
 
-  test('data_entry: tenant isolation -> only 2 subsidiaries visible', async ({ page }) => {
+  test('a standard user: tenant isolation -> only 2 subsidiaries visible', async ({ page }) => {
     await login(page, ENTRY_EMAIL);
     await page.goto('/subsidiaries');
     await expect(page.getByRole('heading', { name: 'Subsidiaries' })).toBeVisible();

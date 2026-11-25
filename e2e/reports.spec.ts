@@ -2,7 +2,6 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import {
   ADMIN_EMAIL,
-  APPROVER_EMAIL,
   API_BASE,
   E2E_YEAR,
   ENTRY_EMAIL,
@@ -56,11 +55,11 @@ test('reports: live preview + PDF/Excel/CSV downloads', async ({ page }) => {
   }
 });
 
-test('reports: data_entry can view report data but has no export controls', async ({ page }) => {
+test('reports: a standard user can view report data but has no export controls', async ({ page }) => {
   await login(page, ENTRY_EMAIL);
   await page.goto('/reports');
   await expect(page.getByRole('heading', { name: 'Reports' })).toBeVisible();
-  // Permissions matrix: "Generate and export reports" is denied to data_entry.
+  // Permissions matrix: "Generate and export reports" is denied to a standard user (`report.generate`).
   await expect(page.getByText(/cannot generate or export reports/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Download PDF' })).toHaveCount(0);
 });
@@ -111,8 +110,9 @@ test('reports: a withdrawn figure is disclosed in the export, not silently omitt
     periodValue: 'Q2',
     activityValue: 54_321,
   });
-  // The other masterkey approves: nobody approves a record they created (D01).
-  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
+  // Its approver approves it: the admin is a masterkey, so this is a
+  // self-approval (`recordApprover`).
+  await approveRecord(request, id);
   const withdrawal = await request.post(`${API_BASE}/activity-records/${id}/void`, {
     headers: bearer(token),
     data: { voidReason: REASON },

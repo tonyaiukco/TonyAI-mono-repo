@@ -1,7 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
   ADMIN_EMAIL,
-  APPROVER_EMAIL,
   SUB,
   approveRecord,
   createCommittedRecord,
@@ -78,9 +77,9 @@ test('a cell stays amber until a human accepts the data, and says why', async ({
   );
   await page.keyboard.press('Escape');
 
-  // Accepting it is what finishes the category — by the other masterkey,
-  // since nobody approves a record they created (D01).
-  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
+  // Accepting it is what finishes the category — by the record's approver
+  // (`recordApprover`).
+  await approveRecord(request, id);
 
   await page.reload();
   const approved = page.getByRole('button', { name: CELL });

@@ -41,7 +41,7 @@ import {
  * Lane: `SUB.energy` / quarterly `E2E_YEAR` / `Fuel`, whole company. Q3 is
  * the draft that gets the file; Q4 is the one that does not. No other spec
  * writes either tuple or holds a lock on either period (`rbac-tenant` tries to
- * lock Energy Q4 as data_entry and is refused). The other Energy Q3/Q4 rows are
+ * lock Energy Q4 as a standard user and is refused). The other Energy Q3/Q4 rows are
  * in other categories, and the specs that write them also delete them. The anomaly
  * rule runs on as little as one committed earlier period of the same series
  * (2026-11-11), and a draft never counts. The only quarterly Energy Fuel

@@ -7,11 +7,9 @@ import {
   bearer,
   E2E_YEAR,
   login,
-  switchUser,
   pickByFieldLabel,
   selectSubsidiary,
   ADMIN_EMAIL,
-  CONSULTANT_EMAIL,
   EVIDENCE_FIXTURE,
   getAccessToken,
   createCommittedRecord,
@@ -35,7 +33,7 @@ import {
  * No other spec COMMITS a record in this series, and only a committed record
  * is history. `gates.spec.ts` leaves a Q1 draft here and
  * `turkish-filenames.spec.ts` a Q3 draft; `review-queue.spec.ts` posts a Q4 as
- * the consultant and is refused; `reports.spec.ts` writes its Q2 at the London
+ * an auditor and is refused; `reports.spec.ts` writes its Q2 at the London
  * site, a different series. All of them run after this file (one worker, in
  * file order). Everything written here is deleted in the `finally`, by its
  * place in the lane and not by an id collected on the way, so a step that
@@ -48,11 +46,13 @@ const LANE = { subsidiaryId: SUB.gas, category: 'Electricity' } as const;
 const VARIANCE = 'Second production shift added this quarter.';
 
 /** The reviewer's own language, set on a request context of its own so the
- *  reset below still runs after a timed-out test. */
+ *  reset below still runs after a timed-out test. The reviewer is the admin:
+ *  it enters the series, and a masterkey's record is decided by its author
+ *  (`recordApprover`). */
 async function setReviewerLanguage(language: 'tr' | 'en') {
   const api = await playwrightRequest.newContext();
   try {
-    const token = await getAccessToken(api, CONSULTANT_EMAIL);
+    const token = await getAccessToken(api, ADMIN_EMAIL);
     const res = await api.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language } });
     if (res.status() !== 200) throw new Error(`language ${language}: ${res.status()}`);
   } finally {
@@ -120,8 +120,8 @@ test('the second period is gated on limited history, and the third says what it 
     await page.getByRole('button', { name: 'Submit for review' }).click();
     await expect(page.getByText('Submitted for review')).toBeVisible();
 
-    // The reviewer reads the same basis on the flagged record, with the reason.
-    await switchUser(page, CONSULTANT_EMAIL);
+    // The reviewer — its approver, the admin itself — reads the same basis on
+    // the flagged record, with the reason.
     await page.goto('/review');
     const row = (period: string) =>
       page.locator('table tbody tr', { hasText: 'TonyAI Gas' }).filter({ hasText: period });

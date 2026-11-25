@@ -3,39 +3,53 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { INTERNAL_FACTOR_PUBLISHERS, type UserRole, type UserSummaryDTO } from '@tonyai/shared-types';
+import {
+  CATEGORIES,
+  INTERNAL_FACTOR_PUBLISHERS,
+  type Category,
+  type RecordApprover,
+  type UserAccessGrantDTO,
+  type UserRole,
+  type UserSummaryDTO,
+} from '@tonyai/shared-types';
 
 export const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI-CI!2026';
+/** The `masterkey` (INC-2.6 §1, "godmode"): the whole organisation, no grant.
+ *  Decides its own records (a self-approval, audited `self_approve`), every
+ *  super_admin's record, and every record of a company with no active
+ *  super_admin (TonyAI Trading in the seed, the fallback company). */
 export const ADMIN_EMAIL = 'admin@tonyai.local';
+/** The `standard_user`: Energy and Logistics, every category ticked — the
+ *  seed's carried-over account with two companies (ruling R6). */
 export const ENTRY_EMAIL = 'entry@tonyai.local';
-/** Consultant: org-wide read, may review, reject and approve (K2, 2026-11-12;
- * never a record they created), may NOT enter data, void or unlock. Seeded
- * with no per-subsidiary access rows on purpose — a consultant's visibility
- * comes from the organisation, so granting rows here would hide a regression in
- * that guard branch. */
-export const CONSULTANT_EMAIL = 'review@tonyai.local';
-/** A second masterkey. The approver may not be the record's creator
- * (decision D01), so whatever ADMIN creates, APPROVER approves. */
+/** An `auditor` (a former consultant, ruling R2): reads the whole organisation,
+ * decides, enters, voids and unlocks nothing. Seeded with no per-subsidiary
+ * access rows on purpose — an auditor's visibility comes from the organisation,
+ * so granting rows here would hide a regression in that guard branch. */
+export const AUDITOR_EMAIL = 'review@tonyai.local';
+/** The `super_admin`: granted every seed company but TonyAI Trading. Decides
+ * the standard user's records in its companies (`recordApprover`), never its
+ * own (a masterkey decides those) and never Trading's. */
 export const APPROVER_EMAIL = 'approver@tonyai.local';
-/** The read-only executive viewer (LP4-04 slice 2 PR C): org-wide reads, no writes. */
+/** The second `auditor` (a former executive viewer): org-wide reads, no writes. */
 export const VIEWER_EMAIL = 'viewer@tonyai.local';
 
 // NestJS API (versioned prefix). Absolute so it ignores the page baseURL.
 export const API_BASE = 'http://localhost:3001/api/v1';
 
 /**
- * Seeded subsidiaries (stable UUIDs from packages/db seed). `entryCan` marks the
- * two the data_entry user has explicit access to (Energy + Logistics).
+ * Seeded subsidiaries (stable UUIDs from packages/db seed). `entry-accessible`
+ * marks the two the standard user is granted (Energy + Logistics); the
+ * super_admin holds every one but Trading.
  */
 export const SUB = {
   energy: '22222222-2222-2222-2222-222222220001', // TonyAI Energy · TR · entry-accessible
   gas: '22222222-2222-2222-2222-222222220002', // TonyAI Gas · UK
   mfg: '22222222-2222-2222-2222-222222220003', // TonyAI Mfg · EU
   logistics: '22222222-2222-2222-2222-222222220004', // TonyAI Logistics · TR · entry-accessible
-  trading: '22222222-2222-2222-2222-222222220005', // TonyAI Trading · UK
+  trading: '22222222-2222-2222-2222-222222220005', // TonyAI Trading · UK · no super_admin (the fallback company)
 } as const;
 
-/** A subsidiary the data_entry user CANNOT access — used by cross-tenant probes. */
 /** A subsidiary OUTSIDE `entry@tonyai.local`'s access set. The seed has a
  * single organisation, so this proves access-set isolation, not cross-ORG
  * isolation — a second seeded org would be needed for that. */
@@ -84,49 +98,121 @@ export async function login(page: Page, email: string, password = PASSWORD): Pro
 
 /** Every seed user back to English (globalSetup), through the API as the user would. */
 export async function resetSeedLanguages(request: APIRequestContext): Promise<void> {
-  for (const email of [ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL, VIEWER_EMAIL]) {
+  for (const email of [ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, AUDITOR_EMAIL, VIEWER_EMAIL]) {
     const token = await getAccessToken(request, email);
     const res = await request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: 'en' } });
     if (res.status() !== 200) throw new Error(`reset language of ${email}: ${res.status()}`);
   }
 }
 
-/** The seed users' roles that specs may change (the admin, the acting user, cannot change its own). */
-const SEED_ROLES: ReadonlyArray<readonly [string, UserRole]> = [
-  [APPROVER_EMAIL, 'masterkey'],
-  [ENTRY_EMAIL, 'data_entry'],
-  [CONSULTANT_EMAIL, 'consultant'],
-  [VIEWER_EMAIL, 'executive_viewer'],
+/**
+ * The seed users' roles that specs may change (the admin, the acting
+ * masterkey, cannot change its own and is always `masterkey`).
+ */
+export const SEED_ROLES: ReadonlyArray<readonly [string, UserRole]> = [
+  [APPROVER_EMAIL, 'super_admin'],
+  [ENTRY_EMAIL, 'standard_user'],
+  [AUDITOR_EMAIL, 'auditor'],
+  [VIEWER_EMAIL, 'auditor'],
 ];
 
 /** `entry@tonyai.local`'s grants in the seed: the two `SUB` entries marked entry-accessible. */
 export const SEED_ENTRY_GRANTS: readonly string[] = [SUB.energy, SUB.logistics];
+/** The categories ticked on each of the standard user's seed grants: all thirteen, sorted, as the seed writes them. */
+export const SEED_ENTRY_CATEGORIES: readonly Category[] = [...CATEGORIES].sort();
+/** `approver@tonyai.local`'s grants in the seed: every company but TonyAI Trading, the fallback company. */
+export const SEED_APPROVER_GRANTS: readonly string[] = [SUB.energy, SUB.gas, SUB.mfg, SUB.logistics];
+
+/** Two grant lists hold the same companies with the same categories, in any order. */
+function sameAccess(a: readonly UserAccessGrantDTO[], b: readonly UserAccessGrantDTO[]): boolean {
+  const key = (list: readonly UserAccessGrantDTO[]) =>
+    list
+      .map((g) => `${g.subsidiaryId}:${[...g.categories].sort().join('|')}`)
+      .sort()
+      .join(',');
+  return key(a) === key(b);
+}
 
 /**
- * Every seed user back to its seed role, and the Data Entry user back to its
- * seed grants, through the API as an administrator would (globalSetup, and
- * around each test of `users-access.spec.ts`, which changes both). A run killed
+ * Every seed user back to its seed role, and both granted seed users back to
+ * their seed grants (globalSetup, and around the specs that change them:
+ * `users-access.spec.ts`, `roles-approval-chain.spec.ts`). A run killed
  * mid-test skips that spec's hooks; globalSetup repairs it before any spec
- * that relies on the seed's roles runs. Changes only what differs.
+ * that relies on the seed's access runs. Changes only what differs.
+ *
+ * Each step goes through the API as the role that owns it (design Decision 9):
+ * the masterkey sets roles (a role change withdraws every grant, so the grants
+ * come after) and the super_admin's companies; the super_admin sets the
+ * standard user's company and categories. One exception: the API never ADDS a
+ * company to a standard user who would then hold more than one
+ * (`standard_user_single_company`, ruling R6), and the seed's standard user is
+ * the carried-over account holding two. Putting a withdrawn company back is
+ * therefore the seed's own write, done as the database owner exactly as
+ * `pnpm db:seed` does it (local or CI only).
  */
 export async function resetSeedAccess(request: APIRequestContext): Promise<void> {
-  const token = await getAccessToken(request, ADMIN_EMAIL);
-  const users = await listAllPages<UserSummaryDTO>(request, token, '/users');
+  const admin = await getAccessToken(request, ADMIN_EMAIL);
+  const read = async () => {
+    const users = await listAllPages<UserSummaryDTO>(request, admin, '/users');
+    return (email: string) => {
+      const user = users.find((u) => u.email === email);
+      if (!user) throw new Error(`seed user ${email} not found`);
+      return user;
+    };
+  };
+  let find = await read();
+  let changedRole = false;
   for (const [email, role] of SEED_ROLES) {
-    const user = users.find((u) => u.email === email);
-    if (!user) throw new Error(`seed user ${email} not found`);
+    const user = find(email);
     if (user.role === role) continue;
-    const res = await request.patch(`${API_BASE}/users/${user.id}/role`, { headers: bearer(token), data: { role } });
+    const res = await request.patch(`${API_BASE}/users/${user.id}/role`, { headers: bearer(admin), data: { role } });
     if (res.status() !== 200) throw new Error(`reset role of ${email}: ${res.status()} ${await res.text()}`);
+    changedRole = true;
   }
-  const entry = users.find((u) => u.email === ENTRY_EMAIL)!;
-  const grants = [...SEED_ENTRY_GRANTS].sort();
-  // An entry user whose role was just reset to data_entry holds no grant.
-  const current = entry.role === 'data_entry' ? [...entry.subsidiaryIds].sort() : [];
-  if (current.join() !== grants.join()) {
-    const res = await request.put(`${API_BASE}/users/${entry.id}/access`, { headers: bearer(token), data: { subsidiaryIds: grants } });
+  if (changedRole) find = await read();
+
+  const approver = find(APPROVER_EMAIL);
+  const approverGrants = SEED_APPROVER_GRANTS.map((subsidiaryId) => ({ subsidiaryId, categories: [] as Category[] }));
+  if (!sameAccess(approver.access, approverGrants)) {
+    const res = await request.put(`${API_BASE}/users/${approver.id}/access`, {
+      headers: bearer(admin),
+      data: { access: approverGrants },
+    });
+    if (res.status() !== 200) throw new Error(`reset grants of ${APPROVER_EMAIL}: ${res.status()} ${await res.text()}`);
+  }
+
+  const entry = find(ENTRY_EMAIL);
+  const entryGrants = SEED_ENTRY_GRANTS.map((subsidiaryId) => ({ subsidiaryId, categories: [...SEED_ENTRY_CATEGORIES] }));
+  if (sameAccess(entry.access, entryGrants)) return;
+  const held = new Set(entry.access.map((g) => g.subsidiaryId));
+  if (SEED_ENTRY_GRANTS.every((id) => held.has(id))) {
+    // Nothing to add: categories and withdrawals pass the API.
+    const res = await request.put(`${API_BASE}/users/${entry.id}/access`, {
+      headers: bearer(await getAccessToken(request, APPROVER_EMAIL)),
+      data: { access: entryGrants },
+    });
     if (res.status() !== 200) throw new Error(`reset grants of ${ENTRY_EMAIL}: ${res.status()} ${await res.text()}`);
+    return;
   }
+  await withOwner((owner) =>
+    owner.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `DELETE FROM user_subsidiary_access WHERE user_id = $1::uuid AND NOT (subsidiary_id = ANY($2::uuid[]))`,
+        entry.id,
+        [...SEED_ENTRY_GRANTS],
+      );
+      for (const subsidiaryId of SEED_ENTRY_GRANTS) {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO user_subsidiary_access (user_id, subsidiary_id, organisation_id, categories)
+           SELECT p.id, $2::uuid, p.organisation_id, $3::text[] FROM profiles p WHERE p.id = $1::uuid
+           ON CONFLICT (user_id, subsidiary_id) DO UPDATE SET categories = EXCLUDED.categories`,
+          entry.id,
+          subsidiaryId,
+          [...SEED_ENTRY_CATEGORIES],
+        );
+      }
+    }),
+  );
 }
 
 /** Rows in the live "Subsidiary register" table on /subsidiaries (excludes header). */
@@ -362,8 +448,44 @@ export async function seenSubmittedAt(request: APIRequestContext, token: string,
   return ((await res.json()) as { submittedAt: string | null }).submittedAt;
 }
 
-/** Approve a submitted record (consultant or masterkey — K2 — and never the record's creator — D01). */
-export async function approveRecord(request: APIRequestContext, token: string, id: string): Promise<void> {
+/**
+ * The seed account that decides a pending record, from the record's own
+ * `approver` (`recordApprover`, INC-2.6 §1.1), read as the masterkey (who
+ * reads the whole organisation): `masterkey` → `ADMIN_EMAIL`; `super_admin` →
+ * `APPROVER_EMAIL`, the seed's one super_admin; `author` → the record's author,
+ * a masterkey deciding its own record (`ADMIN_EMAIL` for the seed). A record
+ * that states no approver is not pending, and that is an error here.
+ */
+export async function recordDeciderEmail(request: APIRequestContext, id: string): Promise<string> {
+  const admin = await getAccessToken(request, ADMIN_EMAIL);
+  const res = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(admin) });
+  if (!res.ok()) throw new Error(`read for the approver failed: ${res.status()} ${await res.text()}`);
+  const record = (await res.json()) as { approver?: RecordApprover | null; createdBy: string; status: string };
+  switch (record.approver) {
+    case 'masterkey':
+      return ADMIN_EMAIL;
+    case 'super_admin':
+      return APPROVER_EMAIL;
+    case 'author': {
+      const users = await listAllPages<UserSummaryDTO>(request, admin, '/users');
+      const author = users.find((u) => u.id === record.createdBy);
+      if (!author) throw new Error(`the author ${record.createdBy} of ${id} is not a user of the organisation`);
+      return author.email;
+    }
+    default:
+      throw new Error(`record ${id} states no approver (status "${record.status}"): it is not pending`);
+  }
+}
+
+/**
+ * Approve a submitted record as its approver (`recordDeciderEmail`) — never a
+ * caller's guess. Routing is by the author's role: the standard user's record
+ * goes to the company's super_admin, or to the masterkey in a company without
+ * one; a super_admin's to the masterkey; a masterkey's to itself, audited
+ * `self_approve`. Anybody else is refused `not_record_approver`.
+ */
+export async function approveRecord(request: APIRequestContext, id: string): Promise<void> {
+  const token = await getAccessToken(request, await recordDeciderEmail(request, id));
   const res = await request.post(`${API_BASE}/activity-records/${id}/approve`, {
     headers: bearer(token),
     data: { seenSubmittedAt: await seenSubmittedAt(request, token, id) },
@@ -707,6 +829,38 @@ export async function cleanupE2ERegistrations(request: APIRequestContext): Promi
     );
   } catch (e) {
     errors.push(`registration owner delete failed — ${(e as Error).message}`);
+  }
+  reportCleanup(errors);
+}
+
+/** The address prefix of every account a spec invites into the seed organisation. */
+export const E2E_INVITED_PREFIX = 'e2e-invited-';
+
+/**
+ * Removes every account a spec invited into the seed organisation (address
+ * `e2e-invited-…@tonyai.local`), this run's or an aborted one's: its Auth user
+ * (the admin API; its id is the profile's), then its profile as the owner,
+ * which takes its grants and invitation with it. The audit rows that record
+ * the invitation stay: the trail is append-only, and they hold no address.
+ */
+export async function removeE2EInvitedAccounts(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const like = `${E2E_INVITED_PREFIX}%@tonyai.local`;
+  const profiles = await withOwner((prisma) =>
+    prisma.$queryRawUnsafe<{ id: string }[]>(`SELECT id::text AS id FROM profiles WHERE email LIKE $1`, like),
+  );
+  const errors: (string | null)[] = [];
+  for (const { id } of profiles) {
+    const res = await request.delete(`${url}/auth/v1/admin/users/${id}`, { headers: { apikey: service, Authorization: `Bearer ${service}` } });
+    errors.push(res.ok() || res.status() === 404 ? null : `${res.status()} deleting Auth user ${id}`);
+  }
+  try {
+    await withOwner((prisma) => prisma.$executeRawUnsafe(`DELETE FROM profiles WHERE email LIKE $1`, like));
+  } catch (e) {
+    errors.push(`invited account owner delete failed — ${(e as Error).message}`);
   }
   reportCleanup(errors);
 }
@@ -1451,7 +1605,7 @@ export async function readAuditSince(
   filter: { entity?: string; action?: string; since: string },
 ): Promise<{ entityId: string | null; action: string; diff: Record<string, unknown> }[]> {
   // The token is obtained here rather than taken as a parameter: reading the
-  // trail is masterkey-only, and a caller passing the token they happened to
+  // trail is the masterkey's and the auditor's alone, and a caller passing the token they happened to
   // have produces a 403 that reads like a bug in the thing under test.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const search = new URLSearchParams({ limit: '200' });

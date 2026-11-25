@@ -234,7 +234,8 @@ test('a voided evidence-required record is copied into a new draft, which needs 
   const bare = await request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(adminToken) });
   expect(bare.status()).toBe(409);
   expect((await bare.json()).code).toBe('record_changed');
-  await approveRecord(request, adminToken, id);
+  // The standard user's record is decided by its company's super_admin.
+  await approveRecord(request, id);
   await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: wrong meter reading' });
 
   await login(page, ENTRY_EMAIL);
@@ -280,7 +281,7 @@ test('a second Copy answering after a subsidiary switch never overwrites the swi
   for (const month of ['September', 'November']) {
     const id = await createDraft(request, entryToken, month, E2E_BULK_CATEGORY, E2E_BULK_UNIT);
     await post(request, entryToken, `/activity-records/${id}/submit`);
-    await approveRecord(request, adminToken, id);
+    await approveRecord(request, id);
     await post(request, adminToken, `/activity-records/${id}/void`, { voidReason: 'e2e: copy race' });
     voided.push(id);
   }

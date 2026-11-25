@@ -6,7 +6,7 @@ import {
   attachEvidence,
   bearer,
   buildBulkCsv,
-  CONSULTANT_EMAIL,
+  AUDITOR_EMAIL,
   deleteRecordsAsService,
   E2E_BULK_CATEGORY,
   E2E_PERIOD,
@@ -236,10 +236,11 @@ test('a role that may not author gets one 403, and it is recorded', async ({ req
   // Not a per-record report: a role cannot change mid-batch. And the refusal
   // is audited, because a seat probing the write surface is the interaction
   // most worth keeping on an append-only trail.
-  const consultantToken = await getAccessToken(request, CONSULTANT_EMAIL);
+  // An auditor: reads everything, authors nothing.
+  const auditorToken = await getAccessToken(request, AUDITOR_EMAIL);
   const since = new Date().toISOString();
 
-  const res = await submitMany(request, consultantToken, [randomUUID()]);
+  const res = await submitMany(request, auditorToken, [randomUUID()]);
 
   expect(res.status()).toBe(403);
   expect(JSON.stringify(await res.json())).toContain(

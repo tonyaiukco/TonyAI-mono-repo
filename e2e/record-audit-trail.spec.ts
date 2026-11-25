@@ -2,7 +2,8 @@ import { test, expect, request as playwrightRequest, type APIRequestContext } fr
 import {
   ADMIN_EMAIL,
   API_BASE,
-  CONSULTANT_EMAIL,
+  APPROVER_EMAIL,
+  AUDITOR_EMAIL,
   E2E_YEAR,
   ENTRY_EMAIL,
   SUB,
@@ -20,12 +21,13 @@ import trRecordStatus from '../apps/web/messages/tr/recordStatus.json';
 /**
  * WP5 (`uat4-review-resubmit`): a record's history as a timeline.
  *
- * - A consultant opens it from the review sheet of a recalled, edited and
- *   resubmitted record: the edit's value before and after is there, the sheet
- *   behind it holds current values only.
- * - An author, in Turkish, opens it from Data Entry for a record a reviewer
- *   returned: the reason is there, and the four steps a revised record goes
- *   through read in Turkish.
+ * - The record's approver (the standard user's record in Energy, so the
+ *   company's super_admin) opens it from the review sheet of a recalled,
+ *   edited and resubmitted record: the edit's value before and after is
+ *   there, the sheet behind it holds current values only.
+ * - An author, in Turkish, opens it from Data Entry for a record its approver
+ *   returned (an auditor asking to return it is refused first): the reason is
+ *   there, and the four steps a revised record goes through read in Turkish.
  *
  * Lane: `SUB.energy` / quarterly `E2E_YEAR` / Q2, Q3 and Q4 (Q1 is `data-entry-happy`'s), Electricity, whole
  * company. Each test deletes its record in `finally`; the author's language is
@@ -60,7 +62,7 @@ async function reviseAsAuthor(request: APIRequestContext, token: string, id: str
   }
 }
 
-test('a consultant reads a revised record\'s history from the review sheet; the sheet keeps current values', async ({ page, request }) => {
+test('the company\'s super admin reads a revised record\'s history from the review sheet; the sheet keeps current values', async ({ page, request }) => {
   const entry = await getAccessToken(request, ENTRY_EMAIL);
   const id = await createCommittedRecord(request, entry, {
     subsidiaryId: SUB.energy,
@@ -72,7 +74,7 @@ test('a consultant reads a revised record\'s history from the review sheet; the 
   try {
     await reviseAsAuthor(request, entry, id, 1200);
 
-    await login(page, CONSULTANT_EMAIL);
+    await login(page, APPROVER_EMAIL);
     await page.goto('/review');
     await page
       .locator('table tbody tr', { hasText: 'TonyAI Energy' })
@@ -103,7 +105,8 @@ test('a consultant reads a revised record\'s history from the review sheet; the 
 
 test('an author reads, in Turkish, the history of a record a reviewer returned, reason included', async ({ page, request }) => {
   const entry = await getAccessToken(request, ENTRY_EMAIL);
-  const consultant = await getAccessToken(request, CONSULTANT_EMAIL);
+  const auditor = await getAccessToken(request, AUDITOR_EMAIL);
+  const approver = await getAccessToken(request, APPROVER_EMAIL);
   const id = await createCommittedRecord(request, entry, {
     subsidiaryId: SUB.energy,
     category: 'Electricity',
@@ -113,9 +116,17 @@ test('an author reads, in Turkish, the history of a record a reviewer returned, 
   });
   try {
     await reviseAsAuthor(request, entry, id, 4321);
+    // An auditor reads the record but returns nothing (INC-2.6 §1): refused on
+    // the role, and the record is still waiting.
+    const byAuditor = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
+      headers: bearer(auditor),
+      data: { varianceReason: 'An auditor may not return it', seenSubmittedAt: await seenSubmittedAt(request, auditor, id) },
+    });
+    expect(byAuditor.status()).toBe(403);
+    expect((await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(entry) })).json()).status).toBe('submitted');
     const returned = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
-      headers: bearer(consultant),
-      data: { varianceReason: 'The March invoice is missing', seenSubmittedAt: await seenSubmittedAt(request, consultant, id) },
+      headers: bearer(approver),
+      data: { varianceReason: 'The March invoice is missing', seenSubmittedAt: await seenSubmittedAt(request, approver, id) },
     });
     expect(returned.status(), await returned.text()).toBe(200);
     expect((await returned.json()).status).toBe('rejected');
@@ -163,8 +174,8 @@ test('an author reads, in Turkish, the history of a record a reviewer returned, 
   }
 });
 
-test('a data entry user is offered no history for a colleague\'s record', async ({ page, request }) => {
-  // The consultant cannot author; the colleague is the admin.
+test('a standard user is offered no history for a colleague\'s record', async ({ page, request }) => {
+  // An auditor cannot author; the colleague is the admin.
   const admin = await getAccessToken(request, ADMIN_EMAIL);
   const id = await createCommittedRecord(request, admin, {
     subsidiaryId: SUB.energy,
@@ -215,11 +226,11 @@ test('the timeline says when it is loading, empty, refused, failed or cut short'
     const event = (n: number) => ({
       id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
       at: new Date(Date.UTC(2026, 10, 25, 9, n)).toISOString(),
-      kind: 'edited', action: 'update', actor: { name: 'Entry User', role: 'data_entry' },
+      kind: 'edited', action: 'update', actor: { name: 'Entry User', role: 'standard_user' },
       submission: null, reason: null, changes: [],
     });
 
-    await login(page, CONSULTANT_EMAIL);
+    await login(page, APPROVER_EMAIL);
     await page.goto('/review');
     await page
       .locator('table tbody tr', { hasText: 'TonyAI Energy' })

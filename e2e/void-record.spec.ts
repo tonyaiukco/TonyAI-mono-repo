@@ -3,7 +3,7 @@ import {
   ADMIN_EMAIL,
   APPROVER_EMAIL,
   API_BASE,
-  CONSULTANT_EMAIL,
+  AUDITOR_EMAIL,
   E2E_PERIOD,
   E2E_YEAR,
   SUB,
@@ -39,13 +39,14 @@ const ACTIVITY_VALUE = 77_777;
 const REASON = 'Duplicate of the site-level invoice for the same quarter.';
 
 /** Create an approved figure to withdraw — `approved` is the one status the
- *  void path accepts. Created by ADMIN and approved by the second masterkey:
- *  nobody approves a record they created (D01). */
+ *  void path accepts. Created by APPROVER, the super_admin granted Mfg, so its
+ *  approver is the masterkey (`recordApprover`): ADMIN approves it, and the
+ *  figure carries two people, not one masterkey deciding its own entry. */
 async function arrangeApproved(
   request: APIRequestContext,
   periodValue: string,
 ): Promise<string> {
-  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const token = await getAccessToken(request, APPROVER_EMAIL);
   const id = await createCommittedRecord(request, token, {
     subsidiaryId: SUB.mfg,
     category: 'Fuel',
@@ -53,7 +54,7 @@ async function arrangeApproved(
     activityValue: ACTIVITY_VALUE,
     activityUnit: 'litres',
   });
-  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
+  await approveRecord(request, id);
   return id;
 }
 
@@ -151,12 +152,12 @@ test('a masterkey withdraws an approved figure, and the record agrees', async ({
   // confirmation of the one irreversible act in the product. The names are
   // required now, so a write response cannot omit them.
   await expect(drawer.getByText('Entered by')).toBeVisible();
-  // Every actor is named, and the counts are the assertion. Admin entered the
-  // figure and withdrew it; the second masterkey approved it, because the
-  // approver may not be the creator (decision D01, LP1-01 — this test used to
-  // count THREE "Tony Admin", the segregation-of-duties gap made visible
-  // rather than prevented). `toBeVisible()` on the doubled name is a
-  // strict-mode violation, so do not "fix" it with .first().
+  // Every actor is named, and the counts are the assertion. The super_admin
+  // entered the figure; the masterkey approved it (a super_admin's record is
+  // the masterkey's to decide, `recordApprover`) and withdrew it. A screen
+  // naming the viewer instead of each actor would count three "Tony Admin".
+  // `toBeVisible()` on the doubled name is a strict-mode violation, so do not
+  // "fix" it with .first().
   await expect(drawer.getByText('Tony Admin')).toHaveCount(2);
   await expect(drawer.getByText('Arda Approver')).toHaveCount(1);
 
@@ -242,7 +243,7 @@ test('the withdrawn figure is no longer included, and its slot reopens', async (
   expect(replacement.status()).toBe(201);
 });
 
-test('a consultant is not offered the control, and is refused if they ask anyway', async ({
+test('an auditor is not offered the control, and is refused if they ask anyway', async ({
   page,
   request,
 }) => {
@@ -261,32 +262,38 @@ test('a consultant is not offered the control, and is refused if they ask anyway
   await page.keyboard.press('Escape');
   await expect(asAdmin).toBeHidden();
 
-  await switchUser(page, CONSULTANT_EMAIL);
-  const asConsultant = await openRecord(page, 'Q3');
-  // The consultant has org-wide read and may reject, but the service answers
-  // their void with a 403. Rendering a button that always fails would teach the
-  // seat to distrust the screen.
+  await switchUser(page, AUDITOR_EMAIL);
+  const asAuditor = await openRecord(page, 'Q3');
+  // The auditor reads the whole organisation and changes nothing, so the
+  // service answers their void with a 403. Rendering a button that always
+  // fails would teach the seat to distrust the screen.
   await expect(
-    asConsultant.getByRole('button', { name: 'Withdraw from inventory' }),
+    asAuditor.getByRole('button', { name: 'Withdraw from inventory' }),
   ).toHaveCount(0);
   // The record is still fully readable — this is a missing control, not a
   // hidden record.
-  await expect(asConsultant.getByText('Methodology & Factor')).toBeVisible();
+  await expect(asAuditor.getByText('Methodology & Factor')).toBeVisible();
 
   // And the guard is real, not merely unrendered. Everything above is about
   // what a screen shows; this is the privilege-escalation probe — a genuine
-  // consultant token against the live route, through the wired guard, the
+  // auditor token against the live route, through the wired guard, the
   // controller and the DTO. Until this existed the 403 was proven only against
   // a mocked `user` object in a unit test, which cannot tell you the pipeline
   // is assembled the way the mock assumes.
-  const consultantToken = await getAccessToken(request, CONSULTANT_EMAIL);
+  const auditorToken = await getAccessToken(request, AUDITOR_EMAIL);
   const refused = await request.post(`${API_BASE}/activity-records/${recordId}/void`, {
-    headers: bearer(consultantToken),
-    data: { voidReason: 'A consultant should never be able to do this.' },
+    headers: bearer(auditorToken),
+    data: { voidReason: 'An auditor should never be able to do this.' },
   });
   expect(refused.status()).toBe(403);
+  // Nor may the super_admin who entered it: void is the masterkey's alone.
+  const byAuthor = await request.post(`${API_BASE}/activity-records/${recordId}/void`, {
+    headers: bearer(await getAccessToken(request, APPROVER_EMAIL)),
+    data: { voidReason: 'A super admin may not withdraw a figure.' },
+  });
+  expect(byAuthor.status()).toBe(403);
 
-  // The refusal changed nothing: read it back as the admin.
+  // The refusals changed nothing: read it back as the admin.
   const adminToken = await getAccessToken(request, ADMIN_EMAIL);
   const after = await request.get(`${API_BASE}/activity-records/${recordId}`, {
     headers: bearer(adminToken),

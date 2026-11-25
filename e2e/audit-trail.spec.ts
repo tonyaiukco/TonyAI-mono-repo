@@ -1,11 +1,16 @@
 import { test, expect } from '@playwright/test';
+import enAudit from '../apps/web/messages/en/audit.json';
+import enUsers from '../apps/web/messages/en/users.json';
 import {
   login,
   bearer,
   getAccessToken,
   createCommittedRecord,
   ADMIN_EMAIL,
+  APPROVER_EMAIL,
+  AUDITOR_EMAIL,
   ENTRY_EMAIL,
+  VIEWER_EMAIL,
   API_BASE,
   SUB,
 } from './helpers';
@@ -93,18 +98,31 @@ test('the viewer paginates rather than loading the whole trail', async ({
   await expect(page.getByRole('button', { name: 'Previous', exact: true })).toBeEnabled();
 });
 
-test('data_entry is told why the trail is closed, not shown a broken page', async ({
-  page,
-}) => {
-  // The API 403s this role (matching the RLS policy). The page must explain
-  // that rather than render an error — a blank screen reads as a bug.
-  await login(page, ENTRY_EMAIL);
-  await page.goto('/audit');
+for (const [who, email, role] of [
+  ['a standard user', ENTRY_EMAIL, 'standard_user'],
+  ['a super admin', APPROVER_EMAIL, 'super_admin'],
+] as const) {
+  test(`${who} is told why the trail is closed, not shown a broken page`, async ({
+    page,
+  }) => {
+    // The API 403s this role (matching the RLS policy): the organisation's
+    // audit log is the masterkey's and the auditor's (ruling R4). The page must
+    // explain that rather than render an error — a blank screen reads as a bug.
+    await login(page, email);
+    await page.goto('/audit');
 
-  await expect(
-    page.getByText(/Only a masterkey can read the audit trail/i),
-  ).toBeVisible();
-  await expect(page.locator('table')).toHaveCount(0);
+    await expect(page.getByText(enAudit.forbidden.title)).toBeVisible();
+    await expect(page.getByText(enAudit.forbidden.body.replace('{role}', enUsers.roles[role]))).toBeVisible();
+    await expect(page.locator('table')).toHaveCount(0);
+  });
+}
+
+test('an auditor reads the trail, and changes nothing in it', async ({ page }) => {
+  await login(page, VIEWER_EMAIL);
+  await page.goto('/audit');
+  await expect(page.getByRole('heading', { name: 'Audit Trail' })).toBeVisible();
+  await expect(page.locator('table tbody tr').first()).toContainText(/create|update|submit|approve|generate|self_approve|review/);
+  await expect(page.getByText(enAudit.forbidden.title)).toHaveCount(0);
 });
 
 test('the audit API is read-only and tenant-gated', async ({ request }) => {
@@ -117,9 +135,20 @@ test('the audit API is read-only and tenant-gated', async ({ request }) => {
   expect(page1.items.length).toBeLessThanOrEqual(5);
   expect(page1.total).toBeGreaterThan(0);
 
-  // Role gate, not a tenancy gate: the trail exists, this role may not read it.
+  // Role gate, not a tenancy gate: the trail exists, these roles may not read
+  // it — a super admin reads each record's trail in its companies, never the
+  // organisation's log (ruling R4). Both auditors may.
   const refused = await request.get(`${API_BASE}/audit`, { headers: bearer(entry) });
   expect(refused.status()).toBe(403);
+  const superAdmin = await request.get(`${API_BASE}/audit`, { headers: bearer(await getAccessToken(request, APPROVER_EMAIL)) });
+  expect(superAdmin.status()).toBe(403);
+  for (const email of [AUDITOR_EMAIL, VIEWER_EMAIL]) {
+    const auditor = await request.get(`${API_BASE}/audit?limit=5`, { headers: bearer(await getAccessToken(request, email)) });
+    expect(auditor.status(), email).toBe(200);
+    // The auditor writes nothing here either: no verb but GET exists.
+    const write = await request.post(`${API_BASE}/audit`, { headers: bearer(await getAccessToken(request, email)) });
+    expect(write.status(), email).toBe(404);
+  }
 
   // Filters actually narrow the result, and the envelope's `total` reflects the
   // filter rather than the whole trail.
