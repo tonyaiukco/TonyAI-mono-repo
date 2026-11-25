@@ -65,7 +65,7 @@ function mocks(records: Record<string, unknown>[], language = 'en') {
   return { tx, root, audit, service };
 }
 
-const user = { id: 'u-1', email: 'admin@tonyai.local', role: 'super_admin', organisationId: 'org-1', accessibleSubsidiaryIds: ['sub-1'] } as RequestUser;
+const user = { id: 'u-1', email: 'admin@tonyai.local', role: 'masterkey', organisationId: 'org-1', accessibleSubsidiaryIds: ['sub-1'] } as RequestUser;
 const q = { template: 'ghg_protocol_detail', year: 2024, includeMethodologyNotes: true } as ReportQueryDto;
 
 async function sheetRows(bytes: Buffer, name: string): Promise<unknown[][]> {

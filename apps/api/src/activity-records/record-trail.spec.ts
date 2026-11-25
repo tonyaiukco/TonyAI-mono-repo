@@ -190,7 +190,7 @@ describe('buildRecordTrail — the events of one record, in order', () => {
         row(
           'void',
           transition('approved', 'voided', { voidReason: 'Duplicate of the site invoice', before: snapshot() }),
-          { userId: 'u-admin', role: 'super_admin' },
+          { userId: 'u-admin', role: 'masterkey' },
         ),
       ],
       lookups,

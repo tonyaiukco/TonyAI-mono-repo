@@ -413,11 +413,11 @@ function EmissionsAnalysisPageInner() {
     contextKeyRef.current = contextKey;
   }, [loadSummary, loadTrends, contextKey]);
 
-  const isSuperAdmin = user?.role === 'super_admin';
+  const isMasterkey = user?.role === 'masterkey';
   const intensityAvailable = (intensity?.metrics.length ?? 0) > 0;
-  // super_admin can always open the panel (to configure the first denominator);
+  // masterkey can always open the panel (to configure the first denominator);
   // viewers only when configured metrics exist ("only valid configured metrics").
-  const intensityEnabled = intensityAvailable || isSuperAdmin;
+  const intensityEnabled = intensityAvailable || isMasterkey;
 
   // Intensity availability + values (drives the Absolute/Intensity toggle).
   // The selected context's intensity — not "the latest year with data".
@@ -742,7 +742,7 @@ function EmissionsAnalysisPageInner() {
             analyticsError
           ) : dataViewMode === 'intensity' ? (
             <IntensityPanel
-              canManage={isSuperAdmin}
+              canManage={isMasterkey}
               subsidiaries={subsidiaries}
               nameById={nameById}
               context={context}
@@ -1190,7 +1190,7 @@ function EmissionsAnalysisPageInner() {
                 {tContext('targetsHint')}
               </p>
               <TargetsPanel
-                canManage={isSuperAdmin}
+                canManage={isMasterkey}
                 subsidiaries={subsidiaries}
                 nameById={nameById}
                 subsidiaryId={context.subsidiaryId}
@@ -1415,7 +1415,7 @@ function EmissionsAnalysisPageInner() {
                   {/* The reporting entity, which the ledger has no column for.
                       A whole-company row and its site twin differ ONLY in this
                       field and in the activity value, and this drawer is where
-                      a super_admin decides which of the two to withdraw — so
+                      a masterkey decides which of the two to withdraw — so
                       without it the choice is made by comparing two numbers and
                       hoping. `locationName` is resolved by the API at read time
                       rather than joined here. */}
@@ -1505,7 +1505,7 @@ function EmissionsAnalysisPageInner() {
                 {/* A withdrawal, in the reader's terms. Without this a voided
                     record opens showing its original figure and nothing about
                     why it left the inventory — the audit trail has the reason,
-                    but `/audit` is super_admin-only, so for every other seat
+                    but `/audit` is masterkey-only, so for every other seat
                     the record itself is the only place it could appear. */}
                 {selectedRecord.status === "voided" && (
                   <div className="border-t border-border pt-4">
@@ -1520,7 +1520,7 @@ function EmissionsAnalysisPageInner() {
                         figure was withdrawn, by whom, and when") while this
                         block rendered only the reason — the person was
                         reachable solely through /audit, which is
-                        super_admin-only, so for every other seat a restatement
+                        masterkey-only, so for every other seat a restatement
                         named nobody. FR §5.4 ties a withdrawal to
                         ISO 14064-1 §9.3.1 traceability, and a restatement with
                         no attributable actor does not meet it. */}
@@ -1558,7 +1558,7 @@ function EmissionsAnalysisPageInner() {
 
                 {/* D04's re-entry (BUG-R2-03): a voided figure is corrected by a
                     new record, pre-filled on Data Entry from this one. Offered
-                    to its author and to a super_admin; the create decides. */}
+                    to its author and to a masterkey; the create decides. */}
                 {mayCopyVoidedRecord(user, selectedRecord) && (
                   <div className="border-t border-border pt-4">
                     <p className="text-xs text-muted-foreground mb-3">{t('copy.explain')}</p>
@@ -1580,7 +1580,7 @@ function EmissionsAnalysisPageInner() {
                     shows an approved record on its own: the review queue lists
                     pending work only, and Data Entry loads a record into the
                     form, which an approved record cannot enter. */}
-                {canOfferVoid(selectedRecord, isSuperAdmin) && (
+                {canOfferVoid(selectedRecord, isMasterkey) && (
                   <div className="border-t border-border pt-4">
                     <h4 className="text-sm font-medium mb-2">
                       {t('void.title')}

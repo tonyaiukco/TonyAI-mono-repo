@@ -73,7 +73,7 @@ test.describe('Milestone-1 slice', () => {
     await login(page, ADMIN_EMAIL);
 
     // Dashboard KPI: the live "Total Subsidiaries" card shows 5 for the
-    // super_admin (sees all org subsidiaries). The value lives in a
+    // masterkey (sees all org subsidiaries). The value lives in a
     // font-mono/tabular-nums div within the card; scope to that card's value to
     // avoid matching unrelated "5"s in the demo section below.
     const totalCard = page

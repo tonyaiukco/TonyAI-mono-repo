@@ -13,12 +13,12 @@ import { INVENTORY_DECLARATION_LIMITS } from './dto/inventory-boundary.dto';
  * (`forbidden`, E2; `validation_failed`), and the service keeps its own check.
  */
 
-/** super_admin alone writes a boundary (E2) — refused here before the body is read. */
+/** masterkey alone writes a boundary (E2) — refused here before the body is read. */
 @Injectable()
 export class BoundaryWriterGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const user = context.switchToHttp().getRequest<{ user?: RequestUser }>().user;
-    if (user?.role !== 'super_admin') throw new ForbiddenException('Only super_admin may change an inventory boundary');
+    if (user?.role !== 'masterkey') throw new ForbiddenException('Only masterkey may change an inventory boundary');
     if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
     return true;
   }

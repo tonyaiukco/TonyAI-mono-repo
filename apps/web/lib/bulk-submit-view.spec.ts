@@ -425,7 +425,7 @@ describe('submitBlockReason', () => {
 
   it("refuses someone else's record for every role", () => {
     const theirs = draft({ createdBy: 'user-them' });
-    expect(submitBlockReason(theirs, { ...ME, role: 'super_admin' })).toBe('Entered by someone else.');
+    expect(submitBlockReason(theirs, { ...ME, role: 'masterkey' })).toBe('Entered by someone else.');
     expect(submitBlockReason(theirs, ME)).toBe('Entered by someone else.');
     // The other two are refused earlier, by the role gate — which is itself the
     // point: no role can submit a colleague's record.
@@ -614,14 +614,14 @@ describe('draftsSubmitLabel', () => {
 });
 
 describe('authorship has no submission exemption', () => {
-  it.each(['super_admin', 'data_entry', 'consultant', 'executive_viewer'] as const)(
+  it.each(['masterkey', 'data_entry', 'consultant', 'executive_viewer'] as const)(
     'requires the same author for %s', (role) => {
       const user = { id: 'user-author', role };
       expect(authoredBy(draft({ createdBy: user.id }), user)).toBe(true);
       expect(authoredBy(draft({ createdBy: 'user-other' }), user)).toBe(false);
     },
   );
-  it.each(['super_admin', 'data_entry'] as const)('selects only own rows for %s', (role) => {
+  it.each(['masterkey', 'data_entry'] as const)('selects only own rows for %s', (role) => {
     const user = { id: 'user-author', role };
     const result = selectableDrafts([
       draft({ id: 'mine', createdBy: user.id }),

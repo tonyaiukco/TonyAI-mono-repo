@@ -44,7 +44,7 @@ beforeEach(async () => {
   for (const name of ['Int race site 1', 'Int race site 2']) {
     sites.push((await owner.location.create({ data: { subsidiaryId, name, geographyCode: 'UK' } })).id);
   }
-  admin = { ...tenant.users.superAdmin, accessibleSubsidiaryIds: [...tenant.users.superAdmin.accessibleSubsidiaryIds, subsidiaryId] };
+  admin = { ...tenant.users.masterkey, accessibleSubsidiaryIds: [...tenant.users.masterkey.accessibleSubsidiaryIds, subsidiaryId] };
 });
 
 afterEach(async () => {

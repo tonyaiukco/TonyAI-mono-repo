@@ -381,7 +381,7 @@ export type IssuedFileFormat = "pdf" | "xlsx" | "csv";
 export const api = {
   // LP4-03 PR C: the inventory boundary — a year's versions and one version's
   // declarations. Reads take the READ quota, writes the WRITE one; every write
-  // is super_admin's and only an open version takes one (a frozen version
+  // is masterkey's and only an open version takes one (a frozen version
   // answers `boundary_frozen`, so new facts mean a new version).
   listInventoryBoundaries: (reportingYear: number) =>
     apiFetch<InventoryBoundaryVersionSummary[]>(`/inventory-boundaries${boundedQuery({ reportingYear }, ["reportingYear"])}`),
@@ -451,7 +451,7 @@ export const api = {
   updateMyPreferences: (body: UpdatePreferencesRequest) =>
     apiFetch<AuthUser>("/me/preferences", { method: "PATCH", body: JSON.stringify(body) }),
 
-  // --- Users and invitations (LP4-01; super_admin only, own organisation) ---
+  // --- Users and invitations (LP4-01; masterkey only, own organisation) ---
   /** Members, newest first. */
   listUsersPage: (params: ListUsersParams = {}) => apiCursorPage<UserSummaryDTO>("/users", params),
   /** Invites an account; the answer's `invitation` says whether the email went out. */
@@ -627,7 +627,7 @@ export const api = {
 
   // The review verbs. Each is a POST with no body except `reject`, which
   // carries the reason the submitter will read. The role rules (consultant and
-  // super_admin review, reject and approve; nobody approves their own record,
+  // masterkey review, reject and approve; nobody approves their own record,
   // D01) are enforced by the API — the UI hides
   // what a role cannot do, it does not decide it.
   reviewActivityRecord: (id: string, body: StartReviewInput = {}) =>
@@ -648,7 +648,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  /** Withdraw an approved figure from the inventory (the void path), super_admin only. */
+  /** Withdraw an approved figure from the inventory (the void path), masterkey only. */
   voidActivityRecord: (id: string, body: VoidInput) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/void`, {
       method: "POST",
@@ -699,7 +699,7 @@ export const api = {
     ),
 
   // --- Period locks (FR §4.2) ---
-  /** Audit trail (super_admin only), retaining its offset contract. */
+  /** Audit trail (masterkey only), retaining its offset contract. */
   listAudit: (params: ListAuditParams = {}) => {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {

@@ -84,7 +84,7 @@ const FK = ['P2003', '23503'];
 const NIL = '00000000-0000-0000-0000-000000000000';
 
 const header = (tenant: Tenant, over: Partial<Prisma.InventoryBoundaryUncheckedCreateInput> = {}) => ({
-  id: randomUUID(), organisationId: tenant.organisationId, reportingYear: 2026, version: 1, createdBy: tenant.users.superAdmin.id, ...over,
+  id: randomUUID(), organisationId: tenant.organisationId, reportingYear: 2026, version: 1, createdBy: tenant.users.masterkey.id, ...over,
 });
 /**
  * A source row of the version: the fixture's site meter unless overridden. Its
@@ -159,7 +159,7 @@ describe('the schema: keys and CHECKs', () => {
   const rlo = String.fromCharCode(0x202e);
   it.each<[string, (boundaryId: string) => (tx: Prisma.TransactionClient) => Promise<unknown>]>([
     ['a confirmed version that is not frozen', () => (tx) =>
-      tx.inventoryBoundary.create({ data: header(a, { version: 2, decision: 'confirmed', decidedBy: a.users.superAdmin.id, decidedAt: new Date() }) })],
+      tx.inventoryBoundary.create({ data: header(a, { version: 2, decision: 'confirmed', decidedBy: a.users.masterkey.id, decidedAt: new Date() }) })],
     ['a decision but confirmed or unconfirmed', () => (tx) => tx.inventoryBoundary.create({ data: header(a, { version: 2, decision: 'final' }) })],
     ['a year out of range', () => (tx) => tx.inventoryBoundary.create({ data: header(a, { version: 2, reportingYear: 1999 }) })],
     ['operating months in reverse', (id) => (tx) =>
@@ -309,7 +309,7 @@ describe('a frozen version takes no change (TA014)', () => {
       const [{ now }] = await tx.$queryRaw<{ now: Date }[]>`SELECT now() AS now`;
       const frozen = await tx.inventoryBoundary.update({
         where: { id: boundaryId },
-        data: { frozenAt: new Date('2000-01-01'), decision: 'confirmed', decidedBy: a.users.superAdmin.id, decidedAt: new Date('2000-01-01') },
+        data: { frozenAt: new Date('2000-01-01'), decision: 'confirmed', decidedBy: a.users.masterkey.id, decidedAt: new Date('2000-01-01') },
       });
       await tx.subsidiary.update({ where: { id: a.subsidiaryId }, data: { tradingName: 'Renamed after the freeze', geographyCode: 'TR' } });
       await tx.location.update({ where: { id: siteA }, data: { name: 'Renamed site' } });
@@ -539,7 +539,7 @@ describe('a frozen version takes no change (TA014)', () => {
       await tx.$executeRaw`SELECT pg_sleep(0.3)`;
       const frozen = await tx.inventoryBoundary.update({
         where: { id: boundaryId },
-        data: { frozenAt: new Date(), decision: 'confirmed', decidedBy: a.users.superAdmin.id, decidedAt: new Date() },
+        data: { frozenAt: new Date(), decision: 'confirmed', decidedBy: a.users.masterkey.id, decidedAt: new Date() },
       });
       const [{ started }] = await tx.$queryRaw<{ started: Date }[]>`SELECT now() AS started`;
       return { frozen, started };
@@ -693,7 +693,7 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
     const site = (await owner.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test declared site', geographyCode: 'UK' } })).id;
     const open = await createBoundary(owner, a, { locationId: site, version: 20 });
     try {
-      const siteRefusal = await failure(locations.remove(a.users.superAdmin, site));
+      const siteRefusal = await failure(locations.remove(a.users.masterkey, site));
       expect(siteRefusal).toBeInstanceOf(ConflictException);
       expect((siteRefusal as Error).message).toMatch(/declared in 1 inventory boundary version\(s\)/);
     } finally {
@@ -701,7 +701,7 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
     }
     const openB = await createBoundary(owner, b, { locationId: siteB, version: 20 });
     try {
-      const refusal = await failure(subsidiaries.remove(b.users.superAdmin, b.subsidiaryId));
+      const refusal = await failure(subsidiaries.remove(b.users.masterkey, b.subsidiaryId));
       expect(refusal).toBeInstanceOf(ConflictException);
       expect((refusal as Error).message).toMatch(/1 open inventory boundary version\(s\) declaring it/);
     } finally {
@@ -710,14 +710,14 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
     // A frozen version keeps its subsidiary for good (deleted with the
     // organisation in afterAll).
     await createBoundary(owner, a, { locationId: siteA, version: 22, frozen: true });
-    const kept = await failure(subsidiaries.remove(a.users.superAdmin, a.subsidiaryId));
+    const kept = await failure(subsidiaries.remove(a.users.masterkey, a.subsidiaryId));
     expect(kept).toBeInstanceOf(ConflictException);
     expect((kept as Error).message).toMatch(/declared in \d+ confirmed or captured inventory boundary version\(s\)[\s\S]*"inactive"/);
 
     // The race: the check passes, then a version declares the site before
     // the delete runs — the guard's TA014 answers the same 409.
     const hold = holdBefore(runtime, 'Location', 'delete');
-    const raced = new LocationsService(hold.client, new AuditService(hold.client)).remove(a.users.superAdmin, site);
+    const raced = new LocationsService(hold.client, new AuditService(hold.client)).remove(a.users.masterkey, site);
     let late: { boundaryId: string } | undefined;
     try {
       await hold.reached();
@@ -765,7 +765,7 @@ describe('RLS and the client roles', () => {
         entryDeclared: await seenAs(tx, 'authenticated', a.users.dataEntry.id, declared.boundaryId),
         entryOther: await seenAs(tx, 'authenticated', a.users.dataEntry.id, undeclared.boundaryId),
         consultantOther: await seenAs(tx, 'authenticated', a.users.consultant.id, undeclared.boundaryId),
-        foreignAdmin: await seenAs(tx, 'authenticated', b.users.superAdmin.id, declared.boundaryId),
+        foreignAdmin: await seenAs(tx, 'authenticated', b.users.masterkey.id, declared.boundaryId),
         anon: await seenAs(tx, 'anon', null, declared.boundaryId),
       };
     });

@@ -33,7 +33,7 @@ import {
  * boundary versions, one subsidiary's declaration at a time, and their
  * confirmation.
  *
- * `super_admin` alone writes and confirms (E2), every write in READ COMMITTED
+ * `masterkey` alone writes and confirms (E2), every write in READ COMMITTED
  * — the only isolation the guard admits a row write or a freeze in (TA014) —
  * with the version's header locked FOR UPDATE as its first statement (W8, PR
  * B's (6)). Every rule the guard holds is checked here first: the version
@@ -287,10 +287,10 @@ export class InventoryBoundariesService {
     });
   }
 
-  /** The organisation a super_admin writes in; anyone else is refused before
+  /** The organisation a masterkey writes in; anyone else is refused before
    * anything is read (E2). */
   private writerOrganisation(user: RequestUser): string {
-    if (user.role !== 'super_admin') throw new ForbiddenException('Only super_admin may change an inventory boundary');
+    if (user.role !== 'masterkey') throw new ForbiddenException('Only masterkey may change an inventory boundary');
     if (!user.organisationId) throw new ForbiddenException('No organisation context for this user');
     return user.organisationId;
   }

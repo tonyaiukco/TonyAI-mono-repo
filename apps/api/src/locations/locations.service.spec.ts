@@ -6,7 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   createPrismaMock,
   makeLocation,
-  makeSuperAdmin,
+  makeMasterkey,
   makeDataEntry,
   type PrismaMock,
 } from '../../test/helpers';
@@ -92,7 +92,7 @@ describe('LocationsService', () => {
   });
 
   describe('create', () => {
-    it('rejects non-super_admin writes with 403', async () => {
+    it('rejects non-masterkey writes with 403', async () => {
       const user = makeDataEntry();
 
       await expect(
@@ -102,7 +102,7 @@ describe('LocationsService', () => {
     });
 
     it('rejects attaching to an inaccessible subsidiary as not found', async () => {
-      const user = makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = makeMasterkey({ accessibleSubsidiaryIds: ['sub-1'] });
 
       await expect(
         service.create(user, { subsidiaryId: 'sub-999', name: 'HQ', geographyCode: 'TR' }),
@@ -111,7 +111,7 @@ describe('LocationsService', () => {
     });
 
     it('creates and writes an audit row', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const created = makeLocation({ subsidiaryId: 'sub-1', name: 'HQ' });
       prisma.txClient.location.create.mockResolvedValue(created);
 
@@ -139,7 +139,7 @@ describe('LocationsService', () => {
       // — only that a blank becomes null — so hardcoding them to null in the
       // writer passed 401 unit tests and 71 E2E. Silent data loss on both
       // create paths, in code this PR introduced.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
 
       await service.create(user, {
@@ -167,7 +167,7 @@ describe('LocationsService', () => {
       // that structural property is the real defence and nothing asserted it.
       // Driven against the writer itself, because `create()`'s own dto id IS
       // the parameter; only the shared writer can be handed a mismatch.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
       const parent = TrustedParent.becauseInAccessibleSet(user, 'sub-1');
 
@@ -182,7 +182,7 @@ describe('LocationsService', () => {
     });
 
     it('writes the row and its audit entry in ONE transaction', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
 
       await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' });
@@ -201,7 +201,7 @@ describe('LocationsService', () => {
   });
 
   describe('update / remove', () => {
-    it('rejects non-super_admin updates with 403', async () => {
+    it('rejects non-masterkey updates with 403', async () => {
       const user = makeDataEntry();
 
       await expect(
@@ -210,7 +210,7 @@ describe('LocationsService', () => {
     });
 
     it('updates only provided fields and audits with before/after', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1', name: 'Old' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.txClient.location.update.mockResolvedValue({ ...existing, name: 'New' });
@@ -237,7 +237,7 @@ describe('LocationsService', () => {
       // The site's key is RESTRICT since LP4-01: the race the check cannot
       // close (it runs before the transaction) now fails the DELETE with
       // P2003 instead of re-filing the newcomer at company level.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.activityRecord.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
@@ -249,7 +249,7 @@ describe('LocationsService', () => {
     });
 
     it('answers 404, not a 500, when a concurrent delete removed the site first (pre-pilot defects)', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.txClient.location.delete.mockRejectedValue(
@@ -270,7 +270,7 @@ describe('LocationsService', () => {
       it('answers true and audits the row it deleted', async () => {
         const location = makeLocation({ subsidiaryId: 'sub-1' });
         prisma.txClient.location.delete.mockResolvedValue(location);
-        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeSuperAdmin(), location)).resolves.toBe(true);
+        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeMasterkey(), location)).resolves.toBe(true);
         expect(audit.record).toHaveBeenCalledTimes(1);
       });
 
@@ -278,7 +278,7 @@ describe('LocationsService', () => {
         // The subsidiary sweep's case: its transaction must carry on, not roll back as a 500.
         const location = makeLocation({ subsidiaryId: 'sub-1' });
         prisma.txClient.location.delete.mockRejectedValue(gone());
-        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeSuperAdmin(), location)).resolves.toBe(false);
+        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeMasterkey(), location)).resolves.toBe(false);
         expect(audit.record).not.toHaveBeenCalled();
       });
 
@@ -286,7 +286,7 @@ describe('LocationsService', () => {
         const location = makeLocation({ subsidiaryId: 'sub-1' });
         const failure = new Prisma.PrismaClientKnownRequestError('another failure', { code, clientVersion: 'test' });
         prisma.txClient.location.delete.mockRejectedValue(failure);
-        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeSuperAdmin(), location)).rejects.toBe(failure);
+        await expect(service.deleteLocationForTrustedParent(prisma.txClient as never, makeMasterkey(), location)).rejects.toBe(failure);
         expect(audit.record).not.toHaveBeenCalled();
       });
     });
@@ -294,7 +294,7 @@ describe('LocationsService', () => {
     it('passes any other failure through unchanged, even with a record now at the site', async () => {
       // Only the key's refusal means "a record arrived": an audit-insert or
       // connection failure must surface as itself, not as a 409 about records.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.activityRecord.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
@@ -306,7 +306,7 @@ describe('LocationsService', () => {
     });
 
     it('refuses to delete a site declared in an inventory boundary version, and deletes nothing (W9)', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.inventoryBoundarySite.count.mockResolvedValue(2);
@@ -326,7 +326,7 @@ describe('LocationsService', () => {
       // The boundary's guard refuses the cascade (TA014) — the race the check
       // cannot close. Prisma reports a trigger's RAISE on a model query as an
       // unknown request error carrying the PostgreSQL code.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.inventoryBoundarySite.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
@@ -344,7 +344,7 @@ describe('LocationsService', () => {
       // The guard's TA014 means a version declared the site when the delete
       // ran; a recount after that version's removal finds none — the delete
       // still did not happen, and the answer is still the conflict, never 500.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.inventoryBoundarySite.count.mockResolvedValue(0);
@@ -366,7 +366,7 @@ describe('LocationsService', () => {
       // referencing record claiming the SUBSIDIARY's geography while its frozen
       // snapshot was computed from the LOCATION's — measured live: subsidiary
       // TR, location UK, record detached with 'UK' still in the snapshot.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.activityRecord.count.mockResolvedValue(3);
@@ -380,7 +380,7 @@ describe('LocationsService', () => {
     });
 
     it('removes a scoped location and audits it', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.activityRecord.count.mockResolvedValue(0);
@@ -409,7 +409,7 @@ describe('LocationsService', () => {
     });
 
     it('treats deleting a location outside the access set as not found', async () => {
-      const user = makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = makeMasterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.location.findUnique.mockResolvedValue(
         makeLocation({ subsidiaryId: 'sub-999' }),
       );

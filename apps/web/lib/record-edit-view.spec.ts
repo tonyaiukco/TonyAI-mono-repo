@@ -111,7 +111,7 @@ describe('evidencePlan — owner decision D1', () => {
 
 describe('recordActions — the API\'s gates, row by row', () => {
   const author = { id: 'u-entry', role: 'data_entry' };
-  const admin = { id: 'u-admin', role: 'super_admin' };
+  const admin = { id: 'u-admin', role: 'masterkey' };
   const row = (status: string, createdBy = author.id, periodLocked = false) => ({ status, createdBy, periodLocked });
 
   it('offers Edit on the author\'s draft and rejected records only', () => {
@@ -122,7 +122,7 @@ describe('recordActions — the API\'s gates, row by row', () => {
     }
   });
 
-  it('never offers a super_admin Edit or Recall on a colleague\'s record', () => {
+  it('never offers a masterkey Edit or Recall on a colleague\'s record', () => {
     expect(recordActions(admin, row('draft'))).toEqual({ edit: false, recall: false, copy: false });
     expect(recordActions(admin, row('submitted'))).toEqual({ edit: false, recall: false, copy: false });
     expect(recordActions(admin, row('draft', admin.id)).edit).toBe(true);
@@ -138,7 +138,7 @@ describe('recordActions — the API\'s gates, row by row', () => {
     expect(recordActions(author, row('submitted', author.id, true)).recall).toBe(false);
   });
 
-  it('offers Copy on a voided record to its author and to a super_admin, locked period or not', () => {
+  it('offers Copy on a voided record to its author and to a masterkey, locked period or not', () => {
     expect(recordActions(author, row('voided')).copy).toBe(true);
     expect(recordActions(admin, row('voided')).copy).toBe(true);
     expect(recordActions(admin, row('voided', author.id, true)).copy).toBe(true);

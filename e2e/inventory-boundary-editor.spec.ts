@@ -75,7 +75,7 @@ async function declareHolding(page: Page, editor: Locator): Promise<void> {
 
 test.describe.configure({ mode: 'serial' });
 
-test('a super admin declares, is refused, resolves the gaps and confirms a version', async ({ page, request }) => {
+test('a masterkey declares, is refused, resolves the gaps and confirms a version', async ({ page, request }) => {
   await deleteOpenVersion(request);
   await login(page, ADMIN_EMAIL);
   await page.goto(pageUrl);

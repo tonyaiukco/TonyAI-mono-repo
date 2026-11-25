@@ -63,7 +63,7 @@ export interface EnabledChange {
  * nothing else writes `profiles.role` or `user_subsidiary_access`.
  *
  * The rules, each enforced here and — where the database can — again below:
- *  - Only a `super_admin` of an organisation administers it. There is no
+ *  - Only a `masterkey` of an organisation administers it. There is no
  *    cross-tenant administrator: every lookup is bounded by the actor's own
  *    organisation, and an id from another tenant answers 404, exactly as an id
  *    that does not exist (no existence oracle).
@@ -73,7 +73,7 @@ export interface EnabledChange {
  *  - A profile never changes organisation (D17): the runtime database role may
  *    UPDATE only `profiles.role`, so not even a bug here could move one.
  *  - Nobody changes their own role, so an organisation is never left without a
- *    `super_admin` by its last one, and nobody promotes themselves.
+ *    `masterkey` by its last one, and nobody promotes themselves.
  *  - The actor is re-read under a per-organisation lock, so an administrator
  *    demoted a moment ago cannot act on the stale role their request was
  *    authenticated with, and two administrators cannot demote each other at
@@ -86,7 +86,7 @@ export interface EnabledChange {
  *    in one transaction (the database first; Auth and the email follow, in
  *    `users/`). Nobody disables their own account, and a disabled actor is
  *    refused under the lock — so an organisation always keeps an active
- *    `super_admin`: the actor, who is one and is never the target.
+ *    `masterkey`: the actor, who is one and is never the target.
  *
  * Organisations and first administrators come from two places (owner decision
  * 2026-11-11, replacing D18's "the operator only"): the operator
@@ -357,7 +357,7 @@ export class AccessAdminService {
   /**
    * Self-service registration: creates an organisation, its default
    * subsidiary (named by the company, so a facility can be added at once —
-   * UAT round 2, K1), its first `super_admin`, that account's invitation and
+   * UAT round 2, K1), its first `masterkey`, that account's invitation and
    * the consent it gave — in one audited transaction, all or nothing. There is
    * no actor: the caller is the public registration endpoint, which has
    * already checked the registration code. Delivery follows outside, as for an
@@ -399,7 +399,7 @@ export class AccessAdminService {
             email,
             fullName: input.fullName.trim(),
             jobTitle: input.jobTitle.trim(),
-            role: DbUserRole.super_admin,
+            role: DbUserRole.masterkey,
             language: input.language,
             organisationId: organisation.id,
           },
@@ -411,7 +411,7 @@ export class AccessAdminService {
             action: 'invite',
             entity: 'invitation',
             entityId: profileId,
-            diff: { source: REGISTRATION_SOURCE, role: DbUserRole.super_admin, language: input.language, subsidiaryIds: [] },
+            diff: { source: REGISTRATION_SOURCE, role: DbUserRole.masterkey, language: input.language, subsidiaryIds: [] },
           },
           tx,
         );
@@ -626,8 +626,8 @@ export function tenantAdminLockKey(organisationId: string): number {
 
 /** The actor's organisation, when the actor may administer it at all. */
 function assertTenantAdmin(actor: RequestUser): string {
-  if (actor.role !== DbUserRole.super_admin || !actor.organisationId) {
-    throw new ForbiddenException('Only a super_admin manages roles and access.');
+  if (actor.role !== DbUserRole.masterkey || !actor.organisationId) {
+    throw new ForbiddenException('Only a masterkey manages roles and access.');
   }
   return actor.organisationId;
 }
@@ -647,7 +647,7 @@ export const INVITE_REFUSALS_PER_HOUR = 5;
 
 /**
  * The invite route answers whether an address has an account anywhere (D17),
- * and self-service registration makes a `super_admin` of anyone holding the
+ * and self-service registration makes a `masterkey` of anyone holding the
  * code. So an organisation's `invite_refused` rows of the last hour bound it:
  * at `INVITE_REFUSALS_PER_HOUR`, every invitation is refused 429 before the
  * address is looked up, until the oldest ages out. Counted on the database's
@@ -688,8 +688,8 @@ async function lockAndReadActor(
   // request (D19, K6): the same answer the guard gives, so the session ends
   // rather than acting once more.
   if (current?.disabledAt || current?.organisation?.offboardedAt) throw new AccountDisabledError();
-  if (!current || current.role !== DbUserRole.super_admin || current.organisationId !== organisationId) {
-    throw new ForbiddenException('Only a super_admin manages roles and access.');
+  if (!current || current.role !== DbUserRole.masterkey || current.organisationId !== organisationId) {
+    throw new ForbiddenException('Only a masterkey manages roles and access.');
   }
   return { ...actor, role: current.role };
 }

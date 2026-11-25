@@ -44,7 +44,7 @@ function build({ rows = [auditRow(0)], get = vi.fn().mockResolvedValue(RECORD) }
 }
 
 describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 §6)', () => {
-  it.each(['super_admin', 'consultant', 'executive_viewer'] as const)(
+  it.each(['masterkey', 'consultant', 'executive_viewer'] as const)(
     'a %s reads the trail of a record they can read',
     async (role) => {
       const { service } = build();
@@ -71,7 +71,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
 
   it('refuses an organisation-less caller before reading', async () => {
     const { prisma, service } = build();
-    await expect(service.read(user('super_admin', 'u-x', null), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.read(user('masterkey', 'u-x', null), 'rec-1')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
   it('refuses a record the caller cannot read exactly as its read does', async () => {
     const notFound = new ResourceNotFoundError('record_not_found');
     const { prisma, service } = build({ get: vi.fn().mockRejectedValue(notFound) });
-    await expect(service.read(user('super_admin'), 'rec-other-org')).rejects.toBe(notFound);
+    await expect(service.read(user('masterkey'), 'rec-other-org')).rejects.toBe(notFound);
     expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
   });
 
@@ -106,7 +106,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
   it('returns the newest 500 of 520 events, oldest first, and says earlier ones were left out', async () => {
     const rows = Array.from({ length: 520 }, (_, i) => auditRow(i));
     const { service } = build({ rows });
-    const trail = await service.read(user('super_admin'), 'rec-1');
+    const trail = await service.read(user('masterkey'), 'rec-1');
     expect(trail.truncated).toBe(true);
     expect(trail.events).toHaveLength(500);
     expect(trail.events[0].id).toBe('audit-0020');
@@ -116,7 +116,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
   it('says nothing is left out at exactly the limit', async () => {
     const rows = Array.from({ length: RECORD_TRAIL_MAX_EVENTS }, (_, i) => auditRow(i));
     const { service } = build({ rows });
-    const trail = await service.read(user('super_admin'), 'rec-1');
+    const trail = await service.read(user('masterkey'), 'rec-1');
     expect(trail.truncated).toBe(false);
     expect(trail.events).toHaveLength(500);
     expect(RECORD_TRAIL_MAX_EVENTS).toBe(500);
@@ -125,7 +125,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
   it('says nothing is left out within the limit', async () => {
     const rows = Array.from({ length: 12 }, (_, i) => auditRow(i));
     const { service } = build({ rows });
-    const trail = await service.read(user('super_admin'), 'rec-1');
+    const trail = await service.read(user('masterkey'), 'rec-1');
     expect(trail).toMatchObject({ truncated: false });
     expect(trail.events).toHaveLength(12);
   });
@@ -142,7 +142,7 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
       { id: 'loc-a', name: 'Istanbul plant' },
       { id: 'loc-b', name: 'Izmir depot' },
     ]);
-    const trail = await service.read(user('super_admin'), 'rec-1');
+    const trail = await service.read(user('masterkey'), 'rec-1');
     expect(prisma.location.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ['loc-a', 'loc-b'] }, subsidiaryId: 'sub-1' } }),
     );
@@ -153,8 +153,8 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
 
   it('writes nothing: the audit writer is never called', async () => {
     const { prisma, service } = build();
-    await service.read(user('super_admin'), 'rec-1');
-    await service.read(user('super_admin'), 'rec-1');
+    await service.read(user('masterkey'), 'rec-1');
+    await service.read(user('masterkey'), 'rec-1');
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
     expect(prisma.auditLog.createMany).not.toHaveBeenCalled();
   });

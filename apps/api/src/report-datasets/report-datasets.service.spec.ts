@@ -6,7 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toErrorBody } from '../common/api-error';
 import type { PrismaService } from '../prisma/prisma.service';
-import { makeDataEntry, makeSuperAdmin } from '../../test/helpers';
+import { makeDataEntry, makeMasterkey } from '../../test/helpers';
 import { readInventoryBoundary } from '../inventory-boundary/boundary-reader';
 import { readCaptureContext, readCaptureFacts } from './dataset-reader';
 import { canonicalDatasetContent, reportDatasetFingerprint } from './dataset-fingerprint';
@@ -31,8 +31,8 @@ vi.mock('./dataset-reader', async (actual) => ({
 const BOUNDARY_ID = '0b1d0000-0000-4000-8000-000000000001';
 const ORG = 'org-1';
 
-const consultant = (over: Partial<RequestUser> = {}) => makeSuperAdmin({ id: 'user-consultant', role: 'consultant', ...over });
-const viewer = () => makeSuperAdmin({ id: 'user-viewer', role: 'executive_viewer' });
+const consultant = (over: Partial<RequestUser> = {}) => makeMasterkey({ id: 'user-consultant', role: 'consultant', ...over });
+const viewer = () => makeMasterkey({ id: 'user-viewer', role: 'executive_viewer' });
 
 const header = (over: Record<string, unknown> = {}) => ({
   id: BOUNDARY_ID, reportingYear: 2026, version: 2, frozenAt: null as Date | null,
@@ -93,7 +93,7 @@ const failure = async (p: Promise<unknown>) => p.then(() => { throw new Error('r
 describe('ReportDatasetsService.capture', () => {
   let db: ReturnType<typeof mockDb>;
   let service: ReportDatasetsService;
-  const admin = makeSuperAdmin();
+  const admin = makeMasterkey();
 
   beforeEach(() => {
     vi.mocked(readInventoryBoundary).mockReset().mockResolvedValue(snapshotBoundary());
@@ -116,7 +116,7 @@ describe('ReportDatasetsService.capture', () => {
     });
 
     it('refuses a caller with no organisation', async () => {
-      expect(await failure(service.capture(makeSuperAdmin({ organisationId: null }), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
+      expect(await failure(service.capture(makeMasterkey({ organisationId: null }), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
       expect(db.prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -171,7 +171,7 @@ describe('ReportDatasetsService.capture', () => {
       });
     });
 
-    it('lets only super_admin freeze an open version — a consultant is refused, nothing frozen (V1)', async () => {
+    it('lets only masterkey freeze an open version — a consultant is refused, nothing frozen (V1)', async () => {
       expect(await failure(service.capture(consultant(), { boundaryId: BOUNDARY_ID }))).toBeInstanceOf(ForbiddenException);
       expect(db.tx.inventoryBoundary.updateMany).not.toHaveBeenCalled();
       expect(db.order).toEqual(['ReadCommitted']);
@@ -342,21 +342,21 @@ describe('ReportDatasetsService reads', () => {
   });
 
   it('lists nothing for a caller with no organisation', async () => {
-    expect(await service.list(makeSuperAdmin({ organisationId: null }), 2026)).toEqual({ items: [], truncated: false });
+    expect(await service.list(makeMasterkey({ organisationId: null }), 2026)).toEqual({ items: [], truncated: false });
   });
 });
 
 describe('the dataset routes\' guards', () => {
   const context = (user?: RequestUser) => ({ switchToHttp: () => ({ getRequest: () => ({ user }) }) }) as never;
-  it('admits super_admin and consultant to capture, and no one else', () => {
-    expect(new DatasetCapturerGuard().canActivate(context(makeSuperAdmin()))).toBe(true);
+  it('admits masterkey and consultant to capture, and no one else', () => {
+    expect(new DatasetCapturerGuard().canActivate(context(makeMasterkey()))).toBe(true);
     expect(new DatasetCapturerGuard().canActivate(context(consultant()))).toBe(true);
     for (const user of [makeDataEntry(), viewer(), undefined]) {
       expect(() => new DatasetCapturerGuard().canActivate(context(user))).toThrow(ForbiddenException);
     }
   });
   it('admits every role but data_entry to read', () => {
-    for (const user of [makeSuperAdmin(), consultant(), viewer()]) expect(new DatasetReaderGuard().canActivate(context(user))).toBe(true);
+    for (const user of [makeMasterkey(), consultant(), viewer()]) expect(new DatasetReaderGuard().canActivate(context(user))).toBe(true);
     for (const user of [makeDataEntry(), undefined]) expect(() => new DatasetReaderGuard().canActivate(context(user))).toThrow(ForbiddenException);
   });
 });

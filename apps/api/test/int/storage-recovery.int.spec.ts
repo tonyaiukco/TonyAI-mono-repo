@@ -1182,7 +1182,7 @@ describe('LP1-02 — concurrent approval cannot silently lose evidence (real Sto
     expect(r.first).toBe('ok');
     expect(r.second).toBeInstanceOf(RecordChangedError);
 
-    await lifecycleServices(b, storage).records.approve(tenant.users.superAdmin, first.id);
+    await lifecycleServices(b, storage).records.approve(tenant.users.masterkey, first.id);
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: first.id } })).status).toBe(
       ActivityRecordStatus.approved,
     );

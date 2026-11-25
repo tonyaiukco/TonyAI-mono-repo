@@ -32,13 +32,13 @@ export class TargetsController {
     return this.service.progress(user, query);
   }
 
-  /** Create a target — super_admin only, audited. */
+  /** Create a target — masterkey only, audited. */
   @Post()
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateTargetDto) {
     return this.service.create(user, dto);
   }
 
-  /** Update a target — super_admin only, audited. */
+  /** Update a target — masterkey only, audited. */
   @Patch(':id')
   update(
     @CurrentUser() user: RequestUser,
@@ -48,7 +48,7 @@ export class TargetsController {
     return this.service.update(user, id, dto);
   }
 
-  /** Delete a target — super_admin only, audited. */
+  /** Delete a target — masterkey only, audited. */
   @Delete(':id')
   remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.remove(user, id);

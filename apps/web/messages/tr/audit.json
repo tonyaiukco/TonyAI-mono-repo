@@ -3,7 +3,7 @@
   "subtitle": "Denetlenen değişikliklerin yalnızca eklenebilen kaydı",
   "subtitleUser": "Denetlenen değişikliklerin yalnızca eklenebilen kaydı · {name} ({role})",
   "forbidden": {
-    "title": "Denetim izini yalnızca bir süper yönetici okuyabilir",
+    "title": "Denetim izini yalnızca bir masterkey okuyabilir",
     "body": "İz, ana şirketin tüm bağlı şirketlerini kapsadığı için hem API'de hem veritabanında kısıtlanmıştır. Rolünüz: <mono>{role}</mono>."
   },
   "filterPlaceholder": "Bu sayfada ara…",

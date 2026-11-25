@@ -38,7 +38,7 @@ const user = (role: UserRole, over: Partial<RequestUser> = {}): RequestUser => (
   id: '0a000000-0000-4000-8000-00000000000a', email: 'x@tonyai.test', fullName: 'Someone', role,
   organisationId: ORG, accessibleSubsidiaryIds: ['sub-a', 'sub-b'], ...over,
 });
-const admin = user('super_admin');
+const admin = user('masterkey');
 const consultant = user('consultant');
 
 let dataset: ReportDataset;
@@ -194,8 +194,8 @@ describe('issue — the read rule: refusal is not found, byte for byte', () => {
     datasetRow = null;
     const missing = await body(issue());
     arrange(datasetOf());
-    const outside = await body(issue(user('super_admin', { accessibleSubsidiaryIds: ['sub-a'] })));
-    const none = await body(issue(user('super_admin', { accessibleSubsidiaryIds: [] })));
+    const outside = await body(issue(user('masterkey', { accessibleSubsidiaryIds: ['sub-a'] })));
+    const none = await body(issue(user('masterkey', { accessibleSubsidiaryIds: [] })));
     expect(missing).toContain('report_dataset_not_found');
     expect(outside).toBe(missing);
     expect(none).toBe(missing);
@@ -209,12 +209,12 @@ describe('issue — the read rule: refusal is not found, byte for byte', () => {
     expect(errorCodeOf(await refusal(issue(outside('consultant'))))).toBe('report_dataset_not_found');
     // Already issued, but not the caller's to read: not found, not report_already_issued.
     tx.reportIssuance.findFirst.mockResolvedValue({ id: 'earlier' });
-    expect(errorCodeOf(await refusal(issue(outside('super_admin'))))).toBe('report_dataset_not_found');
+    expect(errorCodeOf(await refusal(issue(outside('masterkey'))))).toBe('report_dataset_not_found');
     expect(tx.reportIssuance.findFirst).not.toHaveBeenCalled();
   });
 
   it('refuses a caller without an organisation as not found', async () => {
-    expect(errorCodeOf(await refusal(issue(user('super_admin', { organisationId: null }))))).toBe('report_dataset_not_found');
+    expect(errorCodeOf(await refusal(issue(user('masterkey', { organisationId: null }))))).toBe('report_dataset_not_found');
   });
 });
 
@@ -392,8 +392,8 @@ describe('reads', () => {
 
   it('reads nothing for a caller with no access or no organisation', async () => {
     const none = { items: [], truncated: false, currentFinalIssuanceId: null };
-    expect(await service.list(user('super_admin', { accessibleSubsidiaryIds: [] }), 2026)).toEqual(none);
-    expect(await service.list(user('super_admin', { organisationId: null }), 2026)).toEqual(none);
+    expect(await service.list(user('masterkey', { accessibleSubsidiaryIds: [] }), 2026)).toEqual(none);
+    expect(await service.list(user('masterkey', { organisationId: null }), 2026)).toEqual(none);
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
@@ -464,7 +464,7 @@ describe('the issuance preview (LP4-03 K7) — the gate, nothing written', () =>
   });
 
   it('answers an unreadable dataset as report_dataset_not_found — no bypass for the issuer', async () => {
-    const e = await refusal(service.preview(user('super_admin', { accessibleSubsidiaryIds: ['sub-a'] }), dataset.datasetId));
+    const e = await refusal(service.preview(user('masterkey', { accessibleSubsidiaryIds: ['sub-a'] }), dataset.datasetId));
     expect(errorCodeOf(e)).toBe('report_dataset_not_found');
   });
 

@@ -23,7 +23,7 @@ import {
  * WP7 PR 3 — the reviewer UI at `/review`.
  *
  * The rule this file exists to defend is who decides, against the real guard
- * rather than mocks: a consultant or a super_admin takes a record into review,
+ * rather than mocks: a consultant or a masterkey takes a record into review,
  * sends it back or approves it (a consultant approves since K2, Decisions
  * 2026-11-12), and nobody approves a record they created (D01). Until the seed
  * grew a consultant user there was no way to exercise the consultant's branch
@@ -59,7 +59,7 @@ test('a submitted record reaches the queue and approving clears it', async ({
   await expect(page.getByText('You cannot approve a record you entered.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
-  // A different super_admin still has the approval action.
+  // A different masterkey still has the approval action.
   await switchUser(page, APPROVER_EMAIL);
   await page.goto('/review');
   await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
@@ -262,10 +262,10 @@ test('a consultant takes another user\'s record into review and approves it (K2)
   await row.click();
 
   // Since K2 a consultant approves a record someone else created, so Approve is
-  // offered, and neither the old "reserved for a super_admin" note nor the
+  // offered, and neither the old "reserved for a masterkey" note nor the
   // self-approval hint is shown.
   await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
-  await expect(page.getByText(/Approval is reserved for a super_admin/)).toHaveCount(0);
+  await expect(page.getByText(/Approval is reserved for a masterkey/)).toHaveCount(0);
   await expect(page.getByText('You cannot approve a record you entered.')).toHaveCount(0);
 
   // The sheet must carry what a decision needs. Both of these were implemented
@@ -391,7 +391,7 @@ test('the API decides who approves: a consultant yes, with the submission seen; 
   // A role that may not approve is refused on the role, before anything else.
   const byViewer = await approveAs(viewer, { seenSubmittedAt: await seenSubmittedAt(request, admin, id) });
   expect(byViewer.status()).toBe(403);
-  expect((await byViewer.json()).message).toMatch(/Only a consultant or super_admin may approve records/);
+  expect((await byViewer.json()).message).toMatch(/Only a consultant or masterkey may approve records/);
 
   // A consultant passes the role check, so a request that names no submission
   // (a review tab from before BUG-R2-03) is `record_changed`, not 403.
@@ -433,7 +433,7 @@ test('the API decides who approves: a consultant yes, with the submission seen; 
   expect(approved.status()).toBe(200);
   expect((await approved.json()).status).toBe('approved');
 
-  // Approving is not voiding: void stays super_admin only.
+  // Approving is not voiding: void stays masterkey only.
   const voided = await request.post(`${API_BASE}/activity-records/${id}/void`, {
     headers: bearer(consultant),
     data: { voidReason: 'consultant tries to withdraw' },
@@ -450,7 +450,7 @@ test('data_entry is told the decision is not theirs, not shown a broken page', a
   await page.goto('/review');
 
   await expect(
-    page.getByText(/Reviewing is done by a consultant or a super_admin/i),
+    page.getByText(/Reviewing is done by a consultant or a masterkey/i),
   ).toBeVisible();
   await expect(page.locator('table')).toHaveCount(0);
 });
@@ -514,7 +514,7 @@ test("a reviewer's open closes the author's recall: the refusal names the status
   }
 });
 
-test('a super_admin opening their own submitted record leaves it submitted, with no Start review', async ({ page, request }) => {
+test('a masterkey opening their own submitted record leaves it submitted, with no Start review', async ({ page, request }) => {
   const admin = await getAccessToken(request, ADMIN_EMAIL);
   const id = await createCommittedRecord(request, admin, {
     subsidiaryId: SUB.trading,

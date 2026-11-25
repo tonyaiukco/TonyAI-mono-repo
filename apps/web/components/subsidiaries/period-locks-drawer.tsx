@@ -34,7 +34,7 @@ const PERIODS: readonly ReportingPeriod[] = ['quarterly', 'monthly', 'annual'];
 
 interface PeriodLocksDrawerProps {
   subsidiary: SubsidiaryDTO | null;
-  /** Only super_admin may lock/unlock (permissions §5.3). */
+  /** Only masterkey may lock/unlock (permissions §5.3). */
   canManage: boolean;
   onClose: () => void;
 }
@@ -204,7 +204,7 @@ export function PeriodLocksDrawer({
                 </div>
               )}
 
-              {/* Lock a period — super_admin only */}
+              {/* Lock a period — masterkey only */}
               {canManage ? (
                 <div className="space-y-4 border-t border-border pt-4">
                   <h4 className="text-sm font-medium">{t('locks.closeTitle')}</h4>

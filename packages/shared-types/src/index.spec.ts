@@ -1322,7 +1322,7 @@ describe('needsEvidenceBeforeSubmit', () => {
 describe('mayAuthorRecords — the one record-write rule', () => {
   it.each([
     ['data_entry', true],
-    ['super_admin', true],
+    ['masterkey', true],
     ['consultant', false],
     ['executive_viewer', false],
     ['DATA_ENTRY', false],
@@ -1342,7 +1342,7 @@ describe('mayReadRecordTrail — who reads one record\'s history (WP5, INC-2.6 �
   const record = { createdBy: 'u-author' };
 
   it.each([
-    ['super_admin', true],
+    ['masterkey', true],
     ['consultant', true],
     ['executive_viewer', true],
   ])('%s reads any record it can read → %s', (role, allowed) => {
@@ -1372,7 +1372,7 @@ describe('mayReadRecordTrail — who reads one record\'s history (WP5, INC-2.6 �
 
 describe('mayApproveRecords — who may approve (K2, Decisions 2026-11-12)', () => {
   it.each([
-    ['super_admin', true],
+    ['masterkey', true],
     ['consultant', true],
     ['data_entry', false],
     ['executive_viewer', false],
@@ -1395,7 +1395,7 @@ describe('mayApproveRecords — who may approve (K2, Decisions 2026-11-12)', () 
 
 describe('record edit, recall and copy (BUG-R2-03)', () => {
   const author = { id: 'u-author', role: 'data_entry' };
-  const admin = { id: 'u-admin', role: 'super_admin' };
+  const admin = { id: 'u-admin', role: 'masterkey' };
   const consultant = { id: 'u-consultant', role: 'consultant' };
   const ALL = ['draft', 'submitted', 'under_review', 'approved', 'rejected', 'locked', 'voided'];
 
@@ -1407,7 +1407,7 @@ describe('record edit, recall and copy (BUG-R2-03)', () => {
     for (const junk of ['', 'Submitted', ' submitted']) expect(isRecallable(junk)).toBe(false);
   });
 
-  it('lets only the author edit, in an editable status — super_admin is not exempt', () => {
+  it('lets only the author edit, in an editable status — masterkey is not exempt', () => {
     for (const status of ALL) {
       const editable = status === 'draft' || status === 'rejected';
       expect(mayEditRecord(author, { status, createdBy: author.id })).toBe(editable);
@@ -1427,7 +1427,7 @@ describe('record edit, recall and copy (BUG-R2-03)', () => {
     expect(mayRecallRecord(consultant, { status: 'submitted', createdBy: consultant.id })).toBe(false);
   });
 
-  it('offers copy on a voided record to its author and to super_admin only', () => {
+  it('offers copy on a voided record to its author and to masterkey only', () => {
     expect(mayCopyVoidedRecord(author, { status: 'voided', createdBy: author.id })).toBe(true);
     expect(mayCopyVoidedRecord(admin, { status: 'voided', createdBy: author.id })).toBe(true);
     expect(mayCopyVoidedRecord({ id: 'u-other', role: 'data_entry' }, { status: 'voided', createdBy: author.id })).toBe(false);

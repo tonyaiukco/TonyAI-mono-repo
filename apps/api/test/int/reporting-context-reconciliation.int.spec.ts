@@ -167,14 +167,14 @@ beforeAll(async () => {
       status: row.status,
       calculation: { tCo2e: row.tCo2e, factorId: 'int-test-placeholder' },
       ...(row.status === ActivityRecordStatus.voided
-        ? { voidReason: 'Int-test reconciliation withdrawal', voidedBy: t.users.superAdmin.id, voidedAt: new Date('2025-12-01T00:00:00Z') }
+        ? { voidReason: 'Int-test reconciliation withdrawal', voidedBy: t.users.masterkey.id, voidedAt: new Date('2025-12-01T00:00:00Z') }
         : {}),
     });
   }
   for (const [year, bySub] of Object.entries(REVENUE)) {
     for (const [sub, value] of Object.entries(bySub)) {
       await owner.subsidiaryDenominator.create({
-        data: { subsidiaryId: idOf(sub as 'S1' | 'S2'), year: Number(year), metric: 'revenue', value, unit: 'EUR', createdBy: t.users.superAdmin.id },
+        data: { subsidiaryId: idOf(sub as 'S1' | 'S2'), year: Number(year), metric: 'revenue', value, unit: 'EUR', createdBy: t.users.masterkey.id },
       });
     }
   }

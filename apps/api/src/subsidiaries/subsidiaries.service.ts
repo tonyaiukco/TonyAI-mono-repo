@@ -103,8 +103,8 @@ export class SubsidiariesService {
   }
 
   private assertCanWrite(user: RequestUser): void {
-    if (user.role !== 'super_admin') {
-      throw new ForbiddenException('Only super_admin may modify subsidiaries');
+    if (user.role !== 'masterkey') {
+      throw new ForbiddenException('Only masterkey may modify subsidiaries');
     }
     if (!user.organisationId) {
       throw new ForbiddenException('No organisation context for this user');
@@ -216,7 +216,7 @@ export class SubsidiariesService {
     dto: UpdateSubsidiaryDto,
   ): Promise<SubsidiaryDTO> {
     this.assertCanWrite(user);
-    // Tenant check, not just the role check: without it a super_admin of one
+    // Tenant check, not just the role check: without it a masterkey of one
     // organisation could update another organisation's subsidiary. 404 (never
     // 403) so the response cannot confirm the row exists — the same rule every
     // other scoped read/write in the API follows.
@@ -437,7 +437,7 @@ export class SubsidiariesService {
    * 'inactive'` is how an entity gets retired. But `submitted`/`under_review`
    * look terminal and are not: a reviewer rejects the record, and it becomes
    * deletable — measured, delete then went through with 200. Lumping those in
-   * with `approved` told a super_admin that a mistyped subsidiary was
+   * with `approved` told a masterkey that a mistyped subsidiary was
    * permanently in the register, which forecloses an action the API grants. It
    * is the same error as promising a delete that cannot happen, pointing the
    * other way.

@@ -46,10 +46,10 @@ import { datasetRow, datasetSummary, listDatasetSummaries, readableBy, readDatas
  * only as a copy.
  */
 
-/** Who captures (W4): super_admin and consultant. Only super_admin freezes an open version (V1). */
-export const CAPTURE_ROLES: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant']);
+/** Who captures (W4): masterkey and consultant. Only masterkey freezes an open version (V1). */
+export const CAPTURE_ROLES: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant']);
 /** Who reads a retained dataset (V7): not data_entry, which generates no report (W3). */
-export const DATASET_READ_ROLES: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant', 'executive_viewer']);
+export const DATASET_READ_ROLES: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant', 'executive_viewer']);
 
 const FREEZE_TX = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000 };
 const SNAPSHOT_TX = { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30_000 };
@@ -93,7 +93,7 @@ export class ReportDatasetsService {
   ) {}
 
   async capture(user: RequestUser, dto: CaptureReportDatasetRequest): Promise<ReportDatasetSummary> {
-    if (!CAPTURE_ROLES.has(user.role)) throw new ForbiddenException('Only super_admin or consultant may capture a report dataset');
+    if (!CAPTURE_ROLES.has(user.role)) throw new ForbiddenException('Only masterkey or consultant may capture a report dataset');
     const organisationId = user.organisationId;
     if (!organisationId) throw new ForbiddenException('No organisation context for this user');
     const selection = selectionOf(dto);
@@ -149,7 +149,7 @@ export class ReportDatasetsService {
 
   /**
    * The capture's first transaction: every refusal the request decides, then
-   * the freeze of an open version (super_admin's alone, V1), audited.
+   * the freeze of an open version (masterkey's alone, V1), audited.
    */
   private async freeze(user: RequestUser, organisationId: string, boundaryId: string, selection: DatasetSelection): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
@@ -188,8 +188,8 @@ export class ReportDatasetsService {
       const links = scopes.length === 0 ? 0 : await tx.activityRecordEvidence.count({ where: { activityRecord: selected } });
       if (links > this.limits.REPORT_EVIDENCE_LINK_LIMIT) throw new QueryTooBroadError();
       if (header.frozenAt !== null) return;
-      if (user.role !== 'super_admin') {
-        throw new ForbiddenException('Only super_admin may capture an open inventory boundary version; capture it once it is frozen');
+      if (user.role !== 'masterkey') {
+        throw new ForbiddenException('Only masterkey may capture an open inventory boundary version; capture it once it is frozen');
       }
       // Conditional, so a retry never meets the guard: none changed means
       // another capture or a confirmation froze it first.

@@ -191,7 +191,7 @@ test('a late Cancel of one record never refills the form over the record opened 
   await page.unroute(`**/api/v1/activity-records/${first}`);
 });
 
-test('the author recalls a submitted record, edits it and submits it again; a super_admin is offered neither', async ({ page, request }) => {
+test('the author recalls a submitted record, edits it and submits it again; a masterkey is offered neither', async ({ page, request }) => {
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const id = await createWasteDraft(request, token, 'December');
   await post(request, token, `/activity-records/${id}/submit`);
@@ -285,7 +285,7 @@ test('a second Copy answering after a subsidiary switch never overwrites the swi
     voided.push(id);
   }
 
-  // A super_admin: Copy is theirs on any voided record, and they see a second subsidiary.
+  // A masterkey: Copy is theirs on any voided record, and they see a second subsidiary.
   await login(page, ADMIN_EMAIL);
   await openDataEntry(page);
   await listOf(page).getByRole('button', { name: `Copy September ${E2E_YEAR} ${E2E_BULK_CATEGORY} to a new draft` }).click();

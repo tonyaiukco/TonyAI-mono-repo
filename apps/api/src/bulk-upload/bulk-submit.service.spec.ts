@@ -176,7 +176,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('BulkSubmitService — what it hands to submit', () => {
   it('passes the caller through, untouched, with each id', async () => {
     // The assertion a mutation sweep showed was missing, and the one that
-    // matters most: forging `role: 'super_admin'`, widening
+    // matters most: forging `role: 'masterkey'`, widening
     // `accessibleSubsidiaryIds`, or swapping `id` on this call each passed the
     // entire suite. That single call is where the tenant boundary, the author
     // gate and the role gate are all handed over.
@@ -256,13 +256,13 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     expect(records.submit).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a super_admin someone else’s draft too — only the author submits (D02)', async () => {
+  it('refuses a masterkey someone else’s draft too — only the author submits (D02)', async () => {
     const { records, service } = build([
       candidate({ id: 'theirs', createdBy: 'user-colleague' }),
     ]);
 
     const report = await service.submitMany(
-      dataEntry({ role: 'super_admin' }),
+      dataEntry({ role: 'masterkey' }),
       ids('theirs'),
     );
 
@@ -476,7 +476,7 @@ describe('BulkSubmitService — a role refusal is one 403, and it is recorded', 
   });
 
   it('lets both authoring roles through', async () => {
-    for (const role of ['data_entry', 'super_admin'] as const) {
+    for (const role of ['data_entry', 'masterkey'] as const) {
       const { records, service } = build();
       await service.submitMany(dataEntry({ role }), ids('a'));
       expect(records.submit).toHaveBeenCalledTimes(1);
@@ -490,7 +490,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     [new VarianceReasonRequiredError(), 'variance_reason_required', /variance/i],
     [
       new PeriodLockedError(
-        'Reporting period January 2024 is locked — a super_admin must unlock it.',
+        'Reporting period January 2024 is locked — a masterkey must unlock it.',
         { periodValue: 'January', reportingYear: 2024 },
       ),
       'period_locked',

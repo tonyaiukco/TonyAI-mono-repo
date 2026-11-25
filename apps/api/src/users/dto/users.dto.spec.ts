@@ -112,7 +112,7 @@ describe('the registration DTO (self-service registration)', () => {
     ['a notice version this API does not serve', { ...REGISTRATION, consentVersion: 'v0' }, 'consentVersion'],
     ['a language the product does not speak', { ...REGISTRATION, language: 'de' }, 'language'],
     ['a code that is not text', { ...REGISTRATION, registrationCode: 12345 }, 'registrationCode'],
-    ['an extra field', { ...REGISTRATION, role: 'super_admin' }, 'role'],
+    ['an extra field', { ...REGISTRATION, role: 'masterkey' }, 'role'],
     ['an organisation chosen by the caller', { ...REGISTRATION, organisationId: '11111111-1111-1111-1111-111111111111' }, 'organisationId'],
   ])('refuses %s', async (_label, body, property) => {
     expect(await errorsOf(RegistrationDto, body)).toContain(property);

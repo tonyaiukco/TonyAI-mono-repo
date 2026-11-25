@@ -16,13 +16,13 @@ import {
 } from './record-lifecycle-view';
 
 describe('record lifecycle controls', () => {
-  const admin = { id: 'author', role: 'super_admin' as const };
+  const admin = { id: 'author', role: 'masterkey' as const };
   it.each([
-    ['super_admin', true],
+    ['masterkey', true],
     ['consultant', true],
     ['data_entry', false],
     ['executive_viewer', false],
-  ] as const)('offers approval to a consultant or super_admin, never on their own record: %s', (role, mayApproveOthers) => {
+  ] as const)('offers approval to a consultant or masterkey, never on their own record: %s', (role, mayApproveOthers) => {
     const user = { ...admin, role };
     expect(canApproveRecord(user, { createdBy: 'author' })).toBe(false);
     expect(canApproveRecord(user, { createdBy: 'other' })).toBe(mayApproveOthers);
@@ -32,7 +32,7 @@ describe('record lifecycle controls', () => {
     expect(canApproveRecord(admin, null)).toBe(false);
   });
   it.each([
-    ['super_admin', true],
+    ['masterkey', true],
     ['consultant', true],
     ['data_entry', false],
     ['executive_viewer', false],
@@ -42,7 +42,7 @@ describe('record lifecycle controls', () => {
     expect(isOwnRecordForApprover(user, { createdBy: 'other' })).toBe(false);
     expect(isOwnRecordForApprover(null, { createdBy: 'author' })).toBe(false);
   });
-  it.each(['super_admin', 'data_entry'] as const)('allows only own or new submissions for %s', (role) => {
+  it.each(['masterkey', 'data_entry'] as const)('allows only own or new submissions for %s', (role) => {
     const user = { ...admin, role };
     expect(canSubmitEntry(user, null, null)).toBe(true);
     expect(canSubmitEntry(user, 'draft', 'author')).toBe(true);
@@ -129,12 +129,12 @@ describe('save errors on Data Entry (LP3-01: by code, in the user\'s language)',
 
 describe('opening a record in the review queue (WP5)', () => {
   const consultant = { id: 'reviewer', role: 'consultant' as const };
-  const admin = { id: 'author', role: 'super_admin' as const };
+  const admin = { id: 'author', role: 'masterkey' as const };
   const submitted = { createdBy: 'author', status: 'submitted' };
 
   it("starts the review when an approver opens another user's submitted record", () => {
     expect(shouldStartReviewOnOpen(consultant, submitted)).toBe(true);
-    expect(shouldStartReviewOnOpen({ id: 'other-admin', role: 'super_admin' }, submitted)).toBe(true);
+    expect(shouldStartReviewOnOpen({ id: 'other-admin', role: 'masterkey' }, submitted)).toBe(true);
   });
   it('never starts it for the author, who may not approve it', () => {
     expect(shouldStartReviewOnOpen(admin, submitted)).toBe(false);

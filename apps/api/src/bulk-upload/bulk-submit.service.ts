@@ -219,7 +219,7 @@ export class BulkSubmitService {
    * the per-record path cannot give a BATCH:
    *
    * 1. **The author gate, before anything is locked.** `submit` has the same
-   *    gate since decision D02 (only the author submits, `super_admin`
+   *    gate since decision D02 (only the author submits, `masterkey`
    *    included); here it turns a colleague's draft into a `not_author` row
    *    without a transaction per id. It was this route's own rule first: at a
    *    thousand ids, a draft any colleague could submit was a way to sweep
@@ -279,7 +279,7 @@ export class BulkSubmitService {
         });
         continue;
       }
-      // No `super_admin` exemption: only the author submits (decision D02),
+      // No `masterkey` exemption: only the author submits (decision D02),
       // the same rule `submit` itself enforces.
       if (row.createdBy !== user.id) {
         rejected.push({

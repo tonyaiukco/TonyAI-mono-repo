@@ -96,7 +96,7 @@ describe('K3 — approve', () => {
     const record = await mgoRecord(ActivityRecordStatus.submitted);
     const before = await auditCount(record.id);
 
-    const refusal = await s.records.approve(tenant.users.superAdmin, record.id).then(
+    const refusal = await s.records.approve(tenant.users.masterkey, record.id).then(
       () => null,
       (e: unknown) => e,
     );
@@ -110,10 +110,10 @@ describe('K3 — approve', () => {
 
     // The remedy the refusal names: return it to the author, who attaches a
     // file (allowed again once the record is rejected) and submits it.
-    await s.records.reject(tenant.users.superAdmin, record.id, 'Attach the bunker delivery note');
+    await s.records.reject(tenant.users.masterkey, record.id, 'Attach the bunker delivery note');
     await attachEvidence(runtime, tenant, [record.id]);
     await s.records.submit(tenant.users.dataEntry, record.id);
-    await s.records.approve(tenant.users.superAdmin, record.id);
+    await s.records.approve(tenant.users.masterkey, record.id);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.approved);
   });
 });

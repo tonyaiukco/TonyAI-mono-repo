@@ -543,7 +543,7 @@ export function factorActivityTypeFor(
 
 // Data Entry Types
 // Canonical 4-role enum (aligned with docs/tech_docs technical_analysis.md §4 and Prisma user_role)
-export const USER_ROLES = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'] as const;
+export const USER_ROLES = ['masterkey', 'consultant', 'data_entry', 'executive_viewer'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 /** A stored role this build knows — a retired one is shown as stored. */
@@ -565,37 +565,37 @@ export function isUserRole(role: string): role is UserRole {
 export function mayAuthorRecords(
   user: { role: string } | null | undefined,
 ): boolean {
-  return !!user && (user.role === 'data_entry' || user.role === 'super_admin');
+  return !!user && (user.role === 'data_entry' || user.role === 'masterkey');
 }
 
 /**
- * May this user approve activity records? `consultant` or `super_admin`
+ * May this user approve activity records? `consultant` or `masterkey`
  * (Decisions 2026-11-12, K2: a one-person customer's approver is its external
  * consultant). One rule, read by the API's approve check and by the review
  * screen.
  *
  * - Role only. Segregation of duties (D01: nobody approves a record they
  *   created) is a separate record-level check on `createdBy`, in both places.
- * - Approving is not voiding or unlocking: those stay `super_admin` only.
+ * - Approving is not voiding or unlocking: those stay `masterkey` only.
  * - It grants no authoring: see `mayAuthorRecords`.
  */
 export function mayApproveRecords(
   user: { role: string } | null | undefined,
 ): boolean {
-  return !!user && (user.role === 'consultant' || user.role === 'super_admin');
+  return !!user && (user.role === 'consultant' || user.role === 'masterkey');
 }
 
 /**
  * May this user read one activity record's audit trail
  * (`GET /activity-records/:id/audit-trail`; WP5, INC-2.6 §6)?
  *
- * - `super_admin`, `consultant` and `executive_viewer`: any record they can
+ * - `masterkey`, `consultant` and `executive_viewer`: any record they can
  *   read (the caller has already loaded the record through its scoped read).
  * - `data_entry` ("limited" in the access matrix): only a record they created.
  *   A colleague's record in a shared subsidiary is readable, its trail is not.
  *
  * One rule, read by the API's trail service and by the screens that offer the
- * timeline. The organisation-wide `GET /audit` stays `super_admin`-only.
+ * timeline. The organisation-wide `GET /audit` stays `masterkey`-only.
  */
 export function mayReadRecordTrail(
   user: { id: string; role: string } | null | undefined,
@@ -603,7 +603,7 @@ export function mayReadRecordTrail(
 ): boolean {
   if (!user || !record) return false;
   switch (user.role) {
-    case 'super_admin':
+    case 'masterkey':
     case 'consultant':
     case 'executive_viewer':
       return true;
@@ -1607,7 +1607,7 @@ export interface RegistrationStatus {
 
 /**
  * POST /api/v1/auth/registration — public. Creates an organisation and its
- * first `super_admin`, and emails the invitation. 202 with no body for every
+ * first `masterkey`, and emails the invitation. 202 with no body for every
  * address once the code is right — new, invited or active — so the answer
  * never says whether an address has an account; 403
  * `registration_code_invalid` for a wrong code.
@@ -1664,7 +1664,7 @@ export interface SubsidiaryDTO {
    *
    * Named now because the distinction is cheap to state and expensive to
    * recover: TonyAI already encodes it in the workflow (`data_entry` prepares,
-   * `super_admin` or `consultant` approves), but this record carries no role, so once UAT
+   * `masterkey` or `consultant` approves), but this record carries no role, so once UAT
    * testers start filling it — some meaning "who to chase for data", others
    * meaning "who signs it off" — no migration could tell the two apart. A
    * future `responsibleParty*` field is then an addition, not a reinterpretation.
@@ -1825,7 +1825,7 @@ export interface SubsidiarySummaryDTO {
    * about DEPENDENCIES only.
    *
    * It deliberately does NOT say "deletable". `remove()` runs `assertCanWrite`
-   * first, so a non-super_admin caller with an empty subsidiary would have been
+   * first, so a non-masterkey caller with an empty subsidiary would have been
    * told `deletable: true` and then refused with 403. Encoding an authorisation
    * outcome here would also make the same subsidiary answer differently per
    * caller, which is worse than useless for caching.
@@ -2793,7 +2793,7 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   record_create_forbidden: 403,
   record_submit_forbidden: 403,
   /** Only a record's author submits, resubmits (D02), edits or recalls it
-   *  (BUG-R2-03) — `super_admin` included. No params. */
+   *  (BUG-R2-03) — `masterkey` included. No params. */
   record_author_forbidden: 403,
   /** Segregation of duties (D01). */
   self_approval_forbidden: 403,
@@ -2836,10 +2836,10 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
    *  signs out. */
   session_revoked: 401,
   /** An administrator acting on their own account — their role or their
-   *  access to the product. Ask another super_admin (LP1-03, LP4-01). */
+   *  access to the product. Ask another masterkey (LP1-03, LP4-01). */
   own_account_forbidden: 403,
   /** LP3-04 PR D (W4): the dataset qualifies as final, and only a
-   *  super_admin issues a final report; a consultant issues partials. */
+   *  masterkey issues a final report; a consultant issues partials. */
   report_final_forbidden: 403,
   /** The registration code does not match the environment's. It says nothing
    *  about any address, so it is the one refusal registration words. */
@@ -4595,7 +4595,7 @@ export const ACTIVITY_RECORD_STATUSES = [
    * `approved` and `locked` are immutable, and rightly so — but that left a
    * record entered in error with no exit whatsoever, since the API refuses
    * update, delete, submit, review, approve and reject on both, and
-   * `super_admin` does not override it (the status check is independent of the
+   * `masterkey` does not override it (the status check is independent of the
    * role check). Deleting was the only remedy, and the API refuses that too.
    *
    * A voided record still exists, keeps its immutable calculation snapshot, and
@@ -5714,7 +5714,7 @@ export interface ListActivityRecordsParams {
 // Period locking (Phase 1, FR §4.2) — closing a reporting period.
 // A lock freezes one subsidiary's specific reporting period (e.g. 2024/Q1):
 // no new records, no edits/deletes/submits; committed records flip to `locked`
-// status (and back to `approved` on unlock). super_admin only.
+// status (and back to `approved` on unlock). masterkey only.
 // ---------------------------------------------------------------------------
 
 export interface PeriodLockDTO {
@@ -6528,7 +6528,7 @@ export const AUDIT_ACTIONS = [
    *  `{ flow: 'invite' | 'recovery' }`; nothing about the password.
    *  `entity: 'profile'`. */
   'password_set',
-  /** LP3-04: a super_admin confirmed an inventory boundary version, freezing
+  /** LP3-04: a masterkey confirmed an inventory boundary version, freezing
    *  it (W4). `entity: 'inventory_boundary'`. */
   'confirm',
   /** LP3-04 PR C: a capture froze an open inventory boundary version,
@@ -7143,7 +7143,7 @@ export type ImportBatchStatus = (typeof IMPORT_BATCH_STATUSES)[number];
 export const IMPORT_BATCH_LIST_MAX = 50;
 
 /**
- * One applied bulk import, as a reader may see it. Visible to super_admin,
+ * One applied bulk import, as a reader may see it. Visible to masterkey,
  * consultant and executive_viewer across their organisation, and to a
  * data_entry user only for a batch they uploaded while they can still reach
  * every subsidiary it names (the source file holds every row). The storage
@@ -7174,7 +7174,7 @@ export interface ImportBatchDTO {
   uploadedBy: string;
   uploadedByName: string | null;
   hasSourceFile: boolean;
-  /** Drafts of this batch the caller may send (their own, or any for a super_admin). */
+  /** Drafts of this batch the caller may send (their own, or any for a masterkey). */
   draftCount: number;
   /**
    * Of those, the ones that can go NOW: no evidence file missing. The batch
@@ -7294,9 +7294,9 @@ export interface RecordAuthorship {
 
 /**
  * Whether `user` may edit `record`'s inputs (BUG-R2-03, decision 2026-11-10
- * (fourth), 5): an author role, the record's own author — `super_admin`
+ * (fourth), 5): an author role, the record's own author — `masterkey`
  * included, never exempt — and an editable status. Closes the 2026-10-03
- * segregation-of-duties gap where a super_admin could edit a colleague's
+ * segregation-of-duties gap where a masterkey could edit a colleague's
  * draft and later approve it. The API enforces it; Data Entry mirrors it to
  * decide where Edit is offered. A locked period is a separate refusal.
  */
@@ -7327,7 +7327,7 @@ export function mayRecallRecord(
 
 /**
  * Whether `user` is offered "Copy to new draft" on `record` (D04's re-entry,
- * BUG-R2-03): a voided record, to its author or a super_admin. The copy is an
+ * BUG-R2-03): a voided record, to its author or a masterkey. The copy is an
  * ordinary create, so the create's own rules still decide whether it saves.
  */
 export function mayCopyVoidedRecord(
@@ -7338,7 +7338,7 @@ export function mayCopyVoidedRecord(
     !!user &&
     mayAuthorRecords(user) &&
     record.status === 'voided' &&
-    (record.createdBy === user.id || user.role === 'super_admin')
+    (record.createdBy === user.id || user.role === 'masterkey')
   );
 }
 
@@ -7410,7 +7410,7 @@ export const BULK_SUBMIT_ISSUE_CODES = [
    * Someone else wrote it.
    *
    * The same rule as the single-record path since decision D02 (2026-09-29):
-   * only a record's author submits it, `super_admin` included. Before that the
+   * only a record's author submits it, `masterkey` included. Before that the
    * single-record path gated only a RESUBMISSION; at a thousand ids in one
    * call that was a way to sweep a colleague's half-finished month into
    * review, where they can no longer edit it and only a reviewer can send it

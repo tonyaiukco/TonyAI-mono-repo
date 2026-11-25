@@ -17,7 +17,7 @@
   "emptyNoFigures": "Bu seçimde {year} için Kapsam 1 veya 2 değeri yok",
   "emptyScope3": "Yoğunluk yalnızca Kapsam 1 ve 2'yi okur. Kapsam 3 toplama dahil değildir, bu nedenle bu seçimin yoğunluğu yoktur.",
   "emptyManage": "Yoğunluğu hesaplamak için bir payda (gelir, çalışan sayısı, alan, üretim çıktısı ya da satış çıktısı) ekleyin.",
-  "emptyView": "Yoğunluk paydalarını bir super_admin tanımlayabilir.",
+  "emptyView": "Yoğunluk paydalarını bir masterkey tanımlayabilir.",
   "perUnit": "tCO₂e / {unit}",
   "formula": "{emissions} tCO₂e ÷ {denominator} {unit}",
   "listTitle": "Tanımlı paydalar · {year}",

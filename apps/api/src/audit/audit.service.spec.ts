@@ -22,7 +22,7 @@ function makeRow(overrides: Record<string, unknown> = {}) {
   return {
     id: `audit-${rowSeq}`,
     userId: 'user-1',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     action: 'create',
     entity: 'subsidiary',
@@ -38,7 +38,7 @@ function makeUser(overrides: Partial<RequestUser> = {}): RequestUser {
     id: 'user-1',
     email: 'admin@tonyai.local',
     fullName: '1 User',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1'],
     ...overrides,
@@ -65,7 +65,7 @@ describe('AuditService', () => {
     expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
     expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
       userId: 'user-1',
-      role: 'super_admin',
+      role: 'masterkey',
       organisationId: 'org-1',
       action: 'create',
       entity: 'subsidiary',
@@ -171,10 +171,10 @@ describe('AuditService', () => {
   });
 
   describe('list — reading the trail', () => {
-    it('refuses any role other than super_admin', async () => {
+    it('refuses any role other than masterkey', async () => {
       for (const role of ['consultant', 'data_entry', 'executive_viewer'] as const) {
         await expect(service.list(makeUser({ role }), {})).rejects.toThrow(
-          /Only a super_admin/,
+          /Only a masterkey/,
         );
       }
       expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
@@ -190,7 +190,7 @@ describe('AuditService', () => {
       });
     });
 
-    it('returns nothing for a super_admin with no organisation, without querying', async () => {
+    it('returns nothing for a masterkey with no organisation, without querying', async () => {
       // A null tenant would otherwise widen the filter to every row ever written.
       const page = await service.list(makeUser({ organisationId: null }), {});
       expect(page).toMatchObject({ items: [], total: 0 });
@@ -198,7 +198,7 @@ describe('AuditService', () => {
     });
 
     it('renders the role STORED on the row, not the actor\'s current role', async () => {
-      // The actor is a super_admin today; the row says they were a consultant
+      // The actor is a masterkey today; the row says they were a consultant
       // when they acted. The trail must show what was true then.
       prisma.auditLog.findMany.mockResolvedValue([
         makeRow({ role: 'consultant', action: 'reject', entity: 'activity_record' }),

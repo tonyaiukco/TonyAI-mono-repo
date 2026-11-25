@@ -285,7 +285,7 @@
   "severalRecordsExist": "Several {category} records exist for {year}. Pick one from Previous submissions, or enter another period.",
   "notEditable": "This record is {status} and can no longer be edited.",
   "notYourRecord": "This record was entered by someone else — only its author can change it.",
-  "periodLockedRecord": "{period} {year} is locked — a super_admin must unlock it before this record can change.",
+  "periodLockedRecord": "{period} {year} is locked — a masterkey must unlock it before this record can change.",
   "nowEnteringNew": "Now entering a new record — the one you opened is untouched.",
   "context": {
     "title": "Additional context",

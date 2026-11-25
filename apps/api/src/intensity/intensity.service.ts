@@ -73,10 +73,10 @@ export class IntensityService {
     };
   }
 
-  /** Denominators are org configuration — super_admin only (perm §5.3). */
+  /** Denominators are org configuration — masterkey only (perm §5.3). */
   private assertCanManage(user: RequestUser): void {
-    if (user.role !== 'super_admin') {
-      throw new ForbiddenException('Only super_admin may manage intensity denominators');
+    if (user.role !== 'masterkey') {
+      throw new ForbiddenException('Only masterkey may manage intensity denominators');
     }
   }
 

@@ -114,6 +114,8 @@ describe("the catalogues", () => {
       ...['subsidiaries.monthRange', 'gaps.line', 'gaps.lineWithSources'].map((key) => `boundary.${key}`),
       // Units and formats with no words, and a name spelled alike (LP4-04 slice 2).
       'anomaly.tonnes',
+      // A role name spelled alike in both languages (INC-2.6 §1: "masterkey").
+      'users.roles.masterkey',
       'bulkUpload.groupHeading',
       'bulkUpload.sizeCap',
       'bulkUpload.tonnes.figure',

@@ -269,7 +269,7 @@ export default function ReviewPage() {
    * whether to render a control the caller would be refused for using, because
    * offering a button that always fails is worse than not offering it.
    */
-  const canReview = user?.role === "super_admin" || user?.role === "consultant";
+  const canReview = user?.role === "masterkey" || user?.role === "consultant";
   const canApprove = canApproveRecord(user, selected);
 
   /** The queue's filters: the pending statuses, and the subsidiary picked. */

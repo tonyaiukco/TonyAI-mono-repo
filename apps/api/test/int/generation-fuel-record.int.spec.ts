@@ -81,7 +81,7 @@ function fuel(data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {}, on:
   });
 }
 
-const reader = (): RequestUser => tenant.users.superAdmin;
+const reader = (): RequestUser => tenant.users.masterkey;
 const stateOf = async (id: string, user: RequestUser = reader()) => (await s.records.get(user, id)).generationFuelRecord;
 
 describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
@@ -147,7 +147,7 @@ describe('generationFuelRecord on real PostgreSQL (self-gen-form)', () => {
       category: 'Natural Gas', reportingPeriod: 'monthly', periodValue: 'January', activityValue: 1, activityUnit: 'cubic_metres',
     });
     const both: RequestUser = {
-      ...tenant.users.superAdmin,
+      ...tenant.users.masterkey,
       accessibleSubsidiaryIds: [tenant.subsidiaryId, sister.id, other.subsidiaryId],
     };
     expect(await stateOf(chp.id, both)).toBe('missing');

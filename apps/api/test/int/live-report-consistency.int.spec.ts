@@ -74,7 +74,7 @@ afterEach(async () => {
   await t?.cleanup();
 });
 
-const admin = () => t.users.superAdmin;
+const admin = () => t.users.masterkey;
 async function withAccess(user: RequestUser): Promise<RequestUser> {
   const subs = await owner.subsidiary.findMany({ where: { organisationId: t.organisationId }, select: { id: true } });
   return { ...user, accessibleSubsidiaryIds: subs.map((s) => s.id) };

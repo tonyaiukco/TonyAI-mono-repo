@@ -12,9 +12,9 @@ import {
 } from './helpers';
 
 /**
- * The end-to-end demo flow (Phase-1 exit gate rehearsal): a super_admin enters
+ * The end-to-end demo flow (Phase-1 exit gate rehearsal): a masterkey enters
  * activity data, sees a live tCO₂e preview, saves a draft, attaches the required
- * evidence, submits, then has the second super_admin approve it (via the API —
+ * evidence, submits, then has the second masterkey approve it (via the API —
  * the UI path is covered by `review-queue.spec.ts`) and
  * the record shows as Approved. Uses TonyAI Energy · Electricity · 2026 · Q1 —
  * an unseeded quarterly tuple with no baseline, so nothing is flagged anomalous.
@@ -64,7 +64,7 @@ test('data entry: draft → live preview → evidence → submit → approve →
   await page.getByRole('button', { name: 'Submit for review' }).click();
   await expect(page.getByText('Submitted for review')).toBeVisible();
 
-  // Approve via the API, as the OTHER super_admin: nobody approves a record
+  // Approve via the API, as the OTHER masterkey: nobody approves a record
   // they created (D01).
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await findRecordId(request, token, {

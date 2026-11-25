@@ -59,7 +59,7 @@ interface IntensityPanelProps {
   context: ReportingContext;
 }
 
-/** Intensity view (WP5): emissions per configured denominator + super_admin CRUD. */
+/** Intensity view (WP5): emissions per configured denominator + masterkey CRUD. */
 export function IntensityPanel({ canManage, subsidiaries, nameById, context }: IntensityPanelProps) {
   const t = useTranslations('reportingContext');
   const tIntensity = useTranslations('intensity');

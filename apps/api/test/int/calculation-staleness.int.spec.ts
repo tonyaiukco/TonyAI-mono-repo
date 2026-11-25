@@ -222,14 +222,14 @@ describe('K11 — an erratum between submit and approve', () => {
     await records.submit(tenant.users.dataEntry, record.id);
     await erratum(first, [NATURAL_GAS(0.25)]);
 
-    expect(await failure(records.approve(tenant.users.superAdmin, record.id))).toBeInstanceOf(CalculationStaleError);
+    expect(await failure(records.approve(tenant.users.masterkey, record.id))).toBeInstanceOf(CalculationStaleError);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
     expect(logged()).toEqual([`calculation_stale: approve of record ${record.id} refused — figure, factor differ`]);
 
     await records.reject(tenant.users.consultant, record.id, 'The factor was corrected — please save it again');
     await records.update(tenant.users.dataEntry, record.id, { activityValue: 100 });
     await records.submit(tenant.users.dataEntry, record.id);
-    await records.approve(tenant.users.superAdmin, record.id);
+    await records.approve(tenant.users.masterkey, record.id);
     expect(await row(record.id)).toMatchObject({ status: ActivityRecordStatus.approved, calculation: { kgCo2e: 25 } });
     expect(await auditActions(record.id)).toEqual(['create', 'submit', 'reject', 'update', 'submit', 'approve']);
   });
@@ -304,7 +304,7 @@ describe('C8 — an untyped record of a typed category is not committed', () => 
     });
     // Its fuel log, as a submitted Fuel record has: approve checks it before C8 (K3).
     await attachEvidence(owner, tenant, [record.id]);
-    const refused = await failure(lifecycleServices(runtime).records.approve(tenant.users.superAdmin, record.id));
+    const refused = await failure(lifecycleServices(runtime).records.approve(tenant.users.masterkey, record.id));
     expect(refused).toBeInstanceOf(CalculationInputError);
     expect((refused as CalculationInputError).code).toBe('activity_type_required');
     expect(logged()).toEqual([]);
@@ -380,7 +380,7 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
     const record = await savedAt(category, activityType, value, unit, site);
     const { records } = lifecycleServices(runtime);
     await records.submit(tenant.users.dataEntry, record.id);
-    await records.approve(tenant.users.superAdmin, record.id);
+    await records.approve(tenant.users.masterkey, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.approved);
     expect(logged()).toEqual([]);
   });
@@ -392,7 +392,7 @@ describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B
     await records.reject(tenant.users.consultant, record.id, 'Please check the meter reading again');
     await records.update(tenant.users.dataEntry, record.id, { activityValue: 0.30000000000000004 });
     await records.submit(tenant.users.dataEntry, record.id);
-    await records.approve(tenant.users.superAdmin, record.id);
+    await records.approve(tenant.users.masterkey, record.id);
     expect((await row(record.id)).status).toBe(ActivityRecordStatus.approved);
   });
 });
@@ -646,10 +646,10 @@ describe('K11 — BUG-17 refrigerant rule transition', () => {
     const before = await row(submitted.id);
     const beforeAudit = await auditActions(submitted.id);
     const { records } = lifecycleServices(runtime);
-    await expect(records.approve(tenant.users.superAdmin, submitted.id)).rejects.toBeInstanceOf(CalculationStaleError);
+    await expect(records.approve(tenant.users.masterkey, submitted.id)).rejects.toBeInstanceOf(CalculationStaleError);
     expect(await row(submitted.id)).toEqual(before);
     expect(await auditActions(submitted.id)).toEqual(beforeAudit);
-    await expect(records.approve(tenant.users.superAdmin, unaffected.id)).resolves.toMatchObject({
+    await expect(records.approve(tenant.users.masterkey, unaffected.id)).resolves.toMatchObject({
       status: 'approved', calculation: { kgCo2e: 2880 },
     });
   });

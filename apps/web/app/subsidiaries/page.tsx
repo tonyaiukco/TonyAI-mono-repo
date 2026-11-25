@@ -140,10 +140,10 @@ export default function SubsidiariesPage() {
   const pending = subsidiaries.filter((s) => s.reportingStatus === "pending").length;
   const geographies = new Set(subsidiaries.map((s) => s.geographyCode)).size;
 
-  // Single source of truth for super_admin-only write controls on this page
+  // Single source of truth for masterkey-only write controls on this page
   // (create/delete subsidiary, and the lock/location write forms in the drawers).
   // The API + RLS remain the real enforcement; hiding these is UX/defense-in-depth.
-  const canManage = user?.role === "super_admin";
+  const canManage = user?.role === "masterkey";
   const locSubsidiary = subsidiaries.find((s) => s.id === locSubsidiaryId) ?? null;
   const lockSubsidiary = subsidiaries.find((s) => s.id === lockSubsidiaryId) ?? null;
   const locCount = (subsidiaryId: string) =>

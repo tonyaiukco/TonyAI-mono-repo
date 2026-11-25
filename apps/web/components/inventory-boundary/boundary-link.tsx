@@ -7,7 +7,7 @@ import { useAuthStore } from "@/lib/store";
 
 /**
  * The way from a coverage reading to the year's boundary (LP4-03 PR C, D1):
- * "declare or edit" for super_admin, the one role that writes it; "view" for
+ * "declare or edit" for masterkey, the one role that writes it; "view" for
  * every other.
  */
 export function BoundaryLink({ year, className = "" }: { year: number; className?: string }) {
@@ -20,7 +20,7 @@ export function BoundaryLink({ year, className = "" }: { year: number; className
       data-testid="boundary-link"
     >
       <Waypoints className="h-3 w-3" aria-hidden />
-      {role === "super_admin" ? t("link.edit") : t("link.view")}
+      {role === "masterkey" ? t("link.edit") : t("link.view")}
     </Link>
   );
 }

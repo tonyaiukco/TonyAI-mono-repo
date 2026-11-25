@@ -69,7 +69,7 @@ const roleOf = async (id: string) => (await observer.profile.findUniqueOrThrow({
 
 describe('grantSubsidiaryAccess', () => {
   it('grants a subsidiary of the organisation to its data_entry user, with its audit row', async () => {
-    await service(a).grantSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA);
+    await service(a).grantSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, secondSubsidiaryA);
 
     expect(await grantsOf(A.users.dataEntry.id)).toEqual(
       expect.arrayContaining([{ subsidiaryId: secondSubsidiaryA, organisationId: A.organisationId }]),
@@ -78,16 +78,16 @@ describe('grantSubsidiaryAccess', () => {
     expect(row).toMatchObject({
       action: 'create',
       entity: 'subsidiary_access',
-      userId: A.users.superAdmin.id,
-      role: 'super_admin',
+      userId: A.users.masterkey.id,
+      role: 'masterkey',
       organisationId: A.organisationId,
       diff: { subsidiaryId: secondSubsidiaryA },
     });
   });
 
   it('is idempotent: granting again changes nothing and audits nothing', async () => {
-    await service(a).grantSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA);
-    await service(a).grantSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA);
+    await service(a).grantSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, secondSubsidiaryA);
+    await service(a).grantSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, secondSubsidiaryA);
     expect(await auditOf(A.users.dataEntry.id)).toHaveLength(1);
   });
 
@@ -99,16 +99,16 @@ describe('grantSubsidiaryAccess', () => {
   ])('%s: 404 — the same answer as a missing id, and nothing written', async (_label, ids) => {
     const [profileId, subsidiaryId] = ids();
     const before = await grantsOf(profileId);
-    await expect(service(a).grantSubsidiaryAccess(A.users.superAdmin, profileId, subsidiaryId)).rejects.toBeInstanceOf(
+    await expect(service(a).grantSubsidiaryAccess(A.users.masterkey, profileId, subsidiaryId)).rejects.toBeInstanceOf(
       NotFoundException,
     );
     expect(await grantsOf(profileId)).toEqual(before);
     expect(await auditOf(profileId)).toEqual([]);
   });
 
-  it("B's super_admin cannot grant A's subsidiary to A's user — there is no cross-tenant administrator", async () => {
+  it("B's masterkey cannot grant A's subsidiary to A's user — there is no cross-tenant administrator", async () => {
     await expect(
-      service(b).grantSubsidiaryAccess(B.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA),
+      service(b).grantSubsidiaryAccess(B.users.masterkey, A.users.dataEntry.id, secondSubsidiaryA),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
   });
@@ -120,11 +120,11 @@ describe('grantSubsidiaryAccess', () => {
     expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
   });
 
-  it.each(['superAdmin', 'consultant', 'executiveViewer'] as const)(
+  it.each(['masterkey', 'consultant', 'executiveViewer'] as const)(
     'a grant to a %s is refused (409 access_role_mismatch, LP4-01): organisation-wide roles hold no grants',
     async (role) => {
       await expect(
-        service(a).grantSubsidiaryAccess(A.users.superAdmin, A.users[role].id, secondSubsidiaryA),
+        service(a).grantSubsidiaryAccess(A.users.masterkey, A.users[role].id, secondSubsidiaryA),
       ).rejects.toMatchObject({ status: 409, response: { code: 'access_role_mismatch' } });
       expect(await grantsOf(A.users[role].id)).toEqual([]);
     },
@@ -138,7 +138,7 @@ describe('grantSubsidiaryAccess', () => {
     try {
       for (const client of [failingAuditClient(pooled), abortAfterAuditClient(pooled)]) {
         await expect(
-          service(client).grantSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA),
+          service(client).grantSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, secondSubsidiaryA),
         ).rejects.toThrow();
         expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
         expect(await auditOf(A.users.dataEntry.id)).toEqual([]);
@@ -155,7 +155,7 @@ describe('every change commits with its audit rows, or not at all', () => {
     try {
       for (const client of [failingAuditClient(pooled), abortAfterAuditClient(pooled)]) {
         await expect(
-          service(client).revokeSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, A.subsidiaryId),
+          service(client).revokeSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, A.subsidiaryId),
         ).rejects.toThrow();
         expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
         expect(await auditOf(A.users.dataEntry.id)).toEqual([]);
@@ -170,7 +170,7 @@ describe('every change commits with its audit rows, or not at all', () => {
     try {
       for (const client of [failingAuditClient(pooled), abortAfterAuditClient(pooled)]) {
         await expect(
-          service(client).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.consultant),
+          service(client).setRole(A.users.masterkey, A.users.dataEntry.id, UserRole.consultant),
         ).rejects.toThrow();
         expect(await roleOf(A.users.dataEntry.id)).toBe('data_entry');
         expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
@@ -200,7 +200,7 @@ describe('the withdrawal leg of a role change commits with the rest, or not at a
         },
       }) as unknown as PrismaService;
       await expect(
-        service(client).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.consultant),
+        service(client).setRole(A.users.masterkey, A.users.dataEntry.id, UserRole.consultant),
       ).rejects.toThrow();
       expect(inserts).toBe(2);
       expect(await roleOf(A.users.dataEntry.id)).toBe('data_entry');
@@ -214,15 +214,15 @@ describe('the withdrawal leg of a role change commits with the rest, or not at a
 
 describe('revokeSubsidiaryAccess', () => {
   it('withdraws a grant, with its audit row', async () => {
-    await service(a).revokeSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, A.subsidiaryId);
+    await service(a).revokeSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, A.subsidiaryId);
     expect(await grantsOf(A.users.dataEntry.id)).toEqual([]);
     const [row] = await auditOf(A.users.dataEntry.id);
     expect(row).toMatchObject({ action: 'delete', entity: 'subsidiary_access', diff: { subsidiaryId: A.subsidiaryId } });
   });
 
-  it("B's super_admin cannot withdraw A's grant: 404, and the grant stays", async () => {
+  it("B's masterkey cannot withdraw A's grant: 404, and the grant stays", async () => {
     await expect(
-      service(b).revokeSubsidiaryAccess(B.users.superAdmin, A.users.dataEntry.id, A.subsidiaryId),
+      service(b).revokeSubsidiaryAccess(B.users.masterkey, A.users.dataEntry.id, A.subsidiaryId),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
     expect(await auditOf(A.users.dataEntry.id)).toEqual([]);
@@ -230,7 +230,7 @@ describe('revokeSubsidiaryAccess', () => {
 
   it('a grant that does not exist: 404', async () => {
     await expect(
-      service(a).revokeSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA),
+      service(a).revokeSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, secondSubsidiaryA),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -244,7 +244,7 @@ describe('revokeSubsidiaryAccess', () => {
 
 describe('setRole', () => {
   it("changes a member's role, with its audit row (from → to)", async () => {
-    await service(a).setRole(A.users.superAdmin, A.users.consultant.id, UserRole.executive_viewer);
+    await service(a).setRole(A.users.masterkey, A.users.consultant.id, UserRole.executive_viewer);
     expect(await roleOf(A.users.consultant.id)).toBe('executive_viewer');
     const [row] = await auditOf(A.users.consultant.id);
     expect(row).toMatchObject({
@@ -256,12 +256,12 @@ describe('setRole', () => {
   });
 
   it('a data_entry user moved to another role loses its grants (audited); moved back, it starts with none', async () => {
-    await service(a).grantSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA);
+    await service(a).grantSubsidiaryAccess(A.users.masterkey, A.users.dataEntry.id, secondSubsidiaryA);
     expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(2);
 
-    await service(a).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.consultant);
+    await service(a).setRole(A.users.masterkey, A.users.dataEntry.id, UserRole.consultant);
     expect(await grantsOf(A.users.dataEntry.id)).toEqual([]);
-    await service(a).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.data_entry);
+    await service(a).setRole(A.users.masterkey, A.users.dataEntry.id, UserRole.data_entry);
     expect(await grantsOf(A.users.dataEntry.id)).toEqual([]);
 
     const rows = await auditOf(A.users.dataEntry.id);
@@ -272,48 +272,48 @@ describe('setRole', () => {
     expect(rows.filter((r) => r.entity === 'profile')).toHaveLength(2);
   });
 
-  it('nobody changes their own role — not even to promote or keep the last super_admin', async () => {
+  it('nobody changes their own role — not even to promote or keep the last masterkey', async () => {
     await expect(
-      service(a).setRole(A.users.superAdmin, A.users.superAdmin.id, UserRole.consultant),
+      service(a).setRole(A.users.masterkey, A.users.masterkey.id, UserRole.consultant),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(await roleOf(A.users.superAdmin.id)).toBe('super_admin');
+    expect(await roleOf(A.users.masterkey.id)).toBe('masterkey');
   });
 
   it.each(['consultant', 'dataEntry', 'executiveViewer'] as const)(
     'a %s cannot promote itself or anyone: 403',
     async (role) => {
-      await expect(service(a).setRole(A.users[role], A.users.dataEntry.id, UserRole.super_admin)).rejects.toBeInstanceOf(
+      await expect(service(a).setRole(A.users[role], A.users.dataEntry.id, UserRole.masterkey)).rejects.toBeInstanceOf(
         ForbiddenException,
       );
-      await expect(service(a).setRole(A.users[role], A.users[role].id, UserRole.super_admin)).rejects.toBeInstanceOf(
+      await expect(service(a).setRole(A.users[role], A.users[role].id, UserRole.masterkey)).rejects.toBeInstanceOf(
         ForbiddenException,
       );
       expect(await roleOf(A.users[role].id)).toBe(A.users[role].role);
     },
   );
 
-  it("B's super_admin cannot change a role in A: 404", async () => {
+  it("B's masterkey cannot change a role in A: 404", async () => {
     await expect(
-      service(b).setRole(B.users.superAdmin, A.users.consultant.id, UserRole.super_admin),
+      service(b).setRole(B.users.masterkey, A.users.consultant.id, UserRole.masterkey),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(await roleOf(A.users.consultant.id)).toBe('consultant');
   });
 
   it('an unknown role is refused (400)', async () => {
     await expect(
-      service(a).setRole(A.users.superAdmin, A.users.consultant.id, 'platform_admin' as UserRole),
+      service(a).setRole(A.users.masterkey, A.users.consultant.id, 'platform_admin' as UserRole),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('the same role again changes nothing and audits nothing', async () => {
-    await service(a).setRole(A.users.superAdmin, A.users.consultant.id, UserRole.consultant);
+    await service(a).setRole(A.users.masterkey, A.users.consultant.id, UserRole.consultant);
     expect(await auditOf(A.users.consultant.id)).toEqual([]);
   });
 
   it('an administrator demoted since their request was authenticated cannot act on the stale role', async () => {
-    await owner.profile.update({ where: { id: A.users.superAdmin.id }, data: { role: 'consultant' } });
-    const stale: RequestUser = { ...A.users.superAdmin, role: 'super_admin' };
-    await expect(service(a).setRole(stale, A.users.consultant.id, UserRole.super_admin)).rejects.toBeInstanceOf(
+    await owner.profile.update({ where: { id: A.users.masterkey.id }, data: { role: 'consultant' } });
+    const stale: RequestUser = { ...A.users.masterkey, role: 'masterkey' };
+    await expect(service(a).setRole(stale, A.users.consultant.id, UserRole.masterkey)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     await expect(
@@ -322,26 +322,26 @@ describe('setRole', () => {
     expect(await roleOf(A.users.consultant.id)).toBe('consultant');
   });
 
-  it('two administrators demoting each other at once: exactly one wins, and the organisation keeps a super_admin', async () => {
+  it('two administrators demoting each other at once: exactly one wins, and the organisation keeps a masterkey', async () => {
     const second = await owner.profile.create({
       data: {
         id: randomUUID(),
         email: `int-admin2-${A.organisationId.slice(0, 8)}@tonyai.test`,
         fullName: 'Int admin two',
-        role: 'super_admin',
+        role: 'masterkey',
         organisationId: A.organisationId,
       },
     });
     A.profileIds.push(second.id);
-    const admin2: RequestUser = { ...A.users.superAdmin, id: second.id, email: second.email };
+    const admin2: RequestUser = { ...A.users.masterkey, id: second.id, email: second.email };
 
-    // A re-reads its actor (still super_admin) and stops just before its write;
+    // A re-reads its actor (still masterkey) and stops just before its write;
     // B then tries to demote A's actor.
     const hold = holdBefore(a, 'Profile', 'update');
-    const requestA = service(hold.client).setRole(A.users.superAdmin, second.id, UserRole.consultant);
+    const requestA = service(hold.client).setRole(A.users.masterkey, second.id, UserRole.consultant);
     await hold.reached();
     const pidB = await backendPid(b);
-    const requestB = service(b).setRole(admin2, A.users.superAdmin.id, UserRole.consultant);
+    const requestB = service(b).setRole(admin2, A.users.masterkey.id, UserRole.consultant);
     // B must wait behind A's per-organisation lock rather than run ahead.
     expect(await settledOrBlocked(requestB, pidB, observer)).toBe('blocked');
     hold.release();
@@ -350,7 +350,7 @@ describe('setRole', () => {
     expect(resultA.status).toBe('fulfilled');
     expect(resultB.status).toBe('rejected');
     expect((resultB as PromiseRejectedResult).reason).toBeInstanceOf(ForbiddenException);
-    expect(await roleOf(A.users.superAdmin.id)).toBe('super_admin');
+    expect(await roleOf(A.users.masterkey.id)).toBe('masterkey');
     expect(await roleOf(second.id)).toBe('consultant');
   });
 });

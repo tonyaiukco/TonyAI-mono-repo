@@ -75,9 +75,9 @@ describe('createTenant', () => {
     await createRecord(a, tenant);
     await a.auditLog.create({
       data: {
-        userId: tenant.users.superAdmin.id,
+        userId: tenant.users.masterkey.id,
         organisationId: tenant.organisationId,
-        role: 'super_admin',
+        role: 'masterkey',
         action: 'create',
         entity: 'activity_record',
       },

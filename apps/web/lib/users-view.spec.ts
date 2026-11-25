@@ -57,7 +57,7 @@ describe('accessSummary', () => {
   ]);
 
   it('every role but data_entry reads the whole parent company, grants or not', () => {
-    for (const role of ['consultant', 'executive_viewer', 'super_admin'] as const) {
+    for (const role of ['consultant', 'executive_viewer', 'masterkey'] as const) {
       expect(accessSummary(member({ role, subsidiaryIds: ['den'] }), names, 'tr-TR')).toEqual({ key: 'wholeOrganisation' });
     }
   });

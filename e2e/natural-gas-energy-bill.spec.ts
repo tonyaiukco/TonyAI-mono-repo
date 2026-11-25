@@ -214,7 +214,7 @@ test('a voided net kWh bill is copied with its unit, quantity and basis, and mov
   created.push(id);
   await attachEvidence(request, token, id);
   await post(request, token, `/activity-records/${id}/submit`);
-  // A second super_admin approves: nobody approves their own record.
+  // A second masterkey approves: nobody approves their own record.
   await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
   await post(request, token, `/activity-records/${id}/void`, { voidReason: 'e2e: copied to a new draft' });
 

@@ -57,7 +57,7 @@ type PrismaMock = ReturnType<typeof createPrismaMock>;
 
 const admin: RequestUser = {
   id: 'admin-1',
-  role: 'super_admin',
+  role: 'masterkey',
   accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
 } as RequestUser;
 
@@ -132,7 +132,7 @@ describe('IntensityService', () => {
     expect(prisma.subsidiaryDenominator.findMany).not.toHaveBeenCalled();
   });
 
-  it('createDenominator is forbidden for non-super_admin', async () => {
+  it('createDenominator is forbidden for non-masterkey', async () => {
     await expect(
       service.createDenominator(entry, createInput),
     ).rejects.toBeInstanceOf(ForbiddenException);

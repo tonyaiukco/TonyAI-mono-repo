@@ -48,7 +48,7 @@ describe('versionSummary', () => {
 });
 
 describe('versionDTO', () => {
-  it.each(['super_admin', 'consultant', 'executive_viewer'] as const)('%s reads the whole declared inventory and every gap', (role) => {
+  it.each(['masterkey', 'consultant', 'executive_viewer'] as const)('%s reads the whole declared inventory and every gap', (role) => {
     const dto = versionDTO(loaded(), viewer(role, [SUB]));
     const snapshot = buildBoundarySnapshot(rows());
     expect(dto.view).toBe('organisation');

@@ -88,7 +88,7 @@ describe('the role guards — before any body is read', () => {
   const context = (role?: string) => ({ switchToHttp: () => ({ getRequest: () => ({ user: role === undefined ? undefined : { role } }) }) }) as never;
 
   it.each([
-    ['super_admin', true, true], ['consultant', true, true], ['executive_viewer', false, true], ['data_entry', false, false],
+    ['masterkey', true, true], ['consultant', true, true], ['executive_viewer', false, true], ['data_entry', false, false],
   ] as const)('%s: issues %s, reads %s', (role, issues, reads) => {
     const outcome = (guard: { canActivate(c: never): boolean }) => { try { return guard.canActivate(context(role)); } catch { return false; } };
     expect(outcome(new IssuerGuard())).toBe(issues);

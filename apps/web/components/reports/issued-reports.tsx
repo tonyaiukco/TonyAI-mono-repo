@@ -40,8 +40,8 @@ import { Skeleton } from '@/components/ui/skeleton';
  * pressed, and one action runs at a time.
  */
 
-const ISSUERS: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant']);
-const READERS: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant', 'executive_viewer']);
+const ISSUERS: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant']);
+const READERS: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant', 'executive_viewer']);
 
 interface Loaded {
   datasets: ReportDatasetSummary[];
@@ -148,7 +148,7 @@ export function IssuedReports({ year, role, language }: { year: number; role: Us
   }
 
   const newest = loaded?.newest ?? null;
-  // A consultant captures a frozen version only (V1): super_admin freezes an open one by capturing it.
+  // A consultant captures a frozen version only (V1): masterkey freezes an open one by capturing it.
   const consultantBlocked = role === 'consultant' && newest !== null && newest.frozenAt === null;
 
   return (

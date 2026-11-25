@@ -3,7 +3,7 @@
   "subtitle": "Karar bekleyen kayıtlar",
   "subtitleUser": "Karar bekleyen kayıtlar · {name} ({role})",
   "gate": {
-    "title": "İncelemeyi bir danışman veya süper yönetici yapar",
+    "title": "İncelemeyi bir danışman veya masterkey yapar",
     "body": "Bu gizli veri değil — Emisyonlar sayfasında zaten görebildiğiniz kayıtlar burada karara bağlananlarla aynıdır. Rolünüz: <mono>{role}</mono>."
   },
   "allSubsidiaries": "Tüm bağlı şirketler",

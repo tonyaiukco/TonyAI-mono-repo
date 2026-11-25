@@ -237,12 +237,12 @@ export class EvidenceService {
   /**
    * Why this caller may not change the evidence on `record`, or null.
    *
-   * The record's author only — `super_admin` included — on a still-editable
+   * The record's author only — `masterkey` included — on a still-editable
    * record, in an open period: the same three rules a record's own edit obeys
    * since BUG-R2-03. Author-only since Decisions 2026-11-12 (option A): with a
-   * `super_admin` exception, a `super_admin` could change a colleague's draft's
+   * `masterkey` exception, a `masterkey` could change a colleague's draft's
    * evidence and then approve it, which D01 (`createdBy` only) cannot see.
-   * Deleting a whole draft stays author-or-`super_admin` (the record service).
+   * Deleting a whole draft stays author-or-`masterkey` (the record service).
    * The period lock is new here (WP8 PR7): until then a rejected record inside
    * a locked period could still gain or lose a file.
    */
@@ -267,7 +267,7 @@ export class EvidenceService {
     }
     if (locked) {
       return new PeriodLockedError(
-        `Reporting period ${record.periodValue} ${record.reportingYear} is locked — a super_admin must unlock it before its evidence can change.`,
+        `Reporting period ${record.periodValue} ${record.reportingYear} is locked — a masterkey must unlock it before its evidence can change.`,
         record,
       );
     }

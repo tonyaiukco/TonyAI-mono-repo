@@ -16,7 +16,7 @@ datasource db {
 }
 
 enum UserRole {
-  super_admin
+  masterkey
   consultant
   data_entry
   executive_viewer
@@ -40,7 +40,7 @@ enum SubsidiaryStatus {
 /// itself on whenever a subsidiary happens to own locations would report almost
 /// every existing tenant as incomplete overnight, and would leave the user with
 /// no way to see WHY. Defaulting to `subsidiary` keeps every existing dashboard
-/// exactly as it was; a super_admin will opt a subsidiary in when its data is
+/// exactly as it was; a masterkey will opt a subsidiary in when its data is
 /// actually keyed by location (API: PATCH /subsidiaries/:id — the UI arrives
 /// with the coverage display in WP17 PR 3).
 enum TrackingGranularity {
@@ -526,7 +526,7 @@ model ActivityRecordEvidence {
 // NO records may be created, edited, deleted or submitted for that
 // (subsidiary, year, period, periodValue) — enforced as a gate in the
 // activity-records service. Locking also flips committed records to `locked`
-// status (unlock reverts them to `approved`). super_admin only; every
+// status (unlock reverts them to `approved`). masterkey only; every
 // lock/unlock writes an audit row.
 model PeriodLock {
   id              String     @id @default(uuid()) @db.Uuid
@@ -553,7 +553,7 @@ model PeriodLock {
 // + absolute target tCO₂e; the reduction % is derived, never stored. `scope`
 // filters which emissions count ('all' | 'scope1' | 'scope2' | 'scope3'), `basis`
 // records the target type. Progress is computed live from committed activity
-// records (never a stored snapshot). super_admin only; every write is audited.
+// records (never a stored snapshot). masterkey only; every write is audited.
 model Target {
   id            String     @id @default(uuid()) @db.Uuid
   subsidiaryId  String     @map("subsidiary_id") @db.Uuid
@@ -579,7 +579,7 @@ model Target {
 // Intensity = emissions / denominator (e.g. tCO₂e per M EUR revenue). Kept
 // per-year so intensity over time stays honest. Metric is one of the spec's four
 // (emissions_page.md §2): 'area' | 'revenue' | 'headcount' | 'production_output' | 'sales_output'.
-// super_admin only; every write is audited. The Intensity toggle only offers
+// masterkey only; every write is audited. The Intensity toggle only offers
 // metrics that have a configured value for the year in view.
 model SubsidiaryDenominator {
   id           String     @id @default(uuid()) @db.Uuid

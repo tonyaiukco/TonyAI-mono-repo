@@ -19,7 +19,7 @@ import type {
  *   POST   /inventory-boundaries/:id/confirm      (no body) → InventoryBoundaryVersionDTO
  *   DELETE /inventory-boundaries/:id              (an open version only) → 204
  *
- * Roles (W4, E2): super_admin creates, copies, edits, deletes an open version
+ * Roles (W4, E2): masterkey creates, copies, edits, deletes an open version
  * and confirms; consultant and executive_viewer read; data_entry reads its
  * granted subsidiaries' part of a version (W3, `view`). Every other write
  * answers `forbidden`. What data_entry sees follows the boundary's RLS: the
@@ -39,7 +39,7 @@ import type {
  * precondition (E5) — the last writer of a subsidiary's declaration wins, and
  * the audit row of each write holds what it replaced.
  *
- * Confirm (W4, E3): super_admin only. It freezes and confirms the version in
+ * Confirm (W4, E3): masterkey only. It freezes and confirms the version in
  * one step (the stored decision says both). Refused `boundary_frozen` when
  * the version is already confirmed; `boundary_confirm_requires_copy` when it
  * froze unconfirmed, captured into a dataset (PR B's (4a)) — copy it, then

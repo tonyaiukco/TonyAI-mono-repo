@@ -46,7 +46,7 @@ import { issuedCsv, issuedWorkbook } from './issuance-tables';
  *     text held to its row, its fingerprint and its own assessments (K2), its
  *     boundary to the version (PR C follow-up (9)) — a mismatch is a defect,
  *     an internal error —, then status and gaps (D13, K4). A final is
- *     super_admin's (W4: `report_final_forbidden`).
+ *     masterkey's (W4: `report_final_forbidden`).
  *  3. RENDER on the replica's one Chromium (`PdfRenderer`), no transaction open.
  *  4. RETAIN, recoverably (LP1-02): `beginUpload` → upload (never upsert) →
  *     the bytes read back and hashed — the contract's fingerprint is of the
@@ -62,12 +62,12 @@ import { issuedCsv, issuedWorkbook } from './issuance-tables';
  * renders again.
  */
 
-/** Who issues (W4): super_admin and consultant — a partial. */
-export const ISSUE_ROLES: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant']);
+/** Who issues (W4): masterkey and consultant — a partial. */
+export const ISSUE_ROLES: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant']);
 /** Who issues a final (W4). */
-export const FINAL_ROLES: ReadonlySet<UserRole> = new Set(['super_admin']);
+export const FINAL_ROLES: ReadonlySet<UserRole> = new Set(['masterkey']);
 /** Who reads an issuance and its PDF (W3): not data_entry. */
-export const ISSUANCE_READ_ROLES: ReadonlySet<UserRole> = new Set(['super_admin', 'consultant', 'executive_viewer']);
+export const ISSUANCE_READ_ROLES: ReadonlySet<UserRole> = new Set(['masterkey', 'consultant', 'executive_viewer']);
 
 const SNAPSHOT_TX = { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30_000 };
 
@@ -80,10 +80,10 @@ export class ReportAlreadyIssuedError extends ConflictException {
   }
 }
 
-/** `report_final_forbidden` (403, W4): the dataset qualifies as final, and a final is super_admin's. */
+/** `report_final_forbidden` (403, W4): the dataset qualifies as final, and a final is masterkey's. */
 export class ReportFinalForbiddenError extends ForbiddenException {
   constructor() {
-    super(errorBody('report_final_forbidden', 'This dataset qualifies as a final report, and only a super_admin issues a final report.'));
+    super(errorBody('report_final_forbidden', 'This dataset qualifies as a final report, and only a masterkey issues a final report.'));
   }
 }
 
@@ -138,7 +138,7 @@ export class ReportIssuancesService {
   ) {}
 
   async issue(user: RequestUser, dto: IssueReportDto): Promise<ReportIssuance> {
-    if (!ISSUE_ROLES.has(user.role)) throw new ForbiddenException('Only super_admin or consultant may issue a report');
+    if (!ISSUE_ROLES.has(user.role)) throw new ForbiddenException('Only masterkey or consultant may issue a report');
     const organisationId = user.organisationId;
     if (!organisationId) throw new ResourceNotFoundError('report_dataset_not_found');
     const options = {
@@ -337,7 +337,7 @@ export class ReportIssuancesService {
    * written. Issuers only — a reader who cannot issue has nothing to preview.
    */
   async preview(user: RequestUser, datasetId: string): Promise<ReportIssuancePreview> {
-    if (!ISSUE_ROLES.has(user.role)) throw new ForbiddenException('Only super_admin or consultant may issue a report');
+    if (!ISSUE_ROLES.has(user.role)) throw new ForbiddenException('Only masterkey or consultant may issue a report');
     const organisationId = user.organisationId;
     if (!organisationId) throw new ResourceNotFoundError('report_dataset_not_found');
     const read = await this.prisma.$transaction((tx) => this.readRetained(tx, user, organisationId, datasetId), SNAPSHOT_TX);

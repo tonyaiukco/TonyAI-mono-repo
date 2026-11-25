@@ -315,12 +315,12 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
     const id = randomUUID();
     try {
       await owner.activityRecord.create({ data: draftData(id, 'October') });
-      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.superAdmin.id }))).toEqual({
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.masterkey.id }))).toEqual({
         ok: false,
         code: 'TA006',
       });
       await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
-      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.superAdmin.id }))).toEqual({
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.masterkey.id }))).toEqual({
         ok: false,
         code: 'TA006',
       });

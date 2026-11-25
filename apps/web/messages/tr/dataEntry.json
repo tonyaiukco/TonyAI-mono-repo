@@ -285,7 +285,7 @@
   "severalRecordsExist": "{year} için birden fazla {category} kaydı var. Önceki gönderimlerden birini seçin ya da başka bir dönem girin.",
   "notEditable": "Bu kayıt {status} durumda ve artık düzenlenemez.",
   "notYourRecord": "Bu kaydı başka biri girdi — yalnızca kaydı giren kişi değiştirebilir.",
-  "periodLockedRecord": "{period} {year} kilitli — bu kaydın değişebilmesi için bir super_admin'in kilidi açması gerekir.",
+  "periodLockedRecord": "{period} {year} kilitli — bu kaydın değişebilmesi için bir masterkey'in kilidi açması gerekir.",
   "nowEnteringNew": "Artık yeni bir kayıt giriyorsunuz — açtığınız kayıt değişmedi.",
   "context": {
     "title": "Ek bağlam",

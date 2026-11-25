@@ -138,7 +138,7 @@ export async function withRollback<T>(
 export interface Tenant {
   organisationId: string;
   subsidiaryId: string;
-  users: Record<'superAdmin' | 'consultant' | 'dataEntry' | 'executiveViewer', RequestUser>;
+  users: Record<'masterkey' | 'consultant' | 'dataEntry' | 'executiveViewer', RequestUser>;
   /** Every id this tenant's rows can be found by, for cleanup and leak checks. */
   profileIds: string[];
   cleanup(): Promise<void>;
@@ -209,7 +209,7 @@ async function populateTenant(
   };
 
   const users = {
-    superAdmin: await makeUser(UserRole.super_admin, 'admin'),
+    masterkey: await makeUser(UserRole.masterkey, 'admin'),
     consultant: await makeUser(UserRole.consultant, 'consultant'),
     dataEntry: await makeUser(UserRole.data_entry, 'entry'),
     executiveViewer: await makeUser(UserRole.executive_viewer, 'viewer'),
@@ -633,7 +633,7 @@ export async function createBoundary(
       organisationId,
       reportingYear: options.reportingYear ?? 2026,
       version: options.version ?? 1,
-      createdBy: tenant.users.superAdmin.id,
+      createdBy: tenant.users.masterkey.id,
     },
   });
   await prisma.inventoryBoundarySubsidiary.create({

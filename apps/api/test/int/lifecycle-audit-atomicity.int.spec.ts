@@ -166,7 +166,7 @@ const cases: Case[] = [
       await attachEvidence(prisma, tenant, [r.id]);
       return { record: r.id };
     },
-    act: (s, ids) => s.records.approve(tenant.users.superAdmin, ids.record),
+    act: (s, ids) => s.records.approve(tenant.users.masterkey, ids.record),
     audit: { action: 'approve', entity: 'activity_record' },
   },
   {
@@ -184,7 +184,7 @@ const cases: Case[] = [
       const r = await createRecord(prisma, tenant, { status: ActivityRecordStatus.approved });
       return { record: r.id };
     },
-    act: (s, ids) => s.records.void(tenant.users.superAdmin, ids.record, 'Entered in error'),
+    act: (s, ids) => s.records.void(tenant.users.masterkey, ids.record, 'Entered in error'),
     audit: { action: 'void', entity: 'activity_record' },
   },
   {
@@ -236,7 +236,7 @@ const cases: Case[] = [
       return {};
     },
     act: (s) =>
-      s.periodLocks.lock(tenant.users.superAdmin, {
+      s.periodLocks.lock(tenant.users.masterkey, {
         subsidiaryId: tenant.subsidiaryId,
         ...period,
         reportingPeriod: 'monthly',
@@ -248,11 +248,11 @@ const cases: Case[] = [
     arrange: async () => {
       await createRecord(prisma, tenant, { status: ActivityRecordStatus.locked });
       const lock = await prisma.periodLock.create({
-        data: { subsidiaryId: tenant.subsidiaryId, ...period, lockedBy: tenant.users.superAdmin.id },
+        data: { subsidiaryId: tenant.subsidiaryId, ...period, lockedBy: tenant.users.masterkey.id },
       });
       return { lock: lock.id };
     },
-    act: (s, ids) => s.periodLocks.unlock(tenant.users.superAdmin, ids.lock),
+    act: (s, ids) => s.periodLocks.unlock(tenant.users.masterkey, ids.lock),
     audit: { action: 'unlock', entity: 'period_lock' },
   },
 ];

@@ -21,7 +21,7 @@ import {
  * irreversible write in the product.
  *
  * The API half shipped in PR 2a with unit tests and an RLS probe; what those
- * cannot show is whether a super_admin can actually reach it, whether anyone
+ * cannot show is whether a masterkey can actually reach it, whether anyone
  * else is offered it, and whether the numbers on screen follow. All three are
  * asserted here against the running stack.
  *
@@ -39,7 +39,7 @@ const ACTIVITY_VALUE = 77_777;
 const REASON = 'Duplicate of the site-level invoice for the same quarter.';
 
 /** Create an approved figure to withdraw — `approved` is the one status the
- *  void path accepts. Created by ADMIN and approved by the second super_admin:
+ *  void path accepts. Created by ADMIN and approved by the second masterkey:
  *  nobody approves a record they created (D01). */
 async function arrangeApproved(
   request: APIRequestContext,
@@ -82,7 +82,7 @@ async function withdraw(page: Page, drawer: ReturnType<Page['getByRole']>) {
     .click();
 }
 
-test('a super_admin withdraws an approved figure, and the record agrees', async ({
+test('a masterkey withdraws an approved figure, and the record agrees', async ({
   page,
   request,
 }) => {
@@ -152,7 +152,7 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   // required now, so a write response cannot omit them.
   await expect(drawer.getByText('Entered by')).toBeVisible();
   // Every actor is named, and the counts are the assertion. Admin entered the
-  // figure and withdrew it; the second super_admin approved it, because the
+  // figure and withdrew it; the second masterkey approved it, because the
   // approver may not be the creator (decision D01, LP1-01 — this test used to
   // count THREE "Tony Admin", the segregation-of-duties gap made visible
   // rather than prevented). `toBeVisible()` on the doubled name is a

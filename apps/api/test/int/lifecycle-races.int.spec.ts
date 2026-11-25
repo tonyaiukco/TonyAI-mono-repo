@@ -118,7 +118,7 @@ const january = {
 } as const;
 
 const lockJanuary = (s: Services) =>
-  s.periodLocks.lock(tenant.users.superAdmin, { subsidiaryId: tenant.subsidiaryId, ...january });
+  s.periodLocks.lock(tenant.users.masterkey, { subsidiaryId: tenant.subsidiaryId, ...january });
 
 /**
  * A draft the data-entry user can submit: an evidence-required category with
@@ -153,7 +153,7 @@ describe('F03 — edit, submit and approve', () => {
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
 
     await lifecycleServices(b).records.submit(tenant.users.dataEntry, record.id);
-    await lifecycleServices(b).records.approve(tenant.users.superAdmin, record.id);
+    await lifecycleServices(b).records.approve(tenant.users.masterkey, record.id);
     const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
     expect(final.status).toBe(ActivityRecordStatus.approved);
     expect(final.activityValue).toBe(250);
@@ -180,7 +180,7 @@ describe('F03 — edit, submit and approve', () => {
     expect(r.first).toBe('ok');
     expect(r.second).toBeInstanceOf(RecordChangedError);
 
-    await lifecycleServices(b).records.approve(tenant.users.superAdmin, record.id);
+    await lifecycleServices(b).records.approve(tenant.users.masterkey, record.id);
     const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
     expect(final.status).toBe(ActivityRecordStatus.approved);
     expect(final.activityValue).toBe(record.activityValue);
@@ -234,7 +234,7 @@ describe('BUG-R2-03 — recall and review', () => {
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
       (s) => s.records.recall(tenant.users.dataEntry, record.id),
-      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.approve(tenant.users.masterkey, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -247,7 +247,7 @@ describe('BUG-R2-03 — recall and review', () => {
     const record = await submittedRecord();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.approve(tenant.users.masterkey, record.id),
       (s) => s.records.recall(tenant.users.dataEntry, record.id),
     );
     expect(r.how).toBe('blocked');
@@ -412,7 +412,7 @@ describe('F03 — deleting a shared file while one of its records goes to approv
     expect(r.first).toBe('ok');
     expect(r.second).toBeInstanceOf(RecordChangedError);
 
-    await lifecycleServices(b).records.approve(tenant.users.superAdmin, first.id);
+    await lifecycleServices(b).records.approve(tenant.users.masterkey, first.id);
     expect(await statusOf(first.id)).toBe(ActivityRecordStatus.approved);
     expect(await linkCount(first.id)).toBe(1);
     expect(await observer.evidence.count({ where: { id: file.id } })).toBe(1);
@@ -438,7 +438,7 @@ describe('F03 — void and period lock', () => {
   it('a lock held before its write: the void waits, then is refused — a locked figure is never voided', async () => {
     const record = await createRecord(a, tenant, { status: ActivityRecordStatus.approved }, { priced: true });
     const r = await race(['PeriodLock', 'create'], lockJanuary, (s) =>
-      s.records.void(tenant.users.superAdmin, record.id, 'Entered in error'),
+      s.records.void(tenant.users.masterkey, record.id, 'Entered in error'),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -450,7 +450,7 @@ describe('F03 — void and period lock', () => {
     const record = await createRecord(a, tenant, { status: ActivityRecordStatus.approved }, { priced: true });
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.void(tenant.users.superAdmin, record.id, 'Entered in error'),
+      (s) => s.records.void(tenant.users.masterkey, record.id, 'Entered in error'),
       lockJanuary,
     );
     expect(r.how).toBe('blocked');
@@ -495,7 +495,7 @@ describe('F03 — a record moved to another period between an upload\'s read and
     // which nothing in the upload's locks prevents, then let it commit.
     const first = await Promise.race([upload.then(() => 'settled' as const), held.reached().then(() => 'held' as const)]);
     if (first === 'held') {
-      await lifecycleServices(b).periodLocks.lock(tenant.users.superAdmin, {
+      await lifecycleServices(b).periodLocks.lock(tenant.users.masterkey, {
         subsidiaryId: tenant.subsidiaryId,
         reportingYear: 2026,
         reportingPeriod: 'monthly',
@@ -561,7 +561,7 @@ describe('F03 — approve, reject and submit, against each other', () => {
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
       (s) => s.records.reject(tenant.users.consultant, record.id, 'Wrong meter'),
-      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.approve(tenant.users.masterkey, record.id),
     );
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
@@ -574,7 +574,7 @@ describe('F03 — approve, reject and submit, against each other', () => {
     const record = await underReview();
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
-      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.approve(tenant.users.masterkey, record.id),
       (s) => s.records.reject(tenant.users.consultant, record.id, 'Wrong meter'),
     );
     expect(r.how).toBe('blocked');

@@ -683,9 +683,9 @@ async function main() {
   const adminId = await ensureAuthUser('admin@tonyai.local', SEED_PASSWORD, 'Tony Admin');
   const entryId = await ensureAuthUser('entry@tonyai.local', SEED_PASSWORD, 'Eda Entry');
   const reviewId = await ensureAuthUser('review@tonyai.local', SEED_PASSWORD, 'Cem Consultant');
-  // A second super_admin, because the approver may not be the record's
-  // creator (decision D01, 2026-09-29): with one super_admin, nothing that
-  // super_admin entered could ever be approved. The e2e suite and the UAT
+  // A second masterkey, because the approver may not be the record's
+  // creator (decision D01, 2026-09-29): with one masterkey, nothing that
+  // masterkey entered could ever be approved. The e2e suite and the UAT
   // catalogue approve as this user whatever admin@ created.
   const approverId = await ensureAuthUser('approver@tonyai.local', SEED_PASSWORD, 'Arda Approver');
   // Read-only (LP4-04 slice 2 PR C, M5): the fourth role the UAT catalogue's
@@ -694,8 +694,8 @@ async function main() {
 
   await prisma.profile.upsert({
     where: { id: adminId },
-    update: { role: UserRole.super_admin, organisationId: ORG_ID },
-    create: { id: adminId, email: 'admin@tonyai.local', fullName: 'Tony Admin', role: UserRole.super_admin, organisationId: ORG_ID },
+    update: { role: UserRole.masterkey, organisationId: ORG_ID },
+    create: { id: adminId, email: 'admin@tonyai.local', fullName: 'Tony Admin', role: UserRole.masterkey, organisationId: ORG_ID },
   });
 
   await prisma.profile.upsert({
@@ -706,8 +706,8 @@ async function main() {
 
   await prisma.profile.upsert({
     where: { id: approverId },
-    update: { role: UserRole.super_admin, organisationId: ORG_ID },
-    create: { id: approverId, email: 'approver@tonyai.local', fullName: 'Arda Approver', role: UserRole.super_admin, organisationId: ORG_ID },
+    update: { role: UserRole.masterkey, organisationId: ORG_ID },
+    create: { id: approverId, email: 'approver@tonyai.local', fullName: 'Arda Approver', role: UserRole.masterkey, organisationId: ORG_ID },
   });
 
   // Consultant: may take records into review, reject and — since K2
@@ -1121,8 +1121,8 @@ const LOCATION_ACTIVITY = [
 
   console.log('\nSeed complete.');
   const passwordLabel = process.env.TONYAI_TEST_PASSWORD === undefined ? SEED_PASSWORD : '<configured test password>';
-  console.log(`  super_admin -> admin@tonyai.local / ${passwordLabel} (sees all 5 subsidiaries)`);
-  console.log(`  super_admin -> approver@tonyai.local / ${passwordLabel} (a second approver: nobody approves a record they created)`);
+  console.log(`  masterkey -> admin@tonyai.local / ${passwordLabel} (sees all 5 subsidiaries)`);
+  console.log(`  masterkey -> approver@tonyai.local / ${passwordLabel} (a second approver: nobody approves a record they created)`);
   console.log(`  data_entry  -> entry@tonyai.local / ${passwordLabel} (sees 2 subsidiaries)`);
   console.log(`  consultant  -> review@tonyai.local / ${passwordLabel} (org-wide read; reviews, rejects and approves, never enters data)`);
   console.log(`  executive_viewer -> viewer@tonyai.local / ${passwordLabel} (org-wide read only)`);

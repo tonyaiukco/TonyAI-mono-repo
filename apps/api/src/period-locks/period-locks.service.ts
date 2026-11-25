@@ -95,11 +95,11 @@ export class PeriodLocksService {
     };
   }
 
-  /** Closing/reopening a period is org structure — super_admin only (perm §5.3). */
+  /** Closing/reopening a period is org structure — masterkey only (perm §5.3). */
   private assertCanLock(user: RequestUser): void {
-    if (user.role !== 'super_admin') {
+    if (user.role !== 'masterkey') {
       throw new ForbiddenException(
-        'Only super_admin may lock or unlock reporting periods',
+        'Only masterkey may lock or unlock reporting periods',
       );
     }
   }
@@ -156,7 +156,7 @@ export class PeriodLocksService {
     // compares `period_value` with raw Postgres equality, so a lock stored as
     // `"january"` used to leave every `"January"` record open — it neither
     // counted them as pending nor flipped them to `locked`. A period a
-    // super_admin believes is closed that still accepts writes is the sharpest
+    // masterkey believes is closed that still accepts writes is the sharpest
     // consequence of storing the caller's spelling.
     const periodValue = canonicalPeriodValue(dto.reportingPeriod, dto.periodValue);
     if (periodValue === null) {

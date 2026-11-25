@@ -235,7 +235,7 @@ describe('RLS: a grant reaches only its own organisation — even when the keys 
     expect(seen.foreignBatch).toBe(0);
   });
 
-  it.each(['superAdmin', 'consultant', 'executiveViewer'] as const)(
+  it.each(['masterkey', 'consultant', 'executiveViewer'] as const)(
     "A's %s, holding a stray grant of B's subsidiary: sees none of B's rows, all of its own",
     async (role) => {
       const seen = await withRollback(owner, async (tx) => {
@@ -294,7 +294,7 @@ describe("the API's guard on a real database: a grant counts only inside the use
     expect(user.accessibleSubsidiaryIds).toEqual([]);
   });
 
-  it.each(['superAdmin', 'consultant', 'executiveViewer', 'dataEntry'] as const)(
+  it.each(['masterkey', 'consultant', 'executiveViewer', 'dataEntry'] as const)(
     "A's %s, on the runtime role: A's subsidiary, never B's",
     async (role) => {
       const user = await guardUser(runtime, a.users[role].id);

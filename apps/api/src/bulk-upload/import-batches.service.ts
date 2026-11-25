@@ -24,7 +24,7 @@ const DEFAULT_LIST_LIMIT = 20;
 const SIGNED_URL_TTL_SECONDS = 60;
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 /** Roles that read every batch of their organisation, as they read its records. */
-const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_viewer']);
+const ORGANISATION_READERS = new Set(['masterkey', 'consultant', 'executive_viewer']);
 
 /**
  * Applied bulk imports: list, read, download the source file, submit the
@@ -32,7 +32,7 @@ const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_vi
  * (`import_batches_select_scoped`), applied here because the API reads as the
  * runtime role (`tonyai_runtime`, LP1-03), which bypasses RLS:
  *
- *   - super_admin, consultant, executive_viewer: every batch of their
+ *   - masterkey, consultant, executive_viewer: every batch of their
  *     organisation;
  *   - data_entry: a batch THEY uploaded, and only while they can still reach
  *     every subsidiary it names — the source file holds every row, refused
@@ -127,7 +127,7 @@ export class ImportBatchesService {
 
   /**
    * Send for review every draft of this batch the caller authored — a
-   * super_admin too, since only the author submits (decision D02). The ids are
+   * masterkey too, since only the author submits (decision D02). The ids are
    * handed to the ordinary bulk submit,
    * whose pre-flight re-checks role, author, status and tenant for each — the
    * batch only names them. A role that may not submit is refused there, with

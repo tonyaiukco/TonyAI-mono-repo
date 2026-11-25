@@ -179,10 +179,10 @@ describe('BUG-R2-03 — evidence follows a record edit', () => {
     const second = await svc.submit(tenant.users.dataEntry, record.id);
     expect(second.submittedAt).not.toBe(first.submittedAt);
 
-    await expect(svc.approve(tenant.users.superAdmin, record.id, first.submittedAt)).rejects.toBeInstanceOf(RecordChangedError);
+    await expect(svc.approve(tenant.users.masterkey, record.id, first.submittedAt)).rejects.toBeInstanceOf(RecordChangedError);
     expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).status).toBe(ActivityRecordStatus.submitted);
 
-    const approved = await svc.approve(tenant.users.superAdmin, record.id, second.submittedAt);
+    const approved = await svc.approve(tenant.users.masterkey, record.id, second.submittedAt);
     expect(approved.status).toBe(ActivityRecordStatus.approved);
     expect(approved.activityValue).toBe(1000);
   });

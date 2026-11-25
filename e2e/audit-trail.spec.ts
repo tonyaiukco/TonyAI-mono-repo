@@ -19,7 +19,7 @@ import {
  * spec creates rather than on seeded data.
  */
 
-test('super_admin reads the trail; the newest entry is the action just performed', async ({
+test('masterkey reads the trail; the newest entry is the action just performed', async ({
   page,
   request,
 }) => {
@@ -45,7 +45,7 @@ test('super_admin reads the trail; the newest entry is the action just performed
   await expect(firstRow).toContainText('activity record');
   // The actor's role at the time, read from the row — by its name (LP4-04
   // slice 2 PR C); the action and entity stay raw identifiers (M2).
-  await expect(firstRow).toContainText('Super admin');
+  await expect(firstRow).toContainText('Masterkey');
 });
 
 test('the viewer paginates rather than loading the whole trail', async ({
@@ -102,7 +102,7 @@ test('data_entry is told why the trail is closed, not shown a broken page', asyn
   await page.goto('/audit');
 
   await expect(
-    page.getByText(/Only a super_admin can read the audit trail/i),
+    page.getByText(/Only a masterkey can read the audit trail/i),
   ).toBeVisible();
   await expect(page.locator('table')).toHaveCount(0);
 });

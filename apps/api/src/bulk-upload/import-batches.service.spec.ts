@@ -80,10 +80,10 @@ describe('ImportBatchesService — who may see a batch (the RLS rule, applied by
     ['its uploader, when it names no subsidiary at all', user(), false, { subsidiaryIds: [] }],
     ['a consultant of the organisation', user({ id: 'u-c', role: 'consultant' }), true],
     ['an executive viewer of the organisation', user({ id: 'u-x', role: 'executive_viewer' }), true],
-    ['a super_admin of the organisation', user({ id: 'u-a', role: 'super_admin' }), true],
+    ['a masterkey of the organisation', user({ id: 'u-a', role: 'masterkey' }), true],
     [
-      'a super_admin of ANOTHER organisation',
-      user({ id: 'u-a', role: 'super_admin', organisationId: 'd4444444-4444-4444-8444-44444444444d' }),
+      'a masterkey of ANOTHER organisation',
+      user({ id: 'u-a', role: 'masterkey', organisationId: 'd4444444-4444-4444-8444-44444444444d' }),
       false,
     ],
   ] as [string, RequestUser, boolean, Record<string, unknown>?][])(
@@ -253,10 +253,10 @@ describe('ImportBatchesService — submitting a batch', () => {
     expect(bulkSubmit.submitIds).toHaveBeenCalledWith(user(), ['r1', 'r2'], { batchId: BATCH });
   });
 
-  it("hands a super_admin only their OWN drafts too — only the author submits (D02)", async () => {
+  it("hands a masterkey only their OWN drafts too — only the author submits (D02)", async () => {
     const { prisma, service } = build();
     prisma.importBatch.findUnique.mockResolvedValue(batch());
-    const admin = user({ id: 'u-a', role: 'super_admin', accessibleSubsidiaryIds: [SUB_A, SUB_B] });
+    const admin = user({ id: 'u-a', role: 'masterkey', accessibleSubsidiaryIds: [SUB_A, SUB_B] });
 
     await service.submit(admin, BATCH);
 

@@ -112,7 +112,7 @@ export type InventorySource = {
 
 /** A version is immutable once captured into any dataset or confirmed. New facts create a new
  * version; one captured unconfirmed is confirmed only as a copy
- * (`boundary_confirm_requires_copy`). super_admin owns decisions; reasons must be nonblank. Included
+ * (`boundary_confirm_requires_copy`). masterkey owns decisions; reasons must be nonblank. Included
  * sources have obligations that exhaust their operating months exactly once
  * at the source reportingPeriod, matching the category attribution policy
  * wherever mapped (unsupported sources still declare a cadence), with canonical period labels
@@ -154,7 +154,7 @@ export interface InventoryBoundarySnapshot {
   /** Explicit declared inventory, not whatever the requester can currently see. */
   subsidiaryIds: readonly string[];
   decision: 'unconfirmed' | 'confirmed';
-  /** The confirming super_admin's profile id, written by the API from the
+  /** The confirming masterkey's profile id, written by the API from the
    * caller's verified token — never a request field — and opaque: no foreign
    * key, so a profile's erasure (D20/D21) leaves it standing (LP3-04 E6). */
   decidedBy: string | null;
@@ -433,7 +433,7 @@ export type ReportIssuance = {
  * whole boundary but assesses only the selection — a `subsidiaryId` is one the
  * version declares (`subsidiary_not_found` otherwise).
  * Capturing an open version freezes it, unconfirmed (`boundary_unconfirmed`),
- * in a transaction of its own before anything is read — `super_admin` alone
+ * in a transaction of its own before anything is read — `masterkey` alone
  * may; a consultant captures a version already frozen. A capture that fails
  * after its freeze leaves the version frozen without a dataset: a retry
  * captures it as it stands. */
@@ -468,8 +468,8 @@ export interface ReportDatasetList {
 /** `POST /api/v1/report-issuances` (LP3-04 PR D; Decisions 2026-10-21): issue
  * one retained dataset as a PDF. Its status and gaps derive from the retained
  * dataset alone — never sent; the issuer is the verified token's (E6). A final
- * is `super_admin`'s (W4: `report_final_forbidden` for a consultant); a
- * partial is `super_admin`'s or a consultant's. One issuance per dataset,
+ * is `masterkey`'s (W4: `report_final_forbidden` for a consultant); a
+ * partial is `masterkey`'s or a consultant's. One issuance per dataset,
  * language, template and options (`report_already_issued`); another language
  * or template is another issuance of the same dataset. */
 export interface IssueReportRequest {

@@ -143,7 +143,7 @@ export class ActivityRecordsController {
     return this.service.reject(user, id, dto.varianceReason, seenSubmission(dto.seenSubmittedAt));
   }
 
-  /** Withdraw an approved figure from the inventory (the void path) — super_admin only. */
+  /** Withdraw an approved figure from the inventory (the void path) — masterkey only. */
   @Post(':id/void')
   @HttpCode(HttpStatus.OK)
   void(

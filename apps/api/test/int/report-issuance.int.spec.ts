@@ -170,7 +170,7 @@ function holdingDeclaration(): PutInventoryBoundarySubsidiaryRequest {
   };
 }
 
-const admin = () => t.users.superAdmin;
+const admin = () => t.users.masterkey;
 /** A user as the guard would build it: every subsidiary of the organisation, now. */
 async function withAccess(user: RequestUser): Promise<RequestUser> {
   const subs = await owner.subsidiary.findMany({ where: { organisationId: user.organisationId! }, select: { id: true } });
@@ -438,22 +438,22 @@ describe('an issuance over HTTP', () => {
     const issued = issuanceOf(await issue(admin(), { datasetId, template: 'executive_summary' }));
     const other = await createTenant();
     try {
-      const foreign = await issue(other.users.superAdmin, { datasetId, template: 'executive_summary' });
-      const missing = await issue(other.users.superAdmin, { datasetId: randomUUID(), template: 'executive_summary' });
+      const foreign = await issue(other.users.masterkey, { datasetId, template: 'executive_summary' });
+      const missing = await issue(other.users.masterkey, { datasetId: randomUUID(), template: 'executive_summary' });
       expect(foreign.status).toBe(404);
       expect(foreign.code).toBe('report_dataset_not_found');
       expect(foreign.text).toBe(missing.text);
       for (const suffix of ['', '/pdf', '/xlsx', '/csv']) {
-        const theirs = await call(other.users.superAdmin, 'GET', `/report-issuances/${issued.issuanceId}${suffix}`);
-        const none = await call(other.users.superAdmin, 'GET', `/report-issuances/${randomUUID()}${suffix}`);
+        const theirs = await call(other.users.masterkey, 'GET', `/report-issuances/${issued.issuanceId}${suffix}`);
+        const none = await call(other.users.masterkey, 'GET', `/report-issuances/${randomUUID()}${suffix}`);
         expect(theirs.status).toBe(404);
         expect(theirs.code).toBe('report_issuance_not_found');
         expect(theirs.text).toBe(none.text);
       }
-      expect(JSON.parse((await call(other.users.superAdmin, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text))
+      expect(JSON.parse((await call(other.users.masterkey, 'GET', `/report-issuances?year=${FINAL_YEAR}`)).text))
         .toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
-      const theirPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${datasetId}/issuance-preview`);
-      const noPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${randomUUID()}/issuance-preview`);
+      const theirPreview = await call(other.users.masterkey, 'GET', `/report-datasets/${datasetId}/issuance-preview`);
+      const noPreview = await call(other.users.masterkey, 'GET', `/report-datasets/${randomUUID()}/issuance-preview`);
       expect(theirPreview.status).toBe(404);
       expect(theirPreview.code).toBe('report_dataset_not_found');
       expect(theirPreview.text).toBe(noPreview.text);
@@ -716,12 +716,12 @@ describe('the guard (TA017) — every writer, the owner included', () => {
     const otherS2 = (await owner.subsidiary.create({ data: { organisationId: other.organisationId, legalName: `Int-test holding ${randomUUID().slice(0, 8)}`, geographyCode: 'UK' } })).id;
     try {
       const service = new InventoryBoundariesService(runtime, new AuditService(runtime));
-      const user = await withAccess(other.users.superAdmin);
+      const user = await withAccess(other.users.masterkey);
       const { id } = await service.create(user, { reportingYear: YEAR });
       await service.putSubsidiary(user, id, otherS2, holdingDeclaration());
       await service.confirm(user, id);
-      const capture = await call(other.users.superAdmin, 'POST', '/report-datasets', { boundaryId: id });
-      const issued = issuanceOf(await issue(other.users.superAdmin, { datasetId: (JSON.parse(capture.text) as { datasetId: string }).datasetId, template: 'executive_summary' }));
+      const capture = await call(other.users.masterkey, 'POST', '/report-datasets', { boundaryId: id });
+      const issued = issuanceOf(await issue(other.users.masterkey, { datasetId: (JSON.parse(capture.text) as { datasetId: string }).datasetId, template: 'executive_summary' }));
       const path = `${other.organisationId}/${issued.pdf.artifactId}.pdf`;
       await other.cleanup();
       expect(await owner.reportIssuance.count({ where: { id: issued.issuanceId } })).toBe(0);

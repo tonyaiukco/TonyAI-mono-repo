@@ -46,21 +46,21 @@ async function statusOf(id: string) {
 }
 
 describe('D01 — the approver is neither the creator nor the submitter', () => {
-  it('a super_admin cannot approve a record they created and submitted', async () => {
-    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id }, { priced: true });
+  it('a masterkey cannot approve a record they created and submitted', async () => {
+    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.masterkey.id }, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
-    await s.records.submit(tenant.users.superAdmin, record.id);
+    await s.records.submit(tenant.users.masterkey, record.id);
 
-    await expect(s.records.approve(tenant.users.superAdmin, record.id)).rejects.toBeInstanceOf(
+    await expect(s.records.approve(tenant.users.masterkey, record.id)).rejects.toBeInstanceOf(
       SelfApprovalRefusedError,
     );
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.submitted);
   });
 
-  it('another super_admin can', async () => {
-    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id }, { priced: true });
+  it('another masterkey can', async () => {
+    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.masterkey.id }, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
-    await s.records.submit(tenant.users.superAdmin, record.id);
+    await s.records.submit(tenant.users.masterkey, record.id);
     // Profiles are the owner's to create (the runtime role reads them).
     const owner = connectOwner();
     const colleague = await owner.profile
@@ -69,14 +69,14 @@ describe('D01 — the approver is neither the creator nor the submitter', () => 
           id: randomUUID(),
           email: `int-admin2-${record.id.slice(0, 8)}@tonyai.test`,
           fullName: 'Int admin two',
-          role: 'super_admin',
+          role: 'masterkey',
           organisationId: tenant.organisationId,
         },
       })
       .finally(() => owner.$disconnect());
     tenant.profileIds.push(colleague.id);
 
-    await s.records.approve({ ...tenant.users.superAdmin, id: colleague.id }, record.id);
+    await s.records.approve({ ...tenant.users.masterkey, id: colleague.id }, record.id);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.approved);
   });
 
@@ -123,13 +123,13 @@ describe('D01 — the approver is neither the creator nor the submitter', () => 
 });
 
 describe('WP5 — the author does not take their own record into review', () => {
-  it('a super_admin is refused the start of review of their own record with 403 self_review_forbidden; it stays submitted and can still be recalled', async () => {
-    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id }, { priced: true });
+  it('a masterkey is refused the start of review of their own record with 403 self_review_forbidden; it stays submitted and can still be recalled', async () => {
+    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.masterkey.id }, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
-    const submitted = await s.records.submit(tenant.users.superAdmin, record.id);
+    const submitted = await s.records.submit(tenant.users.masterkey, record.id);
 
     const refusal = await s.records
-      .startReview(tenant.users.superAdmin, record.id, submitted.submittedAt)
+      .startReview(tenant.users.masterkey, record.id, submitted.submittedAt)
       .then(() => null, (err: unknown) => err);
     expect(refusal).toBeInstanceOf(SelfReviewRefusedError);
     expect((refusal as SelfReviewRefusedError).getStatus()).toBe(403);
@@ -140,7 +140,7 @@ describe('WP5 — the author does not take their own record into review', () => 
     expect(row.reviewedBy).toBeNull();
     expect(await prisma.auditLog.count({ where: { entityId: record.id, action: 'review' } })).toBe(0);
 
-    await s.records.recall(tenant.users.superAdmin, record.id);
+    await s.records.recall(tenant.users.masterkey, record.id);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
   });
 
@@ -173,15 +173,15 @@ describe('WP5 — the author does not take their own record into review', () => 
   });
 });
 
-// Decisions 2026-11-12 (option A): evidence is author-only, super_admin
-// included — otherwise a super_admin could re-file a colleague's draft and then
+// Decisions 2026-11-12 (option A): evidence is author-only, masterkey
+// included — otherwise a masterkey could re-file a colleague's draft and then
 // approve it, which D01 (`createdBy` only) cannot see.
 describe("D01's evidence side — only the author changes a record's evidence", () => {
-  it("a super_admin cannot upload to a data_entry user's draft; nothing is stored", async () => {
+  it("a masterkey cannot upload to a data_entry user's draft; nothing is stored", async () => {
     const record = await createRecord(prisma, tenant);
     const before = await prisma.activityRecordEvidence.count({ where: { activityRecordId: record.id } });
 
-    await expect(s.evidence.upload(tenant.users.superAdmin, record.id, pdfFile())).rejects.toBeInstanceOf(
+    await expect(s.evidence.upload(tenant.users.masterkey, record.id, pdfFile())).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(await prisma.activityRecordEvidence.count({ where: { activityRecordId: record.id } })).toBe(before);
@@ -190,10 +190,10 @@ describe("D01's evidence side — only the author changes a record's evidence", 
 });
 
 describe('D02 — only the author submits', () => {
-  it("a super_admin cannot submit a colleague's draft", async () => {
+  it("a masterkey cannot submit a colleague's draft", async () => {
     const record = await createRecord(prisma, tenant);
     await attachEvidence(prisma, tenant, [record.id]);
-    await expect(s.records.submit(tenant.users.superAdmin, record.id)).rejects.toBeInstanceOf(
+    await expect(s.records.submit(tenant.users.masterkey, record.id)).rejects.toBeInstanceOf(
       SubmitAuthorRefusedError,
     );
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
@@ -205,7 +205,7 @@ describe('D03 — a period cannot be locked while it holds a rejected record', (
     const record = await createRecord(prisma, tenant, { status: ActivityRecordStatus.rejected }, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
     const lock = () =>
-      s.periodLocks.lock(tenant.users.superAdmin, { subsidiaryId: tenant.subsidiaryId, ...january });
+      s.periodLocks.lock(tenant.users.masterkey, { subsidiaryId: tenant.subsidiaryId, ...january });
 
     const refused = await lock().catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ConflictException);
@@ -213,7 +213,7 @@ describe('D03 — a period cannot be locked while it holds a rejected record', (
     expect(await prisma.periodLock.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
 
     await s.records.submit(tenant.users.dataEntry, record.id);
-    await s.records.approve(tenant.users.superAdmin, record.id);
+    await s.records.approve(tenant.users.masterkey, record.id);
     await lock();
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.locked);
   });
@@ -226,18 +226,18 @@ describe('D04 — the correction procedure is unlock → void → re-entry, ever
       activityUnit: 'cubic_metres',
       status: ActivityRecordStatus.approved,
     });
-    const locked = await s.periodLocks.lock(tenant.users.superAdmin, {
+    const locked = await s.periodLocks.lock(tenant.users.masterkey, {
       subsidiaryId: tenant.subsidiaryId,
       ...january,
     });
 
     // While locked, the void is refused; the lock has to be lifted first.
-    await expect(s.records.void(tenant.users.superAdmin, original.id, 'Wrong meter')).rejects.toThrow(
+    await expect(s.records.void(tenant.users.masterkey, original.id, 'Wrong meter')).rejects.toThrow(
       /unlocked first/,
     );
 
-    await s.periodLocks.unlock(tenant.users.superAdmin, locked.id);
-    await s.records.void(tenant.users.superAdmin, original.id, 'Wrong meter');
+    await s.periodLocks.unlock(tenant.users.masterkey, locked.id);
+    await s.records.void(tenant.users.masterkey, original.id, 'Wrong meter');
     // The voided row leaves the uniqueness index, so the corrected figure
     // takes the same slot as a new record.
     const corrected = await s.records.create(tenant.users.dataEntry, {

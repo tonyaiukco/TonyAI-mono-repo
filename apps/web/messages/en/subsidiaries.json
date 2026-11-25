@@ -72,7 +72,7 @@
     "notFoundTitle": "Subsidiary not found",
     "notFoundBody": "This subsidiary does not exist, or you no longer have access to it.",
     "backToList": "Back to subsidiaries",
-    "readOnly": "You can view this subsidiary, but only a super_admin can change it.",
+    "readOnly": "You can view this subsidiary, but only a masterkey can change it.",
     "loadFailed": "This subsidiary could not be loaded.",
     "tryAgain": "Try again",
     "loading": "Loading subsidiary…",
@@ -151,7 +151,7 @@
     "personPlaceholder": "Aylin Demir",
     "save": "Save facility",
     "add": "Add facility",
-    "readOnly": "Only a super_admin can add or modify facilities.",
+    "readOnly": "Only a masterkey can add or modify facilities.",
     "nameRequired": "Facility name is required",
     "geographyRequired": "Geography is required",
     "updated": "Facility updated",
@@ -176,7 +176,7 @@
     "locking": "Locking…",
     "lock": "Lock period",
     "hint": "Committed records in the period flip to <em>locked</em>; unlocking reverts them to <em>approved</em>. Both actions are audited.",
-    "readOnly": "Only a super_admin can lock or unlock reporting periods.",
+    "readOnly": "Only a masterkey can lock or unlock reporting periods.",
     "locked": "Locked {period} {year} — records in this period are now frozen",
     "unlocked": "Unlocked {period} {year}"
   }

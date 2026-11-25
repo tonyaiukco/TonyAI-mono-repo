@@ -134,7 +134,7 @@ const VOIDED_AT = {
   laterB: new Date('2026-12-30T12:00:00Z'),
 } as const;
 const printed = (n: number) => [String(n), n.toLocaleString('en-GB'), n.toLocaleString('tr-TR')];
-const ROLES = ['superAdmin', 'consultant', 'dataEntry', 'executiveViewer'] as const;
+const ROLES = ['masterkey', 'consultant', 'dataEntry', 'executiveViewer'] as const;
 type Role = (typeof ROLES)[number];
 
 beforeAll(async () => {
@@ -189,7 +189,7 @@ beforeAll(async () => {
     periodValue: 'November',
     calculation: { tCo2e: B_VOIDED_TCO2E, factorId: 'int-test-placeholder' },
     voidReason: 'Int-test withdrawal only B gave',
-    voidedBy: B.users.superAdmin.id,
+    voidedBy: B.users.masterkey.id,
     voidedAt: VOIDED_AT.firstB,
   });
   const evidenceB = await owner.evidence.create({
@@ -210,9 +210,9 @@ beforeAll(async () => {
   }));
   await owner.auditLog.create({
     data: {
-      userId: B.users.superAdmin.id,
+      userId: B.users.masterkey.id,
       organisationId: B.organisationId,
-      role: 'super_admin',
+      role: 'masterkey',
       action: 'create',
       entity: 'activity_record',
       entityId: approvedB.id,
@@ -452,7 +452,7 @@ const voidedIn = () =>
     status: ActivityRecordStatus.voided,
     periodValue: 'November',
     voidReason: 'Int-test withdrawal A gave',
-    voidedBy: A.users.superAdmin.id,
+    voidedBy: A.users.masterkey.id,
     voidedAt: VOIDED_AT.A,
   }, { priced: true });
 
@@ -534,23 +534,23 @@ const ID_ROUTES: Route[] = [
   // subsidiaries
   { name: 'GET /subsidiaries/:id', method: 'GET', path: (i) => `/subsidiaries/${i.subsidiaryId}`, own: { role: 'dataEntry' } },
   { name: 'GET /subsidiaries/:id/summary', method: 'GET', path: (i) => `/subsidiaries/${i.subsidiaryId}/summary`, own: { role: 'consultant' } },
-  { name: 'PATCH /subsidiaries/:id', method: 'PATCH', path: (i) => `/subsidiaries/${i.subsidiaryId}`, body: () => ({ tradingName: 'renamed' }), own: { role: 'superAdmin' } },
-  { name: 'DELETE /subsidiaries/:id', method: 'DELETE', path: (i) => `/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin', ok: differs } },
+  { name: 'PATCH /subsidiaries/:id', method: 'PATCH', path: (i) => `/subsidiaries/${i.subsidiaryId}`, body: () => ({ tradingName: 'renamed' }), own: { role: 'masterkey' } },
+  { name: 'DELETE /subsidiaries/:id', method: 'DELETE', path: (i) => `/subsidiaries/${i.subsidiaryId}`, own: { role: 'masterkey', ok: differs } },
   // locations
   { name: 'GET /locations/:id', method: 'GET', path: (i) => `/locations/${i.locationId}`, own: { role: 'executiveViewer' } },
-  { name: 'PATCH /locations/:id', method: 'PATCH', path: (i) => `/locations/${i.locationId}`, body: () => ({ name: 'renamed' }), own: { role: 'superAdmin' } },
+  { name: 'PATCH /locations/:id', method: 'PATCH', path: (i) => `/locations/${i.locationId}`, body: () => ({ name: 'renamed' }), own: { role: 'masterkey' } },
   // A's own data site is declared in A's boundary version (LP3-04 W9: not
   // deletable), so the positive control deletes a disposable site of A's.
   {
     name: 'DELETE /locations/:id', method: 'DELETE', path: (i) => `/locations/${i.locationId}`,
     own: {
-      role: 'superAdmin',
+      role: 'masterkey',
       prepare: async () => ({
         locationId: (await owner.location.create({ data: { subsidiaryId: A.subsidiaryId, name: 'Int-test disposable site', geographyCode: 'UK' } })).id,
       }),
     },
   },
-  { name: 'POST /locations', method: 'POST', path: () => '/locations', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New site', geographyCode: 'UK' }), own: { role: 'superAdmin', ok: created } },
+  { name: 'POST /locations', method: 'POST', path: () => '/locations', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New site', geographyCode: 'UK' }), own: { role: 'masterkey', ok: created } },
   // activity records
   { name: 'GET /activity-records/:id', method: 'GET', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'consultant' } },
   { name: 'PATCH /activity-records/:id', method: 'PATCH', path: (i) => `/activity-records/${i.recordId}`, body: () => ({ activityValue: 7 }), own: { role: 'dataEntry' } },
@@ -564,11 +564,11 @@ const ID_ROUTES: Route[] = [
   { name: 'POST /activity-records/:id/submit', method: 'POST', path: (i) => `/activity-records/${i.recordId}/submit`, own: { role: 'dataEntry', ok: created } },
   { name: 'POST /activity-records/:id/review', method: 'POST', path: (i) => `/activity-records/${i.recordId}/review`, own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
   // `seenSubmittedAt` is required over HTTP (BUG-R2-03); the prepared record was never submitted through the API, so it has none.
-  { name: 'POST /activity-records/:id/approve', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, body: () => ({ seenSubmittedAt: null }), own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
+  { name: 'POST /activity-records/:id/approve', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, body: () => ({ seenSubmittedAt: null }), own: { role: 'masterkey', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
   // A consultant approves since K2 (Decisions 2026-11-12): the same route's positive control through the real guard as that role.
   { name: 'POST /activity-records/:id/approve (consultant, K2)', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, body: () => ({ seenSubmittedAt: null }), own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
   { name: 'POST /activity-records/:id/reject', method: 'POST', path: (i) => `/activity-records/${i.recordId}/reject`, body: () => ({ varianceReason: 'please recheck the meter reading', seenSubmittedAt: null }), own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
-  { name: 'POST /activity-records/:id/void', method: 'POST', path: (i) => `/activity-records/${i.recordId}/void`, body: () => ({ voidReason: 'entered against the wrong site' }), own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.approved), ok: created } },
+  { name: 'POST /activity-records/:id/void', method: 'POST', path: (i) => `/activity-records/${i.recordId}/void`, body: () => ({ voidReason: 'entered against the wrong site' }), own: { role: 'masterkey', prepare: recordIn(ActivityRecordStatus.approved), ok: created } },
   { name: 'POST /activity-records/bulk-submit', method: 'POST', path: () => '/activity-records/bulk-submit', body: (i) => ({ recordIds: [i.recordId] }), own: { role: 'dataEntry', ok: differs } },
   // evidence
   { name: 'GET /activity-records/:recordId/evidence', method: 'GET', path: (i) => `/activity-records/${i.recordId}/evidence`, own: { role: 'executiveViewer' } },
@@ -578,16 +578,16 @@ const ID_ROUTES: Route[] = [
   { name: 'GET /evidence/:id/url', method: 'GET', path: (i) => `/evidence/${i.evidenceId}/url`, own: { role: 'consultant', ok: differs } },
   { name: 'DELETE /evidence/:id', method: 'DELETE', path: (i) => `/evidence/${i.evidenceId}`, own: { role: 'dataEntry', ok: differs } },
   // period locks
-  { name: 'DELETE /period-locks/:id', method: 'DELETE', path: (i) => `/period-locks/${i.periodLockId}`, own: { role: 'superAdmin' } },
-  { name: 'POST /period-locks', method: 'POST', path: () => '/period-locks', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2018, reportingPeriod: 'monthly', periodValue: 'January' }), own: { role: 'superAdmin', ok: created } },
+  { name: 'DELETE /period-locks/:id', method: 'DELETE', path: (i) => `/period-locks/${i.periodLockId}`, own: { role: 'masterkey' } },
+  { name: 'POST /period-locks', method: 'POST', path: () => '/period-locks', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2018, reportingPeriod: 'monthly', periodValue: 'January' }), own: { role: 'masterkey', ok: created } },
   // targets
-  { name: 'PATCH /targets/:id', method: 'PATCH', path: (i) => `/targets/${i.targetId}`, body: () => ({ name: 'renamed' }), own: { role: 'superAdmin' } },
-  { name: 'DELETE /targets/:id', method: 'DELETE', path: (i) => `/targets/${i.targetId}`, own: { role: 'superAdmin' } },
-  { name: 'POST /targets', method: 'POST', path: () => '/targets', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New target', basis: 'internal_annual', scope: 'all', baselineYear: 2024, baselineTCo2e: 10, targetYear: 2030, targetTCo2e: 5 }), own: { role: 'superAdmin', ok: created } },
+  { name: 'PATCH /targets/:id', method: 'PATCH', path: (i) => `/targets/${i.targetId}`, body: () => ({ name: 'renamed' }), own: { role: 'masterkey' } },
+  { name: 'DELETE /targets/:id', method: 'DELETE', path: (i) => `/targets/${i.targetId}`, own: { role: 'masterkey' } },
+  { name: 'POST /targets', method: 'POST', path: () => '/targets', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New target', basis: 'internal_annual', scope: 'all', baselineYear: 2024, baselineTCo2e: 10, targetYear: 2030, targetTCo2e: 5 }), own: { role: 'masterkey', ok: created } },
   // denominators
-  { name: 'PATCH /denominators/:id', method: 'PATCH', path: (i) => `/denominators/${i.denominatorId}`, body: () => ({ value: 11 }), own: { role: 'superAdmin' } },
-  { name: 'DELETE /denominators/:id', method: 'DELETE', path: (i) => `/denominators/${i.denominatorId}`, own: { role: 'superAdmin' } },
-  { name: 'POST /denominators', method: 'POST', path: () => '/denominators', body: (i) => ({ subsidiaryId: i.subsidiaryId, year: 2025, metric: 'headcount', value: 3, unit: 'FTE' }), own: { role: 'superAdmin', ok: created } },
+  { name: 'PATCH /denominators/:id', method: 'PATCH', path: (i) => `/denominators/${i.denominatorId}`, body: () => ({ value: 11 }), own: { role: 'masterkey' } },
+  { name: 'DELETE /denominators/:id', method: 'DELETE', path: (i) => `/denominators/${i.denominatorId}`, own: { role: 'masterkey' } },
+  { name: 'POST /denominators', method: 'POST', path: () => '/denominators', body: (i) => ({ subsidiaryId: i.subsidiaryId, year: 2025, metric: 'headcount', value: 3, unit: 'FTE' }), own: { role: 'masterkey', ok: created } },
   // import batches
   { name: 'GET /import-batches/:id', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}`, own: { role: 'dataEntry' } },
   { name: 'GET /import-batches/:id/source-url', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}/source-url`, own: { role: 'dataEntry', ok: differs } },
@@ -597,41 +597,41 @@ const ID_ROUTES: Route[] = [
   { name: 'GET /inventory-boundaries/:id', method: 'GET', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'dataEntry' } },
   {
     name: 'POST /inventory-boundaries (copyOf)', method: 'POST', path: () => '/inventory-boundaries',
-    body: (i) => ({ reportingYear: 2027, copyOf: i.boundaryId }), own: { role: 'superAdmin', ok: created },
+    body: (i) => ({ reportingYear: 2027, copyOf: i.boundaryId }), own: { role: 'masterkey', ok: created },
   },
   {
     name: 'PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId', method: 'PUT',
-    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'masterkey' },
   },
   // B's subsidiary declared in A's own version, and B's site in A's own subsidiary's declaration.
   {
     name: "PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's subsidiary in A's version)", method: 'PUT',
-    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'masterkey' },
   },
   {
     name: "PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's site in A's declaration)", method: 'PUT',
     path: () => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${A.subsidiaryId}`,
     body: (i) => ({ ...EMPTY_DECLARATION, sites: [{ locationId: i.locationId, firstMonth: 1, lastMonth: 12 }] }),
-    own: { role: 'superAdmin' },
+    own: { role: 'masterkey' },
   },
   {
     name: 'DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId', method: 'DELETE',
-    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'masterkey' },
   },
   {
     name: "DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's subsidiary in A's version)", method: 'DELETE',
-    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin' },
+    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'masterkey' },
   },
   // A's own version has gaps: its confirmation is refused, not unseen.
-  { name: 'POST /inventory-boundaries/:id/confirm', method: 'POST', path: (i) => `/inventory-boundaries/${i.boundaryId}/confirm`, own: { role: 'superAdmin', ok: differs } },
-  { name: 'DELETE /inventory-boundaries/:id', method: 'DELETE', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'superAdmin', ok: (res) => res.status === 204 } },
+  { name: 'POST /inventory-boundaries/:id/confirm', method: 'POST', path: (i) => `/inventory-boundaries/${i.boundaryId}/confirm`, own: { role: 'masterkey', ok: differs } },
+  { name: 'DELETE /inventory-boundaries/:id', method: 'DELETE', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'masterkey', ok: (res) => res.status === 204 } },
   // report datasets (LP3-04 PR C): a capture of B's version. A capture freezes
   // the version it captures, so A's positive control captures a fresh version
   // of its own, not the one the routes above edit.
   {
     name: "POST /report-datasets (B's version)", method: 'POST', path: () => '/report-datasets', body: (i) => ({ boundaryId: i.boundaryId }),
     own: {
-      role: 'superAdmin',
+      role: 'masterkey',
       ok: created,
       prepare: async () => ({ boundaryId: (await createBoundary(owner, A, { locationId: dataA.locationId, reportingYear: 2031 })).boundaryId }),
     },
@@ -810,7 +810,7 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       status: ActivityRecordStatus.voided,
       periodValue: 'October',
       voidReason: lookalike,
-      voidedBy: A.users.superAdmin.id,
+      voidedBy: A.users.masterkey.id,
       voidedAt: VOIDED_AT.A,
     }, { priced: true });
     const named = await owner.subsidiary.create({ data: { organisationId: A.organisationId, legalName: 'Generated', geographyCode: 'UK' } });
@@ -945,12 +945,12 @@ describe("pages and cursors (LP4-05 PR C): a page, its cursor and its count reac
     const later = new Date(Date.now() + 86_400_000);
     const routes: [string, string, Role][] = [
       ['/activity-records', forged(RECORD_SORTS.newest, {}, [later, dataB.recordId]), 'dataEntry'],
-      ['/activity-records?sort=review_queue', forged(RECORD_SORTS.review_queue, {}, [new Date(0), dataB.recordId]), 'superAdmin'],
+      ['/activity-records?sort=review_queue', forged(RECORD_SORTS.review_queue, {}, [new Date(0), dataB.recordId]), 'masterkey'],
       ['/period-locks', forged(PERIOD_LOCK_SORT, {}, [later, dataB.periodLockId]), 'consultant'],
       ['/targets', forged(TARGET_SORT, {}, [2000, later, dataB.targetId]), 'consultant'],
       ['/denominators', forged(DENOMINATOR_SORT, {}, [2100, 'revenue', dataB.denominatorId]), 'consultant'],
       [`/activity-records/${dataA.recordId}/evidence`, forged(EVIDENCE_SORT, { recordId: dataA.recordId }, [later, dataB.evidenceId]), 'executiveViewer'],
-      ['/users', forged(USERS_SORT, {}, [later, B.users.superAdmin.id]), 'superAdmin'],
+      ['/users', forged(USERS_SORT, {}, [later, B.users.masterkey.id]), 'masterkey'],
     ];
     for (const [path, cursor, role] of routes) {
       const sep = path.includes('?') ? '&' : '?';
@@ -995,9 +995,9 @@ describe('POST /bulk-upload/activity-records (dry run): rows naming B are refuse
     const foreignIds = { ...dataB, subsidiaryId: B.subsidiaryId, organisationId: B.organisationId };
     const missingIds = { ...foreignIds, subsidiaryId: randomUUID(), locationId: randomUUID() };
     const before = await snapshotB();
-    // The route is throttled per user (five calls a minute): superAdmin makes two, dataEntry three.
+    // The route is throttled per user (five calls a minute): masterkey makes two, dataEntry three.
     let foreign: Res | undefined;
-    for (const role of ['superAdmin', 'dataEntry'] as const) {
+    for (const role of ['masterkey', 'dataEntry'] as const) {
       foreign = await call(role, 'POST', '/bulk-upload/activity-records', form(csv(B.subsidiaryId, dataB.locationId)));
       const missing = await call(role, 'POST', '/bulk-upload/activity-records', form(csv(missingIds.subsidiaryId, missingIds.locationId)));
       expect(foreign.status, `${role}: ${foreign.text.slice(0, 300)}`).toBeLessThan(500);
@@ -1185,7 +1185,7 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
             periodValue: 'August',
             calculation: { tCo2e: 4444, factorId: 'int-test-placeholder' },
             voidReason: 'Int-test later withdrawal B gave',
-            voidedBy: B.users.superAdmin.id,
+            voidedBy: B.users.masterkey.id,
             // Later than A's (VOIDED_AT): a time leaking across tenants shows,
             // now that only the generation minute is masked.
             voidedAt: VOIDED_AT.laterB,
@@ -1206,7 +1206,7 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       data: { subsidiaryId: B.subsidiaryId, reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'July', lockedBy: by },
     });
     const audit = await owner.auditLog.create({
-      data: { userId: B.users.superAdmin.id, organisationId: B.organisationId, role: 'super_admin', action: 'update', entity: 'subsidiary', entityId: B.subsidiaryId },
+      data: { userId: B.users.masterkey.id, organisationId: B.organisationId, role: 'masterkey', action: 'update', entity: 'subsidiary', entityId: B.subsidiaryId },
     });
     // B's 2026 revenue exists (beforeAll): it changes, last, so a failed create
     // above cannot leave it changed for the rest of the file.
@@ -1411,7 +1411,7 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
         '/reports/pdf?year=2026&template=executive_summary',
       ]) {
         for (const method of ['GET', 'HEAD'] as const) {
-          const res = await call('superAdmin', method, path);
+          const res = await call('masterkey', method, path);
           expect(res.status, `${method} ${path}: ${res.text.slice(0, 200)}`).toBe(429);
           if (method === 'GET') expect((JSON.parse(res.text) as { code?: unknown }).code, path).toBe('rate_limited');
         }
@@ -1426,11 +1426,11 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
         ['/reports//context/csv', 404],
         ['/reports/context/c%73v', 404],
       ] as const) {
-        const res = await call('superAdmin', 'GET', `${variant}?year=2026&template=executive_summary`);
+        const res = await call('masterkey', 'GET', `${variant}?year=2026&template=executive_summary`);
         expect(res.status, `${variant}: ${res.text.slice(0, 120)}`).toBe(status);
       }
       for (const path of ['/reports/context/meta?year=2026', ...CONTEXT_READS.map((r) => `${r.path}?year=2026`)]) {
-        expect((await call('superAdmin', 'GET', path)).status, path).toBe(200);
+        expect((await call('masterkey', 'GET', path)).status, path).toBe(200);
       }
       hold.resolve();
       expect((await rendering).status).toBe(200);
@@ -1442,7 +1442,7 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
       pdf.entered = undefined;
     }
     // The lease came back with the render.
-    expect((await call('superAdmin', 'GET', csv)).status).toBe(200);
+    expect((await call('masterkey', 'GET', csv)).status).toBe(200);
   });
 
   it('context and legacy exports spend one per-user quota; reads and other users do not', async () => {
@@ -1463,7 +1463,7 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
       expect(sixth.status, sixth.text.slice(0, 200)).toBe(429);
       expect((JSON.parse(sixth.text) as { code?: unknown }).code).toBe('rate_limited');
       expect((await call('consultant', 'GET', '/reports/context/meta?year=2026')).status).toBe(200);
-      expect((await call('superAdmin', 'GET', csv)).status).toBe(200);
+      expect((await call('masterkey', 'GET', csv)).status).toBe(200);
     } finally {
       config.RATE_EXPORT_PER_MINUTE = previous;
     }
@@ -1497,7 +1497,7 @@ describe('PATCH /me/preferences (LP3-01): the caller\'s own language, and nothin
     ['an unsupported language', { language: 'de' }],
     ['a locale tag', { language: 'tr-TR' }],
     ['no language', {}],
-    ['another profile column', { language: 'tr', role: 'super_admin' }],
+    ['another profile column', { language: 'tr', role: 'masterkey' }],
     ['another user', { language: 'tr', id: randomUUID() }],
   ])('refuses %s with validation_failed and changes nothing', async (_label, body) => {
     const res = await call('dataEntry', 'PATCH', '/me/preferences', body);

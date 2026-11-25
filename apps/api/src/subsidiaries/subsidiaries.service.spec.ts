@@ -13,7 +13,7 @@ import {
   stubRead,
   makeLocation,
   makeSubsidiary,
-  makeSuperAdmin,
+  makeMasterkey,
   makeDataEntry,
   type PrismaMock,
 } from '../../test/helpers';
@@ -164,7 +164,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('serialises Date fields to ISO strings in the DTO', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const created = new Date('2026-02-03T04:05:06.000Z');
       prisma.subsidiary.findMany.mockResolvedValue([
         makeSubsidiary({ id: 'sub-1', createdAt: created, updatedAt: created }),
@@ -198,7 +198,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('throws NotFound when the id is accessible but the row was deleted', async () => {
-      const user = makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = makeMasterkey({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findUnique.mockResolvedValue(null);
 
       await expect(service.get(user, 'sub-1')).rejects.toBeInstanceOf(NotFoundException);
@@ -208,7 +208,7 @@ describe('SubsidiariesService', () => {
   describe('create — RBAC + audit', () => {
     const dto = { legalName: 'New Co', geographyCode: 'UK' as const };
 
-    it('throws Forbidden for a non-super_admin and writes no data', async () => {
+    it('throws Forbidden for a non-masterkey and writes no data', async () => {
       const user = makeDataEntry();
 
       await expect(service.create(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
@@ -216,15 +216,15 @@ describe('SubsidiariesService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
-    it('throws Forbidden when a super_admin has no organisation context', async () => {
-      const user = makeSuperAdmin({ organisationId: null });
+    it('throws Forbidden when a masterkey has no organisation context', async () => {
+      const user = makeMasterkey({ organisationId: null });
 
       await expect(service.create(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
     });
 
-    it('creates and writes an audit log for super_admin', async () => {
-      const user = makeSuperAdmin();
+    it('creates and writes an audit log for masterkey', async () => {
+      const user = makeMasterkey();
       const created = makeSubsidiary({ id: 'sub-new', legalName: 'New Co' });
       prisma.txClient.subsidiary.create.mockResolvedValue(created);
             const result = await service.create(user, dto);
@@ -250,7 +250,7 @@ describe('SubsidiariesService', () => {
       // Round-1 SUB-3. Atomic on purpose: a subsidiary's locations are its
       // reporting borders, and a partial set is a completeness denominator
       // that is quietly wrong rather than obviously missing.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
 
       await service.create(user, {
@@ -291,7 +291,7 @@ describe('SubsidiariesService', () => {
       // rejection rather than a real rollback, but the shape is what matters:
       // the failure must propagate out of `create`, not be swallowed into a
       // subsidiary with a missing location.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
       locations.writeLocationForTrustedParent.mockRejectedValueOnce(
         new Error('location insert failed'),
@@ -310,7 +310,7 @@ describe('SubsidiariesService', () => {
       // Optional at this layer deliberately: the create FORM requires one, but
       // making it mandatory in the contract would break every existing caller,
       // and a holding entity with no distinct site is a real thing.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
 
       await service.create(user, { legalName: 'New Co', geographyCode: 'UK' });
@@ -320,7 +320,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('applies documented defaults (pending status, scopes [1,2]) for optional fields', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
             await service.create(user, dto);
 
@@ -332,7 +332,7 @@ describe('SubsidiariesService', () => {
   });
 
   describe('update — RBAC + audit', () => {
-    it('throws Forbidden for a non-super_admin and mutates nothing', async () => {
+    it('throws Forbidden for a non-masterkey and mutates nothing', async () => {
       const user = makeDataEntry();
 
       await expect(
@@ -344,11 +344,11 @@ describe('SubsidiariesService', () => {
 
     it('refuses to update a subsidiary outside the access set WITHOUT querying it', async () => {
       // Regression guard for the cross-tenant write hole: update used to check
-      // the ROLE only and then findUnique by id, so a super_admin of one
+      // the ROLE only and then findUnique by id, so a masterkey of one
       // organisation could edit another's subsidiary. The "never queried"
       // assertion is what distinguishes the fix from the old code — a
       // not-found id alone would 404 either way.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
 
       await expect(
         service.update(user, 'sub-of-another-org', { legalName: 'Hijacked' }),
@@ -359,7 +359,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('throws NotFound when an in-scope row has since been deleted', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(null);
 
       await expect(
@@ -368,8 +368,8 @@ describe('SubsidiariesService', () => {
       expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
     });
 
-    it('updates and audits with before/after diff for super_admin', async () => {
-      const user = makeSuperAdmin();
+    it('updates and audits with before/after diff for masterkey', async () => {
+      const user = makeMasterkey();
       const before = makeSubsidiary({ id: 'sub-1', legalName: 'Old' });
       const after = makeSubsidiary({ id: 'sub-1', legalName: 'New' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
@@ -388,7 +388,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('refuses location granularity for a subsidiary with no locations', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.location.count.mockResolvedValue(0);
 
@@ -406,7 +406,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('allows location granularity once a location exists', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const before = makeSubsidiary({ id: 'sub-1' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
       prisma.location.count.mockResolvedValue(2);
@@ -432,7 +432,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('refuses location granularity at CREATE without inline locations', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
 
       // The same invariant on the other write path. Stating it here as pure
       // input validation is what let `UpdateSubsidiaryInput` stay derived and
@@ -448,7 +448,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('accepts location granularity at CREATE when locations come with it', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.subsidiary.create.mockResolvedValue(
         makeSubsidiary({ id: 'sub-new', trackingGranularity: 'location' } as Partial<Subsidiary>),
       );
@@ -466,7 +466,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('never counts locations when switching BACK to subsidiary granularity', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(
         makeSubsidiary({ id: 'sub-1', trackingGranularity: 'location' } as Partial<Subsidiary>),
       );
@@ -487,7 +487,7 @@ describe('SubsidiariesService', () => {
       // calculation snapshot, so updating the subsidiary must not reach into
       // activity_records at all. If it ever did, the warning would be a lie and
       // historic emissions would silently change.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const before = makeSubsidiary({ id: 'sub-1', geographyCode: 'UK' });
       const after = makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
@@ -520,7 +520,7 @@ describe('SubsidiariesService', () => {
       // the entire unit suite: the existing test reads `calls[0][1]` and never
       // looks at the client. Create and delete were transactional and update
       // was not — one of three verbs able to lose its trail.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
 
@@ -531,7 +531,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('only includes explicitly-provided fields in the update payload', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
             await service.update(user, 'sub-1', { reportingStatus: 'active' });
@@ -547,7 +547,7 @@ describe('SubsidiariesService', () => {
       // DTO in `diff`, so contact details become permanent, uncorrectable rows
       // in an append-only log. Excluded here would mean "contact changed" is
       // unauditable, which is worse — but it IS a choice, so it is pinned.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       const created = makeSubsidiary({
         id: 'sub-new',
         designatedPerson: 'Aylin Demir',
@@ -580,7 +580,7 @@ describe('SubsidiariesService', () => {
       // `undefined` would serialise the key away entirely, so a client could
       // not tell "no contact recorded" from "this API version has no such
       // field". Every other optional column on this entity answers `null`.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
 
       const dto = await service.create(user, { legalName: 'New Co', geographyCode: 'UK' });
@@ -597,7 +597,7 @@ describe('SubsidiariesService', () => {
       // The `!== undefined` discipline is what makes this possible: an explicit
       // `null` clears the field, an absent key leaves it alone. A truthiness
       // check here would make a contact impossible to remove once set.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
 
@@ -611,7 +611,7 @@ describe('SubsidiariesService', () => {
 
   describe('summary — the counts behind the control panel', () => {
     it('reports every dependent class, and is tenant-scoped', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['approved', 'locked', 'submitted', 'draft', 'draft']);
       countLocations(prisma, { total: 2 });
@@ -647,7 +647,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('reports no blockers only when literally nothing is left', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
 
@@ -655,7 +655,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('a location a concurrent delete removed during the sweep counts as cleared: the subsidiary still goes (Codex review of #350)', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
@@ -674,7 +674,7 @@ describe('SubsidiariesService', () => {
       // It used to. The refusal existed because the FK cascade destroyed
       // locations unaudited; writing a row each removes the objection, and PR 3
       // made the friction routine by requiring a location at create time.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
@@ -712,7 +712,7 @@ describe('SubsidiariesService', () => {
       // violation. Counting every record at the location instead double-counted
       // this subsidiary's own (already in the three tiers) and produced advice
       // that contradicted itself: remove the location, and the location stays.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       countLocations(prisma, { total: 1 });
@@ -746,7 +746,7 @@ describe('SubsidiariesService', () => {
       // summary and the guard to it by setting each dependent to 1 ON ITS OWN
       // and asserting both answers. (It replaced a `BLOCKING_DEPENDENTS` array
       // that had to be kept in sync by hand — the array is gone, this is not.)
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       const byKey: Record<string, () => void> = {
@@ -779,7 +779,7 @@ describe('SubsidiariesService', () => {
       // the seed ships zero period locks and every assertion compared 0 to 0.
       // Shared with the delete guard, that would make every subsidiary in the
       // database undeletable the moment one lock existed anywhere.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
 
@@ -802,7 +802,7 @@ describe('SubsidiariesService', () => {
       // `remove()` locks the row before counting; `summary()` deliberately does
       // not. Pinned as a NEGATIVE so nobody later "fixes" the snapshot skew
       // below by putting a FOR UPDATE inside a GET.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
 
@@ -818,7 +818,7 @@ describe('SubsidiariesService', () => {
       // accounts of one rule would read like two rules — prose drift, which is
       // worse than the numeric drift `countDependents` was extracted to stop,
       // because nothing typechecks a sentence.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['submitted', 'draft']);
       countLocations(prisma, { total: 1 });
@@ -840,7 +840,7 @@ describe('SubsidiariesService', () => {
       // An approved record is not an item to clear — the answer is that the
       // subsidiary stays. Splitting it into a phrase like the others would
       // invite a UI to render it as a to-do.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['approved', 'locked']);
       stubRead(prisma, (c) => c.location.count, 3);
@@ -855,7 +855,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('is empty when nothing blocks', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
 
@@ -873,7 +873,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('is readable by a non-admin inside the tenant (reads are not role-gated)', async () => {
-      // SUB-2: the PANEL is super_admin-only, but reads stay tenant-scoped for
+      // SUB-2: the PANEL is masterkey-only, but reads stay tenant-scoped for
       // everyone — and this exposes nothing a data_entry user could not already
       // count by listing the collections they can see, only far more cheaply.
       const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
@@ -885,7 +885,7 @@ describe('SubsidiariesService', () => {
   });
 
   describe('remove — RBAC + audit', () => {
-    it('throws Forbidden for a non-super_admin and deletes nothing', async () => {
+    it('throws Forbidden for a non-masterkey and deletes nothing', async () => {
       const user = makeDataEntry();
 
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ForbiddenException);
@@ -894,7 +894,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('refuses to delete a subsidiary outside the access set WITHOUT querying it', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
 
       await expect(service.remove(user, 'sub-of-another-org')).rejects.toBeInstanceOf(
         NotFoundException,
@@ -905,7 +905,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('throws NotFound when an in-scope row has since been deleted', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(null);
 
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(NotFoundException);
@@ -913,7 +913,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('answers 404, not a 500, when a concurrent delete wins while it waits for the row lock (pre-pilot defects)', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       // The other request committed its delete: the lock reads back no row.
       prisma.$queryRaw.mockResolvedValueOnce([]);
@@ -931,7 +931,7 @@ describe('SubsidiariesService', () => {
       // measured live, the delete then went through with 200. Sending that
       // caller to "inactive" forecloses an action the API actually grants, the
       // same error as promising a delete that cannot happen, inverted.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['submitted', 'under_review']);
 
@@ -947,7 +947,7 @@ describe('SubsidiariesService', () => {
       // FOR KEY SHARE lock on the parent row, so locking it FOR UPDATE first
       // serialises the guard against a concurrent create — and the loser of
       // that race is not an error, it is a row the FK cascades away silently.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
 
@@ -974,7 +974,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('refuses to delete a subsidiary whose only records were VOIDED', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['voided']);
 
@@ -990,7 +990,7 @@ describe('SubsidiariesService', () => {
     });
 
   it('lists the removable dependents as facts in the order the sentence names them', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['submitted', 'draft', 'draft']);
       countLocations(prisma, { total: 2, holdingForeign: 1 });
@@ -1019,7 +1019,7 @@ describe('SubsidiariesService', () => {
       // and period locks. Measured: a record taken through submit AND approve
       // was a 404 immediately after one DELETE, leaving one "delete subsidiary"
       // audit row and nothing about the approved figures that went with it.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, Array(101).fill('approved').concat('locked'));
 
@@ -1036,7 +1036,7 @@ describe('SubsidiariesService', () => {
       // A confirmed or captured version records the inventory a report was
       // issued from and never changes, so nothing the caller clears unblocks
       // this: the same advice as committed records.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       countBoundaryVersions(prisma, { frozen: 2, open: 1 });
@@ -1050,7 +1050,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('blocks on an open inventory boundary version that declares it, and says how to clear it (W9)', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       countBoundaryVersions(prisma, { open: 2 });
@@ -1062,7 +1062,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('the panel agrees with the guard on boundary versions, and the summary DTO gains no field', async () => {
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       countBoundaryVersions(prisma, { open: 1 });
@@ -1082,7 +1082,7 @@ describe('SubsidiariesService', () => {
       // through their own endpoint. Sending that caller to `inactive` would be
       // the mirror image of unfollowable advice: telling someone not to bother
       // with the one action that would work.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['draft', 'draft', 'rejected']);
 
@@ -1097,7 +1097,7 @@ describe('SubsidiariesService', () => {
       // `DELETE /period-locks/:id` writes — a closed reporting period reopened
       // with no trace. Same for targets and denominators: compliance artifacts
       // that would vanish behind one "delete subsidiary" row.
-      const user = makeSuperAdmin();
+      const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       stubRead(prisma, (c) => c.periodLock.count, 1);
@@ -1115,8 +1115,8 @@ describe('SubsidiariesService', () => {
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
-    it('deletes and audits with the before snapshot for super_admin', async () => {
-      const user = makeSuperAdmin();
+    it('deletes and audits with the before snapshot for masterkey', async () => {
+      const user = makeMasterkey();
       const before = makeSubsidiary({ id: 'sub-1' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
       prisma.txClient.subsidiary.delete.mockResolvedValue(before);

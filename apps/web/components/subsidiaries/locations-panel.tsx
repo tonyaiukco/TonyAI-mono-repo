@@ -35,7 +35,7 @@ interface LocationsPanelProps {
    *  subsidiary. The drawer keeps the nullable prop as its open/closed signal. */
   subsidiary: SubsidiaryDTO;
   locations: LocationDTO[];
-  /** Only super_admin may add/edit/delete (org structure). */
+  /** Only masterkey may add/edit/delete (org structure). */
   canManage: boolean;
   /** Called after any successful mutation so the parent can refetch. */
   onChanged: () => Promise<void> | void;
@@ -219,7 +219,7 @@ export function LocationsPanel({
           </div>
         )}
 
-        {/* Add / edit form — super_admin only */}
+        {/* Add / edit form — masterkey only */}
         {canManage ? (
           <div className="space-y-4 border-t border-border pt-4">
             <div className="flex items-center justify-between">

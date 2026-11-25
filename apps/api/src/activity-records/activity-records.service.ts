@@ -193,16 +193,16 @@ export function evidenceReadyWhere() {
 }
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
-const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
+const REVIEW_ROLES = new Set(['consultant', 'masterkey']);
 // Who may APPROVE is `mayApproveRecords` (@tonyai/shared-types): `consultant`
-// or `super_admin`. Until 2026-11-12 approval was super_admin only; the owner
+// or `masterkey`. Until 2026-11-12 approval was masterkey only; the owner
 // reversed that (Decisions 2026-11-12, K2) so that a one-person customer's
 // approver can be its external consultant. D01 still applies to every approver
 // (see `approve`), and every other approval gate is role-blind.
 //
-// Roles allowed to VOID — `super_admin` only, and deliberately NOT derived from
+// Roles allowed to VOID — `masterkey` only, and deliberately NOT derived from
 // the approval rule: widening approval must never widen void (see `void`).
-const VOID_ROLES = new Set(['super_admin']);
+const VOID_ROLES = new Set(['masterkey']);
 /**
  * A review decision is about the submission the reviewer saw (BUG-R2-03
  * review, P1). Since an author may recall a submitted record, edit it and
@@ -617,9 +617,9 @@ export class ActivityRecordsService {
   }
 
   /**
-   * The edit gate: an author role, the record's own author — `super_admin`
+   * The edit gate: an author role, the record's own author — `masterkey`
    * included, never exempt (BUG-R2-03, decision 2026-11-10 (fourth), 5) — and
-   * an editable status. Before, a super_admin could edit a colleague's draft
+   * an editable status. Before, a masterkey could edit a colleague's draft
    * and approve it once submitted, which D01 (creator ≠ approver) could not
    * see. `mayEditRecord` in the contract is the same rule for the screens.
    */
@@ -636,7 +636,7 @@ export class ActivityRecordsService {
   }
 
   /**
-   * The delete gate: author or `super_admin`, as before BUG-R2-03. A draft
+   * The delete gate: author or `masterkey`, as before BUG-R2-03. A draft
    * counts towards nothing, so an administrator removing a colleague's
    * abandoned draft changes no figure anyone will approve.
    */
@@ -646,7 +646,7 @@ export class ActivityRecordsService {
         'Your role may not modify activity records',
       );
     }
-    if (user.role !== 'super_admin' && record.createdBy !== user.id) {
+    if (user.role !== 'masterkey' && record.createdBy !== user.id) {
       throw new ForbiddenException(
         'You may only modify activity records you created',
       );
@@ -720,7 +720,7 @@ export class ActivityRecordsService {
   /**
    * Period-lock gate (FR §4.2): while a `period_locks` row exists for the
    * record's (subsidiary, year, period, periodValue), NO create/update/delete/
-   * submit is allowed — the period is closed. super_admin must unlock first.
+   * submit is allowed — the period is closed. masterkey must unlock first.
    */
   private async assertPeriodNotLocked(
     period: PeriodKey,
@@ -730,7 +730,7 @@ export class ActivityRecordsService {
     const lock = await client.periodLock.findFirst({ where: periodOf(period) });
     if (lock) {
       throw new PeriodLockedError(
-        `Reporting period ${periodValue} ${reportingYear} is locked — a super_admin must unlock it before records can change.`,
+        `Reporting period ${periodValue} ${reportingYear} is locked — a masterkey must unlock it before records can change.`,
         { periodValue, reportingYear },
       );
     }
@@ -1349,7 +1349,7 @@ export class ActivityRecordsService {
           );
         }
         // Only the author submits (decision D02, 2026-09-29) — a draft as much
-        // as a rejected record, and `super_admin` is not exempt. Resubmitting
+        // as a rejected record, and `masterkey` is not exempt. Resubmitting
         // REVERSES a reviewer's decision, and submitting at all moves a
         // colleague's half-finished figure out of their hands into review. It
         // is also what makes the submitter always the creator, which the
@@ -1437,7 +1437,7 @@ export class ActivityRecordsService {
    * (fourth), 1): its author takes it back before review starts, edits it and
    * submits it again. Only from `submitted` — once a reviewer has taken it into
    * review, the reviewer returns it (reject), so nobody approves a figure that
-   * changed while they were looking at it. Only the author, `super_admin`
+   * changed while they were looking at it. Only the author, `masterkey`
    * included, as with submit (D02).
    *
    * The inputs and the figure do not change: the database freezes them on
@@ -1485,7 +1485,7 @@ export class ActivityRecordsService {
     const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
       throw new ForbiddenException(
-        'Only a consultant or super_admin may review records',
+        'Only a consultant or masterkey may review records',
       );
     }
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
@@ -1517,7 +1517,7 @@ export class ActivityRecordsService {
   async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!mayApproveRecords(user)) {
-      throw new ForbiddenException('Only a consultant or super_admin may approve records');
+      throw new ForbiddenException('Only a consultant or masterkey may approve records');
     }
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
@@ -1539,7 +1539,7 @@ export class ActivityRecordsService {
       });
       // Segregation of duties (decision D01, 2026-09-29): the approver is
       // neither the creator nor the submitter, whatever the approver's role —
-      // `super_admin` and `consultant` included, and a user whose role changed
+      // `masterkey` and `consultant` included, and a user whose role changed
       // since they created the record. Only the author may submit, so the
       // submitter IS the creator and one comparison covers both.
       if (record.createdBy === user.id) {
@@ -1582,7 +1582,7 @@ export class ActivityRecordsService {
    * `approved` and `locked` are immutable, and that is correct: a figure a
    * reviewer accepted must not be quietly edited away. But it left a record
    * entered in error with no exit at all — update, remove, submit, review,
-   * approve and reject all refuse both statuses, and `super_admin` does not
+   * approve and reject all refuse both statuses, and `masterkey` does not
    * override it, because `assertCanEdit` checks role and status
    * independently. Deleting was the only remedy and the API refuses that too.
    *
@@ -1592,7 +1592,7 @@ export class ActivityRecordsService {
    * baseline excludes it by construction rather than by a filter each call site
    * has to remember.
    *
-   * `super_admin` only, narrower than `REVIEW_ROLES` on purpose: a consultant
+   * `masterkey` only, narrower than `REVIEW_ROLES` on purpose: a consultant
    * may send a record back for revision (`reject`), but removing an accepted
    * figure from the client's reported inventory is the holding company's own
    * decision. A consultant may approve (Decisions 2026-11-12, K2) but not
@@ -1609,7 +1609,7 @@ export class ActivityRecordsService {
   ): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!VOID_ROLES.has(user.role)) {
-      throw new ForbiddenException('Only a super_admin may void records');
+      throw new ForbiddenException('Only a masterkey may void records');
     }
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
@@ -1648,7 +1648,7 @@ export class ActivityRecordsService {
     const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
       throw new ForbiddenException(
-        'Only a consultant or super_admin may return records',
+        'Only a consultant or masterkey may return records',
       );
     }
     assertSubmissionNamed(seenSubmittedAt);

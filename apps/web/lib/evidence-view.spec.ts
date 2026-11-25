@@ -41,7 +41,7 @@ const removeFileLabel = (f: Parameters<typeof removeFileLabelIn>[0]) => removeFi
 const sharedWithNote = (f: Parameters<typeof sharedWithNoteIn>[0], id: string) => sharedWithNoteIn(f, id, ev());
 
 const ME: SubmittingUser = { id: 'user-me', role: 'data_entry' };
-const ADMIN: SubmittingUser = { id: 'user-admin', role: 'super_admin' };
+const ADMIN: SubmittingUser = { id: 'user-admin', role: 'masterkey' };
 
 function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
   return {
@@ -88,7 +88,7 @@ describe('attachBlockReason — the upload’s refusals, in the evidence API’s
     expect(attachBlockReason(draft({ status: 'under_review' }), ME)).toBe('Already under review.');
   });
 
-  it('refuses a colleague’s record, a super_admin included (Decisions 2026-11-12)', () => {
+  it('refuses a colleague’s record, a masterkey included (Decisions 2026-11-12)', () => {
     const theirs = draft({ createdBy: 'user-them' });
     expect(attachBlockReason(theirs, ME)).toBe('Entered by someone else.');
     expect(attachBlockReason(theirs, ADMIN)).toBe('Entered by someone else.');
@@ -97,7 +97,7 @@ describe('attachBlockReason — the upload’s refusals, in the evidence API’s
     expect(attachBlockReason({ ...theirs, status: 'submitted' }, ME)).toBe('Entered by someone else.');
   });
 
-  it('offers a super_admin only their own records in the attach step (Decisions 2026-11-12)', () => {
+  it('offers a masterkey only their own records in the attach step (Decisions 2026-11-12)', () => {
     const own = draft({ id: 'own', createdBy: ADMIN.id });
     const theirs = draft({ id: 'theirs', createdBy: 'user-them' });
     expect(attachableRecords([own, theirs], ADMIN)).toEqual({

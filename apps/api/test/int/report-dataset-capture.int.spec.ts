@@ -5,7 +5,7 @@
  * guard (TA016) as every writer meets it.
  *
  * A capture freezes an open version in a READ COMMITTED transaction of its
- * own — super_admin's alone — before its REPEATABLE READ snapshot opens; a
+ * own — masterkey's alone — before its REPEATABLE READ snapshot opens; a
  * retry freezes nothing; one that fails after its freeze leaves the version
  * frozen and no dataset (PR B follow-up (4a)). Everything a dataset holds is
  * one moment's: a rename, a withdrawal, a new record and a void committed
@@ -167,7 +167,7 @@ function holdingDeclaration(): PutInventoryBoundarySubsidiaryRequest {
   };
 }
 
-const admin = () => t.users.superAdmin;
+const admin = () => t.users.masterkey;
 /** A user as the guard would build it: every subsidiary of the organisation, now. */
 async function withAccess(user: RequestUser): Promise<RequestUser> {
   const subs = await owner.subsidiary.findMany({ where: { organisationId: t.organisationId }, select: { id: true } });
@@ -330,7 +330,7 @@ describe('a capture over HTTP', () => {
     expect(await datasetCount()).toBe(2);
   });
 
-  it('lets only super_admin freeze an open version; a consultant captures one already frozen; data_entry and executive_viewer capture nothing', async () => {
+  it('lets only masterkey freeze an open version; a consultant captures one already frozen; data_entry and executive_viewer capture nothing', async () => {
     const boundaryId = await openVersion();
     for (const user of [t.users.dataEntry, t.users.executiveViewer]) {
       const refused = await capture(user, { boundaryId });
@@ -667,7 +667,7 @@ describe('who reads a retained dataset', () => {
     const { datasetId } = summaryOf(await capture(admin(), { boundaryId }));
     const other = await createTenant();
     try {
-      const theirs = other.users.superAdmin;
+      const theirs = other.users.masterkey;
       const foreignCapture = await capture(theirs, { boundaryId });
       const unknownCapture = await capture(theirs, { boundaryId: randomUUID() });
       expect([foreignCapture.status, foreignCapture.code]).toEqual([404, 'boundary_not_found']);

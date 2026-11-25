@@ -91,8 +91,8 @@ export const USERS_SORT: KeysetSort = {
 
 /** Reading users is the tenant administrator's, like changing them. */
 function adminOrganisation(actor: RequestUser): string {
-  if (actor.role !== 'super_admin' || !actor.organisationId) {
-    throw new ForbiddenException('Only a super_admin manages users.');
+  if (actor.role !== 'masterkey' || !actor.organisationId) {
+    throw new ForbiddenException('Only a masterkey manages users.');
   }
   return actor.organisationId;
 }

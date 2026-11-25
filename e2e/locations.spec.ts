@@ -95,7 +95,7 @@ test('a subsidiary holding committed records cannot be deleted', async ({ reques
     multipart: { file: { name: 'guard.pdf', mimeType: 'application/pdf', buffer: readFileSync(EVIDENCE_FIXTURE) } },
   });
   await request.post(`${API_BASE}/activity-records/${rec.id}/submit`, { headers: bearer(token) });
-  // The other super_admin approves: nobody approves a record they created (D01).
+  // The other masterkey approves: nobody approves a record they created (D01).
   const approver = await getAccessToken(request, APPROVER_EMAIL);
   const approved = await request.post(`${API_BASE}/activity-records/${rec.id}/approve`, {
     headers: bearer(approver),
@@ -306,7 +306,7 @@ test('locationName is a read-time field and never enters the audit trail', async
   await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
 });
 
-test('only a super_admin may write locations', async ({ page, request }) => {
+test('only a masterkey may write locations', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const entry = await getAccessToken(request, ENTRY_EMAIL);
   const sub = await makeSubsidiary(request, token, 'E2E Test Co Loc RBAC');

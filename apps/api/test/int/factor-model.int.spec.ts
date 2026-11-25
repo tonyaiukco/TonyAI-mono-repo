@@ -163,7 +163,7 @@ describe('K5 — a snapshot that has left draft never changes', () => {
     await runtime.activityRecord.updateMany({ where: { id: approved.id }, data: { status: ActivityRecordStatus.approved } });
     await runtime.activityRecord.update({
       where: { id: approved.id },
-      data: { status: ActivityRecordStatus.voided, voidReason: 'int test', voidedBy: tenant.users.superAdmin.id, voidedAt: new Date() },
+      data: { status: ActivityRecordStatus.voided, voidReason: 'int test', voidedBy: tenant.users.masterkey.id, voidedAt: new Date() },
     });
   });
 
@@ -1280,7 +1280,7 @@ describe('the engine on the real library', () => {
       activityValue: 1,
       activityUnit: 'kWh',
     };
-    const foreignAnswer = await failure(records.previewCreate(foreign.users.superAdmin, dto));
+    const foreignAnswer = await failure(records.previewCreate(foreign.users.masterkey, dto));
     expect(foreignAnswer).toBeInstanceOf(NotFoundException);
     expect(foreignAnswer).not.toBeInstanceOf(NoEmissionFactorError);
     expect((foreignAnswer as NotFoundException).getResponse()).not.toHaveProperty('coverage');
@@ -1293,7 +1293,7 @@ describe('the engine on the real library', () => {
       code: 'subsidiary_not_found',
     });
     // Positive control: the tenant's own administrator learns the gap.
-    const ownAnswer = await failure(records.previewCreate(tenant.users.superAdmin, dto));
+    const ownAnswer = await failure(records.previewCreate(tenant.users.masterkey, dto));
     expect((ownAnswer as NoEmissionFactorError).getResponse()).toMatchObject({ code: 'no_factor', coverage: { reportingYear: 2031 } });
   });
 });

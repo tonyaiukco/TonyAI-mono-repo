@@ -2,8 +2,8 @@
   "title": "Kullanıcılar",
   "subtitle": "Ana şirketinize kişileri davet edin, rollerini ve erişimlerini yönetin.",
   "invite": "Kullanıcı davet et",
-  "forbiddenTitle": "Kullanıcıları yalnızca süper yöneticiler yönetir",
-  "forbidden": "Kişileri davet etmek, rollerini veya erişimlerini değiştirmek ana şirketinizin süper yöneticilerine aittir. Rolünüz: {role}.",
+  "forbiddenTitle": "Kullanıcıları yalnızca masterkey'ler yönetir",
+  "forbidden": "Kişileri davet etmek, rollerini veya erişimlerini değiştirmek ana şirketinizin masterkey'lerine aittir. Rolünüz: {role}.",
   "loadFailed": "Kullanıcılar yüklenemedi.",
   "empty": "Henüz kullanıcı yok.",
   "loadMore": "Daha fazla yükle",
@@ -16,7 +16,7 @@
     "actions": "İşlemler"
   },
   "roles": {
-    "super_admin": "Süper yönetici",
+    "masterkey": "Masterkey",
     "consultant": "Danışman",
     "data_entry": "Veri girişi",
     "executive_viewer": "Yönetici izleyici"
@@ -67,7 +67,7 @@
     "emptyWarning": "En az bir bağlı şirket işaretlenene kadar bu kullanıcı veri giremez."
   },
   "roleAccessNote": {
-    "super_admin": "Süper yönetici ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez.",
+    "masterkey": "Masterkey ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez.",
     "consultant": "Danışman ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez.",
     "executive_viewer": "Yönetici izleyici ana şirketin tüm bağlı şirketlerini görür. Bağlı şirket seçmek gerekmez."
   },

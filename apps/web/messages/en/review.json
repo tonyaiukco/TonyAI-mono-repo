@@ -3,7 +3,7 @@
   "subtitle": "Records awaiting a decision",
   "subtitleUser": "Records awaiting a decision · {name} ({role})",
   "gate": {
-    "title": "Reviewing is done by a consultant or a super_admin",
+    "title": "Reviewing is done by a consultant or a masterkey",
     "body": "This is not hidden data — records you can already see on the Emissions page are the same ones being decided here. Your role is <mono>{role}</mono>."
   },
   "allSubsidiaries": "All subsidiaries",

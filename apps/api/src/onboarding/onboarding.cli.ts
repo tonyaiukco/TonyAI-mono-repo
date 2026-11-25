@@ -3,7 +3,7 @@
  * K6; LP4-01 PR B). No HTTP surface offboards or reconciles; one creates an
  * organisation — the code-gated self-service registration, where an
  * environment enables it (`users/registration.service.ts`, 2026-11-11). A
- * tenant's own `super_admin` invites everyone else from the users screen.
+ * tenant's own `masterkey` invites everyone else from the users screen.
  *
  * Usage (from the repository root; arguments after the script name):
  *
@@ -20,7 +20,7 @@
  *                    against a typo, not a control (a tunnel to production is "localhost" too)
  *
  * `provision` creates the organisation (or uses --organisation-id's) and its
- * first `super_admin`, and sends the invitation (TR/EN by --language). A new
+ * first `masterkey`, and sends the invitation (TR/EN by --language). A new
  * organisation also gets its default subsidiary — named by --legal-name, with
  * its trading name, sector and geography (one of UK, TR, EU) — so a facility
  * can be added at once (UAT round 2, K1); --organisation-id adds none. Re-run

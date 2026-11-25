@@ -41,21 +41,21 @@ describe('AccessAdminService — LP4-01 refusals before the database is touched'
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('nobody disables their own account (so the actor always stays an active super_admin) — in any spelling of the id', async () => {
+  it('nobody disables their own account (so the actor always stays an active masterkey) — in any spelling of the id', async () => {
     const { prisma, service } = setup();
-    await expect(service.disableMember(user('super_admin'), 'actor')).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
-    await expect(service.disableMember(user('super_admin'), 'ACTOR')).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
-    await expect(service.setRole(user('super_admin'), 'ACTOR', UserRole.consultant)).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
+    await expect(service.disableMember(user('masterkey'), 'actor')).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
+    await expect(service.disableMember(user('masterkey'), 'ACTOR')).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
+    await expect(service.setRole(user('masterkey'), 'ACTOR', UserRole.consultant)).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('an invitation with grants for an organisation-wide role, an unknown role or language is refused', async () => {
     const { prisma, service } = setup();
-    await expect(service.inviteMember(user('super_admin'), { ...INVITE, role: UserRole.consultant, subsidiaryIds: ['s'] })).rejects.toMatchObject({
+    await expect(service.inviteMember(user('masterkey'), { ...INVITE, role: UserRole.consultant, subsidiaryIds: ['s'] })).rejects.toMatchObject({
       response: { code: 'access_role_mismatch' },
     });
-    await expect(service.inviteMember(user('super_admin'), { ...INVITE, role: 'platform_admin' as UserRole })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.inviteMember(user('super_admin'), { ...INVITE, language: 'de' as 'en' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.inviteMember(user('masterkey'), { ...INVITE, role: 'platform_admin' as UserRole })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.inviteMember(user('masterkey'), { ...INVITE, language: 'de' as 'en' })).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
@@ -69,12 +69,12 @@ describe('AccessAdminService — refused before the database is touched', () => 
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('a super_admin with no organisation administers nothing — there is no platform-wide administrator', async () => {
+  it('a masterkey with no organisation administers nothing — there is no platform-wide administrator', async () => {
     const { prisma, service } = setup();
-    await expect(service.grantSubsidiaryAccess(user('super_admin', null), 'p', 's')).rejects.toBeInstanceOf(
+    await expect(service.grantSubsidiaryAccess(user('masterkey', null), 'p', 's')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
-    await expect(service.setRole(user('super_admin', null), 'p', UserRole.consultant)).rejects.toBeInstanceOf(
+    await expect(service.setRole(user('masterkey', null), 'p', UserRole.consultant)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -82,7 +82,7 @@ describe('AccessAdminService — refused before the database is touched', () => 
 
   it('nobody changes their own role', async () => {
     const { prisma, service } = setup();
-    await expect(service.setRole(user('super_admin'), 'actor', UserRole.consultant)).rejects.toBeInstanceOf(
+    await expect(service.setRole(user('masterkey'), 'actor', UserRole.consultant)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -90,7 +90,7 @@ describe('AccessAdminService — refused before the database is touched', () => 
 
   it('an unknown role is refused', async () => {
     const { prisma, service } = setup();
-    await expect(service.setRole(user('super_admin'), 'p', 'platform_admin' as UserRole)).rejects.toBeInstanceOf(
+    await expect(service.setRole(user('masterkey'), 'p', 'platform_admin' as UserRole)).rejects.toBeInstanceOf(
       BadRequestException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -105,7 +105,7 @@ describe('AccessAdminService — every lookup is bounded by the actor\'s organis
     const tx = {
       $executeRaw: vi.fn(async () => 1),
       profile: {
-        findUnique: vi.fn(async () => ({ role: 'super_admin', organisationId: ORG })),
+        findUnique: vi.fn(async () => ({ role: 'masterkey', organisationId: ORG })),
         findFirst: vi.fn(async () => found.member ?? null),
       },
       subsidiary: { findFirst: vi.fn(async () => found.subsidiary ?? null) },
@@ -118,7 +118,7 @@ describe('AccessAdminService — every lookup is bounded by the actor\'s organis
 
   it("a grant looks the subsidiary up within the actor's organisation, and never writes on a miss", async () => {
     const { tx, service } = txStub({ member: { id: 'p', role: 'data_entry' } });
-    await expect(service.grantSubsidiaryAccess(user('super_admin'), 'p', 'foreign-subsidiary')).rejects.toThrow(
+    await expect(service.grantSubsidiaryAccess(user('masterkey'), 'p', 'foreign-subsidiary')).rejects.toThrow(
       'Subsidiary not found',
     );
     expect(tx.subsidiary.findFirst).toHaveBeenCalledWith(
@@ -129,7 +129,7 @@ describe('AccessAdminService — every lookup is bounded by the actor\'s organis
 
   it("the target profile is looked up within the actor's organisation", async () => {
     const { tx, service } = txStub({});
-    await expect(service.setRole(user('super_admin'), 'foreign-profile', UserRole.consultant)).rejects.toThrow(
+    await expect(service.setRole(user('masterkey'), 'foreign-profile', UserRole.consultant)).rejects.toThrow(
       'User not found',
     );
     expect(tx.profile.findFirst).toHaveBeenCalledWith(
@@ -200,7 +200,7 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     return { service, tx, prisma, audit, writes, audits, committed: () => committed };
   }
 
-  it('writes the organisation, its default subsidiary, its first super_admin, the invitation and the consent in one transaction', async () => {
+  it('writes the organisation, its default subsidiary, its first masterkey, the invitation and the consent in one transaction', async () => {
     const { service, tx, prisma, writes } = registrationSetup();
     const result = await service.registerOrganisation(INPUT);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
@@ -223,7 +223,7 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
       email: 'ada@example.test',
       fullName: 'Ada Yilmaz',
       jobTitle: 'Sustainability Manager',
-      role: UserRole.super_admin,
+      role: UserRole.masterkey,
       language: 'tr',
       organisationId: ORG,
     });
@@ -284,7 +284,7 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
 
 describe('inviteMember — refusals audited and bounded (pre-g5-security-hardening)', () => {
   const NOW = new Date('2026-11-24T10:00:00.000Z');
-  /** A transaction client for one invitation: the actor is an active super_admin of ORG. */
+  /** A transaction client for one invitation: the actor is an active masterkey of ORG. */
   function invitation(options: { refusals?: number; taken?: boolean; insertRace?: boolean } = {}) {
     const audit = { record: vi.fn(async () => undefined) };
     const tx = {
@@ -296,7 +296,7 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
       profile: {
         findUnique: vi.fn(async (args: { where: { id?: string; email?: string } }) =>
           args.where.id === 'actor'
-            ? { role: UserRole.super_admin, organisationId: ORG, disabledAt: null, organisation: { offboardedAt: null } }
+            ? { role: UserRole.masterkey, organisationId: ORG, disabledAt: null, organisation: { offboardedAt: null } }
             : options.taken ? { id: 'someone' } : null),
         create: vi.fn(async () => {
           if (options.insertRace) {
@@ -319,7 +319,7 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
 
   it('a taken address answers email_unavailable, creates nothing, and audits the refusal without the address', async () => {
     const { audit, tx, service } = invitation({ taken: true });
-    await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+    await expect(service.inviteMember(user('masterkey'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
     expect(tx.profile.create).not.toHaveBeenCalled();
     expect(tx.invitation.create).not.toHaveBeenCalled();
     const rows = refusalRows(audit);
@@ -332,14 +332,14 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
 
   it('a new address is invited as before, with no refusal row', async () => {
     const { audit, tx, service } = invitation();
-    await expect(service.inviteMember(user('super_admin'), INVITE)).resolves.toMatchObject({ profileId: expect.any(String) });
+    await expect(service.inviteMember(user('masterkey'), INVITE)).resolves.toMatchObject({ profileId: expect.any(String) });
     expect(tx.profile.create).toHaveBeenCalledTimes(1);
     expect(refusalRows(audit)).toHaveLength(0);
   });
 
   it.each([false, true])('at five refusals within the hour, every invitation is refused 429 before the lookup (taken: %s)', async (taken) => {
     const { audit, tx, service } = invitation({ refusals: 5, taken });
-    const refusal = await service.inviteMember(user('super_admin'), INVITE).catch((e: unknown) => e);
+    const refusal = await service.inviteMember(user('masterkey'), INVITE).catch((e: unknown) => e);
     expect(refusal).toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
     // The same answer, whatever the address: it was never looked up.
     expect(tx.profile.findUnique.mock.calls.filter((c) => c[0].where.email !== undefined)).toHaveLength(0);
@@ -351,7 +351,7 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
 
   it('below the bound, the count is read for this organisation and the last hour on the database clock', async () => {
     const { tx, service } = invitation({ refusals: 4 });
-    await service.inviteMember(user('super_admin'), INVITE);
+    await service.inviteMember(user('masterkey'), INVITE);
     expect((tx.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray])[0].join('?')).toBe('SELECT now() AS now');
     expect(tx.auditLog.aggregate).toHaveBeenCalledWith({
       where: { organisationId: ORG, action: 'invite_refused', createdAt: { gt: new Date(NOW.getTime() - 3_600_000) } },
@@ -365,13 +365,13 @@ describe('inviteMember — refusals audited and bounded (pre-g5-security-hardeni
     tx.auditLog.aggregate
       .mockResolvedValueOnce({ _count: 4, _min: { createdAt: new Date(NOW.getTime() - 10 * 60_000) } })
       .mockResolvedValueOnce({ _count: 5, _min: { createdAt: new Date(NOW.getTime() - 10 * 60_000) } });
-    await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
+    await expect(service.inviteMember(user('masterkey'), INVITE)).rejects.toMatchObject({ status: 429, response: { code: 'invite_refusals_exhausted' } });
     expect(refusalRows(audit)).toHaveLength(0);
   });
 
   it('an insert that loses the race for the address is the same refusal, audited in its own transaction', async () => {
     const { audit, prisma, service } = invitation({ insertRace: true });
-    await expect(service.inviteMember(user('super_admin'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
+    await expect(service.inviteMember(user('masterkey'), INVITE)).rejects.toMatchObject({ response: { code: 'email_unavailable' } });
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(refusalRows(audit)).toHaveLength(1);
   });

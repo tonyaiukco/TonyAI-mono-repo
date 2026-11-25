@@ -115,7 +115,7 @@ const record = (over: Partial<ActivityRecordDTO> = {}): ActivityRecordDTO => ({
 });
 
 describe('canOfferVoid', () => {
-  it('offers the control only to a super_admin', () => {
+  it('offers the control only to a masterkey', () => {
     expect(canOfferVoid({ status: 'approved' }, true)).toBe(true);
     // A consultant may take a record into review and send it back, but the
     // service refuses their void with a 403. Rendering a button that always

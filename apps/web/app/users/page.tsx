@@ -76,7 +76,7 @@ const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
 };
 
 /**
- * User and access management (LP4-01) — a super_admin's, for their own
+ * User and access management (LP4-01) — a masterkey's, for their own
  * organisation. Every change goes through the API, which answers the member
  * as they now stand; the row is replaced with that answer, so a step that did
  * not go through (an undelivered invitation, a pending sign-in block) shows at

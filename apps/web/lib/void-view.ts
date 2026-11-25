@@ -109,9 +109,9 @@ export function voidReasonError(reason: string, { t, locale }: ViewCopy<VoidKey>
  */
 export function canOfferVoid(
   record: Pick<ActivityRecordDTO, 'status'>,
-  isSuperAdmin: boolean,
+  isMasterkey: boolean,
 ): boolean {
-  return isSuperAdmin && record.status === 'approved';
+  return isMasterkey && record.status === 'approved';
 }
 
 export interface VoidConsequence {

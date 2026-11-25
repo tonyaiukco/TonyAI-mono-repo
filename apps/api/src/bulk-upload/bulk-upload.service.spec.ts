@@ -1775,7 +1775,7 @@ describe('BulkUploadService — the template', () => {
 });
 
 describe('BulkUploadService — what the UAT-prep review passes found', () => {
-  it.each(['data_entry', 'super_admin'] as const)('lets a %s through the role gate', async (role) => {
+  it.each(['data_entry', 'masterkey'] as const)('lets a %s through the role gate', async (role) => {
     // The gate is the record service's own rule. Narrowing it to one role
     // passed every test until this one.
     const { audit, service } = build();

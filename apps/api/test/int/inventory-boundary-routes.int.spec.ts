@@ -79,7 +79,7 @@ afterAll(async () => {
 beforeEach(async () => {
   t = await createTenant();
   S = t.subsidiaryId;
-  admin = t.users.superAdmin;
+  admin = t.users.masterkey;
   const site = async (subsidiaryId: string, name: string) =>
     (await owner.location.create({ data: { subsidiaryId, name, geographyCode: 'UK' } })).id;
   L1 = await site(S, 'Int-test L1');
@@ -244,7 +244,7 @@ const auditOf = (entityId: string) =>
 
 // --------------------------------------------------------------------------
 
-describe('who may do what (E2): super_admin writes and confirms; everyone else reads', () => {
+describe('who may do what (E2): masterkey writes and confirms; everyone else reads', () => {
   it('refuses every write by consultant, executive_viewer and data_entry with forbidden — changing nothing — and lets each read', async () => {
     const id = await versionWith([[S, completeS()]]);
     const before = await boundaryState();
@@ -285,7 +285,7 @@ describe('who may do what (E2): super_admin writes and confirms; everyone else r
     expect(await declared(id, S)).toBeNull();
   });
 
-  it('lets super_admin do every one of them', async () => {
+  it('lets masterkey do every one of them', async () => {
     const created = await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026 });
     expect(created.status).toBe(201);
     const { id } = json<InventoryBoundaryVersionDTO>(created);
@@ -417,7 +417,7 @@ describe("a version's life (E3, E4, W7, W10)", () => {
     // One audit row per write, in its own transaction's order.
     const trail = await auditOf(v1.id);
     expect(trail.map((r) => r.action)).toEqual(['create', 'update', 'update', 'update', 'confirm']);
-    expect(trail.every((r) => r.userId === admin.id && r.role === 'super_admin' && r.organisationId === t.organisationId)).toBe(true);
+    expect(trail.every((r) => r.userId === admin.id && r.role === 'masterkey' && r.organisationId === t.organisationId)).toBe(true);
     const [, firstS2, secondS2] = trail.slice(1);
     expect(firstS2.diff).toMatchObject({ subsidiaryId: S2, before: null });
     expect((secondS2.diff as { before: unknown }).before).toEqual((firstS2.diff as { after: unknown }).after);

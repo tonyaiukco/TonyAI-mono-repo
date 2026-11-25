@@ -13,11 +13,11 @@ const requireRole = (context: ExecutionContext, roles: ReadonlySet<string>, refu
   return true;
 };
 
-/** super_admin and consultant issue (W4); a final is super_admin's alone. */
+/** masterkey and consultant issue (W4); a final is masterkey's alone. */
 @Injectable()
 export class IssuerGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    return requireRole(context, ISSUE_ROLES, 'Only super_admin or consultant may issue a report');
+    return requireRole(context, ISSUE_ROLES, 'Only masterkey or consultant may issue a report');
   }
 }
 

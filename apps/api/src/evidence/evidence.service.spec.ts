@@ -409,12 +409,12 @@ describe('EvidenceService', () => {
       expect(storage.upload).not.toHaveBeenCalled();
     });
 
-    it('is a 404 for a record out of reach — for a super_admin too — before any storage', async () => {
+    it('is a 404 for a record out of reach — for a masterkey too — before any storage', async () => {
       prisma.activityRecord.findUnique.mockResolvedValue(
         makeRecord({ id: 'rec-x', subsidiaryId: 'sub-999' }),
       );
       await expect(
-        service.upload(dataEntry({ role: 'super_admin', id: 'admin' }), 'rec-x', makeFile()),
+        service.upload(dataEntry({ role: 'masterkey', id: 'admin' }), 'rec-x', makeFile()),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(storage.upload).not.toHaveBeenCalled();
     });
@@ -429,24 +429,24 @@ describe('EvidenceService', () => {
       expect(storage.upload).not.toHaveBeenCalled();
     });
 
-    it('refuses a super_admin on a colleague’s editable record: author-only (Decisions 2026-11-12)', async () => {
-      // Without this a super_admin could change a colleague's draft's evidence
+    it('refuses a masterkey on a colleague’s editable record: author-only (Decisions 2026-11-12)', async () => {
+      // Without this a masterkey could change a colleague's draft's evidence
       // and then approve it — D01 compares only the creator.
       const record = makeRecord({ id: 'rec-1', createdBy: 'someone-else' });
       prisma.activityRecord.findUnique.mockResolvedValue(record);
       stubStore([record]);
       await expect(
-        service.upload(dataEntry({ role: 'super_admin', id: 'admin' }), 'rec-1', makeFile()),
+        service.upload(dataEntry({ role: 'masterkey', id: 'admin' }), 'rec-1', makeFile()),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(storage.upload).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
-    it('lets a super_admin upload to a record they created, audited', async () => {
+    it('lets a masterkey upload to a record they created, audited', async () => {
       const record = makeRecord({ id: 'rec-1', createdBy: 'admin' });
       prisma.activityRecord.findUnique.mockResolvedValue(record);
       stubStore([record]);
-      await service.upload(dataEntry({ role: 'super_admin', id: 'admin' }), 'rec-1', makeFile());
+      await service.upload(dataEntry({ role: 'masterkey', id: 'admin' }), 'rec-1', makeFile());
       expect(storage.upload).toHaveBeenCalledOnce();
       expect(audit.record.mock.calls[0][1]).toMatchObject({ action: 'create', entity: 'evidence' });
     });
@@ -768,7 +768,7 @@ describe('EvidenceService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
-    it('refuses a super_admin whose selection holds a colleague’s record — all or nothing', async () => {
+    it('refuses a masterkey whose selection holds a colleague’s record — all or nothing', async () => {
       const own = makeRecord({ id: 'aaaaaaaa-0000-0000-0000-000000000001', createdBy: 'admin' });
       const colleague = makeRecord({ id: 'aaaaaaaa-0000-0000-0000-000000000003', createdBy: 'someone-else' });
       prisma.activityRecord.findMany.mockResolvedValue([own, colleague]);
@@ -777,7 +777,7 @@ describe('EvidenceService', () => {
       stubStore([own, colleague]);
 
       const error = await service
-        .uploadForRecords(dataEntry({ role: 'super_admin', id: 'admin' }), [own.id, colleague.id], makeFile())
+        .uploadForRecords(dataEntry({ role: 'masterkey', id: 'admin' }), [own.id, colleague.id], makeFile())
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(BadRequestException);
@@ -988,13 +988,13 @@ describe('EvidenceService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
-    it('refuses a super_admin taking a file off a colleague’s record (Decisions 2026-11-12)', async () => {
+    it('refuses a masterkey taking a file off a colleague’s record (Decisions 2026-11-12)', async () => {
       const theirs = makeRecord({ id: 'rec-1', status: ActivityRecordStatus.rejected, createdBy: 'someone-else' });
       prisma.activityRecord.findUnique.mockResolvedValue(theirs);
       // The file is found, so a regression would reach the delete and fail below.
       prisma.evidence.findFirst.mockResolvedValue(makeEvidence([theirs]));
       await expect(
-        service.detach(dataEntry({ role: 'super_admin', id: 'admin' }), 'rec-1', 'ev-1'),
+        service.detach(dataEntry({ role: 'masterkey', id: 'admin' }), 'rec-1', 'ev-1'),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.activityRecordEvidence.deleteMany).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
@@ -1064,13 +1064,13 @@ describe('EvidenceService', () => {
   });
 
   describe('remove — the file from every record', () => {
-    it('refuses a super_admin deleting a file shared with a colleague’s record: 409, naming it (Decisions 2026-11-12)', async () => {
+    it('refuses a masterkey deleting a file shared with a colleague’s record: 409, naming it (Decisions 2026-11-12)', async () => {
       const own = makeRecord({ id: 'rec-own', createdBy: 'admin' });
       const theirs = makeRecord({ id: 'rec-theirs', createdBy: 'someone-else', periodValue: 'February' });
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([own, theirs]));
       prisma.activityRecord.findMany.mockResolvedValue([own, theirs]);
 
-      const error = await service.remove(dataEntry({ role: 'super_admin', id: 'admin' }), 'ev-1').catch((e: unknown) => e);
+      const error = await service.remove(dataEntry({ role: 'masterkey', id: 'admin' }), 'ev-1').catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(ConflictException);
       expect((error as ConflictException).getResponse()).toMatchObject({
@@ -1082,12 +1082,12 @@ describe('EvidenceService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
-    it('refuses a super_admin deleting a file that backs a colleague’s record (Decisions 2026-11-12)', async () => {
+    it('refuses a masterkey deleting a file that backs a colleague’s record (Decisions 2026-11-12)', async () => {
       const record = makeRecord({ id: 'rec-1', createdBy: 'someone-else' });
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));
       prisma.activityRecord.findMany.mockResolvedValue([record]);
 
-      await expect(service.remove(dataEntry({ role: 'super_admin', id: 'admin' }), 'ev-1')).rejects.toBeInstanceOf(
+      await expect(service.remove(dataEntry({ role: 'masterkey', id: 'admin' }), 'ev-1')).rejects.toBeInstanceOf(
         ForbiddenException,
       );
       expect(prisma.evidence.delete).not.toHaveBeenCalled();

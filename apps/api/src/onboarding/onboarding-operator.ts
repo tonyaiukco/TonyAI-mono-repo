@@ -148,7 +148,7 @@ export class OnboardingOperator {
         throw new OperatorRefusal('That address already belongs to another organisation (D17: one organisation per account).');
       }
       if (org.offboardedAt) throw new OperatorRefusal('That organisation is offboarded.');
-      if (existing.role !== UserRole.super_admin) {
+      if (existing.role !== UserRole.masterkey) {
         throw new OperatorRefusal(`That address is already a ${existing.role} of the organisation; its administrators change roles in the app.`);
       }
       const invitation = existing.invitation?.status ?? 'none';
@@ -258,7 +258,7 @@ export class OnboardingOperator {
         }));
       }
       await tx.profile.create({
-        data: { id: profileId, email, fullName: input.adminName.trim(), role: UserRole.super_admin, language: input.language, organisationId: orgId },
+        data: { id: profileId, email, fullName: input.adminName.trim(), role: UserRole.masterkey, language: input.language, organisationId: orgId },
       });
       await tx.invitation.create({ data: { profileId, language: input.language, invitedBy: null } });
       await this.audit.recordSystem(
@@ -267,7 +267,7 @@ export class OnboardingOperator {
           action: 'invite',
           entity: 'invitation',
           entityId: profileId,
-          diff: this.operatorDiff('provision', { role: UserRole.super_admin, language: input.language, subsidiaryIds: [] }),
+          diff: this.operatorDiff('provision', { role: UserRole.masterkey, language: input.language, subsidiaryIds: [] }),
         },
         tx,
       );

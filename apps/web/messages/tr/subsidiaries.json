@@ -72,7 +72,7 @@
     "notFoundTitle": "Bağlı şirket bulunamadı",
     "notFoundBody": "Bu bağlı şirket yok ya da artık ona erişiminiz yok.",
     "backToList": "Bağlı şirketlere dön",
-    "readOnly": "Bu bağlı şirketi görüntüleyebilirsiniz, ancak yalnızca bir süper yönetici değiştirebilir.",
+    "readOnly": "Bu bağlı şirketi görüntüleyebilirsiniz, ancak yalnızca bir masterkey değiştirebilir.",
     "loadFailed": "Bu bağlı şirket yüklenemedi.",
     "tryAgain": "Yeniden dene",
     "loading": "Bağlı şirket yükleniyor…",
@@ -151,7 +151,7 @@
     "personPlaceholder": "Aylin Demir",
     "save": "Tesisi kaydet",
     "add": "İşletme / Tesis ekle",
-    "readOnly": "Tesisleri yalnızca bir süper yönetici ekleyebilir veya değiştirebilir.",
+    "readOnly": "Tesisleri yalnızca bir masterkey ekleyebilir veya değiştirebilir.",
     "nameRequired": "İşletme / Tesis adı zorunludur",
     "geographyRequired": "Coğrafya zorunludur",
     "updated": "Tesis güncellendi",
@@ -176,7 +176,7 @@
     "locking": "Kilitleniyor…",
     "lock": "Dönemi kilitle",
     "hint": "Dönemdeki kesinleşmiş kayıtlar <em>kilitli</em> olur; kilidi açmak onları yeniden <em>onaylanmış</em> yapar. Her iki işlem de denetim kaydına yazılır.",
-    "readOnly": "Raporlama dönemlerini yalnızca bir süper yönetici kilitleyebilir veya açabilir.",
+    "readOnly": "Raporlama dönemlerini yalnızca bir masterkey kilitleyebilir veya açabilir.",
     "locked": "{period} {year} kilitlendi — bu dönemdeki kayıtlar artık donduruldu",
     "unlocked": "{period} {year} kilidi açıldı"
   }

@@ -5,7 +5,7 @@ import {
 } from './helpers';
 
 /**
- * WP16 PR 2b — `/subsidiaries/[id]`, the super_admin control panel (round-1 UAT
+ * WP16 PR 2b — `/subsidiaries/[id]`, the masterkey control panel (round-1 UAT
  * SUB-2). It replaces the row-level Edit dialog, so this file inherits the edit
  * coverage that used to live in `smoke.spec.ts` and `grid-regions.spec.ts`.
  */
@@ -226,7 +226,7 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
   await login(page, ENTRY_EMAIL);
   await page.goto(`/subsidiaries/${SUB.energy}`);
 
-  await expect(page.getByText(/only a super_admin can change it/i)).toBeVisible();
+  await expect(page.getByText(/only a masterkey can change it/i)).toBeVisible();
 
   // By rule, not by sample: asserting two named fields left eight other write
   // controls ungated, and removing `disabled` from them stayed green.
@@ -238,13 +238,13 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
   }
   await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add facility' })).toHaveCount(0);
-  await expect(page.getByText('Only a super_admin can add or modify facilities.')).toBeVisible();
+  await expect(page.getByText('Only a masterkey can add or modify facilities.')).toBeVisible();
 
   // The period-locks drawer is mounted by this page too, and its gating was
   // only ever checked on the register. Flipping its canManage to true here
   // stayed green.
   await page.getByRole('button', { name: 'Reporting periods' }).click();
-  await expect(page.getByText(/only a super_admin can lock or unlock/i)).toBeVisible();
+  await expect(page.getByText(/only a masterkey can lock or unlock/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Lock period' })).toHaveCount(0);
   await page.keyboard.press('Escape');
 

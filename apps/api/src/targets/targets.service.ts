@@ -92,10 +92,10 @@ export class TargetsService {
     };
   }
 
-  /** Targets are org configuration — super_admin only (perm §5.3). */
+  /** Targets are org configuration — masterkey only (perm §5.3). */
   private assertCanManage(user: RequestUser): void {
-    if (user.role !== 'super_admin') {
-      throw new ForbiddenException('Only super_admin may manage targets');
+    if (user.role !== 'masterkey') {
+      throw new ForbiddenException('Only masterkey may manage targets');
     }
   }
 

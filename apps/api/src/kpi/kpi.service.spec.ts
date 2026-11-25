@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   createPrismaMock,
   makeSubsidiary,
-  makeSuperAdmin,
+  makeMasterkey,
   makeDataEntry,
   type PrismaMock,
 } from '../../test/helpers';
@@ -45,7 +45,7 @@ describe('KpiService.summary', () => {
   });
 
   it('counts total/active/pending and breaks down geography (known input -> known output)', async () => {
-    const user = makeSuperAdmin();
+    const user = makeMasterkey();
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ reportingStatus: 'active', geographyCode: 'UK' }),
       makeSubsidiary({ reportingStatus: 'active', geographyCode: 'UK' }),

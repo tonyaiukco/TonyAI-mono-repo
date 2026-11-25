@@ -244,18 +244,18 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     const before = await auditRows();
 
     const answers = await Promise.all(
-      [A.users.superAdmin, A.users.consultant, A.users.executiveViewer, A.users.dataEntry].map((u) =>
+      [A.users.masterkey, A.users.consultant, A.users.executiveViewer, A.users.dataEntry].map((u) =>
         trailOf(u, approved.id),
       ),
     );
     expect(answers.map((a) => a.status)).toEqual([200, 200, 200, 200]);
     // Two reads hold the same events and write no audit row.
-    expect(answers[0].text).toBe((await trailOf(A.users.superAdmin, approved.id)).text);
+    expect(answers[0].text).toBe((await trailOf(A.users.masterkey, approved.id)).text);
     expect(await auditRows()).toBe(before);
   });
 
   it('refuses a data_entry user the trail of a colleague\'s record, which they can read', async () => {
-    const colleagues = await createRecord(owner, A, { createdBy: A.users.superAdmin.id, periodValue: 'February' });
+    const colleagues = await createRecord(owner, A, { createdBy: A.users.masterkey.id, periodValue: 'February' });
     expect((await call(A.users.dataEntry, 'GET', `/activity-records/${colleagues.id}`)).status).toBe(200);
     const refused = await trailOf(A.users.dataEntry, colleagues.id);
     expect(refused.status).toBe(403);
@@ -264,8 +264,8 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
 
   it('refuses a record of another organisation exactly as its read is', async () => {
     const recordB = await createRecord(owner, B, { periodValue: 'March' });
-    const read = await call(A.users.superAdmin, 'GET', `/activity-records/${recordB.id}`);
-    const trail = await trailOf(A.users.superAdmin, recordB.id);
+    const read = await call(A.users.masterkey, 'GET', `/activity-records/${recordB.id}`);
+    const trail = await trailOf(A.users.masterkey, recordB.id);
     expect(read.status).toBe(404);
     expect(trail).toEqual(read);
   });
@@ -327,7 +327,7 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     const first = await elevenEventStory(A);
     const neighbour = await createRecord(owner, A, { periodValue: 'May' });
     await ok(A.users.dataEntry, 'PATCH', `/activity-records/${neighbour.id}`, { activityValue: 7 });
-    const trail = JSON.parse((await trailOf(A.users.superAdmin, first.id)).text) as RecordAuditTrailDTO;
+    const trail = JSON.parse((await trailOf(A.users.masterkey, first.id)).text) as RecordAuditTrailDTO;
     const ids = new Set(
       (await owner.auditLog.findMany({ where: { entityId: neighbour.id }, select: { id: true } })).map((r) => r.id),
     );

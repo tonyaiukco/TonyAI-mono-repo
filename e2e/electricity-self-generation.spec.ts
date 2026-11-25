@@ -382,7 +382,7 @@ test('a voided record copied to a new draft keeps its block', async ({ page, req
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await draftWithBlock(request, token);
   // Electricity needs its evidence at submit and approval (K3); a second
-  // super_admin approves, since nobody approves their own record (D01).
+  // masterkey approves, since nobody approves their own record (D01).
   await attachEvidence(request, token, id);
   const submitted = await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(token) });
   expect(submitted.ok(), await submitted.text()).toBe(true);

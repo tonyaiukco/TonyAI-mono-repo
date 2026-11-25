@@ -30,10 +30,10 @@ import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 // The taxonomy lives in @tonyai/shared-types — one source of truth. Writers
 // import it from there directly rather than through this module.
 
-/** Reading the trail is super_admin-only, matching the RLS policy exactly.
+/** Reading the trail is masterkey-only, matching the RLS policy exactly.
  * The API is the primary control (Prisma connects as the runtime role, which
  * bypasses RLS — LP1-03), so this check is what actually enforces it. */
-const READ_ROLES = new Set<UserRole>(['super_admin']);
+const READ_ROLES = new Set<UserRole>(['masterkey']);
 
 /** Accepts a transaction client so the audit row commits with the mutation. */
 type Writer = Pick<Prisma.TransactionClient, 'auditLog'>;
@@ -141,7 +141,7 @@ export class AuditService {
     query: ListAuditQueryDto,
   ): Promise<Paginated<AuditLogDTO>> {
     if (!READ_ROLES.has(user.role)) {
-      throw new ForbiddenException('Only a super_admin may read the audit trail');
+      throw new ForbiddenException('Only a masterkey may read the audit trail');
     }
     if (!user.organisationId) {
       // Default-deny, mirroring the guard's treatment of an org-less profile.

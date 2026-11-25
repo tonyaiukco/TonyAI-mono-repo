@@ -1350,7 +1350,7 @@ function DataEntryPageInner() {
       toast.info(t("notEditable", { status: tStatus(`inline.${rec.status}`) }));
       return;
     }
-    // Only a record's author edits it, super_admin included (BUG-R2-03,
+    // Only a record's author edits it, masterkey included (BUG-R2-03,
     // `mayEditRecord`), so a colleague's draft would open, accept typing, and
     // only then 403. On a deep link this happens with no click at all — the
     // user would be looking at someone else's figures believing they were

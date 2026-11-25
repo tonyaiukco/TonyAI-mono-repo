@@ -72,7 +72,7 @@ const admin: RequestUser = {
   id: 'admin-1',
   email: 'admin@tonyai.local',
   fullName: 'Admin User',
-  role: 'super_admin',
+  role: 'masterkey',
   accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
 } as RequestUser;
 
@@ -194,7 +194,7 @@ describe('TargetsService', () => {
     expect(prisma.target.findMany).not.toHaveBeenCalled();
   });
 
-  it('create is forbidden for non-super_admin (and writes nothing)', async () => {
+  it('create is forbidden for non-masterkey (and writes nothing)', async () => {
     await expect(service.create(entry, validInput)).rejects.toBeInstanceOf(
       ForbiddenException,
     );

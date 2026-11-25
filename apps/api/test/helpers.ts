@@ -201,12 +201,12 @@ export function makeLocation(
   } as import('@tonyai/db').Location;
 }
 
-export function makeSuperAdmin(overrides: Partial<RequestUser> = {}): RequestUser {
+export function makeMasterkey(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
     fullName: 'Admin User',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3', 'sub-4', 'sub-5'],
     ...overrides,

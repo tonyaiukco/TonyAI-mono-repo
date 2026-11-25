@@ -69,7 +69,7 @@ const TENANT_TABLES = [
   'subsidiaries',
   // `profiles` joined for the same reason `subsidiaries` did. It has always
   // held personal data, but until WP22 the only API surface exposing another
-  // person's identity was `/audit`, which is super_admin-only. Record actor
+  // person's identity was `/audit`, which is masterkey-only. Record actor
   // names now flow to every tenant reader, so the containment of the table
   // behind them has to be asserted rather than assumed from the ENABLE bit.
   'profiles',
@@ -191,14 +191,14 @@ async function ownerDb() {
 
 // period_locks is empty in the seed → seed a temporary pair (one accessible to
 // entry, one not) so the entry>0 and entry<service assertions have data.
-// The seeded admin by address, not "any super_admin": an organisation the
+// The seeded admin by address, not "any masterkey": an organisation the
 // operator CLI provisioned locally (LP4-01) has one too, in another tenant.
 async function seedPeriodLocks() {
   const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const adminId = (await r.json())[0]?.id;
-  if (!adminId) throw new Error('could not resolve a super_admin profile id for the period_locks seed');
+  if (!adminId) throw new Error('could not resolve a masterkey profile id for the period_locks seed');
   // `id` has no DB default (Prisma generates the uuid client-side), so supply one.
   const base = { reporting_year: 2024, reporting_period: 'quarterly', period_value: 'ZZ', locked_by: adminId };
   const res = await svc('POST', 'period_locks', [
@@ -223,7 +223,7 @@ async function seedImportBatches(entryId) {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const admin = (await r.json())[0];
-  if (!admin?.id) throw new Error('could not resolve a super_admin profile for the import_batches seed');
+  if (!admin?.id) throw new Error('could not resolve a masterkey profile for the import_batches seed');
   const now = new Date().toISOString();
   const base = {
     organisation_id: admin.organisation_id,
@@ -250,7 +250,7 @@ async function cleanupImportBatches() {
 // The seed writes no audit rows, so a fresh `db:reset` would leave the audit
 // probes with nothing to measure. Seed two: one in the admin's organisation and
 // one filed under a FOREIGN organisation — the latter is what proves the RLS
-// tightening (a super_admin of org A must not read org B's rows), which a
+// tightening (a masterkey of org A must not read org B's rows), which a
 // single-organisation seed otherwise cannot demonstrate.
 const AUDIT_PROBE_ENTITY = 'rls_probe';
 const FOREIGN_ORG = '99999999-9999-9999-9999-999999999999';
@@ -259,8 +259,8 @@ async function seedAuditRows() {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const admin = (await r.json())[0];
-  if (!admin) throw new Error('could not resolve a super_admin profile for the audit_log seed');
-  const base = { action: 'create', entity: AUDIT_PROBE_ENTITY, user_id: admin.id, role: 'super_admin' };
+  if (!admin) throw new Error('could not resolve a masterkey profile for the audit_log seed');
+  const base = { action: 'create', entity: AUDIT_PROBE_ENTITY, user_id: admin.id, role: 'masterkey' };
   const res = await svc('POST', 'audit_log', [
     { id: randomUUID(), ...base, organisation_id: admin.organisation_id },
     { id: randomUUID(), ...base, organisation_id: FOREIGN_ORG },
@@ -275,7 +275,7 @@ async function cleanupAuditRows() {
 // A subsidiary filed under a FOREIGN organisation. The seed has exactly one
 // organisation, so without this the cross-ORG half of the subsidiaries policy
 // is untestable — `data_entry` seeing 2 of 5 proves intra-org scoping only,
-// and a policy that leaked every organisation's rows to a super_admin would
+// and a policy that leaked every organisation's rows to a masterkey would
 // still pass it. Carries contact values, so a leak would be visible as PII
 // rather than as a bare count.
 const FOREIGN_SUB_ID = '99999999-0000-0000-0000-000000000001';
@@ -414,7 +414,7 @@ const LP103 = {
   recX1Forged: '99999999-1003-4000-8000-000000000a1f', // the service role's refused insert (LP4-02 (29))
   emailPrefix: 'lp103-probe-',
 };
-const LP103_ROLES = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'];
+const LP103_ROLES = ['masterkey', 'consultant', 'data_entry', 'executive_viewer'];
 
 function authAdmin(method, path, body) {
   return fetch(`${URL_}/auth/v1/admin/${path}`, {
@@ -490,7 +490,7 @@ async function seedTwoOrganisations() {
   const record = (id, sub) => ({
     id, subsidiaryId: sub, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January',
     category: 'Electricity', scope: 2, activityValue: 1, activityUnit: 'kWh',
-    calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, createdBy: users['super_admin:x'].id,
+    calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, createdBy: users['masterkey:x'].id,
   });
   const owner = await ownerDb();
   await owner.activityRecord.createMany({
@@ -511,11 +511,11 @@ async function probeTwoOrganisations() {
     // their whole organisation, data_entry only what it is granted.
     const subs = `${LP103.subX1},${LP103.subX2},${LP103.subY1}`;
     const expected = {
-      'super_admin:x': [LP103.subX1, LP103.subX2],
+      'masterkey:x': [LP103.subX1, LP103.subX2],
       'consultant:x': [LP103.subX1, LP103.subX2],
       'executive_viewer:x': [LP103.subX1, LP103.subX2],
       'data_entry:x': [LP103.subX1],
-      'super_admin:y': [LP103.subY1],
+      'masterkey:y': [LP103.subY1],
       'consultant:y': [LP103.subY1],
       'executive_viewer:y': [LP103.subY1],
       'data_entry:y': [],
@@ -565,9 +565,9 @@ async function probeTwoOrganisations() {
     const promote = await fetch(`${URL_}/rest/v1/profiles?id=eq.${entryX}`, {
       method: 'PATCH',
       headers: asEntry,
-      body: JSON.stringify({ role: 'super_admin' }),
+      body: JSON.stringify({ role: 'masterkey' }),
     });
-    const asAdmin = { ...asEntry, Authorization: `Bearer ${tokens['super_admin:x']}` };
+    const asAdmin = { ...asEntry, Authorization: `Bearer ${tokens['masterkey:x']}` };
     const revoke = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}`, { method: 'DELETE', headers: asAdmin });
     const after = await fetch(`${URL_}/rest/v1/user_subsidiary_access?select=subsidiary_id&user_id=eq.${entryX}`, {
       headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
@@ -589,7 +589,7 @@ async function probeTwoOrganisations() {
       `patch=${promote.status}, rows=${promotedRows.length}, role now=${profileAfter[0]?.role}`,
     );
     check(
-      "a super_admin cannot change grants through PostgREST — only through the API's audited boundary",
+      "a masterkey cannot change grants through PostgREST — only through the API's audited boundary",
       revokedRows.length === 0 && grantsAfter.length === 1,
       `delete=${revoke.status}, rows=${revokedRows.length}`,
     );
@@ -749,7 +749,7 @@ async function main() {
 
     // Cross-ORGANISATION containment. `data_entry` seeing 2 of 5 proves only
     // intra-org scoping; a policy handing every organisation's rows to a
-    // super_admin would pass that and fail this.
+    // masterkey would pass that and fail this.
     const adminTokenForSubs = await getToken(ADMIN_EMAIL);
     const adminSees = await count('subsidiaries', {
       token: adminTokenForSubs,
@@ -761,7 +761,7 @@ async function main() {
       query: `select=id&id=eq.${FOREIGN_SUB_ID}`,
     });
     check(
-      'subsidiaries: a super_admin cannot read another organisation',
+      'subsidiaries: a masterkey cannot read another organisation',
       foreignExists.total === 1 && adminSees.total === 0,
       `foreign rows exist=${foreignExists.total}, visible to admin=${adminSees.total}`,
     );
@@ -787,7 +787,7 @@ async function main() {
   }
 
   // audit_log does NOT follow the tenant-table shape: its policy is role-gated
-  // (super_admin only) AND organisation-scoped, so a data_entry user must see
+  // (masterkey only) AND organisation-scoped, so a data_entry user must see
   // nothing at all while an admin sees only their own organisation's rows.
   console.log('▸ audit_log (role-gated + organisation-scoped)');
   await cleanupAuditRows(); // in case a previous run aborted
@@ -815,13 +815,13 @@ async function main() {
       check('audit_log: data_entry sees nothing (role-gated)', entry.total === 0, `count=${entry.total}`);
 
     if (admin.error) check('audit_log: admin read', false, `unexpected status ${admin.error} (missing GRANT?)`);
-    else check('audit_log: super_admin sees own-organisation rows', admin.total > 0, `count=${admin.total}`);
+    else check('audit_log: masterkey sees own-organisation rows', admin.total > 0, `count=${admin.total}`);
 
-    // The tightening this probe exists for: before it, a super_admin of one
+    // The tightening this probe exists for: before it, a masterkey of one
     // organisation could read another organisation's audit rows.
     if (!foreign.error && !adminSeesForeign.error) {
       check(
-        'audit_log: super_admin cannot read another organisation (the WP7 fix)',
+        'audit_log: masterkey cannot read another organisation (the WP7 fix)',
         foreign.total > 0 && adminSeesForeign.total === 0,
         `foreign rows exist=${foreign.total}, visible to admin=${adminSeesForeign.total}`,
       );
@@ -850,7 +850,7 @@ async function main() {
     const intentsEntry = await count('storage_intents', { token });
     const intentsAdmin = await count('storage_intents', { token: await getToken(ADMIN_EMAIL) });
     check(
-      'storage_intents: no client role reads a row (anon, data_entry, super_admin)',
+      'storage_intents: no client role reads a row (anon, data_entry, masterkey)',
       intentsSvc.total > 0 && refused(intentsAnon) && refused(intentsEntry) && refused(intentsAdmin),
       `service=${intentsSvc.total}, anon=${intentsAnon.error ?? intentsAnon.total}, entry=${intentsEntry.error ?? intentsEntry.total}, admin=${intentsAdmin.error ?? intentsAdmin.total}`,
     );
@@ -1000,7 +1000,7 @@ async function main() {
       method: 'PATCH',
       headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify({
-        role: 'super_admin', disabled_at: stamp, sessions_revoked_at: stamp, auth_sync_pending_since: stamp, auth_sync_generation: 999, recovery_sent_at: stamp,
+        role: 'masterkey', disabled_at: stamp, sessions_revoked_at: stamp, auth_sync_pending_since: stamp, auth_sync_generation: 999, recovery_sent_at: stamp,
       }),
     });
     const afterRow = await readOwn();

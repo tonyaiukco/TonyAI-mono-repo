@@ -112,7 +112,7 @@ export default function SubsidiaryDetailPage() {
   );
   const [locksOpen, setLocksOpen] = useState(false);
 
-  const canManage = user?.role === "super_admin";
+  const canManage = user?.role === "masterkey";
 
   const load = useCallback(
     async (resetForm: boolean) => {

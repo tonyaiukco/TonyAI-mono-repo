@@ -12,11 +12,11 @@ const requireRole = (context: ExecutionContext, roles: ReadonlySet<string>, refu
   return true;
 };
 
-/** super_admin and consultant capture (W4). */
+/** masterkey and consultant capture (W4). */
 @Injectable()
 export class DatasetCapturerGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    return requireRole(context, CAPTURE_ROLES, 'Only super_admin or consultant may capture a report dataset');
+    return requireRole(context, CAPTURE_ROLES, 'Only masterkey or consultant may capture a report dataset');
   }
 }
 

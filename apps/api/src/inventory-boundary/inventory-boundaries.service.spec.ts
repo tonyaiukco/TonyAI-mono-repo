@@ -5,7 +5,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { errorCodeOf, toErrorBody } from '../common/api-error';
 import type { PrismaService } from '../prisma/prisma.service';
-import { makeDataEntry, makeSuperAdmin } from '../../test/helpers';
+import { makeDataEntry, makeMasterkey } from '../../test/helpers';
 import { InventoryBoundariesService } from './inventory-boundaries.service';
 
 /**
@@ -67,7 +67,7 @@ const BODY = { firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applica
 describe('InventoryBoundariesService', () => {
   let db: ReturnType<typeof mockDb>;
   let service: InventoryBoundariesService;
-  const admin = makeSuperAdmin();
+  const admin = makeMasterkey();
 
   beforeEach(() => {
     db = mockDb();
@@ -84,10 +84,10 @@ describe('InventoryBoundariesService', () => {
 
   describe('who writes (E2)', () => {
     it.each([
-      ['consultant', makeSuperAdmin({ role: 'consultant' })],
-      ['executive_viewer', makeSuperAdmin({ role: 'executive_viewer' })],
+      ['consultant', makeMasterkey({ role: 'consultant' })],
+      ['executive_viewer', makeMasterkey({ role: 'executive_viewer' })],
       ['data_entry', makeDataEntry()],
-      ['a super_admin with no organisation', makeSuperAdmin({ organisationId: null })],
+      ['a masterkey with no organisation', makeMasterkey({ organisationId: null })],
     ])('refuses %s every write, before reading anything', async (_who, user) => {
       for (const write of writes(user)) {
         await expect(write()).rejects.toBeInstanceOf(ForbiddenException);
@@ -297,7 +297,7 @@ describe('InventoryBoundariesService', () => {
         expect.objectContaining({ isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }),
       );
       db.prisma.$transaction.mockClear();
-      await expect(service.get(makeSuperAdmin({ organisationId: null }), ID)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_not_found');
+      await expect(service.get(makeMasterkey({ organisationId: null }), ID)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_not_found');
       expect(db.prisma.$transaction).not.toHaveBeenCalled();
     });
   });

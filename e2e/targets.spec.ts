@@ -3,7 +3,7 @@ import { login, pickByFieldLabel, ADMIN_EMAIL } from './helpers';
 
 /**
  * Targets & intensity (WP5): the Targets tab shows live progress against
- * committed emissions (seeded demo targets), a super_admin can create a target,
+ * committed emissions (seeded demo targets), a masterkey can create a target,
  * and the Intensity toggle reveals configured metrics. E2E rows use the `E2E-`
  * sentinel so the global teardown removes exactly them (seed preserved).
  */
@@ -20,7 +20,7 @@ test('targets: seeded progress + create round-trip', async ({ page }) => {
   await expect(page.getByText('Net-zero pathway 2030')).toBeVisible();
   await expect(page.getByText(/no committed figure for a year after the 2026 baseline/i)).toBeVisible();
 
-  // Create a target (sentinel name) via the super_admin dialog.
+  // Create a target (sentinel name) via the masterkey dialog.
   await page.getByRole('button', { name: 'Add target' }).click();
   await pickByFieldLabel(page, 'Subsidiary', 'TonyAI Energy (TR)');
   await page.getByPlaceholder('e.g. Net-zero pathway 2030').fill('E2E-target');

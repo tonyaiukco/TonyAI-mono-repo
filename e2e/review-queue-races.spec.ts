@@ -75,7 +75,7 @@ test('a decision that settles after a switch refreshes the selection on screen, 
   const id = await pending(request, 'Q2');
   const mfg = await legalName(request, SUB.mfg);
   const gasName = await legalName(request, SUB.gas);
-  // The second super_admin: the admin authored the record, and its author
+  // The second masterkey: the admin authored the record, and its author
   // neither takes it into review nor approves it (D01, WP5).
   await login(page, APPROVER_EMAIL);
   await page.goto('/review');

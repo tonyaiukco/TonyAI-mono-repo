@@ -332,7 +332,7 @@ describe('the filter codes what arrives uncoded', () => {
   it.each([
     [new BadRequestException('nope'), 400, 'bad_request'],
     [new UnauthorizedException('Invalid or expired token'), 401, 'unauthorized'],
-    [new ForbiddenException('Only a super_admin may read the audit trail'), 403, 'forbidden'],
+    [new ForbiddenException('Only a masterkey may read the audit trail'), 403, 'forbidden'],
     [new NotFoundException('Target not found'), 404, 'not_found'],
     [new ConflictException('This reporting period is already locked.'), 409, 'conflict'],
     [new ThrottlerException(), 429, 'rate_limited'],

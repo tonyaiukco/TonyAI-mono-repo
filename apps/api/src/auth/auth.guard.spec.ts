@@ -68,7 +68,7 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     // A stray grant must not become real access: WP7 stamps audit rows with the
     // ACTOR's organisation, so acting on another tenant's subsidiary would file
     // that tenant's activity under the wrong organisation — readable by the
-    // wrong super_admin and invisible to the right one.
+    // wrong masterkey and invisible to the right one.
     prisma.profile.findUnique.mockResolvedValue({
       id: 'user-1',
       email: 'e@x',
@@ -102,11 +102,11 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
   });
 
-  it('gives a super_admin every subsidiary in its organisation', async () => {
+  it('gives a masterkey every subsidiary in its organisation', async () => {
     prisma.profile.findUnique.mockResolvedValue({
       id: 'user-1',
       email: 'a@x',
-      role: 'super_admin',
+      role: 'masterkey',
       organisationId: 'org-1',
       subsidiaryAccess: [],
     });
@@ -123,7 +123,7 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     prisma.profile.findUnique.mockResolvedValue({
       id: 'user-1',
       email: 'a@x',
-      role: 'super_admin',
+      role: 'masterkey',
       organisationId: null,
       subsidiaryAccess: [],
     });
@@ -281,7 +281,7 @@ describe('SupabaseAuthGuard — a disabled account (D19, LP4-01)', () => {
   const profile = (over: Record<string, unknown>) => ({
     id: 'user-1',
     email: 'e@x',
-    role: 'super_admin',
+    role: 'masterkey',
     organisationId: 'org-1',
     subsidiaryAccess: [],
     disabledAt: null,

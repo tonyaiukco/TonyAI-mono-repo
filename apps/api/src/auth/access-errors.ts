@@ -31,8 +31,8 @@ export class OwnAccountError extends ForbiddenException {
       errorBody(
         'own_account_forbidden',
         what === 'role'
-          ? 'You cannot change your own role; ask another super_admin.'
-          : 'You cannot disable your own account; ask another super_admin.',
+          ? 'You cannot change your own role; ask another masterkey.'
+          : 'You cannot disable your own account; ask another masterkey.',
       ),
     );
   }

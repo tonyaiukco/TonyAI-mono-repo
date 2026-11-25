@@ -14,7 +14,7 @@ export const ENTRY_EMAIL = 'entry@tonyai.local';
  * comes from the organisation, so granting rows here would hide a regression in
  * that guard branch. */
 export const CONSULTANT_EMAIL = 'review@tonyai.local';
-/** A second super_admin. The approver may not be the record's creator
+/** A second masterkey. The approver may not be the record's creator
  * (decision D01), so whatever ADMIN creates, APPROVER approves. */
 export const APPROVER_EMAIL = 'approver@tonyai.local';
 /** The read-only executive viewer (LP4-04 slice 2 PR C): org-wide reads, no writes. */
@@ -93,7 +93,7 @@ export async function resetSeedLanguages(request: APIRequestContext): Promise<vo
 
 /** The seed users' roles that specs may change (the admin, the acting user, cannot change its own). */
 const SEED_ROLES: ReadonlyArray<readonly [string, UserRole]> = [
-  [APPROVER_EMAIL, 'super_admin'],
+  [APPROVER_EMAIL, 'masterkey'],
   [ENTRY_EMAIL, 'data_entry'],
   [CONSULTANT_EMAIL, 'consultant'],
   [VIEWER_EMAIL, 'executive_viewer'],
@@ -362,7 +362,7 @@ export async function seenSubmittedAt(request: APIRequestContext, token: string,
   return ((await res.json()) as { submittedAt: string | null }).submittedAt;
 }
 
-/** Approve a submitted record (consultant or super_admin — K2 — and never the record's creator — D01). */
+/** Approve a submitted record (consultant or masterkey — K2 — and never the record's creator — D01). */
 export async function approveRecord(request: APIRequestContext, token: string, id: string): Promise<void> {
   const res = await request.post(`${API_BASE}/activity-records/${id}/approve`, {
     headers: bearer(token),
@@ -371,7 +371,7 @@ export async function approveRecord(request: APIRequestContext, token: string, i
   if (!res.ok()) throw new Error(`approve failed: ${res.status()} ${await res.text()}`);
 }
 
-/** Lock a reporting period (super_admin). Returns the lock id. */
+/** Lock a reporting period (masterkey). Returns the lock id. */
 export async function lockPeriod(
   request: APIRequestContext,
   token: string,
@@ -1451,7 +1451,7 @@ export async function readAuditSince(
   filter: { entity?: string; action?: string; since: string },
 ): Promise<{ entityId: string | null; action: string; diff: Record<string, unknown> }[]> {
   // The token is obtained here rather than taken as a parameter: reading the
-  // trail is super_admin-only, and a caller passing the token they happened to
+  // trail is masterkey-only, and a caller passing the token they happened to
   // have produces a 403 that reads like a bug in the thing under test.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const search = new URLSearchParams({ limit: '200' });

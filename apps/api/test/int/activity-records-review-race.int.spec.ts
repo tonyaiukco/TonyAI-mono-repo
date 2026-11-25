@@ -24,7 +24,7 @@ import {
  *
  * Before LP1-01 both methods read the record, checked its status in memory,
  * then wrote on the id alone, so a consultant's `startReview` that read
- * `submitted` and was then overtaken by a super_admin's `approve` still wrote
+ * `submitted` and was then overtaken by a masterkey's `approve` still wrote
  * `under_review` over the approval — and the audit trail recorded two
  * transitions out of `submitted` (reproduced in LP0-03, where this file held
  * the requirement as `it.fails` beside a pin of that behaviour).
@@ -104,7 +104,7 @@ function chainEnd(transitions: Transition[], start: string): string | null {
 
 /**
  * Consultant A reads a submitted record and is held just before its write;
- * super_admin B approves the record; then A is released. If B blocks on a lock
+ * masterkey B approves the record; then A is released. If B blocks on a lock
  * A holds, A is released as soon as that is observed.
  */
 async function interleaveStartReviewWithApprove() {
@@ -129,7 +129,7 @@ async function interleaveStartReviewWithApprove() {
   );
   await hold.reached();
 
-  const approve = makeService(b).approve(tenant.users.superAdmin, record.id);
+  const approve = makeService(b).approve(tenant.users.masterkey, record.id);
   const approveOutcome = approve.then(
     () => 'ok' as const,
     (err: unknown) => err,
@@ -142,7 +142,7 @@ async function interleaveStartReviewWithApprove() {
   return { outcomes, how, finalStatus: final.status, transitions: await transitionsOf(record.id) };
 }
 
-/** The other order: super_admin A's approve is held before its write; consultant B starts review. */
+/** The other order: masterkey A's approve is held before its write; consultant B starts review. */
 async function interleaveApproveWithStartReview() {
   // Priced: the approve recomputes the figure (K11, LP4-02 B2).
   const record = await createRecord(
@@ -157,7 +157,7 @@ async function interleaveApproveWithStartReview() {
   const pidB = await backendPid(b);
 
   const approveOutcome = makeService(hold.client)
-    .approve(tenant.users.superAdmin, record.id)
+    .approve(tenant.users.masterkey, record.id)
     .then(() => 'ok' as const, (err: unknown) => err);
   await hold.reached();
 
@@ -209,7 +209,7 @@ describe('F03 — startReview racing approve', () => {
     expect(outcomes.startReview).toBeInstanceOf(RecordChangedError);
     expect(finalStatus).toBe(ActivityRecordStatus.approved);
     expect(transitions).toEqual([
-      { from: 'submitted', to: 'approved', userId: tenant.users.superAdmin.id },
+      { from: 'submitted', to: 'approved', userId: tenant.users.masterkey.id },
     ]);
   });
 });

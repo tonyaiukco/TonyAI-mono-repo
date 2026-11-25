@@ -20,7 +20,7 @@ describe('signOutHere (pre-pilot defects; Codex review of #350)', () => {
   beforeEach(() => {
     signOut.mockReset();
     getSession.mockReset();
-    useAuthStore.getState().setUser({ id: 'user-a', role: 'super_admin' } as never);
+    useAuthStore.getState().setUser({ id: 'user-a', role: 'masterkey' } as never);
     useReportingContextStore.getState().remember('user-a', { year: 2026 } as never);
   });
 

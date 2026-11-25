@@ -74,10 +74,10 @@ export class LocationsService {
     };
   }
 
-  /** Admin-managed org structure: only super_admin may modify locations. */
+  /** Admin-managed org structure: only masterkey may modify locations. */
   private assertCanWrite(user: RequestUser): void {
-    if (user.role !== 'super_admin') {
-      throw new ForbiddenException('Only super_admin may modify locations');
+    if (user.role !== 'masterkey') {
+      throw new ForbiddenException('Only masterkey may modify locations');
     }
   }
 

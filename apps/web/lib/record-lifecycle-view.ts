@@ -10,7 +10,7 @@ export const canSubmitEntry = (
 ): boolean => !!user && mayAuthorRecords(user) && (!editingId || createdBy === user.id);
 
 /**
- * Approve is offered to an approver role (`consultant` or `super_admin`, K2 —
+ * Approve is offered to an approver role (`consultant` or `masterkey`, K2 —
  * Decisions 2026-11-12) on a record someone else created (D01). The API
  * enforces both; this only decides what the review screen shows.
  */
@@ -21,7 +21,7 @@ export const canApproveRecord = (
 
 /**
  * An approver looking at a record they created: Approve is withheld (D01) and
- * the screen says why — for a role-changed consultant as for a super_admin.
+ * the screen says why — for a role-changed consultant as for a masterkey.
  */
 export const isOwnRecordForApprover = (
   user: SubmittingUser | null,

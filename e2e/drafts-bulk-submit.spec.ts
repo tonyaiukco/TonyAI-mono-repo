@@ -243,7 +243,7 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
     await expect(mineBox).toBeChecked();
     await expect(page.locator('[data-testid="drafts-submit-bar"]')).toBeVisible();
 
-    // A super_admin neither submits nor edits another author's draft (D02;
+    // A masterkey neither submits nor edits another author's draft (D02;
     // BUG-R2-03 closed the edit half, which let an admin change a colleague's
     // figure and then approve it): the row opens nothing and says why, and no
     // Edit action is offered on it.

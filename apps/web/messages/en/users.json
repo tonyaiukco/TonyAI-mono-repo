@@ -2,8 +2,8 @@
   "title": "Users",
   "subtitle": "Invite people to your parent company and manage their roles and access.",
   "invite": "Invite user",
-  "forbiddenTitle": "Only a super admin manages users",
-  "forbidden": "Inviting people and changing their roles or access is restricted to your parent company's super admins. Your role is {role}.",
+  "forbiddenTitle": "Only a masterkey manages users",
+  "forbidden": "Inviting people and changing their roles or access is restricted to your parent company's masterkeys. Your role is {role}.",
   "loadFailed": "Users could not be loaded.",
   "empty": "No users yet.",
   "loadMore": "Load more",
@@ -16,7 +16,7 @@
     "actions": "Actions"
   },
   "roles": {
-    "super_admin": "Super admin",
+    "masterkey": "Masterkey",
     "consultant": "Consultant",
     "data_entry": "Data entry",
     "executive_viewer": "Executive viewer"
@@ -67,7 +67,7 @@
     "emptyWarning": "This user cannot enter data until at least one subsidiary is ticked."
   },
   "roleAccessNote": {
-    "super_admin": "A super admin sees every subsidiary of the parent company. No subsidiary needs to be chosen.",
+    "masterkey": "A masterkey sees every subsidiary of the parent company. No subsidiary needs to be chosen.",
     "consultant": "A consultant sees every subsidiary of the parent company. No subsidiary needs to be chosen.",
     "executive_viewer": "An executive viewer sees every subsidiary of the parent company. No subsidiary needs to be chosen."
   },

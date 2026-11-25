@@ -9,7 +9,7 @@ import { UsersQueryService } from './users-query.service';
 
 /**
  * User and access management (LP4-01) — the caller's own organisation, a
- * `super_admin`'s alone; every other role is refused (403) and an id of
+ * `masterkey`'s alone; every other role is refused (403) and an id of
  * another tenant answers 404, exactly as one that does not exist.
  */
 @Controller('users')

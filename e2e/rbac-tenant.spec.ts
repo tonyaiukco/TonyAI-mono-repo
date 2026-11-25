@@ -25,7 +25,7 @@ test('data_entry: scoped reads + period-lock write gated in the UI', async ({ pa
   // Sees exactly the 2 subsidiaries it has access to (Energy + Logistics).
   await expect(subsidiaryRows(page)).toHaveCount(2);
 
-  // super_admin-only write controls are hidden for data_entry (the API also 403s).
+  // masterkey-only write controls are hidden for data_entry (the API also 403s).
   // Admin visibility of these is covered by smoke.spec's create/delete flow.
   await expect(page.getByRole('button', { name: 'Add Subsidiary' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Delete subsidiary' })).toHaveCount(0);
@@ -39,9 +39,9 @@ test('data_entry: scoped reads + period-lock write gated in the UI', async ({ pa
 
   // The read-only drawers stay available: the period-locks drawer opens (locked
   // list) but the lock/unlock form is gated — no "Lock period" button, and an
-  // explicit super_admin-only message.
+  // explicit masterkey-only message.
   await page.getByRole('button', { name: 'Manage period locks' }).first().click();
-  await expect(page.getByText(/only a super_admin can lock or unlock/i)).toBeVisible();
+  await expect(page.getByText(/only a masterkey can lock or unlock/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Lock period' })).toHaveCount(0);
 });
 
@@ -85,11 +85,11 @@ test('out-of-scope access 404s (never 403 — no existence oracle)', async ({ re
   expect(missing.status()).toBe(read.status());
 });
 
-test('super_admin cannot write to another organisation (tenant check on update/delete)', async ({
+test('masterkey cannot write to another organisation (tenant check on update/delete)', async ({
   request,
 }) => {
   // Regression guard: update/remove used to check the ROLE only, so a
-  // super_admin could edit or delete a subsidiary in another organisation.
+  // masterkey could edit or delete a subsidiary in another organisation.
   // Every seeded subsidiary belongs to one org, so we use an id that exists
   // for nobody — the same 404 path the tenant check now enforces.
   const token = await getAccessToken(request, ADMIN_EMAIL);
