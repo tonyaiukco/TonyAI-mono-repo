@@ -1146,7 +1146,8 @@ class RollbackTests(unittest.TestCase):
     """Live: source OLD with OLD_DIGEST images (FakeAzure). Target: an earlier/later main candidate."""
     def run_rollback(self, candidate, mode='candidate', trees=None, ancestor=0, azure=None, fetch=None, rid='rb42-1'):
         self.azure = azure or FakeAzure()
-        trees = trees or {OLD: TREE, TARGET: TREE}
+        # Main's head (`SHA`) carries the same chain unless a case says otherwise.
+        trees = {SHA: TREE, **(trees or {OLD: TREE, TARGET: TREE})}
         self.fetched = []
         def record(url):
             self.fetched.append((len(self.azure.patches), url))
@@ -1167,6 +1168,20 @@ class RollbackTests(unittest.TestCase):
     def assert_untouched(self):
         self.assertEqual(self.azure.patches, [])
         self.assertNotIn(('containerapp', 'revision', 'deactivate'), self.azure.calls)
+
+    def test_refused_when_main_carries_a_forward_only_migration_the_target_lacks(self):
+        # A run applied it and stopped before the rollout: the live tag still says OLD,
+        # whose chain equals the target's, yet the database holds the forward-only one.
+        ahead = dict(TREE, **{EXTRA_MIGRATION: b'-- tonyai:forward-only\nALTER TYPE x RENAME VALUE a TO b;\n'})
+        with self.assertRaises(SafeFailure) as caught:
+            self.run_rollback(self.target(), trees={OLD: TREE, TARGET: TREE, SHA: ahead})
+        self.assertIn('forward-only migration(s) 20261101000000_more', str(caught.exception))
+        self.assertIn('re-running the QA deploy from main', str(caught.exception))
+        self.assert_untouched()
+
+    def test_an_expand_only_migration_ahead_on_main_does_not_block_a_rollback(self):
+        ahead = dict(TREE, **{EXTRA_MIGRATION: b'ALTER TABLE a ADD COLUMN b int;\n'})
+        self.assertEqual(self.run_rollback(self.target(), trees={OLD: TREE, TARGET: TREE, SHA: ahead}), TARGET)
 
     def test_rollback_id_marks_the_revision(self):
         self.assertEqual(qa.rollback_id(QA_ENV), 'rb42-1')

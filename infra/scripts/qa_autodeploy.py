@@ -389,6 +389,17 @@ def forward_only_added(candidate, live_sha, read_git=git_bytes):
     return marked
 
 
+def forward_only_beyond(candidate, ahead_sha, read_git=git_bytes):
+    """Forward-only migrations committed at `ahead_sha` (main's head) that `candidate`
+    lacks. Any of them may already be applied — a deploy run commits its migrations and
+    can stop before the rollout, leaving the live apps' source tag on the old commit —
+    so a rollback to `candidate` could put an old image on a schema it misreads."""
+    have = {m['name'] for m in candidate.get('migrations', [])}
+    ahead = [m['name'] for m in fingerprint_at(ahead_sha, read_git)['migrations']]
+    return [name for name in ahead if name not in have
+            and FORWARD_ONLY_MARK in read_git('show', ahead_sha + ':packages/db/prisma/migrations/' + name + '/migration.sql')]
+
+
 def bind_at(candidate, inputs, sha, read_git=git_bytes):
     """candidate.bind() without a checkout: the same expected candidate, from git objects."""
     foundation, release = validate_release(inputs)
@@ -579,7 +590,8 @@ def rollback(foundation, candidate, mode, rid, project, read, patch, owns, run_g
     sha = candidate.get('source_sha') if isinstance(candidate, dict) else None
     if not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{40}', sha):
         raise SafeFailure('Candidate has no full source SHA; nothing was changed.')
-    if run_git('merge-base', '--is-ancestor', sha, main_head(run_git))[0] != 0:
+    head = main_head(run_git)
+    if run_git('merge-base', '--is-ancestor', sha, head)[0] != 0:
         raise SafeFailure('Candidate source is not on main; nothing was changed.')
     apps = {kind: show(foundation, kind, read) for kind in ('api', 'web')}
     live_sha, _ = live_identity(foundation, apps, same_revision=False)
@@ -594,6 +606,13 @@ def rollback(foundation, candidate, mode, rid, project, read, patch, owns, run_g
     # and the forward return must not skip one either.
     if fingerprint_at(live_sha, read_git)['migrations'] != candidate['migrations']:
         raise SafeFailure('Rollback would cross a migration; nothing was changed.')
+    # The live tag says what the apps run, not what the database holds (owner's review):
+    # a forward-only migration on main that the target lacks may be applied already.
+    beyond = forward_only_beyond(candidate, head, read_git)
+    if beyond:
+        raise SafeFailure('Rollback refused: main carries forward-only migration(s) ' + ', '.join(beyond)
+                          + ' that the target lacks and the database may already hold; recover by '
+                          're-running the QA deploy from main. Nothing was changed.')
     try:
         rollout(foundation, candidate, sha, rid, read, patch, owns, **rollout_options)
     except SafeFailure as error:

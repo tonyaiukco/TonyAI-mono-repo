@@ -413,6 +413,14 @@ gh workflow run "QA rollback" -R tonyaiukco/TonyAI-mono-repo -f candidate_run_id
   images back, the database is already ahead of both. The guard does not make that
   situation worse, and it does not detect it either. Check the deploy history before
   a drill.
+- **Forward-only migrations** (a `migration.sql` carrying `-- tonyai:forward-only`,
+  first `20261125180000_inc26_roles_approval_chain`): the previous image cannot run
+  on the schema they leave. `rollout` never rolls back across one, and `rollback`
+  refuses any target that lacks one main already carries — the database may hold it
+  even when the live `source` tag is older (a run that migrated and stopped before
+  its rollout). Recovery is forward: dispatch `QA deploy` from `main`. A
+  `same-image` rollback needs a published candidate, which a first rollout that
+  failed never produced.
 
 **Drill (L10):** after a QA-fix release `ciN` deploys with no new migration,
 announce two API gaps of about 2.5 minutes, then dispatch with `ci4-1`'s deploy run
