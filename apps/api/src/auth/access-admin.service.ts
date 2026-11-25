@@ -201,6 +201,14 @@ export class AccessAdminService {
       });
       const inScope = (id: string) => admin.scope === null || admin.scope.has(id);
       const held = heldAll.filter((g) => inScope(g.subsidiaryId));
+      // A scoped actor asking nothing of an account it does not administer
+      // (grants, none inside its companies) learns nothing about it either:
+      // answered as an unknown account, as its users list hides it (owner's
+      // review, P1). Withdrawing its own last visible grant is a different
+      // request — that grant is in scope — and is allowed.
+      if (admin.scope !== null && wanted.length === 0 && heldAll.length > 0 && held.length === 0) {
+        throw new ResourceNotFoundError('user_not_found');
+      }
       const wantedById = new Map(wanted.map((g) => [g.subsidiaryId, g.categories]));
       const heldById = new Map(held.map((g) => [g.subsidiaryId, sortedCategories(g.categories)]));
       const removed = held.map((g) => g.subsidiaryId).filter((id) => !wantedById.has(id)).sort();

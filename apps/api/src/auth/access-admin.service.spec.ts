@@ -624,6 +624,19 @@ describe('Decision 9 — replace access', () => {
     expect(w.state()).toEqual(before);
   });
 
+  it('a super_admin\'s empty replace on a standard user granted only outside its companies answers user_not_found, writing nothing (owner\'s review P1)', async () => {
+    const w = world([{ id: SA, role: 'super_admin', grants: { [A]: [] } }, { id: T, role: 'standard_user', grants: { [C]: ['Fuel'] } }]);
+    const before = snapshot(w);
+    await expect(w.service.replaceSubsidiaryAccess(w.as(SA), T, [])).rejects.toMatchObject({ response: { code: 'user_not_found' } });
+    expect(w.state()).toEqual(before);
+  });
+
+  it('a super_admin withdrawing its own last visible grant of a carried-over account is allowed (the grant was in scope)', async () => {
+    const w = world([{ id: SA, role: 'super_admin', grants: { [A]: [] } }, { id: T, role: 'standard_user', grants: { [A]: ['Fuel'], [C]: ['Fuel'] } }]);
+    await w.service.replaceSubsidiaryAccess(w.as(SA), T, []);
+    expect(w.grantsOf(T)).toEqual({ [C]: ['Fuel'] });
+  });
+
   it('categories changed from Electricity to Electricity and Fuel: one update row holding both lists, sorted', async () => {
     const w = world([{ id: SA, role: 'super_admin', grants: { [A]: [] } }, { id: T, role: 'standard_user', grants: { [A]: ['Electricity'] } }]);
     await w.service.replaceSubsidiaryAccess(w.as(SA), T, [grant(A, ['Fuel', 'Electricity'])]);
@@ -710,7 +723,8 @@ describe('Decision 9 — replace access', () => {
       w.meanwhile((s) => { s.grants = s.grants.filter((g) => g.userId !== SA); });
       const before = snapshot(w);
       await expect(w.service.replaceSubsidiaryAccess(actor, T, [grant(A, ['Waste'])])).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
-      await w.service.replaceSubsidiaryAccess(actor, T, []); // nothing in scope: nothing to withdraw
+      // Nothing in scope any more: the account is one it does not administer.
+      await expect(w.service.replaceSubsidiaryAccess(actor, T, [])).rejects.toMatchObject({ response: { code: 'user_not_found' } });
       expect(w.state()).toEqual(before);
     });
 
