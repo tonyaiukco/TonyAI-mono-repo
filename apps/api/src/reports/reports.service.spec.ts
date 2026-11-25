@@ -374,6 +374,16 @@ describe('ReportsService', () => {
     for (const [args] of prisma.activityRecord.findMany.mock.calls) expect(args.where.AND).toEqual([scope]);
   });
 
+  it('meta answers a category-narrowed caller\'s coverage as not_readable: the company-wide assessment is not read for it', async () => {
+    prisma.activityRecord.groupBy.mockResolvedValue([{ status: 'approved', _count: { _all: 1 } }]);
+    const narrowed: RequestUser = {
+      id: 'user-entry', email: 'entry@tonyai.local', fullName: 'Entry User', role: 'standard_user',
+      organisationId: 'org-1', accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] },
+    };
+    const m = await service.meta(narrowed, 2024);
+    expect((m as { coverage?: unknown }).coverage).toEqual({ state: 'not_readable' });
+  });
+
   it('meta reports approved when every record is approved/locked', async () => {
     prisma.activityRecord.groupBy.mockResolvedValue([
       { status: 'approved', _count: { _all: 10 } },

@@ -382,7 +382,11 @@ export class ReportsService {
     // A requested subsidiary outside the caller's access never reaches here
     // (`ids` is empty and `readHead` answered); the boundary's own read rule
     // holds every subsidiary it declares to the caller's current access.
-    const coverage: ReportLiveCoverage = !user.organisationId ? { state: 'no_boundary' } : await readLiveCoverage(
+    // Coverage assesses the company's whole declared inventory — every
+    // category's records, links and locks — so a caller narrowed to some
+    // categories cannot read it (security review of inc26: its gap counts
+    // would describe records it may not see).
+    const coverage: ReportLiveCoverage = !user.organisationId ? { state: 'no_boundary' } : can(user.role, 'scope.categories') ? { state: 'not_readable' } : await readLiveCoverage(
       snapshot,
       {
         organisationId: user.organisationId,
