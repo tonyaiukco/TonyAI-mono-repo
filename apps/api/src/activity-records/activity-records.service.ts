@@ -1516,12 +1516,14 @@ export class ActivityRecordsService {
    * none still takes the record into review, which decides nothing.
    */
   async startReview(user: RequestUser, id: string, seenSubmittedAt?: string | null): Promise<ActivityRecordDTO> {
-    const seen = await this.loadScoped(user, id);
+    // The role refusal comes before every other answer (record-lifecycle spec):
+    // a role that decides nothing is refused even for a record it cannot read.
     if (!can(user.role, 'record.decide')) {
       throw new ForbiddenException(
         'Only a masterkey or a super_admin may review records',
       );
     }
+    const seen = await this.loadScoped(user, id);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
         if (record.status !== ActivityRecordStatus.submitted) {
@@ -1547,10 +1549,12 @@ export class ActivityRecordsService {
   }
 
   async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
-    const seen = await this.loadScoped(user, id);
+    // The role refusal comes before every other answer (record-lifecycle spec):
+    // a role that decides nothing is refused even for a record it cannot read.
     if (!can(user.role, 'record.decide')) {
       throw new ForbiddenException('Only a masterkey or a super_admin may approve records');
     }
+    const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
@@ -1675,12 +1679,14 @@ export class ActivityRecordsService {
     varianceReason: string,
     seenSubmittedAt?: SeenSubmission,
   ): Promise<ActivityRecordDTO> {
-    const seen = await this.loadScoped(user, id);
+    // The role refusal comes before every other answer (record-lifecycle spec):
+    // a role that decides nothing is refused even for a record it cannot read.
     if (!can(user.role, 'record.decide')) {
       throw new ForbiddenException(
         'Only a masterkey or a super_admin may return records',
       );
     }
+    const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {

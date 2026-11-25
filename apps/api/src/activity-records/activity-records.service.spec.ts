@@ -6297,6 +6297,21 @@ describe('ActivityRecordsService — the approver chain (inc26-roles-approval-ch
   async function refusal(promise: Promise<unknown>) {
     return promise.then(() => null, (e: unknown) => e as any);
   }
+  it('a role that decides nothing is refused 403 even for a record it cannot read — the role refusal comes first (owner\'s review)', async () => {
+    const { service, prisma } = arrange({ subsidiaryId: 'sub-hidden' });
+    for (const decide of [
+      () => service.approve(auditor({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-p', SEEN),
+      () => service.reject(auditor({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-p', 'why', SEEN),
+      () => service.startReview(auditor({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-p', SEEN),
+    ]) {
+      const error = await refusal(decide());
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(error).not.toBeInstanceOf(ResourceNotFoundError);
+    }
+    expect(prisma.activityRecord.findUnique).not.toHaveBeenCalled();
+    nothingWritten(prisma);
+  });
+
   function expectNotApprover(error: unknown, approver: string) {
     expect(error).toBeInstanceOf(NotRecordApproverError);
     expect((error as NotRecordApproverError).getStatus()).toBe(403);
