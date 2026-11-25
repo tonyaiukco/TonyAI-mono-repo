@@ -146,8 +146,10 @@ GRANT UPDATE ("categories") ON "user_subsidiary_access" TO "tonyai_runtime";
 --   * `audit_log_select_scoped` admits `masterkey` and `auditor` (it admitted
 --     the earlier `super_admin` alone);
 --   * on `activity_records` and `activity_record_evidence` the grant branch
---     also needs, for a `standard_user`, the row's category ticked on the
---     grant or the row (the evidence link's record) to be the holder's own.
+--     passes a `super_admin` whole, and anyone else only for a row whose
+--     category is ticked on the grant or that (the evidence link's record)
+--     is the holder's own — fail-closed: a role added later is narrowed until
+--     it is named here.
 -- The other thirteen grant branches are unchanged: their rows carry no
 -- category. All sixteen stay SELECT-only and are never FORCEd.
 
@@ -157,7 +159,7 @@ ALTER POLICY "activity_record_evidence_select_scoped" ON "activity_record_eviden
   WHERE ((s.id = activity_record_evidence.subsidiary_id) AND ((EXISTS ( SELECT 1
            FROM (user_subsidiary_access usa
              JOIN profiles p ON ((p.id = usa.user_id)))
-          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id) AND ((p.role <> 'standard_user'::"UserRole") OR (EXISTS ( SELECT 1 FROM activity_records ar WHERE ((ar.id = activity_record_evidence.activity_record_id) AND ((ar.category = ANY (usa.categories)) OR (ar.created_by = ( SELECT auth.uid() AS uid)))))))))) OR (EXISTS ( SELECT 1
+          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id) AND ((p.role = 'super_admin'::"UserRole") OR (EXISTS ( SELECT 1 FROM activity_records ar WHERE ((ar.id = activity_record_evidence.activity_record_id) AND ((ar.category = ANY (usa.categories)) OR (ar.created_by = ( SELECT auth.uid() AS uid)))))))))) OR (EXISTS ( SELECT 1
            FROM profiles p
           WHERE ((p.id = ( SELECT auth.uid() AS uid)) AND (p.role = ANY (ARRAY['masterkey'::"UserRole", 'auditor'::"UserRole"])) AND (p.organisation_id = s.organisation_id))))))))
 );
@@ -168,7 +170,7 @@ ALTER POLICY "activity_records_select_scoped" ON "activity_records" USING (
   WHERE ((s.id = activity_records.subsidiary_id) AND ((EXISTS ( SELECT 1
            FROM (user_subsidiary_access usa
              JOIN profiles p ON ((p.id = usa.user_id)))
-          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id) AND ((p.role <> 'standard_user'::"UserRole") OR (activity_records.category = ANY (usa.categories)) OR (activity_records.created_by = ( SELECT auth.uid() AS uid)))))) OR (EXISTS ( SELECT 1
+          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id) AND ((p.role = 'super_admin'::"UserRole") OR (activity_records.category = ANY (usa.categories)) OR (activity_records.created_by = ( SELECT auth.uid() AS uid)))))) OR (EXISTS ( SELECT 1
            FROM profiles p
           WHERE ((p.id = ( SELECT auth.uid() AS uid)) AND (p.role = ANY (ARRAY['masterkey'::"UserRole", 'auditor'::"UserRole"])) AND (p.organisation_id = s.organisation_id))))))))
 );
