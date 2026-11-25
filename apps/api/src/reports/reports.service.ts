@@ -204,9 +204,10 @@ export class ReportsService {
   ) {}
 
   /**
-   * Generating/exporting reports is denied to `data_entry`
-   * (permissions_and_roles.md §"Generate and export reports": all roles except
-   * data_entry). Reads like /reports/meta stay tenant-scoped for everyone.
+   * Generating/exporting reports: `can(role, 'report.generate')` — a
+   * masterkey, an auditor and a super_admin, whose scope confines its export
+   * to its companies; a standard user is refused (INC-2.6 §6). Reads like
+   * /reports/meta stay tenant-scoped for everyone.
    */
   private assertCanGenerate(user: RequestUser): void {
     if (!can(user.role, 'report.generate')) {

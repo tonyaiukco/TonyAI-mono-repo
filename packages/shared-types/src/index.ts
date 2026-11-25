@@ -7633,6 +7633,12 @@ export const BULK_SUBMIT_ISSUE_CODES = [
   /** The reporting period is closed. */
   'period_locked',
   /**
+   * A standard user's grant for the record's company no longer ticks its
+   * category (INC-2.6 §1, §7.3) — the single-record submit's
+   * `category_not_granted`. The draft stays the author's to recall or delete.
+   */
+  'category_not_granted',
+  /**
    * The category requires an evidence file and this record has none.
    *
    * The import reports `evidence_required` as a WARNING on these same rows;

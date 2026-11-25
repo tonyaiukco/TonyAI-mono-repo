@@ -80,8 +80,9 @@ export class InventoryBoundariesService {
     private readonly audit: AuditService,
   ) {}
 
-  /** One year's versions, newest first; a data_entry user's, only those
-   * declaring a subsidiary it is granted (the boundary's RLS, W3). */
+  /** One year's versions, newest first; a granted reader's (a super_admin or
+   * a standard user), only those declaring a company it is granted (the
+   * boundary's RLS, W3). */
   async list(user: RequestUser, query: ListInventoryBoundariesParams): Promise<InventoryBoundaryVersionSummary[]> {
     if (!user.organisationId) return [];
     const headers = await this.prisma.inventoryBoundary.findMany({

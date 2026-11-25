@@ -36,6 +36,7 @@ import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculatio
 import { AuditService } from '../audit/audit.service';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
+import { CategoryNotGrantedError } from '../activity-records/record-scope';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkSubmitActivityRecordsDto } from './dto/bulk-submit-activity-records.dto';
@@ -376,6 +377,11 @@ export class BulkSubmitService {
     if (error instanceof SubmitRoleRefusedError) throw error;
     if (error instanceof SubmitAuthorRefusedError) {
       return { recordId, code: 'not_author', message: error.message };
+    }
+    // Before the plain Nest classes: it is a ForbiddenException, and the
+    // single-record submit answers it as its own code.
+    if (error instanceof CategoryNotGrantedError) {
+      return { recordId, code: 'category_not_granted', message: error.message };
     }
     // Changed by someone else between this batch's read and the record's
     // lock — most often no longer a draft, which is what `not_submittable`
