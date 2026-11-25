@@ -47,7 +47,7 @@ describe('every sentence is Turkish', () => {
   });
 
   it('a block reason names the status and the period in Turkish', () => {
-    const user = { id: 'me', role: 'data_entry' as const };
+    const user = { id: 'me', role: 'standard_user' as const };
     const base = { id: 'r', category: 'Electricity' as const, evidenceCount: 1, createdBy: 'me', subsidiaryId: 's', reportingYear: 2026, reportingPeriod: 'monthly' as const, periodValue: 'March', periodLocked: false };
     expect(submitBlockReason({ ...base, status: 'approved' }, user, sub('tr'), recordWordsFor('tr'))).toBe('Zaten onaylanmış.');
     expect(submitBlockReason({ ...base, status: 'draft', periodLocked: true }, user, sub('tr'), recordWordsFor('tr'))).toBe('Mart 2026 kilitli.');
@@ -100,7 +100,7 @@ describe('one and many are worded apart (each pair, both languages)', () => {
 });
 
 describe('Turkish-only paths (English reads the same either way, so these pin the Turkish words)', () => {
-  const user = { id: 'me', role: 'data_entry' as const };
+  const user = { id: 'me', role: 'standard_user' as const };
   const draft = { id: 'r', category: 'Electricity' as const, evidenceCount: 0, createdBy: 'me', subsidiaryId: 's', reportingYear: 2026, reportingPeriod: 'monthly' as const, periodValue: 'March', periodLocked: true, status: 'draft' as const };
 
   it('an attach refusal names the locked month in Turkish', () => {

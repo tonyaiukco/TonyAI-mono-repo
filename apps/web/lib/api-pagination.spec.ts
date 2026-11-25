@@ -70,6 +70,20 @@ describe('LP4-05 paged client contracts', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('sends the review queue\'s awaitingMyDecision filter to the list and its count (inc26-roles-approval-chain)', async () => {
+    respond({ items: [], limit: 50, nextCursor: null });
+    await api.listActivityRecordPage({ status: ['submitted', 'under_review'], awaitingMyDecision: true, sort: 'review_queue' });
+    expect(requested().searchParams.get('awaitingMyDecision')).toBe('true');
+    fetchMock.mockClear();
+    respond({ total: 0, latestReportingYear: null });
+    await api.activityRecordMetadata({ awaitingMyDecision: true });
+    expect(Object.fromEntries(requested().searchParams)).toEqual({ awaitingMyDecision: 'true' });
+    fetchMock.mockClear();
+    respond({ items: [], limit: 50, nextCursor: null });
+    await api.listActivityRecordPage({ awaitingMyDecision: undefined });
+    expect(requested().searchParams.has('awaitingMyDecision')).toBe(false);
+  });
+
   it('distinguishes an omitted site filter from a selected site', async () => {
     await api.listActivityRecordPage({ locationId: 'site', status: [] });
     expect(requested().searchParams.get('locationId')).toBe('site');

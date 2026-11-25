@@ -85,7 +85,8 @@ describe("versionState", () => {
 });
 
 describe("boundaryActions — only masterkey writes, only on the open version", () => {
-  const ROLES: UserRole[] = ["consultant", "data_entry", "executive_viewer"];
+  // `boundary.write` is the masterkey's (a super_admin's own company waits for inc26-group-tree).
+  const ROLES: UserRole[] = ["super_admin", "standard_user", "auditor"];
 
   it.each(ROLES)("%s may not create, edit or confirm", (role) => {
     const a = boundaryActions({ role, versions: [summary(1, CONFIRMED)], selected: dto() });
@@ -104,7 +105,7 @@ describe("boundaryActions — only masterkey writes, only on the open version", 
   });
 
   it("says why a confirmation would be refused, for whoever looks", () => {
-    expect(boundaryActions({ role: "consultant", versions: [summary(2)], selected: dto() }).confirmBlock).toBe("gaps");
+    expect(boundaryActions({ role: "auditor", versions: [summary(2)], selected: dto() }).confirmBlock).toBe("gaps");
     expect(boundaryActions({ role: "masterkey", versions: [summary(2)], selected: dto({}, ["gas"]) }).confirmBlock).toBeNull();
   });
 

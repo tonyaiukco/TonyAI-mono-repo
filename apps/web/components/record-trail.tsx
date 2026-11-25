@@ -13,6 +13,7 @@ import {
   Repeat,
   Send,
   Undo2,
+  UserCheck,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ const MARKS: Record<string, LucideIcon> = {
   eye: Eye,
   "corner-up-left": CornerUpLeft,
   check: Check,
+  "user-check": UserCheck,
   ban: Ban,
   dot: Dot,
 };

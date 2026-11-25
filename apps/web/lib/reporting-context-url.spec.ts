@@ -225,7 +225,7 @@ describe('the remembered selection and the session', () => {
 });
 
 describe('the signed-in user goes with the session (pre-pilot defects)', () => {
-  const user = { id: 'user-a', role: 'data_entry' } as never;
+  const user = { id: 'user-a', role: 'standard_user' } as never;
 
   it('is cleared on a sign-out, here or in another tab, and when the session is now someone else\'s', () => {
     for (const [event, sessionUser] of [['SIGNED_OUT', undefined], ['SIGNED_IN', 'user-b'], ['INITIAL_SESSION', undefined]] as const) {

@@ -21,7 +21,7 @@ describe("a code the catalogue knows", () => {
   it("fills its params, period and category in the user's language and the year ungrouped", () => {
     const locked = new ApiError("Reporting period March 2025 is locked", 409, "period_locked", { period: "March", year: 2025 });
     expect(describe_(locked, "tr").title).toBe(
-      "Mart 2025 raporlama dönemi kilitli — içindeki bir şeyin değişebilmesi için bir masterkey'in kilidi açması gerekir.",
+      "Mart 2025 raporlama dönemi kilitli — içindeki bir şeyin değişebilmesi için bir Masterkey'in kilidi açması gerekir.",
     );
     expect(describe_(locked, "en").title).toMatch(/^Reporting period March 2025 is locked/);
     const evidence = new ApiError("x", 400, "evidence_required", { category: "Natural Gas" });
@@ -134,8 +134,9 @@ describe("LP4-04 slice 2 PR C's codes (M3)", () => {
 
   it("words the author's refused start of review in both languages (WP5)", () => {
     const e = new ApiError("You created this record, so someone else must review it.", 403, "self_review_forbidden");
-    expect(describe_(e, "en").title).toBe("You created this record, so someone else must review it.");
-    expect(describe_(e, "tr").title).toBe("Bu kaydı siz oluşturdunuz; başka biri incelemeli.");
+    // inc26-roles-approval-chain: only a non-masterkey author meets it, and a masterkey decides that record.
+    expect(describe_(e, "en").title).toBe("You cannot take a record you created into review. A Masterkey decides it.");
+    expect(describe_(e, "tr").title).toBe("Kendi oluşturduğunuz bir kaydı incelemeye alamazsınız. Bu kayda bir Masterkey karar verir.");
   });
 
   it("groups every count param — a period's pending records too", () => {

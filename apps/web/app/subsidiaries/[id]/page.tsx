@@ -33,7 +33,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
 import { LocationsPanel } from "@/components/subsidiaries/locations-panel";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
-import { geographyOptions, SUBSIDIARY_STATUSES } from "@/lib/types";
+import { can, geographyOptions, SUBSIDIARY_STATUSES } from "@/lib/types";
 import type {
   LocationDTO,
   SubsidiaryDTO,
@@ -112,7 +112,12 @@ export default function SubsidiaryDetailPage() {
   );
   const [locksOpen, setLocksOpen] = useState(false);
 
-  const canManage = user?.role === "masterkey";
+  // The capability table (design Decision 3): the company itself and its
+  // period locks are the masterkey's; facilities a super_admin's too, in the
+  // companies granted them (the only ones this page can read for them).
+  const canManage = can(user?.role, "company.write");
+  const canManageLocations = can(user?.role, "location.write");
+  const canLockPeriods = can(user?.role, "period_lock.write");
 
   const load = useCallback(
     async (resetForm: boolean) => {
@@ -470,7 +475,7 @@ export default function SubsidiaryDetailPage() {
                   <LocationsPanel
                     subsidiary={subsidiary}
                     locations={locations}
-                    canManage={canManage}
+                    canManage={canManageLocations}
                     onChanged={() => load(false)}
                   />
                 </CardContent>
@@ -484,7 +489,7 @@ export default function SubsidiaryDetailPage() {
 
       <PeriodLocksDrawer
         subsidiary={locksOpen ? subsidiary : null}
-        canManage={canManage}
+        canManage={canLockPeriods}
         onClose={() => {
           setLocksOpen(false);
           void load(false);

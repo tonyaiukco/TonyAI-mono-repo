@@ -67,7 +67,7 @@ import { useReleaseSealDates } from '@/lib/use-release-seal-dates';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
-import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, CATEGORY_SCOPE_MAP, LOCALE_FORMAT_TAGS, entityLabel, isCalculated, mayCopyVoidedRecord, unitSymbol } from '@/lib/types';
+import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, CATEGORY_SCOPE_MAP, LOCALE_FORMAT_TAGS, can, entityLabel, isCalculated, mayCopyVoidedRecord, unitSymbol } from '@/lib/types';
 import type { Category, Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
@@ -413,11 +413,15 @@ function EmissionsAnalysisPageInner() {
     contextKeyRef.current = contextKey;
   }, [loadSummary, loadTrends, contextKey]);
 
-  const isMasterkey = user?.role === 'masterkey';
+  // The capability table (design Decision 3): denominators, targets and voids
+  // are the masterkey's.
+  const canWriteIntensity = can(user?.role, 'intensity.write');
+  const canWriteTargets = can(user?.role, 'target.write');
+  const canVoid = can(user?.role, 'record.void');
   const intensityAvailable = (intensity?.metrics.length ?? 0) > 0;
-  // masterkey can always open the panel (to configure the first denominator);
-  // viewers only when configured metrics exist ("only valid configured metrics").
-  const intensityEnabled = intensityAvailable || isMasterkey;
+  // A masterkey can always open the panel (to configure the first denominator);
+  // the others only when configured metrics exist ("only valid configured metrics").
+  const intensityEnabled = intensityAvailable || canWriteIntensity;
 
   // Intensity availability + values (drives the Absolute/Intensity toggle).
   // The selected context's intensity — not "the latest year with data".
@@ -742,7 +746,7 @@ function EmissionsAnalysisPageInner() {
             analyticsError
           ) : dataViewMode === 'intensity' ? (
             <IntensityPanel
-              canManage={isMasterkey}
+              canManage={canWriteIntensity}
               subsidiaries={subsidiaries}
               nameById={nameById}
               context={context}
@@ -1190,7 +1194,7 @@ function EmissionsAnalysisPageInner() {
                 {tContext('targetsHint')}
               </p>
               <TargetsPanel
-                canManage={isMasterkey}
+                canManage={canWriteTargets}
                 subsidiaries={subsidiaries}
                 nameById={nameById}
                 subsidiaryId={context.subsidiaryId}
@@ -1580,7 +1584,7 @@ function EmissionsAnalysisPageInner() {
                     shows an approved record on its own: the review queue lists
                     pending work only, and Data Entry loads a record into the
                     form, which an approved record cannot enter. */}
-                {canOfferVoid(selectedRecord, isMasterkey) && (
+                {canOfferVoid(selectedRecord, canVoid) && (
                   <div className="border-t border-border pt-4">
                     <h4 className="text-sm font-medium mb-2">
                       {t('void.title')}

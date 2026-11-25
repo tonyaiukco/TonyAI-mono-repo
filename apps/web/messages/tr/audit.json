@@ -3,15 +3,17 @@
   "subtitle": "Denetlenen değişikliklerin yalnızca eklenebilen kaydı",
   "subtitleUser": "Denetlenen değişikliklerin yalnızca eklenebilen kaydı · {name} ({role})",
   "forbidden": {
-    "title": "Denetim izini yalnızca bir masterkey okuyabilir",
-    "body": "İz, ana şirketin tüm bağlı şirketlerini kapsadığı için hem API'de hem veritabanında kısıtlanmıştır. Rolünüz: <mono>{role}</mono>."
+    "title": "Denetim izini bir Masterkey ve bir Denetçi okur",
+    "body": "İz, ana şirketin tüm bağlı şirketlerini kapsadığı için hem API'de hem veritabanında kısıtlanmıştır. Rolünüz: {role}."
   },
   "filterPlaceholder": "Bu sayfada ara…",
   "allEntities": "Tüm varlıklar",
   "allActions": "Tüm işlemler",
   "actions": {
     "reprice": "Emisyon yeniden hesaplandı",
-    "reject": "İade edildi"
+    "reject": "İade edildi",
+    "self_approve": "Kendi kaydını onayladı",
+    "role_model_change": "Rol modeli değişti"
   },
   "entriesOne": "{count} kayıt",
   "entriesMany": "{count} kayıt",

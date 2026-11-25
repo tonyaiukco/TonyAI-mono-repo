@@ -62,6 +62,14 @@ describe("record trail — kinds", () => {
     }
   });
 
+  it("labels a self-approval apart from an approval, in its own colour (inc26-roles-approval-chain)", () => {
+    expect(trailKindLabel({ kind: "self_approved", action: "self_approve" }, tFor("en"))).toBe("Self-approved");
+    expect(trailKindLabel({ kind: "self_approved", action: "self_approve" }, tFor("tr"))).toBe("Kendi kaydını onayladı");
+    expect(trailKindLabel({ kind: "approved", action: "approve" }, tFor("en"))).toBe("Approved");
+    expect(TRAIL_KIND_STYLE.self_approved.dot).not.toBe(TRAIL_KIND_STYLE.approved.dot);
+    expect(TRAIL_KIND_STYLE.self_approved.mark).not.toBe(TRAIL_KIND_STYLE.approved.mark);
+  });
+
   it("names an operator's action by its own label, and an unknown one as stored", () => {
     expect(trailKindLabel({ kind: "other", action: "reprice" }, tFor("en"))).toBe("Figure recalculated");
     expect(trailKindLabel({ kind: "other", action: "relink" }, tFor("en"))).toBe("relink");

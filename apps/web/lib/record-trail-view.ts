@@ -32,6 +32,10 @@ export const TRAIL_KIND_STYLE: Readonly<
   review_started: { mark: "eye", dot: "bg-[#D97706]", text: "text-[#92400E]" },
   returned: { mark: "corner-up-left", dot: "bg-[#DC2626]", text: "text-[#B91C1C]" },
   approved: { mark: "check", dot: "bg-[#059669]", text: "text-[#047857]" },
+  // A masterkey's approval of their own record (inc26-roles-approval-chain,
+  // Decision 8): fuchsia, a colour no other kind uses, so an auditor reading
+  // the timeline never takes it for an ordinary approval.
+  self_approved: { mark: "user-check", dot: "bg-[#C026D3]", text: "text-[#A21CAF]" },
   voided: { mark: "ban", dot: "bg-[#374151]", text: "text-[#111827]" },
   other: { mark: "dot", dot: "bg-[#9CA3AF]", text: "text-[#4B5563]" },
 };

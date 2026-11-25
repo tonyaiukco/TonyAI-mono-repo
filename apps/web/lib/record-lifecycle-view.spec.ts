@@ -3,57 +3,119 @@ import { ApiError } from './api';
 import { createTranslator } from 'use-intl/core';
 import { MESSAGES } from '@/messages';
 import { describeApiError, type ErrorTranslator } from './i18n/errors';
-import type { Locale } from './types';
+import { RECORD_APPROVERS, USER_ROLES, type Locale, type RecordApprover, type UserRole } from './types';
 import {
+  awaitedApprover,
   canApproveRecord,
   canSubmitEntry,
   isNewerRecord,
   keepNewerRows,
   isOwnRecordForApprover,
   isRevised,
+  isSelfApproval,
+  mayUseReviewQueue,
   saveErrorDescription,
   shouldStartReviewOnOpen,
 } from './record-lifecycle-view';
 
-describe('record lifecycle controls', () => {
-  const admin = { id: 'author', role: 'masterkey' as const };
-  it.each([
-    ['masterkey', true],
-    ['consultant', true],
-    ['data_entry', false],
-    ['executive_viewer', false],
-  ] as const)('offers approval to a consultant or masterkey, never on their own record: %s', (role, mayApproveOthers) => {
-    const user = { ...admin, role };
-    expect(canApproveRecord(user, { createdBy: 'author' })).toBe(false);
-    expect(canApproveRecord(user, { createdBy: 'other' })).toBe(mayApproveOthers);
+/**
+ * Who is offered a decision (inc26-roles-approval-chain, design Decision 7):
+ * every role against every `approver` value, as the author and as anyone else.
+ * `me` is the user on screen; the record's author is `me` or `other`.
+ */
+describe('record lifecycle controls — the approver decides (inc26-roles-approval-chain)', () => {
+  const me = (role: UserRole) => ({ id: 'me', role });
+  const record = (createdBy: 'me' | 'other', approver: RecordApprover | null) => ({ createdBy, approver });
+
+  // [role, approver, decides someone else's record, decides own record]
+  const MATRIX: readonly (readonly [UserRole, RecordApprover, boolean, boolean])[] = [
+    // A masterkey decides a super_admin's record and the fallback, never
+    // another masterkey's (approver `author`), and their own as a self-approval.
+    ['masterkey', 'masterkey', true, false],
+    ['masterkey', 'super_admin', false, false],
+    ['masterkey', 'author', false, true],
+    // A super_admin decides a standard user's record, never their own.
+    ['super_admin', 'super_admin', true, false],
+    ['super_admin', 'masterkey', false, false],
+    ['super_admin', 'author', false, false],
+    // The other two roles decide nothing.
+    ['standard_user', 'super_admin', false, false],
+    ['standard_user', 'masterkey', false, false],
+    ['standard_user', 'author', false, false],
+    ['auditor', 'super_admin', false, false],
+    ['auditor', 'masterkey', false, false],
+    ['auditor', 'author', false, false],
+  ];
+
+  it.each(MATRIX)('%s, approver %s: decides another\'s record %s, their own %s', (role, approver, others, own) => {
+    expect(canApproveRecord(me(role), record('other', approver))).toBe(others);
+    expect(canApproveRecord(me(role), record('me', approver))).toBe(own);
   });
-  it('offers no approval without a loaded user or record', () => {
-    expect(canApproveRecord(null, { createdBy: 'other' })).toBe(false);
-    expect(canApproveRecord(admin, null)).toBe(false);
+
+  it('offers no decision on a record that states no approver (not pending), or without a user or record', () => {
+    for (const role of USER_ROLES) {
+      expect(canApproveRecord(me(role), record('other', null))).toBe(false);
+      expect(canApproveRecord(me(role), { createdBy: 'other' })).toBe(false);
+    }
+    expect(canApproveRecord(null, record('other', 'masterkey'))).toBe(false);
+    expect(canApproveRecord(me('masterkey'), null)).toBe(false);
   });
-  it.each([
-    ['masterkey', true],
-    ['consultant', true],
-    ['data_entry', false],
-    ['executive_viewer', false],
-  ] as const)('explains the withheld Approve only to an approver on their own record: %s', (role, explained) => {
-    const user = { ...admin, role };
-    expect(isOwnRecordForApprover(user, { createdBy: 'author' })).toBe(explained);
-    expect(isOwnRecordForApprover(user, { createdBy: 'other' })).toBe(false);
-    expect(isOwnRecordForApprover(null, { createdBy: 'author' })).toBe(false);
+
+  it('opens the queue to a masterkey and a super_admin only', () => {
+    expect(USER_ROLES.filter((role) => mayUseReviewQueue(me(role)))).toEqual(['masterkey', 'super_admin']);
+    expect(mayUseReviewQueue(null)).toBe(false);
   });
-  it.each(['masterkey', 'data_entry'] as const)('allows only own or new submissions for %s', (role) => {
-    const user = { ...admin, role };
+
+  it('explains the withheld Approve to a super_admin on their own record, which a masterkey decides', () => {
+    expect(isOwnRecordForApprover(me('super_admin'), record('me', 'masterkey'))).toBe(true);
+    // Not on someone else's record, and not without a loaded user.
+    expect(isOwnRecordForApprover(me('super_admin'), record('other', 'masterkey'))).toBe(false);
+    expect(isOwnRecordForApprover(null, record('me', 'masterkey'))).toBe(false);
+  });
+
+  it('never explains a withheld Approve to a masterkey on their own record — it is theirs to decide', () => {
+    expect(isOwnRecordForApprover(me('masterkey'), record('me', 'author'))).toBe(false);
+  });
+
+  it.each(['standard_user', 'auditor'] as const)('never explains it to a %s, who decides nothing', (role) => {
+    for (const approver of RECORD_APPROVERS) expect(isOwnRecordForApprover(me(role), record('me', approver))).toBe(false);
+  });
+
+  it('notes a self-approval beside Approve for a masterkey\'s own record only', () => {
+    expect(isSelfApproval(me('masterkey'), record('me', 'author'))).toBe(true);
+    // Another masterkey's record is not theirs to approve at all.
+    expect(isSelfApproval(me('masterkey'), record('other', 'author'))).toBe(false);
+    // An ordinary approval is no self-approval.
+    expect(isSelfApproval(me('masterkey'), record('other', 'masterkey'))).toBe(false);
+    expect(isSelfApproval(me('super_admin'), record('other', 'super_admin'))).toBe(false);
+    expect(isSelfApproval(null, record('me', 'author'))).toBe(false);
+  });
+
+  it('names who a record awaits when it is not the user\'s decision, and nothing when it is', () => {
+    // The masterkey's "show every pending record" view (spec scenario "Showing the others").
+    expect(awaitedApprover(me('masterkey'), record('other', 'super_admin'))).toBe('super_admin');
+    expect(awaitedApprover(me('masterkey'), record('other', 'author'))).toBe('author');
+    expect(awaitedApprover(me('masterkey'), record('other', 'masterkey'))).toBeNull();
+    expect(awaitedApprover(me('masterkey'), record('me', 'author'))).toBeNull();
+    // A super_admin's own record and a colleague's.
+    expect(awaitedApprover(me('super_admin'), record('me', 'masterkey'))).toBe('masterkey');
+    expect(awaitedApprover(me('super_admin'), record('other', 'masterkey'))).toBe('masterkey');
+    expect(awaitedApprover(me('super_admin'), record('other', 'super_admin'))).toBeNull();
+    // Nothing for a record that states no approver.
+    expect(awaitedApprover(me('masterkey'), record('other', null))).toBeNull();
+    expect(awaitedApprover(me('masterkey'), null)).toBeNull();
+  });
+
+  it.each(['masterkey', 'super_admin', 'standard_user'] as const)('allows only own or new submissions for %s', (role) => {
+    const user = { id: 'author', role };
     expect(canSubmitEntry(user, null, null)).toBe(true);
     expect(canSubmitEntry(user, 'draft', 'author')).toBe(true);
     expect(canSubmitEntry(user, 'rejected', 'other')).toBe(false);
     expect(canSubmitEntry(user, 'draft', null)).toBe(false);
   });
-  it('offers no submit control before user loading or to read/review roles', () => {
+  it('offers no submit control before user loading or to an auditor', () => {
     expect(canSubmitEntry(null, null, null)).toBe(false);
-    for (const role of ['consultant', 'executive_viewer'] as const) {
-      expect(canSubmitEntry({ ...admin, role }, null, null)).toBe(false);
-    }
+    expect(canSubmitEntry({ id: 'author', role: 'auditor' }, null, null)).toBe(false);
   });
 });
 
@@ -127,29 +189,43 @@ describe('save errors on Data Entry (LP3-01: by code, in the user\'s language)',
   });
 });
 
-describe('opening a record in the review queue (WP5)', () => {
-  const consultant = { id: 'reviewer', role: 'consultant' as const };
-  const admin = { id: 'author', role: 'masterkey' as const };
-  const submitted = { createdBy: 'author', status: 'submitted' };
+describe('opening a record in the review queue (WP5; inc26-roles-approval-chain)', () => {
+  const superAdmin = { id: 'reviewer', role: 'super_admin' as const };
+  const masterkey = { id: 'mk', role: 'masterkey' as const };
+  const submitted = (createdBy: string, approver: RecordApprover | null) => ({ createdBy, approver, status: 'submitted' });
 
-  it("starts the review when an approver opens another user's submitted record", () => {
-    expect(shouldStartReviewOnOpen(consultant, submitted)).toBe(true);
-    expect(shouldStartReviewOnOpen({ id: 'other-admin', role: 'masterkey' }, submitted)).toBe(true);
+  it("starts the review when a super_admin opens a standard user's submitted record (approver super_admin)", () => {
+    expect(shouldStartReviewOnOpen(superAdmin, submitted('author', 'super_admin'))).toBe(true);
   });
-  it('never starts it for the author, who may not approve it', () => {
-    expect(shouldStartReviewOnOpen(admin, submitted)).toBe(false);
-    expect(shouldStartReviewOnOpen({ id: 'author', role: 'consultant' }, submitted)).toBe(false);
+  it("starts it when a masterkey opens a super_admin's record, or the fallback (approver masterkey)", () => {
+    expect(shouldStartReviewOnOpen(masterkey, submitted('author', 'masterkey'))).toBe(true);
+  });
+  it('starts it when a masterkey opens their own submitted record (approver author)', () => {
+    expect(shouldStartReviewOnOpen(masterkey, submitted('mk', 'author'))).toBe(true);
+  });
+  it('never starts it for a non-approver: the masterkey on a super_admin\'s decision, the super_admin on a masterkey\'s', () => {
+    expect(shouldStartReviewOnOpen(masterkey, submitted('author', 'super_admin'))).toBe(false);
+    expect(shouldStartReviewOnOpen(superAdmin, submitted('author', 'masterkey'))).toBe(false);
+    expect(shouldStartReviewOnOpen(superAdmin, submitted('author', 'author'))).toBe(false);
+    // Another masterkey's own record waits for its author.
+    expect(shouldStartReviewOnOpen(masterkey, submitted('other-mk', 'author'))).toBe(false);
+  });
+  it('never starts it for a super_admin author, whose record a masterkey decides', () => {
+    expect(shouldStartReviewOnOpen(superAdmin, submitted('reviewer', 'masterkey'))).toBe(false);
   });
   it('changes nothing on a record already under review, or no longer pending', () => {
     for (const status of ['under_review', 'draft', 'rejected', 'approved']) {
-      expect(shouldStartReviewOnOpen(consultant, { createdBy: 'author', status })).toBe(false);
+      expect(shouldStartReviewOnOpen(superAdmin, { createdBy: 'author', approver: 'super_admin', status })).toBe(false);
     }
   });
-  it('never starts it for a role that may not approve, or without a user or record', () => {
-    expect(shouldStartReviewOnOpen({ id: 'x', role: 'executive_viewer' }, submitted)).toBe(false);
-    expect(shouldStartReviewOnOpen({ id: 'x', role: 'data_entry' }, submitted)).toBe(false);
-    expect(shouldStartReviewOnOpen(null, submitted)).toBe(false);
-    expect(shouldStartReviewOnOpen(consultant, null)).toBe(false);
+  it('never starts it for a role that decides nothing, on a record stating no approver, or without a user or record', () => {
+    for (const approver of RECORD_APPROVERS) {
+      expect(shouldStartReviewOnOpen({ id: 'x', role: 'auditor' }, submitted('author', approver))).toBe(false);
+      expect(shouldStartReviewOnOpen({ id: 'x', role: 'standard_user' }, submitted('author', approver))).toBe(false);
+    }
+    expect(shouldStartReviewOnOpen(superAdmin, submitted('author', null))).toBe(false);
+    expect(shouldStartReviewOnOpen(null, submitted('author', 'super_admin'))).toBe(false);
+    expect(shouldStartReviewOnOpen(superAdmin, null)).toBe(false);
   });
   it('marks a record revised from its second submission', () => {
     expect(isRevised({ submissionCount: 0 })).toBe(false);

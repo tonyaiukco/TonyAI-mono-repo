@@ -285,7 +285,7 @@
   "severalRecordsExist": "{year} için birden fazla {category} kaydı var. Önceki gönderimlerden birini seçin ya da başka bir dönem girin.",
   "notEditable": "Bu kayıt {status} durumda ve artık düzenlenemez.",
   "notYourRecord": "Bu kaydı başka biri girdi — yalnızca kaydı giren kişi değiştirebilir.",
-  "periodLockedRecord": "{period} {year} kilitli — bu kaydın değişebilmesi için bir masterkey'in kilidi açması gerekir.",
+  "periodLockedRecord": "{period} {year} kilitli — bu kaydın değişebilmesi için bir Masterkey'in kilidi açması gerekir.",
   "nowEnteringNew": "Artık yeni bir kayıt giriyorsunuz — açtığınız kayıt değişmedi.",
   "context": {
     "title": "Ek bağlam",
@@ -594,5 +594,10 @@
       "category": "Kategori",
       "allCategories": "Tüm kategoriler"
     }
+  },
+  "categoryGate": {
+    "none": "{company} için size henüz bir kategori atanmadı, bu yüzden burada girilecek bir şey yok. Kategorileri şirketin bir Süper Yöneticisi atar.",
+    "notGranted": "{category} kategorisi {company} için size atanmadı, bu yüzden burada girilemez. Kategorileri şirketin bir Süper Yöneticisi atar.",
+    "noneShort": "Size atanmış kategori yok"
   }
 }

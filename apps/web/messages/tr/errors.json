@@ -10,7 +10,8 @@
     "evidence_required": "Kanıt dosyası gerekiyor",
     "variance_reason_required": "Sapma nedeni gerekiyor",
     "calculation_stale": "Hesap güncel değil",
-    "unexpected": "İncelemeye gönderilemedi"
+    "unexpected": "İncelemeye gönderilemedi",
+    "category_not_granted": "Kategori artık size atanmış değil"
   },
   "bulkUploadIssues": {
     "invalid": "Geçersiz değer",
@@ -25,7 +26,8 @@
     "not_processed_deadline": "Süre sınırı dolduğu için işlenmedi",
     "formula_lead": "Formül olarak okunuyor",
     "would_block_submit": "Henüz incelemeye gönderilemez",
-    "evidence_required": "Kanıt dosyası gerekiyor"
+    "evidence_required": "Kanıt dosyası gerekiyor",
+    "category_not_granted": "Kategori size atanmamış"
   },
   "codes": {
     "query_too_broad": "Bu istek işleme sınırını aşıyor. Filtreleri daraltın veya daha küçük bir rapor isteyin.",
@@ -47,8 +49,8 @@
     "record_create_forbidden": "Rolünüz faaliyet kaydı oluşturamaz.",
     "record_submit_forbidden": "Rolünüz faaliyet kaydı gönderemez.",
     "record_author_forbidden": "Bu kaydı yalnızca oluşturan kişi gönderebilir, düzenleyebilir veya geri alabilir.",
-    "self_approval_forbidden": "Bu kaydı siz oluşturdunuz; başka biri onaylamalı.",
-    "self_review_forbidden": "Bu kaydı siz oluşturdunuz; başka biri incelemeli.",
+    "self_approval_forbidden": "Kendi oluşturduğunuz bir kaydı onaylayamazsınız. Bu kayda bir Masterkey karar verir.",
+    "self_review_forbidden": "Kendi oluşturduğunuz bir kaydı incelemeye alamazsınız. Bu kayda bir Masterkey karar verir.",
     "subsidiary_not_found": "Bağlı şirket bulunamadı.",
     "location_not_found": "Tesis bulunamadı.",
     "record_not_found": "Faaliyet kaydı bulunamadı — silinmiş olabilir.",
@@ -58,7 +60,7 @@
     "user_not_found": "Kullanıcı bulunamadı.",
     "access_grant_not_found": "Erişim yetkisi bulunamadı.",
     "record_duplicate": "Bu raporlama birimi, dönem ve kategori için zaten bir faaliyet kaydı var.",
-    "period_locked": "{period} {year} raporlama dönemi kilitli — içindeki bir şeyin değişebilmesi için bir masterkey'in kilidi açması gerekir.",
+    "period_locked": "{period} {year} raporlama dönemi kilitli — içindeki bir şeyin değişebilmesi için bir Masterkey'in kilidi açması gerekir.",
     "record_changed": "Bu kayıt, isteğiniz işlenirken başka biri tarafından değiştirildi. Kaydı yeniden yükleyip tekrar deneyin.",
     "slot_holds_untyped": "Bu raporlama birimi ve dönem için bu kategoride yakıt ya da gaz belirtilmemiş bir kayıt zaten var. Yakıt ya da gaz bazında kayıt girmeden önce o kaydı düzenleyin veya geçersiz kılın.",
     "slot_holds_typed": "Bu raporlama birimi ve dönem için bu kategoride yakıt ya da gaz belirtilmiş kayıtlar var; bu kayıt da yakıtını ya da gazını belirtmelidir.",
@@ -89,8 +91,8 @@
     "registration_unavailable": "Kayıt şu anda kullanılamıyor.",
     "registration_code_invalid": "Kayıt kodu geçerli değil. Size verilen kodu kontrol edin.",
     "account_disabled": "Hesabınız devre dışı bırakıldı. Bunun bir hata olduğunu düşünüyorsanız yöneticinize başvurun.",
-    "own_account_forbidden": "Kendi rolünüzü değiştiremez veya kendi hesabınızı devre dışı bırakamazsınız; başka bir masterkey'den isteyin.",
-    "access_role_mismatch": "Bağlı şirket erişimi yalnızca Veri Girişi kullanıcılarına verilir; diğer roller ana şirketin tamamını görür.",
+    "own_account_forbidden": "Kendi rolünüzü değiştiremez veya kendi hesabınızı devre dışı bırakamazsınız; başka bir Masterkey'den isteyin.",
+    "access_role_mismatch": "Şirket erişimi yalnızca Süper Yönetici ve Standart Kullanıcı hesaplarına, kategori ise yalnızca Standart Kullanıcı erişimine verilir; Masterkey ve Denetçi kuruluşun tamamını görür.",
     "email_unavailable": "Bu e-posta adresinin zaten bir hesabı var.",
     "invite_refusals_exhausted": "Hesabı zaten olan adreslere çok fazla davet gönderildi. Bir saat sonra yeniden deneyin.",
     "invitation_closed": "Bu davet zaten kabul edildi.",
@@ -99,7 +101,7 @@
     "report_dataset_not_found": "Rapor veri seti bulunamadı.",
     "report_issuance_not_found": "Rapor kesinleştirmesi bulunamadı.",
     "report_artifact_missing": "Bu raporun PDF dosyası depolamada bulunamıyor. Sorun yöneticilere bildirildi.",
-    "report_final_forbidden": "Bu veri seti nihai rapor niteliğinde; nihai raporu yalnızca bir masterkey kesinleştirebilir.",
+    "report_final_forbidden": "Bu veri seti nihai rapor niteliğinde; nihai raporu yalnızca bir Masterkey kesinleştirebilir.",
     "report_already_issued": "Bu veri seti bu dil, şablon ve seçeneklerle zaten kesinleştirildi. Bunun yerine PDF dosyasını indirin.",
     "boundary_frozen": "Envanter sınırının bu sürümü dondurulmuş, artık değiştirilemez. Değişiklik yapmak için onu yeni bir sürüme kopyalayın.",
     "boundary_draft_open": "Bu yılın envanter sınırı için açık bir sürüm zaten var. Yeni bir sürüme başlamadan önce onu düzenleyin ya da silin.",
@@ -153,7 +155,10 @@
     "bulk_workbook_unreadable": "Dosya bir çalışma kitabı olarak okunamadı.",
     "bulk_workbook_no_sheets": "Çalışma kitabında hiç sayfa yok.",
     "bulk_workbook_first_sheet_not_worksheet": "Çalışma kitabının ilk sayfası bir çalışma sayfası değil. Kayıtların bulunduğu sayfayı en başa taşıyın.",
-    "bulk_workbook_too_large": "Çalışma kitabı açıldığında {limitMb} MB'tan büyük. Kullanılmayan biçimlendirmeyi kaldırın ya da daha küçük dosyalara bölün."
+    "bulk_workbook_too_large": "Çalışma kitabı açıldığında {limitMb} MB'tan büyük. Kullanılmayan biçimlendirmeyi kaldırın ya da daha küçük dosyalara bölün.",
+    "not_record_approver": "Bu kayda siz değil, başka bir kullanıcı karar verir.",
+    "category_not_granted": "{category} kategorisi bu şirket için size atanmadı. Kategorileri şirketin bir Süper Yöneticisi atar.",
+    "standard_user_single_company": "Standart kullanıcı yalnızca bir bağlı şirkette çalışır ve bu değişiklik ona bir bağlı şirket daha verirdi. Hiçbir şey değiştirilmedi."
   },
   "variants": {
     "variance_reason_required": {
@@ -164,6 +169,11 @@
       "generationTopology": "Tesisin kendi üretiminin şebeke sayacına göre nerede olduğunu belirtin.",
       "selfGenerationSource": "Tesisin kendi üretiminin kaynağını belirtin: güneş, rüzgâr, doğal gaz kojenerasyonu ya da dizel jeneratör.",
       "selfGeneratedKwh": "Tesisin bu dönemde kendi ürettiği elektriği kWh olarak belirtin."
+    },
+    "not_record_approver": {
+      "super_admin": "Bu kayda siz değil, şirketinin bir Süper Yöneticisi karar verir.",
+      "masterkey": "Bu kayda siz değil, bir Masterkey karar verir.",
+      "author": "Bu kayda onu giren Masterkey, kendi kaydını onaylayarak karar verir; başka kimse karar veremez."
     }
   },
   "bulkOutcomes": {

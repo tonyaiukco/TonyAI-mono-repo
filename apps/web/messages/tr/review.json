@@ -3,8 +3,8 @@
   "subtitle": "Karar bekleyen kayıtlar",
   "subtitleUser": "Karar bekleyen kayıtlar · {name} ({role})",
   "gate": {
-    "title": "İncelemeyi bir danışman veya masterkey yapar",
-    "body": "Bu gizli veri değil — Emisyonlar sayfasında zaten görebildiğiniz kayıtlar burada karara bağlananlarla aynıdır. Rolünüz: <mono>{role}</mono>."
+    "title": "İnceleme Masterkey ve Süper Yönetici'nin işidir",
+    "body": "Bu gizli veri değil — Emisyonlar sayfasında zaten görebildiğiniz kayıtlar burada karara bağlananlarla aynıdır. Rolünüz: {role}."
   },
   "allSubsidiaries": "Tüm bağlı şirketler",
   "awaitingReview": "{count} kayıt inceleme bekliyor",
@@ -80,10 +80,16 @@
     "startReview": "İncelemeye al",
     "reject": "İade et",
     "approve": "Onayla",
-    "selfApproval": "Kendi girdiğiniz bir kaydı onaylayamazsınız.",
+    "selfApproval": "Kendi girdiğiniz bir kaydı onaylayamazsınız. Bu kayda bir Masterkey karar verir.",
     "reading": "Kaydın güncel hali okunuyor…",
     "readFailed": "Kayıt yeniden okunamadı; karar bunu bekliyor.",
-    "noLongerPending": "Bu kayıt artık incelemeyi beklemiyor."
+    "noLongerPending": "Bu kayıt artık incelemeyi beklemiyor.",
+    "selfApprovalNote": "Bu sizin kaydınız: onayınız kendi kaydını onaylama olarak kaydedilir ve denetçiye gösterilir.",
+    "decidedBy": {
+      "super_admin": "Bu kayda şirketinin bir Süper Yöneticisi karar verir. Kaydı okuyabilirsiniz, ancak incelemeye alamaz, iade edemez veya onaylayamazsınız.",
+      "masterkey": "Bu kayda bir Masterkey karar verir. Kaydı okuyabilirsiniz, ancak incelemeye alamaz, iade edemez veya onaylayamazsınız.",
+      "author": "Bu kayda onu giren Masterkey karar verir. Kaydı okuyabilirsiniz, ancak incelemeye alamaz, iade edemez veya onaylayamazsınız."
+    }
   },
   "toast": {
     "reviewed": "İncelemeye alındı",
@@ -93,5 +99,12 @@
   "revised": {
     "label": "Revize",
     "title": "{n}. gönderim: geri çekildikten veya iade edildikten sonra yeniden incelemeye gönderildi"
+  },
+  "showAll": "Bekleyen tüm kayıtları göster",
+  "emptyMine": "Kararınızı bekleyen bir kayıt yok.",
+  "awaits": {
+    "super_admin": "Süper Yönetici bekliyor",
+    "masterkey": "Masterkey bekliyor",
+    "author": "Kaydı giren bekliyor"
   }
 }

@@ -2,11 +2,14 @@
 
 import { useLocale, useTranslations } from "use-intl";
 import {
+  awaitedApprover,
   canApproveRecord,
   isOwnRecordForApprover,
   isNewerRecord,
   isRevised,
+  isSelfApproval,
   keepNewerRows,
+  mayUseReviewQueue,
   shouldStartReviewOnOpen,
 } from "@/lib/record-lifecycle-view";
 
@@ -26,6 +29,8 @@ import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -207,6 +212,12 @@ export default function ReviewPage() {
           return;
         }
         showError(err);
+        // Its approver changed since the read (a grant withdrawn, an author's
+        // role changed): the re-read states the record's approver now.
+        if (err instanceof ApiError && err.code === "not_record_approver") {
+          void loadRef.current({ quiet: true });
+          openRecord(fresh, { startReview: false });
+        }
       })
       .finally(() => {
         if (sheetSession.current === session) setStartingReview(false);
@@ -265,20 +276,31 @@ export default function ReviewPage() {
 
   /**
    * Who may do what. The API is the authority — a forged request still gets
-   * its 403 (approval: `mayApproveRecords` plus D01). These flags only decide
-   * whether to render a control the caller would be refused for using, because
-   * offering a button that always fails is worse than not offering it.
+   * its 403 (`record.decide`, then `not_record_approver` inside the record's
+   * lock). These flags only decide whether to render a control the caller
+   * would be refused for using, because offering a button that always fails is
+   * worse than not offering it. Start review, Return and Approve belong to the
+   * record's approver alone (`mayDecideRecord` over its `approver`).
    */
-  const canReview = user?.role === "masterkey" || user?.role === "consultant";
+  const canReview = mayUseReviewQueue(user);
   const canApprove = canApproveRecord(user, selected);
 
-  /** The queue's filters: the pending statuses, and the subsidiary picked. */
+  /**
+   * By default the queue lists only what awaits THIS user's decision — the API
+   * applies the routing (`awaitingMyDecision`), so paging and the count stay
+   * right. The switch shows every pending record the user can read; those not
+   * theirs to decide say who decides them and offer no decision.
+   */
+  const [showAll, setShowAll] = useState(false);
+
+  /** The queue's filters: the pending statuses, the subsidiary picked, and whose decision. */
   const queueFilters = useCallback(
     (): ActivityRecordPageFilters => ({
       status: [...PENDING_REVIEW_STATUSES],
       ...(subsidiaryId === ANY ? {} : { subsidiaryId }),
+      ...(showAll ? {} : { awaitingMyDecision: true }),
     }),
-    [subsidiaryId],
+    [subsidiaryId, showAll],
   );
 
   /**
@@ -513,7 +535,8 @@ export default function ReviewPage() {
       // queue this page is showing is stale, so reload rather than leave the
       // reviewer clicking a row that can no longer move.
       showError(e);
-      if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
+      // `not_record_approver`: who decides the record changed since it was read.
+      if (e instanceof ApiError && (e.status === 409 || e.status === 400 || e.code === "not_record_approver")) {
         void loadRef.current();
         // The record moved under this opening: read it again, so what is
         // typed and shown belongs to the submission it holds now.
@@ -549,7 +572,7 @@ export default function ReviewPage() {
           {!user ? (
             // The store is in-memory, so `user` is null on every hard load. The
             // old `user && !canReview` rendered the FULL queue to every role —
-            // including executive_viewer — until /me resolved. The API refuses
+            // including an auditor — until /me resolved. The API refuses
             // their actions, but the page should not contradict its own rule.
             <Card>
               <CardContent className="py-8">
@@ -563,12 +586,9 @@ export default function ReviewPage() {
                 <div className="space-y-1">
                   <p className="font-medium">{t("gate.title")}</p>
                   <p className="text-sm text-muted-foreground">
-                    {/* Visibility is tenant-scoped; role and distinct authorship
-                        decide which review actions are offered. */}
-                    {t.rich("gate.body", {
-                      role: user.role,
-                      mono: (chunks) => <span className="font-mono">{chunks}</span>,
-                    })}
+                    {/* Visibility is tenant-scoped; the record's approver
+                        decides which review actions are offered. */}
+                    {t("gate.body", { role: tRoles(`roles.${user.role}`) })}
                   </p>
                 </div>
               </CardContent>
@@ -592,6 +612,17 @@ export default function ReviewPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="review-show-all"
+                    checked={showAll}
+                    onCheckedChange={setShowAll}
+                    data-testid="review-show-all"
+                  />
+                  <Label htmlFor="review-show-all" className="text-sm font-normal">
+                    {t("showAll")}
+                  </Label>
+                </div>
                 <span className="text-sm text-muted-foreground ml-auto" data-testid="review-queue-total">
                   {t("awaitingReview", { count: total === null ? "—" : formatNumber(total, locale) })}
                 </span>
@@ -645,7 +676,7 @@ export default function ReviewPage() {
                             {/* An empty queue is the good outcome here, not an
                                 error — say so, so it does not read as a failed
                                 load. */}
-                            {t("empty")}
+                            {showAll ? t("empty") : t("emptyMine")}
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -723,6 +754,19 @@ export default function ReviewPage() {
                                   {t("revised.label")}
                                 </Badge>
                               )}
+                              {/* Not this user's decision (the "every pending
+                                  record" view): who decides it instead. */}
+                              {(() => {
+                                const awaits = awaitedApprover(user, row);
+                                return awaits ? (
+                                  <span
+                                    className="block mt-1 text-xs text-muted-foreground whitespace-nowrap"
+                                    data-testid="review-row-awaits"
+                                  >
+                                    {t(`awaits.${awaits}`)}
+                                  </span>
+                                ) : null;
+                              })()}
                             </TableCell>
                             <TableCell className="text-sm whitespace-nowrap">
                               {/* A reviewer decides someone else's number, so
@@ -1158,6 +1202,7 @@ export default function ReviewPage() {
                 />
               </div>
 
+              {canApprove && (
               <div className="space-y-2 border-t pt-4">
                 <label
                   htmlFor="review-reason"
@@ -1177,6 +1222,7 @@ export default function ReviewPage() {
                   {t("sheet.reasonHint")}
                 </p>
               </div>
+              )}
 
               {sheetState === "reading" && (
                 <p className="text-xs text-muted-foreground" role="status" data-testid="review-sheet-reading">
@@ -1204,7 +1250,7 @@ export default function ReviewPage() {
                     {t("sheet.startReview")}
                   </Button>
                 )}
-                {canReview && (
+                {canApprove && (
                   <Button
                     variant="destructive"
                     disabled={busy || sheetState !== "ready" || !reason.trim()}
@@ -1222,10 +1268,32 @@ export default function ReviewPage() {
                   </Button>
                 )}
               </div>
-              {isOwnRecordForApprover(user, selected) && (
-                <p className="text-xs text-muted-foreground">
+              {/* A masterkey's own record: theirs to decide, and the approval
+                  is written as a self-approval the auditor sees — said before
+                  Approve is pressed. */}
+              {isSelfApproval(user, selected) && (
+                <p
+                  className="flex items-start gap-1.5 text-xs text-[#A21CAF]"
+                  role="note"
+                  data-testid="review-sheet-self-approval-note"
+                >
+                  <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{t("sheet.selfApprovalNote")}</span>
+                </p>
+              )}
+              {isOwnRecordForApprover(user, selected) ? (
+                <p className="text-xs text-muted-foreground" data-testid="review-sheet-own-record">
                   {t("sheet.selfApproval")}
                 </p>
+              ) : (
+                (() => {
+                  const awaits = awaitedApprover(user, selected);
+                  return awaits ? (
+                    <p className="text-xs text-muted-foreground" data-testid="review-sheet-awaits">
+                      {t(`sheet.decidedBy.${awaits}`)}
+                    </p>
+                  ) : null;
+                })()
               )}
             </div>
           )}

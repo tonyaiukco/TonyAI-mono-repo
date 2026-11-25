@@ -143,7 +143,8 @@ export class ApiError extends Error {
  * means company-level, an empty cursor/targetIds is sent for the API to refuse,
  * and only the documented empty status set means no filter. */
 const PAGE_KEYS = ["limit", "cursor"] as const satisfies readonly (keyof CursorPageParams)[];
-const ACTIVITY_FILTER_KEYS = ["subsidiaryId", "year", "period", "category", "status", "locationId", "periodValue", "scope", "search"] as const satisfies readonly (keyof ActivityRecordPageFilters)[];
+// `awaitingMyDecision`: the review queue's default view (inc26-roles-approval-chain), sent as `true`.
+const ACTIVITY_FILTER_KEYS = ["subsidiaryId", "year", "period", "category", "status", "locationId", "periodValue", "scope", "search", "awaitingMyDecision"] as const satisfies readonly (keyof ActivityRecordPageFilters)[];
 const ACTIVITY_PAGE_KEYS = [...PAGE_KEYS, ...ACTIVITY_FILTER_KEYS, "sort"] as const satisfies readonly (keyof ActivityRecordPageParams)[];
 const PERIOD_LOCK_PAGE_KEYS = [...PAGE_KEYS, "subsidiaryId", "year", "period", "periodValue"] as const satisfies readonly (keyof PeriodLockPageParams)[];
 const TARGET_PAGE_KEYS = [...PAGE_KEYS, "subsidiaryId"] as const satisfies readonly (keyof TargetPageParams)[];
@@ -451,17 +452,21 @@ export const api = {
   updateMyPreferences: (body: UpdatePreferencesRequest) =>
     apiFetch<AuthUser>("/me/preferences", { method: "PATCH", body: JSON.stringify(body) }),
 
-  // --- Users and invitations (LP4-01; masterkey only, own organisation) ---
-  /** Members, newest first. */
+  // --- Users and invitations (LP4-01; a masterkey for the organisation, a
+  // super_admin for the standard users of its own companies) ---
+  /** Members the caller administers, newest first; a super_admin reads only the grants inside its companies. */
   listUsersPage: (params: ListUsersParams = {}) => apiCursorPage<UserSummaryDTO>("/users", params),
-  /** Invites an account; the answer's `invitation` says whether the email went out. */
+  /** Invites an account with its `access` (a super_admin's companies, or a
+   *  standard user's one company and categories; none for an auditor); the
+   *  answer's `invitation` says whether the email went out. */
   inviteUser: (body: InviteUserRequest) =>
     apiFetch<UserSummaryDTO>("/users/invitations", { method: "POST", body: JSON.stringify(body) }),
   resendInvitation: (id: string) =>
     apiFetch<UserSummaryDTO>(`/users/${id}/invitation/resend`, { method: "POST" }),
   setUserRole: (id: string, body: UpdateUserRoleRequest) =>
     apiFetch<UserSummaryDTO>(`/users/${id}/role`, { method: "PATCH", body: JSON.stringify(body) }),
-  /** The complete set of a data_entry user's subsidiaries. */
+  /** The complete set of a super_admin's or standard user's grants within the
+   *  caller's own scope; grants outside it are left untouched. */
   replaceUserAccess: (id: string, body: ReplaceUserAccessRequest) =>
     apiFetch<UserSummaryDTO>(`/users/${id}/access`, { method: "PUT", body: JSON.stringify(body) }),
   disableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/disable`, { method: "POST" }),
@@ -626,9 +631,9 @@ export const api = {
     }),
 
   // The review verbs. Each is a POST with no body except `reject`, which
-  // carries the reason the submitter will read. The role rules (consultant and
-  // masterkey review, reject and approve; nobody approves their own record,
-  // D01) are enforced by the API — the UI hides
+  // carries the reason the submitter will read. The routing (the record's
+  // `approver` — a super_admin, a masterkey, or a masterkey author as a
+  // self-approval; `mayDecideRecord`) is enforced by the API — the UI hides
   // what a role cannot do, it does not decide it.
   reviewActivityRecord: (id: string, body: StartReviewInput = {}) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/review`, {

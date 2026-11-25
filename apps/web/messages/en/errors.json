@@ -10,7 +10,8 @@
     "evidence_required": "Needs an evidence file",
     "variance_reason_required": "Needs a variance reason",
     "calculation_stale": "Figure out of date",
-    "unexpected": "Could not be submitted"
+    "unexpected": "Could not be submitted",
+    "category_not_granted": "Category no longer assigned to you"
   },
   "bulkUploadIssues": {
     "invalid": "Invalid value",
@@ -25,7 +26,8 @@
     "not_processed_deadline": "Not processed before the time limit",
     "formula_lead": "Reads as a formula",
     "would_block_submit": "Cannot be submitted yet",
-    "evidence_required": "Needs an evidence file"
+    "evidence_required": "Needs an evidence file",
+    "category_not_granted": "Category not assigned to you"
   },
   "codes": {
     "bad_request": "The request could not be processed.",
@@ -46,8 +48,8 @@
     "record_create_forbidden": "Your role may not create activity records.",
     "record_submit_forbidden": "Your role may not submit activity records.",
     "record_author_forbidden": "Only the person who created this record can submit, edit or recall it.",
-    "self_approval_forbidden": "You created this record, so someone else must approve it.",
-    "self_review_forbidden": "You created this record, so someone else must review it.",
+    "self_approval_forbidden": "You cannot approve a record you created. A Masterkey decides it.",
+    "self_review_forbidden": "You cannot take a record you created into review. A Masterkey decides it.",
     "subsidiary_not_found": "Subsidiary not found.",
     "location_not_found": "Facility not found.",
     "record_not_found": "Activity record not found — it may have been deleted.",
@@ -57,7 +59,7 @@
     "user_not_found": "User not found.",
     "access_grant_not_found": "Access grant not found.",
     "record_duplicate": "An activity record already exists for this reporting entity, period and category.",
-    "period_locked": "Reporting period {period} {year} is locked — a masterkey must unlock it before anything in it can change.",
+    "period_locked": "Reporting period {period} {year} is locked — a Masterkey must unlock it before anything in it can change.",
     "record_changed": "This record was changed by someone else while your request was in progress. Reload it and try again.",
     "slot_holds_untyped": "A record of this category without a fuel or gas already exists for this reporting entity and period. Edit that record, or void it, before entering one per fuel or gas.",
     "slot_holds_typed": "Records of this category with a fuel or gas already exist for this reporting entity and period, so this one must name its fuel or gas too.",
@@ -89,8 +91,8 @@
     "registration_unavailable": "Registration is not available.",
     "registration_code_invalid": "The registration code is not valid. Check the code you were given.",
     "account_disabled": "Your account has been disabled. Ask your administrator if you think this is a mistake.",
-    "own_account_forbidden": "You cannot change your own role or disable your own account — ask another masterkey.",
-    "access_role_mismatch": "Only Data Entry users are granted subsidiaries; other roles see their whole parent company.",
+    "own_account_forbidden": "You cannot change your own role or disable your own account — ask another Masterkey.",
+    "access_role_mismatch": "Companies are granted only to a Super Admin or a Standard User, and categories only on a Standard User's grant; a Masterkey and an Auditor read their whole organisation.",
     "email_unavailable": "This email address already has an account.",
     "invite_refusals_exhausted": "Too many invitations went to addresses that already have an account. Try again in an hour.",
     "invitation_closed": "This invitation was already accepted.",
@@ -99,7 +101,7 @@
     "report_dataset_not_found": "Report dataset not found.",
     "report_issuance_not_found": "Report issuance not found.",
     "report_artifact_missing": "This report's PDF is missing from storage. The problem has been reported to the administrators.",
-    "report_final_forbidden": "This dataset qualifies as a final report, and only a masterkey can issue a final report.",
+    "report_final_forbidden": "This dataset qualifies as a final report, and only a Masterkey can issue a final report.",
     "report_already_issued": "This dataset is already issued in this language, template and options. Download its PDF instead.",
     "boundary_frozen": "This inventory boundary version is frozen and can no longer change. Copy it into a new version to make changes.",
     "boundary_draft_open": "An open version of this year’s inventory boundary already exists. Edit or delete it before starting another.",
@@ -153,7 +155,10 @@
     "bulk_workbook_unreadable": "The file could not be read as a workbook.",
     "bulk_workbook_no_sheets": "The workbook has no sheets.",
     "bulk_workbook_first_sheet_not_worksheet": "The workbook's first sheet is not a worksheet. Move the sheet with the records to the front.",
-    "bulk_workbook_too_large": "The workbook is larger than {limitMb} MB once unpacked. Remove unused formatting, or split it into smaller files."
+    "bulk_workbook_too_large": "The workbook is larger than {limitMb} MB once unpacked. Remove unused formatting, or split it into smaller files.",
+    "not_record_approver": "This record is decided by another user, not by you.",
+    "category_not_granted": "{category} is not assigned to you for this company. A Super Admin of the company assigns categories.",
+    "standard_user_single_company": "A standard user works in one subsidiary only, and this change would give them another. Nothing was changed."
   },
   "variants": {
     "variance_reason_required": {
@@ -164,6 +169,11 @@
       "generationTopology": "State where the site's own generation sits against the grid meter.",
       "selfGenerationSource": "State what the site's own generation runs on: solar, wind, natural gas CHP or a diesel generator.",
       "selfGeneratedKwh": "State how many kWh the site generated itself in this period."
+    },
+    "not_record_approver": {
+      "super_admin": "A Super Admin of its company decides this record, not you.",
+      "masterkey": "A Masterkey decides this record, not you.",
+      "author": "Its author, a Masterkey, decides this record as a self-approval; nobody else does."
     }
   },
   "bulkOutcomes": {

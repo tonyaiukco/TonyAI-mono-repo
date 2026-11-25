@@ -347,7 +347,7 @@ describe('submitConfirmation — the zero case', () => {
 // Drafts that did not come from an import (PR 2c)
 // ---------------------------------------------------------------------------
 
-const ME: SubmittingUser = { id: 'user-me', role: 'data_entry' };
+const ME: SubmittingUser = { id: 'user-me', role: 'standard_user' };
 
 function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
   return {
@@ -427,9 +427,9 @@ describe('submitBlockReason', () => {
     const theirs = draft({ createdBy: 'user-them' });
     expect(submitBlockReason(theirs, { ...ME, role: 'masterkey' })).toBe('Entered by someone else.');
     expect(submitBlockReason(theirs, ME)).toBe('Entered by someone else.');
-    // The other two are refused earlier, by the role gate — which is itself the
+    // An auditor is refused earlier, by the role gate — which is itself the
     // point: no role can submit a colleague's record.
-    for (const role of ['consultant', 'executive_viewer'] as const) {
+    for (const role of ['auditor', 'super_admin'] as const) {
       expect(submitBlockReason(theirs, { ...ME, role })).not.toBeNull();
       expect(submitBlockReason(theirs, { ...ME, role })).not.toBe(null);
     }
@@ -459,7 +459,7 @@ describe('submitBlockReason', () => {
     );
     // And the role gate outranks all three.
     expect(
-      submitBlockReason(theirsAndLocked, { ...ME, role: 'consultant' }),
+      submitBlockReason(theirsAndLocked, { ...ME, role: 'auditor' }),
     ).toBe('Your role cannot submit records.');
   });
 
@@ -475,13 +475,10 @@ describe('submitBlockReason', () => {
     // The server refuses the WHOLE request with a 403 — it is not a per-record
     // code — so a seat demoted out of the write roles would otherwise see live
     // checkboxes and one refusal for everything it ticked. First, as the server
-    // checks it: a consultant looking at their own old draft gets THIS, not
-    // "Entered by someone else."
+    // checks it: an auditor looking at their own old draft (an account made an
+    // auditor after entering it) gets THIS, not "Entered by someone else."
     const mine = draft({ createdBy: 'user-me' });
-    expect(submitBlockReason(mine, { ...ME, role: 'consultant' })).toBe(
-      'Your role cannot submit records.',
-    );
-    expect(submitBlockReason(mine, { ...ME, role: 'executive_viewer' })).toBe(
+    expect(submitBlockReason(mine, { ...ME, role: 'auditor' })).toBe(
       'Your role cannot submit records.',
     );
     expect(submitBlockReason(mine, ME)).toBeNull();
@@ -614,14 +611,14 @@ describe('draftsSubmitLabel', () => {
 });
 
 describe('authorship has no submission exemption', () => {
-  it.each(['masterkey', 'data_entry', 'consultant', 'executive_viewer'] as const)(
+  it.each(['masterkey', 'super_admin', 'standard_user', 'auditor'] as const)(
     'requires the same author for %s', (role) => {
       const user = { id: 'user-author', role };
       expect(authoredBy(draft({ createdBy: user.id }), user)).toBe(true);
       expect(authoredBy(draft({ createdBy: 'user-other' }), user)).toBe(false);
     },
   );
-  it.each(['masterkey', 'data_entry'] as const)('selects only own rows for %s', (role) => {
+  it.each(['masterkey', 'super_admin', 'standard_user'] as const)('selects only own rows for %s', (role) => {
     const user = { id: 'user-author', role };
     const result = selectableDrafts([
       draft({ id: 'mine', createdBy: user.id }),

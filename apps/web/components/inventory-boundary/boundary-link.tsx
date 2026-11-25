@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useTranslations } from "use-intl";
 import { Waypoints } from "lucide-react";
 import { useAuthStore } from "@/lib/store";
+import { can } from "@/lib/types";
 
 /**
  * The way from a coverage reading to the year's boundary (LP4-03 PR C, D1):
- * "declare or edit" for masterkey, the one role that writes it; "view" for
+ * "declare or edit" for a role that writes it (`boundary.write`); "view" for
  * every other.
  */
 export function BoundaryLink({ year, className = "" }: { year: number; className?: string }) {
@@ -20,7 +21,7 @@ export function BoundaryLink({ year, className = "" }: { year: number; className
       data-testid="boundary-link"
     >
       <Waypoints className="h-3 w-3" aria-hidden />
-      {role === "masterkey" ? t("link.edit") : t("link.view")}
+      {can(role, "boundary.write") ? t("link.edit") : t("link.view")}
     </Link>
   );
 }

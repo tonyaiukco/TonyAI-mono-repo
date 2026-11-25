@@ -147,10 +147,27 @@ describe('actorLabel in Turkish', () => {
 });
 
 describe('auditActionLabel — the actions the page words itself', () => {
-  const labels = { reprice: 'Figure recalculated', reject: 'Returned' };
+  const labels = {
+    reprice: 'Figure recalculated',
+    reject: 'Returned',
+    self_approve: 'Self-approved',
+    role_model_change: 'Role model changed',
+  };
   it('words a reject as a return (WP5) and a reprice by its label', () => {
     expect(auditActionLabel('reject', labels)).toBe('Returned');
     expect(auditActionLabel('reprice', labels)).toBe('Figure recalculated');
+  });
+  it('words a self-approval and the role-model carry-over by their labels (inc26-roles-approval-chain)', () => {
+    expect(auditActionLabel('self_approve', labels, 'self approve')).toBe('Self-approved');
+    expect(auditActionLabel('role_model_change', labels, 'role model change')).toBe('Role model changed');
+  });
+  it('gives a self-approval the trail\'s words for it, in both languages', () => {
+    for (const locale of ['en', 'tr'] as const) {
+      expect(MESSAGES[locale].audit.actions.self_approve).toBe(MESSAGES[locale].recordTrail.kinds.self_approved);
+    }
+  });
+  it('never answers a prototype member for an unknown action', () => {
+    expect(auditActionLabel('constructor', labels, 'constructor')).toBe('constructor');
   });
   it('keeps the caller\'s display of every other action', () => {
     expect(auditActionLabel('approve', labels, 'Approve')).toBe('Approve');

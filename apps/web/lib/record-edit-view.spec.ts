@@ -110,7 +110,7 @@ describe('evidencePlan — owner decision D1', () => {
 });
 
 describe('recordActions — the API\'s gates, row by row', () => {
-  const author = { id: 'u-entry', role: 'data_entry' };
+  const author = { id: 'u-entry', role: 'standard_user' };
   const admin = { id: 'u-admin', role: 'masterkey' };
   const row = (status: string, createdBy = author.id, periodLocked = false) => ({ status, createdBy, periodLocked });
 
@@ -142,8 +142,10 @@ describe('recordActions — the API\'s gates, row by row', () => {
     expect(recordActions(author, row('voided')).copy).toBe(true);
     expect(recordActions(admin, row('voided')).copy).toBe(true);
     expect(recordActions(admin, row('voided', author.id, true)).copy).toBe(true);
-    expect(recordActions({ id: 'u-other', role: 'data_entry' }, row('voided')).copy).toBe(false);
-    expect(recordActions({ id: 'u-c', role: 'consultant' }, row('voided', 'u-c')).copy).toBe(false);
+    expect(recordActions({ id: 'u-other', role: 'standard_user' }, row('voided')).copy).toBe(false);
+    // A super_admin copies only their own voided record (`record.copy_any_voided` is the masterkey's).
+    expect(recordActions({ id: 'u-sa', role: 'super_admin' }, row('voided')).copy).toBe(false);
+    expect(recordActions({ id: 'u-c', role: 'auditor' }, row('voided', 'u-c')).copy).toBe(false);
   });
 
   it('offers nothing to a signed-out shell', () => {

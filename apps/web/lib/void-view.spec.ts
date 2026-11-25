@@ -117,8 +117,8 @@ const record = (over: Partial<ActivityRecordDTO> = {}): ActivityRecordDTO => ({
 describe('canOfferVoid', () => {
   it('offers the control only to a masterkey', () => {
     expect(canOfferVoid({ status: 'approved' }, true)).toBe(true);
-    // A consultant may take a record into review and send it back, but the
-    // service refuses their void with a 403. Rendering a button that always
+    // A super_admin may take a record into review and send it back, but the
+    // service refuses their void with a 403 (`record.void` is the masterkey's). Rendering a button that always
     // fails would teach the seat to distrust the screen.
     expect(canOfferVoid({ status: 'approved' }, false)).toBe(false);
   });

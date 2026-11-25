@@ -31,7 +31,8 @@
     "returned": "İade edildi",
     "approved": "Onaylandı",
     "voided": "Geçersiz kılındı",
-    "other": "{action}"
+    "other": "{action}",
+    "self_approved": "Kendi kaydını onayladı"
   },
   "actions": {
     "reprice": "Rakam yeniden hesaplandı"

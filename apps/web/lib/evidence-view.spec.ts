@@ -40,7 +40,7 @@ const recordLabel = (r: Parameters<typeof recordLabelIn>[0]) => recordLabelIn(r,
 const removeFileLabel = (f: Parameters<typeof removeFileLabelIn>[0]) => removeFileLabelIn(f, ev());
 const sharedWithNote = (f: Parameters<typeof sharedWithNoteIn>[0], id: string) => sharedWithNoteIn(f, id, ev());
 
-const ME: SubmittingUser = { id: 'user-me', role: 'data_entry' };
+const ME: SubmittingUser = { id: 'user-me', role: 'standard_user' };
 const ADMIN: SubmittingUser = { id: 'user-admin', role: 'masterkey' };
 
 function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
@@ -77,8 +77,8 @@ describe('attachBlockReason — the upload’s refusals, in the evidence API’s
     expect(attachBlockReason(draft({ status: 'rejected' }), ME)).toBeNull();
   });
 
-  it('refuses a non-authoring role (the consultant) before anything else', () => {
-    expect(attachBlockReason(draft(), { id: ME.id, role: 'consultant' })).toBe(
+  it('refuses a non-authoring role (the auditor) before anything else', () => {
+    expect(attachBlockReason(draft(), { id: ME.id, role: 'auditor' })).toBe(
       'Your role cannot attach evidence.',
     );
   });

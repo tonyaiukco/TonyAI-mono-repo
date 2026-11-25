@@ -48,7 +48,7 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
-import { geographyOptions, MAX_LOCATIONS_PER_CREATE, SUBSIDIARY_STATUSES } from "@/lib/types";
+import { can, geographyOptions, MAX_LOCATIONS_PER_CREATE, SUBSIDIARY_STATUSES } from "@/lib/types";
 import type {
   CreateSubsidiaryLocationInput,
   LocationDTO,
@@ -143,7 +143,11 @@ export default function SubsidiariesPage() {
   // Single source of truth for masterkey-only write controls on this page
   // (create/delete subsidiary, and the lock/location write forms in the drawers).
   // The API + RLS remain the real enforcement; hiding these is UX/defense-in-depth.
-  const canManage = user?.role === "masterkey";
+  // The capability table (design Decision 3): companies and period locks are
+  // the masterkey's; facilities a super_admin's too, in granted companies.
+  const canManage = can(user?.role, "company.write");
+  const canManageLocations = can(user?.role, "location.write");
+  const canLockPeriods = can(user?.role, "period_lock.write");
   const locSubsidiary = subsidiaries.find((s) => s.id === locSubsidiaryId) ?? null;
   const lockSubsidiary = subsidiaries.find((s) => s.id === lockSubsidiaryId) ?? null;
   const locCount = (subsidiaryId: string) =>
@@ -531,14 +535,14 @@ export default function SubsidiariesPage() {
       <LocationsDrawer
         subsidiary={locSubsidiary}
         locations={locations.filter((l) => l.subsidiaryId === locSubsidiaryId)}
-        canManage={canManage}
+        canManage={canManageLocations}
         onClose={() => setLocSubsidiaryId(null)}
         onChanged={refresh}
       />
 
       <PeriodLocksDrawer
         subsidiary={lockSubsidiary}
-        canManage={canManage}
+        canManage={canLockPeriods}
         onClose={() => setLockSubsidiaryId(null)}
       />
 

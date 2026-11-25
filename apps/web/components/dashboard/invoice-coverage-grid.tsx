@@ -24,8 +24,8 @@ interface InvoiceCoverageGridProps {
   subsidiaryId: string;
   subsidiaryName: string;
   reportingYear: number;
-  /** False for a seat the API refuses writes from (`consultant`,
-   *  `executive_viewer`). The grid still SHOWS what is missing — that is the
+  /** False for a seat the API refuses writes from (an auditor:
+   *  no `record.author`). The grid still SHOWS what is missing — that is the
    *  point of the panel for a reviewer — but it stops inviting a click that
    *  ends in a 403 two screens later. */
   canEnter: boolean;

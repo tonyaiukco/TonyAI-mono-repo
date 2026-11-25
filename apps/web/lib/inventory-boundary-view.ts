@@ -1,3 +1,4 @@
+import { can } from "./types";
 import type {
   InventoryBoundaryGapCode,
   InventoryBoundaryVersionDTO,
@@ -37,13 +38,13 @@ export interface BoundaryActions {
   confirmBlock: ConfirmBlock;
 }
 
-/** Only masterkey writes (`BoundaryWriterGuard`); only the year's open version takes a write. */
+/** Only a `boundary.write` role writes (`BoundaryWriterGuard`; today the masterkey); only the year's open version takes a write. */
 export function boundaryActions(input: {
   role: UserRole | undefined;
   versions: readonly InventoryBoundaryVersionSummary[];
   selected: InventoryBoundaryVersionDTO | null;
 }): BoundaryActions {
-  const writer = input.role === "masterkey";
+  const writer = can(input.role, "boundary.write");
   const open = input.versions.some((v) => v.frozenAt === null);
   const editable = writer && input.selected !== null && input.selected.frozenAt === null
     && input.selected.view === "organisation";
