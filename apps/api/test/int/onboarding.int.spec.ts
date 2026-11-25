@@ -1075,7 +1075,7 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
     await expect(
       operator.provision({ organisationId: A.organisationId, adminEmail: A.users.superAdmin.email, adminName: 'X', language: 'en' }, true),
-    ).rejects.toThrow(/already a super_admin/);
+    ).rejects.toThrow(/already holds the role super_admin/);
     await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: new Date() } });
     try {
       await expect(
