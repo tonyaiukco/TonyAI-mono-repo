@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -46,28 +47,48 @@ import { useErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { useAuthStore } from "@/lib/store";
 import {
+  CATEGORIES,
   LOCALE_FORMAT_TAGS,
   SUPPORTED_LOCALES,
   type Locale,
   type SubsidiaryDTO,
+  type UserAccessGrantDTO,
   type UserRole,
   type UserSummaryDTO,
-  USER_ROLES,
 } from "@/lib/types";
 import {
+  accessPayload,
   accessSummary,
+  accessWarnings,
   appendPage,
-  canResend,
+  assignableCompanies,
+  categorySelection,
+  chooseCompany,
+  clearCategories,
+  companySelection,
+  initialDraft,
+  invitableRoles,
   invitationNote,
+  invitePayload,
+  isCarriedOver,
+  pickerKind,
   replaceUser,
-  selectAllSubsidiaries,
-  selectionState,
-  toggleSubsidiary,
+  restoreCompany,
+  roleChangeFollowUp,
+  roleChangeOptions,
+  initialRoleChoice,
+  rowActions,
+  selectAllCategories,
+  selectAllCompanies,
+  toggleCategory,
+  toggleCompany,
+  usersErrorKey,
+  withdrawCompany,
+  type AccessDraft,
+  type InviteDrafts,
 } from "@/lib/users-view";
 import { cn } from "@/lib/utils";
 import { useSignOut } from "@/lib/use-sign-out";
-
-const ROLES: readonly UserRole[] = USER_ROLES;
 
 const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",
@@ -75,18 +96,36 @@ const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
   disabled: "bg-slate-500/15 text-slate-600 border-slate-500/30",
 };
 
+/** Toasts a refusal: the users screen's own sentence for a code it words, the shared one otherwise. */
+function useUsersErrorToast(): (error: unknown) => void {
+  const t = useTranslations("users");
+  const errorToast = useErrorToast();
+  return useCallback(
+    (error: unknown) => {
+      const key = usersErrorKey(error);
+      if (key) toast.error(t(key));
+      else errorToast(error);
+    },
+    [t, errorToast],
+  );
+}
+
 /**
- * User and access management (LP4-01) — a masterkey's, for their own
- * organisation. Every change goes through the API, which answers the member
+ * User and access management (LP4-01; the four roles of
+ * inc26-roles-approval-chain). A masterkey administers super_admins and
+ * auditors across the organisation; a super_admin the standard users of its
+ * own companies. Every change goes through the API, which answers the member
  * as they now stand; the row is replaced with that answer, so a step that did
  * not go through (an undelivered invitation, a pending sign-in block) shows at
  * once. Other roles see why they cannot use it rather than a missing page.
+ * Every decision is `lib/users-view.ts`'s; this file renders.
  */
 export default function UsersPage() {
   const t = useTranslations("users");
   const locale = useLocale() as Locale;
   const signOut = useSignOut();
   const errorToast = useErrorToast();
+  const usersErrorToast = useUsersErrorToast();
   const { user, setUser } = useAuthStore();
   const [users, setUsers] = useState<UserSummaryDTO[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -105,6 +144,8 @@ export default function UsersPage() {
     [locale],
   );
   const subsidiaryNames = useMemo(() => new Map(subsidiaries.map((s) => [s.id, s.legalName])), [subsidiaries]);
+  const assignable = useMemo(() => assignableCompanies(user, subsidiaries), [user, subsidiaries]);
+  const inviteRoles = invitableRoles(user);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -164,7 +205,7 @@ export default function UsersPage() {
       setUsers((list) => replaceUser(list, updated));
       done(updated);
     } catch (e) {
-      errorToast(e);
+      usersErrorToast(e);
     } finally {
       setBusyId(null);
     }
@@ -193,7 +234,7 @@ export default function UsersPage() {
               </p>
             </div>
             <div className="flex gap-2">
-              {!forbidden && (
+              {!forbidden && inviteRoles.length > 0 && (
                 <Button onClick={() => setInviteOpen(true)} className="gap-2" disabled={loading}>
                   <UserPlus className="h-4 w-4" />
                   {t("invite")}
@@ -247,6 +288,7 @@ export default function UsersPage() {
                       users.map((member) => {
                         const note = invitationNote(member);
                         const access = accessSummary(member, subsidiaryNames, LOCALE_FORMAT_TAGS[locale]);
+                        const actions = rowActions(user, member);
                         const self = member.id === user?.id;
                         return (
                           <TableRow key={member.id} className={cn(member.status === "disabled" && "opacity-70")}>
@@ -305,7 +347,7 @@ export default function UsersPage() {
                                 ) : (
                                   <span className="text-muted-foreground">{t("wholeOrganisation")}</span>
                                 )}
-                                {member.role === "data_entry" && (
+                                {actions.editAccess && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -320,7 +362,7 @@ export default function UsersPage() {
                               </div>
                             </TableCell>
                             <TableCell className="text-right">
-                              {!self && (
+                              {actions.menu && (
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button
@@ -333,10 +375,17 @@ export default function UsersPage() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onSelect={() => setRoleTarget(member)}>
-                                      {t("actions.changeRole")}
-                                    </DropdownMenuItem>
-                                    {canResend(member) && (
+                                    {actions.changeRole && (
+                                      <DropdownMenuItem onSelect={() => setRoleTarget(member)}>
+                                        {t("actions.changeRole")}
+                                      </DropdownMenuItem>
+                                    )}
+                                    {actions.editAccess && (
+                                      <DropdownMenuItem onSelect={() => setAccessTarget(member)}>
+                                        {t("actions.editAccess")}
+                                      </DropdownMenuItem>
+                                    )}
+                                    {actions.resend && (
                                       <DropdownMenuItem
                                         onSelect={() =>
                                           void act(member, () => api.resendInvitation(member.id), (u) => afterDelivery(u, "resent"))
@@ -345,19 +394,25 @@ export default function UsersPage() {
                                         {t("actions.resend")}
                                       </DropdownMenuItem>
                                     )}
-                                    <DropdownMenuSeparator />
-                                    {member.status === "disabled" ? (
-                                      <DropdownMenuItem
-                                        onSelect={() =>
-                                          void act(member, () => api.enableUser(member.id), (u) => afterEnabledChange(u, "enabledToast"))
-                                        }
-                                      >
-                                        {t("actions.enable")}
-                                      </DropdownMenuItem>
-                                    ) : (
-                                      <DropdownMenuItem className="text-destructive" onSelect={() => setDisableTarget(member)}>
-                                        {t("actions.disable")}
-                                      </DropdownMenuItem>
+                                    {actions.toggleEnabled && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        {member.status === "disabled" ? (
+                                          <DropdownMenuItem
+                                            onSelect={() =>
+                                              void act(member, () => api.enableUser(member.id), (u) =>
+                                                afterEnabledChange(u, "enabledToast"),
+                                              )
+                                            }
+                                          >
+                                            {t("actions.enable")}
+                                          </DropdownMenuItem>
+                                        ) : (
+                                          <DropdownMenuItem className="text-destructive" onSelect={() => setDisableTarget(member)}>
+                                            {t("actions.disable")}
+                                          </DropdownMenuItem>
+                                        )}
+                                      </>
                                     )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -386,7 +441,9 @@ export default function UsersPage() {
       <InviteDialog
         open={inviteOpen}
         onOpenChange={setInviteOpen}
-        subsidiaries={subsidiaries}
+        roles={inviteRoles}
+        assignable={assignable}
+        names={subsidiaryNames}
         defaultLanguage={locale}
         onInvited={(created) => {
           setUsers((list) => [created, ...list.filter((u) => u.id !== created.id)]);
@@ -395,22 +452,29 @@ export default function UsersPage() {
       />
       <RoleDialog
         target={roleTarget}
+        options={roleChangeOptions(user)}
         onClose={() => setRoleTarget(null)}
         onSave={(target, role) =>
           act(target, () => api.setUserRole(target.id, { role }), (updated) => {
             setRoleTarget(null);
-            toast.success(t("roleChanged"));
-            // A user who becomes Data Entry has no grant yet: go straight to choosing them.
-            if (target.role !== "data_entry" && updated.role === "data_entry") setAccessTarget(updated);
+            const next = roleChangeFollowUp(user, target.role, updated);
+            if (next === "superAdminAssigns") {
+              toast.success(t("roleChanged"), { description: t("roleChangedStandardUser") });
+            } else {
+              toast.success(t("roleChanged"));
+            }
+            // A new super_admin holds no grant: go straight to choosing their companies.
+            if (next === "openAccessEditor") setAccessTarget(updated);
           })
         }
       />
       <AccessDialog
         target={accessTarget}
-        subsidiaries={subsidiaries}
+        assignable={assignable}
+        names={subsidiaryNames}
         onClose={() => setAccessTarget(null)}
-        onSave={(target, subsidiaryIds) =>
-          act(target, () => api.replaceUserAccess(target.id, { subsidiaryIds }), () => {
+        onSave={(target, draft) =>
+          act(target, () => api.replaceUserAccess(target.id, { access: accessPayload(target.role, draft) }), () => {
             setAccessTarget(null);
             toast.success(t("accessSaved"));
           })
@@ -441,82 +505,283 @@ export default function UsersPage() {
   );
 }
 
-/**
- * The one subsidiary picker (invite and access dialogs): how many are ticked,
- * select all and clear, and a warning — never a refusal — when none is.
- */
-function SubsidiaryChecklist({
-  subsidiaries,
-  selected,
+function WarningLine({ children, testId }: { children: React.ReactNode; testId: string }) {
+  return (
+    <p className="flex items-start gap-1.5 text-xs text-amber-700" role="status" data-testid={testId}>
+      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      {children}
+    </p>
+  );
+}
+
+/** Two small text buttons: select all and clear. */
+function SelectAllClear({
+  onSelectAll,
+  onClear,
+  selectAllDisabled,
+  clearDisabled,
+  selectAllLabel,
+  clearLabel,
+}: {
+  onSelectAll: () => void;
+  onClear: () => void;
+  selectAllDisabled: boolean;
+  clearDisabled: boolean;
+  selectAllLabel?: string;
+  clearLabel?: string;
+}) {
+  const t = useTranslations("users");
+  return (
+    <div className="flex gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2"
+        disabled={selectAllDisabled}
+        aria-label={selectAllLabel}
+        onClick={onSelectAll}
+      >
+        {t("picker.selectAll")}
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2"
+        disabled={clearDisabled}
+        aria-label={clearLabel}
+        onClick={onClear}
+      >
+        {t("picker.clear")}
+      </Button>
+    </div>
+  );
+}
+
+/** One company's category checklist, with its own count, select all and clear; nothing is ticked for a newly chosen company. */
+function CategoryChecklist({
+  grant,
+  name,
   onChange,
+}: {
+  grant: UserAccessGrantDTO;
+  name: string;
+  onChange: (change: (draft: AccessDraft) => AccessDraft) => void;
+}) {
+  const t = useTranslations("users");
+  const tCategory = useTranslations("categories");
+  const locale = useLocale() as Locale;
+  const state = categorySelection(grant);
+  const id = grant.subsidiaryId;
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/30 p-3" data-testid="category-picker">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-medium">{t("picker.categoriesHeading", { name })}</span>
+        <SelectAllClear
+          onSelectAll={() => onChange((d) => selectAllCategories(d, id))}
+          onClear={() => onChange((d) => clearCategories(d, id))}
+          selectAllDisabled={state.allSelected}
+          clearDisabled={state.noneSelected}
+          selectAllLabel={t("picker.selectAllCategoriesFor", { name })}
+          clearLabel={t("picker.clearCategoriesFor", { name })}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground" aria-live="polite" data-testid="category-picker-count">
+        {t("picker.categoriesCount", { count: formatNumber(state.count, locale), total: formatNumber(state.total, locale) })}
+      </p>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+        {CATEGORIES.map((c) => (
+          <label key={c} className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={grant.categories.includes(c)}
+              onCheckedChange={(checked) => onChange((d) => toggleCategory(d, id, c, checked === true))}
+            />
+            {tCategory(c)}
+          </label>
+        ))}
+      </div>
+      {state.noneSelected && (
+        <WarningLine testId="category-picker-empty">{t("picker.noCategoryWarning", { name })}</WarningLine>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The one access picker (invite and access dialogs). Lists only the companies
+ * the reader may assign. A super_admin's: several companies, "n of m
+ * selected", select all and clear. A standard user's: one company and its
+ * category checklist; a carried-over account's several companies are shown
+ * as held and removable, with none addable. Empty selections are warned,
+ * never refused.
+ */
+function AccessPicker({
+  role,
+  initial,
+  draft,
+  onChange,
+  assignable,
+  names,
   help,
 }: {
-  subsidiaries: SubsidiaryDTO[];
-  selected: string[];
-  onChange: (ids: string[]) => void;
+  role: UserRole;
+  /** The account's grants when the dialog opened (none for an invitation). */
+  initial: readonly UserAccessGrantDTO[];
+  draft: AccessDraft;
+  onChange: (change: (draft: AccessDraft) => AccessDraft) => void;
+  assignable: SubsidiaryDTO[];
+  names: ReadonlyMap<string, string>;
   help?: string;
 }) {
   const t = useTranslations("users");
   const locale = useLocale() as Locale;
-  const state = selectionState(selected, subsidiaries);
-  return (
-    <fieldset className="space-y-2" data-testid="subsidiary-picker">
-      <legend className="text-sm font-medium leading-none">{t("picker.heading")}</legend>
-      {help && <p className="text-xs text-muted-foreground">{help}</p>}
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="text-muted-foreground" aria-live="polite" data-testid="subsidiary-picker-count">
-          {t("picker.selectedCount", {
-            count: formatNumber(state.count, locale),
-            total: formatNumber(state.total, locale),
+  const kind = pickerKind(role);
+  const warnings = accessWarnings(role, draft, assignable);
+  const carriedOver = isCarriedOver(role, initial);
+  const nameOf = (id: string) => names.get(id) ?? "";
+
+  const none = (
+    <p className="rounded-md border p-3 text-sm text-muted-foreground" data-testid="subsidiary-picker-none">
+      {t("picker.noneAssignable")}
+    </p>
+  );
+
+  let body: React.ReactNode;
+  if (kind === "companies") {
+    const state = companySelection(draft, assignable);
+    const ticked = new Set(draft.map((g) => g.subsidiaryId));
+    body = (
+      <>
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="text-muted-foreground" aria-live="polite" data-testid="subsidiary-picker-count">
+            {t("picker.selectedCount", { count: formatNumber(state.count, locale), total: formatNumber(state.total, locale) })}
+          </span>
+          <SelectAllClear
+            onSelectAll={() => onChange((d) => selectAllCompanies(d, assignable))}
+            onClear={() => onChange(() => [])}
+            selectAllDisabled={state.total === 0 || state.allSelected}
+            clearDisabled={draft.length === 0}
+          />
+        </div>
+        {warnings.noneAssignable ? (
+          none
+        ) : (
+          <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
+            {assignable.map((s) => (
+              <label key={s.id} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={ticked.has(s.id)}
+                  onCheckedChange={(checked) => onChange((d) => toggleCompany(d, s.id, checked === true))}
+                />
+                {s.legalName}
+              </label>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  } else if (carriedOver) {
+    const current = new Map(draft.map((g) => [g.subsidiaryId, g]));
+    body = (
+      <>
+        <p className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-xs" data-testid="held-companies-note">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          {t("picker.heldNote")}
+        </p>
+        <div className="max-h-[22rem] space-y-3 overflow-y-auto">
+          {initial.map((held) => {
+            const name = nameOf(held.subsidiaryId);
+            const grant = current.get(held.subsidiaryId);
+            return (
+              <div key={held.subsidiaryId} className="space-y-2" data-testid="held-company">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className={cn("font-medium", !grant && "text-muted-foreground line-through")}>{name}</span>
+                  {grant ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-destructive"
+                      aria-label={t("picker.withdrawFor", { name })}
+                      onClick={() => onChange((d) => withdrawCompany(d, held.subsidiaryId))}
+                    >
+                      {t("picker.withdraw")}
+                    </Button>
+                  ) : (
+                    <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {t("picker.withdrawn")}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2"
+                        aria-label={t("picker.restoreFor", { name })}
+                        onClick={() => onChange((d) => restoreCompany(d, initial, held.subsidiaryId))}
+                      >
+                        {t("picker.restore")}
+                      </Button>
+                    </span>
+                  )}
+                </div>
+                {grant && <CategoryChecklist grant={grant} name={name} onChange={onChange} />}
+              </div>
+            );
           })}
-        </span>
-        <div className="flex gap-1">
+        </div>
+      </>
+    );
+  } else {
+    const chosen = draft[0];
+    const state = companySelection(draft, assignable);
+    body = (
+      <>
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="text-muted-foreground" aria-live="polite" data-testid="subsidiary-picker-count">
+            {t("picker.selectedCount", { count: formatNumber(state.count, locale), total: formatNumber(state.total, locale) })}
+          </span>
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2"
-            disabled={state.total === 0 || state.allSelected}
-            onClick={() => onChange(selectAllSubsidiaries(selected, subsidiaries))}
-          >
-            {t("picker.selectAll")}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2"
-            disabled={selected.length === 0}
-            onClick={() => onChange([])}
+            className="h-7 px-2 text-xs"
+            disabled={draft.length === 0}
+            aria-label={t("picker.clearCompany")}
+            onClick={() => onChange(() => [])}
           >
             {t("picker.clear")}
           </Button>
         </div>
-      </div>
-      {subsidiaries.length === 0 ? (
-        <p className="rounded-md border p-3 text-sm text-muted-foreground" data-testid="subsidiary-picker-none">
-          {t("inviteDialog.noSubsidiaries")}
-        </p>
-      ) : (
-        <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
-          {subsidiaries.map((s) => (
-            <label key={s.id} className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={selected.includes(s.id)}
-                onCheckedChange={(checked) => onChange(toggleSubsidiary(selected, s.id, checked === true))}
-              />
-              {s.legalName}
-            </label>
-          ))}
-        </div>
-      )}
-      {/* Shown with no subsidiary at all too: an invitation sent before any exists still leaves the user unable to enter data. */}
-      {state.noneSelected && (
-        <p className="flex items-start gap-1.5 text-xs text-amber-700" role="status" data-testid="subsidiary-picker-empty">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {t("picker.emptyWarning")}
-        </p>
-      )}
+        {warnings.noneAssignable ? (
+          none
+        ) : (
+          <RadioGroup
+            value={chosen?.subsidiaryId ?? ""}
+            onValueChange={(id) => onChange((d) => chooseCompany(d, id))}
+            className="max-h-40 gap-2 overflow-y-auto rounded-md border p-3"
+            aria-label={t("picker.singleHeading")}
+          >
+            {assignable.map((s) => (
+              <label key={s.id} className="flex items-center gap-2 text-sm">
+                <RadioGroupItem value={s.id} />
+                {s.legalName}
+              </label>
+            ))}
+          </RadioGroup>
+        )}
+        {chosen && <CategoryChecklist grant={chosen} name={nameOf(chosen.subsidiaryId)} onChange={onChange} />}
+      </>
+    );
+  }
+
+  const heading = kind === "companies" ? t("picker.heading") : carriedOver ? t("picker.heldHeading") : t("picker.singleHeading");
+  return (
+    <fieldset className="space-y-2" data-testid="subsidiary-picker">
+      <legend className="text-sm font-medium leading-none">{heading}</legend>
+      {help && <p className="text-xs text-muted-foreground">{help}</p>}
+      {body}
+      {/* Shown with no subsidiary at all too: an invitation sent before any exists still leaves the user unable to work. */}
+      {warnings.noCompany && <WarningLine testId="subsidiary-picker-empty">{t("picker.emptyWarning")}</WarningLine>}
     </fieldset>
   );
 }
@@ -524,59 +789,60 @@ function SubsidiaryChecklist({
 function InviteDialog({
   open,
   onOpenChange,
-  subsidiaries,
+  roles,
+  assignable,
+  names,
   defaultLanguage,
   onInvited,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  subsidiaries: SubsidiaryDTO[];
+  roles: readonly UserRole[];
+  assignable: SubsidiaryDTO[];
+  names: ReadonlyMap<string, string>;
   defaultLanguage: Locale;
   onInvited: (created: UserSummaryDTO) => void;
 }) {
   const t = useTranslations("users");
-  const errorToast = useErrorToast();
+  const usersErrorToast = useUsersErrorToast();
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState<UserRole>("data_entry");
+  const [role, setRole] = useState<UserRole | null>(roles[0] ?? null);
   const [language, setLanguage] = useState<Locale>(defaultLanguage);
-  const [subsidiaryIds, setSubsidiaryIds] = useState<string[]>([]);
+  const [drafts, setDrafts] = useState<InviteDrafts>({});
   const [sending, setSending] = useState(false);
+  const firstRole = roles[0] ?? null;
 
   useEffect(() => {
     if (!open) return;
     setEmail("");
     setFullName("");
-    setRole("data_entry");
+    setRole(firstRole);
     setLanguage(defaultLanguage);
-    setSubsidiaryIds([]);
-  }, [open, defaultLanguage]);
+    setDrafts({});
+  }, [open, defaultLanguage, firstRole]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!role) return;
     setSending(true);
     try {
-      const created = await api.inviteUser({
-        email: email.trim(),
-        fullName: fullName.trim(),
-        role,
-        language,
-        subsidiaryIds: role === "data_entry" ? subsidiaryIds : [],
-      });
+      const created = await api.inviteUser(invitePayload({ email, fullName, role, language, drafts }));
       onOpenChange(false);
       onInvited(created);
     } catch (error) {
       // An organisation past its bound of refused invitations answers its own
       // code, `invite_refusals_exhausted`, worded by the errors catalogue.
-      errorToast(error);
+      usersErrorToast(error);
     } finally {
       setSending(false);
     }
   }
 
+  const kind = role ? pickerKind(role) : "wholeOrganisation";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <form onSubmit={onSubmit} className="space-y-4">
           <DialogHeader>
             <DialogTitle>{t("inviteDialog.title")}</DialogTitle>
@@ -593,12 +859,12 @@ function InviteDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>{t("inviteDialog.role")}</Label>
-              <Select value={role} onValueChange={(v) => setRole(v as UserRole)}>
+              <Select value={role ?? undefined} onValueChange={(v) => setRole(v as UserRole)} disabled={roles.length < 2}>
                 <SelectTrigger aria-label={t("inviteDialog.role")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROLES.map((r) => (
+                  {roles.map((r) => (
                     <SelectItem key={r} value={r}>
                       {t(`roles.${r}`)}
                     </SelectItem>
@@ -622,24 +888,27 @@ function InviteDialog({
               </Select>
             </div>
           </div>
-          {role === "data_entry" ? (
-            <SubsidiaryChecklist
-              subsidiaries={subsidiaries}
-              selected={subsidiaryIds}
-              onChange={setSubsidiaryIds}
-              help={t("inviteDialog.subsidiariesHelp")}
+          {role && kind !== "wholeOrganisation" ? (
+            <AccessPicker
+              role={role}
+              initial={[]}
+              draft={drafts[role] ?? []}
+              onChange={(change) => setDrafts((all) => ({ ...all, [role]: change(all[role] ?? []) }))}
+              assignable={assignable}
+              names={names}
+              help={kind === "companies" ? t("inviteDialog.superAdminHelp") : t("inviteDialog.standardUserHelp")}
             />
-          ) : (
+          ) : role ? (
             <p className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm" data-testid="invite-role-access-note">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-              {t(`roleAccessNote.${role as Exclude<UserRole, "data_entry">}`)}
+              {t("roleAccessNote.auditor")}
             </p>
-          )}
+          ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("inviteDialog.cancel")}
             </Button>
-            <Button type="submit" disabled={sending}>
+            <Button type="submit" disabled={sending || !role}>
               {sending ? t("inviteDialog.submitting") : t("inviteDialog.submit")}
             </Button>
           </DialogFooter>
@@ -651,19 +920,21 @@ function InviteDialog({
 
 function RoleDialog({
   target,
+  options,
   onClose,
   onSave,
 }: {
   target: UserSummaryDTO | null;
+  options: readonly UserRole[];
   onClose: () => void;
   onSave: (target: UserSummaryDTO, role: UserRole) => Promise<void>;
 }) {
   const t = useTranslations("users");
-  const [role, setRole] = useState<UserRole>("data_entry");
+  const [role, setRole] = useState<UserRole | null>(null);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    if (target) setRole(target.role);
-  }, [target]);
+    if (target) setRole(initialRoleChoice(target, options));
+  }, [target, options]);
 
   return (
     <Dialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
@@ -672,12 +943,12 @@ function RoleDialog({
           <DialogTitle>{t("roleDialog.title", { name: target?.fullName ?? "" })}</DialogTitle>
           <DialogDescription>{t("roleDialog.description")}</DialogDescription>
         </DialogHeader>
-        <Select value={role} onValueChange={(v) => setRole(v as UserRole)}>
+        <Select value={role ?? ""} onValueChange={(v) => setRole(v as UserRole)}>
           <SelectTrigger aria-label={t("columns.role")}>
-            <SelectValue />
+            <SelectValue placeholder={t("roleDialog.placeholder")} />
           </SelectTrigger>
           <SelectContent>
-            {ROLES.map((r) => (
+            {options.map((r) => (
               <SelectItem key={r} value={r}>
                 {t(`roles.${r}`)}
               </SelectItem>
@@ -689,9 +960,9 @@ function RoleDialog({
             {t("roleDialog.cancel")}
           </Button>
           <Button
-            disabled={saving || !target || role === target.role}
+            disabled={saving || !target || !role || role === target.role}
             onClick={async () => {
-              if (!target) return;
+              if (!target || !role) return;
               setSaving(true);
               await onSave(target, role);
               setSaving(false);
@@ -707,30 +978,45 @@ function RoleDialog({
 
 function AccessDialog({
   target,
-  subsidiaries,
+  assignable,
+  names,
   onClose,
   onSave,
 }: {
   target: UserSummaryDTO | null;
-  subsidiaries: SubsidiaryDTO[];
+  assignable: SubsidiaryDTO[];
+  names: ReadonlyMap<string, string>;
   onClose: () => void;
-  onSave: (target: UserSummaryDTO, subsidiaryIds: string[]) => Promise<void>;
+  onSave: (target: UserSummaryDTO, draft: AccessDraft) => Promise<void>;
 }) {
   const t = useTranslations("users");
-  const [selected, setSelected] = useState<string[]>([]);
+  const initial = useMemo(() => (target ? initialDraft(target) : []), [target]);
+  const [draft, setDraft] = useState<AccessDraft>([]);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    if (target) setSelected(target.subsidiaryIds);
-  }, [target]);
+    setDraft(initial);
+  }, [initial]);
 
+  const kind = target ? pickerKind(target.role) : "companies";
   return (
     <Dialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t("accessDialog.title", { name: target?.fullName ?? "" })}</DialogTitle>
-          <DialogDescription>{t("accessDialog.description")}</DialogDescription>
+          <DialogDescription>
+            {kind === "singleCompany" ? t("accessDialog.standardUserDescription") : t("accessDialog.superAdminDescription")}
+          </DialogDescription>
         </DialogHeader>
-        <SubsidiaryChecklist subsidiaries={subsidiaries} selected={selected} onChange={setSelected} />
+        {target && (
+          <AccessPicker
+            role={target.role}
+            initial={initial}
+            draft={draft}
+            onChange={(change) => setDraft((d) => change(d))}
+            assignable={assignable}
+            names={names}
+          />
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             {t("accessDialog.cancel")}
@@ -740,7 +1026,7 @@ function AccessDialog({
             onClick={async () => {
               if (!target) return;
               setSaving(true);
-              await onSave(target, selected);
+              await onSave(target, draft);
               setSaving(false);
             }}
           >
