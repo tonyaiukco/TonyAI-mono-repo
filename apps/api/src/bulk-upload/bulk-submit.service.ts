@@ -36,7 +36,7 @@ import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculatio
 import { AuditService } from '../audit/audit.service';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
-import { CategoryNotGrantedError } from '../activity-records/record-scope';
+import { CategoryNotGrantedError, recordScopeWhere } from '../activity-records/record-scope';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkSubmitActivityRecordsDto } from './dto/bulk-submit-activity-records.dto';
@@ -242,9 +242,11 @@ export class BulkSubmitService {
     const rows = (await this.prisma.activityRecord.findMany({
       where: {
         id: { in: requestedIds },
-        // Mirrors `loadScoped`, so an inaccessible id is indistinguishable
-        // from an absent one here exactly as it is there.
+        // Mirrors `loadScoped` (the record scope: a standard user's ticked
+        // categories and own records), so an id outside it is
+        // indistinguishable from an absent one here exactly as it is there.
         subsidiaryId: { in: user.accessibleSubsidiaryIds },
+        AND: [recordScopeWhere(user)],
       },
       select: {
         id: true,

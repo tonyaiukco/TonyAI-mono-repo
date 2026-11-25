@@ -682,6 +682,18 @@ describe('SubsidiariesService', () => {
       });
     });
 
+    it('counts a standard user\'s records inside its record scope (security review: no hidden category\'s count)', async () => {
+      const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] } });
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      countLocations(prisma, { total: 0 });
+      await service.summary(user, 'sub-1');
+      const scope = { OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: user.id }] };
+      const recordCounts = prisma.activityRecord.count.mock.calls.map(([args]: [{ where: { AND?: unknown } }]) => args.where.AND);
+      expect(recordCounts.length).toBeGreaterThan(0);
+      for (const and of recordCounts) expect(and).toEqual([scope]);
+    });
+
     it('reports no blockers only when literally nothing is left', async () => {
       const user = makeMasterkey();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));

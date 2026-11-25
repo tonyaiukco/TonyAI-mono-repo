@@ -21,6 +21,7 @@ import type {
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import { LocationsService, TrustedParent } from '../locations/locations.service';
 import { EDITABLE_STATUSES } from '../activity-records/activity-records.service';
@@ -311,6 +312,9 @@ export class SubsidiariesService {
   private async countDependents(
     db: Prisma.TransactionClient | PrismaService,
     id: string,
+    /** The reader's record scope for the panel's read-only view; none for a
+     *  delete, which must count every record it would cascade. */
+    recordScope: Prisma.ActivityRecordWhereInput = {},
   ): Promise<SubsidiaryDependentCounts> {
     // Annotated, not inferred: assignability is what catches a status that no
     // longer exists in the Prisma enum, and it names the bad one. The same trap
@@ -340,13 +344,13 @@ export class SubsidiariesService {
     ] =
       await Promise.all([
         db.activityRecord.count({
-          where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] } },
+          where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] }, AND: [recordScope] },
         }),
         db.activityRecord.count({
-          where: { subsidiaryId: id, status: { in: reviewable } },
+          where: { subsidiaryId: id, status: { in: reviewable }, AND: [recordScope] },
         }),
         db.activityRecord.count({
-          where: { subsidiaryId: id, status: { in: editable } },
+          where: { subsidiaryId: id, status: { in: editable }, AND: [recordScope] },
         }),
         db.location.count({ where: { subsidiaryId: id } }),
         db.location.count({
@@ -381,13 +385,14 @@ export class SubsidiariesService {
    * Tenant-scoped but NOT role-gated, matching `get()` and SUB-2's note that
    * "reads remain tenant-scoped for other roles" — it exposes nothing a caller
    * could not already obtain by listing the child collections they can see,
-   * only far more cheaply.
+   * only far more cheaply. The record counts take the reader's record scope,
+   * so a standard user's counts its ticked categories and own records only.
    */
   async summary(user: RequestUser, id: string): Promise<SubsidiarySummaryDTO> {
     await this.loadScoped(user, id);
     // `this.prisma` is directly assignable — the delegates a transaction client
     // exposes are the ones used here. Verified: removing the cast typechecks.
-    const counts = await this.countDependents(this.prisma, id);
+    const counts = await this.countDependents(this.prisma, id, recordScopeWhere(user));
     const refusal = SubsidiariesService.describeBlockers(counts);
     const {
       locationsHoldingForeignRecords: _alarm,

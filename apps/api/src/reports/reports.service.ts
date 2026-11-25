@@ -50,6 +50,7 @@ import type {
   ReportWithdrawnTotals,
 } from './report-data';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import {
   COUNTED_STATUSES,
@@ -207,7 +208,8 @@ export class ReportsService {
    * Generating/exporting reports: `can(role, 'report.generate')` — a
    * masterkey, an auditor and a super_admin, whose scope confines its export
    * to its companies; a standard user is refused (INC-2.6 §6). Reads like
-   * /reports/meta stay tenant-scoped for everyone.
+   * /reports/meta stay open to every role, inside the caller's record scope
+   * (`recordWhere`).
    */
   private assertCanGenerate(user: RequestUser): void {
     if (!can(user.role, 'report.generate')) {
@@ -251,7 +253,7 @@ export class ReportsService {
       if (head.counts === null) return head.meta;
       const scopes = inventoryScopeFilter(selection.scope);
       const committed = scopes === null ? [] : await db.activityRecord.findMany({
-        where: { ...this.recordWhere(ids, selection), scope: scopes, status: { in: COMMITTED_STATUSES } },
+        where: { ...this.recordWhere(user, ids, selection), scope: scopes, status: { in: COMMITTED_STATUSES } },
         select: SUMMARY_RECORD_SELECT,
         orderBy: { id: 'asc' },
         take: this.limits.REPORT_RECORD_LIMIT + 1,
@@ -294,7 +296,7 @@ export class ReportsService {
     const scopes = inventoryScopeFilter(selection.scope);
     const grouped = scopes === null ? [] : await db.activityRecord.groupBy({
       by: ['status'],
-      where: { ...this.recordWhere(ids, selection), scope: scopes },
+      where: { ...this.recordWhere(user, ids, selection), scope: scopes },
       _count: { _all: true },
     });
     const count = (statuses: ActivityRecordStatus[]) =>
@@ -357,7 +359,7 @@ export class ReportsService {
     const readsScope3 = (selection.scope === undefined || selection.scope === 3)
       && (selection.category === undefined || CATEGORY_SCOPE_MAP[selection.category] === 3);
     const scope3Rows = !readsScope3 ? [] : await db.activityRecord.findMany({
-      where: { ...this.recordWhere(ids, selection), scope: 3, status: { in: COMMITTED_STATUSES } },
+      where: { ...this.recordWhere(user, ids, selection), scope: 3, status: { in: COMMITTED_STATUSES } },
       select: { calculation: true },
       orderBy: { id: 'asc' },
       take: this.limits.REPORT_RECORD_LIMIT + 1,
@@ -406,8 +408,20 @@ export class ReportsService {
     return { ...head.meta, ...head.counts, summary, ...tail };
   }
 
-  private recordWhere(ids: string[], selection: LiveSelection) {
-    return { subsidiaryId: { in: ids }, reportingYear: selection.year, category: selection.category };
+  /**
+   * Every live report read of activity records: the caller's companies AND
+   * its record scope (`recordScopeWhere`) — a standard user's figures, counts
+   * and coverage count its ticked categories and its own records only
+   * (INC-2.6 §1, ruling R5). `GET /reports/meta` is open to every role, so
+   * this is what confines it; a role categories never narrow is unchanged.
+   */
+  private recordWhere(user: RequestUser, ids: string[], selection: LiveSelection) {
+    return {
+      subsidiaryId: { in: ids },
+      reportingYear: selection.year,
+      category: selection.category,
+      AND: [recordScopeWhere(user)],
+    };
   }
 
   private async namesOf(db: Prisma.TransactionClient, ids: string[]): Promise<Map<string, string>> {
@@ -459,6 +473,9 @@ export class ReportsService {
       db.activityRecord.findMany({
         where: {
           subsidiaryId: { in: ids },
+          // The record scope too, as every report read (defence in depth: a
+          // standard user is refused generation before this point).
+          AND: [recordScopeWhere(user)],
           reportingYear: q.year,
           scope: scopes ?? undefined,
           category: q.category,

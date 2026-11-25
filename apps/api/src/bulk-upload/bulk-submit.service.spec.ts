@@ -307,6 +307,18 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     });
   });
 
+  it('preflights inside a standard user\'s record scope: a record of another category answers as not_found, never its status', async () => {
+    const { prisma, service } = build([]);
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] } });
+
+    const { result: report } = await captureErrors(() => service.submitMany(user, ids('hidden')));
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject({
+      AND: [{ OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: user.id }] }],
+    });
+    expect(report.failed).toEqual([expect.objectContaining({ recordId: 'hidden', code: 'not_found' })]);
+  });
+
   it('does not disclose whether an unreachable record exists', async () => {
     // Asserted as a PROPERTY, not against a blocklist of four words: an
     // inaccessible id and an absent one must be byte-identical apart from the

@@ -216,6 +216,18 @@ describe('a standard user granted Electricity alone (INC-2.6 §1, task 8.5)', ()
     }
   });
 
+  it('reads report metadata and its company summary without the Fuel record (security review P1)', async () => {
+    for (const path of [`/reports/meta?year=2026&subsidiaryId=${t.subsidiaryId}`, '/reports/context/meta?year=2026', `/subsidiaries/${t.subsidiaryId}/summary`]) {
+      const answer = await call(narrow, 'GET', path);
+      expect(answer.status, `${path}: ${answer.text.slice(0, 200)}`).toBe(200);
+      expect(answer.text, path).not.toContain(String(FUEL_TCO2E));
+      expect(answer.text, path).not.toContain('"Fuel"');
+    }
+    // The super_admin of the company still counts the Fuel record there.
+    const sa = await call(t.users.superAdmin, 'GET', `/reports/meta?year=2026&subsidiaryId=${t.subsidiaryId}`);
+    expect(sa.text).toContain(String(FUEL_TCO2E));
+  });
+
   it('reads its import batch with the Electricity record alone', async () => {
     const detail = await ok<ImportBatchDetailDTO>(narrow, `/import-batches/${batch}`);
     expect(detail.records.map((r) => r.id)).toEqual([electricity]);

@@ -383,6 +383,26 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     expect(records.previewCreate).not.toHaveBeenCalled();
   });
 
+  it('answers a row outside the user\'s categories as category_not_granted, never as a stored slot (no oracle for hidden records)', async () => {
+    const { prisma, records, service } = build();
+    // A colleague's Electricity January record holds the slot.
+    prisma.activityRecord.findMany.mockResolvedValue([
+      {
+        subsidiaryId: SUB_1,
+        locationId: null,
+        reportingYear: 2024,
+        reportingPeriod: 'monthly',
+        periodValue: 'January',
+        category: 'Electricity',
+      },
+    ]);
+
+    const report = await service.import(standardUser({ categoryGrants: { [SUB_1]: ['Fuel'] } }), csvFile([row()]), DRY);
+
+    expect(report.errors).toEqual([expect.objectContaining({ code: 'category_not_granted', column: 'category' })]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
   it('matches the stored slot on the CANONICAL spelling', async () => {
     // The vocabulary is case-insensitive on the way in and exact on the way
     // out. A file saying "january" claims the same slot as a stored "January",
@@ -3823,10 +3843,11 @@ describe('BulkUploadService — a standard user\'s categories (INC-2.6 §1, §7.
     expect(report.errors).toEqual([
       expect.objectContaining({ row: 3, column: 'category', code: 'category_not_granted' }),
     ]);
-    // Exactly one record came out of the write path: the refused call threw
-    // before anything was created.
+    // Exactly one record came out of the write path: the ungranted row is
+    // refused before its slot checks and never reaches `create` (security
+    // review: a slot check first would tell whether a hidden record exists).
     expect(seq).toBe(1);
-    expect(records.create).toHaveBeenCalledTimes(2);
+    expect(records.create).toHaveBeenCalledTimes(1);
     expect(prisma.importBatch.update.mock.calls[0][0]).toMatchObject({
       data: { status: 'completed', acceptedCount: 1, rejectedCount: 1 },
     });

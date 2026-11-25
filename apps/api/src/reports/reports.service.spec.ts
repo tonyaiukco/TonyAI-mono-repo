@@ -284,7 +284,8 @@ describe('ReportsService', () => {
     expect(data.evidenceSummary.flatMap((row) => row.fileNames)).toEqual(['invoice-jan.pdf']);
     expect(data.factors.map((factor) => factor.source)).not.toContain('excluded-source');
     expect(prisma.activityRecord.groupBy).toHaveBeenCalledWith(expect.objectContaining({
-      where: { subsidiaryId: { in: ['sub-1'] }, reportingYear: 2024, scope: 2, category: 'Electricity' },
+      // The caller's record scope rides along (a masterkey's is its companies).
+      where: { subsidiaryId: { in: ['sub-1'] }, reportingYear: 2024, scope: 2, category: 'Electricity', AND: [{ subsidiaryId: { in: ['sub-1', 'sub-2'] } }] },
     }));
     for (const [args] of prisma.activityRecord.findMany.mock.calls) {
       expect(args.where).toMatchObject({ reportingYear: 2024, scope: 2, category: 'Electricity' });
@@ -359,6 +360,19 @@ describe('ReportsService', () => {
   });
 
   // --- meta / status --------------------------------------------------------
+
+  it('meta reads a standard user\'s records inside its record scope: no other category counts (security review P1)', async () => {
+    prisma.activityRecord.groupBy.mockResolvedValue([]);
+    const narrowed: RequestUser = {
+      id: 'user-entry', email: 'entry@tonyai.local', fullName: 'Entry User', role: 'standard_user',
+      organisationId: 'org-1', accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] },
+    };
+    await service.meta(narrowed, 2024);
+    const scope = { OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: narrowed.id }] };
+    expect(prisma.activityRecord.groupBy).toHaveBeenCalled();
+    for (const [args] of prisma.activityRecord.groupBy.mock.calls) expect(args.where.AND).toEqual([scope]);
+    for (const [args] of prisma.activityRecord.findMany.mock.calls) expect(args.where.AND).toEqual([scope]);
+  });
 
   it('meta reports approved when every record is approved/locked', async () => {
     prisma.activityRecord.groupBy.mockResolvedValue([
