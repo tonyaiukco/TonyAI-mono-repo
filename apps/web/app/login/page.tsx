@@ -1,5 +1,6 @@
 "use client";
 
+import { idleTimeRemaining, lastActivity, startInteractiveSession } from "@/lib/idle-session";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -37,6 +38,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const t = useTranslations("auth");
   const [loading, setLoading] = useState(false);
+  const [expiredOnServer, setExpiredOnServer] = useState(false);
   const reason = searchParams.get("reason");
   // The way to /register is offered only where registration is open. Off, or
   // an answer that cannot be read, shows nothing: signing in never waits on it.
@@ -58,6 +60,7 @@ function LoginForm() {
   // Sent here because the account was disabled (D19) or its session revoked
   // since it began: `lib/api.ts` ended the session on the API's 401.
   useEffect(() => {
+    setExpiredOnServer(reason === "session_ended" && idleTimeRemaining(lastActivity(), Date.now()) === 0);
     // Long enough to read: the person did not choose to leave.
     if (reason === "account_disabled") toast.error(t("signIn.disabled"), { id: "login-reason", duration: 10_000 });
     if (reason === "session_revoked") toast.error(t("signIn.sessionRevoked"), { id: "login-reason", duration: 10_000 });
@@ -74,7 +77,7 @@ function LoginForm() {
     const password = (elements.namedItem("password") as HTMLInputElement).value;
     setLoading(true);
     const supabase = getSupabaseBrowserClient();
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await startInteractiveSession(() => supabase.auth.signInWithPassword({ email, password }));
     if (error) {
       setLoading(false);
       // Supabase's own sentence is English and names internals; the catalogue
@@ -108,6 +111,7 @@ function LoginForm() {
           <CardDescription>{t("tagline")}</CardDescription>
         </CardHeader>
         <CardContent>
+          {(reason === "idle" || expiredOnServer) && <p role="status" className="mb-4 text-sm">{t("signIn.idle")}</p>}
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">{t("signIn.email")}</Label>

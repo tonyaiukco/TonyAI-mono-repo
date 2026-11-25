@@ -165,7 +165,7 @@ extension. Measured on 2026-11-03, CI on `main` takes 3–7 minutes.
    then fails CI, QA keeps the last deployed commit until the next green merge.
    **auth-policy (before Azure login too; `pre-g5-security-hardening`):** the run
    stops unless the QA variable `QA_AUTH_POLICY_DIGEST` equals this release's
-   managed Auth policy digest (`auth_settings.auth_policy_digest()`). Only the owner
+   managed Auth policy digest (`auth_settings.auth_policy_digest()`), including the two-hour Auth inactivity backstop measured from the last refresh. Only the owner
    applies and verifies that policy, with runbook 04's
    `supabase_setup.py --reconcile-auth-only`, which prints the digest after its
    private readback passed; the owner then sets the variable (GitHub → Settings →

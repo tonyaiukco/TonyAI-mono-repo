@@ -1,5 +1,6 @@
 "use client";
 
+import { startInteractiveSession } from "@/lib/idle-session";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -48,7 +49,7 @@ export function ConfirmEmailLink() {
     if (state.phase !== "ready") return;
     const { tokenHash, type } = state;
     setState({ phase: "verifying", tokenHash, type });
-    const { data, error } = await getSupabaseBrowserClient().auth.verifyOtp({ token_hash: tokenHash, type });
+    const { data, error } = await startInteractiveSession(() => getSupabaseBrowserClient().auth.verifyOtp({ token_hash: tokenHash, type }));
     if (error) {
       setState({ phase: "invalid", type });
       return;

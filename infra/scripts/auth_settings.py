@@ -35,6 +35,9 @@ def managed_auth_settings(origin, public_web_host=None):
         'passkey_enabled': False,
         # K4's accepted direct-PostgREST residual lasts at most one hour.
         'jwt_exp': 3600,
+        # Auth counts from the last refresh. Allow the JWT lifetime plus the client's
+        # full idle hour so a recently active tab can resume after token expiry.
+        'sessions_inactivity_timeout': 2,  # Management API hours
         'password_min_length': 12,
         'mailer_otp_exp': 3600,
         'mailer_secure_email_change_enabled': True,

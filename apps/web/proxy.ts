@@ -1,4 +1,4 @@
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, isChunkLike } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isPublicPath, isSignedOutOnlyPath } from "@/lib/auth-view";
 
@@ -15,6 +15,7 @@ export async function proxy(request: NextRequest) {
     process.env.SUPABASE_URL_INTERNAL ||
     (process.env.NEXT_PUBLIC_SUPABASE_URL as string);
 
+  const hadSession = request.cookies.getAll().some(({ name }) => isChunkLike(name, "sb-tonyai-auth"));
   const supabase = createServerClient(
     supabaseUrl,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
@@ -55,7 +56,10 @@ export async function proxy(request: NextRequest) {
   if (!user && !isPublicPath(path)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    if (hadSession && !url.searchParams.has("reason")) url.searchParams.set("reason", "session_ended");
+    const redirect = NextResponse.redirect(url);
+    for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+    return redirect;
   }
 
   if (user && isSignedOutOnlyPath(path)) {

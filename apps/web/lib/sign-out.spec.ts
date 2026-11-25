@@ -108,7 +108,7 @@ describe('the session wiring', () => {
   const read = (file: string) => readFileSync(join(__dirname, '..', file), 'utf8');
 
   it('the root layout mounts the session watch, so a page that never reads the reporting context is covered', () => {
-    expect(read('app/layout.tsx')).toMatch(/<SessionWatch \/>/);
+    expect(read('app/layout.tsx')).toMatch(/<SessionWatch>\{children\}<\/SessionWatch>/);
     expect(read('components/auth/session-watch.tsx')).toMatch(/watchSession\(\)/);
   });
 
