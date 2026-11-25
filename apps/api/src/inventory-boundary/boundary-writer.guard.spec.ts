@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, type ExecutionContext } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { errorCodeOf } from '../common/api-error';
-import { makeDataEntry, makeMasterkey } from '../../test/helpers';
+import { makeAuditor, makeMasterkey, makeStandardUser, makeSuperAdmin } from '../../test/helpers';
 import { BoundaryWriterGuard, DeclarationSizeGuard } from './boundary-writer.guard';
 import { INVENTORY_DECLARATION_LIMITS } from './dto/inventory-boundary.dto';
 
@@ -18,9 +18,10 @@ const context = (request: Record<string, unknown>) =>
 
 describe('BoundaryWriterGuard', () => {
   it.each([
-    ['consultant', makeMasterkey({ role: 'consultant' })],
-    ['executive_viewer', makeMasterkey({ role: 'executive_viewer' })],
-    ['data_entry', makeDataEntry()],
+    ['a scoped super_admin', makeSuperAdmin()],
+    ['an auditor', makeAuditor()],
+    ['a standard_user', makeStandardUser()],
+    ['a retired role name', makeMasterkey({ role: 'consultant' as never })],
     ['a masterkey with no organisation', makeMasterkey({ organisationId: null })],
     ['no one', undefined],
   ])('refuses %s with forbidden — whatever the body', (_who, user) => {
@@ -34,7 +35,7 @@ describe('BoundaryWriterGuard', () => {
     })();
     // The filter answers it `forbidden`, as it does the service's own refusal.
     expect(failure).toBeInstanceOf(ForbiddenException);
-    expect((failure as ForbiddenException).message).toMatch(/^(Only masterkey may change an inventory boundary|No organisation context for this user)$/);
+    expect((failure as ForbiddenException).message).toMatch(/^(Only a masterkey may change an inventory boundary|No organisation context for this user)$/);
   });
 
   it("lets a masterkey of an organisation through", () => {

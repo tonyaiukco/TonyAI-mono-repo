@@ -5,7 +5,7 @@ import {
   type ActivityRecord,
   type Subsidiary,
 } from '@tonyai/db';
-import { ACCEPTED_STATUSES, COUNTED_STATUSES } from '@tonyai/shared-types';
+import { ACCEPTED_STATUSES, CATEGORIES, COUNTED_STATUSES } from '@tonyai/shared-types';
 import {
   computeInvoiceCoverage,
   deriveCellStatus,
@@ -15,6 +15,7 @@ import {
 import { LIMIT_DEFAULTS } from '../common/runtime-config';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { everyCategoryOn } from '../../test/helpers';
 
 // --- Local, DB-free mocks --------------------------------------------------
 
@@ -112,14 +113,16 @@ function masterkey(overrides: Partial<RequestUser> = {}): RequestUser {
   };
 }
 
-function dataEntry(overrides: Partial<RequestUser> = {}): RequestUser {
+/** A standard user granted sub-1 and sub-2, every category ticked unless `categoryGrants` is overridden. */
+function standardUser(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
     fullName: 'Entry User',
-    role: 'data_entry',
+    role: 'standard_user',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    categoryGrants: everyCategoryOn(overrides.accessibleSubsidiaryIds ?? ['sub-1', 'sub-2']),
     ...overrides,
   };
 }
@@ -386,6 +389,8 @@ describe('EmissionsService.completeness (drill-down)', () => {
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.reportingYear).toBe(2024);
     expect(where.subsidiaryId).toBe('sub-1');
+    // The record scope (INC-2.6, Decision 6): a masterkey's is its companies alone.
+    expect(where.AND).toEqual([{ subsidiaryId: { in: ['sub-1'] } }]);
     // The status filter is deliberately ABSENT now, where it used to be
     // asserted here. The response carries FR §2.2's verdict, and two of the
     // three caps behind it — a draft in the cell, an anomaly flag — are
@@ -509,7 +514,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('scopes the record query to the accessible set and only counts committed statuses', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
@@ -517,6 +522,17 @@ describe('EmissionsService.summary', () => {
 
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+    // ...and the standard user's record scope: per granted company, its ticked
+    // categories (every one here), plus its own records.
+    expect(where.AND).toEqual([
+      {
+        OR: [
+          { subsidiaryId: 'sub-1', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: 'sub-2', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' },
+        ],
+      },
+    ]);
     expect(where.status).toEqual({
       in: [
         ActivityRecordStatus.submitted,
@@ -617,7 +633,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('returns an empty summary for an inaccessible subsidiary without hitting the DB', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1'] });
 
     const summary = await service.summary(user, { subsidiaryId: 'sub-999' });
 
@@ -627,7 +643,7 @@ describe('EmissionsService.summary', () => {
   });
 
   it('returns an empty summary for an empty accessible set', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: [] });
+    const user = standardUser({ accessibleSubsidiaryIds: [] });
 
     const summary = await service.summary(user, {});
 
@@ -880,7 +896,13 @@ describe('EmissionsService.trackingMatrix', () => {
     ]);
     const matrix = await service.trackingMatrix(masterkey(), { year: 2027, subsidiaryId: 'sub-1', scope: 2, category: 'Electricity' });
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { subsidiaryId: 'sub-1', reportingYear: 2027, scope: 2, category: 'Electricity' },
+      where: {
+        subsidiaryId: 'sub-1',
+        AND: [{ subsidiaryId: { in: ['sub-1', 'sub-2'] } }],
+        reportingYear: 2027,
+        scope: 2,
+        category: 'Electricity',
+      },
     }));
     expect(matrix.reportingYear).toBe(2027);
     expect(matrix.rows[0]).toMatchObject({ categoryCount: 1, completeCount: 0, totalTCo2e: 10, uncalculatedRecordCount: 1 });
@@ -1063,7 +1085,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('returns an empty matrix for an empty accessible set without hitting the DB', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: [] });
+    const user = standardUser({ accessibleSubsidiaryIds: [] });
 
     const m = await service.trackingMatrix(user, {});
 
@@ -1076,7 +1098,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('scopes both queries to the accessible set and fetches ALL statuses', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.activityRecord.findMany.mockResolvedValue([]);
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
@@ -1084,6 +1106,15 @@ describe('EmissionsService.trackingMatrix', () => {
 
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+    expect(where.AND).toEqual([
+      {
+        OR: [
+          { subsidiaryId: 'sub-1', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: 'sub-2', category: { in: [...CATEGORIES].sort() } },
+          { subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' },
+        ],
+      },
+    ]);
     expect(where.reportingYear).toBe(2024);
     expect(where.status).toBeUndefined(); // drafts must be visible (yellow cells)
   });
@@ -1881,7 +1912,7 @@ describe('EmissionsService.trackingMatrix', () => {
   });
 
   it('gives every accessible subsidiary a row even with zero records', async () => {
-    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    const user = standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' }),
       makeSubsidiary({ id: 'sub-2', tradingName: null, legalName: 'Gas Legal Ltd.' }),
@@ -2082,4 +2113,92 @@ it('bounds every summary read — the caller\'s limit, else the reports\' budget
   // A year-less read — the history's trend, every year — has the metadata reads' budget (architect P2-5).
   await service.summary(masterkey(), {});
   expect(prisma.activityRecord.findMany.mock.lastCall?.[0]).toHaveProperty('take', LIMIT_DEFAULTS.ACTIVITY_RECORD_METADATA_MAX_ROWS + 1);
+});
+
+// INC-2.6 §1, ruling R5, design Decision 6; access-roles spec "A standard
+// user sees only the categories of their grant": every figure built from
+// records takes the record scope, so a standard user's totals, matrix and
+// drill-down never count a category it was not granted.
+describe('EmissionsService — the record scope (a standard user\'s categories)', () => {
+  let prisma: PrismaMock;
+  let service: EmissionsService;
+
+  /** Granted Electricity on sub-1 and Fuel on sub-2: a category differs by company. */
+  const narrow = () =>
+    standardUser({ categoryGrants: { 'sub-1': ['Electricity'], 'sub-2': ['Fuel'] } });
+  const NARROW_SCOPE = {
+    OR: [
+      { subsidiaryId: 'sub-1', category: { in: ['Electricity'] } },
+      { subsidiaryId: 'sub-2', category: { in: ['Fuel'] } },
+      { subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' },
+    ],
+  };
+
+  beforeEach(() => {
+    seq = 0;
+    prisma = createPrismaMock();
+    service = new EmissionsService(prisma as unknown as PrismaService);
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+    prisma.location.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findUnique.mockResolvedValue({ trackingGranularity: 'location' });
+  });
+
+  it('a standard user\'s summary query carries its category scope, per company, beside the company filter', async () => {
+    await service.summary(narrow(), {});
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+    expect(where.AND).toEqual([NARROW_SCOPE]);
+  });
+
+  it('keeps the scope when the caller also filters by a category it was not granted — the filter cannot widen it', async () => {
+    await service.summary(narrow(), { category: 'Water' });
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.category).toBe('Water');
+    expect(where.AND).toEqual([NARROW_SCOPE]);
+  });
+
+  it('fails closed with no grants known: the summary counts only its own records', async () => {
+    await service.summary(standardUser({ categoryGrants: undefined }), {});
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.AND).toEqual([
+      { OR: [{ subsidiaryId: { in: ['sub-1', 'sub-2'] }, createdBy: 'user-entry' }] },
+    ]);
+  });
+
+  it('a super_admin\'s summary does not narrow by category — its companies only', async () => {
+    const superAdmin = standardUser({ id: 'user-sa', role: 'super_admin', categoryGrants: {} });
+
+    await service.summary(superAdmin, {});
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual([{ subsidiaryId: { in: ['sub-1', 'sub-2'] } }]);
+    expect(JSON.stringify(where)).not.toContain('category');
+  });
+
+  it('an auditor\'s summary does not narrow by category either', async () => {
+    const auditor = standardUser({ id: 'user-auditor', role: 'auditor', categoryGrants: {} });
+
+    await service.summary(auditor, {});
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.AND).toEqual([
+      { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+    ]);
+  });
+
+  it('the tracking matrix query carries the same scope', async () => {
+    await service.trackingMatrix(narrow(), { year: 2024 });
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.AND).toEqual([NARROW_SCOPE]);
+  });
+
+  it('the completeness drill-down query carries the same scope', async () => {
+    await service.completeness(narrow(), { subsidiaryId: 'sub-1', year: 2024 });
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.subsidiaryId).toBe('sub-1');
+    expect(where.AND).toEqual([NARROW_SCOPE]);
+  });
 });

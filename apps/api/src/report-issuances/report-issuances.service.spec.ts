@@ -39,7 +39,8 @@ const user = (role: UserRole, over: Partial<RequestUser> = {}): RequestUser => (
   organisationId: ORG, accessibleSubsidiaryIds: ['sub-a', 'sub-b'], ...over,
 });
 const admin = user('masterkey');
-const consultant = user('consultant');
+const auditor = user('auditor');
+const superAdmin = user('super_admin');
 
 let dataset: ReportDataset;
 let datasetRow: ReturnType<typeof rowOf> | null;
@@ -165,25 +166,40 @@ describe('issue — a final', () => {
 });
 
 describe('issue — roles (W4)', () => {
-  it('refuses a consultant a final, before anything is rendered: report_final_forbidden', async () => {
-    const e = await refusal(issue(consultant));
-    expect(errorCodeOf(e)).toBe('report_final_forbidden');
+  // Before INC-2.6 a consultant issued a partial and was refused a final
+  // (report_final_forbidden). Ruling R4 makes issuing the masterkey's alone:
+  // the auditor that inherits the consultant's reads issues neither, and is
+  // refused before anything is read — the final gate is never reached.
+  it.each([
+    ['an auditor', 'auditor'], ['a scoped super_admin', 'super_admin'], ['a standard_user', 'standard_user'],
+  ] as const)('refuses %s a final before reading anything — a plain 403, not report_final_forbidden (ruling R4)', async (_who, role) => {
+    const e = await refusal(issue(user(role)));
+    expect((e as { getStatus(): number }).getStatus()).toBe(403);
+    expect(errorCodeOf(e)).not.toBe('report_final_forbidden');
+    expect((e as Error).message).toBe('Only a masterkey may issue a report');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(pdf.render).not.toHaveBeenCalled();
     expect(intents.beginUpload).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('lets a consultant issue a partial', async () => {
+  it.each([
+    ['an auditor', 'auditor'], ['a scoped super_admin', 'super_admin'], ['a standard_user', 'standard_user'],
+  ] as const)('refuses %s a partial too, nothing rendered or written (ruling R4)', async (_who, role) => {
     arrange(datasetOf({ locks: allLocks().filter((l) => l.periodValue !== 'March') }));
-    const issued = await issue(consultant);
-    expect(issued.status).toBe('partial');
-    expect(issued.gaps.map((g) => g.code)).toEqual(['unlocked_period']);
-    expect(audit.record.mock.calls[0][1].diff.gaps).toEqual({ unlocked_period: 1 });
-  });
-
-  it.each(['data_entry', 'executive_viewer'] as const)('refuses %s before reading anything', async (role) => {
     const e = await refusal(issue(user(role)));
     expect((e as { getStatus(): number }).getStatus()).toBe(403);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(tx.reportIssuance.create).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+
+  it('lets a masterkey issue a partial', async () => {
+    arrange(datasetOf({ locks: allLocks().filter((l) => l.periodValue !== 'March') }));
+    const issued = await issue(admin);
+    expect(issued.status).toBe('partial');
+    expect(issued.gaps.map((g) => g.code)).toEqual(['unlocked_period']);
+    expect(audit.record.mock.calls[0][1].diff.gaps).toEqual({ unlocked_period: 1 });
   });
 });
 
@@ -203,10 +219,14 @@ describe('issue — the read rule: refusal is not found, byte for byte', () => {
     expect(pdf.render).not.toHaveBeenCalled();
   });
 
-  it('applies the read rule before the role and repeat refusals — an unreadable dataset never answers 403 or 409 (`qa-auditor` M9a)', async () => {
+  it('applies the read rule before the repeat refusal — an unreadable dataset never answers 409 (`qa-auditor` M9a)', async () => {
     const outside = (role: UserRole) => user(role, { accessibleSubsidiaryIds: ['sub-a'] });
-    // Final-qualifying, but not the consultant's to read: not found, not report_final_forbidden.
-    expect(errorCodeOf(await refusal(issue(outside('consultant'))))).toBe('report_dataset_not_found');
+    // A non-issuer is refused by role before the dataset is read at all, so
+    // the 403 says nothing about the dataset (the final gate is not reached).
+    const e = await refusal(issue(outside('auditor')));
+    expect(errorCodeOf(e)).not.toBe('report_final_forbidden');
+    expect((e as { getStatus(): number }).getStatus()).toBe(403);
+    expect(tx.reportDataset.findFirst).not.toHaveBeenCalled();
     // Already issued, but not the caller's to read: not found, not report_already_issued.
     tx.reportIssuance.findFirst.mockResolvedValue({ id: 'earlier' });
     expect(errorCodeOf(await refusal(issue(outside('masterkey'))))).toBe('report_dataset_not_found');
@@ -397,9 +417,22 @@ describe('reads', () => {
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it.each(['list', 'get', 'pdfOf'] as const)('%s refuses data_entry (W3)', async (method) => {
-    const call = method === 'list' ? service.list(user('data_entry'), 2026) : service[method](user('data_entry'), 'id');
-    expect(((await refusal(call)) as { getStatus(): number }).getStatus()).toBe(403);
+  it.each([
+    ['list', 'standard_user'], ['get', 'standard_user'], ['pdfOf', 'standard_user'],
+    ['list', 'super_admin'], ['get', 'super_admin'], ['pdfOf', 'super_admin'],
+  ] as const)('%s refuses a %s, reading nothing (dataset.read; W3)', async (method, role) => {
+    const call = method === 'list' ? service.list(user(role), 2026) : service[method](user(role), 'id');
+    const e = await refusal(call);
+    expect((e as { getStatus(): number }).getStatus()).toBe(403);
+    expect((e as Error).message).toBe('Only a masterkey or an auditor reads report issuances');
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(storage.download).not.toHaveBeenCalled();
+  });
+
+  it('lets an auditor read the list, scoped to its organisation and access', async () => {
+    prisma.$queryRaw.mockResolvedValue([]);
+    expect(await service.list(auditor, 2026)).toMatchObject({ items: [], truncated: false });
+    expect(prisma.$queryRaw).toHaveBeenCalled();
   });
 
   it('answers an unreadable issuance as report_issuance_not_found', async () => {
@@ -412,7 +445,7 @@ describe('reads', () => {
 describe('the PDF download — the retained bytes, verified, never rendered again', () => {
   it('serves the bytes that hash to the issuance', async () => {
     prisma.$queryRaw.mockResolvedValueOnce([issuanceRow()]);
-    const served = await service.pdfOf(user('executive_viewer'), 'id');
+    const served = await service.pdfOf(auditor, 'id');
     expect(served.bytes.equals(PDF)).toBe(true);
     // Every final of a year has its own name: the issue date and a short id (PR D follow-up (11)).
     expect(served.filename).toBe('tonyai-report-2026-executive_summary-en-final-2026-10-21-1550a000.pdf');
@@ -443,7 +476,6 @@ describe('the issuance preview (LP4-03 K7) — the gate, nothing written', () =>
     expect(await service.preview(admin, dataset.datasetId)).toEqual({
       datasetId: dataset.datasetId, status: 'final', gaps: [], finalAllowed: true,
     });
-    expect(await service.preview(consultant, dataset.datasetId)).toMatchObject({ status: 'final', finalAllowed: false });
     expect(pdf.render).not.toHaveBeenCalled();
     expect(storage.upload).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
@@ -453,14 +485,15 @@ describe('the issuance preview (LP4-03 K7) — the gate, nothing written', () =>
 
   it('names a partial\'s gaps, as the issuance would carry them', async () => {
     arrange(datasetOf({ boundary: frozenBoundary(complete(), 'unconfirmed'), locks: allLocks() }));
-    const preview = await service.preview(consultant, dataset.datasetId);
+    const preview = await service.preview(admin, dataset.datasetId);
     expect(preview.status).toBe('partial');
     expect(preview.gaps.map((g) => g.coverageCode ?? g.code)).toContain('boundary_unconfirmed');
     expect(preview.finalAllowed).toBe(false);
   });
 
-  it.each(['executive_viewer', 'data_entry'] as const)('refuses %s, who issues nothing', async (role) => {
+  it.each(['auditor', 'super_admin', 'standard_user'] as const)('refuses a %s, who issues nothing — before reading', async (role) => {
     expect(((await refusal(service.preview(user(role), dataset.datasetId))) as { getStatus(): number }).getStatus()).toBe(403);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('answers an unreadable dataset as report_dataset_not_found — no bypass for the issuer', async () => {
@@ -481,7 +514,7 @@ describe('the issued Excel and CSV (LP4-03 K5) — the retained dataset, re-veri
 
   it.each(['xlsx', 'csv'] as const)('projects the issuance\'s own dataset as %s, under one name with its PDF', async (format) => {
     prisma.$queryRaw.mockResolvedValueOnce([issuedRow()]);
-    const { body, filename } = await service.tablesOf(user('executive_viewer'), 'id', format);
+    const { body, filename } = await service.tablesOf(auditor, 'id', format);
     expect(filename).toBe(`tonyai-report-2026-executive_summary-en-final-2026-10-21-1550a000.${format}`);
     if (format === 'csv') expect(String(body)).toContain(`,sha256:${dataset.fingerprint.hex},`);
     else expect((body as Buffer).subarray(0, 2).toString()).toBe('PK');
@@ -496,9 +529,11 @@ describe('the issued Excel and CSV (LP4-03 K5) — the retained dataset, re-veri
     expect((e as Error).message).toMatch(/fingerprint is not the issuance's/);
   });
 
-  it('answers an unreadable issuance as report_issuance_not_found, and data_entry 403', async () => {
+  it('answers an unreadable issuance as report_issuance_not_found, and a standard_user or super_admin 403', async () => {
     expect(errorCodeOf(await refusal(service.tablesOf(admin, 'id', 'xlsx')))).toBe('report_issuance_not_found');
-    expect(((await refusal(service.tablesOf(user('data_entry'), 'id', 'csv'))) as { getStatus(): number }).getStatus()).toBe(403);
+    for (const who of [user('standard_user'), superAdmin]) {
+      expect(((await refusal(service.tablesOf(who, 'id', 'csv'))) as { getStatus(): number }).getStatus()).toBe(403);
+    }
     expect(tx.reportDataset.findFirst).not.toHaveBeenCalled();
   });
 });

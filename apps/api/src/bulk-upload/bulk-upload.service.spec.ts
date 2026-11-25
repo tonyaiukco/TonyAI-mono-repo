@@ -43,6 +43,8 @@ import { StorageService } from '../storage/storage.service';
 import type { StorageIntentsService } from '../storage/storage-intents.service';
 import type { RequestUser } from '../auth/auth.types';
 import { row as sheetRow, xlsx } from '../../test/xlsx';
+import { everyCategoryOn } from '../../test/helpers';
+import { assertCategoryGranted } from '../activity-records/record-scope';
 
 // Reporting-entity ids in the one spelling the boundary accepts (hyphenated;
 // the DTO lowercases). Hex LETTERS in each, so a case test is never vacuous.
@@ -133,14 +135,21 @@ const SNAPSHOT: CalculationResult = {
   version: '2024.1',
 };
 
-function dataEntry(over: Partial<RequestUser> = {}): RequestUser {
+/**
+ * A standard user (INC-2.6 §1) granted SUB_1 by default, with every category
+ * ticked on each granted company unless `categoryGrants` is overridden — so a
+ * case about something else is never narrowed by categories by accident.
+ */
+function standardUser(over: Partial<RequestUser> = {}): RequestUser {
+  const accessibleSubsidiaryIds = over.accessibleSubsidiaryIds ?? [SUB_1];
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
     fullName: 'Entry User',
-    role: 'data_entry',
+    role: 'standard_user',
     organisationId: 'org-1',
-    accessibleSubsidiaryIds: [SUB_1],
+    accessibleSubsidiaryIds,
+    categoryGrants: everyCategoryOn(accessibleSubsidiaryIds),
     ...over,
   };
 }
@@ -270,7 +279,7 @@ describe('BulkUploadService — the dry run writes nothing', () => {
   it('previews every row and creates none', async () => {
     const { records, service } = build();
 
-    const report = await service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), DRY);
+    const report = await service.import(standardUser(), csvFile([row(), row({ periodValue: 'February' })]), DRY);
 
     expect(records.previewCreate).toHaveBeenCalledTimes(2);
     // The whole point of the feature, and the whole point of PR 1's seam.
@@ -287,7 +296,7 @@ describe('BulkUploadService — the dry run writes nothing', () => {
     // pointed at this tenant's inventory. A dry run is still an act.
     const { audit, service } = build();
 
-    await service.import(dataEntry(), csvFile([row()]), DRY);
+    await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(audit.record).toHaveBeenCalledTimes(1);
     const [, entry] = audit.record.mock.calls[0];
@@ -310,7 +319,7 @@ describe('BulkUploadService — applying', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' })]),
       NOTHING,
     );
@@ -324,7 +333,7 @@ describe('BulkUploadService — applying', () => {
   it('treats a blank locationId as the whole company, not a missing value', async () => {
     const { records, service } = build();
 
-    await service.import(dataEntry(), csvFile([row({ locationId: '' })]), NOTHING);
+    await service.import(standardUser(), csvFile([row({ locationId: '' })]), NOTHING);
 
     const [, dto] = records.create.mock.calls[0];
     // Absent, not `''` — an empty string would fail `@MinLength(1)` and
@@ -335,7 +344,7 @@ describe('BulkUploadService — applying', () => {
   it('passes a location through when the row names one', async () => {
     const { records, service } = build();
 
-    await service.import(dataEntry(), csvFile([row({ locationId: LOC_9 })]), NOTHING);
+    await service.import(standardUser(), csvFile([row({ locationId: LOC_9 })]), NOTHING);
 
     expect(records.create.mock.calls[0][1].locationId).toBe(LOC_9);
   });
@@ -347,7 +356,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     // both rows clean and the apply would return a conflict.
     const { records, service } = build();
 
-    const report = await service.import(dataEntry(), csvFile([row(), row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row(), row()]), DRY);
 
     expect(report.accepted).toHaveLength(1);
     expect(report.errors).toHaveLength(1);
@@ -368,7 +377,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
       },
     ]);
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.errors[0]).toMatchObject({ code: 'duplicate_existing' });
     expect(records.previewCreate).not.toHaveBeenCalled();
@@ -391,7 +400,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     ]);
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ periodValue: '  january ' })]),
       DRY,
     );
@@ -405,7 +414,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     // restatement that is meant to replace it.
     const { prisma, service } = build();
 
-    await service.import(dataEntry(), csvFile([row()]), DRY);
+    await service.import(standardUser(), csvFile([row()]), DRY);
 
     const [args] = prisma.activityRecord.findMany.mock.calls[0];
     expect(args.where.status).toEqual({ not: 'voided' });
@@ -415,7 +424,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     const { prisma, service } = build();
 
     await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' }), row({ periodValue: 'March' })]),
       DRY,
     );
@@ -434,7 +443,7 @@ describe('BulkUploadService — the batch pre-flight', () => {
     const { records, prisma, service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
+      service.import(standardUser(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     // Nothing at all happened — not even the row that would have been fine.
@@ -447,7 +456,7 @@ describe('BulkUploadService — the batch pre-flight', () => {
     const { service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
+      service.import(standardUser(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toThrow(/Row\(s\) 3\b/);
   });
 
@@ -468,7 +477,7 @@ describe('BulkUploadService — the batch pre-flight', () => {
   ])('refuses %s', async (_label, file, pattern, code) => {
     const { service } = build();
     const error = await service
-      .import(dataEntry(), file as Express.Multer.File | undefined, NOTHING)
+      .import(standardUser(), file as Express.Multer.File | undefined, NOTHING)
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toMatch(pattern);
@@ -481,7 +490,7 @@ describe('BulkUploadService — the batch pre-flight', () => {
     const { service } = build();
     const file = csvFile([row()], { mimetype: 'application/vnd.ms-excel' });
 
-    const report = await service.import(dataEntry(), file, DRY);
+    const report = await service.import(standardUser(), file, DRY);
 
     expect(report.accepted).toHaveLength(1);
   });
@@ -493,7 +502,7 @@ describe('BulkUploadService — the batch pre-flight', () => {
     );
 
     await expect(
-      service.import(dataEntry(), csvFile(rows), NOTHING),
+      service.import(standardUser(), csvFile(rows), NOTHING),
     ).rejects.toThrow(/limit is 1000/);
     expect(records.create).not.toHaveBeenCalled();
   });
@@ -510,7 +519,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
       .mockResolvedValueOnce({ id: 'rec-3', calculation: SNAPSHOT, anomalyFlag: false, varianceReason: null });
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row(),
         row({ periodValue: 'February' }),
@@ -538,7 +547,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     const { records, service } = build();
     records.create.mockRejectedValueOnce(error);
 
-    const report = await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
 
     expect(report.errors[0].code).toBe(code);
   });
@@ -550,7 +559,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
       new Error('connect ECONNREFUSED 10.0.0.5:5432 while running SELECT "secret"'),
     );
 
-    const report = await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
 
     expect(report.errors[0].code).toBe('unexpected');
     expect(report.errors[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
@@ -574,7 +583,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     );
 
     const { result: report, logged } = await captureErrors(() =>
-      service.import(dataEntry(), csvFile(rows), NOTHING),
+      service.import(standardUser(), csvFile(rows), NOTHING),
     );
 
     // Every row still gets its own refusal, with the constant message.
@@ -614,7 +623,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
       });
     try {
       await expect(
-        service.import(dataEntry(), csvFile(rows), NOTHING),
+        service.import(standardUser(), csvFile(rows), NOTHING),
       ).rejects.toBeInstanceOf(ForbiddenException);
     } finally {
       spy.mockRestore();
@@ -631,8 +640,8 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     records.create.mockRejectedValue(new Error('driver said no'));
 
     const { logged } = await captureErrors(async () => {
-      await service.import(dataEntry(), csvFile([row()]), NOTHING);
-      await service.import(dataEntry(), csvFile([row()]), NOTHING);
+      await service.import(standardUser(), csvFile([row()]), NOTHING);
+      await service.import(standardUser(), csvFile([row()]), NOTHING);
     });
 
     expect(logged).toHaveLength(2);
@@ -653,7 +662,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     );
 
     const { result: report, logged } = await captureErrors(() =>
-      service.import(dataEntry(), csvFile(rows), NOTHING),
+      service.import(standardUser(), csvFile(rows), NOTHING),
     );
 
     expect(report.accepted).toHaveLength(1);
@@ -675,7 +684,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     records.previewCreate.mockRejectedValue(new Error('preview said no'));
 
     const { result: report, logged } = await captureErrors(() =>
-      service.import(dataEntry(), csvFile([row(), row({ reportingYear: '2023' })]), DRY),
+      service.import(standardUser(), csvFile([row(), row({ reportingYear: '2023' })]), DRY),
     );
 
     expect(records.create).not.toHaveBeenCalled();
@@ -694,7 +703,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
 
     const { result: report, logged } = await captureErrors(() =>
       service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row(), row({ reportingYear: '2023' })]),
         NOTHING,
       ),
@@ -712,7 +721,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
 
     await expect(
       service.import(
-        dataEntry({ role: 'consultant' }),
+        standardUser({ role: 'auditor' }),
         csvFile([row()], { originalname: 'x.exe' }),
         DRY,
       ),
@@ -722,19 +731,19 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
   it('refuses a role that may not author records before parsing its file — and audits it', async () => {
     // It used to be refused only by the record service inside the loop, so
     // the 403 was thrown past the audited pre-flight and before the batch row:
-    // a consultant's import attempt left no trace at all. A READABLE file on
+    // an auditor's import attempt left no trace at all. A READABLE file on
     // purpose: without the gate, every "not called" below would fail.
     const { audit, prisma, records, service } = build();
 
     await expect(
-      service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
+      service.import(standardUser({ role: 'auditor' }), csvFile([row()]), DRY),
     ).rejects.toThrow(new ForbiddenException('Your role may not create activity records'));
 
     expect(records.previewCreate).not.toHaveBeenCalled();
     expect(records.create).not.toHaveBeenCalled();
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledTimes(1);
-    expect(audit.record.mock.calls[0][0]).toMatchObject({ role: 'consultant' });
+    expect(audit.record.mock.calls[0][0]).toMatchObject({ role: 'auditor' });
     expect(audit.record.mock.calls[0][1].diff).toMatchObject({
       refused: true,
       dryRun: true,
@@ -742,7 +751,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     });
   });
 
-  it.each(['consultant', 'executive_viewer'] as const)(
+  it.each(['auditor'] as const)(
     'refuses a %s even when no row would have reached the record service',
     async (role) => {
       // Every row fails validation, so the loop's own role check never ran and
@@ -750,7 +759,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
       const { service } = build();
 
       await expect(
-        service.import(dataEntry({ role }), csvFile([row({ activityValue: 'abc' })]), DRY),
+        service.import(standardUser({ role }), csvFile([row({ activityValue: 'abc' })]), DRY),
       ).rejects.toBeInstanceOf(ForbiddenException);
     },
   );
@@ -762,7 +771,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     records.previewCreate.mockRejectedValue(new CreateRoleRefusedError());
 
     await expect(
-      service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), DRY),
+      service.import(standardUser(), csvFile([row(), row({ periodValue: 'February' })]), DRY),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -783,7 +792,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
       });
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' })]),
       DRY,
     );
@@ -807,7 +816,7 @@ describe('BulkUploadService — warnings', () => {
       verdict: { anomalous: true, priorCount: 3, baseline: 0.1 },
     });
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.accepted).toHaveLength(1);
     // Found by code, not by index: an Electricity row also carries the
@@ -832,7 +841,7 @@ describe('BulkUploadService — warnings', () => {
     });
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ periodValue: 'February' })]),
       DRY,
     );
@@ -856,7 +865,7 @@ describe('BulkUploadService — warnings', () => {
       verdict: { anomalous: true, priorCount: 0, baseline: null },
     });
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     const warning = report.warnings.find((w) => w.code === 'would_block_submit');
     expect(warning).toMatchObject({ row: 2, column: 'varianceReason' });
@@ -875,7 +884,7 @@ describe('BulkUploadService — warnings', () => {
       verdict: { anomalous: true, priorCount: 1, baseline: 0.1 },
     });
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.warnings.find((w) => w.code === 'would_block_submit')?.message).toMatch(
       /deviates from its baseline/,
@@ -894,7 +903,7 @@ describe('BulkUploadService — warnings', () => {
       varianceReason: null,
     });
 
-    const report = await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
 
     expect(report.warnings.find((w) => w.code === 'would_block_submit')?.message).toMatch(
       /plausibility ceiling/,
@@ -913,7 +922,7 @@ describe('BulkUploadService — warnings', () => {
     });
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ varianceReason: 'New plant; meter read checked' })]),
       DRY,
     );
@@ -933,7 +942,7 @@ describe('BulkUploadService — warnings', () => {
     });
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row({
           // Not an evidence-required category: this case asserts the ABSENCE
@@ -956,7 +965,7 @@ describe('BulkUploadService — warnings', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ varianceReason: '-15% after a line shutdown' })]),
       NOTHING,
     );
@@ -975,7 +984,7 @@ describe('BulkUploadService — warnings', () => {
     const { service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row(), // row 2: imports, and carries the evidence warning
         row({ periodValue: 'February', activityValue: 'abc', varianceReason: '=SUM(A1)' }), // row 3: invalid
@@ -996,7 +1005,7 @@ describe('BulkUploadService — warnings', () => {
     // the warning reads the shared list, so these rows carry it as an
     // electricity row does.
     const { service } = build();
-    const report = await service.import(dataEntry(), csvFile([row(fields)]), DRY);
+    const report = await service.import(standardUser(), csvFile([row(fields)]), DRY);
     expect(report.errors).toEqual([]);
     expect(report.warnings.map((w) => [w.row, w.code])).toEqual([[2, 'evidence_required']]);
   });
@@ -1004,7 +1013,7 @@ describe('BulkUploadService — warnings', () => {
   it('does not warn on a Waste row, which needs no evidence (Scope 3)', async () => {
     const { service } = build();
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ category: 'Waste', activityUnit: 'tonnes' })]),
       DRY,
     );
@@ -1020,7 +1029,7 @@ describe('BulkUploadService — warnings', () => {
       new BadRequestException('"Q5" is not a valid period for a quarterly record.'),
     );
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.errors).toHaveLength(1);
     expect(report.warnings).toEqual([]);
@@ -1035,7 +1044,7 @@ describe('BulkUploadService — warnings', () => {
     );
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ varianceReason: '=1+1' })]),
       NOTHING,
     );
@@ -1056,7 +1065,7 @@ describe('BulkUploadService — row validation reaches the real DTO rules', () =
     // validator, so the importer cannot drift from what the API accepts.
     const { records, service } = build();
 
-    const report = await service.import(dataEntry(), csvFile([row(over)]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([row(over)]), NOTHING);
 
     expect(report.errors[0]).toMatchObject({ code: 'invalid', column });
     expect(records.create).not.toHaveBeenCalled();
@@ -1066,7 +1075,7 @@ describe('BulkUploadService — row validation reaches the real DTO rules', () =
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ activityValue: '1000000000001' }), row({ periodValue: 'February', activityValue: '1000000000000' })]),
       DRY,
     );
@@ -1090,7 +1099,7 @@ describe('BulkUploadService — row validation reaches the real DTO rules', () =
   ])('keeps invalid when another field is refused too — %s, as the record API answers it', async (_, over) => {
     const { service } = build();
 
-    const report = await service.import(dataEntry(), csvFile([row(over)]), DRY);
+    const report = await service.import(standardUser(), csvFile([row(over)]), DRY);
 
     expect(report.errors[0]).toMatchObject({ code: 'invalid' });
   });
@@ -1101,7 +1110,7 @@ describe('BulkUploadService — row validation reaches the real DTO rules', () =
     const { service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ reportingYear: '1066', activityValue: '1000000000001' })]),
       DRY,
     );
@@ -1115,7 +1124,7 @@ describe('BulkUploadService — row validation reaches the real DTO rules', () =
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ activityValue: '' })]),
       NOTHING,
     );
@@ -1142,7 +1151,7 @@ describe('BulkUploadService — the figures that reach the write', () => {
     const { records, service } = build();
 
     await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row({
           locationId: LOC_9,
@@ -1178,7 +1187,7 @@ describe('BulkUploadService — the figures that reach the write', () => {
     const { service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ periodValue: '  january ' })]),
       DRY,
     );
@@ -1223,7 +1232,7 @@ describe('BulkUploadService — the figures that reach the write', () => {
     });
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ category: 'Water', activityUnit: 'm3' })]),
       NOTHING,
     );
@@ -1241,7 +1250,7 @@ describe('BulkUploadService — the slot key is the whole key', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ locationId: LOC_A }), row({ locationId: LOC_B })]),
       NOTHING,
     );
@@ -1263,7 +1272,7 @@ describe('BulkUploadService — the slot key is the whole key', () => {
       },
     ]);
 
-    const report = await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
 
     expect(report.errors).toHaveLength(0);
     expect(records.create).toHaveBeenCalledTimes(1);
@@ -1288,7 +1297,7 @@ describe('BulkUploadService — an id is accepted in one spelling, in either cas
     ['unhyphenated', LOC.replace(/-/g, '')],
     ['mis-grouped', '09ed17d3a-ef5-4da2-89c1-3b001ac50e94'],
   ] as const;
-  const entry = () => dataEntry({ accessibleSubsidiaryIds: [SUB] });
+  const entry = () => standardUser({ accessibleSubsidiaryIds: [SUB] });
   const stored = (locationId: string | null) => ({
     subsidiaryId: SUB,
     locationId,
@@ -1461,7 +1470,7 @@ describe('BulkUploadService — the audit row tells the truth', () => {
     const { audit, service } = build();
 
     await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' }), row({ activityValue: 'x' })]),
       NOTHING,
     );
@@ -1482,7 +1491,7 @@ describe('BulkUploadService — the audit row tells the truth', () => {
     const { audit, records, service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row({ subsidiaryId: SUB_99 })]), NOTHING),
+      service.import(standardUser(), csvFile([row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(records.create).not.toHaveBeenCalled();
@@ -1496,7 +1505,7 @@ describe('BulkUploadService — the audit row tells the truth', () => {
     const { audit, service } = build();
     const long = `${'n'.repeat(4000)}.csv`;
 
-    await service.import(dataEntry(), csvFile([row()], { originalname: long }), DRY);
+    await service.import(standardUser(), csvFile([row()], { originalname: long }), DRY);
 
     expect(
       (audit.record.mock.calls[0][1].diff as { fileName: string }).fileName.length,
@@ -1510,7 +1519,7 @@ describe('BulkUploadService — the audit row tells the truth', () => {
     const { audit, service } = build();
     audit.record.mockRejectedValueOnce(new Error('audit_log unavailable'));
 
-    const report = await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
 
     expect(report.accepted).toHaveLength(1);
     expect(report.accepted[0].recordId).toBe('rec-1');
@@ -1529,7 +1538,7 @@ describe('BulkUploadService — the remaining refusals', () => {
       ),
     );
 
-    const report = await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
 
     expect(report.errors[0]).toMatchObject({ code: 'no_factor' });
     expect(report.errors[0].message).toMatch(/emission factor/i);
@@ -1538,7 +1547,7 @@ describe('BulkUploadService — the remaining refusals', () => {
   it('warns that an evidence-required category cannot be submitted after import', async () => {
     const { service } = build();
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.warnings.find((w) => w.code === 'evidence_required')).toMatchObject({
       row: 2,
@@ -1552,7 +1561,7 @@ describe('BulkUploadService — the remaining refusals', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ subsidiaryId: '' })]),
       NOTHING,
     );
@@ -1569,7 +1578,7 @@ describe('BulkUploadService — the remaining refusals', () => {
     const { prisma, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ reportingYear: '99999999999' })]),
       NOTHING,
     );
@@ -1584,9 +1593,9 @@ describe('BulkUploadService — the remaining refusals', () => {
   it('refuses a file that is only a header', async () => {
     const { service } = build();
     await expect(
-      service.import(dataEntry(), csvFile([]), NOTHING),
+      service.import(standardUser(), csvFile([]), NOTHING),
     ).rejects.toThrow(/no data rows/);
-    await expect(service.import(dataEntry(), csvFile([]), NOTHING)).rejects.toMatchObject({
+    await expect(service.import(standardUser(), csvFile([]), NOTHING)).rejects.toMatchObject({
       response: { code: 'bulk_no_rows' },
     });
   });
@@ -1598,7 +1607,7 @@ describe('BulkUploadService — the remaining refusals', () => {
 
     for (const mimetype of ['application/octet-stream', 'text/x-csv', '']) {
       const report = await service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row()], { mimetype }),
         DRY,
       );
@@ -1610,7 +1619,7 @@ describe('BulkUploadService — the remaining refusals', () => {
     const { service } = build();
     await expect(
       service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row()], { originalname: 'payload.exe', mimetype: 'text/csv' }),
         DRY,
       ),
@@ -1624,7 +1633,7 @@ describe('BulkUploadService — the remaining refusals', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ subsidiaryId: ` ${SUB_1} ` })]),
       NOTHING,
     );
@@ -1638,7 +1647,7 @@ describe('BulkUploadService — a dry run touches no write API at all', () => {
   it('calls neither the record service nor Prisma to write', async () => {
     const { prisma, records, service } = build();
 
-    await service.import(dataEntry(), csvFile([row(), row({ periodValue: 'March' })]), DRY);
+    await service.import(standardUser(), csvFile([row(), row({ periodValue: 'March' })]), DRY);
 
     expect(records.create).not.toHaveBeenCalled();
     // Explicit, rather than relying on the mock lacking the method: without a
@@ -1704,7 +1713,7 @@ describe('BulkUploadService — the template', () => {
     twoTenants(prisma);
 
     const text = await referenceTextOf(
-      await service.template(dataEntry({ accessibleSubsidiaryIds: [SUB_1] })),
+      await service.template(standardUser({ accessibleSubsidiaryIds: [SUB_1] })),
     );
 
     expect(text).toContain(SUB_1);
@@ -1723,7 +1732,7 @@ describe('BulkUploadService — the template', () => {
     prisma.subsidiary.findMany.mockResolvedValue([ALL_SUBSIDIARIES[0]]);
     prisma.location.findMany.mockResolvedValue(ALL_LOCATIONS);
 
-    const text = await referenceTextOf(await service.template(dataEntry()));
+    const text = await referenceTextOf(await service.template(standardUser()));
 
     expect(text).toContain('My Site');
     expect(text).not.toContain('Their Site');
@@ -1732,7 +1741,7 @@ describe('BulkUploadService — the template', () => {
   it('scopes both queries to the accessible set', async () => {
     const { prisma, service } = build();
 
-    await service.template(dataEntry({ accessibleSubsidiaryIds: [SUB_1] }));
+    await service.template(standardUser({ accessibleSubsidiaryIds: [SUB_1] }));
 
     expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({
       id: { in: [SUB_1] },
@@ -1753,7 +1762,7 @@ describe('BulkUploadService — the template', () => {
       },
     ]);
 
-    const buffer = await service.template(dataEntry());
+    const buffer = await service.template(standardUser());
 
     // Magic bytes: a real .xlsx is a zip, and a caller that got JSON here
     // would find out only when Excel refused the download.
@@ -1764,7 +1773,7 @@ describe('BulkUploadService — the template', () => {
   it('writes nothing', async () => {
     const { prisma, records, audit, service } = build();
 
-    await service.template(dataEntry());
+    await service.template(standardUser());
 
     expect(records.create).not.toHaveBeenCalled();
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
@@ -1775,12 +1784,12 @@ describe('BulkUploadService — the template', () => {
 });
 
 describe('BulkUploadService — what the UAT-prep review passes found', () => {
-  it.each(['data_entry', 'masterkey'] as const)('lets a %s through the role gate', async (role) => {
+  it.each(['standard_user', 'super_admin', 'masterkey'] as const)('lets a %s through the role gate', async (role) => {
     // The gate is the record service's own rule. Narrowing it to one role
     // passed every test until this one.
     const { audit, service } = build();
 
-    const report = await service.import(dataEntry({ role }), csvFile([row()]), DRY);
+    const report = await service.import(standardUser({ role }), csvFile([row()]), DRY);
 
     expect(report.accepted).toHaveLength(1);
     expect(audit.record.mock.calls[0][1].diff).not.toHaveProperty('refused');
@@ -1792,7 +1801,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     const { service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
+      service.import(standardUser(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toThrow(
       new BadRequestException(
         'Row(s) 3 name a reporting entity that does not exist or is not yours.',
@@ -1804,7 +1813,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     const { service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row(),
         row({ periodValue: 'February', activityValue: 'abc', varianceReason: '=SUM(A1)' }),
@@ -1828,7 +1837,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       const { audit, records, service } = build();
 
       const error = await service
-        .import(dataEntry(), csvFile([row()]), { dryRun: value as unknown as boolean })
+        .import(standardUser(), csvFile([row()]), { dryRun: value as unknown as boolean })
         .catch((e: unknown) => e);
       // The class as well as the words: `toThrow(instance)` compares messages
       // only, and a plain Error here would reach the caller as a 500.
@@ -1857,7 +1866,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       .mockRejectedValueOnce(new CreateRoleRefusedError());
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' })]),
       NOTHING,
     );
@@ -1875,7 +1884,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
 
     await expect(
       service.import(
-        dataEntry({ role: 'consultant' }),
+        standardUser({ role: 'auditor' }),
         csvFile([row()], { originalname: 'probe\u0000.csv' }),
         DRY,
       ),
@@ -1884,7 +1893,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
 
     // 254 characters and an emoji: a UTF-16 slice to 255 kept half of it.
     const long = `${'a'.repeat(254)}😀.csv`;
-    await service.import(dataEntry(), csvFile([row()], { originalname: long }), DRY);
+    await service.import(standardUser(), csvFile([row()], { originalname: long }), DRY);
     expect(audit.record.mock.calls[1][1].diff).toMatchObject({
       fileName: `${'a'.repeat(254)}😀`,
     });
@@ -1901,7 +1910,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       buffer: Buffer.from(`${HEADER},badcol\n${row()}`),
     } as Express.Multer.File;
 
-    const refused = service.import(dataEntry(), file, DRY);
+    const refused = service.import(standardUser(), file, DRY);
     await expect(refused).rejects.toBeInstanceOf(BadRequestException);
     await expect(refused).rejects.toThrow('Unrecognised column(s): "badcol"');
 
@@ -1928,7 +1937,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       const { prisma, records, audit, storage, intents, service } = build();
 
       await expect(
-        service.import(dataEntry(), await workbookFile('x_x0000_y'), NOTHING),
+        service.import(standardUser(), await workbookFile('x_x0000_y'), NOTHING),
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(prisma.importBatch.create).not.toHaveBeenCalled();
@@ -1943,7 +1952,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     it('applies the same file without the NUL, so the refusal is what stopped the writes', async () => {
       const { prisma, records, storage, service } = build();
 
-      const report = await service.import(dataEntry(), await workbookFile('x'), NOTHING);
+      const report = await service.import(standardUser(), await workbookFile('x'), NOTHING);
 
       expect(report.errors).toEqual([]);
       expect(prisma.importBatch.create).toHaveBeenCalledOnce();
@@ -1964,7 +1973,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       },
     });
 
-    await expect(service.import(dataEntry(), file, DRY)).rejects.toThrow(/^boom/);
+    await expect(service.import(standardUser(), file, DRY)).rejects.toThrow(/^boom/);
 
     expect(audit.record).not.toHaveBeenCalled();
   });
@@ -1975,7 +1984,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     const { audit, service } = build();
 
     await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row()], { originalname: 'invoice_\u202Efdp\u200B.csv' }),
       DRY,
     );
@@ -1999,7 +2008,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       buffer: Buffer.from([header, row()].join('\n')),
     } as Express.Multer.File;
 
-    const error = await service.import(dataEntry(), file, DRY).catch((e: unknown) => e);
+    const error = await service.import(standardUser(), file, DRY).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toContain('Unrecognised column(s)');
@@ -2026,7 +2035,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       buffer: Buffer.from([header, row()].join('\n')),
     } as Express.Multer.File;
 
-    const error = await service.import(dataEntry(), file, DRY).catch((e: unknown) => e);
+    const error = await service.import(standardUser(), file, DRY).catch((e: unknown) => e);
 
     const message = (error as Error).message;
     const fragment = `${'aaa<U+200B>'.repeat(5)}aaa…`;
@@ -2058,7 +2067,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       .join('');
 
     await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row()], { originalname: `invoice${hidden}.csv` }),
       DRY,
     );
@@ -2079,7 +2088,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     );
 
     const { result: report, logged } = await captureErrors(() =>
-      service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), NOTHING),
+      service.import(standardUser(), csvFile([row(), row({ periodValue: 'February' })]), NOTHING),
     );
 
     expect(report.accepted).toHaveLength(2);
@@ -2096,7 +2105,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       const { audit, service } = build();
 
       await service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row()], { originalname: `x${String.fromCharCode(code)}.csv` }),
         DRY,
       );
@@ -2112,7 +2121,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     audit.record.mockRejectedValueOnce(new Error('Connection terminated unexpectedly'));
 
     await expect(
-      service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
+      service.import(standardUser({ role: 'auditor' }), csvFile([row()]), DRY),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(audit.record).toHaveBeenCalledTimes(1);
@@ -2135,7 +2144,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       );
 
       const report = await service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row(), row({ subsidiaryId: blank })]),
         DRY,
       );
@@ -2175,7 +2184,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     const cell = `${rlo}${zwsp}${'9'.repeat(20)}${'x'.repeat(40_000)}`;
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ [column]: cell })]),
       DRY,
     );
@@ -2211,7 +2220,7 @@ describe('BulkUploadService — what the report repeats back', () => {
       buffer,
     } as Express.Multer.File;
 
-    const report = await service.import(dataEntry(), file, DRY);
+    const report = await service.import(standardUser(), file, DRY);
 
     const message = `"<U+202E>${'Y'.repeat(39)}…" is not a whole year.`;
     expect(report.errors).toHaveLength(BULK_UPLOAD_MAX_ROWS);
@@ -2242,7 +2251,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     const { records, service } = build();
     records.previewCreate.mockRejectedValueOnce(error());
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.errors).toEqual([{ row: 2, column: null, code, message }]);
   });
@@ -2258,7 +2267,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     const { service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ activityUnit: `${rlo}${'k'.repeat(100_000)}` })]),
       DRY,
     );
@@ -2285,7 +2294,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ activityUnit: `cubic${' '.repeat(40)}metres` })]),
       DRY,
     );
@@ -2305,7 +2314,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     const name = `Façade_${rlo}${nul}${zwsp}${'n'.repeat(300)}.csv`;
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row()], { originalname: name }),
       DRY,
     );
@@ -2325,7 +2334,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     );
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row({ periodValue: 'February' }),
         row({ reportingYear: 'soon', activityValue: '1,2', category: 'Vibes' }),
@@ -2351,7 +2360,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     const { service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ category: 'Vibes' })]),
       DRY,
     );
@@ -2392,7 +2401,7 @@ describe('BulkUploadService — what is audited, and under which verb', () => {
   ])('does not audit %s — it says something about the file, not the caller', async (_label, file) => {
     const { audit, records, service } = build();
 
-    await expect(service.import(dataEntry(), file(), DRY)).rejects.toBeInstanceOf(
+    await expect(service.import(standardUser(), file(), DRY)).rejects.toBeInstanceOf(
       BadRequestException,
     );
 
@@ -2403,14 +2412,14 @@ describe('BulkUploadService — what is audited, and under which verb', () => {
   it.each([
     [
       'a role that may not author',
-      () => dataEntry({ role: 'consultant' }),
+      () => standardUser({ role: 'auditor' }),
       () => csvFile([row()]),
       CreateRoleRefusedError,
       'Your role may not create activity records',
     ],
     [
       'a file naming an entity outside the tenant',
-      () => dataEntry(),
+      () => standardUser(),
       () => csvFile([row({ subsidiaryId: SUB_99 })]),
       InaccessibleEntityError,
       // Row numbers only: no caller text reaches the row.
@@ -2444,7 +2453,7 @@ describe('BulkUploadService — what is audited, and under which verb', () => {
       );
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' }), row({ periodValue: 'March' })]),
       NOTHING,
     );
@@ -2461,7 +2470,7 @@ describe('BulkUploadService — import batches', () => {
   it('a dry run creates no batch, stores no file and passes no provenance', async () => {
     const { prisma, storage, records, audit, service } = build();
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.batchId).toBeNull();
     expect(prisma.importBatch.create).not.toHaveBeenCalled();
@@ -2486,7 +2495,7 @@ describe('BulkUploadService — import batches', () => {
     prisma.importBatch.update.mockImplementation(async () => void order.push('close'));
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' }), row({ activityValue: 'x' })]),
       NOTHING,
     );
@@ -2522,7 +2531,7 @@ describe('BulkUploadService — import batches', () => {
     const { prisma, storage, intents, records, service } = build();
     prisma.importBatch.create.mockRejectedValue(new Error('db down'));
 
-    await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('db down');
+    await expect(service.import(standardUser(), csvFile([row()]), NOTHING)).rejects.toThrow('db down');
 
     // Abandoned, not removed directly: a removal that fails stays a retryable
     // intent (it used to be a swallowed `.catch(() => undefined)`). The
@@ -2541,7 +2550,7 @@ describe('BulkUploadService — import batches', () => {
   it('names the source file in an intent before storing it, and adopts it with the batch row', async () => {
     const { prisma, storage, intents, service } = build();
 
-    await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    await service.import(standardUser(), csvFile([row()]), NOTHING);
 
     const path = storage.upload.mock.calls[0][1];
     expect(intents.beginUpload).toHaveBeenCalledWith(
@@ -2562,7 +2571,7 @@ describe('BulkUploadService — import batches', () => {
     const { prisma, storage, intents, service } = build();
     storage.upload.mockRejectedValue(new Error('storage down'));
 
-    await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('storage down');
+    await expect(service.import(standardUser(), csvFile([row()]), NOTHING)).rejects.toThrow('storage down');
 
     expect(intents.abandonUnadoptedUpload).toHaveBeenCalledWith(
       'intent-1',
@@ -2577,7 +2586,7 @@ describe('BulkUploadService — import batches', () => {
     const { prisma, records, service } = build();
     records.create.mockRejectedValue(new CreateRoleRefusedError());
 
-    await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toBeInstanceOf(
+    await expect(service.import(standardUser(), csvFile([row()]), NOTHING)).rejects.toBeInstanceOf(
       CreateRoleRefusedError,
     );
 
@@ -2586,7 +2595,7 @@ describe('BulkUploadService — import batches', () => {
 
   it('records every subsidiary the file names, a location counted by its owner', async () => {
     const { prisma, service } = build();
-    const user = dataEntry({ accessibleSubsidiaryIds: [SUB_1, SUB_9] });
+    const user = standardUser({ accessibleSubsidiaryIds: [SUB_1, SUB_9] });
     prisma.location.findMany.mockImplementation(({ where }: any) =>
       Promise.resolve(where?.id?.in ? [{ id: LOC_1, subsidiaryId: SUB_9 }] : []),
     );
@@ -2614,7 +2623,7 @@ describe('BulkUploadService — import batches', () => {
     );
 
     await service.import(
-      dataEntry({ accessibleSubsidiaryIds: [SUB_1, SUB_9] }),
+      standardUser({ accessibleSubsidiaryIds: [SUB_1, SUB_9] }),
       csvFile([row({ subsidiaryId: SUB_1, locationId: LOC_1 })]),
       NOTHING,
     );
@@ -2628,7 +2637,7 @@ describe('BulkUploadService — import batches', () => {
     const { audit, storage, service } = build();
 
     await expect(
-      service.import(dataEntry({ organisationId: null }), csvFile([row()]), NOTHING),
+      service.import(standardUser({ organisationId: null }), csvFile([row()]), NOTHING),
     ).rejects.toBeInstanceOf(CreateRoleRefusedError);
 
     expect(storage.upload).not.toHaveBeenCalled();
@@ -2648,7 +2657,7 @@ describe('BulkUploadService — a location outside the tenant refuses the whole 
 
     await expect(
       service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row(), row({ periodValue: 'February', locationId: LOC_9 })]),
         NOTHING,
       ),
@@ -2673,7 +2682,7 @@ describe('BulkUploadService — a location outside the tenant refuses the whole 
   it('asks nothing when no row names a location', async () => {
     const { prisma, service } = build();
 
-    await service.import(dataEntry(), csvFile([row()]), DRY);
+    await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(prisma.location.findMany).not.toHaveBeenCalled();
   });
@@ -2698,7 +2707,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     const { records, service } = build();
     const fuel = row(FUEL);
 
-    const report = await service.import(dataEntry(), csvFile([fuel, fuel]), DRY);
+    const report = await service.import(standardUser(), csvFile([fuel, fuel]), DRY);
 
     expect(report.errors).toEqual([
       expect.objectContaining({ row: 2, code: 'invalid', column: 'activityType' }),
@@ -2713,7 +2722,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
   it('refuses Mobile Combustion and Refrigerants rows without one the same way', async () => {
     const { service } = build();
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row({ category: 'Mobile Combustion', activityUnit: 'litres' }),
         row({ category: 'Refrigerants', activityUnit: 'kg', periodValue: 'February' }),
@@ -2730,7 +2739,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row({ ...FUEL, activityType: ' diesel ' }),
         row({ category: 'Refrigerants', activityType: 'R-410A', activityUnit: 'kg' }),
@@ -2749,7 +2758,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
   it('applies a typed row through create, with its activity type', async () => {
     const { records, service } = build();
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ ...FUEL, activityType: 'gas_oil' })]),
       { dryRun: false },
     );
@@ -2762,7 +2771,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
   it('applies a marine gas oil row in tonnes through create, as the form would (UAT2 BUG-R2-11)', async () => {
     const { records, service } = build();
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ category: 'Mobile Combustion', activityType: 'marine_gas_oil', activityUnit: 'tonnes', activityValue: '12.5' })]),
       { dryRun: false },
     );
@@ -2778,7 +2787,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row({ ...FUEL, activityType: 'R-32' }),
         row({ ...FUEL, activityType: 'cng', periodValue: 'February' }),
@@ -2805,7 +2814,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
   it('refuses a malformed activity type through the DTO, on its column', async () => {
     const { records, service } = build();
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ ...FUEL, activityType: 'diesel;drop' })]),
       DRY,
     );
@@ -2819,7 +2828,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     const { records, service } = build();
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([
         row({ ...FUEL, activityType: 'diesel' }),
         row({ ...FUEL, activityType: 'gas_oil' }),
@@ -2845,7 +2854,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', 'diesel')]);
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ ...FUEL, activityType: 'diesel' }), row({ ...FUEL, activityType: 'gas_oil' })]),
       DRY,
     );
@@ -2874,7 +2883,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ ...FUEL, activityType: 'diesel' })]),
       DRY,
     );
@@ -2893,7 +2902,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ ...FUEL, activityType: 'diesel', periodValue: 'january' })]),
       DRY,
     );
@@ -2909,7 +2918,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
     const typed = row({ ...FUEL, activityType: 'diesel' });
 
-    const report = await service.import(dataEntry(), csvFile([typed, typed]), DRY);
+    const report = await service.import(standardUser(), csvFile([typed, typed]), DRY);
 
     expect(report.errors.map((e) => [e.row, e.code])).toEqual([
       [2, 'duplicate_existing'],
@@ -2921,7 +2930,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     const { prisma, records, service } = build();
     prisma.activityRecord.findMany.mockResolvedValue([storedIn('Electricity', 'grid_electricity')]);
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(standardUser(), csvFile([row()]), DRY);
 
     expect(report.errors).toEqual([
       { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_TYPED_MESSAGE },
@@ -2966,7 +2975,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       prisma.activityRecord.findMany.mockImplementation(table([...elsewhere(BULK_UPLOAD_MAX_ROWS * 10), legacyFuel]));
 
       const report = await service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row({ ...FUEL, activityType: 'diesel' })]),
         DRY,
       );
@@ -2981,7 +2990,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       const { prisma, service } = build();
 
       await service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([
           row({ ...FUEL, activityType: 'diesel', periodValue: ' january ', locationId: LOC_A.toUpperCase() }),
           row({ ...FUEL, activityType: 'gas_oil', periodValue: 'January', locationId: LOC_A }),
@@ -3022,7 +3031,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
         prisma.activityRecord.findMany.mockImplementation(table([legacyFuel]));
 
         const report = await service.import(
-          dataEntry({ accessibleSubsidiaryIds: [SUB_1, SUB_99] }),
+          standardUser({ accessibleSubsidiaryIds: [SUB_1, SUB_99] }),
           csvFile([...lines]),
           DRY,
         );
@@ -3036,7 +3045,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       prisma.activityRecord.findMany.mockImplementation(table([legacyFuel]));
 
       const report = await service.import(
-        dataEntry(),
+        standardUser(),
         csvFile([row({ ...FUEL, activityType: 'diesel', varianceReason: 'Meter replaced' })]),
         DRY,
       );
@@ -3057,10 +3066,10 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
         loadStoredSlots(user: RequestUser, rows: { row: number; cells: Record<BulkUploadColumn, string> }[]): Promise<unknown>;
       }).loadStoredSlots.bind(service);
 
-      await load(dataEntry(), [{ row: 2, cells: cells({ subsidiaryId: SUB_99 }) }]);
+      await load(standardUser(), [{ row: 2, cells: cells({ subsidiaryId: SUB_99 }) }]);
       expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
 
-      await load(dataEntry(), [
+      await load(standardUser(), [
         { row: 2, cells: cells({ subsidiaryId: SUB_99 }) },
         { row: 3, cells: cells({}) },
       ]);
@@ -3080,7 +3089,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       for (const options of [DRY, { dryRun: false }]) {
         await expect(
           service.import(
-            dataEntry(),
+            standardUser(),
             csvFile([row({ category: 'Refrigerants', activityType: 'R-32', activityUnit: 'kg' })]),
             options,
           ),
@@ -3101,7 +3110,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     ]);
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row({ ...FUEL, activityType: 'diesel' })]),
       DRY,
     );
@@ -3116,7 +3125,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       .mockRejectedValueOnce(new FactorLibraryConflictError('ambiguous_factor', 'Two releases claim it.'));
 
     const report = await service.import(
-      dataEntry(),
+      standardUser(),
       csvFile([row(), row({ periodValue: 'February' })]),
       DRY,
     );
@@ -3141,7 +3150,7 @@ describe('import cooperative deadline', () => {
         time = 60_000;
         return result;
       });
-      const report = await service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), { dryRun });
+      const report = await service.import(standardUser(), csvFile([row(), row({ periodValue: 'February' })]), { dryRun });
       expect(report.completion).toBe('deadline_exceeded');
       expect(report.accepted).toHaveLength(1);
       expect(report.errors).toMatchObject([{ row: 3, code: 'not_processed_deadline' }]);
@@ -3165,7 +3174,7 @@ describe('review regression import', () => {
         time = 60_000;
         return result;
       });
-      const report = await service.import(dataEntry(), csvFile([row()]), { dryRun: false });
+      const report = await service.import(standardUser(), csvFile([row()]), { dryRun: false });
       expect(report.errors).toEqual([]);
       expect(report.completion).toBe('completed');
       expect(audit.record.mock.calls[0][1].diff).toMatchObject({ completion: 'completed', notProcessedCount: 0 });
@@ -3178,7 +3187,7 @@ describe('review regression import', () => {
     vi.stubEnv('IMPORT_PARSE_TIMEOUT_MS', '1');
     try {
       const { service } = build();
-      await expect(service.import(dataEntry(), csvFile([row()]), { dryRun: true })).rejects.toMatchObject({ status: 400 });
+      await expect(service.import(standardUser(), csvFile([row()]), { dryRun: true })).rejects.toMatchObject({ status: 400 });
     } finally { clock.mockRestore(); vi.unstubAllEnvs(); }
   });
 });
@@ -3187,7 +3196,7 @@ it('closes the import through the final audit transaction client, never the root
   const { service, audit, prisma } = build();
   const tx = { importBatch: { update: vi.fn().mockResolvedValue({}) } };
   audit.finalize.mockImplementation(async (_user, _entry, close) => { await close?.(tx); });
-  await service.import(dataEntry(), csvFile([row()]), { dryRun: false });
+  await service.import(standardUser(), csvFile([row()]), { dryRun: false });
   expect(tx.importBatch.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed', acceptedCount: 1, rejectedCount: 0 }) }));
   expect(prisma.importBatch.update).not.toHaveBeenCalled();
 });
@@ -3217,7 +3226,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
   it('reads a CSV 1.234 as 1.234 and says so in the dry run, with the unit as stored', async () => {
     const { records, service } = build();
 
-    const report = await service.import(dataEntry(), csvWith('1.234', 'KWH'), DRY);
+    const report = await service.import(standardUser(), csvWith('1.234', 'KWH'), DRY);
 
     expect(report.errors).toEqual([]);
     expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
@@ -3228,7 +3237,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
   it('reads an XLSX text cell 1.234 as 1.234 — the same rule as a CSV cell', async () => {
     const { service } = build();
 
-    const report = await service.import(dataEntry(), await xlsxFile('1.234'), DRY);
+    const report = await service.import(standardUser(), await xlsxFile('1.234'), DRY);
 
     expect(report.errors).toEqual([]);
     expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
@@ -3245,7 +3254,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
       const file =
         kind === 'csv' ? csvWith('1234.56789012345')
         : await xlsxFile(kind === 'xlsx-text' ? '1234.56789012345' : 1234.56789012345);
-      const report = await service.import(dataEntry(), file, options);
+      const report = await service.import(standardUser(), file, options);
       expect(report.accepted[0].activityValue).toBe(1234.56789012345);
     }
   });
@@ -3259,7 +3268,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     const { service } = build();
     const file = kind === 'csv' ? csvWith(raw) : await xlsxFile(raw);
 
-    const report = await service.import(dataEntry(), file, DRY);
+    const report = await service.import(standardUser(), file, DRY);
 
     expect(report.errors).toEqual([]);
     expect(report.accepted[0].activityValue).toBe(Number(raw));
@@ -3272,7 +3281,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     const { records, service } = build();
     const line = [SUB_1, '', '2024', 'monthly', 'January', 'Electricity', '', '1', '5', 'kWh'].join(',');
 
-    const report = await service.import(dataEntry(), csvFile([line]), NOTHING);
+    const report = await service.import(standardUser(), csvFile([line]), NOTHING);
 
     expect(report.accepted).toEqual([]);
     expect(report.errors).toHaveLength(1);
@@ -3282,7 +3291,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
   it('takes a numeric XLSX cell as the number it holds', async () => {
     const { service } = build();
 
-    const report = await service.import(dataEntry(), await xlsxFile(1234.5), DRY);
+    const report = await service.import(standardUser(), await xlsxFile(1234.5), DRY);
 
     expect(report.accepted[0]).toMatchObject({ activityValue: 1234.5 });
   });
@@ -3290,7 +3299,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
   it('reports the same figure on an apply as on the dry run', async () => {
     const { service } = build();
 
-    const report = await service.import(dataEntry(), csvWith('1.234'), NOTHING);
+    const report = await service.import(standardUser(), csvWith('1.234'), NOTHING);
 
     expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
   });
@@ -3305,7 +3314,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
       }),
     );
 
-    const report = await service.import(dataEntry(), csvWith('0.30000000000000004', 'KWH'), NOTHING);
+    const report = await service.import(standardUser(), csvWith('0.30000000000000004', 'KWH'), NOTHING);
 
     expect(report.accepted[0]).toMatchObject({ recordId: 'rec-x', activityValue: 0.3, activityUnit: 'kWh' });
   });
@@ -3321,7 +3330,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     const { records, service } = build();
     const file = kind === 'CSV' ? csvWith(raw) : await xlsxFile(raw);
 
-    const report = await service.import(dataEntry(), file, NOTHING);
+    const report = await service.import(standardUser(), file, NOTHING);
 
     expect(report.accepted).toEqual([]);
     expect(report.errors).toEqual([
@@ -3338,7 +3347,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
   it.each(['1,5 kWh', 'abc,d', ',', '1e3'])('keeps invalid for %s — not a figure at all', async (raw) => {
     const { service } = build();
 
-    const report = await service.import(dataEntry(), csvWith(raw), DRY);
+    const report = await service.import(standardUser(), csvWith(raw), DRY);
 
     expect(report.errors[0]).toMatchObject({ code: 'invalid', column: 'activityValue' });
   });
@@ -3347,7 +3356,7 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     // exceljs hands 1e21 back as "1e+21", which strictNumber refuses as text.
     const { service } = build();
 
-    const report = await service.import(dataEntry(), await xlsxFile(1e21), DRY);
+    const report = await service.import(standardUser(), await xlsxFile(1e21), DRY);
 
     expect(report.errors[0]).toMatchObject({ code: 'invalid', column: 'activityValue' });
   });
@@ -3376,7 +3385,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('builds one refrigerant record from its equipment lines: their capacities summed, the lines as parameters', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       line(),
       line({ equipmentType: 'chiller', capacityKg: '20.5', refillKg: '1.25', leakRateChoice: 'alternative' }),
     ), DRY);
@@ -3395,7 +3404,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('imports an Electricity row as a plain grid record, with no parameters (self-gen-model)', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(line({
+    const report = await service.import(standardUser(), file(line({
       category: 'Electricity', activityType: '', activityValue: '600000', activityUnit: 'kWh',
       reportingPeriod: 'monthly', periodValue: 'January', equipmentType: '', capacityKg: '', refillKg: '',
     })), DRY);
@@ -3407,7 +3416,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('keeps a record of one line as a record of one row, and accepts a refill alone', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(line({ capacityKg: '0', refillKg: '2' })), DRY);
+    const report = await service.import(standardUser(), file(line({ capacityKg: '0', refillKg: '2' })), DRY);
     expect(report.errors).toEqual([]);
     expect(records.previewCreate.mock.calls[0][1].activityValue).toBe(0);
     expect(report.accepted[0].lineRows).toBeUndefined();
@@ -3415,7 +3424,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('groups lines across spellings of one record, and keeps two gases apart', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       line(),
       line({ subsidiaryId: SUB_1.toUpperCase(), periodValue: 'annual', equipmentType: 'chiller' }),
       line({ activityType: 'R-32' }),
@@ -3428,7 +3437,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('refuses a refrigerant record whole, on the line at fault, naming every line', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       line(),
       line({ equipmentType: 'refrigerator', leakRateChoice: 'alternative' }),
     ), DRY);
@@ -3452,16 +3461,16 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     ['a calorific basis on a refrigerant line', { cvBasis: 'net' }, 'cvBasis'],
   ])('refuses %s on its own cell', async (_case, over, column) => {
     const { service } = build();
-    const report = await service.import(dataEntry(), file(line(over as Cells)), DRY);
+    const report = await service.import(standardUser(), file(line(over as Cells)), DRY);
     expect(report.errors).toEqual([expect.objectContaining({ row: 2, column })]);
     expect(report.errors[0].code).toBe((over as Cells).capacityKg === '"1,5"' ? 'wrong_decimal_separator' : 'invalid');
   });
 
   it('refuses a second line of one equipment type, and lines that disagree on the record', async () => {
     const { service } = build();
-    const repeated = await service.import(dataEntry(), file(line(), line()), DRY);
+    const repeated = await service.import(standardUser(), file(line(), line()), DRY);
     expect(repeated.errors).toEqual([expect.objectContaining({ row: 3, column: 'equipmentType' })]);
-    const units = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller', varianceReason: 'other' })), DRY);
+    const units = await service.import(standardUser(), file(line(), line({ equipmentType: 'chiller', varianceReason: 'other' })), DRY);
     expect(units.errors).toEqual([expect.objectContaining({ row: 3, column: 'varianceReason' })]);
   });
 
@@ -3472,7 +3481,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('builds one Fire Suppression record of 51 kg from a CO2 extinguisher and a CO2 system', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       fireRow(),
       fireRow({ equipmentType: 'fire_suppression_system', capacityKg: '45' }),
     ), DRY);
@@ -3489,7 +3498,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('keeps a Fire Suppression record apart from a Refrigerants record of the same gas and slot', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       fireRow({ activityType: 'HFC-227ea', equipmentType: 'fire_suppression_system', capacityKg: '40' }),
       line({ activityType: 'HFC-227ea', equipmentType: 'fire_suppression_system', capacityKg: '30' }),
     ), DRY);
@@ -3506,7 +3515,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     ['the alternative rate', { leakRateChoice: 'alternative' }, 'leakRateChoice', /fire_suppression_system has no alternative leak rate/],
   ])('refuses a Fire Suppression record whole when a line names %s, on its row, writing nothing', async (_what, over, column, message) => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       fireRow(),
       fireRow({ equipmentType: 'fire_suppression_system', capacityKg: '45', ...(over as Cells) }),
     ), NOTHING);
@@ -3521,7 +3530,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
   // record writes none of its lines.
   it('refuses a Fire Suppression record with a cooling device whole, beside a valid record of another gas', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       fireRow(),
       fireRow({ activityType: 'SF6', equipmentType: 'transformer_breaker', capacityKg: '10' }),
       fireRow({ activityType: 'SF6', equipmentType: 'split_air_conditioner', capacityKg: '5' }),
@@ -3540,13 +3549,13 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
       subsidiaryId: SUB_1, locationId: null, reportingYear: 2025, reportingPeriod: 'annual', periodValue: 'Annual',
       category: 'Refrigerants', activityType: 'R-410A',
     }]);
-    const stored = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller' })), DRY);
+    const stored = await service.import(standardUser(), file(line(), line({ equipmentType: 'chiller' })), DRY);
     expect(stored.errors).toEqual([expect.objectContaining({ row: 2, code: 'duplicate_existing' })]);
   });
 
   it('reads the Natural Gas inputs and echoes them', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       gasRow({ billedGcvKcalPerSm3: '9349.174' }),
       gasRow({ periodValue: 'February', activityUnit: 'cubic_metres', volumeCorrectionFactor: '0.97', ncvKcalPerSm3: '8100' }),
     ), DRY);
@@ -3566,7 +3575,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     const sentence = 'A typed net calorific value must be between 7300 and 9396 kcal/Sm³, the range the factor release accepts.';
     records.previewCreate.mockRejectedValue(new CalculationInputError('ncv_out_of_range', sentence));
 
-    const report = await service.import(dataEntry(), file(gasRow({ ncvKcalPerSm3: '8.250' } as Cells)), DRY);
+    const report = await service.import(standardUser(), file(gasRow({ ncvKcalPerSm3: '8.250' } as Cells)), DRY);
 
     expect(records.previewCreate.mock.calls[0][1].parameters).toEqual({ ncvKcalPerSm3: 8.25 });
     expect(report.errors).toEqual([{ row: 2, column: null, code: 'invalid', message: sentence }]);
@@ -3582,7 +3591,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
     ['an equipment column on Natural Gas', { equipmentType: 'chiller' }, 'equipmentType'],
   ])('refuses %s on its own cell, before the record service sees it', async (_case, over, column) => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(gasRow(over as Cells)), DRY);
+    const report = await service.import(standardUser(), file(gasRow(over as Cells)), DRY);
     expect(report.errors).toEqual([expect.objectContaining({ row: 2, column, code: 'invalid' })]);
     expect(records.previewCreate).not.toHaveBeenCalled();
   });
@@ -3592,7 +3601,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
     it('reads the basis in any letter case, sends it lower-case, and echoes it', async () => {
       const { records, service } = build();
-      const report = await service.import(dataEntry(), file(
+      const report = await service.import(standardUser(), file(
         billRow({ cvBasis: 'GROSS' }),
         billRow({ periodValue: 'February', activityUnit: 'MWh', activityValue: '1', cvBasis: ' Net ' }),
       ), DRY);
@@ -3605,7 +3614,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
       const { prisma, records, service } = build();
       const sentence = 'A natural gas bill in kWh in Türkiye states its calorific basis, net or gross.';
       records.previewCreate.mockRejectedValue(new CalculationInputError('parameters_required', sentence, { input: 'cvBasis' }));
-      const report = await service.import(dataEntry(), file(billRow()), DRY);
+      const report = await service.import(standardUser(), file(billRow()), DRY);
       expect(records.previewCreate.mock.calls[0][1].parameters).toBeUndefined();
       expect(report.errors).toEqual([{ row: 2, column: null, code: 'invalid', message: sentence }]);
       expect(prisma.importBatch.create).not.toHaveBeenCalled();
@@ -3617,7 +3626,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
       ['a basis given as a number', { cvBasis: '1' }],
     ])('refuses %s on its own cell, naming both values', async (_case, over) => {
       const { records, service } = build();
-      const report = await service.import(dataEntry(), file(billRow(over as Cells)), DRY);
+      const report = await service.import(standardUser(), file(billRow(over as Cells)), DRY);
       expect(report.errors).toEqual([expect.objectContaining({ row: 2, column: 'cvBasis', code: 'invalid' })]);
       expect(report.errors[0].message).toMatch(/net or gross/);
       expect(records.previewCreate).not.toHaveBeenCalled();
@@ -3625,32 +3634,32 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
     it('refuses a basis on an Electricity row, as any gas input there', async () => {
       const { records, service } = build();
-      const report = await service.import(dataEntry(), file(gasRow({ category: 'Electricity', activityUnit: 'kWh', cvBasis: 'net' })), DRY);
+      const report = await service.import(standardUser(), file(gasRow({ category: 'Electricity', activityUnit: 'kWh', cvBasis: 'net' })), DRY);
       expect(report.errors).toEqual([expect.objectContaining({ row: 2, column: 'cvBasis', code: 'invalid' })]);
       expect(records.previewCreate).not.toHaveBeenCalled();
     });
 
     it('writes the basis on the import, and nothing on the dry run', async () => {
       const { prisma, records, service } = build();
-      const dry = await service.import(dataEntry(), file(billRow({ cvBasis: 'gross' })), DRY);
+      const dry = await service.import(standardUser(), file(billRow({ cvBasis: 'gross' })), DRY);
       expect(dry.errors).toEqual([]);
       expect(records.create).not.toHaveBeenCalled();
       expect(prisma.importBatch.create).not.toHaveBeenCalled();
-      await service.import(dataEntry(), file(billRow({ cvBasis: "gross" })), NOTHING);
+      await service.import(standardUser(), file(billRow({ cvBasis: "gross" })), NOTHING);
       expect(records.create.mock.calls[0][1].parameters).toEqual({ cvBasis: 'gross' });
     });
   });
 
   it('passes a row with no inputs as before, its parameters null', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(gasRow()), DRY);
+    const report = await service.import(standardUser(), file(gasRow()), DRY);
     expect(records.previewCreate.mock.calls[0][1].parameters).toBeUndefined();
     expect(report.accepted[0].parameters).toBeNull();
   });
 
   it('keeps one record whole across spellings of its year (review finding)', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(
+    const report = await service.import(standardUser(), file(
       line(),
       line({ reportingYear: '2025.0', equipmentType: 'chiller' }),
       line({ reportingYear: '02025', equipmentType: 'refrigerator' }),
@@ -3663,14 +3672,14 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
   it('names every line of a record the record service refuses, before the bound can cut it', async () => {
     const { records, service } = build();
     records.previewCreate.mockRejectedValueOnce(new BadRequestException('A refrigerant record in Türkiye is annual: its leak rates are yearly.'));
-    const report = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller' })), DRY);
+    const report = await service.import(standardUser(), file(line(), line({ equipmentType: 'chiller' })), DRY);
     expect(report.errors).toEqual([expect.objectContaining({ row: 2, code: 'invalid' })]);
     expect(report.errors[0].message).toMatch(/^Rows 2, 3 are one gas's record, and none was imported\. A refrigerant record/);
   });
 
   it('refuses a line with no equipment type, saying the column is required', async () => {
     const { service } = build();
-    const report = await service.import(dataEntry(), file(line({ equipmentType: '', capacityKg: '5' })), DRY);
+    const report = await service.import(standardUser(), file(line({ equipmentType: '', capacityKg: '5' })), DRY);
     expect(report.errors).toEqual([expect.objectContaining({ row: 2, column: 'equipmentType' })]);
     expect(report.errors[0].message).toMatch(/^equipmentType is required on an equipment line/);
   });
@@ -3687,7 +3696,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
         time = 60_000;
         return result;
       });
-      const report = await service.import(dataEntry(), file(
+      const report = await service.import(standardUser(), file(
         gasRow(),
         line(),
         line({ equipmentType: 'chiller' }),
@@ -3710,7 +3719,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
   ])('refuses the whole record for %s of the same gas, on either path', async (_case, rows, faultRow) => {
     for (const dryRun of [true, false]) {
       const { records, service } = build();
-      const report = await service.import(dataEntry(), file(...rows()), { dryRun });
+      const report = await service.import(standardUser(), file(...rows()), { dryRun });
       expect(records.previewCreate).not.toHaveBeenCalled();
       expect(records.create).not.toHaveBeenCalled();
       expect(report.accepted).toEqual([]);
@@ -3722,7 +3731,7 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('keeps a legacy Refrigerants row with no equipment anywhere in its record as before', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(bare({ reportingPeriod: 'monthly', periodValue: 'January' })), DRY);
+    const report = await service.import(standardUser(), file(bare({ reportingPeriod: 'monthly', periodValue: 'January' })), DRY);
     expect(report.errors).toEqual([]);
     expect(records.previewCreate.mock.calls[0][1]).toMatchObject({ activityValue: 20 });
     expect(records.previewCreate.mock.calls[0][1].parameters).toBeUndefined();
@@ -3730,8 +3739,133 @@ describe('BulkUploadService — calculation inputs (LP4-02 PR4)', () => {
 
   it('applies a refrigerant record once, and reports what the record stores', async () => {
     const { records, service } = build();
-    const report = await service.import(dataEntry(), file(line(), line({ equipmentType: 'chiller' })), { dryRun: false });
+    const report = await service.import(standardUser(), file(line(), line({ equipmentType: 'chiller' })), { dryRun: false });
     expect(records.create).toHaveBeenCalledTimes(1);
     expect(report.accepted).toEqual([expect.objectContaining({ lineRows: [2, 3], activityValue: 20 })]);
+  });
+});
+
+describe('BulkUploadService — a standard user\'s categories (INC-2.6 §1, §7.3)', () => {
+  // Spec: activity-data-entry, "Bulk upload refuses rows outside a standard
+  // user's categories" — scenario "A mixed file".
+  const ELECTRICITY_ONLY = { [SUB_1]: ['Electricity'] } as RequestUser['categoryGrants'];
+  const fuelRow = () => row({ category: 'Fuel', activityType: 'diesel', activityUnit: 'litres' });
+
+  /**
+   * The record service's own category gate in front of the stubbed preview
+   * and create — the REAL `assertCategoryGranted`, so what is asserted is the
+   * gate's error travelling through the bulk issue mapper, not a stand-in.
+   */
+  function gated() {
+    const built = build();
+    const preview = built.records.previewCreate.getMockImplementation()!;
+    const create = built.records.create.getMockImplementation()!;
+    built.records.previewCreate.mockImplementation(async (user: RequestUser, dto: any) => {
+      assertCategoryGranted(user, dto.subsidiaryId, dto.category);
+      return preview(user, dto);
+    });
+    built.records.create.mockImplementation(async (user: RequestUser, dto: any, provenance?: any) => {
+      assertCategoryGranted(user, dto.subsidiaryId, dto.category);
+      return create(user, dto, provenance);
+    });
+    return built;
+  }
+
+  it('dry run: reports the Fuel row category_not_granted on its category column, the Electricity row valid, and stores nothing', async () => {
+    const { prisma, records, storage, service } = gated();
+
+    const report = await service.import(
+      standardUser({ categoryGrants: ELECTRICITY_ONLY }),
+      csvFile([row(), fuelRow()]),
+      DRY,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2]);
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 3, column: 'category', code: 'category_not_granted' }),
+    ]);
+    // The refusal names the category, as the record API's 403 does.
+    expect(report.errors[0].message).toContain('"Fuel"');
+    expect(records.create).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(prisma.importBatch.create).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+
+  it('dry run: a file of ungranted rows only is a report of row errors, not one whole-file 403', async () => {
+    // `CategoryNotGrantedError` is a ForbiddenException; only the ROLE
+    // refusal may abort the loop, so a first-row category refusal must not.
+    const { service } = gated();
+
+    const report = await service.import(
+      standardUser({ categoryGrants: ELECTRICITY_ONLY }),
+      csvFile([fuelRow(), row({ category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', periodValue: 'February' })]),
+      DRY,
+    );
+
+    expect(report.accepted).toEqual([]);
+    expect(report.errors.map((e) => [e.row, e.column, e.code])).toEqual([
+      [2, 'category', 'category_not_granted'],
+      [3, 'category', 'category_not_granted'],
+    ]);
+  });
+
+  it('apply: creates only the granted row; the Fuel row is the same row error, and the batch counts it', async () => {
+    const { prisma, records, audit, service } = gated();
+
+    const report = await service.import(
+      standardUser({ categoryGrants: ELECTRICITY_ONLY }),
+      csvFile([row(), fuelRow()]),
+      NOTHING,
+    );
+
+    expect(report.accepted).toEqual([expect.objectContaining({ row: 2, recordId: 'rec-1', category: 'Electricity' })]);
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 3, column: 'category', code: 'category_not_granted' }),
+    ]);
+    // Exactly one record came out of the write path: the refused call threw
+    // before anything was created.
+    expect(seq).toBe(1);
+    expect(records.create).toHaveBeenCalledTimes(2);
+    expect(prisma.importBatch.update.mock.calls[0][0]).toMatchObject({
+      data: { status: 'completed', acceptedCount: 1, rejectedCount: 1 },
+    });
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ acceptedCount: 1, rejectedCount: 1 });
+  });
+
+  it('a category ticked on ANOTHER company does not open it on this one', async () => {
+    const { service } = gated();
+
+    const report = await service.import(
+      standardUser({
+        accessibleSubsidiaryIds: [SUB_1, SUB_9],
+        categoryGrants: { [SUB_1]: ['Electricity'], [SUB_9]: ['Fuel'] },
+      }),
+      csvFile([fuelRow()]),
+      DRY,
+    );
+
+    expect(report.accepted).toEqual([]);
+    expect(report.errors).toEqual([expect.objectContaining({ row: 2, code: 'category_not_granted' })]);
+  });
+
+  it.each([
+    ['super_admin', {}],
+    ['masterkey', {}],
+  ] as const)('a %s\'s same file is not narrowed by category, in the dry run and the apply', async (role, categoryGrants) => {
+    for (const dryRun of [true, false]) {
+      seq = 0;
+      const { records, service } = gated();
+
+      const report = await service.import(
+        standardUser({ role, categoryGrants }),
+        csvFile([row(), fuelRow()]),
+        { dryRun },
+      );
+
+      expect(report.errors).toEqual([]);
+      expect(report.accepted.map((a) => a.row)).toEqual([2, 3]);
+      expect((dryRun ? records.previewCreate : records.create)).toHaveBeenCalledTimes(2);
+    }
   });
 });

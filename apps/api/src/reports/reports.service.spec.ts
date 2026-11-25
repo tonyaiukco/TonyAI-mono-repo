@@ -707,10 +707,60 @@ describe('ReportsService', () => {
     expect(m.status).toBe('contains_incomplete_data');
   });
 
-  it('generation is forbidden for data_entry (permissions matrix)', async () => {
-    const entry = { ...admin, role: 'data_entry' } as RequestUser;
-    await expect(service.generateCsv(entry, q)).rejects.toMatchObject({ status: 403 });
+  it('generation is forbidden for a standard_user — every format, nothing read or audited (report.generate)', async () => {
+    const entry = { ...admin, role: 'standard_user' } as RequestUser;
+    for (const generate of [
+      () => service.generateCsv(entry, q),
+      () => service.generateExcel(entry, q),
+      () => service.generatePdf(entry, q),
+    ]) {
+      const e = await generate().catch((err: unknown) => err);
+      expect(e).toMatchObject({ status: 403 });
+      expect((e as Error).message).toBe('Only a masterkey, an auditor or a super_admin may generate or export reports');
+    }
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  describe('live reports by role (INC-2.6 §6)', () => {
+    // Granted sub-1 and sub-2 only; sub-3 is the same organisation's.
+    const superAdmin = { ...admin, id: 'sa-1', role: 'super_admin', accessibleSubsidiaryIds: ['sub-1', 'sub-2'] } as RequestUser;
+    const auditor = { ...admin, id: 'au-1', role: 'auditor', accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3'] } as RequestUser;
+    const records = () => [
+      makeRecord({ id: 'rec-granted', subsidiaryId: 'sub-1', periodValue: 'GrantedPeriod' }),
+      makeRecord({ id: 'rec-ungranted', subsidiaryId: 'sub-3', periodValue: 'UngrantedPeriod' }),
+    ];
+
+    it("lets a scoped super_admin export — confined to its granted companies' records", async () => {
+      stubRecords(prisma, records());
+      const csv = await service.generateCsv(superAdmin, q);
+      expect(csv).toContain('GrantedPeriod');
+      expect(csv).not.toContain('UngrantedPeriod');
+      for (const [args] of prisma.activityRecord.findMany.mock.calls) {
+        expect(args.where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+      }
+      expect(audit.record).toHaveBeenCalledWith(
+        superAdmin,
+        expect.objectContaining({ entity: 'report', action: 'generate', diff: expect.objectContaining({ exportType: 'csv' }) }),
+      );
+    });
+
+    it('answers a super_admin who names an ungranted company of its organisation with an empty export, reading no record', async () => {
+      stubRecords(prisma, records());
+      const data = await service.assemble(superAdmin, { ...q, subsidiaryId: 'sub-3' } as ReportQueryDto);
+      expect(data.records).toEqual([]);
+      expect(data.withdrawn).toEqual([]);
+      expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+      const csv = await service.generateCsv(superAdmin, { ...q, subsidiaryId: 'sub-3' } as ReportQueryDto);
+      expect(csv).not.toContain('UngrantedPeriod');
+    });
+
+    it('lets an auditor export the organisation it reads', async () => {
+      stubRecords(prisma, records());
+      const csv = await service.generateCsv(auditor, q);
+      expect(csv).toContain('GrantedPeriod');
+      expect(csv).toContain('UngrantedPeriod');
+    });
   });
 
   it('generateExcel builds the three audit sheets', async () => {

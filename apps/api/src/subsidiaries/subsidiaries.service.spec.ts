@@ -13,8 +13,10 @@ import {
   stubRead,
   makeLocation,
   makeSubsidiary,
+  makeAuditor,
   makeMasterkey,
-  makeDataEntry,
+  makeStandardUser,
+  makeSuperAdmin,
   type PrismaMock,
 } from '../../test/helpers';
 
@@ -132,7 +134,7 @@ describe('SubsidiariesService', () => {
 
   describe('list — tenant isolation', () => {
     it('queries only the caller\'s accessible subsidiary ids', async () => {
-      const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+      const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
       const rows = [
         makeSubsidiary({ id: 'sub-1' }),
         makeSubsidiary({ id: 'sub-2' }),
@@ -151,7 +153,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('returns an empty list when the user has no accessible subsidiaries', async () => {
-      const user = makeDataEntry({ accessibleSubsidiaryIds: [] });
+      const user = makeStandardUser({ accessibleSubsidiaryIds: [] });
       prisma.subsidiary.findMany.mockResolvedValue([]);
 
       const result = await service.list(user);
@@ -179,7 +181,7 @@ describe('SubsidiariesService', () => {
 
   describe('get — tenant isolation', () => {
     it('returns the subsidiary when the id is within the access set', async () => {
-      const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+      const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
 
       const dto = await service.get(user, 'sub-1');
@@ -188,8 +190,17 @@ describe('SubsidiariesService', () => {
       expect(prisma.subsidiary.findUnique).toHaveBeenCalledWith({ where: { id: 'sub-1' } });
     });
 
+    it('confines a scoped super_admin to its granted companies — an ungranted one of its organisation is NotFound, unread', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      expect((await service.get(user, 'sub-1')).id).toBe('sub-1');
+      prisma.subsidiary.findUnique.mockClear();
+      await expect(service.get(user, 'sub-3')).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
+    });
+
     it('throws NotFound for an id OUTSIDE the access set without ever hitting the DB', async () => {
-      const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+      const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
 
       await expect(service.get(user, 'sub-99')).rejects.toBeInstanceOf(NotFoundException);
       // Critical: tenant check short-circuits before any DB lookup so a
@@ -209,9 +220,21 @@ describe('SubsidiariesService', () => {
     const dto = { legalName: 'New Co', geographyCode: 'UK' as const };
 
     it('throws Forbidden for a non-masterkey and writes no data', async () => {
-      const user = makeDataEntry();
+      const user = makeStandardUser();
 
       await expect(service.create(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a scoped super_admin', makeSuperAdmin()],
+      ['an auditor', makeAuditor()],
+    ])('refuses %s with 403 (company.write is the masterkey\'s) — nothing written or audited', async (_who, user) => {
+      const e = await service.create(user, dto).catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as Error).message).toBe('Only a masterkey may modify subsidiaries');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
@@ -333,11 +356,24 @@ describe('SubsidiariesService', () => {
 
   describe('update — RBAC + audit', () => {
     it('throws Forbidden for a non-masterkey and mutates nothing', async () => {
-      const user = makeDataEntry();
+      const user = makeStandardUser();
 
       await expect(
         service.update(user, 'sub-1', { legalName: 'Renamed' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a scoped super_admin, even in its granted company', makeSuperAdmin()],
+      ['an auditor', makeAuditor()],
+    ])('refuses %s with 403 before reading the company', async (_who, user) => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      const e = await service.update(user, 'sub-1', { legalName: 'Renamed' }).catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as Error).message).toBe('Only a masterkey may modify subsidiaries');
+      expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
       expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
@@ -863,7 +899,7 @@ describe('SubsidiariesService', () => {
     });
 
     it('refuses an id outside the access set WITHOUT counting anything', async () => {
-      const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1'] });
 
       await expect(service.summary(user, 'sub-99')).rejects.toBeInstanceOf(
         NotFoundException,
@@ -874,9 +910,9 @@ describe('SubsidiariesService', () => {
 
     it('is readable by a non-admin inside the tenant (reads are not role-gated)', async () => {
       // SUB-2: the PANEL is masterkey-only, but reads stay tenant-scoped for
-      // everyone — and this exposes nothing a data_entry user could not already
+      // everyone — and this exposes nothing a standard user could not already
       // count by listing the collections they can see, only far more cheaply.
-      const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
+      const user = makeStandardUser({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['approved']);
 
@@ -886,9 +922,20 @@ describe('SubsidiariesService', () => {
 
   describe('remove — RBAC + audit', () => {
     it('throws Forbidden for a non-masterkey and deletes nothing', async () => {
-      const user = makeDataEntry();
+      const user = makeStandardUser();
 
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a scoped super_admin, even in its granted company', makeSuperAdmin()],
+      ['an auditor', makeAuditor()],
+    ])('refuses %s with 403 — nothing deleted or audited', async (_who, user) => {
+      const e = await service.remove(user, 'sub-1').catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as Error).message).toBe('Only a masterkey may modify subsidiaries');
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });

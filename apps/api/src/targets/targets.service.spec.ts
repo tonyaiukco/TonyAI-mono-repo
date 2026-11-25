@@ -9,6 +9,7 @@ import { TargetsService } from './targets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
+import { makeAuditor, makeSuperAdmin } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -80,7 +81,7 @@ const entry: RequestUser = {
   id: 'entry-1',
   email: 'entry@tonyai.local',
   fullName: 'Entry User',
-  role: 'data_entry',
+  role: 'standard_user',
   accessibleSubsidiaryIds: ['sub-1'],
 } as RequestUser;
 
@@ -199,6 +200,26 @@ describe('TargetsService', () => {
       ForbiddenException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a scoped super_admin, even in its granted company', makeSuperAdmin()],
+    ['an auditor', makeAuditor()],
+    ['a standard_user', entry],
+  ])('refuses %s every target write before reading anything (target.write)', async (_who, user) => {
+    prisma.target.findUnique.mockResolvedValue(makeTarget());
+    for (const write of [
+      () => service.create(user, validInput),
+      () => service.update(user, 'tgt-1', { name: 'x' }),
+      () => service.remove(user, 'tgt-1'),
+    ]) {
+      const e = await write().catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect((e as Error).message).toBe('Only a masterkey may manage targets');
+    }
+    expect(prisma.target.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('create rejects a subsidiary outside the accessible set (404)', async () => {

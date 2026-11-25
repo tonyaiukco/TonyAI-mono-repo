@@ -31,6 +31,8 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { everyCategoryOn } from '../../test/helpers';
+import { CategoryNotGrantedError } from '../activity-records/record-scope';
 
 /**
  * The LOOP and its pre-flight are under test, not the gate:
@@ -95,14 +97,17 @@ function candidate(over: Record<string, unknown> = {}) {
   };
 }
 
-function dataEntry(over: Partial<RequestUser> = {}): RequestUser {
+/** A standard user granted `sub-1`, every category ticked unless `categoryGrants` is overridden. */
+function standardUser(over: Partial<RequestUser> = {}): RequestUser {
+  const accessibleSubsidiaryIds = over.accessibleSubsidiaryIds ?? ['sub-1'];
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
     fullName: 'Entry User',
-    role: 'data_entry',
+    role: 'standard_user',
     organisationId: 'org-1',
-    accessibleSubsidiaryIds: ['sub-1'],
+    accessibleSubsidiaryIds,
+    categoryGrants: everyCategoryOn(accessibleSubsidiaryIds),
     ...over,
   };
 }
@@ -180,7 +185,7 @@ describe('BulkSubmitService — what it hands to submit', () => {
     // `accessibleSubsidiaryIds`, or swapping `id` on this call each passed the
     // entire suite. That single call is where the tenant boundary, the author
     // gate and the role gate are all handed over.
-    const user = dataEntry();
+    const user = standardUser();
     const { records, service } = build([
       candidate({ id: 'a' }),
       candidate({ id: 'b', periodValue: 'February' }),
@@ -199,7 +204,7 @@ describe('BulkSubmitService — what it hands to submit', () => {
     // the old fixture's values WERE the asserted values.
     const { service } = build();
 
-    const [accepted] = (await service.submitMany(dataEntry(), ids('a'))).submitted;
+    const [accepted] = (await service.submitMany(standardUser(), ids('a'))).submitted;
 
     expect(accepted).toEqual({
       recordId: 'a',
@@ -220,7 +225,7 @@ describe('BulkSubmitService — what it hands to submit', () => {
       record({ id: 'a', calculation: { category: 'Water' } as never }),
     );
 
-    const [accepted] = (await service.submitMany(dataEntry(), ids('a'))).submitted;
+    const [accepted] = (await service.submitMany(standardUser(), ids('a'))).submitted;
 
     expect(accepted.tCo2e).toBeNull();
   });
@@ -237,7 +242,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
       candidate({ id: 'theirs', createdBy: 'user-colleague' }),
     ]);
 
-    const report = await service.submitMany(dataEntry(), ids('mine', 'theirs'));
+    const report = await service.submitMany(standardUser(), ids('mine', 'theirs'));
 
     expect(report.submitted.map((r) => r.recordId)).toEqual(['mine']);
     // The MESSAGE as well as the code, and deliberately: the panel renders it
@@ -262,7 +267,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     ]);
 
     const report = await service.submitMany(
-      dataEntry({ role: 'masterkey' }),
+      standardUser({ role: 'masterkey' }),
       ids('theirs'),
     );
 
@@ -281,7 +286,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
       // endpoint, which is not what "the other half of an import" means.
       const { records, service } = build([candidate({ id: 'a', status })]);
 
-      const report = await service.submitMany(dataEntry(), ids('a'));
+      const report = await service.submitMany(standardUser(), ids('a'));
 
       expect(report.failed[0]).toMatchObject({ code: 'not_submittable' });
       expect(report.failed[0].message).toContain(status);
@@ -293,7 +298,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     const { prisma, service } = build([]);
 
     await service.submitMany(
-      dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] }),
+      standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] }),
       ids('a'),
     );
 
@@ -308,7 +313,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     // id itself, or the endpoint is an existence oracle for another tenant.
     const { service } = build([]);
 
-    const report = await service.submitMany(dataEntry(), ids('absent', 'foreign'));
+    const report = await service.submitMany(standardUser(), ids('absent', 'foreign'));
 
     const [first, second] = report.failed;
     expect({ ...first, recordId: '' }).toEqual({ ...second, recordId: '' });
@@ -327,7 +332,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
       candidate({ id: 'prev', periodValue: 'June', reportingYear: 2023 }),
     ]);
 
-    await service.submitMany(dataEntry(), ids('dec', 'jan', 'prev'));
+    await service.submitMany(standardUser(), ids('dec', 'jan', 'prev'));
 
     expect(records.submit.mock.calls.map((c) => c[1])).toEqual([
       'prev',
@@ -339,7 +344,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
   it('de-duplicates, so an id cannot fail against its own success', async () => {
     const { records, service } = build();
 
-    const report = await service.submitMany(dataEntry(), ids('a', 'a'));
+    const report = await service.submitMany(standardUser(), ids('a', 'a'));
 
     expect(records.submit).toHaveBeenCalledTimes(1);
     expect(report.requested).toBe(1);
@@ -368,7 +373,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
   ])('submits a record whose id the caller spelled in %s', async (_, spelt) => {
     const { prisma, records, service } = build([candidate({ id: RECORD_ID })]);
 
-    const report = await service.submitMany(dataEntry(), ids(spelt));
+    const report = await service.submitMany(standardUser(), ids(spelt));
 
     // The QUERY, not only the map: the two agreeing on one spelling is the
     // whole point, and asserting the lookup alone left `where.id` free —
@@ -384,7 +389,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     const { records, audit, service } = build([candidate({ id: RECORD_ID })]);
 
     const report = await service.submitMany(
-      dataEntry(),
+      standardUser(),
       ids(RECORD_ID, RECORD_ID.toUpperCase()),
     );
 
@@ -411,7 +416,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     const { service } = build([row]);
 
     const report = await service.submitMany(
-      dataEntry(),
+      standardUser(),
       ids(RECORD_ID.toUpperCase()),
     );
 
@@ -426,7 +431,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
   it('accounts for every id it was given', async () => {
     const { service } = build([candidate({ id: 'a' })]);
 
-    const report = await service.submitMany(dataEntry(), ids('a', 'gone'));
+    const report = await service.submitMany(standardUser(), ids('a', 'gone'));
 
     // Every requested id lands in exactly one list — a loop that `break`s
     // instead of `continue`s would violate it while each count looked fine.
@@ -436,13 +441,13 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
 });
 
 describe('BulkSubmitService — a role refusal is one 403, and it is recorded', () => {
-  it.each(['consultant', 'executive_viewer'] as const)(
+  it.each(['auditor'] as const)(
     'refuses the whole request for %s',
     async (role) => {
       const { prisma, records, service } = build();
 
       await expect(
-        service.submitMany(dataEntry({ role }), ids('a', 'b')),
+        service.submitMany(standardUser({ role }), ids('a', 'b')),
       ).rejects.toThrow(SUBMIT_ROLE_REFUSAL);
       expect(records.submit).not.toHaveBeenCalled();
       expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
@@ -457,7 +462,7 @@ describe('BulkSubmitService — a role refusal is one 403, and it is recorded', 
 
     await expect(
       service.submitMany(
-        dataEntry({ role: 'consultant' }),
+        standardUser({ role: 'auditor' }),
         ids(RECORD_ID, RECORD_ID.toUpperCase(), 'a'),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -475,10 +480,10 @@ describe('BulkSubmitService — a role refusal is one 403, and it is recorded', 
     });
   });
 
-  it('lets both authoring roles through', async () => {
-    for (const role of ['data_entry', 'masterkey'] as const) {
+  it('lets every authoring role through', async () => {
+    for (const role of ['standard_user', 'super_admin', 'masterkey'] as const) {
       const { records, service } = build();
-      await service.submitMany(dataEntry({ role }), ids('a'));
+      await service.submitMany(standardUser({ role }), ids('a'));
       expect(records.submit).toHaveBeenCalledTimes(1);
     }
   });
@@ -532,7 +537,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     const { records, service } = build();
     records.submit.mockRejectedValue(error);
 
-    const report = await service.submitMany(dataEntry(), ids('a'));
+    const report = await service.submitMany(standardUser(), ids('a'));
 
     expect(report.failed[0].code).toBe(code);
     expect(report.failed[0].message).toMatch(messagePattern);
@@ -545,7 +550,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       id === 'a' ? Promise.reject(new CalculationStaleError()) : Promise.resolve(record({ id })),
     );
     const { result: report, logged } = await captureErrors(() =>
-      service.submitMany(dataEntry(), ids('a', 'b')),
+      service.submitMany(standardUser(), ids('a', 'b')),
     );
     expect(report.failed).toEqual([
       { recordId: 'a', code: 'calculation_stale', message: expect.stringMatching(/save the draft again/i) },
@@ -554,13 +559,33 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     expect(logged).toEqual([]);
   });
 
+  it('a draft whose category was withdrawn is refused on its own: it stays a draft, the batch goes on, no whole-request 403', async () => {
+    // access-roles / activity-data-entry, "Submitting after the category was
+    // withdrawn": `submit` raises CategoryNotGrantedError (a Forbidden) for
+    // that record; only a ROLE refusal may abort the request, and the record
+    // is reported with the single-record submit's own code.
+    const { records, service } = build([candidate({ id: 'a' }), candidate({ id: 'b' })]);
+    records.submit.mockImplementation((_user, id: string) =>
+      id === 'a' ? Promise.reject(new CategoryNotGrantedError('Fuel')) : Promise.resolve(record({ id })),
+    );
+
+    const { result: report } = await captureErrors(() =>
+      service.submitMany(standardUser({ categoryGrants: { 'sub-1': ['Electricity'] } }), ids('a', 'b')),
+    );
+
+    expect(report.failed.map((f) => f.recordId)).toEqual(['a']);
+    expect(report.failed[0].code).toBe('category_not_granted');
+    expect(report.failed[0].message).toContain('Fuel');
+    expect(report.submitted.map((r) => r.recordId)).toEqual(['b']);
+  });
+
   it('sends an unrecognised Forbidden to `unexpected`, not to `not_author`', async () => {
     // "Anything that is not X is Y" is the shape that goes wrong silently: it
     // would tell a user they do not own a record they wrote.
     const { records, service } = build();
     records.submit.mockRejectedValue(new ForbiddenException('Something else entirely'));
 
-    const report = await service.submitMany(dataEntry(), ids('a'));
+    const report = await service.submitMany(standardUser(), ids('a'));
 
     expect(report.failed[0].code).toBe('unexpected');
   });
@@ -569,7 +594,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     const { records, service } = build();
     records.submit.mockRejectedValue(new ConflictException('Something else entirely'));
 
-    const report = await service.submitMany(dataEntry(), ids('a'));
+    const report = await service.submitMany(standardUser(), ids('a'));
 
     expect(report.failed[0].code).toBe('unexpected');
   });
@@ -578,7 +603,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     const { records, service } = build();
     records.submit.mockRejectedValue(new SubmitRoleRefusedError());
 
-    await expect(service.submitMany(dataEntry(), ids('a'))).rejects.toThrow(
+    await expect(service.submitMany(standardUser(), ids('a'))).rejects.toThrow(
       SUBMIT_ROLE_REFUSAL,
     );
   });
@@ -594,7 +619,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       new BadRequestException([`Category "Fuel" ${EVIDENCE_REFUSAL_FRAGMENT}.`]),
     );
 
-    const report = await service.submitMany(dataEntry(), ids('a'));
+    const report = await service.submitMany(standardUser(), ids('a'));
 
     expect(report.failed[0]).toMatchObject({
       code: 'not_submittable',
@@ -617,7 +642,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       .mockRejectedValueOnce(new ConflictException('Reporting period is locked'))
       .mockRejectedValueOnce(new BadRequestException(VARIANCE_REFUSAL));
 
-    const report = await service.submitMany(dataEntry(), ids('a', 'b', 'c'));
+    const report = await service.submitMany(standardUser(), ids('a', 'b', 'c'));
 
     expect(report.failed.map((f) => f.code)).toEqual([
       'unexpected',
@@ -632,7 +657,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       new Error('connect ECONNREFUSED 10.0.0.5:5432 while running SELECT "secret"'),
     );
 
-    const report = await service.submitMany(dataEntry(), ids('a'));
+    const report = await service.submitMany(standardUser(), ids('a'));
 
     expect(report.failed[0].code).toBe('unexpected');
     expect(report.failed[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
@@ -653,7 +678,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
 
     const { result: report, logged } = await captureErrors(() =>
       service.submitMany(
-        dataEntry(),
+        standardUser(),
         ids(...candidates.map((c) => c.id as string)),
       ),
     );
@@ -685,7 +710,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     });
 
     const { result: report, logged } = await captureErrors(() =>
-      service.submitMany(dataEntry(), ids('f', 'c', 'p')),
+      service.submitMany(standardUser(), ids('f', 'c', 'p')),
     );
 
     expect(report.failed.map((r) => r.code)).toEqual([
@@ -724,7 +749,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       });
     try {
       await expect(
-        service.submitMany(dataEntry(), ids('a', 'b')),
+        service.submitMany(standardUser(), ids('a', 'b')),
       ).rejects.toBeInstanceOf(ForbiddenException);
     } finally {
       spy.mockRestore();
@@ -741,8 +766,8 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     records.submit.mockRejectedValue(new Error('driver said no'));
 
     const { logged } = await captureErrors(async () => {
-      await service.submitMany(dataEntry(), ids('a'));
-      await service.submitMany(dataEntry(), ids('a'));
+      await service.submitMany(standardUser(), ids('a'));
+      await service.submitMany(standardUser(), ids('a'));
     });
 
     expect(logged).toHaveLength(2);
@@ -760,7 +785,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     );
 
     const { result: report, logged } = await captureErrors(() =>
-      service.submitMany(dataEntry(), ids('a', 'b')),
+      service.submitMany(standardUser(), ids('a', 'b')),
     );
 
     expect(report.failed.map((f) => f.code)).toEqual([
@@ -776,7 +801,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     const { service } = build([candidate({ id: 'a' })]);
 
     const { result: report, logged } = await captureErrors(() =>
-      service.submitMany(dataEntry(), ids('a', 'gone', 'also-gone')),
+      service.submitMany(standardUser(), ids('a', 'gone', 'also-gone')),
     );
 
     expect(report.submitted).toHaveLength(1);
@@ -795,7 +820,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       .mockRejectedValueOnce(new NotFoundException('gone'))
       .mockResolvedValueOnce(record({ id: 'c' }));
 
-    const report = await service.submitMany(dataEntry(), ids('a', 'b', 'c'));
+    const report = await service.submitMany(standardUser(), ids('a', 'b', 'c'));
 
     expect(report.submitted.map((r) => r.recordId)).toEqual(['a', 'c']);
     expect(report.failed[0].recordId).toBe('b');
@@ -815,7 +840,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       return record({ id });
     });
 
-    const report = await service.submitMany(dataEntry(), ids('feb', 'jan'));
+    const report = await service.submitMany(standardUser(), ids('feb', 'jan'));
 
     expect(records.submit.mock.calls.map((c) => c[1])).toEqual(['jan', 'feb']);
     expect(report.submitted.map((r) => r.recordId)).toEqual(['jan']);
@@ -830,7 +855,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     const { records, service } = build([candidate({ id: 'jan', periodValue: 'January' })]);
     records.submit.mockRejectedValue(new VarianceReasonRequiredError('ceiling'));
 
-    const report = await service.submitMany(dataEntry(), ids('jan'));
+    const report = await service.submitMany(standardUser(), ids('jan'));
 
     expect(report.failed).toEqual([
       expect.objectContaining({
@@ -854,7 +879,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       return record({ id });
     });
 
-    const report = await service.submitMany(dataEntry(), ids('feb', 'jan'));
+    const report = await service.submitMany(standardUser(), ids('feb', 'jan'));
 
     expect(records.submit.mock.calls.map((c) => c[1])).toEqual(['jan', 'feb']);
     expect(report.submitted.map((r) => r.recordId)).toEqual(['feb']);
@@ -870,7 +895,7 @@ describe('BulkSubmitService — the audit row', () => {
     // test — while in production `AuditService` would throw on `user.id`, the
     // catch below would swallow it, and bulk submits would write no batch row
     // at all, silently.
-    const user = dataEntry();
+    const user = standardUser();
     const { records, audit, service } = build([
       candidate({ id: 'a' }),
       candidate({ id: 'b', periodValue: 'February' }),
@@ -894,7 +919,7 @@ describe('BulkSubmitService — the audit row', () => {
   it('names the records it moved, so the per-record rows can be tied to it', async () => {
     const { audit, service } = build([candidate({ id: 'a' })]);
 
-    await service.submitMany(dataEntry(), ids('a', 'gone'));
+    await service.submitMany(standardUser(), ids('a', 'gone'));
 
     expect(audit.record.mock.calls[0][1].diff).toMatchObject({
       bulk: true,
@@ -909,7 +934,7 @@ describe('BulkSubmitService — the audit row', () => {
     const { records, audit, service } = build();
     records.submit.mockRejectedValue(new NotFoundException('gone'));
 
-    await service.submitMany(dataEntry(), ids('a'));
+    await service.submitMany(standardUser(), ids('a'));
 
     expect(audit.record).toHaveBeenCalledTimes(1);
     expect(audit.record.mock.calls[0][1].diff).toMatchObject({ submittedCount: 0 });
@@ -919,7 +944,7 @@ describe('BulkSubmitService — the audit row', () => {
     const { audit, service } = build();
     audit.record.mockRejectedValueOnce(new Error('audit_log unavailable'));
 
-    const report = await service.submitMany(dataEntry(), ids('a'));
+    const report = await service.submitMany(standardUser(), ids('a'));
 
     expect(report.submitted).toHaveLength(1);
   });
@@ -930,7 +955,7 @@ describe('BulkSubmitService — ids named by an import batch', () => {
     const { records, audit, service } = build([candidate({ id: 'a' })]);
     records.submit.mockResolvedValueOnce(record({ id: 'a' }));
 
-    const report = await service.submitIds(dataEntry(), ['a'], { batchId: 'batch-1' });
+    const report = await service.submitIds(standardUser(), ['a'], { batchId: 'batch-1' });
 
     expect(report.submitted.map((r) => r.recordId)).toEqual(['a']);
     expect(audit.record.mock.calls[0][1]).toMatchObject({
@@ -943,7 +968,7 @@ describe('BulkSubmitService — ids named by an import batch', () => {
     const { audit, service } = build();
 
     await expect(
-      service.submitIds(dataEntry({ role: 'consultant' }), [], { batchId: 'batch-1' }),
+      service.submitIds(standardUser({ role: 'auditor' }), [], { batchId: 'batch-1' }),
     ).rejects.toThrow('Your role may not submit activity records');
 
     expect(audit.record.mock.calls[0][1].diff).toMatchObject({ refused: true, batchId: 'batch-1' });
@@ -965,7 +990,7 @@ describe('bulk submit cooperative deadline', () => {
     try {
       const { service, records, audit } = build([candidate({ id: 'a' }), candidate({ id: 'b' })]);
       records.submit.mockImplementation(async (_user, id) => { time = 60_000; return record({ id }); });
-      const report = await service.submitMany(dataEntry(), ids('a', 'b'));
+      const report = await service.submitMany(standardUser(), ids('a', 'b'));
       expect(report.completion).toBe('deadline_exceeded');
       expect(report.submitted.map((r) => r.recordId)).toEqual(['a']);
       expect(report.failed).toEqual([{ recordId: 'b', code: 'not_processed_deadline', message: expect.any(String) }]);
@@ -980,7 +1005,7 @@ describe('bulk submit cooperative deadline', () => {
     try {
       const { service, prisma, records } = build([]);
       prisma.activityRecord.findMany.mockImplementation(async () => { time = 60_000; return []; });
-      const report = await service.submitMany(dataEntry(), ids('missing', 'foreign'));
+      const report = await service.submitMany(standardUser(), ids('missing', 'foreign'));
       expect(report.failed.map((r) => r.code)).toEqual(['not_processed_deadline', 'not_processed_deadline']);
       expect(records.submit).not.toHaveBeenCalled();
     } finally { clock.mockRestore(); }

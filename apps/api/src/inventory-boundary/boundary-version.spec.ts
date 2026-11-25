@@ -9,8 +9,9 @@ import { complete, policy, SUB, SUB_B, without } from '../../test/boundary-fixtu
 
 /**
  * The routes' view of a version (LP3-04's write path; the contract's `view`):
- * the whole declared inventory for every reader but data_entry, whose view is
- * its granted subsidiaries' part — and none at all, answered as a missing
+ * the whole declared inventory for an organisation-wide reader (masterkey,
+ * auditor); a granted reader's (standard_user, and the scoped super_admin —
+ * `scope.granted`) view is its granted subsidiaries' part — and none at all, answered as a missing
  * version, when it declares none of them (the boundary's RLS, W3).
  */
 
@@ -34,6 +35,8 @@ function rows(): BoundaryRows {
 
 const viewer = (role: UserRole, accessibleSubsidiaryIds: string[] = [SUB, SUB_B]) => ({ role, accessibleSubsidiaryIds });
 const loaded = (r: BoundaryRows = rows()) => ({ header: HEADER, rows: r });
+/** The roles a boundary is read through a grant by (`scope.granted`). */
+const GRANTED = ['standard_user', 'super_admin'] as const;
 
 describe('versionSummary', () => {
   it("names the version as the list does — its bookkeeping, the API's own author, ISO dates", () => {
@@ -48,7 +51,7 @@ describe('versionSummary', () => {
 });
 
 describe('versionDTO', () => {
-  it.each(['masterkey', 'consultant', 'executive_viewer'] as const)('%s reads the whole declared inventory and every gap', (role) => {
+  it.each(['masterkey', 'auditor'] as const)('%s reads the whole declared inventory and every gap', (role) => {
     const dto = versionDTO(loaded(), viewer(role, [SUB]));
     const snapshot = buildBoundarySnapshot(rows());
     expect(dto.view).toBe('organisation');
@@ -58,8 +61,8 @@ describe('versionDTO', () => {
     expect(dto).toMatchObject(versionSummary(HEADER));
   });
 
-  it("data_entry reads its granted subsidiaries' part only — every collection and gap filtered, nothing of the other named", () => {
-    const dto = versionDTO(loaded(), viewer('data_entry', [SUB]));
+  it.each(GRANTED)("%s reads its granted subsidiaries' part only — every collection and gap filtered, nothing of the other named", (role) => {
+    const dto = versionDTO(loaded(), viewer(role, [SUB]));
     expect(dto.view).toBe('granted_subsidiaries');
     expect(dto.boundary.subsidiaryIds).toEqual([SUB]);
     expect(dto.boundary.entities.every((e) => e.subsidiaryId === SUB)).toBe(true);
@@ -75,7 +78,7 @@ describe('versionDTO', () => {
     expect(json).not.toContain(`Company ${SUB_B}`);
   });
 
-  it('a granted view holds exactly the gaps its subsidiaries would have alone — every rule stays inside one subsidiary', () => {
+  it.each(GRANTED)('%s: a granted view holds exactly the gaps its subsidiaries would have alone — every rule stays inside one subsidiary', (role) => {
     const all = rows();
     for (const subsidiaryId of [SUB, SUB_B]) {
       const alone: BoundaryRows = {
@@ -86,18 +89,18 @@ describe('versionDTO', () => {
         cells: all.cells.filter((c) => c.subsidiaryId === subsidiaryId),
         sources: all.sources.filter((s) => s.subsidiaryId === subsidiaryId),
       };
-      const dto = versionDTO(loaded(all), viewer('data_entry', [subsidiaryId]));
+      const dto = versionDTO(loaded(all), viewer(role, [subsidiaryId]));
       expect(dto.boundaryGaps).toEqual(boundaryGaps(buildBoundarySnapshot(alone)));
       expect(dto.boundary).toEqual(buildBoundarySnapshot(alone));
     }
   });
 
-  it('a data_entry user granted none of the declared subsidiaries reads it as missing — byte for byte', () => {
+  it.each(GRANTED)('%s granted none of the declared subsidiaries reads it as missing — byte for byte', (role) => {
     const missing = new ResourceNotFoundError('boundary_not_found').getResponse();
     for (const granted of [[], ['sub-elsewhere']]) {
       let thrown: unknown;
       try {
-        versionDTO(loaded(), viewer('data_entry', granted));
+        versionDTO(loaded(), viewer(role, granted));
       } catch (e) {
         thrown = e;
       }
@@ -107,18 +110,18 @@ describe('versionDTO', () => {
     }
   });
 
-  it('a version declaring no subsidiary is no data_entry user’s — and every other reader’s, empty', () => {
+  it('a version declaring no subsidiary is no granted reader’s — and an organisation-wide reader’s, empty', () => {
     const empty: BoundaryRows = { ...rows(), subsidiaries: [], sites: [], policies: [], cells: [], sources: [] };
-    expect(() => versionDTO(loaded(empty), viewer('data_entry', [SUB]))).toThrow(ResourceNotFoundError);
-    const dto = versionDTO(loaded(empty), viewer('consultant'));
+    for (const role of GRANTED) expect(() => versionDTO(loaded(empty), viewer(role, [SUB]))).toThrow(ResourceNotFoundError);
+    const dto = versionDTO(loaded(empty), viewer('auditor'));
     expect(dto.boundary.subsidiaryIds).toEqual([]);
     expect(dto.boundaryGaps).toEqual([]);
     expect(dto.view).toBe('organisation');
   });
 
-  it('keeps a policy row of a subsidiary out of view along with it', () => {
+  it.each(GRANTED)('%s: keeps a policy row of a subsidiary out of view along with it', (role) => {
     const r = rows();
-    const dto = versionDTO(loaded({ ...r, policies: [...r.policies, policy('Fuel', 'company', 'annual', SUB_B)] }), viewer('data_entry', [SUB_B]));
+    const dto = versionDTO(loaded({ ...r, policies: [...r.policies, policy('Fuel', 'company', 'annual', SUB_B)] }), viewer(role, [SUB_B]));
     expect(dto.boundary.attribution.map((p) => p.subsidiaryId)).toEqual(Array(7).fill(SUB_B));
   });
 });
