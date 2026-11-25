@@ -10,7 +10,6 @@ import {
   type ReportIssuanceGapCode,
   type ReportIssuanceList,
   type ReportIssuancePreview,
-  type UserRole,
   can,
 } from '@tonyai/shared-types';
 import { LIFECYCLE_TX } from '../activity-records/lifecycle-lock';

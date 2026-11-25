@@ -2845,7 +2845,9 @@ function DataEntryPageInner() {
                     </Button>
                   </span>
                 )}
-                <Button
+                {/* A role that authors nothing (an auditor) is offered no
+                    save: the API would refuse it (owner's review). */}
+                {mayAuthorRecords(user) && <Button
                   variant="outline"
                   className="gap-2"
                   onClick={handleSaveDraft}
@@ -2853,7 +2855,7 @@ function DataEntryPageInner() {
                 >
                   <Save className="h-4 w-4" />
                   {saving === "draft" ? t("saving") : t("saveDraft")}
-                </Button>
+                </Button>}
                 {canSubmit && <Button
                   className="gap-2"
                   onClick={handleSubmit}

@@ -8,7 +8,6 @@ import {
   type ReportDatasetList,
   ReportDatasetSummary,
   type ReportingContext,
-  type UserRole,
   can,
 } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';

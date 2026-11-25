@@ -32,9 +32,6 @@ import {
 import { CursorPageQueryDto } from '../../common/cursor-page-query.dto';
 import { canonicalUuid, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
 
-/** Each id lowercased — the database's spelling, so grants and audit rows carry one. */
-const lowercaseIds = ({ value }: { value: unknown }) =>
-  Array.isArray(value) ? value.map((v) => canonicalUuid(v) ?? v) : value;
 
 /** The canonical `user_role` (CLAUDE.md) — Prisma's enum holds the same four;
  *  one list, in shared-types (LP4-04 slice 2 PR C). */
