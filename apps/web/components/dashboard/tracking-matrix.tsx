@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { type TrackingMatrixRow } from '@/lib/types';
-import { cellsByColumn, matrixColumns } from '@/lib/dashboard-view';
+import { cellsByColumn, completionRate, matrixColumns } from '@/lib/dashboard-view';
 import { StatusCell } from './status-cell';
 import type { MatrixCellLinks } from '@/lib/dashboard-view';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -123,7 +123,8 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, cellLin
                       <div className="flex items-center gap-2 mt-1">
                         <span className={cn(
                           'text-sm font-bold tabular-nums font-mono',
-                          getCompletionColor((row.completeCount / row.categoryCount) * 100)
+                          // A row with no category the reader may see is neutral, not 0 %.
+                          completionRate(row) === null ? 'text-[#8E8E93]' : getCompletionColor(completionRate(row)!)
                         )}>
                           {formatNumber(row.completeCount, locale)}/{formatNumber(row.categoryCount, locale)}
                         </span>

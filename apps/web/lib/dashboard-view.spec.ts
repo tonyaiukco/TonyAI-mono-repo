@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { axisThousands, buildKpiData, cellsByColumn, compactTonnes, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { axisThousands, buildKpiData, cellsByColumn, compactTonnes, completionRate, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
 import { CATEGORIES } from '@/lib/types';
 import { initialEmissionsTab } from './emissions-view';
 import { copyFor } from '@/lib/i18n/testing';
@@ -273,6 +273,16 @@ describe("matrixColumns and cellsByColumn (inc26: a standard user's rows hold on
     const columns = matrixColumns([row("a", ["Electricity"]), row("b", ["Fuel"])]);
     expect(cellsByColumn(row("a", ["Electricity"]), columns).map((c) => c?.category ?? null)).toEqual(["Electricity", null]);
     expect(cellsByColumn(row("b", ["Fuel"]), columns).map((c) => c?.category ?? null)).toEqual([null, "Fuel"]);
+  });
+});
+
+describe("completionRate (owner's review: no NaN % for a company with no visible category)", () => {
+  it("is a whole percentage of the categories the row holds", () => {
+    expect(completionRate({ completeCount: 1, categoryCount: 3 })).toBe(33);
+    expect(completionRate({ completeCount: 0, categoryCount: 2 })).toBe(0);
+  });
+  it("is null — not applicable — when the row holds no category", () => {
+    expect(completionRate({ completeCount: 0, categoryCount: 0 })).toBeNull();
   });
 });
 

@@ -62,7 +62,8 @@ function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
     // 0 for a row the selection leaves uncovered: the chart is told so on its
     // own (`notCovered`) and draws no bar at all.
     totalEmissions: scope12Total(row) ?? 0,
-    completionRate: Math.round((row.completeCount / row.categoryCount) * 100),
+    // 0 for a row with no category the reader may see (`completionRate` null).
+    completionRate: completionRate(row) ?? 0,
     categories,
   };
 }
@@ -196,5 +197,16 @@ export function cellsByColumn(
 ): (TrackingMatrixRow["cells"][number] | null)[] {
   const byCategory = new Map(row.cells.map((cell) => [cell.category as string, cell]));
   return columns.map((category) => byCategory.get(category) ?? null);
+}
+
+/**
+ * A row's completion as a whole percentage, or null when the row holds no
+ * category to complete — a standard user granted a company with no category
+ * ticked and no record of its own there (`categoryCount` 0). "Not applicable",
+ * never 0 % and never NaN.
+ */
+export function completionRate(row: Pick<TrackingMatrixRow, "completeCount" | "categoryCount">): number | null {
+  if (row.categoryCount <= 0) return null;
+  return Math.round((row.completeCount / row.categoryCount) * 100);
 }
 
