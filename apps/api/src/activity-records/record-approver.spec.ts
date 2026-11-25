@@ -11,6 +11,7 @@ import {
   companiesWithActiveSuperAdmin,
   NotRecordApproverError,
   type DecisionKind,
+  deciderFor,
 } from './record-approver';
 import { makeAuditor, makeMasterkey, makeStandardUser, makeSuperAdmin } from '../../test/helpers';
 import type { RequestUser } from '../auth/auth.types';
@@ -365,6 +366,16 @@ describe('assertRecordApprover — the decision\'s own re-read and its refusals,
       await expect(
         assertRecordApprover(asTx(db), sa({ id: 'u-promoted' }), { createdBy: 'u-promoted', subsidiaryId: 'sub-a' }, 'approve'),
       ).resolves.toBe('author');
+    });
+
+    it('deciderFor answers the decider with the role re-read in the transaction, which the audit row then names (owner\'s review)', async () => {
+      // The token says masterkey; the database says super_admin of sub-a, and a
+      // standard user's record there is a super_admin's to decide.
+      const db = dbOf(org([{ id: 'u-moved', role: 'super_admin', grants: ['sub-a'] }]));
+      const decider = await deciderFor(asTx(db), mk({ id: 'u-moved' }), { createdBy: STD, subsidiaryId: 'sub-a' }, 'approve');
+      expect(decider).toMatchObject({ id: 'u-moved', role: 'super_admin' });
+      const same = await deciderFor(asTx(dbOf(org())), sa(), { createdBy: STD, subsidiaryId: 'sub-a' }, 'approve');
+      expect(same.role).toBe('super_admin');
     });
 
     it('a super_admin whose grant for the company was withdrawn is answered as for an unknown record', async () => {

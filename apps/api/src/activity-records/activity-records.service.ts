@@ -98,7 +98,7 @@ import {
 } from './dto/activity-record-page-query.dto';
 import { closedRecordIds } from './closed-periods';
 import { normaliseRecordFilters, RECORD_SORTS, recordFilterWhere, type RecordFilters } from './record-page';
-import { approversFor, assertRecordApprover, awaitingDecisionWhere } from './record-approver';
+import { approversFor, awaitingDecisionWhere, deciderFor } from './record-approver';
 import { assertCategoryGranted, inRecordScope } from './record-scope';
 
 /** A write that leaves a record in draft or returned: no record of it is pending. */
@@ -1539,9 +1539,9 @@ export class ActivityRecordsService {
       // gate and the re-gate, before anything is written: a non-masterkey
       // author is refused `self_review_forbidden` (WP5), anyone but the
       // record's approver `not_record_approver`.
-      await assertRecordApprover(tx, user, record, 'review');
+      const decider = await deciderFor(tx, user, record, 'review');
       await this.assertPeriodNotLocked(periodOf(record), tx);
-      return this.transition(tx, user, record, ActivityRecordStatus.under_review);
+      return this.transition(tx, decider, record, ActivityRecordStatus.under_review);
     });
     return this.writtenDTO(user, updated);
   }
@@ -1575,7 +1575,7 @@ export class ActivityRecordsService {
       // (`not_record_approver`). A masterkey approving their own record is a
       // self-approval, logged as such by `transition`. Only the author may
       // submit, so the submitter IS the creator and one comparison covers both.
-      await assertRecordApprover(tx, user, record, 'approve');
+      const decider = await deciderFor(tx, user, record, 'approve');
       // Period-lock gate (defense-in-depth): no review transitions in a closed
       // period.
       await this.assertPeriodNotLocked(periodOf(record), tx);
@@ -1600,7 +1600,7 @@ export class ActivityRecordsService {
       this.assertFresh('approve', seen, record, recomputed);
       // Clear any earlier rejection note: an approved record showing last
       // round's rejection reason would misread as "approved, but rejected".
-      return this.transition(tx, user, record, ActivityRecordStatus.approved, {
+      return this.transition(tx, decider, record, ActivityRecordStatus.approved, {
         reviewNote: null,
       });
     });
@@ -1699,12 +1699,12 @@ export class ActivityRecordsService {
         assertSameSubmission(record, seenSubmittedAt);
       });
       // Returning belongs to the record's approver too (INC-2.6 §1.1, §1.2).
-      await assertRecordApprover(tx, user, record, 'reject');
+      const decider = await deciderFor(tx, user, record, 'reject');
       // Period-lock gate (defense-in-depth): symmetric with approve.
       await this.assertPeriodNotLocked(periodOf(record), tx);
       // The reviewer's reason goes in reviewNote — overwriting varianceReason
       // would destroy the author's own anomaly justification (VAR §4).
-      return this.transition(tx, user, record, ActivityRecordStatus.rejected, {
+      return this.transition(tx, decider, record, ActivityRecordStatus.rejected, {
         reviewNote: varianceReason,
       });
     });

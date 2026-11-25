@@ -132,6 +132,33 @@ export async function assertRecordApprover(
   record: { createdBy: string | null; subsidiaryId: string },
   kind: DecisionKind,
 ): Promise<RecordApprover> {
+  return (await checkRecordApprover(tx, user, record, kind)).approver;
+}
+
+/**
+ * `assertRecordApprover`, answering the decider as verified in the
+ * transaction: the caller with the role just re-read, so the decision's audit
+ * row names the role that authorised it, not the one the request was
+ * authenticated with (owner's review: a masterkey made a super_admin of the
+ * company while waiting for the record's lock decides, and is logged, as a
+ * super_admin).
+ */
+export async function deciderFor(
+  tx: Db,
+  user: RequestUser,
+  record: { createdBy: string | null; subsidiaryId: string },
+  kind: DecisionKind,
+): Promise<RequestUser> {
+  const { deciderRole } = await checkRecordApprover(tx, user, record, kind);
+  return deciderRole === user.role ? user : { ...user, role: deciderRole };
+}
+
+async function checkRecordApprover(
+  tx: Db,
+  user: RequestUser,
+  record: { createdBy: string | null; subsidiaryId: string },
+  kind: DecisionKind,
+): Promise<{ approver: RecordApprover; deciderRole: RequestUser['role'] }> {
   const [decider, author, staffed] = await Promise.all([
     tx.profile.findUnique({
       where: { id: user.id },
@@ -166,7 +193,7 @@ export async function assertRecordApprover(
   if (!mayDecideRecord({ id: user.id, role: decider.role }, record, approver)) {
     throw new NotRecordApproverError(approver);
   }
-  return approver;
+  return { approver, deciderRole: decider.role as RequestUser['role'] };
 }
 
 /**
