@@ -1223,6 +1223,24 @@ describe('EvidenceService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
+    it('refuses a shared file a hidden record blocks without naming that record (owner\'s review): no category, period or count of it', async () => {
+      const mine = makeRecord({ id: 'rec-1', category: 'Electricity', reportingPeriod: 'quarterly', periodValue: 'Q1' });
+      const hidden = makeRecord({
+        id: 'rec-2', category: 'Fuel', status: ActivityRecordStatus.approved, createdBy: 'someone-else',
+        reportingPeriod: 'quarterly', periodValue: 'Q3',
+      });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([mine, hidden]));
+      prisma.activityRecord.findMany.mockResolvedValue([mine, hidden]);
+      const user = standardUser({ categoryGrants: { 'sub-1': ['Electricity'] } });
+
+      const refusal = await service.remove(user, 'ev-1').catch((e) => e);
+
+      expect(refusal.getResponse()).toMatchObject({ code: 'evidence_backs_locked_records', params: { count: 1 } });
+      expect(refusal.message).toContain('records outside your access');
+      expect(refusal.message).not.toMatch(/Fuel|Q3/);
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
+    });
+
     it('refuses in a locked period: the lock itself for one record, a 409 naming it for a shared file', async () => {
       const locked = makeRecord({ id: 'rec-1', status: ActivityRecordStatus.rejected });
       prisma.periodLock.findMany.mockResolvedValue([

@@ -635,13 +635,18 @@ export class EvidenceService {
       .filter((x): x is { record: ActivityRecord; refusal: HttpException } => x.refusal !== null);
     if (refusals.length > 0) {
       if (records.length === 1) throw refusals[0].refusal;
+      // The decision reads every record the file backs; the answer names only
+      // those the caller may see (owner's review: a shared file must not
+      // reveal a hidden record's category, period or count).
+      const visible = refusals.filter(({ record }) => inRecordScope(user, record));
+      const hidden = refusals.length - visible.length;
+      const named = visible.map(({ record, refusal }) => `${recordLabel(record)} — ${refusal.message}`);
+      if (hidden > 0) named.push('records outside your access');
       throw new ConflictException(
         errorBody(
           'evidence_backs_locked_records',
-          `This file also backs records that can no longer change, so it cannot be deleted: ${refusals
-            .map(({ record, refusal }) => `${recordLabel(record)} — ${refusal.message}`)
-            .join('; ')}. Remove it from each editable record instead.`,
-          { count: refusals.length },
+          `This file also backs records that can no longer change, so it cannot be deleted: ${named.join('; ')}. Remove it from each editable record instead.`,
+          { count: Math.max(visible.length, 1) },
         ),
       );
     }
