@@ -450,6 +450,8 @@ const CATEGORY_PROBE = {
   own: '99999999-0c47-4000-8000-0000000000a3', // Energy, Fuel, standard user
   ungranted: '99999999-0c47-4000-8000-0000000000a4', // Gas, Electricity, standard user
   evidence: '99999999-0c47-4000-8000-0000000000e1', // Energy, linked to the three above
+  hiddenEvidence: '99999999-0c47-4000-8000-0000000000e2', // Energy, by the masterkey, linked only to `foreign`
+  ownEvidence: '99999999-0c47-4000-8000-0000000000e3', // Energy, uploaded by the standard user, not linked yet
 };
 const NARROWED = ['Electricity'];
 
@@ -471,7 +473,9 @@ async function cleanupCategoryProbe(entryId) {
   await owner.activityRecord.deleteMany({
     where: { id: { in: [CATEGORY_PROBE.ticked, CATEGORY_PROBE.foreign, CATEGORY_PROBE.own, CATEGORY_PROBE.ungranted] } },
   });
-  await owner.evidence.deleteMany({ where: { id: CATEGORY_PROBE.evidence } });
+  await owner.evidence.deleteMany({
+    where: { id: { in: [CATEGORY_PROBE.evidence, CATEGORY_PROBE.hiddenEvidence, CATEGORY_PROBE.ownEvidence] } },
+  });
   if (JSON.stringify(await entryEnergyCategories(entryId)) === JSON.stringify(NARROWED)) {
     await setEntryEnergyCategories(entryId, ALL_CATEGORIES);
   }
@@ -503,16 +507,24 @@ async function probeCategoryGrant(entryToken) {
         record(CATEGORY_PROBE.ungranted, GAS, 'Electricity', 'January', entryId),
       ],
     });
-    await owner.evidence.create({
-      data: {
-        id: CATEGORY_PROBE.evidence, subsidiaryId: ENERGY, storagePath: `rls-probe/${CATEGORY_PROBE.evidence}.pdf`,
-        fileName: 'rls-probe-category.pdf', mimeType: 'application/pdf', sizeBytes: 1, uploadedBy: admin.id,
-      },
+    const file = (id, uploadedBy) => ({
+      id, subsidiaryId: ENERGY, storagePath: `rls-probe/${id}.pdf`,
+      fileName: 'rls-probe-category.pdf', mimeType: 'application/pdf', sizeBytes: 1, uploadedBy,
+    });
+    await owner.evidence.createMany({
+      data: [
+        file(CATEGORY_PROBE.evidence, admin.id),
+        file(CATEGORY_PROBE.hiddenEvidence, admin.id),
+        file(CATEGORY_PROBE.ownEvidence, entryId),
+      ],
     });
     await owner.activityRecordEvidence.createMany({
-      data: [CATEGORY_PROBE.ticked, CATEGORY_PROBE.foreign, CATEGORY_PROBE.own].map((activityRecordId) => ({
-        activityRecordId, evidenceId: CATEGORY_PROBE.evidence, subsidiaryId: ENERGY, linkedBy: admin.id,
-      })),
+      data: [
+        ...[CATEGORY_PROBE.ticked, CATEGORY_PROBE.foreign, CATEGORY_PROBE.own].map((activityRecordId) => ({
+          activityRecordId, evidenceId: CATEGORY_PROBE.evidence, subsidiaryId: ENERGY, linkedBy: admin.id,
+        })),
+        { activityRecordId: CATEGORY_PROBE.foreign, evidenceId: CATEGORY_PROBE.hiddenEvidence, subsidiaryId: ENERGY, linkedBy: admin.id },
+      ],
     });
     await setEntryEnergyCategories(entryId, NARROWED);
 
@@ -539,6 +551,32 @@ async function probeCategoryGrant(entryToken) {
       'activity_record_evidence: the same standard user reads the links of exactly those records',
       JSON.stringify(seenLinks) === JSON.stringify(want),
       `seen=${Array.isArray(seenLinks) ? seenLinks.map((id) => id.slice(-2)).join(',') : JSON.stringify(seenLinks)}`,
+    );
+
+    // Evidence files (owner ruling 2026-11-25): a file the standard user
+    // uploaded, or one linked to a record it reads — never a file that backs
+    // only another category's records.
+    const files = `(${CATEGORY_PROBE.evidence},${CATEGORY_PROBE.hiddenEvidence},${CATEGORY_PROBE.ownEvidence})`;
+    const seenFiles = await ids('evidence', 'id', `id=in.${files}`, entryToken);
+    check(
+      "evidence: a standard user granted one category reads a file linked to a record it reads and a file it uploaded — not a file backing only another category's record",
+      JSON.stringify(seenFiles) === JSON.stringify([CATEGORY_PROBE.evidence, CATEGORY_PROBE.ownEvidence].sort()),
+      `seen=${Array.isArray(seenFiles) ? seenFiles.map((id) => id.slice(-2)).join(',') : JSON.stringify(seenFiles)}`,
+    );
+    const [wantEnergyFiles, allEnergyFiles] = await Promise.all([
+      owner.evidence.count({
+        where: { subsidiaryId: ENERGY, OR: [{ uploadedBy: entryId }, { links: { some: { activityRecord: { subsidiaryId: ENERGY, OR: [{ category: { in: NARROWED } }, { createdBy: entryId }] } } } }] },
+      }),
+      owner.evidence.count({ where: { subsidiaryId: ENERGY } }),
+    ]);
+    const [energyFiles, superFiles] = await Promise.all([
+      count('evidence', { token: entryToken, query: `select=id&subsidiary_id=eq.${ENERGY}` }),
+      count('evidence', { token: await getToken(SUPER_ADMIN_EMAIL), query: `select=id&subsidiary_id=eq.${ENERGY}` }),
+    ]);
+    check(
+      "evidence: of the narrowed company the standard user reads exactly its own uploads and the files of records it reads; a super_admin reads every file",
+      wantEnergyFiles < allEnergyFiles && energyFiles.total === wantEnergyFiles && superFiles.total === allEnergyFiles,
+      `standard user=${energyFiles.error ?? energyFiles.total}/${wantEnergyFiles} of ${allEnergyFiles}, super_admin=${superFiles.error ?? superFiles.total}/${allEnergyFiles}`,
     );
 
     // The whole of Energy (the seed's rows too) and Logistics, against the

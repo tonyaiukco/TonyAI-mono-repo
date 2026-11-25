@@ -149,8 +149,13 @@ GRANT UPDATE ("categories") ON "user_subsidiary_access" TO "tonyai_runtime";
 --     passes a `super_admin` whole, and anyone else only for a row whose
 --     category is ticked on the grant or that (the evidence link's record)
 --     is the holder's own — fail-closed: a role added later is narrowed until
---     it is named here.
--- The other thirteen grant branches are unchanged: their rows carry no
+--     it is named here;
+--   * on `evidence` (owner ruling, 2026-11-25) the grant branch passes a
+--     `super_admin` whole, and anyone else only for a file they uploaded or
+--     one linked to a record of a ticked category or of their own — a
+--     standard user reads the evidence of the records it reads, as the API
+--     does, and no file that backs only another category's records.
+-- The other twelve grant branches are unchanged: their rows carry no
 -- category. All sixteen stay SELECT-only and are never FORCEd.
 
 ALTER POLICY "activity_record_evidence_select_scoped" ON "activity_record_evidence" USING (
@@ -187,7 +192,7 @@ ALTER POLICY "evidence_select_scoped" ON "evidence" USING (
   WHERE ((s.id = evidence.subsidiary_id) AND ((EXISTS ( SELECT 1
            FROM (user_subsidiary_access usa
              JOIN profiles p ON ((p.id = usa.user_id)))
-          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id)))) OR (EXISTS ( SELECT 1
+          WHERE ((usa.subsidiary_id = s.id) AND (usa.user_id = ( SELECT auth.uid() AS uid)) AND (p.organisation_id = s.organisation_id) AND ((p.role = 'super_admin'::"UserRole") OR (evidence.uploaded_by = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1 FROM (activity_record_evidence l JOIN activity_records ar ON ((ar.id = l.activity_record_id))) WHERE ((l.evidence_id = evidence.id) AND ((ar.category = ANY (usa.categories)) OR (ar.created_by = ( SELECT auth.uid() AS uid)))))))))) OR (EXISTS ( SELECT 1
            FROM profiles p
           WHERE ((p.id = ( SELECT auth.uid() AS uid)) AND (p.role = ANY (ARRAY['masterkey'::"UserRole", 'auditor'::"UserRole"])) AND (p.organisation_id = s.organisation_id))))))))
 );
