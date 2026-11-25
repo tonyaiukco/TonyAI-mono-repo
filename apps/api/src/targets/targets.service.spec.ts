@@ -115,6 +115,17 @@ describe('TargetsService', () => {
     );
   });
 
+  it('reads the latest committed year inside the reader\'s record scope (a standard user learns no other category\'s year)', async () => {
+    prisma.target.findMany.mockResolvedValue([makeTarget()]);
+    const narrowed: RequestUser = {
+      ...admin, id: 'user-entry', role: 'standard_user', accessibleSubsidiaryIds: ['sub-1'], categoryGrants: { 'sub-1': ['Electricity'] },
+    };
+    await service.progress(narrowed, IDS);
+    expect(prisma.activityRecord.groupBy.mock.calls[0][0].where.AND).toEqual([
+      { OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: 'user-entry' }] },
+    ]);
+  });
+
   it('counts exactly what the dashboard counts — one list, not a copy', async () => {
     // This is WP18 PR 2a's own headline claim, and nothing tested it. The
     // statuses a target measures progress against were a standalone literal

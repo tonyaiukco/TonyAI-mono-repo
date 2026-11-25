@@ -357,6 +357,16 @@ describe('assertRecordApprover — the decision\'s own re-read and its refusals,
       expect(refusal.getResponse()).toMatchObject({ params: { approver: 'masterkey' } });
     });
 
+    it('an author promoted to masterkey since authenticating self-decides on the role read in the transaction, not the token\'s', async () => {
+      // The token still says super_admin; the database says masterkey. The
+      // self check reads the re-read role (QA review: mutant M32), so the
+      // record is the author's own to decide as a masterkey.
+      const db = dbOf(org([{ id: 'u-promoted', role: 'masterkey' }]));
+      await expect(
+        assertRecordApprover(asTx(db), sa({ id: 'u-promoted' }), { createdBy: 'u-promoted', subsidiaryId: 'sub-a' }, 'approve'),
+      ).resolves.toBe('author');
+    });
+
     it('a super_admin whose grant for the company was withdrawn is answered as for an unknown record', async () => {
       const db = dbOf(org().map((a) => (a.id === SA ? { ...a, grants: ['sub-other'] } : a)));
       const refusal = await assertRecordApprover(asTx(db), sa(), { createdBy: STD, subsidiaryId: 'sub-a' }, 'approve').catch((e) => e);
