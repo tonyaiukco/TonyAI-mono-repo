@@ -585,6 +585,35 @@ export function mayApproveRecords(
   return !!user && (user.role === 'consultant' || user.role === 'super_admin');
 }
 
+/**
+ * May this user read one activity record's audit trail
+ * (`GET /activity-records/:id/audit-trail`; WP5, INC-2.6 §6)?
+ *
+ * - `super_admin`, `consultant` and `executive_viewer`: any record they can
+ *   read (the caller has already loaded the record through its scoped read).
+ * - `data_entry` ("limited" in the access matrix): only a record they created.
+ *   A colleague's record in a shared subsidiary is readable, its trail is not.
+ *
+ * One rule, read by the API's trail service and by the screens that offer the
+ * timeline. The organisation-wide `GET /audit` stays `super_admin`-only.
+ */
+export function mayReadRecordTrail(
+  user: { id: string; role: string } | null | undefined,
+  record: { createdBy: string } | null | undefined,
+): boolean {
+  if (!user || !record) return false;
+  switch (user.role) {
+    case 'super_admin':
+    case 'consultant':
+    case 'executive_viewer':
+      return true;
+    case 'data_entry':
+      return record.createdBy === user.id;
+    default:
+      return false;
+  }
+}
+
 export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' | 'revision_requested';
 
 /**
@@ -2768,6 +2797,11 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   record_author_forbidden: 403,
   /** Segregation of duties (D01). */
   self_approval_forbidden: 403,
+  /** WP5 (`uat4-review-resubmit`): a record's author, whatever role they hold
+   *  now, may not take it into review — the trail would read a four-eyes step
+   *  the author took on their own figure. Checked after the role gate, so a
+   *  `data_entry` author still gets the plain role refusal. No params. */
+  self_review_forbidden: 403,
   subsidiary_not_found: 404,
   location_not_found: 404,
   record_not_found: 404,
@@ -4740,6 +4774,14 @@ export interface ActivityRecordDTO {
    */
   submittedAt: string | null;
   /**
+   * How many times the record has been submitted (WP5, `uat4-review-resubmit`):
+   * 0 until its first submit, raised by one by every successful submit (alone
+   * or in a bulk submit) and by nothing else, so it survives a recall and a
+   * return. The review queue marks a pending record with 2 or more as revised.
+   * A marker for the queue; the audit rows stay the authority on what happened.
+   */
+  submissionCount: number;
+  /**
    * Why an approved figure was withdrawn, by whom, and when. Null on
    * every record that has not been voided.
    *
@@ -6641,6 +6683,80 @@ export interface AuditLogDTO {
   diff: Record<string, unknown> | null;
   createdAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// A record's audit trail (WP5, `uat4-review-resubmit`)
+// ---------------------------------------------------------------------------
+
+/**
+ * The kinds of event one record's trail lists, in lifecycle order. `other` is
+ * any recorded action outside this list (an operator's `reprice`, say), kept
+ * under its own action name in `RecordTrailEventDTO.action`.
+ */
+export const RECORD_TRAIL_EVENT_KINDS = [
+  'created',
+  'edited',
+  'submitted',
+  'resubmitted',
+  'recalled',
+  'review_started',
+  'returned',
+  'approved',
+  'voided',
+  'other',
+] as const;
+export type RecordTrailEventKind = (typeof RECORD_TRAIL_EVENT_KINDS)[number];
+
+/** A value as stored, so the web can format it by locale. */
+export type RecordTrailValue = string | number | boolean | null;
+
+/**
+ * One input an edit changed, before and after. `field` is an input name
+ * (`activityValue`, `activityUnit`, `activityType`, `category`,
+ * `reportingYear`, `reportingPeriod`, `periodValue`, `location`,
+ * `varianceReason`), `figure` for the record's tCO2e, a `parameters.`-prefixed
+ * path to one leaf of a structured input (`parameters.equipment.1.refillKg`),
+ * or an `input.`-prefixed key of the record's additional context
+ * (`input.invoice_no`, `input.supplier`). A location is given by its name.
+ */
+export interface RecordTrailChangeDTO {
+  field: string;
+  before: RecordTrailValue;
+  after: RecordTrailValue;
+}
+
+export interface RecordTrailEventDTO {
+  /** The audit row's id — never a user's. */
+  id: string;
+  at: string;
+  kind: RecordTrailEventKind;
+  /** The recorded action (`create`, `update`, `submit`, `reject`, …). */
+  action: string;
+  /**
+   * Who acted: the name resolved at read time (null when the profile is
+   * gone) and the role stored on the row (the role at the time; null on rows
+   * written before roles were recorded). Null when no user acted (an
+   * operator's command, the system). No id, no email address.
+   */
+  actor: { name: string | null; role: UserRole | null } | null;
+  /** Which submission a submitted or resubmitted event is (1, 2, …); null otherwise. */
+  submission: number | null;
+  /** The return's note, the void's reason or the submit's variance reason. */
+  reason: string | null;
+  /** Edited events only; empty on every other kind. */
+  changes: RecordTrailChangeDTO[];
+}
+
+/** `GET /activity-records/:id/audit-trail`. */
+export interface RecordAuditTrailDTO {
+  recordId: string;
+  /** Oldest first; at most `RECORD_TRAIL_MAX_EVENTS`, the newest ones. */
+  events: RecordTrailEventDTO[];
+  /** True when earlier events were left out. */
+  truncated: boolean;
+}
+
+export const RECORD_TRAIL_MAX_EVENTS = 500;
 
 /** Filters accepted by `GET /audit`. */
 export interface ListAuditParams {

@@ -19,6 +19,7 @@ import {
   PeriodLockedError,
   RecordChangedError,
   SelfApprovalRefusedError,
+  SelfReviewRefusedError,
   SubmitAuthorRefusedError,
   AuthorOnlyRefusedError,
   EvidenceDetachRequiredError,
@@ -441,6 +442,7 @@ export class ActivityRecordsService {
       reviewedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
       reviewNote: r.reviewNote,
       submittedAt: r.submittedAt ? r.submittedAt.toISOString() : null,
+      submissionCount: r.submissionCount,
       // Persisted columns, so they belong in the audit snapshot too — a void is
       // the transition whose provenance matters most.
       voidReason: r.voidReason,
@@ -1322,7 +1324,7 @@ export class ActivityRecordsService {
           throw new BadRequestException(
             errorBody(
               'record_not_submittable',
-              `Only a draft or rejected record can be submitted (current status "${record.status}")`,
+              `Only a draft or returned record can be submitted (current status "${record.status}")`,
               { status: record.status },
             ),
           );
@@ -1480,6 +1482,13 @@ export class ActivityRecordsService {
         }
         assertSameSubmission(record, seenSubmittedAt);
       });
+      // Segregation of duties at the start of review (WP5): the same check
+      // approve makes (D01), on the row as locked, after the role gate above —
+      // so a data_entry author still gets the plain role refusal — and before
+      // anything is written.
+      if (record.createdBy === user.id) {
+        throw new SelfReviewRefusedError();
+      }
       await this.assertPeriodNotLocked(periodOf(record), tx);
       return this.transition(tx, user, record, ActivityRecordStatus.under_review);
     });
@@ -1620,7 +1629,7 @@ export class ActivityRecordsService {
     const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
       throw new ForbiddenException(
-        'Only a consultant or super_admin may reject records',
+        'Only a consultant or super_admin may return records',
       );
     }
     assertSubmissionNamed(seenSubmittedAt);
@@ -1633,7 +1642,7 @@ export class ActivityRecordsService {
           throw new BadRequestException(
             errorBody(
               'record_not_rejectable',
-              `Only a submitted or under_review record can be rejected (current status "${record.status}")`,
+              `Only a submitted or under_review record can be returned (current status "${record.status}")`,
               { status: record.status },
             ),
           );
@@ -1759,8 +1768,11 @@ export class ActivityRecordsService {
         // per-attempt history stays in `audit_log`. Same shape as `reviewedAt`
         // directly above, deliberately — two fields answering "most recently,
         // when" should not disagree about what "most recently" means.
+        // WP5: the count of submissions, raised in this same compare-and-set
+        // update, so a lost race raises nothing and a bulk submit counts each
+        // record through the submit it calls per id. Nothing else changes it.
         ...(status === ActivityRecordStatus.submitted
-          ? { submittedAt: new Date() }
+          ? { submittedAt: new Date(), submissionCount: { increment: 1 } }
           : {}),
         // A recalled record is a draft again: it is not in the review queue,
         // and the queue's clock starts afresh at its next submit (BUG-R2-03).
@@ -1783,6 +1795,10 @@ export class ActivityRecordsService {
         entityId: record.id,
         diff: {
           transition: { from: record.status, to: status },
+          // Which submission this is (WP5): the count after this write.
+          ...(status === ActivityRecordStatus.submitted
+            ? { submission: updated.submissionCount }
+            : {}),
           ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
           ...(extra.varianceReason !== undefined
             ? { varianceReason: extra.varianceReason }

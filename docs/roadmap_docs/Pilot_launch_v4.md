@@ -130,6 +130,9 @@ the owner decides again.
 Where the code departs from the documents and is left alone:
 
 - **A missing gas basis answers 400** (`parameters_required`) where INC-2.5 §1.3 says 422. Not changed unless asked.
+- **The reviewer's action keeps its stored names** (owner, 2026-11-25; INC-2.6 §1.2): the screens and sentences say
+  "İade et" / "Return" and "İade edildi" / "Returned", while the status stays `rejected`, the route
+  `POST /activity-records/:id/reject`, the audit action `reject` and the error codes keep their names (WP5).
 
 Technical risks the documents do not address:
 
@@ -162,9 +165,9 @@ gets synthetic fixtures in the same shapes.
 |---|---|---|---|---|
 | 1 `uat4-quick-fixes` | merged 11-24 (`ce3b1911`) | `fix/uat4-quick-fixes`, [#355](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/355) | `ci90-1` | `uat4-quick-fixes` (archived 2026-11-24). Invoice number and supplier become bulk columns in WP9. QA retests BUG-09, 10, 11, 15 (screen part), 16 after the deploy |
 | 2 `uat4-refill-rule` | merged 11-24 (Codex; #356 `251ddfd3`, #358 `e14ccb27`), archived | `fix/uat4-refill-rule-contract`, [#356](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/356); `fix/uat4-refill-rule`, [#358](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/358) | `ci91-1` (#356), `ci93-1` (#358) | `uat4-refill-rule` (archived 2026-11-24). The hosted `draft-reprice` run (dry run, then `--apply --allow-remote`) needs the owner's release. QA retests BUG-17 with 126.00 t and GV-8 |
-| 3 `uat4-fire-suppression-entry` | merged 11-24 (`da5b8924`; Claude Code), archived locally | `feat/uat4-fire-suppression-entry`, [PR #360](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/360) | `ci95-1` | owner's rulings: Decisions 2026-11-24 (fifth) (supplementary edition, the dry powder or foam zero, CO2 at the device rates); four review seats, no blocking finding; after the deploy an owner release loads `tr-fire-2026-11/ipcc-fire.json` (dry run, then `--apply`); QA retests BUG-12 and decides Fire Suppression in a new boundary version. WP2's hosted `draft-reprice` dry run (every count zero, no apply) and BUG-17's retest on `ci93-1` passed |
-| 4 `uat4-idle-session` | handed to Codex 11-25 (task card; Decisions 2026-11-25 (second)) | `fix/uat4-idle-session` | — | the new Auth policy digest stops the QA auto-deploy until the owner applies it (runbook 04, then `QA_AUTH_POLICY_DIGEST`) |
-| 5 `uat4-review-resubmit` | not started | — | — | |
+| 3 `uat4-fire-suppression-entry` | merged 11-24 (`da5b8924`; Claude Code), archived locally | `feat/uat4-fire-suppression-entry`, [PR #360](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/360) | `ci95-1` | owner's rulings: Decisions 2026-11-24 (fifth) (supplementary edition, the dry powder or foam zero, CO2 at the device rates); four review seats, no blocking finding; the owner loaded `tr-fire-2026-11/ipcc-fire.json` on hosted QA (2026-11-24 23:37 UTC, dry run then `--apply`) and ran the boundary step (2026-11-25); QA retests BUG-12 and decides Fire Suppression in a new boundary version. WP2's hosted `draft-reprice` dry run (every count zero, no apply) and BUG-17's retest on `ci93-1` passed |
+| 4 `uat4-idle-session` | merged 11-25 (Codex; `452a7aaf`) | `fix/uat4-idle-session`, [#362](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/362) | `ci98-1` | two review rounds (`security-rls`, `qa-auditor`); round 1's blocker fixed with a 2 h server backstop (Decisions 2026-11-25 (third)); the owner's Auth release set `QA_AUTH_POLICY_DIGEST` (`authpolicy-v1:961dc410…3229`) and the manual QA deploy passed its gate; ten notes under Open questions; QA retests BUG-13 |
+| 5 `uat4-review-resubmit` | implemented 11-25 (Claude Code), PR on the owner's word | `feat/uat4-review-resubmit` | — | owner's rulings: Decisions 2026-11-25 (fifth); one expand-only migration (`submission_count`, backfilled); three review seats; the PR also records WP3's hosted load and WP4 (Decisions 2026-11-25 (fourth)); after the deploy QA retests BUG-15's workflow (open closes recall, "Revised", the history, the return wording) |
 | 6 `inc26-roles-approval-chain` | not started | — | — | updates `CLAUDE.md`'s canonical roles and the seed users |
 | 7 `inc26-group-tree` | not started | — | — | |
 | 8 `inc26-central-reporter-onboarding` | not started | — | — | |

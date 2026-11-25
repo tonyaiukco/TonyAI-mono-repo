@@ -516,7 +516,9 @@
     "recall": "Recall",
     "recallRecord": "Recall {record}",
     "copy": "Copy to new draft",
-    "copyRecord": "Copy {record} to a new draft"
+    "copyRecord": "Copy {record} to a new draft",
+    "history": "History",
+    "historyRecord": "Open the history of {record}"
   },
   "edit": {
     "category": "Category: {from} → {to}",

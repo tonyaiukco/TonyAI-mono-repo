@@ -103,11 +103,39 @@ describe("parameters_required names the missing input (ng-kwh-engine)", () => {
 describe("LP4-04 slice 2 PR C's codes (M3)", () => {
   it("words a record status and a granularity in the user's language", () => {
     const status = new ApiError('Cannot modify a record in status "under_review"', 400, "record_not_editable", { status: "under_review" });
-    expect(describe_(status, "en").title).toBe('Cannot modify a record in status "under review"');
-    expect(describe_(status, "tr").title).toBe('Durumu "incelemede" olan bir kayıt değiştirilemez.');
+    // By its label (WP5), never the stored code.
+    expect(describe_(status, "en").title).toBe('Cannot modify a record in status "Under review"');
+    expect(describe_(status, "tr").title).toBe('Durumu "İncelemede" olan bir kayıt değiştirilemez.');
     const period = new ApiError("x", 400, "period_lock_value_invalid", { granularity: "quarterly" });
     expect(describe_(period, "en").title).toBe("That is not a valid period for a quarterly lock.");
     expect(describe_(period, "tr").title).toBe("Bu, çeyreklik bir kilit için geçerli bir dönem değil.");
+  });
+
+  it("names a late recall's status by its label (WP5)", () => {
+    const recall = new ApiError("x", 400, "record_not_recallable", { status: "under_review" });
+    expect(describe_(recall, "tr").title).toContain('"İncelemede"');
+    expect(describe_(recall, "en").title).toContain('"Under review"');
+    const approved = new ApiError("x", 400, "record_not_recallable", { status: "approved" });
+    expect(describe_(approved, "en").title).toContain('"Approved"');
+  });
+
+  it.each(["record_not_approvable", "record_not_rejectable", "record_not_reviewable", "record_not_submittable"] as const)(
+    "%s holds no stored status code in either language",
+    (code) => {
+      for (const status of ["under_review", "submitted", "approved", "rejected", "draft"]) {
+        const e = new ApiError(`x (current status "${status}")`, 400, code, { status });
+        for (const locale of ["en", "tr"] as const) {
+          expect(describe_(e, locale).title).not.toMatch(/under_review|\b(submitted|approved|rejected|draft)\b"/);
+          expect(describe_(e, locale).title).not.toContain("under_review");
+        }
+      }
+    },
+  );
+
+  it("words the author's refused start of review in both languages (WP5)", () => {
+    const e = new ApiError("You created this record, so someone else must review it.", 403, "self_review_forbidden");
+    expect(describe_(e, "en").title).toBe("You created this record, so someone else must review it.");
+    expect(describe_(e, "tr").title).toBe("Bu kaydı siz oluşturdunuz; başka biri incelemeli.");
   });
 
   it("groups every count param — a period's pending records too", () => {

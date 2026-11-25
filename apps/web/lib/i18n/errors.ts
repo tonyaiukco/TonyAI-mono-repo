@@ -87,7 +87,9 @@ export function localiseParams(
   for (const [key, value] of Object.entries(params ?? {})) {
     if (key === "period" && t.has(`periods.values.${value}`)) out[key] = t(`periods.values.${value}`);
     else if (key === "category" && t.has(`categories.${value}`)) out[key] = t(`categories.${value}`);
-    else if (key === "status" && t.has(`recordStatus.inline.${value}`)) out[key] = t(`recordStatus.inline.${value}`);
+    // A record's status by its label, never the stored code (WP5): "Under
+    // review" / "İncelemede", quoted by the sentences that name it.
+    else if (key === "status" && t.has(`recordStatus.label.${value}`)) out[key] = t(`recordStatus.label.${value}`);
     else if (key === "granularity" && t.has(`periods.granularityInline.${value}`)) {
       out[key] = t(`periods.granularityInline.${value}`);
     } else if (COUNT_PARAMS.has(key) && typeof value === "number") out[key] = formatNumber(value, locale);

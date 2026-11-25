@@ -516,7 +516,9 @@
     "recall": "Geri al",
     "recallRecord": "{record} gönderimini geri al",
     "copy": "Yeni taslağa kopyala",
-    "copyRecord": "{record} kaydını yeni taslağa kopyala"
+    "copyRecord": "{record} kaydını yeni taslağa kopyala",
+    "history": "Geçmiş",
+    "historyRecord": "{record} kaydının geçmişini aç"
   },
   "edit": {
     "category": "Kategori: {from} → {to}",

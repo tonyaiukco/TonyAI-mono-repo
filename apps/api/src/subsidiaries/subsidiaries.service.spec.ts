@@ -833,7 +833,7 @@ describe('SubsidiariesService', () => {
       }
       // …and the ordering advice the counts alone cannot carry.
       expect(message).toMatch(/reopen any closed period rather than deleting its lock/);
-      expect(message).toMatch(/sent back by a reviewer/);
+      expect(message).toMatch(/returned by a reviewer/);
     });
 
     it('gives the terminal refusal as one sentence, not a shopping list', async () => {
@@ -937,7 +937,7 @@ describe('SubsidiariesService', () => {
 
       const message = await refusal(service.remove(user, 'sub-1'));
       expect(message).toMatch(/2 record\(s\) awaiting review/);
-      expect(message).toMatch(/sent back by a reviewer/);
+      expect(message).toMatch(/returned by a reviewer/);
       expect(message).not.toMatch(/"inactive"/);
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
@@ -1087,7 +1087,7 @@ describe('SubsidiariesService', () => {
       countRecords(prisma, ['draft', 'draft', 'rejected']);
 
       const message = await refusal(service.remove(user, 'sub-1'));
-      expect(message).toMatch(/3 draft or rejected record\(s\)/);
+      expect(message).toMatch(/3 draft or returned record\(s\)/);
       expect(message).not.toMatch(/"inactive"/);
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });

@@ -259,15 +259,46 @@ describe('BUG-R2-03 — recall and review', () => {
 
   it('the recalled draft is edited and submitted again with the new figure', async () => {
     const record = await submittedRecord();
+    const countOf = async () =>
+      (await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).submissionCount;
+    expect(await countOf()).toBe(1);
     const svc = lifecycleServices(b).records;
     await svc.recall(tenant.users.dataEntry, record.id);
+    // WP5: a recall leaves the count; only a submit raises it.
+    expect(await countOf()).toBe(1);
     await svc.update(tenant.users.dataEntry, record.id, { activityValue: 321 });
+    expect(await countOf()).toBe(1);
     await svc.submit(tenant.users.dataEntry, record.id);
     const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
     expect(final.status).toBe(ActivityRecordStatus.submitted);
     expect(final.activityValue).toBe(321);
     expect(final.submittedAt).not.toBeNull();
+    expect(final.submissionCount).toBe(2);
     expect(await auditActions(record.id)).toEqual(['recall', 'submit', 'submit', 'update']);
+    const submits = await observer.auditLog.findMany({
+      where: { entityId: record.id, action: 'submit' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { diff: true },
+    });
+    expect(submits.map((row) => (row.diff as { submission?: number }).submission)).toEqual([1, 2]);
+  });
+});
+
+describe('WP5 — two submits of one draft', () => {
+  it('a submit held before its write: the second submit waits, then is a lost race — the count is raised once', async () => {
+    const { record } = await submittableDraft({ category: 'Water', activityUnit: 'cubic_metres' });
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+    expect(final.status).toBe(ActivityRecordStatus.submitted);
+    expect(final.submissionCount).toBe(1);
+    expect(await auditActions(record.id)).toEqual(['submit']);
   });
 });
 
@@ -512,7 +543,7 @@ describe('F03 — a REJECTED record moved into a period being locked (D03)', () 
     expect(r.how).toBe('blocked');
     expect(r.first).toBe('ok');
     expect(r.second).toBeInstanceOf(ConflictException);
-    expect((r.second as Error).message).toMatch(/rejected record/);
+    expect((r.second as Error).message).toMatch(/returned record/);
     expect(await lockCount()).toBe(0);
   });
 });
@@ -622,5 +653,26 @@ describe('F03 — the importer reuses these paths (bulk submit)', () => {
       expect.objectContaining({ recordId: record.id, code: 'period_locked' }),
     ]);
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
+  });
+
+  it('counts each accepted record once and leaves a refused one alone (WP5)', async () => {
+    const { record: one } = await submittableDraft();
+    const { record: two } = await submittableDraft({ periodValue: 'February' });
+    // No file attached: the evidence gate refuses it inside the bulk submit.
+    const refused = await createRecord(a, tenant, { periodValue: 'March' }, { priced: true });
+    const bulk = new BulkSubmitService(b, lifecycleServices(b).records, new AuditService(b));
+
+    const report = await bulk.submitIds(tenant.users.dataEntry, [one.id, two.id, refused.id]);
+
+    expect(report.failed).toEqual([expect.objectContaining({ recordId: refused.id })]);
+    const counts = await observer.activityRecord.findMany({
+      where: { id: { in: [one.id, two.id, refused.id] } },
+      select: { id: true, submissionCount: true },
+    });
+    expect(Object.fromEntries(counts.map((c) => [c.id, c.submissionCount]))).toEqual({
+      [one.id]: 1,
+      [two.id]: 1,
+      [refused.id]: 0,
+    });
   });
 });

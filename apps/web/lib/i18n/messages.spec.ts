@@ -129,6 +129,9 @@ describe("the catalogues", () => {
       'evidence.size.bytes',
       'evidence.removeAria',
       'geography.TR',
+      // A dash for an absent value and an action shown by its own name (WP5).
+      'recordTrail.emptyValue',
+      'recordTrail.kinds.other',
       // Mass units and a figure in kg, with no words (UAT round 4, BUG-12).
       'dataEntry.inputs.fireSuppression.units.g',
       'dataEntry.inputs.fireSuppression.units.kg',

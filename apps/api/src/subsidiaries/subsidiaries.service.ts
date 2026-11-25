@@ -490,7 +490,7 @@ export class SubsidiariesService {
       counts.push({ kind, count: c[kind] });
     };
     if (c.reviewRecords > 0) add('reviewRecords', `${c.reviewRecords} record(s) awaiting review`);
-    if (c.openRecords > 0) add('openRecords', `${c.openRecords} draft or rejected record(s)`);
+    if (c.openRecords > 0) add('openRecords', `${c.openRecords} draft or returned record(s)`);
     // `c.locations` is deliberately absent: deleting the subsidiary removes its
     // own record-free locations, audited, so they are never something the user
     // must clear first. Only ones holding records block, and for a different
@@ -520,7 +520,7 @@ export class SubsidiariesService {
           ? '; a facility holding another subsidiary\'s record cannot be swept up, because that figure was calculated with its geography — the record has to move or go first'
           : '') +
         (c.reviewRecords > 0
-          ? '; a record awaiting review must be sent back by a reviewer before it can be removed'
+          ? '; a record awaiting review must be returned by a reviewer before it can be removed'
           : '') +
         '), then delete the subsidiary.',
     };

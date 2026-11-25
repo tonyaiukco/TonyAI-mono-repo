@@ -10,7 +10,8 @@
   "allEntities": "Tüm varlıklar",
   "allActions": "Tüm işlemler",
   "actions": {
-    "reprice": "Emisyon yeniden hesaplandı"
+    "reprice": "Emisyon yeniden hesaplandı",
+    "reject": "İade edildi"
   },
   "entriesOne": "{count} kayıt",
   "entriesMany": "{count} kayıt",

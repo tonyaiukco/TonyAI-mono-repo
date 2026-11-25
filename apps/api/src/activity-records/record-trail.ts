@@ -1,0 +1,236 @@
+import {
+  isCalculated,
+  USER_ROLES,
+  type ActivityCalculationSnapshot,
+  type RecordTrailChangeDTO,
+  type RecordTrailEventDTO,
+  type RecordTrailEventKind,
+  type RecordTrailValue,
+  type UserRole,
+} from '@tonyai/shared-types';
+
+/**
+ * One activity record's audit rows as one history (WP5, `uat4-review-resubmit`,
+ * design decision 6). Pure and DB-free: the service reads the rows and the
+ * names, this turns them into events.
+ *
+ * The response is built from an ALLOW-LIST. Nothing of a row's stored `diff`
+ * reaches the caller except the reason strings, the submission number and the
+ * listed inputs' values: no snapshot, no calculation, no user id, no email.
+ */
+
+/** The audit row as the service reads it, oldest first. */
+export interface TrailAuditRow {
+  id: string;
+  action: string;
+  userId: string | null;
+  role: string | null;
+  diff: unknown;
+  createdAt: Date;
+}
+
+export interface TrailLookups {
+  /** Actor id → full name, confined to the reader's organisation. */
+  names: ReadonlyMap<string, string>;
+  /** Location id → name, confined to the record's subsidiary. */
+  locations: ReadonlyMap<string, string>;
+}
+
+/**
+ * The record's scalar inputs an edit is compared on, in the order they are
+ * listed. `locationId` is reported as `location`, by name.
+ */
+const SCALAR_INPUTS = [
+  'activityValue',
+  'activityUnit',
+  'activityType',
+  'category',
+  'reportingYear',
+  'reportingPeriod',
+  'periodValue',
+  'locationId',
+  'varianceReason',
+] as const;
+
+/** Every other key of a snapshot is ignored by construction: timestamps,
+ *  status, review and void fields, anomaly columns, `submissionCount`,
+ *  `evidenceCount` (the `before` snapshot is written without a count, so it
+ *  would always read 0 → N), and `calculation` apart from its total. */
+
+const KIND_BY_ACTION: Readonly<Record<string, RecordTrailEventKind>> = {
+  create: 'created',
+  update: 'edited',
+  recall: 'recalled',
+  review: 'review_started',
+  reject: 'returned',
+  approve: 'approved',
+  void: 'voided',
+};
+
+/** Before the audit taxonomy a transition was logged as `update` with
+ *  `diff.transition`; its target status names what happened. */
+const KIND_BY_TARGET: Readonly<Record<string, RecordTrailEventKind | 'submit'>> = {
+  submitted: 'submit',
+  draft: 'recalled',
+  under_review: 'review_started',
+  rejected: 'returned',
+  approved: 'approved',
+  voided: 'voided',
+};
+
+type Json = Record<string, unknown>;
+
+/** A table's own entry only: `constructor` or `toString` is never a kind. */
+function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
+const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+function asRole(role: string | null): UserRole | null {
+  return role && (USER_ROLES as readonly string[]).includes(role) ? (role as UserRole) : null;
+}
+
+function text(v: unknown): string | null {
+  return typeof v === 'string' && v.trim().length > 0 ? v : null;
+}
+
+/** A stored value as the trail returns it: primitives as stored, absent as null. */
+function asValue(v: unknown): RecordTrailValue {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
+  return JSON.stringify(v);
+}
+
+/** Flattens a structured input to its leaves, keyed by dotted path. */
+function leaves(value: unknown, prefix: string, out: Map<string, RecordTrailValue>): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => leaves(item, `${prefix}.${i}`, out));
+  } else if (isObject(value)) {
+    for (const [key, item] of Object.entries(value)) leaves(item, `${prefix}.${key}`, out);
+  } else {
+    out.set(prefix, asValue(value));
+  }
+}
+
+function leafChanges(before: unknown, after: unknown, prefix: string): RecordTrailChangeDTO[] {
+  const b = new Map<string, RecordTrailValue>();
+  const a = new Map<string, RecordTrailValue>();
+  leaves(before, prefix, b);
+  leaves(after, prefix, a);
+  const paths = [...new Set([...b.keys(), ...a.keys()])].sort((x, y) =>
+    x.localeCompare(y, 'en', { numeric: true }),
+  );
+  const changes: RecordTrailChangeDTO[] = [];
+  for (const path of paths) {
+    const was = b.get(path) ?? null;
+    const now = a.get(path) ?? null;
+    if (was !== now) changes.push({ field: path, before: was, after: now });
+  }
+  return changes;
+}
+
+function figureOf(snapshot: unknown): number | null {
+  const calc = isObject(snapshot) ? (snapshot.calculation as ActivityCalculationSnapshot | null) : null;
+  return isCalculated(calc) ? calc.tCo2e : null;
+}
+
+/**
+ * What one edit changed: each listed input that differs, before and after,
+ * then the figure when it moved. Empty when nothing listed changed.
+ */
+export function editChanges(before: Json, after: Json, lookups: TrailLookups): RecordTrailChangeDTO[] {
+  const changes: RecordTrailChangeDTO[] = [];
+  for (const key of SCALAR_INPUTS) {
+    const was = asValue(before[key]);
+    const now = asValue(after[key]);
+    if (was === now) continue;
+    if (key === 'locationId') {
+      // By name only: a location the lookup cannot name (not in the record's
+      // subsidiary any more) reads as empty, never as its id.
+      const name = (id: RecordTrailValue) =>
+        typeof id === 'string' ? (lookups.locations.get(id) ?? null) : null;
+      changes.push({ field: 'location', before: name(was), after: name(now) });
+    } else {
+      changes.push({ field: key, before: was, after: now });
+    }
+  }
+  changes.push(...leafChanges(before.parameters, after.parameters, 'parameters'));
+  changes.push(...leafChanges(before.input, after.input, 'input'));
+  const figureBefore = figureOf(before);
+  const figureAfter = figureOf(after);
+  if (figureBefore !== figureAfter) {
+    changes.push({ field: 'figure', before: figureBefore, after: figureAfter });
+  }
+  return changes;
+}
+
+/**
+ * An operator's re-pricing (`draft-reprice`) stores the figure before and after
+ * as `{ before: { tCo2e }, after: { tCo2e } }`: shown as the figure's change.
+ */
+function repriceChanges(diff: Json): RecordTrailChangeDTO[] {
+  const tonnes = (side: unknown) =>
+    isObject(side) && typeof side.tCo2e === 'number' && Number.isFinite(side.tCo2e) ? side.tCo2e : null;
+  const before = tonnes(diff.before);
+  const after = tonnes(diff.after);
+  return before === null && after === null ? [] : [{ field: 'figure', before, after }];
+}
+
+export function buildRecordTrail(
+  rows: readonly TrailAuditRow[],
+  lookups: TrailLookups,
+): RecordTrailEventDTO[] {
+  let submissions = 0;
+  return rows.map((row) => {
+    const diff = isObject(row.diff) ? row.diff : {};
+    const transition = isObject(diff.transition) ? diff.transition : null;
+    const target = transition && typeof transition.to === 'string' ? transition.to : null;
+
+    let kind: RecordTrailEventKind | 'submit' =
+      row.action === 'submit'
+        ? 'submit'
+        : row.action === 'update' && target
+          ? (own(KIND_BY_TARGET, target) ?? 'edited')
+          : (own(KIND_BY_ACTION, row.action) ?? 'other');
+
+    let submission: number | null = null;
+    if (kind === 'submit') {
+      submission =
+        typeof diff.submission === 'number' && Number.isInteger(diff.submission) && diff.submission > 0
+          ? diff.submission
+          : submissions + 1;
+      submissions = submission;
+      kind = submission > 1 ? 'resubmitted' : 'submitted';
+    }
+
+    const reason =
+      kind === 'returned'
+        ? text(diff.reviewNote)
+        : kind === 'voided'
+          ? text(diff.voidReason)
+          : kind === 'submitted' || kind === 'resubmitted'
+            ? text(diff.varianceReason)
+            : null;
+
+    const changes =
+      kind === 'edited' && isObject(diff.before) && isObject(diff.after)
+        ? editChanges(diff.before, diff.after, lookups)
+        : row.action === 'reprice'
+          ? repriceChanges(diff)
+          : [];
+
+    return {
+      id: row.id,
+      at: row.createdAt.toISOString(),
+      kind,
+      action: row.action,
+      actor: row.userId
+        ? { name: lookups.names.get(row.userId) ?? null, role: asRole(row.role) }
+        : null,
+      submission,
+      reason,
+      changes,
+    };
+  });
+}

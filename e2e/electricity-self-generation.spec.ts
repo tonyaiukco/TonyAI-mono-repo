@@ -5,6 +5,7 @@ import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enPeriods from '../apps/web/messages/en/periods.json';
 import enErrors from '../apps/web/messages/en/errors.json';
 import enReview from '../apps/web/messages/en/review.json';
+import enRecordStatus from '../apps/web/messages/en/recordStatus.json';
 import trCategories from '../apps/web/messages/tr/categories.json';
 import trDataEntry from '../apps/web/messages/tr/dataEntry.json';
 import trPeriods from '../apps/web/messages/tr/periods.json';
@@ -735,8 +736,9 @@ test('the review sheet shows a CHP block, notes a missing gas record and a balan
   );
   await expect(dialog.getByTestId('review-self-generation-balance')).toContainText('4,000 kWh');
 
-  // A review step answers the record with its fuel state, so the notice stays; nothing is blocked.
-  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  // Opening it took it into review (WP5); that answer carries the record's fuel
+  // state, so the notice stays; nothing is blocked.
+  await expect(dialog.getByTestId('review-sheet-status')).toContainText(enRecordStatus.inline.under_review);
   await expect(fuelNotice(page)).toBeVisible();
   await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
 
@@ -1006,14 +1008,29 @@ async function submittedAtSite(request: APIRequestContext, token: string, period
 const siteRow = (page: Page) =>
   page.locator('table tbody tr').filter({ hasText: 'Manchester Office' }).filter({ hasText: enCategories.Electricity });
 
-test('start review names the submission it saw, so a reason typed for it never meets a newer one', async ({ page, request }) => {
+test('the start of review an opening sends names the submission it saw; refused, the sheet reads again once and never starts again', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await submittedAtSite(request, token);
   await login(page, CONSULTANT_EMAIL);
   await page.goto('/review');
+  // The open's start of review is held until the author has sent a newer submission.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const REVIEW = `**/api/v1/activity-records/${id}/review`;
+  const starts: string[] = [];
+  await page.route(REVIEW, async (route) => {
+    starts.push(route.request().method());
+    await gate;
+    return route.fallback();
+  });
+  const reads: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'GET' && r.url().endsWith(`/activity-records/${id}`)) reads.push(r.url());
+  });
+  const sent = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
   await siteRow(page).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
+  await sent;
   await dialog.locator('#review-reason').fill('The 1,000 kWh does not match the bill');
 
   // The author recalls it, corrects it to 8,000 kWh and submits it again.
@@ -1022,14 +1039,20 @@ test('start review names the submission it saw, so a reason typed for it never m
   expect((await request.post(`${API_BASE}/activity-records/${id}/submit`, { headers: bearer(token) })).ok()).toBe(true);
 
   const answered = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
-  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  release();
   const response = await answered;
   expect(response.status()).toBe(409);
   expect(response.request().postDataJSON()).toEqual({ seenSubmittedAt: expect.any(String) });
   // The sheet reads the record again: the newer submission, with an empty reason.
   await expect(dialog).toContainText('8,000');
   await expect(dialog.locator('#review-reason')).toHaveValue('');
+  // That re-read never starts the review again: one start, two reads, and the
+  // fallback button is offered on the still-submitted record.
+  await expect(dialog.getByTestId('review-sheet-start-review')).toBeVisible();
+  expect(starts).toEqual(['POST']);
+  expect(reads).toHaveLength(2);
   expect((await read(request, token, id)).status).toBe('submitted');
+  await page.unroute(REVIEW);
 });
 
 test('a review step answered after the sheet was closed and opened again leaves the new opening alone', async ({ page, request }) => {
@@ -1038,9 +1061,8 @@ test('a review step answered after the sheet was closed and opened again leaves 
   await login(page, CONSULTANT_EMAIL);
   await page.goto('/review');
   const dialog = page.getByRole('dialog');
-  await siteRow(page).click();
-  await expect(dialog.getByRole('button', { name: enReview.sheet.approve, exact: true })).toBeEnabled();
 
+  // The start of review the first opening sends (WP5) is held.
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
   const REVIEW = `**/api/v1/activity-records/${id}/review`;
@@ -1048,8 +1070,10 @@ test('a review step answered after the sheet was closed and opened again leaves 
     await gate;
     return route.fallback();
   });
+  const sent = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
   const reviewed = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
-  await dialog.getByRole('button', { name: enReview.sheet.startReview, exact: true }).click();
+  await siteRow(page).click();
+  await sent;
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
 

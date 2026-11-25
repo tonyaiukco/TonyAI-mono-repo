@@ -13,6 +13,7 @@ import {
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ActivityRecordsService, SUBMISSION_NOT_NAMED, type SeenSubmission } from './activity-records.service';
+import { RecordAuditTrailService } from './record-audit-trail.service';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { RejectActivityRecordDto } from './dto/reject-activity-record.dto';
@@ -39,7 +40,10 @@ function seenSubmission(seen: string | null | undefined): SeenSubmission {
 
 @Controller('activity-records')
 export class ActivityRecordsController {
-  constructor(private readonly service: ActivityRecordsService) {}
+  constructor(
+    private readonly service: ActivityRecordsService,
+    private readonly trail: RecordAuditTrailService,
+  ) {}
 
   /** One `CursorPage` of the caller's records (LP4-05 PR C). */
   @Get()
@@ -62,6 +66,15 @@ export class ActivityRecordsController {
   @Get(':id')
   get(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.get(user, id);
+  }
+
+  /**
+   * One record's history, oldest first (WP5): who may read it and what it
+   * holds are `RecordAuditTrailService`'s. Writes nothing.
+   */
+  @Get(':id/audit-trail')
+  auditTrail(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
+    return this.trail.read(user, id);
   }
 
   @Post()

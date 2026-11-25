@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import {
-  ADMIN_EMAIL, API_BASE, E2E_YEAR, SUB, bearer, createCommittedRecord, deleteRecordsAsService, getAccessToken, login,
+  ADMIN_EMAIL, API_BASE, APPROVER_EMAIL, E2E_YEAR, SUB, bearer, createCommittedRecord, deleteRecordsAsService, getAccessToken, login,
 } from './helpers';
 
 /**
@@ -75,19 +75,24 @@ test('a decision that settles after a switch refreshes the selection on screen, 
   const id = await pending(request, 'Q2');
   const mfg = await legalName(request, SUB.mfg);
   const gasName = await legalName(request, SUB.gas);
-  await login(page, ADMIN_EMAIL);
+  // The second super_admin: the admin authored the record, and its author
+  // neither takes it into review nor approves it (D01, WP5).
+  await login(page, APPROVER_EMAIL);
   await page.goto('/review');
   const rowA = page.locator('table tbody tr').filter({ hasText: `Q2 ${YEAR}` }).filter({ hasText: gasName });
+  // Opening it takes it into review (WP5); the decision held here is the approval.
+  const started = page.waitForResponse((r) => r.url().endsWith(`/activity-records/${id}/review`));
   await rowA.click();
+  expect((await started).status()).toBe(200);
 
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
-  await page.route((url) => url.pathname.endsWith(`/activity-records/${id}/review`), async (route) => {
+  await page.route((url) => url.pathname.endsWith(`/activity-records/${id}/approve`), async (route) => {
     await gate;
     await route.continue();
   });
-  const decided = page.waitForResponse((r) => r.url().endsWith(`/activity-records/${id}/review`));
-  await page.getByRole('button', { name: 'Start review' }).click();
+  const decided = page.waitForResponse((r) => r.url().endsWith(`/activity-records/${id}/approve`));
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
   // The reviewer moves on before the answer: closes the sheet, picks another subsidiary.
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);

@@ -49,13 +49,15 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | Manage users and roles — invite, re-send an invitation, change a role, replace a data_entry user's subsidiaries (LP4-01) | ✅ ² | ❌ | ❌ | ❌ |
 | Disable or enable an account (LP4-01, D19) | ✅ ² | ❌ | ❌ | ❌ |
 | Reset one's own password from the sign-in page | ✅ | ✅ | ✅ | ✅ |
-| View audit trail | ✅ | ❌ ¹ | ❌ ¹ | ❌ ¹ |
+| View the organisation-wide audit trail | ✅ | ❌ ¹ | ❌ ¹ | ❌ ¹ |
+| View one record's history (`GET /activity-records/:id/audit-trail`, WP5) | ✅ | ✅ | ✅ ³ | ✅ |
 
 ² Own organisation only, never one's own role or account (ask another `super_admin`), serialised per organisation with the actor re-read; every change audited. Creating an organisation and its first administrator is the operator's (`pnpm onboarding`, §6a) or, where an environment enables it, self-service registration's; offboarding is the operator's.
 
 ### Limited Audit Visibility
-- `data_entry` may view audit history for records they created or are assigned to
-- `executive_viewer` may view report level or approved record level history only if enabled
+- Since WP5 (`uat4-review-resubmit`, owner decision 2026-11-25, INC-2.6 §6): one record's history is read by `super_admin`, `consultant` and `executive_viewer` for any record they can read, and by `data_entry` for the records they created (³). The organisation-wide audit trail stays `super_admin`-only.
+
+³ Records they created; a colleague's record in a shared subsidiary is readable, its history is not (`mayReadRecordTrail`).
 
 ---
 
@@ -150,7 +152,9 @@ data_entry limited / executive_viewer limited" promise was never implemented and
 the per-record scoping it implied has no column to hang on — audit rows are
 scoped by organisation, not by subsidiary. Widening it later is a policy change
 plus a scoping decision (which subsidiary does a `report` row with a null
-`entityId` belong to?), so it is deliberately out of scope for the WP7 viewer.
+`entityId` belong to?), so it is deliberately out of scope for the WP7 viewer. One record's history
+is a separate read since WP5, built by the API from an allow-list and keyed by
+the record and the caller's organisation; the policy above is unchanged.
 
 ## 6.3 Context Filtering Rule
 All list and search results must be filtered by the user’s authorised organisation and subsidiary scope before being returned to the frontend.

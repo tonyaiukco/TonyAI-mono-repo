@@ -1,0 +1,75 @@
+{
+  "open": "History",
+  "openLabel": "Open the history of this record",
+  "title": "Record history",
+  "subtitle": "Every recorded step, oldest first. An edit shows each changed field before and after.",
+  "loading": "Reading the history…",
+  "empty": "Nothing has been recorded for this record yet.",
+  "error": "The history could not be read.",
+  "refused": "You cannot read this record's history.",
+  "retry": "Try again",
+  "truncated": "Only the latest {count} events are shown; earlier events were left out.",
+  "marked": "Chosen on the audit page",
+  "storedEntry": "Show the stored audit entry",
+  "system": "System",
+  "removedUser": "Removed user",
+  "submission": "Submission {n}",
+  "reason": "Reason: {reason}",
+  "noChanges": "No listed field changed.",
+  "before": "Before",
+  "after": "After",
+  "emptyValue": "—",
+  "yes": "Yes",
+  "no": "No",
+  "kinds": {
+    "created": "Created",
+    "edited": "Edited",
+    "submitted": "Submitted",
+    "resubmitted": "Resubmitted",
+    "recalled": "Recalled",
+    "review_started": "Taken into review",
+    "returned": "Returned",
+    "approved": "Approved",
+    "voided": "Voided",
+    "other": "{action}"
+  },
+  "actions": {
+    "reprice": "Figure recalculated"
+  },
+  "fields": {
+    "activityValue": "Activity value",
+    "activityUnit": "Unit",
+    "activityType": "Fuel or gas",
+    "category": "Category",
+    "reportingYear": "Reporting year",
+    "reportingPeriod": "Granularity",
+    "periodValue": "Period",
+    "location": "Facility",
+    "varianceReason": "Variance reason",
+    "figure": "Emissions (tCO2e)",
+    "equipmentLine": "Equipment line {n}: {part}",
+    "equipment": {
+      "equipmentType": "equipment type",
+      "capacityKg": "installed capacity (kg)",
+      "refillKg": "refilled (kg)",
+      "leakRateChoice": "leak rate"
+    },
+    "parameters": {
+      "ncvKcalPerSm3": "Net calorific value (kcal/Sm³)",
+      "billedGcvKcalPerSm3": "Billed gross calorific value (kcal/Sm³)",
+      "volumeCorrectionFactor": "Volume correction factor",
+      "cvBasis": "Calorific basis",
+      "generationTopology": "Own generation layout",
+      "selfGenerationSource": "Own generation source",
+      "selfGeneratedKwh": "Generated on site (kWh)",
+      "exportedToGridKwh": "Exported to the grid (kWh)",
+      "facilityConsumptionKwh": "Facility consumption (kWh)"
+    },
+    "input": {
+      "invoice_no": "Invoice number",
+      "supplier": "Supplier",
+      "utility_provider": "Supplier",
+      "notes": "Notes"
+    }
+  }
+}

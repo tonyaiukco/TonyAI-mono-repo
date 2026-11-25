@@ -74,11 +74,11 @@
     "evidenceFailed": "Bu kaydın kanıtı yüklenemedi — dosyaları görmeden karar vermeyin.",
     "noFiles": "Ekli dosya yok.",
     "loadMoreFiles": "Daha fazla dosya yükle",
-    "reasonLabel": "Gerekçe (reddetmek için zorunlu)",
+    "reasonLabel": "Gerekçe (iade için zorunlu)",
     "reasonPlaceholder": "Gönderenin neyi değiştirmesi gerekiyor?",
-    "reasonHint": "Ret, bu metni gönderene geri iletir; bu yüzden neyin düzeltileceğini söylemelidir.",
+    "reasonHint": "İade, bu metni gönderene iletir; bu yüzden neyin düzeltileceğini söylemelidir.",
     "startReview": "İncelemeye al",
-    "reject": "Reddet",
+    "reject": "İade et",
     "approve": "Onayla",
     "selfApproval": "Kendi girdiğiniz bir kaydı onaylayamazsınız.",
     "reading": "Kaydın güncel hali okunuyor…",
@@ -88,6 +88,10 @@
   "toast": {
     "reviewed": "İncelemeye alındı",
     "approved": "Kayıt onaylandı",
-    "rejected": "Kayıt reddedildi — gerekçe artık gönderen tarafından görülebiliyor"
+    "rejected": "Kayıt iade edildi — gerekçe artık gönderen tarafından görülebiliyor"
+  },
+  "revised": {
+    "label": "Revize",
+    "title": "{n}. gönderim: geri çekildikten veya iade edildikten sonra yeniden incelemeye gönderildi"
   }
 }

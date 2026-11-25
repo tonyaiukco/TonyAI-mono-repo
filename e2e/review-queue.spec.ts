@@ -14,6 +14,9 @@ import {
   API_BASE,
   SUB,
   seenSubmittedAt,
+  selectSubsidiary,
+  deleteRecordsAsService,
+  E2E_YEAR,
 } from './helpers';
 
 /**
@@ -110,7 +113,7 @@ test('a submitted record reaches the queue and approving clears it', async ({
   // Created AND Submitted, because they answer different questions and — on
   // this back-dated record — carry different dates. A sheet showing one value
   // against both labels would mean it is reading a single field for the pair.
-  await expect(sheet.getByText('Submitted')).toBeVisible();
+  await expect(sheet.getByText('Submitted', { exact: true })).toBeVisible();
   await expect(sheet.getByText('not recorded')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Approve' }).click();
@@ -153,13 +156,13 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
 
   // No reason typed yet: rejecting is not offered, because a rejection with no
   // explanation tells the submitter nothing about what to fix.
-  const reject = page.getByRole('button', { name: 'Reject' });
+  const reject = page.getByRole('button', { name: 'Return', exact: true });
   await expect(reject).toBeDisabled();
 
-  await page.getByLabel('Reason (required to reject)').fill('Invoice total does not match the meter reading');
+  await page.getByLabel('Reason (required to return)').fill('Invoice total does not match the meter reading');
   await expect(reject).toBeEnabled();
   await reject.click();
-  await expect(page.getByText(/Record rejected/)).toBeVisible();
+  await expect(page.getByText(/Record returned/)).toBeVisible();
 
   const after = await request.get(`${API_BASE}/activity-records/${id}`, {
     headers: bearer(token),
@@ -270,8 +273,9 @@ test('a consultant takes another user\'s record into review and approves it (K2)
   await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
   await expect(page.getByText(/prototype demo factors.*v2026\.1/)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Start review' }).click();
-  await expect(page.getByText('Taken into review')).toBeVisible();
+  // Opening it took it into review (WP5): no button, no toast — the status is the news.
+  await expect(page.getByTestId('review-sheet-status')).toContainText('under review');
+  await expect(page.getByRole('button', { name: 'Start review' })).toHaveCount(0);
 
   // `review` leaves the record PENDING, so it must stay in the queue and change
   // status. Dropping it instead also passed before this assertion existed —
@@ -449,4 +453,176 @@ test('data_entry is told the decision is not theirs, not shown a broken page', a
     page.getByText(/Reviewing is done by a consultant or a super_admin/i),
   ).toBeVisible();
   await expect(page.locator('table')).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// WP5 (`uat4-review-resubmit`): opening a record takes it into review; a
+// revised record is marked.
+
+const reviewRow = (page: import('@playwright/test').Page, subsidiary: string, period: string, category: string) =>
+  page.locator('table tbody tr', { hasText: subsidiary }).filter({ hasText: `${period} ${E2E_YEAR}` }).filter({ hasText: category });
+
+test("a reviewer's open closes the author's recall: the refusal names the status by its label and the list is read again", async ({
+  page,
+  browser,
+  request,
+}) => {
+  const entry = await getAccessToken(request, ENTRY_EMAIL);
+  const id = await createCommittedRecord(request, entry, {
+    subsidiaryId: SUB.logistics,
+    category: 'Electricity',
+    periodValue: 'Q1',
+    activityValue: 1100,
+    // A committed neighbour in the lane may flag it; the reason keeps submit open.
+    varianceReason: 'e2e: WP5 review lane',
+  });
+  try {
+    // The author's list is read while the record still waits.
+    await login(page, ENTRY_EMAIL);
+    await page.goto('/data-entry');
+    await selectSubsidiary(page, 'TonyAI Logistics (TR)');
+    const list = page.locator('[data-testid="previous-submissions"]');
+    const recall = list.getByRole('button', { name: `Recall Q1 ${E2E_YEAR} Electricity` });
+    await expect(recall).toBeVisible();
+
+    // A consultant opens it in the review queue, in a browser of their own.
+    const reviewer = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+  try {
+      const rp = await reviewer.newPage();
+      await login(rp, CONSULTANT_EMAIL);
+      await rp.goto('/review');
+      const started = rp.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`));
+      await reviewRow(rp, 'TonyAI Logistics', 'Q1', 'Electricity').click();
+      expect((await started).status()).toBe(200);
+      await expect(rp.getByTestId('review-sheet-status')).toContainText('under review');
+      await expect(reviewRow(rp, 'TonyAI Logistics', 'Q1', 'Electricity')).toContainText('under review');
+  } finally {
+    await reviewer.close();
+  }
+
+  // The author's recall, from the list read before: refused, worded by the label, list read again.
+  const reread = page.waitForResponse((r) => r.request().method() === 'GET' && /\/activity-records\?/.test(r.url()));
+  await recall.click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Recall to draft' }).click();
+  await expect(page.getByText(/This one is "Under review"/)).toBeVisible();
+  await reread;
+  await expect(list.getByRole('button', { name: `Recall Q1 ${E2E_YEAR} Electricity` })).toHaveCount(0);
+  const record = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(entry) })).json();
+  expect(record.status).toBe('under_review');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
+});
+
+test('a super_admin opening their own submitted record leaves it submitted, with no Start review', async ({ page, request }) => {
+  const admin = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, admin, {
+    subsidiaryId: SUB.trading,
+    category: 'Electricity',
+    periodValue: 'Q3',
+    activityValue: 2100,
+    // A committed neighbour in the lane may flag it; the reason keeps submit open.
+    varianceReason: 'e2e: WP5 review lane',
+  });
+  try {
+    const starts: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`)) starts.push(r.url());
+    });
+
+    await login(page, ADMIN_EMAIL);
+    await page.goto('/review');
+    const read = page.waitForResponse((r) => r.request().method() === 'GET' && r.url().endsWith(`/activity-records/${id}`));
+    await reviewRow(page, 'TonyAI Trading', 'Q3', 'Electricity').click();
+    await read;
+    await expect(page.getByText('You cannot approve a record you entered.')).toBeVisible();
+    await expect(page.getByTestId('review-sheet-status')).toContainText('submitted');
+    await expect(page.getByRole('button', { name: 'Start review' })).toHaveCount(0);
+    expect(starts).toEqual([]);
+
+    // ...and the author can still recall it.
+    const recalled = await request.post(`${API_BASE}/activity-records/${id}/recall`, { headers: bearer(admin) });
+    expect(recalled.status()).toBe(200);
+    expect((await recalled.json()).status).toBe('draft');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
+});
+
+test('a recalled, edited and resubmitted record is marked Revised in the queue and on the sheet', async ({ page, request }) => {
+  const entry = await getAccessToken(request, ENTRY_EMAIL);
+  const id = await createCommittedRecord(request, entry, {
+    subsidiaryId: SUB.logistics,
+    category: 'Electricity',
+    periodValue: 'Q4',
+    activityValue: 1000,
+    // A committed neighbour in the lane may flag it; the reason keeps submit open.
+    varianceReason: 'e2e: WP5 review lane',
+  });
+  try {
+    const ok = async (path: string, data?: unknown, method: 'post' | 'patch' = 'post') => {
+      const res = await request[method](`${API_BASE}/activity-records/${id}${path}`, { headers: bearer(entry), ...(data ? { data } : {}) });
+      expect(res.ok(), await res.text()).toBe(true);
+      return res.json();
+    };
+    await ok('/recall');
+    await ok('', { activityValue: 1200 }, 'patch');
+    const resubmitted = await ok('/submit');
+    expect(resubmitted.submissionCount).toBe(2);
+
+    await login(page, CONSULTANT_EMAIL);
+    await page.goto('/review');
+    const row = reviewRow(page, 'TonyAI Logistics', 'Q4', 'Electricity');
+    await expect(row.getByTestId('revised-badge')).toHaveText('Revised');
+    await expect(row.getByTestId('revised-badge')).toHaveAttribute('title', /^Submission 2/);
+    await row.click();
+    const sheet = page.getByTestId('review-sheet-status');
+    await expect(sheet).toContainText('under review');
+    await expect(sheet.getByTestId('revised-badge')).toBeVisible();
+    // The sheet keeps current values only.
+    await expect(page.getByRole('dialog')).toContainText('1,200');
+    await expect(page.getByRole('dialog')).not.toContainText('1,000 kWh');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
+});
+
+test('a start of review that fails for another reason keeps the sheet usable, with the fallback button', async ({ page, request }) => {
+  const entry = await getAccessToken(request, ENTRY_EMAIL);
+  const id = await createCommittedRecord(request, entry, {
+    subsidiaryId: SUB.logistics,
+    category: 'Electricity',
+    periodValue: 'Q1',
+    activityValue: 1150,
+    varianceReason: 'e2e: WP5 review lane',
+  });
+  try {
+    const REVIEW = `**/api/v1/activity-records/${id}/review`;
+    await page.route(REVIEW, (route) => route.abort('connectionfailed'));
+    // Counted as the page sees it: the start the open sends, failed.
+    let failedStarts = 0;
+    page.on('requestfailed', (r) => {
+      if (r.method() === 'POST' && r.url().endsWith(`/activity-records/${id}/review`)) failedStarts += 1;
+    });
+    await login(page, CONSULTANT_EMAIL);
+    await page.goto('/review');
+    await reviewRow(page, 'TonyAI Logistics', 'Q1', 'Electricity').click();
+    const sheet = page.getByRole('dialog');
+    // The reviewer is told, and nothing is taken away: Start review, Return and Approve.
+    const start = sheet.getByTestId('review-sheet-start-review');
+    await expect(start).toBeVisible();
+    await expect.poll(() => failedStarts).toBe(1);
+    await expect(sheet.getByTestId('review-sheet-status')).toContainText('submitted');
+    await expect(sheet.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
+    await expect(sheet.getByRole('button', { name: 'Return', exact: true })).toBeVisible();
+
+    // Once the network is back, the fallback takes it into review.
+    await page.unroute(REVIEW);
+    await start.click();
+    await expect(page.getByText('Taken into review')).toBeVisible();
+    await expect(sheet.getByTestId('review-sheet-status')).toContainText('under review');
+    await expect(start).toHaveCount(0);
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
 });

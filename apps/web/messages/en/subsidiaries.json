@@ -101,7 +101,7 @@
     "title": "Change geography from {from} to {to}?",
     "body": "Warning: Changing the geography will change the configured factor basis for geography dependent calculations. This may require recalculation of affected Scope 2 records for selected reporting periods. Do you want to continue?",
     "subsidiaryNote": "Records already committed keep the emission factor they were calculated with — those figures do not change. The new geography applies to records created from now on.",
-    "locationNote": "Records already committed at this facility keep the emission factor they were calculated with — those figures do not change. The new geography applies to records created here from now on, and to any draft or sent-back record the next time it is saved.",
+    "locationNote": "Records already committed at this facility keep the emission factor they were calculated with — those figures do not change. The new geography applies to records created here from now on, and to any draft or returned record the next time it is saved.",
     "continue": "Continue"
   },
   "dependents": {
@@ -109,7 +109,7 @@
     "locations": "Facilities",
     "terminalRecords": "Approved, locked or voided records",
     "reviewRecords": "Records awaiting review",
-    "openRecords": "Draft or rejected records",
+    "openRecords": "Draft or returned records",
     "periodLocks": "Closed reporting periods",
     "targets": "Reduction targets",
     "denominators": "Intensity denominators",
@@ -122,7 +122,7 @@
     "terminalRecords": "{count} approved, locked or voided activity record(s) belong to this subsidiary, and deleting it would permanently destroy them along with their evidence. Those records cannot be deleted at any point, so a subsidiary that has reported data stays. Set its status to \"inactive\" to retire it instead.",
     "frozenBoundaryVersions": "This subsidiary is declared in {count} confirmed or captured inventory boundary version(s), which record the inventory a report was issued from and never change, so a subsidiary declared in one stays. Set its status to \"inactive\" to retire it instead.",
     "reviewRecords": "{count} record(s) awaiting review",
-    "openRecords": "{count} draft or rejected record(s)",
+    "openRecords": "{count} draft or returned record(s)",
     "locationsHoldingForeignRecords": "{count} facility(ies) holding a record that belongs to another subsidiary",
     "periodLocks": "{count} closed reporting period(s)",
     "targets": "{count} reduction target(s)",

@@ -209,13 +209,13 @@ describe('SUBMIT_ISSUE_LABEL', () => {
 describe('submitConfirmation', () => {
   it('says how long the author can still take them back', () => {
     // The author may recall a submitted record only until a reviewer opens it
-    // (BUG-R2-03); after that, only the reviewer can send it back. That is the
+    // (BUG-R2-03); after that, only the reviewer can return it. That is the
     // fact a confirm dialog exists to put in front of someone about to move
     // four hundred records.
     const text = submitConfirmation(2);
     expect(text).toContain('2 records');
     expect(text).toMatch(/recall each one yourself only until a reviewer opens it/i);
-    expect(text).toMatch(/only the reviewer can send it back/i);
+    expect(text).toMatch(/only the reviewer can return it/i);
   });
 
   it('uses the singular for one — including the pronoun', () => {

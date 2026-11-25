@@ -50,9 +50,16 @@ export function actorLabel(
     : { text: named, muted: false };
 }
 
-/** Use the localized reprice label and keep the caller's display of other actions. */
-export function auditActionLabel(action: string, repriceLabel: string, fallbackLabel = action): string {
-  return action === 'reprice' ? repriceLabel : fallbackLabel;
+/** The actions the audit page words itself; every other one keeps the caller's display. */
+export interface AuditActionLabels {
+  reprice: string;
+  /** The stored action stays `reject`; screens call it a return (WP5). */
+  reject: string;
+}
+
+/** Use the localized label of an action the page words, and keep the caller's display of other actions. */
+export function auditActionLabel(action: string, labels: AuditActionLabels, fallbackLabel = action): string {
+  return action === 'reprice' ? labels.reprice : action === 'reject' ? labels.reject : fallbackLabel;
 }
 
 /**

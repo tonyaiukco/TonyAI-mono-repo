@@ -4,7 +4,7 @@
     "submitted": "Gönderildi",
     "under_review": "İncelemede",
     "approved": "Onaylandı",
-    "rejected": "Reddedildi",
+    "rejected": "İade edildi",
     "locked": "Kilitli",
     "voided": "Geçersiz kılındı"
   },
@@ -13,7 +13,7 @@
     "submitted": "gönderilmiş",
     "under_review": "incelemede",
     "approved": "onaylanmış",
-    "rejected": "reddedilmiş",
+    "rejected": "iade edilmiş",
     "locked": "kilitli",
     "voided": "geçersiz kılınmış"
   }

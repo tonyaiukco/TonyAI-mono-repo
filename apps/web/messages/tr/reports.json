@@ -19,7 +19,7 @@
   "evidenceSummary": "Kanıt özeti (dosya adları + sayılar)",
   "withdrawnOne": "1 kayıt bu raporlama yılından geri çekildi. Yukarıdaki hiçbir rakama dahil değildir ve her dışa aktarım onu, o sırada kaydedilen gerekçesiyle listeler.",
   "withdrawnMany": "{count} kayıt bu raporlama yılından geri çekildi. Yukarıdaki hiçbir rakama dahil değildirler ve her dışa aktarım onları, o sırada kaydedilen gerekçeleriyle listeler.",
-  "draftWarning": "Bu dönemin kayıtlarının %{percent} oranı taslak/reddedilmiş durumda — bu rapor nihai raporlamaya uygun değildir.",
+  "draftWarning": "Bu dönemin kayıtlarının %{percent} oranı taslak/iade edilmiş durumda — bu rapor nihai raporlamaya uygun değildir.",
   "templateYear": "{template} · Raporlama yılı {year}",
   "status": {
     "approved": "Tüm kayıtlar onaylı",
@@ -63,7 +63,7 @@
     "total": "Toplam kayıt",
     "committed": "Sayılan",
     "pending": "İnceleme bekleyen",
-    "incomplete": "Taslak / reddedilen",
+    "incomplete": "Taslak / iade edilen",
     "withdrawn": "Geri çekilen"
   },
   "sharingNote": "Rapor paylaşımı (bağlantı / e-posta) sonraki bir aşamada gelecek.",

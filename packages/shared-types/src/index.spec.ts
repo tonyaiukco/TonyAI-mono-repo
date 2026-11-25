@@ -42,6 +42,8 @@ import {
   CATEGORY_SCOPE_MAP,
   CATEGORY_UNITS,
   mayAuthorRecords,
+  mayReadRecordTrail,
+  RECORD_TRAIL_EVENT_KINDS,
   mayApproveRecords,
   mayEditRecord,
   mayRecallRecord,
@@ -1332,6 +1334,39 @@ describe('mayAuthorRecords — the one record-write rule', () => {
   it('refuses a signed-out shell', () => {
     expect(mayAuthorRecords(null)).toBe(false);
     expect(mayAuthorRecords(undefined)).toBe(false);
+  });
+});
+
+describe('mayReadRecordTrail — who reads one record\'s history (WP5, INC-2.6 §6)', () => {
+  const author = { id: 'u-author', role: 'data_entry' };
+  const record = { createdBy: 'u-author' };
+
+  it.each([
+    ['super_admin', true],
+    ['consultant', true],
+    ['executive_viewer', true],
+  ])('%s reads any record it can read → %s', (role, allowed) => {
+    expect(mayReadRecordTrail({ id: 'someone-else', role }, record)).toBe(allowed);
+  });
+
+  it('a data_entry author reads their own record', () => {
+    expect(mayReadRecordTrail(author, record)).toBe(true);
+  });
+
+  it('a data_entry user may not read a colleague\'s record', () => {
+    expect(mayReadRecordTrail({ id: 'u-colleague', role: 'data_entry' }, record)).toBe(false);
+  });
+
+  it('refuses an unknown role, a mis-cased role and a signed-out shell', () => {
+    expect(mayReadRecordTrail({ id: 'u-author', role: 'DATA_ENTRY' }, record)).toBe(false);
+    expect(mayReadRecordTrail({ id: 'u-author', role: 'auditor' }, record)).toBe(false);
+    expect(mayReadRecordTrail(null, record)).toBe(false);
+    expect(mayReadRecordTrail(author, null)).toBe(false);
+  });
+
+  it('lists the trail kinds once each, `other` last', () => {
+    expect(new Set(RECORD_TRAIL_EVENT_KINDS).size).toBe(RECORD_TRAIL_EVENT_KINDS.length);
+    expect(RECORD_TRAIL_EVENT_KINDS.at(-1)).toBe('other');
   });
 });
 

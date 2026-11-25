@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
-import { SelfApprovalRefusedError, SubmitAuthorRefusedError } from '../../src/activity-records/errors';
+import {
+  SelfApprovalRefusedError,
+  SelfReviewRefusedError,
+  SubmitAuthorRefusedError,
+} from '../../src/activity-records/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { attachEvidence, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
 import { lifecycleServices, pdfFile } from './services';
@@ -118,6 +122,57 @@ describe('D01 — the approver is neither the creator nor the submitter', () => 
   });
 });
 
+describe('WP5 — the author does not take their own record into review', () => {
+  it('a super_admin is refused the start of review of their own record with 403 self_review_forbidden; it stays submitted and can still be recalled', async () => {
+    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id }, { priced: true });
+    await attachEvidence(prisma, tenant, [record.id]);
+    const submitted = await s.records.submit(tenant.users.superAdmin, record.id);
+
+    const refusal = await s.records
+      .startReview(tenant.users.superAdmin, record.id, submitted.submittedAt)
+      .then(() => null, (err: unknown) => err);
+    expect(refusal).toBeInstanceOf(SelfReviewRefusedError);
+    expect((refusal as SelfReviewRefusedError).getStatus()).toBe(403);
+    expect((refusal as SelfReviewRefusedError).getResponse()).toMatchObject({ code: 'self_review_forbidden' });
+
+    const row = await prisma.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+    expect(row.status).toBe(ActivityRecordStatus.submitted);
+    expect(row.reviewedBy).toBeNull();
+    expect(await prisma.auditLog.count({ where: { entityId: record.id, action: 'review' } })).toBe(0);
+
+    await s.records.recall(tenant.users.superAdmin, record.id);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
+  });
+
+  it('a former author whose role changed to consultant is refused too', async () => {
+    const record = await createRecord(prisma, tenant, {}, { priced: true });
+    await attachEvidence(prisma, tenant, [record.id]);
+    const submitted = await s.records.submit(tenant.users.dataEntry, record.id);
+    const owner = connectOwner();
+    await owner
+      .$transaction([
+        owner.userSubsidiaryAccess.deleteMany({ where: { userId: tenant.users.dataEntry.id } }),
+        owner.profile.update({ where: { id: tenant.users.dataEntry.id }, data: { role: 'consultant' } }),
+      ])
+      .finally(() => owner.$disconnect());
+    const formerAuthor = { ...tenant.users.consultant, id: tenant.users.dataEntry.id };
+
+    await expect(
+      s.records.startReview(formerAuthor, record.id, submitted.submittedAt),
+    ).rejects.toBeInstanceOf(SelfReviewRefusedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it("a consultant takes a data_entry user's record into review", async () => {
+    const record = await createRecord(prisma, tenant, {}, { priced: true });
+    await attachEvidence(prisma, tenant, [record.id]);
+    const submitted = await s.records.submit(tenant.users.dataEntry, record.id);
+    const reviewed = await s.records.startReview(tenant.users.consultant, record.id, submitted.submittedAt);
+    expect(reviewed.status).toBe(ActivityRecordStatus.under_review);
+    expect(reviewed.reviewedBy).toBe(tenant.users.consultant.id);
+  });
+});
+
 // Decisions 2026-11-12 (option A): evidence is author-only, super_admin
 // included — otherwise a super_admin could re-file a colleague's draft and then
 // approve it, which D01 (`createdBy` only) cannot see.
@@ -154,7 +209,7 @@ describe('D03 — a period cannot be locked while it holds a rejected record', (
 
     const refused = await lock().catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ConflictException);
-    expect((refused as Error).message).toMatch(/1 rejected record\(s\)/);
+    expect((refused as Error).message).toMatch(/1 returned record\(s\)/);
     expect(await prisma.periodLock.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
 
     await s.records.submit(tenant.users.dataEntry, record.id);

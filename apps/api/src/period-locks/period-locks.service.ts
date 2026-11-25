@@ -205,10 +205,10 @@ export class PeriodLocksService {
         if (pendingReview > 0 || rejected > 0) {
           const parts = [
             ...(pendingReview > 0
-              ? [`${pendingReview} record(s) in this period are still awaiting review — approve or reject them`]
+              ? [`${pendingReview} record(s) in this period are still awaiting review — approve or return them`]
               : []),
             ...(rejected > 0
-              ? [`${rejected} rejected record(s) are waiting for their authors — have them corrected and resubmitted, or deleted`]
+              ? [`${rejected} returned record(s) are waiting for their authors — have them corrected and resubmitted, or deleted`]
               : []),
           ];
           const message = `${parts.join('; ')} before locking.`;

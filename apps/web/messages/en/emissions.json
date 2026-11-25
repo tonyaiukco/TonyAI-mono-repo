@@ -123,7 +123,7 @@
     "updatedAt": "Updated At",
     "recordId": "Record ID",
     "varianceReason": "Reason for Variance",
-    "sentBack": "Why this was sent back"
+    "sentBack": "Why this was returned"
   },
   "void": {
     "why": "Why this figure was withdrawn",
