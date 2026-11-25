@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -91,6 +92,12 @@ export class ActivityRecordFiltersQueryDto implements ActivityRecordPageFilters 
   @MaxLength(ACTIVITY_RECORD_SEARCH_MAX_LENGTH)
   @Validate(NoControlCharacters)
   search?: string;
+
+  /** `true`: only the pending records the caller decides (the review queue's default view). */
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @IsBoolean()
+  awaitingMyDecision?: boolean;
 }
 
 /** GET /activity-records: the filters, a sort, and the page. */

@@ -80,6 +80,9 @@ export interface ActivityRecordPageFilters extends ListActivityRecordsParams {
    * or legalName), category, periodValue and varianceReason. Escape %, _ and
    * backslash in SQL LIKE patterns. Empty means no search filter. */
   search?: string;
+  /** The review queue's default view (inc26-roles-approval-chain): only the
+   *  pending records the caller decides (`recordApprover`). Wire: `true`. */
+  awaitingMyDecision?: boolean;
 }
 
 export interface ActivityRecordPageParams extends ActivityRecordPageFilters, CursorPageParams {

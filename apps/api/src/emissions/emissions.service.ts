@@ -32,6 +32,7 @@ import {
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
 import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
 import { CompletenessQueryDto } from './dto/completeness-query.dto';
@@ -596,6 +597,9 @@ export class EmissionsService {
         select: SUMMARY_RECORD_SELECT,
         where: {
           subsidiaryId: subsidiaryFilter,
+          // A standard user's figures count its ticked categories (and its own
+          // records) only (INC-2.6 §1, ruling R5).
+          AND: [recordScopeWhere(user)],
           reportingYear: query.year,
           scope: query.scope,
           category: query.category,
@@ -665,6 +669,7 @@ export class EmissionsService {
       this.prisma.activityRecord.findMany({
         where: {
           subsidiaryId: subsidiaryFilter,
+          AND: [recordScopeWhere(user)],
           reportingYear: query.year,
           scope: query.scope,
           category: query.category,
@@ -924,6 +929,7 @@ export class EmissionsService {
       this.prisma.activityRecord.findMany({
         where: {
           subsidiaryId: query.subsidiaryId,
+          AND: [recordScopeWhere(user)],
           reportingYear: query.year,
           category: { in: INVOICE_TRACKED_CATEGORIES },
           // Deliberately UNFILTERED by status, where this once asked SQL for

@@ -74,7 +74,7 @@ export class RecordAuditTrailService {
 
     type Named = { id: string; name: string };
     const none: Promise<Named[]> = Promise.resolve([]);
-    const [profiles, locations] = await Promise.all([
+    const [profiles, locations, organisation] = await Promise.all([
       userIds.length
         ? this.prisma.profile
             .findMany({
@@ -89,6 +89,8 @@ export class RecordAuditTrailService {
             select: { id: true, name: true },
           })
         : none,
+      // The cut-over, read once for the whole trail.
+      this.prisma.organisation.findUnique({ where: { id: user.organisationId }, select: { roleModelChangedAt: true } }),
     ]);
 
     return {
@@ -96,6 +98,7 @@ export class RecordAuditTrailService {
       events: buildRecordTrail(rows, {
         names: new Map(profiles.map((p) => [p.id, p.name])),
         locations: new Map(locations.map((l) => [l.id, l.name])),
+        cutOver: organisation?.roleModelChangedAt ?? null,
       }),
       truncated,
     };

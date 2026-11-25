@@ -22,6 +22,7 @@ import {
   type EvidenceLinkRefusedDTO,
   mayAuthorRecords,
   EDITABLE_RECORD_STATUSES,
+  can,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
@@ -29,6 +30,7 @@ import { StorageIntentsService, type ObjectRef } from '../storage/storage-intent
 import { EVIDENCE_BUCKET } from '../storage/buckets';
 import { captureException } from '../observability/sentry';
 import type { RequestUser } from '../auth/auth.types';
+import { inRecordScope } from '../activity-records/record-scope';
 import { AuditService } from '../audit/audit.service';
 import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
 import {
@@ -88,6 +90,9 @@ const WITH_LINKED_RECORDS = {
       activityRecord: {
         select: {
           id: true,
+          // For the reader's record scope (a standard user's categories).
+          subsidiaryId: true,
+          createdBy: true,
           category: true,
           reportingYear: true,
           periodValue: true,
@@ -201,13 +206,19 @@ export class EvidenceService {
     const record = await this.prisma.activityRecord.findUnique({
       where: { id: recordId },
     });
-    if (!record || !user.accessibleSubsidiaryIds.includes(record.subsidiaryId)) {
+    // The record scope: a standard user reads evidence only through a record
+    // of a ticked category, or one it created (INC-2.6 §1, ruling R5).
+    if (!record || !inRecordScope(user, record)) {
       throw new ResourceNotFoundError('record_not_found');
     }
     return record;
   }
 
-  /** Load a file through its own subsidiary (out-of-set → 404, the same as a missing id). */
+  /**
+   * Load a file through its own subsidiary (out-of-set → 404, the same as a
+   * missing id). A standard user reads a file only as the evidence of a
+   * record it reads — or one it uploaded itself (an upload not yet linked).
+   */
   private async loadEvidenceScoped(
     user: RequestUser,
     id: string,
@@ -217,6 +228,13 @@ export class EvidenceService {
       include: WITH_LINKED_RECORDS,
     });
     if (!evidence || !user.accessibleSubsidiaryIds.includes(evidence.subsidiaryId)) {
+      throw new ResourceNotFoundError('evidence_not_found');
+    }
+    if (
+      can(user.role, 'scope.categories') &&
+      evidence.uploadedBy !== user.id &&
+      !evidence.links.some((l) => inRecordScope(user, l.activityRecord))
+    ) {
       throw new ResourceNotFoundError('evidence_not_found');
     }
     return evidence;
@@ -313,7 +331,11 @@ export class EvidenceService {
     if (rows.slice(0, limit).reduce((n, e) => n + e.links.length, 0) > this.limits.REPORT_EVIDENCE_LINK_LIMIT) {
       throw new QueryTooBroadError();
     }
-    return toCursorPage(rows, limit, EVIDENCE_SORT, binding, (e) => [e.createdAt, e.id], (e) => this.toDTO(e));
+    // A file may back records the reader does not see (another category):
+    // those are left out of its list, never named.
+    return toCursorPage(rows, limit, EVIDENCE_SORT, binding, (e) => [e.createdAt, e.id], (e) =>
+      this.toDTO({ ...e, links: e.links.filter((l) => inRecordScope(user, l.activityRecord)) }),
+    );
   }
 
   /** `POST /activity-records/:recordId/evidence` — one file for one record, with that record's own refusals. */
@@ -348,7 +370,8 @@ export class EvidenceService {
     const found = await this.prisma.activityRecord.findMany({
       where: { id: { in: ids }, subsidiaryId: { in: user.accessibleSubsidiaryIds } },
     });
-    const byId = new Map(found.map((r) => [r.id, r]));
+    // A record outside the caller's record scope answers as one that does not exist.
+    const byId = new Map(found.filter((r) => inRecordScope(user, r)).map((r) => [r.id, r]));
 
     const refused: EvidenceLinkRefusal[] = ids
       .filter((id) => !byId.has(id))

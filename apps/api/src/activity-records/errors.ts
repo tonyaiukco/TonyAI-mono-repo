@@ -37,6 +37,8 @@ export const EDIT_AUTHOR_REFUSAL =
   'You may only edit activity records you created';
 export const RECALL_AUTHOR_REFUSAL =
   'You may only recall activity records you created';
+export const DELETE_AUTHOR_REFUSAL =
+  'You may only delete activity records you created; a masterkey removes a colleague\'s draft';
 export const SELF_APPROVAL_REFUSAL =
   'You created this record, so someone else must approve it.';
 export const SELF_REVIEW_REFUSAL =
@@ -101,12 +103,18 @@ export class SubmitAuthorRefusedError extends ForbiddenException {
  * Only a record's author edits or recalls it (BUG-R2-03, decision 2026-11-10
  * (fourth), 5) — `masterkey` included, the same rule as submitting (D02).
  * It closes the gap where a masterkey edited a colleague's draft and then
- * approved it, which D01 alone could not see. Deleting a draft is NOT covered:
- * a masterkey may still remove one (see `assertCanDelete`).
+ * approved it, which D01 alone could not see. Deleting a draft is narrower:
+ * a masterkey may still remove a colleague's (`record.delete_any_draft`, see
+ * `assertCanDelete`); anyone else only their own.
  */
 export class AuthorOnlyRefusedError extends ForbiddenException {
-  constructor(action: 'edit' | 'recall') {
-    super(errorBody('record_author_forbidden', action === 'edit' ? EDIT_AUTHOR_REFUSAL : RECALL_AUTHOR_REFUSAL));
+  constructor(action: 'edit' | 'recall' | 'delete') {
+    super(
+      errorBody(
+        'record_author_forbidden',
+        action === 'edit' ? EDIT_AUTHOR_REFUSAL : action === 'recall' ? RECALL_AUTHOR_REFUSAL : DELETE_AUTHOR_REFUSAL,
+      ),
+    );
   }
 }
 

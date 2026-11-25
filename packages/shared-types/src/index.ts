@@ -7206,6 +7206,9 @@ export const BULK_UPLOAD_ERROR_CODES = [
   'no_factor',
   /** The reporting period is closed. */
   'period_locked',
+  /** A standard user's grant for the row's company does not tick its
+   *  category (INC-2.6 §1, §7.3) — the same name as the record API's code. */
+  'category_not_granted',
   /** Anything the server did not anticipate; the row is refused, not applied. */
   'unexpected',
   /** The request's deadline passed before this row began. Nothing was applied

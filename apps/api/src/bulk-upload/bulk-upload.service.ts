@@ -53,6 +53,7 @@ import { storedUnit } from '../calculations/storable-unit';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { CategoryNotGrantedError } from '../activity-records/record-scope';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
@@ -1400,6 +1401,11 @@ export class BulkUploadService {
     }
     if (error instanceof PeriodLockedError) {
       return { row, column: null, code: 'period_locked', message: error.message };
+    }
+    // Before the generic 403s: a standard user's row outside its categories
+    // is that user's own answer, in the dry run and the apply alike.
+    if (error instanceof CategoryNotGrantedError) {
+      return { row, column: 'category', code: 'category_not_granted', message: error.message };
     }
     if (error instanceof BadRequestException) {
       const response = error.getResponse();

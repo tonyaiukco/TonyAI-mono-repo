@@ -10,6 +10,7 @@ import {
   can,
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
+import { recordScopeWhere } from '../activity-records/record-scope';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { evidenceReadyWhere } from '../activity-records/activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -73,9 +74,10 @@ export class ImportBatchesService {
     const batch = await this.visibleBatch(user, id);
     const [dto] = await this.toDtos(user, [batch]);
     const records = await this.prisma.activityRecord.findMany({
-      // Tenant-filtered like every record read: a consultant sees them all,
-      // and a data_entry reader who can see the batch can reach every one.
-      where: { importBatchId: id, subsidiaryId: { in: user.accessibleSubsidiaryIds } },
+      // Scoped like every record read (`recordScopeWhere`): an organisation
+      // reader sees them all, a standard user who can see the batch only the
+      // records of its ticked categories and its own.
+      where: { importBatchId: id, AND: [recordScopeWhere(user)] },
       orderBy: [{ reportingYear: 'asc' }, { createdAt: 'asc' }],
       select: {
         id: true,

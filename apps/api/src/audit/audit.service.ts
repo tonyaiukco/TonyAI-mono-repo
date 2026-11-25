@@ -1,12 +1,12 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@tonyai/db';
-import type {
-  AuditAction,
-  AuditEntity,
-  AuditLogDTO,
-  Paginated,
-  UserRole,
+import {
+  displayRole,
+  type AuditAction,
+  type AuditEntity,
+  type AuditLogDTO,
+  type Paginated,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveProfiles } from '../common/resolve-profiles';
@@ -190,7 +190,12 @@ export class AuditService {
 
     // `audit_log.user_id` has no FK (the row must survive the actor's deletion),
     // so the actor is resolved separately — one query for the page, not per row.
-    const byId = await resolveProfiles(this.prisma, rows.map((r) => r.userId));
+    const [byId, organisation] = await Promise.all([
+      resolveProfiles(this.prisma, rows.map((r) => r.userId)),
+      // The role-model cut-over, read once per request (design Decision 10).
+      this.prisma.organisation.findUnique({ where: { id: user.organisationId }, select: { roleModelChangedAt: true } }),
+    ]);
+    const cutOver = organisation?.roleModelChangedAt ?? null;
 
     return {
       items: rows.map((r) => {
@@ -205,8 +210,9 @@ export class AuditService {
           userFullName: profile?.fullName ?? null,
           // The role STORED on the row, never the profile's current role: an
           // audit trail that re-derived it would misstate who was allowed to
-          // do what at the time.
-          role: (r.role as UserRole | null) ?? null,
+          // do what at the time. Shown under its own role model: a
+          // `super_admin` from before the cut-over was organisation-wide.
+          role: displayRole(r.role, r.createdAt, cutOver),
           diff: (r.diff as Record<string, unknown> | null) ?? null,
           createdAt: r.createdAt.toISOString(),
         };
