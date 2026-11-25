@@ -29,10 +29,11 @@ import {
   type CategoryCompleteness,
   type SubsidiaryCompletenessDTO,
   type TrackingMatrixRow,
+  can,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
-import { recordScopeWhere } from '../activity-records/record-scope';
+import { grantedCategories, recordScopeWhere } from '../activity-records/record-scope';
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
 import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
 import { CompletenessQueryDto } from './dto/completeness-query.dto';
@@ -735,7 +736,12 @@ export class EmissionsService {
 
       let uncalculatedRowCount = 0;
 
-      const cells: TrackingMatrixCell[] = categories.map((category) => {
+      // A standard user's row holds the categories it may see in this company
+      // only — the ticked ones, and any where it has its own records — so an
+      // ungranted category is neither a cell nor counted missing (INC-2.6 §1,
+      // ruling R5; owner's review). Every other role sees every category.
+      const rowCategories = visibleCategories(user, sub.id, categories, (c) => byCell.has(`${sub.id}\u0000${c}`));
+      const cells: TrackingMatrixCell[] = rowCategories.map((category) => {
         const recs = byCell.get(`${sub.id}\u0000${category}`) ?? [];
 
         let coverage: InvoiceCoverage | null = null;
@@ -874,7 +880,7 @@ export class EmissionsService {
         designatedPerson: sub.designatedPerson,
         totalTCo2e,
         completeCount,
-        categoryCount: categories.length,
+        categoryCount: rowCategories.length,
         trackingGranularity: sub.trackingGranularity,
         locationCount,
         uncalculatedRecordCount: uncalculatedRowCount,
@@ -964,7 +970,12 @@ export class EmissionsService {
       else byCategory.set(r.category, [r]);
     }
 
-    const categories: CategoryCompleteness[] = INVOICE_TRACKED_CATEGORIES.map(
+    const categories: CategoryCompleteness[] = visibleCategories(
+      user,
+      query.subsidiaryId,
+      [...INVOICE_TRACKED_CATEGORIES],
+      (c) => byCategory.has(c),
+    ).map(
       (category) => {
         const recs = byCategory.get(category) ?? [];
 
@@ -1079,4 +1090,21 @@ export class EmissionsService {
 
     return { ...empty, categories };
   }
+}
+
+/**
+ * The categories of `candidates` a reader is shown for one company: every one,
+ * for a role categories never narrow; for a standard user, those ticked on its
+ * grant and those it holds its own records in (`hasRecords`, read inside its
+ * record scope), in the candidates' order.
+ */
+function visibleCategories<C extends string>(
+  user: RequestUser,
+  subsidiaryId: string,
+  candidates: readonly C[],
+  hasRecords: (category: C) => boolean,
+): C[] {
+  if (!can(user.role, 'scope.categories')) return [...candidates];
+  const ticked = new Set<string>(grantedCategories(user, subsidiaryId));
+  return candidates.filter((c) => ticked.has(c) || hasRecords(c));
 }

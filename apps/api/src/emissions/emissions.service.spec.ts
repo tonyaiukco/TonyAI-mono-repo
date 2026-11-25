@@ -2194,6 +2194,31 @@ describe('EmissionsService — the record scope (a standard user\'s categories)'
     expect(prisma.activityRecord.findMany.mock.calls[0][0].where.AND).toEqual([NARROW_SCOPE]);
   });
 
+  it('the tracking matrix shows a standard user only the categories it may see per company — no ungranted cell, none counted missing', async () => {
+    const sub = (id: string) => ({
+      id, legalName: id, tradingName: id, sector: null, designatedPerson: null,
+      trackingGranularity: 'subsidiary', locations: [],
+    });
+    prisma.subsidiary.findMany.mockResolvedValue([sub('sub-1'), sub('sub-2')]);
+    // Its own Natural Gas draft on sub-1 (a category since withdrawn) stays visible.
+    prisma.activityRecord.findMany.mockResolvedValue([
+      { ...makeRecord({ id: 'own', subsidiaryId: 'sub-1', category: 'Natural Gas', createdBy: 'user-entry', status: 'draft' }), _count: { evidenceLinks: 0 } },
+    ]);
+
+    const m = await service.trackingMatrix(narrow(), { year: 2024 });
+
+    const row = (id: string) => m.rows.find((r) => r.subsidiaryId === id)!;
+    expect(row('sub-1').cells.map((c) => c.category)).toEqual(['Electricity', 'Natural Gas']);
+    expect(row('sub-1').categoryCount).toBe(2);
+    expect(row('sub-2').cells.map((c) => c.category)).toEqual(['Fuel']);
+    expect(m.totals.complete + m.totals.incomplete + m.totals.missing).toBe(3);
+  });
+
+  it('the completeness drill-down lists only the invoice categories a standard user may see', async () => {
+    const c = await service.completeness(narrow(), { subsidiaryId: 'sub-1', year: 2024 });
+    expect(c.categories.map((x) => x.category)).toEqual(['Electricity']);
+  });
+
   it('the completeness drill-down query carries the same scope', async () => {
     await service.completeness(narrow(), { subsidiaryId: 'sub-1', year: 2024 });
 

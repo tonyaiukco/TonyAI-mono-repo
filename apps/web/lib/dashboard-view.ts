@@ -6,8 +6,10 @@
 // still mapped here is what `EmissionsCharts` (matrixToSubsidiaries),
 // `KPICards` (buildKpiData) and `AlertsPanel` (matrixToAlerts) consume.
 // Retiring the remaining three view models is a separate change.
+import { CATEGORIES } from "@/lib/types";
 import type {
   Alert,
+  Category,
   CategoryData,
   EmissionsSummary,
   KPIData,
@@ -172,3 +174,27 @@ export function matrixCellLinks(subsidiaryId: string, category: string, year: nu
     history: `/emissions?${history.toString()}`,
   };
 }
+
+/**
+ * The matrix's columns: the categories any row holds, in the product's order
+ * (every category for a reader categories never narrow). A standard user's
+ * rows hold only the categories it may see in each company (INC-2.6 §1,
+ * `inc26-roles-approval-chain`), so the header follows the rows rather than
+ * the full list; a matrix with no row keeps the full list.
+ */
+export function matrixColumns(rows: readonly TrackingMatrixRow[]): Category[] {
+  if (rows.length === 0) return [...CATEGORIES];
+  const held = new Set<string>(rows.flatMap((row) => row.cells.map((cell) => cell.category)));
+  return CATEGORIES.filter((category) => held.has(category));
+}
+
+/** A row's cell under each column, or null where the row holds none (a category
+ *  the reader may not see in that company). */
+export function cellsByColumn(
+  row: TrackingMatrixRow,
+  columns: readonly Category[],
+): (TrackingMatrixRow["cells"][number] | null)[] {
+  const byCategory = new Map(row.cells.map((cell) => [cell.category as string, cell]));
+  return columns.map((category) => byCategory.get(category) ?? null);
+}
+

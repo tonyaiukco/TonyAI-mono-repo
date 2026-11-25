@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { axisThousands, buildKpiData, compactTonnes, matrixCellLinks, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { axisThousands, buildKpiData, cellsByColumn, compactTonnes, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { CATEGORIES } from '@/lib/types';
 import { initialEmissionsTab } from './emissions-view';
 import { copyFor } from '@/lib/i18n/testing';
 import type {
@@ -254,3 +255,24 @@ describe('matrixCellLinks (BUG-R2-06)', () => {
     expect(initialEmissionsTab(new URLSearchParams('tab=HISTORY'))).toBe('summary');
   });
 });
+
+describe("matrixColumns and cellsByColumn (inc26: a standard user's rows hold only the categories it may see)", () => {
+  const cell = (category: string) => ({ category }) as unknown as TrackingMatrixRow["cells"][number];
+  const row = (id: string, categories: string[]) =>
+    ({ subsidiaryId: id, cells: categories.map(cell) }) as unknown as TrackingMatrixRow;
+
+  it("lists the categories any row holds, in the product's order", () => {
+    expect(matrixColumns([row("a", ["Fuel", "Electricity"]), row("b", ["Water"])])).toEqual(["Electricity", "Fuel", "Water"]);
+  });
+
+  it("keeps the full list for a matrix with no row", () => {
+    expect(matrixColumns([])).toEqual([...CATEGORIES]);
+  });
+
+  it("places each cell under its column and leaves a hidden category blank", () => {
+    const columns = matrixColumns([row("a", ["Electricity"]), row("b", ["Fuel"])]);
+    expect(cellsByColumn(row("a", ["Electricity"]), columns).map((c) => c?.category ?? null)).toEqual(["Electricity", null]);
+    expect(cellsByColumn(row("b", ["Fuel"]), columns).map((c) => c?.category ?? null)).toEqual([null, "Fuel"]);
+  });
+});
+

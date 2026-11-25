@@ -208,6 +208,11 @@ describe('a standard user granted Electricity alone (INC-2.6 §1, task 8.5)', ()
     expect(summary.data.byCategory.map((c) => c.category).sort()).toEqual(['Electricity', 'Natural Gas']);
     const matrix = await ok<ReportingMatrixResponse>(narrow, '/emissions/context/tracking-matrix?year=2026');
     expect(matrix.data.rows.reduce((sum, r) => sum + r.totalTCo2e, 0)).toBe(ELECTRICITY_TCO2E + OWN_TCO2E);
+    // No Fuel cell, and none counted missing (owner's review): the row holds the
+    // ticked category and the one of its own record only.
+    const cells = matrix.data.rows.flatMap((r) => r.cells.map((c) => c.category));
+    expect(cells).not.toContain('Fuel');
+    expect(new Set(cells)).toEqual(new Set(['Electricity', 'Natural Gas']));
     for (const path of ['/emissions/context/summary?year=2026', '/emissions/context/tracking-matrix?year=2026', '/emissions/summary?year=2026', '/emissions/tracking-matrix?year=2026']) {
       const answer = await call(narrow, 'GET', path);
       expect(answer.status, `${path}: ${answer.text.slice(0, 200)}`).toBe(200);
