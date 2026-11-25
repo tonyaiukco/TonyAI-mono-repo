@@ -890,7 +890,11 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
     }
     expect(audits[1].diff).toMatchObject({ default: true, geographyCode: 'TR' });
     expect(audits[3].diff).toMatchObject({ kind: 'kvkk_registration', textVersion: 'placeholder-1' });
-    const trail = JSON.stringify(audits).toLowerCase();
+    // Ids are random hex and can spell 'ada' by chance: they are removed
+    // before the personal words are looked for.
+    const trail = JSON.stringify(audits)
+      .toLowerCase()
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>');
     for (const personal of ['ada', 'yilmaz', 'example.test', 'sustainability', 'example holding']) {
       expect(trail, personal).not.toContain(personal);
     }
