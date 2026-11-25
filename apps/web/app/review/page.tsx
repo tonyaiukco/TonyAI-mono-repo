@@ -4,6 +4,7 @@ import { useLocale, useTranslations } from "use-intl";
 import {
   canApproveRecord,
   isOwnRecordForApprover,
+  isNewerRecord,
   isRevised,
   shouldStartReviewOnOpen,
 } from "@/lib/record-lifecycle-view";
@@ -187,7 +188,10 @@ export default function ReviewPage() {
     api
       .reviewActivityRecord(fresh.id, { seenSubmittedAt: fresh.submittedAt })
       .then((updated) => {
-        setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        // The row too only if it still shows what this start answered for: a
+        // queue read since may hold a newer submission (returned and sent
+        // again), which a late answer must not turn back.
+        setRows((prev) => prev.map((r) => (r.id === updated.id && !isNewerRecord(r, updated) ? updated : r)));
         // Only the opening this was sent from, and only if nothing newer (a
         // decision's answer, a re-read) has spoken since.
         if (sheetSession.current === session && sheetRead.current === seq && selectedId.current === fresh.id) {

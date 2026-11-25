@@ -7,6 +7,7 @@ import type { Locale } from './types';
 import {
   canApproveRecord,
   canSubmitEntry,
+  isNewerRecord,
   isOwnRecordForApprover,
   isRevised,
   saveErrorDescription,
@@ -155,5 +156,17 @@ describe('opening a record in the review queue (WP5)', () => {
     expect(isRevised({ submissionCount: 2 })).toBe(true);
     expect(isRevised({ submissionCount: 5 })).toBe(true);
     expect(isRevised(null)).toBe(false);
+  });
+});
+
+describe('a late answer never replaces a newer read (owner review)', () => {
+  const v = (updatedAt: string, submissionCount: number) => ({ updatedAt, submissionCount });
+  it('keeps a row read after the answer, or holding a later submission', () => {
+    expect(isNewerRecord(v('2026-11-25T10:00:02.000Z', 2), v('2026-11-25T10:00:01.000Z', 1))).toBe(true);
+    expect(isNewerRecord(v('2026-11-25T10:00:00.000Z', 2), v('2026-11-25T10:00:01.000Z', 1))).toBe(true);
+  });
+  it('lets the answer replace the row it answered for', () => {
+    expect(isNewerRecord(v('2026-11-25T10:00:00.000Z', 1), v('2026-11-25T10:00:01.000Z', 1))).toBe(false);
+    expect(isNewerRecord(v('2026-11-25T10:00:01.000Z', 1), v('2026-11-25T10:00:01.000Z', 1))).toBe(false);
   });
 });

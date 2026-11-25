@@ -150,3 +150,18 @@ describe("record trail — the owner review of 52ceb7e8", () => {
     expect(trailValueKey("reportingPeriod", "a.b")).toBeNull();
   });
 });
+
+describe("record trail — the second owner review", () => {
+  it("tells apart values below twelve decimals", () => {
+    const en = { t: tFor("en"), locale: "en" as const };
+    const shown = formatTrailChange("figure", 1e-13, 2e-13, en);
+    expect(shown.before).not.toBe(shown.after);
+    expect(shown.before).not.toMatch(/^0 tCO2e$/);
+    expect(formatTrailValue("figure", 1e-13, en)).not.toBe("0 tCO2e");
+  });
+
+  it("words the legacy unspecified fuel as the other screens do", () => {
+    const copy = { t: tFor("tr"), locale: "tr" as const, root: rootFor("tr") };
+    expect(formatTrailValue("activityType", "unspecified", copy)).toBe(MESSAGES.tr.dataEntry.notSpecifiedLegacy);
+  });
+});

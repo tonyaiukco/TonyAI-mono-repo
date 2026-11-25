@@ -48,6 +48,17 @@ export const shouldStartReviewOnOpen = (
 export const isRevised = (record: { submissionCount: number } | null): boolean =>
   !!record && record.submissionCount >= 2;
 
+/**
+ * Does `shown` hold a later version of the record than `answer`? By its
+ * version (`updatedAt`, which every write to the row bumps), then by its
+ * submission count, so a late answer never replaces a newer read.
+ */
+export const isNewerRecord = (
+  shown: { updatedAt: string; submissionCount: number },
+  answer: { updatedAt: string; submissionCount: number },
+): boolean =>
+  Date.parse(shown.updatedAt) > Date.parse(answer.updatedAt) || shown.submissionCount > answer.submissionCount;
+
 type SaveErrorKey = 'duplicateAdvice' | 'duplicateAdviceMoving' | 'saveFailedServer' | 'recordChanged';
 
 /**

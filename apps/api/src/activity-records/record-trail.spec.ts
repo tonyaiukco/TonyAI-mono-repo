@@ -314,6 +314,18 @@ describe('buildRecordTrail — the owner review of 52ceb7e8', () => {
     ]);
   });
 
+  it('keeps a list apart from an object with digit keys, and lists an empty list added', () => {
+    expect(editChanges(snapshot({ input: { meters: [12] } }), snapshot({ input: { meters: { 0: 12 } } }), lookups)).toEqual([
+      { field: 'input.meters.~20', before: null, after: 12 },
+      { field: 'input.meters.0', before: 12, after: null },
+    ]);
+    expect(editChanges(snapshot({ input: { notes: 'x' } }), snapshot({ input: { notes: 'x', meters: [] } }), lookups)).toEqual([
+      { field: 'input.meters', before: null, after: '[]' },
+    ]);
+    // An input absent or empty is still nothing to report.
+    expect(editChanges(snapshot({ input: null }), snapshot({ input: {} }), lookups)).toEqual([]);
+  });
+
   it('keeps a key holding a dot apart from a nested key', () => {
     const changes = editChanges(
       snapshot({ input: { 'meter.reading': 12 } }),

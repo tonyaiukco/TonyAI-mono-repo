@@ -108,13 +108,24 @@ function asValue(v: unknown): RecordTrailValue {
  * (`{"meter.reading": 12}`) must not read as the nested `{"meter": {"reading": 12}}`.
  * JSON Pointer's escapes: `~` as `~0`, then `.` as `~1`.
  */
-const segment = (key: string) => key.replace(/~/g, '~0').replace(/\./g, '~1');
+const segment = (key: string) => {
+  const escaped = key.replace(/~/g, '~0').replace(/\./g, '~1');
+  // An object key made of digits is marked (`~2`), so `{"0": 12}` is not the
+  // array `[12]`, whose index is the bare number.
+  return /^\d+$/.test(key) ? `~2${escaped}` : escaped;
+};
 
 function leaves(value: unknown, prefix: string, out: Map<string, RecordTrailValue>): void {
   if (Array.isArray(value)) {
+    // An empty list is a value of its own: adding or emptying one is a change.
+    if (value.length === 0) out.set(prefix, '[]');
     value.forEach((item, i) => leaves(item, `${prefix}.${i}`, out));
   } else if (isObject(value)) {
-    for (const [key, item] of Object.entries(value)) leaves(item, `${prefix}.${segment(key)}`, out);
+    const entries = Object.entries(value);
+    // An empty object nested in an input likewise; the input itself absent or
+    // empty reads as nothing, as before.
+    if (entries.length === 0 && prefix.includes('.')) out.set(prefix, '{}');
+    for (const [key, item] of entries) leaves(item, `${prefix}.${segment(key)}`, out);
   } else {
     out.set(prefix, asValue(value));
   }

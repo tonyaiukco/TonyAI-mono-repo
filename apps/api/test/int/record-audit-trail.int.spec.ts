@@ -180,6 +180,31 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     expect(trail.events.find((e) => e.kind === 'submitted')?.reason).toBe('New chiller since March');
   });
 
+  it('numbers a submit after a legacy `update` submit and an uncounted `submit` as the third (owner review)', async () => {
+    const entry = A.users.dataEntry;
+    const created = await ok<ActivityRecordDTO>(entry, 'POST', '/activity-records', {
+      subsidiaryId: A.subsidiaryId, locationId: null, reportingYear: 2026, reportingPeriod: 'monthly',
+      periodValue: 'July', category: 'Electricity', activityType: null, activityValue: 1000,
+      activityUnit: 'kWh', varianceReason: null, input: null,
+    });
+    await attachEvidence(owner, A, [created.id]);
+    // History the API cannot write any more: a pre-taxonomy submit (an `update`
+    // moving to `submitted`), counted by the migration as 1, then a `submit` by
+    // the previous image in the deploy window, which raised nothing.
+    const row = (action: string, at: string) => ({
+      userId: entry.id, organisationId: A.organisationId, role: 'data_entry', action,
+      entity: 'activity_record', entityId: created.id, createdAt: new Date(at),
+      diff: { transition: { from: 'draft', to: 'submitted' } },
+    });
+    await owner.auditLog.createMany({ data: [row('update', '2026-01-01T00:00:00Z'), row('submit', '2026-01-02T00:00:00Z')] });
+    await owner.activityRecord.update({ where: { id: created.id }, data: { submissionCount: 1 } });
+
+    const third = await ok<ActivityRecordDTO>(entry, 'POST', `/activity-records/${created.id}/submit`);
+    expect(third.submissionCount).toBe(3);
+    const trail = JSON.parse((await trailOf(A.users.consultant, created.id)).text) as RecordAuditTrailDTO;
+    expect(trail.events.filter((e) => e.submission !== null).map((e) => e.submission)).toEqual([1, 2, 3]);
+  });
+
   it('is read by the three organisation-wide roles and the author, never written', async () => {
     const approved = await elevenEventStory(A);
     const auditRows = () => owner.auditLog.count({ where: { entityId: approved.id } });

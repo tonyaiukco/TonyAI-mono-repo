@@ -6719,7 +6719,9 @@ export type RecordTrailValue = string | number | boolean | null;
  * or an `input.`-prefixed key of the record's additional context
  * (`input.invoice_no`, `input.supplier`). A location is given by its name.
  * A key holding a `.` or `~` is escaped in its path as JSON Pointer does
- * (`~1`, `~0`), so `{"a.b": 1}` and `{"a": {"b": 1}}` stay two fields.
+ * (`~1`, `~0`), so `{"a.b": 1}` and `{"a": {"b": 1}}` stay two fields; an
+ * object key made of digits is marked `~2` (`{"0": 1}` is not `[1]`); an empty
+ * list or nested object is a value of its own (`"[]"`, `"{}"`).
  */
 export interface RecordTrailChangeDTO {
   field: string;

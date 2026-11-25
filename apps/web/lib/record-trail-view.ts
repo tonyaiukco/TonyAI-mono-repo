@@ -1,4 +1,4 @@
-import type { RecordTrailEventDTO, RecordTrailEventKind, RecordTrailValue } from "@/lib/types";
+import { UNSPECIFIED_ACTIVITY_TYPE, type RecordTrailEventDTO, type RecordTrailEventKind, type RecordTrailValue } from "@/lib/types";
 import type { Locale } from "@/lib/types";
 import { formatNumber } from "@/lib/i18n/number";
 import type { RecordWords } from "@/lib/vocabulary";
@@ -73,6 +73,8 @@ export function trailFieldLabel(field: string, t: TrailTranslator): string {
 export function trailValueKey(field: string, value: string): string | null {
   if (!/^[\w-]+$/.test(value) || value in Object.prototype) return null;
   if (field === "reportingPeriod") return `periods.granularity.${value}`;
+  // A record entered before fuels were tracked: the wording the other screens use.
+  if (field === "activityType" && value === UNSPECIFIED_ACTIVITY_TYPE) return "dataEntry.notSpecifiedLegacy";
   if (field === "activityType") return `dataEntry.activityTypes.${value}`;
   if (field === "activityUnit") return `units.label.${value}`;
   if (field === "parameters.cvBasis") return `dataEntry.inputs.cvBasis.${value}`;
@@ -93,17 +95,26 @@ export interface TrailValueCopy {
 
 const MAX_FRACTION_DIGITS = 12;
 
+/** `digits` up to `MAX_FRACTION_DIGITS` are decimals; past it, significant
+ *  digits (1 → 21), so a value of 1e-13 still reads as itself. */
 function numberAt(field: string, value: number, locale: Locale, digits: number): string {
-  const text = formatNumber(value, locale, { maximumFractionDigits: digits });
+  const options: Intl.NumberFormatOptions =
+    digits <= MAX_FRACTION_DIGITS
+      ? { maximumFractionDigits: digits }
+      : { maximumSignificantDigits: Math.min(digits - MAX_FRACTION_DIGITS, 21) };
+  const text = formatNumber(value, locale, options);
   return field === "figure" ? `${text} tCO2e` : text;
 }
+
+/** The last precision tried: 21 significant digits tells any two doubles apart. */
+const LAST_DIGITS = MAX_FRACTION_DIGITS + 21;
 
 /** The figure to three decimals and any other number to six — more where that
  *  would write a non-zero value as zero (0.00024 t is not "0"). */
 function numberText(field: string, value: number, locale: Locale): { text: string; digits: number } {
   let digits = field === "figure" ? 3 : 6;
   const zero = numberAt(field, 0, locale, digits);
-  while (value !== 0 && digits < MAX_FRACTION_DIGITS && numberAt(field, value, locale, digits) === zero) digits += 1;
+  while (value !== 0 && digits < LAST_DIGITS && numberAt(field, value, locale, digits) === zero) digits += 1;
   return { text: numberAt(field, value, locale, digits), digits };
 }
 
@@ -142,7 +153,7 @@ export function formatTrailChange(
   let a = formatTrailValue(field, after, copy);
   if (typeof before === "number" && typeof after === "number" && before !== after && field !== "reportingYear") {
     let digits = Math.max(numberText(field, before, copy.locale).digits, numberText(field, after, copy.locale).digits);
-    while (a === b && digits < MAX_FRACTION_DIGITS) {
+    while (a === b && digits < LAST_DIGITS) {
       digits += 1;
       b = numberAt(field, before, copy.locale, digits);
       a = numberAt(field, after, copy.locale, digits);

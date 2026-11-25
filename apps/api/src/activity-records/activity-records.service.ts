@@ -365,6 +365,22 @@ export function inheritsQuantityElsewhere(
   return next.locationId !== existing.locationId || !isNetEnergyBill(next.category, nextUnit, next.parameters);
 }
 
+/**
+ * A record's submit audit rows, in both shapes the submission-count migration
+ * counts (WP5): `submit`, and a pre-taxonomy `update` whose `diff.transition.to`
+ * is `submitted`. One definition, so the column and the history agree.
+ */
+export function submitRowsOf(recordId: string): Prisma.AuditLogWhereInput {
+  return {
+    entity: 'activity_record',
+    entityId: recordId,
+    OR: [
+      { action: 'submit' },
+      { action: 'update', diff: { path: ['transition', 'to'], equals: 'submitted' } },
+    ],
+  };
+}
+
 @Injectable()
 export class ActivityRecordsService {
   private readonly logger = new Logger(ActivityRecordsService.name);
@@ -1748,18 +1764,18 @@ export class ActivityRecordsService {
     // if a writer ever bypasses the protocol it turns that writer's damage
     // into this request's 409 (P2025, mapped by `withLockedRecord`).
     //
-    // WP5: which submission this is. The column, or the record's own `submit`
+    // WP5: which submission this is. The column, or the record's own submit
     // audit rows when they say more: a submit made by an image from before the
     // column (the deploy window) wrote a row but raised nothing, and the next
-    // submit must not name itself as a submission already in the trail. Read
-    // under the record lock, in the write's transaction.
+    // submit must not name itself as a submission already in the trail. The
+    // rows counted are the two shapes the migration's backfill counts: `submit`,
+    // and a pre-taxonomy `update` moving to `submitted`. Read under the record
+    // lock, in the write's transaction.
     const submission =
       status === ActivityRecordStatus.submitted
         ? Math.max(
             record.submissionCount,
-            await tx.auditLog.count({
-              where: { entity: 'activity_record', entityId: record.id, action: 'submit' },
-            }),
+            await tx.auditLog.count({ where: submitRowsOf(record.id) }),
           ) + 1
         : null;
     const updated = await tx.activityRecord.update({

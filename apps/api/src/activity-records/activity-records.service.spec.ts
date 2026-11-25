@@ -16,7 +16,7 @@ import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
   mayEditRecord,
 } from '@tonyai/shared-types';
 import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
-import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsQuantityElsewhere } from './activity-records.service';
+import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsQuantityElsewhere, submitRowsOf } from './activity-records.service';
 import {
   CALCULATION_STALE_MESSAGE,
   CalculationStaleError,
@@ -4468,8 +4468,15 @@ describe('ActivityRecordsService — submittedAt', () => {
 
     const dto = await service.submit(dataEntry(), 'rec-s');
 
-    expect(prisma.auditLog.count).toHaveBeenCalledWith({
-      where: { entity: 'activity_record', entityId: 'rec-s', action: 'submit' },
+    expect(prisma.auditLog.count).toHaveBeenCalledWith({ where: submitRowsOf('rec-s') });
+    // Both shapes the migration counts: a pre-taxonomy `update` moving to `submitted` too.
+    expect(submitRowsOf('rec-s')).toEqual({
+      entity: 'activity_record',
+      entityId: 'rec-s',
+      OR: [
+        { action: 'submit' },
+        { action: 'update', diff: { path: ['transition', 'to'], equals: 'submitted' } },
+      ],
     });
     expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(2);
     expect(dto.submissionCount).toBe(2);
