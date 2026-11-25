@@ -210,3 +210,13 @@ export function completionRate(row: Pick<TrackingMatrixRow, "completeCount" | "c
   return Math.round((row.completeCount / row.categoryCount) * 100);
 }
 
+/**
+ * Which sentence an invoice breakdown with no category shows: a subsidiary
+ * measured as a whole has none at all; a location-measured one has categories
+ * this reader is not granted (owner's review: never explain a reader's access
+ * as the company's measurement).
+ */
+export function emptyInvoiceGridKey(trackingGranularity: string): "grid.wholeCompany" | "grid.noVisibleCategory" {
+  return trackingGranularity === "subsidiary" ? "grid.wholeCompany" : "grid.noVisibleCategory";
+}
+

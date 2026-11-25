@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { axisThousands, buildKpiData, cellsByColumn, compactTonnes, completionRate, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { axisThousands, buildKpiData, cellsByColumn, compactTonnes, completionRate, emptyInvoiceGridKey, matrixCellLinks, matrixColumns, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
 import { CATEGORIES } from '@/lib/types';
 import { initialEmissionsTab } from './emissions-view';
 import { copyFor } from '@/lib/i18n/testing';
@@ -283,6 +283,15 @@ describe("completionRate (owner's review: no NaN % for a company with no visible
   });
   it("is null — not applicable — when the row holds no category", () => {
     expect(completionRate({ completeCount: 0, categoryCount: 0 })).toBeNull();
+  });
+});
+
+describe("emptyInvoiceGridKey (owner's review: a reader's access is not the company's measurement)", () => {
+  it("explains a subsidiary measured as a whole", () => {
+    expect(emptyInvoiceGridKey("subsidiary")).toBe("grid.wholeCompany");
+  });
+  it("explains a location-measured subsidiary whose invoice categories the reader is not granted", () => {
+    expect(emptyInvoiceGridKey("location")).toBe("grid.noVisibleCategory");
   });
 });
 

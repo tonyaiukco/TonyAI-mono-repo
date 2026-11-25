@@ -134,6 +134,7 @@
   "grid": {
     "loadFailed": "Fatura dökümü yüklenemedi.",
     "wholeCompany": "{name} bağlı şirketin tamamı olarak ölçülüyor; bu yüzden tesis bazında fatura dökümü yok.",
+    "noVisibleCategory": "Fatura ile izlenen kategorilerin hiçbiri {name} için size atanmadı, bu yüzden gösterilecek fatura dökümü yok. Kategorileri bağlı şirketin bir süper yöneticisi atar.",
     "accepted": "fatura eklendi ve onaylandı",
     "open": "eksik",
     "awaiting": "inceleme bekliyor",

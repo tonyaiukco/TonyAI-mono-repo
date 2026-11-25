@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useCompletenessCopy, useDescribeError, useRecordWords } from '@/lib/i18n/hooks';
 import { useTranslations } from 'use-intl';
+import { emptyInvoiceGridKey } from '@/lib/dashboard-view';
 import {
   duplicateNote,
   duplicatedMonths,
@@ -110,10 +111,14 @@ export function InvoiceCoverageGrid({
   // UI. An earlier version filled it with advice about switching granularity —
   // naming a control that does not exist in the app and a precondition the API
   // does not have. A dead branch that lies is worse than a dead branch.
+  // Two different empties (owner's review): a subsidiary measured as a whole
+  // has no invoice breakdown at all; a location-measured one shown to a
+  // standard user granted none of its invoice-tracked categories has one this
+  // reader may not see.
   if (data.categories.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        {t('grid.wholeCompany', { name: subsidiaryName })}
+        {t(emptyInvoiceGridKey(data.trackingGranularity), { name: subsidiaryName })}
       </p>
     );
   }
