@@ -15,11 +15,16 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+/// The four roles of INC-2.6 §1 (inc26-roles-approval-chain). Listed in the
+/// database's order: the migration renamed the earlier values in place
+/// (super_admin → masterkey, consultant → auditor, data_entry →
+/// standard_user) and reused the emptied executive_viewer slot for the new,
+/// company-scoped super_admin. Nothing orders by role.
 enum UserRole {
   masterkey
-  consultant
-  data_entry
-  executive_viewer
+  auditor
+  standard_user
+  super_admin
 }
 
 enum SubsidiaryStatus {
@@ -79,7 +84,7 @@ model Profile {
   /// The person's job title, as they typed it at registration; null for an
   /// account that was invited or provisioned (nothing else asks for it yet).
   jobTitle             String?                @map("job_title")
-  role                 UserRole               @default(data_entry)
+  role                 UserRole               @default(standard_user)
   /// A `SUPPORTED_LOCALES` entry (CHECK `profiles_language_supported`, LP3-01);
   /// the user sets their own through PATCH /me/preferences.
   language             String                 @default("en")
@@ -137,6 +142,11 @@ model Organisation {
   /// the guard refuses the organisation's members; the start of D21's 90-day
   /// retention clock. The deletion itself is not built (it waits for D24).
   offboardedAt        DateTime?           @map("offboarded_at") @db.Timestamptz(6)
+  /// When this organisation's accounts were carried to the role model of
+  /// INC-2.6 (inc26-roles-approval-chain); null for one created after it. A
+  /// `super_admin` stored on an audit row before it was the earlier,
+  /// organisation-wide administrator (`displayRole`).
+  roleModelChangedAt  DateTime?           @map("role_model_changed_at") @db.Timestamptz(6)
   createdAt           DateTime            @default(now()) @map("created_at")
   updatedAt           DateTime            @updatedAt @map("updated_at")
 
@@ -612,6 +622,11 @@ model UserSubsidiaryAccess {
   organisationId String     @map("organisation_id") @db.Uuid
   profile        Profile    @relation(fields: [userId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
   subsidiary     Subsidiary @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  /// A standard user's ticked categories for this company (INC-2.6 §1, §7.3),
+  /// sorted and unique, each one of `CATEGORIES` (checked by the API, as for
+  /// `activity_records.category`). A super_admin's grant keeps `{}` and covers
+  /// every category; it is never read for one.
+  categories     String[]   @default([])
   createdAt      DateTime   @default(now()) @map("created_at")
 
   @@id([userId, subsidiaryId])

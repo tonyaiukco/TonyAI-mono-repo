@@ -542,76 +542,236 @@ export function factorActivityTypeFor(
 
 
 // Data Entry Types
-// Canonical 4-role enum (aligned with docs/tech_docs technical_analysis.md §4 and Prisma user_role)
-export const USER_ROLES = ['masterkey', 'consultant', 'data_entry', 'executive_viewer'] as const;
+// The four roles of INC-2.6 §1 (inc26-roles-approval-chain, owner decisions
+// 2026-11-24 (third) 2–3 and 2026-11-25 (sixth)). Order matches Prisma's
+// `UserRole`, which follows the database's (nothing orders by role).
+export const USER_ROLES = ['masterkey', 'super_admin', 'standard_user', 'auditor'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
-/** A stored role this build knows — a retired one is shown as stored. */
+/** A stored role this build knows. */
 export function isUserRole(role: string): role is UserRole {
   return (USER_ROLES as readonly string[]).includes(role);
 }
 
 /**
+ * Role names of the earlier role model, as history shows them (design
+ * Decision 10). Audit rows are never rewritten: a `super_admin` stored before
+ * an organisation's cut-over was the ORGANISATION-WIDE administrator and is
+ * shown as `legacy_super_admin`, never as today's scoped role. The three
+ * retired names are shown as stored.
+ */
+export const LEGACY_ROLES = ['legacy_super_admin', 'consultant', 'data_entry', 'executive_viewer'] as const;
+export type LegacyRole = (typeof LEGACY_ROLES)[number];
+/** A role as history displays it. */
+export type DisplayRole = UserRole | LegacyRole;
+
+function toTime(value: Date | string | null | undefined): number | null {
+  if (value == null) return null;
+  const t = value instanceof Date ? value.getTime() : Date.parse(value);
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * The role an audit row's stored `role` is shown as. `cutOver` is the
+ * organisation's `role_model_changed_at` (null for an organisation created
+ * after the change). Unknown text answers null.
+ */
+export function displayRole(
+  storedRole: string | null | undefined,
+  rowTime: Date | string,
+  cutOver: Date | string | null | undefined,
+): DisplayRole | null {
+  if (storedRole == null) return null;
+  if (storedRole === 'super_admin') {
+    const row = toTime(rowTime);
+    const cut = toTime(cutOver);
+    return cut !== null && row !== null && row < cut ? 'legacy_super_admin' : 'super_admin';
+  }
+  if (isUserRole(storedRole)) return storedRole;
+  if ((LEGACY_ROLES as readonly string[]).includes(storedRole) && storedRole !== 'legacy_super_admin') {
+    return storedRole as LegacyRole;
+  }
+  return null;
+}
+
+/**
+ * Every role-keyed power of the product, one row per line of design
+ * Decision 3 (INC-2.6 §6's access matrix, plus ruling R4: a power no document
+ * gives a `super_admin` stays with the masterkey). Services and screens ask
+ * `can(user.role, …)`; no other file lists roles for a power. Scope (which
+ * companies) is NOT here: a scoped role's grants bound every read and write
+ * through `accessibleSubsidiaryIds`, and a standard user's categories through
+ * the record scope.
+ */
+export const ROLE_CAPABILITIES = Object.freeze({
+  /** Reads the whole organisation and holds no grant. */
+  'scope.organisation': ['masterkey', 'auditor'],
+  /** Works only in granted companies (`user_subsidiary_access`). */
+  'scope.granted': ['super_admin', 'standard_user'],
+  /** Create, edit, delete, submit and recall records, attach evidence. A
+   *  standard user within its categories. */
+  'record.author': ['masterkey', 'super_admin', 'standard_user'],
+  /** Take into review, return, approve — routed by `recordApprover`. */
+  'record.decide': ['masterkey', 'super_admin'],
+  'record.void': ['masterkey'],
+  /** Delete a draft or returned record someone else created. */
+  'record.delete_any_draft': ['masterkey'],
+  /** Copy a voided record someone else created into a new draft. */
+  'record.copy_any_voided': ['masterkey'],
+  'company.write': ['masterkey'],
+  /** Facilities — a super_admin in granted companies only (by scope). */
+  'location.write': ['masterkey', 'super_admin'],
+  'period_lock.write': ['masterkey'],
+  'target.write': ['masterkey'],
+  'intensity.write': ['masterkey'],
+  /** A super_admin's own company from `inc26-group-tree` (ruling R6). */
+  'boundary.write': ['masterkey'],
+  'dataset.capture': ['masterkey'],
+  'report.issue': ['masterkey'],
+  'report.issue_final': ['masterkey'],
+  /** Capture freezing an open boundary version. */
+  'dataset.capture_open_boundary': ['masterkey'],
+  /** Captured datasets and issued reports cover the organisation. */
+  'dataset.read': ['masterkey', 'auditor'],
+  /** Live reports and exports; scope narrows a super_admin's. */
+  'report.generate': ['masterkey', 'auditor', 'super_admin'],
+  /** Every import batch of the organisation; the others see their own. */
+  'import_batch.read_all': ['masterkey', 'auditor'],
+  'audit.read': ['masterkey', 'auditor'],
+  /** Any readable record's trail; a standard user reads only its own. */
+  'record_trail.read_any': ['masterkey', 'auditor', 'super_admin'],
+  /** A super_admin lists the standard users of its companies. */
+  'users.list': ['masterkey', 'super_admin'],
+  /** Whom each may invite: `INVITABLE_ROLES`. */
+  'users.invite': ['masterkey', 'super_admin'],
+  /** Whose access each may set: `ACCESS_ASSIGNABLE_ROLES`. */
+  'users.set_access': ['masterkey', 'super_admin'],
+  'users.set_role': ['masterkey'],
+  'users.disable': ['masterkey'],
+} as const satisfies Record<string, readonly UserRole[]>);
+export type Capability = keyof typeof ROLE_CAPABILITIES;
+export const CAPABILITIES = Object.freeze(Object.keys(ROLE_CAPABILITIES)) as readonly Capability[];
+
+/** Whether `role` holds `capability`. A role this build does not know holds none. */
+export function can(role: string | null | undefined, capability: Capability): boolean {
+  if (!role || !Object.prototype.hasOwnProperty.call(ROLE_CAPABILITIES, capability)) return false;
+  return (ROLE_CAPABILITIES[capability] as readonly string[]).includes(role);
+}
+
+/** The roles that hold company grants (`user_subsidiary_access`). */
+export const GRANTED_ROLES = ROLE_CAPABILITIES['scope.granted'];
+export function isGrantedRole(role: string | null | undefined): role is 'super_admin' | 'standard_user' {
+  return can(role, 'scope.granted');
+}
+
+/**
+ * Whom each actor may invite (design Decision 9): a masterkey invites
+ * super_admins and auditors, a super_admin standard users. Nobody invites a
+ * masterkey (ruling R1).
+ */
+export const INVITABLE_ROLES: Readonly<Record<UserRole, readonly UserRole[]>> = Object.freeze({
+  masterkey: Object.freeze(['super_admin', 'auditor'] as const),
+  super_admin: Object.freeze(['standard_user'] as const),
+  standard_user: Object.freeze([] as const),
+  auditor: Object.freeze([] as const),
+});
+
+/** Whose company access each actor sets: a masterkey a super_admin's, a
+ *  super_admin a standard user's (ruling R3: the masterkey does not assign
+ *  standard users). */
+export const ACCESS_ASSIGNABLE_ROLES: Readonly<Record<UserRole, readonly UserRole[]>> = Object.freeze({
+  masterkey: Object.freeze(['super_admin'] as const),
+  super_admin: Object.freeze(['standard_user'] as const),
+  standard_user: Object.freeze([] as const),
+  auditor: Object.freeze([] as const),
+});
+
+/** The roles a masterkey may change an account to — never `masterkey`. */
+export const ROLE_CHANGE_TARGETS = Object.freeze(['super_admin', 'standard_user', 'auditor'] as const);
+
+/**
  * May this user author activity records — create, edit, delete, submit, and
  * attach or remove their evidence? One rule, used by the API's record and
- * evidence services and by every screen that offers those controls.
- *
- * A consultant is NOT a writer (decision 2026-07-30): the seat is typically held
- * by someone outside the holding company, who reviews, rejects and — since
- * Decisions 2026-11-12 (K2) — approves, but never prepares the figures. A
- * function rather than an exported set, so the rule cannot be widened at
- * runtime by a caller.
+ * evidence services and by every screen that offers those controls. A
+ * standard user is further bounded by its categories (`category_not_granted`);
+ * an auditor only reads (INC-2.6 §1).
  */
 export function mayAuthorRecords(
   user: { role: string } | null | undefined,
 ): boolean {
-  return !!user && (user.role === 'data_entry' || user.role === 'masterkey');
-}
-
-/**
- * May this user approve activity records? `consultant` or `masterkey`
- * (Decisions 2026-11-12, K2: a one-person customer's approver is its external
- * consultant). One rule, read by the API's approve check and by the review
- * screen.
- *
- * - Role only. Segregation of duties (D01: nobody approves a record they
- *   created) is a separate record-level check on `createdBy`, in both places.
- * - Approving is not voiding or unlocking: those stay `masterkey` only.
- * - It grants no authoring: see `mayAuthorRecords`.
- */
-export function mayApproveRecords(
-  user: { role: string } | null | undefined,
-): boolean {
-  return !!user && (user.role === 'consultant' || user.role === 'masterkey');
+  return !!user && can(user.role, 'record.author');
 }
 
 /**
  * May this user read one activity record's audit trail
- * (`GET /activity-records/:id/audit-trail`; WP5, INC-2.6 §6)?
+ * (`GET /activity-records/:id/audit-trail`; INC-2.6 §6, ruling R4)?
  *
- * - `masterkey`, `consultant` and `executive_viewer`: any record they can
- *   read (the caller has already loaded the record through its scoped read).
- * - `data_entry` ("limited" in the access matrix): only a record they created.
- *   A colleague's record in a shared subsidiary is readable, its trail is not.
+ * - `masterkey`, `auditor` and `super_admin`: any record they can read (the
+ *   caller has already loaded the record through its scoped read, so a
+ *   super_admin's is confined to granted companies).
+ * - `standard_user` ("limited" in the access matrix): only a record they
+ *   created. A colleague's record in a shared company is readable, its trail
+ *   is not.
  *
- * One rule, read by the API's trail service and by the screens that offer the
- * timeline. The organisation-wide `GET /audit` stays `masterkey`-only.
+ * The organisation-wide `GET /audit` is `can(role, 'audit.read')`.
  */
 export function mayReadRecordTrail(
   user: { id: string; role: string } | null | undefined,
   record: { createdBy: string } | null | undefined,
 ): boolean {
   if (!user || !record) return false;
-  switch (user.role) {
-    case 'masterkey':
-    case 'consultant':
-    case 'executive_viewer':
-      return true;
-    case 'data_entry':
-      return record.createdBy === user.id;
-    default:
-      return false;
-  }
+  if (can(user.role, 'record_trail.read_any')) return true;
+  return user.role === 'standard_user' && record.createdBy === user.id;
+}
+
+/**
+ * Who decides a pending record (INC-2.6 §1.1, design Decision 7):
+ * - `author`: the author is an active masterkey — that masterkey alone, as a
+ *   self-approval (ruling R1);
+ * - `masterkey`: the author is an active super_admin, or the record's company
+ *   has no active super_admin (the fallback, ruling R3);
+ * - `super_admin`: anyone else's record — a standard user's, an auditor's, a
+ *   disabled account's of any role — in a company with an active super_admin.
+ */
+export const RECORD_APPROVERS = Object.freeze(['author', 'masterkey', 'super_admin'] as const);
+export type RecordApprover = (typeof RECORD_APPROVERS)[number];
+
+export interface RecordApproverFacts {
+  /** The author's CURRENT role (never the role at submission). */
+  authorRole: string | null | undefined;
+  authorDisabled: boolean;
+  /** An account with the role, a grant for the company, not disabled and
+   *  with its invitation accepted (or never invited). */
+  companyHasActiveSuperAdmin: boolean;
+}
+
+export function recordApprover(facts: RecordApproverFacts): RecordApprover {
+  if (!facts.authorDisabled && facts.authorRole === 'masterkey') return 'author';
+  if (!facts.authorDisabled && facts.authorRole === 'super_admin') return 'masterkey';
+  return facts.companyHasActiveSuperAdmin ? 'super_admin' : 'masterkey';
+}
+
+/**
+ * Whether `user` decides `record` (take into review, return, approve), given
+ * its approver: for `author`, the user is the author and a masterkey; for the
+ * other two, the user holds that role and did not create the record. Scope
+ * (a super_admin's grant for the company) is the caller's scoped read.
+ */
+export function mayDecideRecord(
+  user: { id: string; role: string } | null | undefined,
+  record: { createdBy: string | null } | null | undefined,
+  approver: RecordApprover | null | undefined,
+): boolean {
+  if (!user || !record || !approver) return false;
+  if (approver === 'author') return user.role === 'masterkey' && record.createdBy === user.id;
+  return user.role === approver && record.createdBy !== user.id;
+}
+
+/** One company grant of an account: the company and, for a standard user,
+ *  the categories ticked for it (empty for a super_admin, who covers all). */
+export interface UserAccessGrantDTO {
+  subsidiaryId: string;
+  categories: Category[];
 }
 
 export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' | 'revision_requested';
@@ -1514,8 +1674,10 @@ export interface UserSummaryDTO {
   role: UserRole;
   language: Locale;
   status: UserAccountStatus;
-  /** Granted subsidiaries — data_entry users only; empty for other roles. */
-  subsidiaryIds: string[];
+  /** Granted companies — super_admin and standard_user only; empty for the
+   *  organisation-wide roles. A super_admin reader sees only the grants
+   *  inside its own companies. */
+  access: UserAccessGrantDTO[];
   disabledAt: string | null;
   /** The account's enabled state has not reached Supabase Auth yet (K4); the
    *  API refuses it either way, and `pnpm onboarding reconcile` retries. */
@@ -1535,8 +1697,9 @@ export interface InviteUserRequest {
   role: UserRole;
   /** The invitation email's language (D16); also the account's first UI language. */
   language: Locale;
-  /** data_entry only: the subsidiaries to grant. */
-  subsidiaryIds?: string[];
+  /** super_admin (companies, no categories) or standard_user (one company,
+   *  with categories) only. */
+  access?: UserAccessGrantDTO[];
 }
 
 /** PATCH /api/v1/users/:id/role */
@@ -1544,9 +1707,11 @@ export interface UpdateUserRoleRequest {
   role: UserRole;
 }
 
-/** PUT /api/v1/users/:id/access — the complete set; data_entry only. */
+/** PUT /api/v1/users/:id/access — the complete set within the actor's own
+ *  scope; super_admin and standard_user targets only. Grants outside the
+ *  actor's scope are neither returned nor touched. */
 export interface ReplaceUserAccessRequest {
-  subsidiaryIds: string[];
+  access: UserAccessGrantDTO[];
 }
 
 /** POST /api/v1/auth/password-reset — public; always 202, whatever the
@@ -1641,6 +1806,9 @@ export interface AuthUser {
   role: UserRole;
   organisationId: string | null;
   accessibleSubsidiaryIds: string[];
+  /** The caller's own grants with their categories (`GET /me`): lists for a
+   *  super_admin and a standard user, empty for the organisation-wide roles. */
+  access: UserAccessGrantDTO[];
   /** The UI language the user chose — `en` until they choose. */
   language: Locale;
   theme: string;
@@ -2795,8 +2963,16 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** Only a record's author submits, resubmits (D02), edits or recalls it
    *  (BUG-R2-03) — `masterkey` included. No params. */
   record_author_forbidden: 403,
-  /** Segregation of duties (D01). */
+  /** Segregation of duties (D01): nobody but a masterkey approves a record
+   *  they created (INC-2.6 §1.1). */
   self_approval_forbidden: 403,
+  /** inc26-roles-approval-chain: a masterkey or super_admin who is not the
+   *  record's approver (`recordApprover`). params: `approver` — a SENTENCE
+   *  SELECTOR (`super_admin`, `masterkey` or `author`). */
+  not_record_approver: 403,
+  /** A standard user's grant for the company does not tick the category
+   *  (INC-2.6 §1, §7.3). params: `category`. */
+  category_not_granted: 403,
   /** WP5 (`uat4-review-resubmit`): a record's author, whatever role they hold
    *  now, may not take it into review — the trail would read a four-eyes step
    *  the author took on their own figure. Checked after the role gate, so a
@@ -2844,10 +3020,13 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** The registration code does not match the environment's. It says nothing
    *  about any address, so it is the one refusal registration words. */
   registration_code_invalid: 403,
-  /** Subsidiary grants belong to data_entry users only (LP1-03): other roles
-   *  read their whole organisation, and a stored grant would widen access on
-   *  a later role change. */
+  /** Company grants belong to super_admin and standard_user accounts only,
+   *  and categories to a standard user's: the organisation-wide roles read
+   *  everything, and a stored grant would widen access on a later role change. */
   access_role_mismatch: 409,
+  /** A standard user is assigned one company (INC-2.6 §1, ruling R6): an
+   *  added company that would leave them holding more than one. */
+  standard_user_single_company: 409,
   /** The address already has an account — in this organisation or another
    *  (D17: one organisation per account). */
   email_unavailable: 409,
@@ -3044,6 +3223,9 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     evidence_detach_required: Object.freeze(['linked']),
     bulk_too_many_rows: Object.freeze(['rows', 'max']),
     bulk_workbook_too_large: Object.freeze(['limitMb']),
+    /** `approver` (`RecordApprover`): a SENTENCE SELECTOR. */
+    not_record_approver: Object.freeze(['approver']),
+    category_not_granted: Object.freeze(['category']),
   });
 
 /** What a `variance_reason_required` refusal rests on: a flag on history
@@ -3071,6 +3253,7 @@ export function varianceBasisOf(verdict: AnomalyVerdict): VarianceBasis {
 export const API_ERROR_SENTENCE_SELECTORS: Readonly<Partial<Record<ApiErrorCode, string>>> = Object.freeze({
   variance_reason_required: 'basis',
   parameters_required: 'input',
+  not_record_approver: 'approver',
 });
 
 export type ApiErrorParams = Readonly<Record<string, string | number>>;
@@ -4757,6 +4940,14 @@ export interface ActivityRecordDTO {
   reviewedByName: string | null;
   reviewedAt: string | null;
   reviewNote: string | null;
+  /**
+   * Who decides this record now (`recordApprover`, INC-2.6 §1.1), worked out
+   * from its author's current role and its company's active super_admins on
+   * every read: set on a `submitted` or `under_review` record, null on every
+   * other status. Optional in this type only so that fixtures written before
+   * the role model changed still compile; the API sets it on every read.
+   */
+  approver?: RecordApprover | null;
   /**
    * When this record was last SUBMITTED for review, or null if it never was.
    *
@@ -6544,6 +6735,12 @@ export const AUDIT_ACTIONS = [
    *  template and renderer, and the PDF's SHA-256 and size. `entity:
    *  'report_issuance'`. */
   'issue',
+  /** inc26-roles-approval-chain: a masterkey approved a record they created
+   *  (INC-2.6 §1.1); the approval's diff. `entity: 'activity_record'`. */
+  'self_approve',
+  /** inc26-roles-approval-chain: the migration carried an account to the new
+   *  role model; no actor, the role before and after. `entity: 'profile'`. */
+  'role_model_change',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -6676,9 +6873,11 @@ export interface AuditLogDTO {
   /**
    * The role the actor held AT THE TIME of the action — read from the row, not
    * from the profile. Null on rows written before WP7 added the column; they
-   * are deliberately not back-dated with a guess.
+   * are deliberately not back-dated with a guess. Shown by `displayRole`: a
+   * `super_admin` stored before the organisation's role-model cut-over reads
+   * `legacy_super_admin`, and the retired names read as stored.
    */
-  role: UserRole | null;
+  role: DisplayRole | null;
   /** Raw change payload. Shape varies by entity; the viewer renders a summary. */
   diff: Record<string, unknown> | null;
   createdAt: string;
@@ -6702,6 +6901,8 @@ export const RECORD_TRAIL_EVENT_KINDS = [
   'review_started',
   'returned',
   'approved',
+  /** A masterkey's approval of their own record (`self_approve`). */
+  'self_approved',
   'voided',
   'other',
 ] as const;
@@ -6742,7 +6943,7 @@ export interface RecordTrailEventDTO {
    * written before roles were recorded). Null when no user acted (an
    * operator's command, the system). No id, no email address.
    */
-  actor: { name: string | null; role: UserRole | null } | null;
+  actor: { name: string | null; role: DisplayRole | null } | null;
   /** Which submission a submitted or resubmitted event is (1, 2, …); null otherwise. */
   submission: number | null;
   /** The return's note, the void's reason or the submit's variance reason. */
@@ -7338,7 +7539,7 @@ export function mayCopyVoidedRecord(
     !!user &&
     mayAuthorRecords(user) &&
     record.status === 'voided' &&
-    (record.createdBy === user.id || user.role === 'masterkey')
+    (record.createdBy === user.id || can(user.role, 'record.copy_any_voided'))
   );
 }
 
