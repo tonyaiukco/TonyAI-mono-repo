@@ -102,7 +102,6 @@ function asValue(v: unknown): RecordTrailValue {
   return JSON.stringify(v);
 }
 
-/** Flattens a structured input to its leaves, keyed by dotted path. */
 /**
  * One path segment, kept apart from the separator: a key holding a dot
  * (`{"meter.reading": 12}`) must not read as the nested `{"meter": {"reading": 12}}`.
@@ -115,25 +114,41 @@ const segment = (key: string) => {
   return /^\d+$/.test(key) ? `~2${escaped}` : escaped;
 };
 
-function leaves(value: unknown, prefix: string, out: Map<string, RecordTrailValue>): void {
+/**
+ * One leaf as it is compared and as it is shown. `key` keeps what the shown
+ * value loses: its JSON type (the list `[]` is not the text "[]") and, inside
+ * a list, an explicit `null` (`[1]` → `[1, null]` is a change). An object
+ * property holding `null` is the same as one absent (the record contract's
+ * rule: a JSON null is an absent key).
+ */
+interface Leaf {
+  shown: RecordTrailValue;
+  key: string;
+}
+
+const ABSENT: Leaf = { shown: null, key: 'absent' };
+
+function leaves(value: unknown, prefix: string, out: Map<string, Leaf>, inList = false): void {
   if (Array.isArray(value)) {
     // An empty list is a value of its own: adding or emptying one is a change.
-    if (value.length === 0) out.set(prefix, '[]');
-    value.forEach((item, i) => leaves(item, `${prefix}.${i}`, out));
+    if (value.length === 0) out.set(prefix, { shown: '[]', key: '[]' });
+    value.forEach((item, i) => leaves(item, `${prefix}.${i}`, out, true));
   } else if (isObject(value)) {
     const entries = Object.entries(value);
     // An empty object nested in an input likewise; the input itself absent or
     // empty reads as nothing, as before.
-    if (entries.length === 0 && prefix.includes('.')) out.set(prefix, '{}');
+    if (entries.length === 0 && prefix.includes('.')) out.set(prefix, { shown: '{}', key: '{}' });
     for (const [key, item] of entries) leaves(item, `${prefix}.${segment(key)}`, out);
+  } else if (value === null || value === undefined) {
+    if (inList) out.set(prefix, { shown: 'null', key: 'null' });
   } else {
-    out.set(prefix, asValue(value));
+    out.set(prefix, { shown: asValue(value), key: JSON.stringify(value) });
   }
 }
 
 function leafChanges(before: unknown, after: unknown, prefix: string): RecordTrailChangeDTO[] {
-  const b = new Map<string, RecordTrailValue>();
-  const a = new Map<string, RecordTrailValue>();
+  const b = new Map<string, Leaf>();
+  const a = new Map<string, Leaf>();
   leaves(before, prefix, b);
   leaves(after, prefix, a);
   const paths = [...new Set([...b.keys(), ...a.keys()])].sort((x, y) =>
@@ -141,9 +156,9 @@ function leafChanges(before: unknown, after: unknown, prefix: string): RecordTra
   );
   const changes: RecordTrailChangeDTO[] = [];
   for (const path of paths) {
-    const was = b.get(path) ?? null;
-    const now = a.get(path) ?? null;
-    if (was !== now) changes.push({ field: path, before: was, after: now });
+    const was = b.get(path) ?? ABSENT;
+    const now = a.get(path) ?? ABSENT;
+    if (was.key !== now.key) changes.push({ field: path, before: was.shown, after: now.shown });
   }
   return changes;
 }

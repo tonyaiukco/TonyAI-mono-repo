@@ -41,17 +41,21 @@ ALTER TABLE "activity_records" ADD COLUMN "submission_count" INTEGER NOT NULL DE
 -- whose `diff.transition.to` is 'submitted'; they are counted too, as the
 -- record's history (`buildRecordTrail`) classifies them, so the column and the
 -- trail agree on which submission is which.
+--
+-- The id is matched in any spelling: before ids were canonicalised at the API
+-- boundary (2026-10-08) a row could keep the request's spelling, upper case
+-- included; `lower()` folds them onto the canonical text of the UUID.
 UPDATE "activity_records" AS ar
 SET "submission_count" = counted."n"
 FROM (
-  SELECT "entity_id", COUNT(*)::INTEGER AS "n"
+  SELECT lower("entity_id") AS "entity_id", COUNT(*)::INTEGER AS "n"
   FROM "audit_log"
   WHERE "entity" = 'activity_record'
     AND (
       "action" = 'submit'
       OR ("action" = 'update' AND "diff" -> 'transition' ->> 'to' = 'submitted')
     )
-  GROUP BY "entity_id"
+  GROUP BY lower("entity_id")
 ) AS counted
 WHERE counted."entity_id" = ar."id"::text;
 

@@ -8,6 +8,7 @@ import {
   canApproveRecord,
   canSubmitEntry,
   isNewerRecord,
+  keepNewerRows,
   isOwnRecordForApprover,
   isRevised,
   saveErrorDescription,
@@ -168,5 +169,19 @@ describe('a late answer never replaces a newer read (owner review)', () => {
   it('lets the answer replace the row it answered for', () => {
     expect(isNewerRecord(v('2026-11-25T10:00:00.000Z', 1), v('2026-11-25T10:00:01.000Z', 1))).toBe(false);
     expect(isNewerRecord(v('2026-11-25T10:00:01.000Z', 1), v('2026-11-25T10:00:01.000Z', 1))).toBe(false);
+  });
+});
+
+describe('a queue page read before a step never turns its row back (owner review)', () => {
+  const row = (id: string, status: string, updatedAt: string, submissionCount = 1) => ({ id, status, updatedAt, submissionCount });
+  it('keeps the row the screen holds in a later version, and takes the page for the rest', () => {
+    const shown = [row('b', 'under_review', '2026-11-25T10:00:05.000Z'), row('z', 'submitted', '2026-11-25T09:00:00.000Z')];
+    const page = [row('b', 'submitted', '2026-11-25T10:00:01.000Z'), row('c', 'submitted', '2026-11-25T10:00:02.000Z')];
+    expect(keepNewerRows(shown, page)).toEqual([shown[0], page[1]]);
+  });
+  it('takes the page where it is the later version', () => {
+    const shown = [row('b', 'submitted', '2026-11-25T10:00:01.000Z')];
+    const page = [row('b', 'under_review', '2026-11-25T10:00:05.000Z')];
+    expect(keepNewerRows(shown, page)).toEqual(page);
   });
 });

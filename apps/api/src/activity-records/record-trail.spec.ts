@@ -326,6 +326,20 @@ describe('buildRecordTrail — the owner review of 52ceb7e8', () => {
     expect(editChanges(snapshot({ input: null }), snapshot({ input: {} }), lookups)).toEqual([]);
   });
 
+  it('keeps a JSON type and a null inside a list (owner review)', () => {
+    expect(editChanges(snapshot({ input: { tags: [] } }), snapshot({ input: { tags: '[]' } }), lookups)).toEqual([
+      { field: 'input.tags', before: '[]', after: '[]' },
+    ]);
+    expect(editChanges(snapshot({ input: { box: {} } }), snapshot({ input: { box: '{}' } }), lookups)).toEqual([
+      { field: 'input.box', before: '{}', after: '{}' },
+    ]);
+    expect(editChanges(snapshot({ input: { meters: [1] } }), snapshot({ input: { meters: [1, null] } }), lookups)).toEqual([
+      { field: 'input.meters.1', before: null, after: 'null' },
+    ]);
+    // An object property holding null is still the same as one absent.
+    expect(editChanges(snapshot({ parameters: { cvBasis: null } }), snapshot({ parameters: {} }), lookups)).toEqual([]);
+  });
+
   it('keeps a key holding a dot apart from a nested key', () => {
     const changes = editChanges(
       snapshot({ input: { 'meter.reading': 12 } }),

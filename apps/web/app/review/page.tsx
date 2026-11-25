@@ -6,6 +6,7 @@ import {
   isOwnRecordForApprover,
   isNewerRecord,
   isRevised,
+  keepNewerRows,
   shouldStartReviewOnOpen,
 } from "@/lib/record-lifecycle-view";
 
@@ -305,7 +306,9 @@ export default function ReviewPage() {
       if (seq !== loadSeq.current) return;
       chainFilters.current = filters;
       setLoadFailed(false);
-      setRows(page.items);
+      // A page read before a step this screen saw answered (a review started on
+      // opening, say) must not turn that row back: the newer version stays.
+      setRows((prev) => keepNewerRows(prev, page.items));
       setNextCursor(page.nextCursor);
       setTotal(meta?.total ?? null);
       setSubsidiaries(subs);

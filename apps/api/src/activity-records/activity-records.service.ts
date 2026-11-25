@@ -370,10 +370,13 @@ export function inheritsQuantityElsewhere(
  * counts (WP5): `submit`, and a pre-taxonomy `update` whose `diff.transition.to`
  * is `submitted`. One definition, so the column and the history agree.
  */
-export function submitRowsOf(recordId: string): Prisma.AuditLogWhereInput {
+export function submitRowsOf(recordId: string, organisationId: string | null): Prisma.AuditLogWhereInput {
   return {
     entity: 'activity_record',
-    entityId: recordId,
+    // Any spelling of the id (rows from before ids were canonicalised), within
+    // the record's organisation.
+    entityId: { equals: recordId, mode: 'insensitive' },
+    organisationId,
     OR: [
       { action: 'submit' },
       { action: 'update', diff: { path: ['transition', 'to'], equals: 'submitted' } },
@@ -1775,7 +1778,7 @@ export class ActivityRecordsService {
       status === ActivityRecordStatus.submitted
         ? Math.max(
             record.submissionCount,
-            await tx.auditLog.count({ where: submitRowsOf(record.id) }),
+            await tx.auditLog.count({ where: submitRowsOf(record.id, user.organisationId) }),
           ) + 1
         : null;
     const updated = await tx.activityRecord.update({

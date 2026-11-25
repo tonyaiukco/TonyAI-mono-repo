@@ -89,7 +89,11 @@ describe('RecordAuditTrailService — who reads a record\'s trail (WP5, INC-2.6 
     await service.read(user('consultant'), 'rec-1');
     expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { entity: 'activity_record', entityId: 'rec-1', organisationId: 'org-1' },
+        where: {
+          entity: 'activity_record',
+          entityId: { equals: 'rec-1', mode: 'insensitive' },
+          organisationId: 'org-1',
+        },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: RECORD_TRAIL_MAX_EVENTS + 1,
       }),

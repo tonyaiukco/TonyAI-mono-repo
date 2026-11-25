@@ -205,6 +205,39 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     expect(trail.events.filter((e) => e.submission !== null).map((e) => e.submission)).toEqual([1, 2, 3]);
   });
 
+  it('reads and counts rows that kept an upper-case spelling of the id (owner review)', async () => {
+    const entry = A.users.dataEntry;
+    const created = await ok<ActivityRecordDTO>(entry, 'POST', '/activity-records', {
+      subsidiaryId: A.subsidiaryId, locationId: null, reportingYear: 2026, reportingPeriod: 'monthly',
+      periodValue: 'August', category: 'Electricity', activityType: null, activityValue: 1000,
+      activityUnit: 'kWh', varianceReason: null, input: null,
+    });
+    await attachEvidence(owner, A, [created.id]);
+    const upper = created.id.toUpperCase();
+    // As an edit and a submit logged before ids were canonicalised (2026-10-08) kept them.
+    await owner.auditLog.createMany({
+      data: [
+        {
+          userId: entry.id, organisationId: A.organisationId, role: 'data_entry', action: 'update',
+          entity: 'activity_record', entityId: upper, createdAt: new Date('2026-01-01T00:00:00Z'),
+          diff: { before: { activityValue: 900 }, after: { activityValue: 1000 } },
+        },
+        {
+          userId: entry.id, organisationId: A.organisationId, role: 'data_entry', action: 'submit',
+          entity: 'activity_record', entityId: upper, createdAt: new Date('2026-01-02T00:00:00Z'),
+          diff: { transition: { from: 'draft', to: 'submitted' } },
+        },
+      ],
+    });
+
+    const next = await ok<ActivityRecordDTO>(entry, 'POST', `/activity-records/${created.id}/submit`);
+    expect(next.submissionCount).toBe(2);
+    const trail = JSON.parse((await trailOf(A.users.consultant, created.id)).text) as RecordAuditTrailDTO;
+    const edit = trail.events.find((e) => e.kind === 'edited');
+    expect(edit?.changes).toEqual([{ field: 'activityValue', before: 900, after: 1000 }]);
+    expect(trail.events.filter((e) => e.submission !== null).map((e) => e.submission)).toEqual([1, 2]);
+  });
+
   it('is read by the three organisation-wide roles and the author, never written', async () => {
     const approved = await elevenEventStory(A);
     const auditRows = () => owner.auditLog.count({ where: { entityId: approved.id } });

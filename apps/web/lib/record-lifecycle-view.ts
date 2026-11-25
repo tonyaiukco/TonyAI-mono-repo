@@ -59,6 +59,22 @@ export const isNewerRecord = (
 ): boolean =>
   Date.parse(shown.updatedAt) > Date.parse(answer.updatedAt) || shown.submissionCount > answer.submissionCount;
 
+/**
+ * A queue page as read, keeping any row the screen already holds in a later
+ * version: the page decides which records are listed and in what order, never
+ * that a record goes back to an earlier state.
+ */
+export function keepNewerRows<T extends { id: string; updatedAt: string; submissionCount: number }>(
+  shown: readonly T[],
+  page: readonly T[],
+): T[] {
+  const byId = new Map(shown.map((r) => [r.id, r]));
+  return page.map((item) => {
+    const held = byId.get(item.id);
+    return held && isNewerRecord(held, item) ? held : item;
+  });
+}
+
 type SaveErrorKey = 'duplicateAdvice' | 'duplicateAdviceMoving' | 'saveFailedServer' | 'recordChanged';
 
 /**

@@ -4468,11 +4468,13 @@ describe('ActivityRecordsService — submittedAt', () => {
 
     const dto = await service.submit(dataEntry(), 'rec-s');
 
-    expect(prisma.auditLog.count).toHaveBeenCalledWith({ where: submitRowsOf('rec-s') });
-    // Both shapes the migration counts: a pre-taxonomy `update` moving to `submitted` too.
-    expect(submitRowsOf('rec-s')).toEqual({
+    expect(prisma.auditLog.count).toHaveBeenCalledWith({ where: submitRowsOf('rec-s', 'org-1') });
+    // Both shapes the migration counts (a pre-taxonomy `update` moving to
+    // `submitted` too), any spelling of the id, within the organisation.
+    expect(submitRowsOf('rec-s', 'org-1')).toEqual({
       entity: 'activity_record',
-      entityId: 'rec-s',
+      entityId: { equals: 'rec-s', mode: 'insensitive' },
+      organisationId: 'org-1',
       OR: [
         { action: 'submit' },
         { action: 'update', diff: { path: ['transition', 'to'], equals: 'submitted' } },

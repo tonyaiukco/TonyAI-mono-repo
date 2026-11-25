@@ -50,7 +50,10 @@ export class RecordAuditTrailService {
     const newest = await this.prisma.auditLog.findMany({
       where: {
         entity: 'activity_record',
-        entityId: record.id,
+        // Any spelling of the id: before ids were canonicalised at the
+        // boundary (2026-10-08) an edit's row kept the request's spelling,
+        // upper case included. Still keyed by the organisation.
+        entityId: { equals: record.id, mode: 'insensitive' },
         organisationId: user.organisationId,
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
