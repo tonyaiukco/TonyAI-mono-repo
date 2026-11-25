@@ -64,6 +64,8 @@ test('a password exchange in another tab takes precedence over the old idle dead
   const signIn = await context.newPage();
   await signIn.goto('/login');
   await login(page, VIEWER_EMAIL);
+  // Both tabs must observe the same instant when the delayed exchange writes its timestamp.
+  await page.clock.pauseAt(new Date(Date.now() + 5000));
   await signIn.locator('#email').fill(VIEWER_EMAIL);
   await signIn.locator('#password').fill(PASSWORD);
 
