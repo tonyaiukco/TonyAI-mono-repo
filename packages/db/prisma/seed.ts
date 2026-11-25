@@ -541,6 +541,10 @@ async function findOrCreateRecord(
       // client's generated types into this file's own contract.
       calculation: data.calculation as Prisma.InputJsonValue,
       status: SEED_RECORD_STATUS,
+      // A seeded record is committed, so it was submitted once (WP5): the same
+      // floor the submission-count migration gives a committed record with no
+      // `submit` audit row, so a fresh database agrees with a migrated one.
+      submissionCount: 1,
     },
   });
   return { id: record.id, created: true };

@@ -101,7 +101,7 @@
     "title": "Coğrafya {from} yerine {to} olarak değiştirilsin mi?",
     "body": "Uyarı: Coğrafyayı değiştirmek, coğrafyaya bağlı hesaplamalar için yapılandırılan faktör temelini değiştirir. Bu, seçilen raporlama dönemlerindeki etkilenen Kapsam 2 kayıtlarının yeniden hesaplanmasını gerektirebilir. Devam etmek istiyor musunuz?",
     "subsidiaryNote": "Kesinleşmiş kayıtlar hesaplandıkları emisyon faktörünü korur — o rakamlar değişmez. Yeni coğrafya bundan sonra oluşturulan kayıtlara uygulanır.",
-    "locationNote": "Bu tesisteki kesinleşmiş kayıtlar hesaplandıkları emisyon faktörünü korur — o rakamlar değişmez. Yeni coğrafya burada bundan sonra oluşturulan kayıtlara ve taslak ya da geri gönderilmiş her kayda bir sonraki kaydedilişinde uygulanır.",
+    "locationNote": "Bu tesisteki kesinleşmiş kayıtlar hesaplandıkları emisyon faktörünü korur — o rakamlar değişmez. Yeni coğrafya burada bundan sonra oluşturulan kayıtlara ve taslak ya da iade edilmiş her kayda bir sonraki kaydedilişinde uygulanır.",
     "continue": "Devam et"
   },
   "dependents": {
@@ -109,7 +109,7 @@
     "locations": "İşletmeler / Tesisler",
     "terminalRecords": "Onaylanmış, kilitli veya geçersiz kılınmış kayıtlar",
     "reviewRecords": "İnceleme bekleyen kayıtlar",
-    "openRecords": "Taslak veya reddedilmiş kayıtlar",
+    "openRecords": "Taslak veya iade edilmiş kayıtlar",
     "periodLocks": "Kapalı raporlama dönemleri",
     "targets": "Azaltım hedefleri",
     "denominators": "Yoğunluk paydaları",
@@ -122,7 +122,7 @@
     "terminalRecords": "Bu bağlı şirkete ait {count} onaylanmış, kilitli veya geçersiz kılınmış faaliyet kaydı var ve şirketi silmek bunları kanıtlarıyla birlikte kalıcı olarak yok eder. Bu kayıtlar hiçbir aşamada silinemez, bu yüzden veri raporlamış bir bağlı şirket kalır. Bunun yerine durumunu \"pasif\" yaparak kullanımdan kaldırın.",
     "frozenBoundaryVersions": "Bu bağlı şirket, bir raporun dayandığı envanteri kaydeden ve hiç değişmeyen {count} onaylanmış veya rapora alınmış envanter sınırı sürümünde beyan edilmiş; bu yüzden böyle bir sürümde beyan edilen şirket kalır. Bunun yerine durumunu \"pasif\" yaparak kullanımdan kaldırın.",
     "reviewRecords": "İnceleme bekleyen {count} kayıt",
-    "openRecords": "{count} taslak veya reddedilmiş kayıt",
+    "openRecords": "{count} taslak veya iade edilmiş kayıt",
     "locationsHoldingForeignRecords": "Başka bir bağlı şirkete ait kayıt içeren {count} tesis",
     "periodLocks": "{count} kapalı raporlama dönemi",
     "targets": "{count} azaltım hedefi",

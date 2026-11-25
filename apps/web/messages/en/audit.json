@@ -10,7 +10,8 @@
   "allEntities": "All entities",
   "allActions": "All actions",
   "actions": {
-    "reprice": "Figure recalculated"
+    "reprice": "Figure recalculated",
+    "reject": "Returned"
   },
   "entriesOne": "{count} entry",
   "entriesMany": "{count} entries",

@@ -4,7 +4,7 @@
     "submitted": "Submitted",
     "under_review": "Under review",
     "approved": "Approved",
-    "rejected": "Rejected",
+    "rejected": "Returned",
     "locked": "Locked",
     "voided": "Voided"
   },
@@ -13,7 +13,7 @@
     "submitted": "submitted",
     "under_review": "under review",
     "approved": "approved",
-    "rejected": "rejected",
+    "rejected": "returned",
     "locked": "locked",
     "voided": "voided"
   }

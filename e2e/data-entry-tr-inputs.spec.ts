@@ -391,8 +391,9 @@ test('evidence: a record submitted before K3 without a file is refused at approv
       page.getByText(enErrors.codes.approval_evidence_missing.replace('{category}', enCategories['Mobile Combustion'])),
     ).toBeVisible();
 
+    // Not approved. Opening it took it into review (WP5), so it waits there for its return.
     const after = await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(token) });
-    expect((await after.json()).status).toBe('submitted');
+    expect((await after.json()).status).toBe('under_review');
   } finally {
     await deleteRecordsAsService(request, [id]);
   }

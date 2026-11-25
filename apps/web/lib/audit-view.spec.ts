@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BulkImportAuditDiff, BulkSubmitAuditDiff } from '@tonyai/shared-types';
-import { actorLabel as actorLabelWith, summariseBatch as summariseBatchWith } from './audit-view';
+import { actorLabel as actorLabelWith, auditActionLabel, summariseBatch as summariseBatchWith } from './audit-view';
 import { copyFor } from '@/lib/i18n/testing';
 import { MESSAGES } from '@/messages';
 import type { Locale } from '@/lib/types';
@@ -143,5 +143,17 @@ describe('actorLabel in Turkish', () => {
       text: MESSAGES.tr.common.actor.deleted,
       muted: true,
     });
+  });
+});
+
+describe('auditActionLabel — the actions the page words itself', () => {
+  const labels = { reprice: 'Figure recalculated', reject: 'Returned' };
+  it('words a reject as a return (WP5) and a reprice by its label', () => {
+    expect(auditActionLabel('reject', labels)).toBe('Returned');
+    expect(auditActionLabel('reprice', labels)).toBe('Figure recalculated');
+  });
+  it('keeps the caller\'s display of every other action', () => {
+    expect(auditActionLabel('approve', labels, 'Approve')).toBe('Approve');
+    expect(auditActionLabel('submit', labels)).toBe('submit');
   });
 });

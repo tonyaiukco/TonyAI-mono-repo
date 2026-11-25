@@ -1,18 +1,27 @@
 "use client";
 
 import { useLocale, useTranslations } from "use-intl";
-import { canApproveRecord, isOwnRecordForApprover } from "@/lib/record-lifecycle-view";
+import {
+  canApproveRecord,
+  isOwnRecordForApprover,
+  isNewerRecord,
+  isRevised,
+  keepNewerRows,
+  shouldStartReviewOnOpen,
+} from "@/lib/record-lifecycle-view";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
   FileText,
+  History,
   Info,
   Paperclip,
   ShieldAlert,
 } from "lucide-react";
 import { Sidebar } from "@/components/dashboard/sidebar";
+import { RecordTrail } from "@/components/record-trail";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +59,7 @@ import {
   entityLabel,
   isCalculated,
   LOCALE_FORMAT_TAGS,
+  mayReadRecordTrail,
   PENDING_REVIEW_STATUSES,
   unitSymbol,
   type ActivityRecordDTO,
@@ -80,6 +90,10 @@ const STATUS_COLORS: Record<string, string> = {
   submitted: "bg-[#E8F0FE] text-[#0066CC] font-semibold",
   under_review: "bg-[#FEF3C7] text-[#92400E] font-semibold",
 };
+
+/** A second badge, never a status (WP5): violet, a colour neither status nor
+ *  the anomaly marker's amber uses. */
+const REVISED_BADGE_CLASS = "bg-[#EDE9FE] text-[#5B21B6] font-semibold";
 
 function formatDate(iso: string, locale: Locale): string {
   return new Intl.DateTimeFormat(LOCALE_FORMAT_TAGS[locale], {
@@ -146,8 +160,61 @@ export default function ReviewPage() {
   // the opening it was sent from, so a late answer from an earlier opening of
   // the same record cannot overrule this one's read (outside review of b8b0d78b).
   const sheetSession = useRef(0);
-  const openRecord = (row: ActivityRecordDTO) => {
+  // The start of review an opening sent, still unanswered (WP5): the fallback
+  // "Start review" button waits for it rather than send a second one.
+  const [startingReview, setStartingReview] = useState(false);
+  // The open record's history dialog (WP5).
+  const [trailOpen, setTrailOpen] = useState(false);
+  const tTrail = useTranslations("recordTrail");
+  // The history belongs to the record on the sheet: any other record, or none
+  // (the sheet closed, or a read found it decided), closes it.
+  const trailRecordId = selected?.id ?? null;
+  useEffect(() => {
+    setTrailOpen(false);
+  }, [trailRecordId]);
+  /**
+   * Opening a record a user may approve takes it into review (WP5, INC-2.6
+   * §1.2), naming the submission the sheet's read saw. Sent once per opening
+   * the USER made (`startReview`): the re-read that follows a refused action
+   * passes false, so a refusal that persists can never loop. A refused start
+   * reads the record again, which shows what it is now (closed if no longer
+   * pending, "Under review" if another reviewer won); any other failure keeps
+   * the sheet on the submitted record, where Approve, Return and the fallback
+   * button stay offered. No toast on success: the status badge is the news.
+   */
+  const startReviewOnOpen = (fresh: ActivityRecordDTO) => {
+    const session = sheetSession.current;
+    const seq = sheetRead.current;
+    setStartingReview(true);
+    api
+      .reviewActivityRecord(fresh.id, { seenSubmittedAt: fresh.submittedAt })
+      .then((updated) => {
+        // The row too only if it still shows what this start answered for: a
+        // queue read since may hold a newer submission (returned and sent
+        // again), which a late answer must not turn back.
+        setRows((prev) => prev.map((r) => (r.id === updated.id && !isNewerRecord(r, updated) ? updated : r)));
+        // Only the opening this was sent from, and only if nothing newer (a
+        // decision's answer, a re-read) has spoken since.
+        if (sheetSession.current === session && sheetRead.current === seq && selectedId.current === fresh.id) {
+          setSelected(updated);
+        }
+      })
+      .catch((err) => {
+        if (sheetSession.current !== session || selectedId.current !== fresh.id) return;
+        if (err instanceof ApiError && (err.status === 409 || err.status === 400)) {
+          void loadRef.current({ quiet: true });
+          openRecord(fresh, { startReview: false });
+          return;
+        }
+        showError(err);
+      })
+      .finally(() => {
+        if (sheetSession.current === session) setStartingReview(false);
+      });
+  };
+  const openRecord = (row: ActivityRecordDTO, opts: { startReview: boolean } = { startReview: true }) => {
     sheetSession.current += 1;
+    setStartingReview(false);
     const seq = (sheetRead.current += 1);
     setSelected(row);
     setReason("");
@@ -175,6 +242,7 @@ export default function ReviewPage() {
         setSelected(fresh);
         setRows((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)));
         setSheetState("ready");
+        if (opts.startReview && shouldStartReviewOnOpen(user, fresh)) startReviewOnOpen(fresh);
       })
       .catch((err) => {
         if (sheetRead.current !== seq || selectedId.current !== row.id) return;
@@ -238,7 +306,9 @@ export default function ReviewPage() {
       if (seq !== loadSeq.current) return;
       chainFilters.current = filters;
       setLoadFailed(false);
-      setRows(page.items);
+      // A page read before a step this screen saw answered (a review started on
+      // opening, say) must not turn that row back: the newer version stays.
+      setRows((prev) => keepNewerRows(prev, page.items));
       setNextCursor(page.nextCursor);
       setTotal(meta?.total ?? null);
       setSubsidiaries(subs);
@@ -447,7 +517,9 @@ export default function ReviewPage() {
         void loadRef.current();
         // The record moved under this opening: read it again, so what is
         // typed and shown belongs to the submission it holds now.
-        if (sheetSession.current === session && selectedId.current === record.id) openRecord(record);
+        if (sheetSession.current === session && selectedId.current === record.id) {
+          openRecord(record, { startReview: false });
+        }
       }
     } finally {
       setBusy(false);
@@ -642,6 +714,15 @@ export default function ReviewPage() {
                               >
                                 {recordWords.status(row.status)}
                               </Badge>
+                              {isRevised(row) && (
+                                <Badge
+                                  className={cn("text-xs ml-1", REVISED_BADGE_CLASS)}
+                                  title={t("revised.title", { n: row.submissionCount })}
+                                  data-testid="revised-badge"
+                                >
+                                  {t("revised.label")}
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="text-sm whitespace-nowrap">
                               {/* A reviewer decides someone else's number, so
@@ -705,6 +786,11 @@ export default function ReviewPage() {
         </div>
       </main>
 
+      <RecordTrail
+        recordId={selected?.id ?? null}
+        open={trailOpen && !!selected}
+        onOpenChange={setTrailOpen}
+      />
       <Sheet
         open={!!selected}
         onOpenChange={(open) => {
@@ -726,6 +812,37 @@ export default function ReviewPage() {
                   })
                 : ""}
             </SheetTitle>
+            {selected && (
+              <div className="flex flex-wrap items-center gap-2" data-testid="review-sheet-status">
+                <Badge className={cn("text-xs", STATUS_COLORS[selected.status])}>
+                  {recordWords.status(selected.status)}
+                </Badge>
+                {isRevised(selected) && (
+                  <Badge
+                    className={cn("text-xs", REVISED_BADGE_CLASS)}
+                    title={t("revised.title", { n: selected.submissionCount })}
+                    data-testid="revised-badge"
+                  >
+                    {t("revised.label")}
+                  </Badge>
+                )}
+                {/* The record's history (WP5): the only place a difference
+                    between submissions is shown; the sheet keeps current values. */}
+                {mayReadRecordTrail(user, selected) && (
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-xs gap-1"
+                    onClick={() => setTrailOpen(true)}
+                    aria-label={tTrail("openLabel")}
+                    data-testid="review-sheet-history"
+                  >
+                    <History className="h-3.5 w-3.5" aria-hidden="true" />
+                    {tTrail("open")}
+                  </Button>
+                )}
+              </div>
+            )}
           </SheetHeader>
           {selected && (
             <div className="space-y-5 mt-4 text-sm">
@@ -1075,9 +1192,12 @@ export default function ReviewPage() {
                 </p>
               )}
               <div className="flex flex-wrap gap-2">
-                {canReview && selected.status === "submitted" && (
+                {/* The fallback (WP5): opening the record took it into review,
+                    unless that start failed. Never for its author. */}
+                {canApprove && selected.status === "submitted" && !startingReview && (
                   <Button
                     variant="outline"
+                    data-testid="review-sheet-start-review"
                     disabled={busy || sheetState !== "ready"}
                     onClick={() => act("review", selected)}
                   >

@@ -33,6 +33,7 @@ import {
   RecordNotRecallableError,
   RecordChangedError,
   SelfApprovalRefusedError,
+  SelfReviewRefusedError,
   SnapshotImmutableError,
   SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
@@ -127,6 +128,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   record_submit_forbidden: () => new SubmitRoleRefusedError(),
   record_author_forbidden: () => new SubmitAuthorRefusedError(false),
   self_approval_forbidden: () => new SelfApprovalRefusedError(),
+  self_review_forbidden: () => new SelfReviewRefusedError(),
   subsidiary_not_found: () => new ResourceNotFoundError('subsidiary_not_found'),
   location_not_found: () => new ResourceNotFoundError('location_not_found'),
   record_not_found: () => new ResourceNotFoundError('record_not_found'),
@@ -289,6 +291,7 @@ describe('every domain code, as the client receives it', () => {
   it('keeps each class the Nest exception it extends (instanceof readers, toThrow(message) specs)', () => {
     expect(new RecordChangedError()).toBeInstanceOf(ConflictException);
     expect(new SelfApprovalRefusedError()).toBeInstanceOf(ForbiddenException);
+    expect(new SelfReviewRefusedError()).toBeInstanceOf(ForbiddenException);
     expect(new EvidenceRequiredError('Electricity')).toBeInstanceOf(BadRequestException);
     expect(new ApprovalEvidenceMissingError('Refrigerants')).toBeInstanceOf(BadRequestException);
     expect(new ResourceNotFoundError('record_not_found')).toBeInstanceOf(NotFoundException);

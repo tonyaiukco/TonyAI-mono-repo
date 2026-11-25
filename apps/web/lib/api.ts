@@ -4,6 +4,7 @@ import type {
   SealedFactorReleaseDTO,
   ReleaseParametersQuery,
   ActivityRecordDTO,
+  RecordAuditTrailDTO,
   ApproveInput,
   StartReviewInput,
   CaptureReportDatasetRequest,
@@ -601,6 +602,9 @@ export const api = {
     apiFetch<ActivityRecordListMetadataDTO>(`/activity-records/metadata${boundedQuery(params, ACTIVITY_FILTER_KEYS)}`),
   getActivityRecord: (id: string) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${encodeURIComponent(id)}`),
+  /** One record's history, oldest first (WP5): who may read it is `mayReadRecordTrail`. */
+  getRecordAuditTrail: (id: string) =>
+    apiFetch<RecordAuditTrailDTO>(`/activity-records/${encodeURIComponent(id)}/audit-trail`),
   createActivityRecord: (body: CreateActivityRecordInput) =>
     apiFetch<ActivityRecordDTO>("/activity-records", {
       method: "POST",

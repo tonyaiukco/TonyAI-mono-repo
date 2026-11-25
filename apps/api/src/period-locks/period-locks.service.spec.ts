@@ -264,7 +264,7 @@ describe('PeriodLocksService', () => {
     ]);
 
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
-      /^1 rejected record\(s\) are waiting for their authors/,
+      /^1 returned record\(s\) are waiting for their authors/,
     );
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toBeInstanceOf(ConflictException);
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
@@ -280,7 +280,7 @@ describe('PeriodLocksService', () => {
     ]);
 
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
-      /2 record\(s\).*awaiting review.*; 1 rejected record\(s\).* before locking\.$/,
+      /2 record\(s\).*awaiting review.*; 1 returned record\(s\).* before locking\.$/,
     );
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
       response: { code: 'period_records_open', params: { pending: 2, rejected: 1 } },

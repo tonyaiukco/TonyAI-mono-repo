@@ -39,13 +39,15 @@ export const RECALL_AUTHOR_REFUSAL =
   'You may only recall activity records you created';
 export const SELF_APPROVAL_REFUSAL =
   'You created this record, so someone else must approve it.';
+export const SELF_REVIEW_REFUSAL =
+  'You created this record, so someone else must review it.';
 export const RECORD_CHANGED_MESSAGE =
   'This record was changed by someone else while your request was in progress. Reload it and try again.';
 export const EVIDENCE_REFUSAL_FRAGMENT =
   'requires at least one evidence file before submitting';
 /** K3: the approver cannot attach a file (evidence is locked after submit). */
 export const APPROVAL_EVIDENCE_REFUSAL_FRAGMENT =
-  'has no evidence file — reject the record so its author can attach one';
+  'has no evidence file — return the record so its author can attach one';
 export const VARIANCE_REFUSAL =
   'This value deviates significantly from the historical average — add a variance comment before submitting.';
 /** A record above its typo ceiling where history cannot judge it (BUG-R2-07
@@ -151,6 +153,20 @@ export class EvidenceDetachRequiredError extends BadRequestException {
 export class SelfApprovalRefusedError extends ForbiddenException {
   constructor() {
     super(errorBody('self_approval_forbidden', SELF_APPROVAL_REFUSAL));
+  }
+}
+
+/**
+ * The same segregation of duties at the start of review (WP5,
+ * `uat4-review-resubmit`): opening a record in the review queue takes it into
+ * review, which closes its author's recall and reads in the trail as a
+ * four-eyes step. The author — whatever role they hold now — may not take it.
+ * Returning one's own record is not refused here (the approval chain package
+ * owns who decides what).
+ */
+export class SelfReviewRefusedError extends ForbiddenException {
+  constructor() {
+    super(errorBody('self_review_forbidden', SELF_REVIEW_REFUSAL));
   }
 }
 

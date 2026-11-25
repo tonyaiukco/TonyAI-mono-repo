@@ -15,7 +15,7 @@ const SERVER: Record<string, (n: number) => string> = {
   frozenBoundaryVersions: (n) =>
     `This subsidiary is declared in ${n} confirmed or captured inventory boundary version(s), which record the inventory a report was issued from and never change, so a subsidiary declared in one stays. Set its status to "inactive" to retire it instead.`,
   reviewRecords: (n) => `${n} record(s) awaiting review`,
-  openRecords: (n) => `${n} draft or rejected record(s)`,
+  openRecords: (n) => `${n} draft or returned record(s)`,
   locationsHoldingForeignRecords: (n) => `${n} facility(ies) holding a record that belongs to another subsidiary`,
   periodLocks: (n) => `${n} closed reporting period(s)`,
   targets: (n) => `${n} reduction target(s)`,

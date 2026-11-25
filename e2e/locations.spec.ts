@@ -136,7 +136,7 @@ test('a record awaiting review blocks the delete WITHOUT calling it permanent', 
   expect(blocked.status()).toBe(409);
   const message = (await blocked.json()).message as string;
   expect(message).toMatch(/1 record\(s\) awaiting review/);
-  expect(message).toMatch(/sent back by a reviewer/);
+  expect(message).toMatch(/returned by a reviewer/);
   expect(message).not.toMatch(/inactive/);
 
   // Follow it: a reviewer sends the record back, and the subsidiary really does
@@ -209,7 +209,7 @@ test('a location holding a record blocks only through that record', async ({ req
   const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
   expect(refused.status()).toBe(409);
   const message = (await refused.json()).message as string;
-  expect(message).toMatch(/1 draft or rejected record/);
+  expect(message).toMatch(/1 draft or returned record/);
   // The location is NOT named. It used to be, which produced advice that
   // contradicted itself — remove the location, and the location stays — and
   // neither was true.
@@ -249,7 +249,7 @@ test('a disposable subsidiary can still be emptied and deleted', async ({ reques
   const blocked = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
   expect(blocked.status()).toBe(409);
   const message = (await blocked.json()).message as string;
-  expect(message).toMatch(/1 draft or rejected record\(s\)/);
+  expect(message).toMatch(/1 draft or returned record\(s\)/);
   // The location is NOT listed. This assertion used to carry a trailing `\.`
   // and passed for the wrong reason: the message DID name the location, and
   // dropping the dot showed it. The advice was self-contradictory too — remove

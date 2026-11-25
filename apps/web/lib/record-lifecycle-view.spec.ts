@@ -4,7 +4,16 @@ import { createTranslator } from 'use-intl/core';
 import { MESSAGES } from '@/messages';
 import { describeApiError, type ErrorTranslator } from './i18n/errors';
 import type { Locale } from './types';
-import { canApproveRecord, canSubmitEntry, isOwnRecordForApprover, saveErrorDescription } from './record-lifecycle-view';
+import {
+  canApproveRecord,
+  canSubmitEntry,
+  isNewerRecord,
+  keepNewerRows,
+  isOwnRecordForApprover,
+  isRevised,
+  saveErrorDescription,
+  shouldStartReviewOnOpen,
+} from './record-lifecycle-view';
 
 describe('record lifecycle controls', () => {
   const admin = { id: 'author', role: 'super_admin' as const };
@@ -115,5 +124,64 @@ describe('save errors on Data Entry (LP3-01: by code, in the user\'s language)',
     expect(save(new ApiError('private failure', 500), false, 'tr')).toEqual({ title: MESSAGES.tr.dataEntry.saveFailedServer });
     expect(save(new Error('Connection lost'), false, 'en')).toEqual({ title: MESSAGES.en.errors.unexpected });
     expect(save(new TypeError('Failed to fetch'), false, 'tr')).toEqual({ title: MESSAGES.tr.errors.network });
+  });
+});
+
+describe('opening a record in the review queue (WP5)', () => {
+  const consultant = { id: 'reviewer', role: 'consultant' as const };
+  const admin = { id: 'author', role: 'super_admin' as const };
+  const submitted = { createdBy: 'author', status: 'submitted' };
+
+  it("starts the review when an approver opens another user's submitted record", () => {
+    expect(shouldStartReviewOnOpen(consultant, submitted)).toBe(true);
+    expect(shouldStartReviewOnOpen({ id: 'other-admin', role: 'super_admin' }, submitted)).toBe(true);
+  });
+  it('never starts it for the author, who may not approve it', () => {
+    expect(shouldStartReviewOnOpen(admin, submitted)).toBe(false);
+    expect(shouldStartReviewOnOpen({ id: 'author', role: 'consultant' }, submitted)).toBe(false);
+  });
+  it('changes nothing on a record already under review, or no longer pending', () => {
+    for (const status of ['under_review', 'draft', 'rejected', 'approved']) {
+      expect(shouldStartReviewOnOpen(consultant, { createdBy: 'author', status })).toBe(false);
+    }
+  });
+  it('never starts it for a role that may not approve, or without a user or record', () => {
+    expect(shouldStartReviewOnOpen({ id: 'x', role: 'executive_viewer' }, submitted)).toBe(false);
+    expect(shouldStartReviewOnOpen({ id: 'x', role: 'data_entry' }, submitted)).toBe(false);
+    expect(shouldStartReviewOnOpen(null, submitted)).toBe(false);
+    expect(shouldStartReviewOnOpen(consultant, null)).toBe(false);
+  });
+  it('marks a record revised from its second submission', () => {
+    expect(isRevised({ submissionCount: 0 })).toBe(false);
+    expect(isRevised({ submissionCount: 1 })).toBe(false);
+    expect(isRevised({ submissionCount: 2 })).toBe(true);
+    expect(isRevised({ submissionCount: 5 })).toBe(true);
+    expect(isRevised(null)).toBe(false);
+  });
+});
+
+describe('a late answer never replaces a newer read (owner review)', () => {
+  const v = (updatedAt: string, submissionCount: number) => ({ updatedAt, submissionCount });
+  it('keeps a row read after the answer, or holding a later submission', () => {
+    expect(isNewerRecord(v('2026-11-25T10:00:02.000Z', 2), v('2026-11-25T10:00:01.000Z', 1))).toBe(true);
+    expect(isNewerRecord(v('2026-11-25T10:00:00.000Z', 2), v('2026-11-25T10:00:01.000Z', 1))).toBe(true);
+  });
+  it('lets the answer replace the row it answered for', () => {
+    expect(isNewerRecord(v('2026-11-25T10:00:00.000Z', 1), v('2026-11-25T10:00:01.000Z', 1))).toBe(false);
+    expect(isNewerRecord(v('2026-11-25T10:00:01.000Z', 1), v('2026-11-25T10:00:01.000Z', 1))).toBe(false);
+  });
+});
+
+describe('a queue page read before a step never turns its row back (owner review)', () => {
+  const row = (id: string, status: string, updatedAt: string, submissionCount = 1) => ({ id, status, updatedAt, submissionCount });
+  it('keeps the row the screen holds in a later version, and takes the page for the rest', () => {
+    const shown = [row('b', 'under_review', '2026-11-25T10:00:05.000Z'), row('z', 'submitted', '2026-11-25T09:00:00.000Z')];
+    const page = [row('b', 'submitted', '2026-11-25T10:00:01.000Z'), row('c', 'submitted', '2026-11-25T10:00:02.000Z')];
+    expect(keepNewerRows(shown, page)).toEqual([shown[0], page[1]]);
+  });
+  it('takes the page where it is the later version', () => {
+    const shown = [row('b', 'submitted', '2026-11-25T10:00:01.000Z')];
+    const page = [row('b', 'under_review', '2026-11-25T10:00:05.000Z')];
+    expect(keepNewerRows(shown, page)).toEqual(page);
   });
 });

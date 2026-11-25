@@ -57,6 +57,12 @@ describe('the error-code registry', () => {
     for (const code of Object.keys(API_ERROR_PARAMS)) expect(isApiErrorCode(code), code).toBe(true);
   });
 
+  it('knows the author\'s refused start of review (WP5) as a 403 with no params', () => {
+    expect(isApiErrorCode('self_review_forbidden')).toBe(true);
+    expect(API_ERROR_STATUS.self_review_forbidden).toBe(403);
+    expect(Object.keys(API_ERROR_PARAMS)).not.toContain('self_review_forbidden');
+  });
+
   it('is frozen', () => {
     expect(Object.isFrozen(API_ERROR_STATUS)).toBe(true);
     expect(Object.isFrozen(API_ERROR_PARAMS)).toBe(true);

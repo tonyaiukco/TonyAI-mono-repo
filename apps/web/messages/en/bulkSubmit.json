@@ -1,8 +1,8 @@
 {
   "blockedOne": "The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.",
   "blockedMany": "All {count} imported records need an evidence file before they can be submitted, and an import cannot attach one. Under Previous submissions, attach each invoice to the records it evidences — one file can cover several.",
-  "confirmOne": "Send 1 record for review. You can recall it yourself only until a reviewer opens it; after that, only the reviewer can send it back.",
-  "confirmMany": "Send {count} records for review. You can recall each one yourself only until a reviewer opens it; after that, only the reviewer can send it back.",
+  "confirmOne": "Send 1 record for review. You can recall it yourself only until a reviewer opens it; after that, only the reviewer can return it.",
+  "confirmMany": "Send {count} records for review. You can recall each one yourself only until a reviewer opens it; after that, only the reviewer can return it.",
   "refusedHeadline": "No records were submitted.",
   "refusedOne": "It needs attention first — see below.",
   "refusedMany": "All {count} need attention first — see below.",
@@ -17,7 +17,7 @@
   "failed": "The submission failed.",
   "block": {
     "role": "Your role cannot submit records.",
-    "rejected": "Sent back by a reviewer — open it on its own, so the note gets read.",
+    "rejected": "Returned by a reviewer — open it on its own, so the note gets read.",
     "already": "Already {status}.",
     "notAuthor": "Entered by someone else.",
     "locked": "{period} {year} is locked.",

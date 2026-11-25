@@ -16,7 +16,7 @@ const SEEN = '2026-11-10T09:00:00.000Z';
 
 function build() {
   const service = { approve: vi.fn().mockResolvedValue({}), reject: vi.fn().mockResolvedValue({}) };
-  return { service, controller: new ActivityRecordsController(service as unknown as ActivityRecordsService) };
+  return { service, controller: new ActivityRecordsController(service as unknown as ActivityRecordsService, {} as never) };
 }
 
 describe('ActivityRecordsController — a review decision names the submission it saw', () => {

@@ -74,11 +74,11 @@
     "evidenceFailed": "Could not load the evidence for this record — do not decide it until you can see the files.",
     "noFiles": "No files attached.",
     "loadMoreFiles": "Load more files",
-    "reasonLabel": "Reason (required to reject)",
+    "reasonLabel": "Reason (required to return)",
     "reasonPlaceholder": "What must the submitter change?",
-    "reasonHint": "A rejection sends this text back to the submitter, so it has to say what to fix.",
+    "reasonHint": "A return sends this text back to the submitter, so it has to say what to fix.",
     "startReview": "Start review",
-    "reject": "Reject",
+    "reject": "Return",
     "approve": "Approve",
     "selfApproval": "You cannot approve a record you entered.",
     "reading": "Reading the record as it stands now…",
@@ -88,6 +88,10 @@
   "toast": {
     "reviewed": "Taken into review",
     "approved": "Record approved",
-    "rejected": "Record rejected — the reason is now visible to the submitter"
+    "rejected": "Record returned — the reason is now visible to the submitter"
+  },
+  "revised": {
+    "label": "Revised",
+    "title": "Submission {n}: sent for review again after a recall or a return"
   }
 }

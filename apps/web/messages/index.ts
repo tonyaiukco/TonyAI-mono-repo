@@ -30,6 +30,7 @@ import enIntensityMetrics from "./en/intensityMetrics.json";
 import enSubsidiaryStatus from "./en/subsidiaryStatus.json";
 import enReview from "./en/review.json";
 import enAudit from "./en/audit.json";
+import enRecordTrail from "./en/recordTrail.json";
 import enSubsidiaries from "./en/subsidiaries.json";
 import trAuth from "./tr/auth.json";
 import trBoundary from "./tr/boundary.json";
@@ -62,6 +63,7 @@ import trIntensityMetrics from "./tr/intensityMetrics.json";
 import trSubsidiaryStatus from "./tr/subsidiaryStatus.json";
 import trReview from "./tr/review.json";
 import trAudit from "./tr/audit.json";
+import trRecordTrail from "./tr/recordTrail.json";
 import trSubsidiaries from "./tr/subsidiaries.json";
 
 /**
@@ -105,6 +107,7 @@ import trSubsidiaries from "./tr/subsidiaries.json";
  *   subsidiaryStatus  a subsidiary's reporting status, keyed by `SUBSIDIARY_STATUSES` (English lowercase, as the screens always printed it)
  *   review      the review queue and its record sheet (LP4-04 slice 2 PR C)
  *   audit       the audit trail; action and entity codes stay raw identifiers (M2)
+ *   recordTrail one record's history as a timeline — review sheet, Data Entry, audit page (WP5)
  *   subsidiaries  the Subsidiaries list and detail, locations and period locks (LP4-04 slice 2 PR C)
  *   emissions   the Emissions screen — its tabs, the record drawer and the withdrawal (`lib/void-view.ts`) (LP4-04)
  */
@@ -140,6 +143,7 @@ const en = {
   subsidiaryStatus: enSubsidiaryStatus,
   review: enReview,
   audit: enAudit,
+  recordTrail: enRecordTrail,
   subsidiaries: enSubsidiaries,
 };
 
@@ -177,6 +181,7 @@ const tr: Messages = {
   subsidiaryStatus: trSubsidiaryStatus,
   review: trReview,
   audit: trAudit,
+  recordTrail: trRecordTrail,
   subsidiaries: trSubsidiaries,
 };
 

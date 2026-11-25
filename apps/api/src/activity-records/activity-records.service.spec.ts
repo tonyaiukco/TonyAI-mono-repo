@@ -16,7 +16,7 @@ import { DEFAULT_PAGE_LIMIT, isCalculated, PENDING_REVIEW_STATUSES,
   mayEditRecord,
 } from '@tonyai/shared-types';
 import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
-import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsQuantityElsewhere } from './activity-records.service';
+import { ActivityRecordsService, SUBMISSION_NOT_NAMED, evidenceReadyWhere, inheritsQuantityElsewhere, submitRowsOf } from './activity-records.service';
 import {
   CALCULATION_STALE_MESSAGE,
   CalculationStaleError,
@@ -33,6 +33,7 @@ import {
   RESUBMIT_AUTHOR_REFUSAL,
   RecordChangedError,
   SelfApprovalRefusedError,
+  SelfReviewRefusedError,
   SUBMIT_AUTHOR_REFUSAL,
   SubmitAuthorRefusedError,
   SUBMIT_ROLE_REFUSAL,
@@ -110,6 +111,8 @@ function createPrismaMock() {
     },
     auditLog: {
       create: vi.fn(),
+      // The record's earlier `submit` rows (WP5's submission number): none by default.
+      count: vi.fn().mockResolvedValue(0),
     },
     // Default []: no actor resolves, so every resolved name reads null — the
     // deleted-profile case. Tests that care about a real name stub it.
@@ -203,7 +206,7 @@ const PERSISTED_KEYS = [
   'periodValue', 'category', 'activityType', 'scope', 'status', 'activityValue',
   'activityUnit', 'input', 'parameters', 'calculation', 'createdBy', 'anomalyFlag',
   'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
-  'reviewedBy', 'reviewedAt', 'reviewNote', 'submittedAt', 'voidReason', 'voidedBy',
+  'reviewedBy', 'reviewedAt', 'reviewNote', 'submittedAt', 'submissionCount', 'voidReason', 'voidedBy',
   'voidedAt', 'importBatchId', 'evidenceCount', 'createdAt', 'updatedAt',
 ].sort();
 
@@ -240,6 +243,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     anomalyBaselineTCo2e: null,
     varianceReason: null,
     submittedAt: null,
+    submissionCount: 0,
     // Prisma `_count` shape returned when the service includes evidence counts.
     _count: { evidenceLinks: 0 },
     createdAt: now,
@@ -2254,6 +2258,62 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
+
+  // WP5 (`uat4-review-resubmit`): the author is refused the start of review.
+  it('refuses a super_admin taking their own record into review, writing nothing', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-own', status: ActivityRecordStatus.submitted, createdBy: 'user-admin' }),
+    );
+    const refusal = service.startReview(superAdmin(), 'rec-own');
+    await expect(refusal).rejects.toBeInstanceOf(SelfReviewRefusedError);
+    await expect(service.startReview(superAdmin(), 'rec-own')).rejects.toMatchObject({
+      response: { code: 'self_review_forbidden' },
+    });
+    await expect(service.startReview(superAdmin(), 'rec-own')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses a former author, now a consultant, whatever role they hold now', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-old', status: ActivityRecordStatus.submitted, createdBy: 'user-moved' }),
+    );
+    await expect(
+      service.startReview(consultant({ id: 'user-moved' }), 'rec-old'),
+    ).rejects.toBeInstanceOf(SelfReviewRefusedError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('gives a data_entry author the plain role refusal, not self_review_forbidden', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ status: ActivityRecordStatus.submitted, createdBy: 'user-entry' }),
+    );
+    const refusal = service.startReview(dataEntry(), 'rec-1');
+    await expect(refusal).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.startReview(dataEntry(), 'rec-1')).rejects.not.toBeInstanceOf(
+      SelfReviewRefusedError,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('still lets a super_admin take another user\'s record into review', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-other', status: ActivityRecordStatus.submitted, createdBy: 'user-entry' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-other', status: data.status }),
+    );
+    const dto = await service.startReview(superAdmin(), 'rec-other');
+    expect(dto.status).toBe(ActivityRecordStatus.under_review);
+  });
 });
 
 describe('ActivityRecordsService — transition rules', () => {
@@ -2763,7 +2823,7 @@ describe('ActivityRecordsService — transition rules', () => {
     );
 
     await expect(service.submit(dataEntry(), 'rec-a')).rejects.toThrow(
-      /draft or rejected/i,
+      /draft or returned/i,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -4345,6 +4405,149 @@ describe('ActivityRecordsService — submittedAt', () => {
     // screen showing the number.
     const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
     expect(written).not.toHaveProperty('submittedAt');
+    // WP5: only a submit raises the submission count.
+    expect(written).not.toHaveProperty('submissionCount');
+  });
+
+  // WP5: the submission count is raised in the submit's own update, and only there.
+  it('raises the submission count on a first submit and names submission 1 in the audit row', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(submittable({ submissionCount: 0 }));
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data, submissionCount: 1 }),
+      _count: { evidenceLinks: 1 },
+    }));
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+
+    const call = prisma.activityRecord.update.mock.calls.at(-1)![0];
+    expect(call.data.submissionCount).toBe(1);
+    // The increment rides the compare-and-set: a lost race raises nothing.
+    expect(call.where).toEqual({ id: 'rec-s', status: ActivityRecordStatus.draft });
+    expect(dto.submissionCount).toBe(1);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'submit',
+        diff: expect.objectContaining({ submission: 1 }),
+      }),
+      prisma.tx,
+    );
+  });
+
+  it('names submission 2 on a resubmit after a return', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({ status: ActivityRecordStatus.rejected, submissionCount: 1, createdBy: 'user-entry' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data, submissionCount: 2 }),
+      _count: { evidenceLinks: 1 },
+    }));
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(2);
+    expect(dto.submissionCount).toBe(2);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ diff: expect.objectContaining({ submission: 2 }) }),
+      prisma.tx,
+    );
+  });
+
+  it('names the next submission after the record\'s own submit rows when the column says less (the deploy window)', async () => {
+    const { prisma, service } = arrange();
+    // Submitted once by an image from before the column: a `submit` row, a count of 0.
+    prisma.activityRecord.findUnique.mockResolvedValue(submittable({ submissionCount: 0 }));
+    prisma.auditLog.count.mockResolvedValue(1);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
+      _count: { evidenceLinks: 1 },
+    }));
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+
+    expect(prisma.auditLog.count).toHaveBeenCalledWith({ where: submitRowsOf('rec-s', 'org-1') });
+    // Both shapes the migration counts (a pre-taxonomy `update` moving to
+    // `submitted` too), any spelling of the id, within the organisation.
+    expect(submitRowsOf('rec-s', 'org-1')).toEqual({
+      entity: 'activity_record',
+      entityId: { equals: 'rec-s', mode: 'insensitive' },
+      organisationId: 'org-1',
+      OR: [
+        { action: 'submit' },
+        { action: 'update', diff: { path: ['transition', 'to'], equals: 'submitted' } },
+      ],
+    });
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(2);
+    expect(dto.submissionCount).toBe(2);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ diff: expect.objectContaining({ submission: 2 }) }),
+      prisma.tx,
+    );
+  });
+
+  it('keeps the column when it says more than the submit rows (a backfilled floor)', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({ status: ActivityRecordStatus.rejected, submissionCount: 3, createdBy: 'user-entry' }),
+    );
+    prisma.auditLog.count.mockResolvedValue(1);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
+      _count: { evidenceLinks: 1 },
+    }));
+    await service.submit(dataEntry(), 'rec-s');
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(4);
+  });
+
+  it("writes the author's variance reason into the submit row, as the record holds it", async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({ varianceReason: 'New chiller since March' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', varianceReason: 'New chiller since March', ...data }),
+      _count: { evidenceLinks: 1 },
+    }));
+    await service.submit(dataEntry(), 'rec-s');
+    const diff = audit.record.mock.calls.at(-1)![1].diff;
+    expect(diff).toMatchObject({ submission: 1, varianceReason: 'New chiller since March' });
+    // The column is not rewritten by the submit.
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data).not.toHaveProperty('varianceReason');
+  });
+
+  it('writes no reason into a submit row when the record has none', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(submittable({ varianceReason: null }));
+    await service.submit(dataEntry(), 'rec-s');
+    expect(audit.record.mock.calls.at(-1)![1].diff).not.toHaveProperty('varianceReason');
+  });
+
+  it('leaves the count alone on a recall, and the recall names no submission', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({ status: ActivityRecordStatus.submitted, submissionCount: 1, submittedAt: new Date('2026-02-01T09:00:00.000Z') }),
+    );
+
+    await service.recall(dataEntry(), 'rec-s');
+
+    const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
+    expect(written).not.toHaveProperty('submissionCount');
+    const diff = audit.record.mock.calls.at(-1)![1].diff;
+    expect(diff).not.toHaveProperty('submission');
+  });
+
+  it('raises nothing on a refused submit (no evidence attached)', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(submittable());
+    prisma.activityRecordEvidence.count.mockResolvedValue(0); // the gate refuses before any write
+
+    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(EvidenceRequiredError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('is null on a record that has never been submitted', async () => {
@@ -5689,7 +5892,7 @@ describe('ActivityRecordsService — every Scope 1–2 category needs a file bef
         params: { category },
       });
       // The approver is told the remedy open to them: return it to the author.
-      expect((error as Error).message).toMatch(/reject the record/);
+      expect((error as Error).message).toMatch(/return the record/);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
       expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({ where: { activityRecordId: 'rec-v' } });

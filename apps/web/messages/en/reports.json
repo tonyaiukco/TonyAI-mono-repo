@@ -19,7 +19,7 @@
   "evidenceSummary": "Evidence summary (file names + counts)",
   "withdrawnOne": "1 record was withdrawn from this reporting year. It counts towards no figure above, and every export lists it with the reason recorded at the time.",
   "withdrawnMany": "{count} records were withdrawn from this reporting year. They count towards no figure above, and every export lists them with the reason recorded at the time.",
-  "draftWarning": "{percent}% of this period's records are draft/rejected — this report is not suitable for final reporting.",
+  "draftWarning": "{percent}% of this period's records are draft/returned — this report is not suitable for final reporting.",
   "templateYear": "{template} · Reporting year {year}",
   "status": {
     "approved": "All records approved",
@@ -63,7 +63,7 @@
     "total": "Total records",
     "committed": "Committed",
     "pending": "Awaiting review",
-    "incomplete": "Draft / rejected",
+    "incomplete": "Draft / returned",
     "withdrawn": "Withdrawn"
   },
   "sharingNote": "Report sharing (link / email) arrives in a later phase.",

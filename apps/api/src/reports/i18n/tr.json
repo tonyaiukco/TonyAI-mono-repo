@@ -15,7 +15,7 @@
   "generatedAt": "Oluşturulma: {at}",
   "generatedBy": "Oluşturan: {email}",
   "dataWarningLabel": "Veri uyarısı:",
-  "dataWarning": "Bu dönemin kayıtlarının %{percent} oranı taslak/reddedilmiş durumda — nihai raporlamaya uygun değildir.",
+  "dataWarning": "Bu dönemin kayıtlarının %{percent} oranı taslak/iade edilmiş durumda — nihai raporlamaya uygun değildir.",
   "tileScope": "Kapsam {scope}",
   "tileTotal": "Kapsam 1 + 2 toplamı",
   "tileCommitted": "Sayılan kayıtlar",

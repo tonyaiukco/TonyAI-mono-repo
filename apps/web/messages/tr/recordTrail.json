@@ -1,0 +1,75 @@
+{
+  "open": "Geçmiş",
+  "openLabel": "Bu kaydın geçmişini aç",
+  "title": "Kayıt geçmişi",
+  "subtitle": "Kaydedilen her adım, en eskiden başlayarak. Bir düzenleme, değişen her alanı önceki ve sonraki değeriyle gösterir.",
+  "loading": "Geçmiş okunuyor…",
+  "empty": "Bu kayıt için henüz bir şey kaydedilmedi.",
+  "error": "Geçmiş okunamadı.",
+  "refused": "Bu kaydın geçmişini okuyamazsınız.",
+  "retry": "Yeniden dene",
+  "truncated": "Yalnızca son {count} olay gösteriliyor; daha önceki olaylar dışarıda bırakıldı.",
+  "marked": "Denetim sayfasında seçilen",
+  "storedEntry": "Kayıtlı denetim girdisini göster",
+  "system": "Sistem",
+  "removedUser": "Silinmiş kullanıcı",
+  "submission": "{n}. gönderim",
+  "reason": "Gerekçe: {reason}",
+  "noChanges": "Listelenen alanlardan hiçbiri değişmedi.",
+  "before": "Önce",
+  "after": "Sonra",
+  "emptyValue": "—",
+  "yes": "Evet",
+  "no": "Hayır",
+  "kinds": {
+    "created": "Oluşturuldu",
+    "edited": "Düzenlendi",
+    "submitted": "Gönderildi",
+    "resubmitted": "Yeniden gönderildi",
+    "recalled": "Geri çekildi",
+    "review_started": "İncelemeye alındı",
+    "returned": "İade edildi",
+    "approved": "Onaylandı",
+    "voided": "Geçersiz kılındı",
+    "other": "{action}"
+  },
+  "actions": {
+    "reprice": "Rakam yeniden hesaplandı"
+  },
+  "fields": {
+    "activityValue": "Faaliyet değeri",
+    "activityUnit": "Birim",
+    "activityType": "Yakıt veya gaz",
+    "category": "Kategori",
+    "reportingYear": "Raporlama yılı",
+    "reportingPeriod": "Dönem türü",
+    "periodValue": "Dönem",
+    "location": "İşletme / Tesis",
+    "varianceReason": "Sapma nedeni",
+    "figure": "Emisyon (tCO2e)",
+    "equipmentLine": "{n}. ekipman satırı: {part}",
+    "equipment": {
+      "equipmentType": "ekipman türü",
+      "capacityKg": "kurulu kapasite (kg)",
+      "refillKg": "dolum (kg)",
+      "leakRateChoice": "kaçak oranı"
+    },
+    "parameters": {
+      "ncvKcalPerSm3": "Alt ısıl değer (kcal/Sm³)",
+      "billedGcvKcalPerSm3": "Faturadaki üst ısıl değer (kcal/Sm³)",
+      "volumeCorrectionFactor": "Hacim düzeltme katsayısı",
+      "cvBasis": "Isıl değer esası",
+      "generationTopology": "Öz üretim düzeni",
+      "selfGenerationSource": "Öz üretim kaynağı",
+      "selfGeneratedKwh": "Tesiste üretilen (kWh)",
+      "exportedToGridKwh": "Şebekeye verilen (kWh)",
+      "facilityConsumptionKwh": "Tesis tüketimi (kWh)"
+    },
+    "input": {
+      "invoice_no": "Fatura no",
+      "supplier": "Tedarikçi",
+      "utility_provider": "Tedarikçi",
+      "notes": "Notlar"
+    }
+  }
+}

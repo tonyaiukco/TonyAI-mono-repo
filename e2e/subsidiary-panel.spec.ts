@@ -208,8 +208,8 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
   const blockers = await (await request.get(`${API_BASE}/subsidiaries/${sub.id}/summary`, {
     headers: bearer(token),
   })).json();
-  expect(blockers.blockers).toContain('1 draft or rejected record(s)');
-  await expect(page.getByText('1 draft or rejected record(s)', { exact: false })).toBeVisible();
+  expect(blockers.blockers).toContain('1 draft or returned record(s)');
+  await expect(page.getByText('1 draft or returned record(s)', { exact: false })).toBeVisible();
 
   const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
   expect(refused.status()).toBe(409);

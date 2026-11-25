@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
 import { actorLabel, auditActionLabel, summariseBatch, type AuditActorWords, type AuditBatchKey } from "@/lib/audit-view";
+import { RecordTrail } from "@/components/record-trail";
 import { formatNumber } from "@/lib/i18n/number";
 import { useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import type { ViewCopy } from "@/lib/i18n/view-translator";
@@ -165,8 +166,8 @@ export default function AuditPage() {
   const tRoles = useTranslations("users");
   const t = useTranslations("audit");
   const tCommon = useTranslations("common");
-  const repriceLabel = t("actions.reprice");
-  const displayAction = (action: string) => auditActionLabel(action, repriceLabel, humanise(action));
+  const actionLabels = { reprice: t("actions.reprice"), reject: t("actions.reject") };
+  const displayAction = (action: string) => auditActionLabel(action, actionLabels, humanise(action));
   const locale = useLocale();
   const recordWords = useRecordWords();
   const showStableError = useStableErrorToast();
@@ -185,6 +186,13 @@ export default function AuditPage() {
   const [action, setAction] = useState<string>(ANY);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AuditLogDTO | null>(null);
+  // An activity record's row opens that record's history with the row marked
+  // (WP5); a record since deleted falls back to the row's stored content.
+  const [trailRow, setTrailRow] = useState<AuditLogDTO | null>(null);
+  const openRow = (row: AuditLogDTO) => {
+    if (row.entity === "activity_record" && row.entityId) setTrailRow(row);
+    else setSelected(row);
+  };
   /**
    * Offset paging over a table that grows AT THE HEAD shifts every page down as
    * new rows land mid-session — page 2 would silently re-show what was page 1.
@@ -384,7 +392,7 @@ export default function AuditPage() {
                           <TableRow
                             key={row.id}
                             className="cursor-pointer"
-                            onClick={() => setSelected(row)}
+                            onClick={() => openRow(row)}
                           >
                             <TableCell className="text-sm whitespace-nowrap">
                               {formatDateTime(row.createdAt, locale)}
@@ -466,12 +474,26 @@ export default function AuditPage() {
         </div>
       </main>
 
+      <RecordTrail
+        recordId={trailRow?.entityId ?? null}
+        open={!!trailRow}
+        onOpenChange={(open) => !open && setTrailRow(null)}
+        markedEventId={trailRow?.id ?? null}
+        onNotFound={() => {
+          setSelected(trailRow);
+          setTrailRow(null);
+        }}
+        onShowStored={() => {
+          setSelected(trailRow);
+          setTrailRow(null);
+        }}
+      />
       <Sheet open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
         <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
           <SheetHeader>
             <SheetTitle>
               {selected ? t("sheet.title", {
-                action: auditActionLabel(selected.action, repriceLabel),
+                action: auditActionLabel(selected.action, actionLabels),
                 entity: humanise(selected.entity),
               }) : ""}
             </SheetTitle>

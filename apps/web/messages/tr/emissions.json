@@ -123,7 +123,7 @@
     "updatedAt": "Güncellenme",
     "recordId": "Kayıt kimliği",
     "varianceReason": "Sapma Gerekçesi",
-    "sentBack": "Neden geri gönderildi"
+    "sentBack": "Neden iade edildi"
   },
   "void": {
     "why": "Bu rakam neden geri çekildi",

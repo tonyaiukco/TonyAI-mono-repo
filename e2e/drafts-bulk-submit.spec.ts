@@ -134,7 +134,7 @@ test('sends the drafts that were ticked, and leaves the rest a draft', async ({
     // The sentence this dialog exists for: the author's recall ends once a
     // reviewer opens the record (BUG-R2-03).
     await expect(page.getByRole('dialog')).toContainText(
-      /only the reviewer can send it back/,
+      /only the reviewer can return it/,
     );
     await page.locator('[data-testid="drafts-submit-confirm"]').click();
 
@@ -306,7 +306,7 @@ test('a rejected record is not offered, and the row says to open it alone', asyn
       .getByRole('row')
       .filter({ hasText: `Q1 ${E2E_YEAR}` })
       .filter({ hasText: E2E_BULK_CATEGORY });
-    await expect(row).toContainText('Rejected');
+    await expect(row).toContainText('Returned');
     await expect(row).toContainText('open it on its own, so the note gets read');
     await expect(
       list.getByRole('checkbox', { name: new RegExp(`Select Q1 ${E2E_YEAR}`) }),

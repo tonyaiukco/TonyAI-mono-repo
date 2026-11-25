@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  History,
   Loader2,
   Paperclip,
   Pencil,
@@ -80,6 +81,8 @@ import type {
   BulkSubmitReportDTO,
 } from "@/lib/types";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { RecordTrail } from "@/components/record-trail";
+import { mayReadRecordTrail } from "@/lib/types";
 import { useDescribeError, useRecordWords, showErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import type { RecordWords } from "@/lib/vocabulary";
@@ -226,15 +229,20 @@ function RowActions({
   onEdit,
   onRecall,
   onCopy,
+  history,
+  onHistory,
 }: {
   actions: RecordActions;
   record: string;
   onEdit: () => void;
   onRecall: () => void;
   onCopy: () => void;
+  /** The record's history may be read by this user (`mayReadRecordTrail`, WP5). */
+  history: boolean;
+  onHistory: () => void;
 }) {
   const t = useTranslations("dataEntry");
-  if (!actions.edit && !actions.recall && !actions.copy) return null;
+  if (!actions.edit && !actions.recall && !actions.copy && !history) return null;
   return (
     <div className="flex shrink-0 flex-wrap justify-end gap-1">
       {actions.edit && (
@@ -253,6 +261,19 @@ function RowActions({
         <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={onCopy} aria-label={t("rowActions.copyRecord", { record })}>
           <Copy className="h-3.5 w-3.5" />
           {t("rowActions.copy")}
+        </Button>
+      )}
+      {history && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-2"
+          onClick={onHistory}
+          aria-label={t("rowActions.historyRecord", { record })}
+          data-testid="record-history-open"
+        >
+          <History className="h-3.5 w-3.5" />
+          {t("rowActions.history")}
         </Button>
       )}
     </div>
@@ -290,6 +311,8 @@ export function RecordsTable({
   const submitCopy = { t: useTranslations("bulkSubmit"), locale };
   const evidenceCopy = { t: useTranslations("evidence"), locale, words };
   const [selected, setSelected] = useState<string[]>([]);
+  // The record whose history is open (WP5), or none.
+  const [trailId, setTrailId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [report, setReport] = useState<BulkSubmitReportDTO | null>(null);
@@ -867,6 +890,8 @@ export function RecordsTable({
                       onEdit={() => onEdit(r)}
                       onRecall={() => onRecall(r)}
                       onCopy={() => onCopy(r)}
+                      history={mayReadRecordTrail(user, r)}
+                      onHistory={() => setTrailId(r.id)}
                     />
                   </TableCell>
                 </TableRow>
@@ -969,6 +994,7 @@ export function RecordsTable({
           </DialogContent>
         </Dialog>
       )}
+      <RecordTrail recordId={trailId} open={trailId !== null} onOpenChange={(open) => !open && setTrailId(null)} />
     </Card>
   );
 }

@@ -28,6 +28,53 @@ export const isOwnRecordForApprover = (
   record: { createdBy: string } | null,
 ): boolean => !!user && !!record && mayApproveRecords(user) && record.createdBy === user.id;
 
+/**
+ * Does opening this record in the review queue take it into review (WP5,
+ * INC-2.6 §1.2)? Only a `submitted` record, and only for a user who may
+ * approve it: the record's author (D01) opens it without changing it, so
+ * their recall stays open. Built on `canApproveRecord`, so it follows who may
+ * approve when the approval chain changes that.
+ */
+export const shouldStartReviewOnOpen = (
+  user: SubmittingUser | null,
+  record: { createdBy: string; status: string } | null,
+): boolean => !!record && record.status === 'submitted' && canApproveRecord(user, record);
+
+/**
+ * A record sent for review more than once — recalled or returned, then
+ * submitted again (WP5). The queue marks it "Revised"; what changed is shown
+ * only in the record's history.
+ */
+export const isRevised = (record: { submissionCount: number } | null): boolean =>
+  !!record && record.submissionCount >= 2;
+
+/**
+ * Does `shown` hold a later version of the record than `answer`? By its
+ * version (`updatedAt`, which every write to the row bumps), then by its
+ * submission count, so a late answer never replaces a newer read.
+ */
+export const isNewerRecord = (
+  shown: { updatedAt: string; submissionCount: number },
+  answer: { updatedAt: string; submissionCount: number },
+): boolean =>
+  Date.parse(shown.updatedAt) > Date.parse(answer.updatedAt) || shown.submissionCount > answer.submissionCount;
+
+/**
+ * A queue page as read, keeping any row the screen already holds in a later
+ * version: the page decides which records are listed and in what order, never
+ * that a record goes back to an earlier state.
+ */
+export function keepNewerRows<T extends { id: string; updatedAt: string; submissionCount: number }>(
+  shown: readonly T[],
+  page: readonly T[],
+): T[] {
+  const byId = new Map(shown.map((r) => [r.id, r]));
+  return page.map((item) => {
+    const held = byId.get(item.id);
+    return held && isNewerRecord(held, item) ? held : item;
+  });
+}
+
 type SaveErrorKey = 'duplicateAdvice' | 'duplicateAdviceMoving' | 'saveFailedServer' | 'recordChanged';
 
 /**
