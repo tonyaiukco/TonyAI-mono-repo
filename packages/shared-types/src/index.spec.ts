@@ -1232,6 +1232,8 @@ describe('bulk submit — the code list', () => {
       'not_submittable',
       'not_author',
       'period_locked',
+      // inc26-roles-approval-chain: a standard user's withdrawn category.
+      'category_not_granted',
       'evidence_required',
       'calculation_stale',
       'variance_reason_required',
