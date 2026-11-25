@@ -66,25 +66,87 @@ export function trailFieldLabel(field: string, t: TrailTranslator): string {
 }
 
 /**
+ * The catalogue key (from the root of the catalogue) a stored code is shown
+ * by, or null for a value shown as stored. A code that is not a plain word,
+ * or names a prototype member, is never looked up.
+ */
+export function trailValueKey(field: string, value: string): string | null {
+  if (!/^[\w-]+$/.test(value) || value in Object.prototype) return null;
+  if (field === "reportingPeriod") return `periods.granularity.${value}`;
+  if (field === "activityType") return `dataEntry.activityTypes.${value}`;
+  if (field === "activityUnit") return `units.label.${value}`;
+  if (field === "parameters.cvBasis") return `dataEntry.inputs.cvBasis.${value}`;
+  if (field === "parameters.selfGenerationSource") return `dataEntry.inputs.selfGeneration.sources.${value}`;
+  if (/^parameters\.equipment\.\d+\.equipmentType$/.test(field)) return `dataEntry.equipmentTypes.${value}`;
+  if (/^parameters\.equipment\.\d+\.leakRateChoice$/.test(field)) return `dataEntry.inputs.choice.${value}`;
+  return null;
+}
+
+/** What formatting a value needs from the screen. `root` words a stored code
+ *  through `trailValueKey`; `words` names a period and a category. */
+export interface TrailValueCopy {
+  t: TrailTranslator;
+  locale: Locale;
+  words?: Pick<RecordWords, "period" | "category">;
+  root?: TrailTranslator;
+}
+
+const MAX_FRACTION_DIGITS = 12;
+
+function numberAt(field: string, value: number, locale: Locale, digits: number): string {
+  const text = formatNumber(value, locale, { maximumFractionDigits: digits });
+  return field === "figure" ? `${text} tCO2e` : text;
+}
+
+/** The figure to three decimals and any other number to six — more where that
+ *  would write a non-zero value as zero (0.00024 t is not "0"). */
+function numberText(field: string, value: number, locale: Locale): { text: string; digits: number } {
+  let digits = field === "figure" ? 3 : 6;
+  const zero = numberAt(field, 0, locale, digits);
+  while (value !== 0 && digits < MAX_FRACTION_DIGITS && numberAt(field, value, locale, digits) === zero) digits += 1;
+  return { text: numberAt(field, value, locale, digits), digits };
+}
+
+/**
  * A stored value, written for the reader: numbers by the locale (the figure
  * to three decimals, in tCO2e), the record's own vocabulary where the field
  * has one, absent as a dash.
  */
-export function formatTrailValue(
-  field: string,
-  value: RecordTrailValue,
-  copy: { t: TrailTranslator; locale: Locale; words?: Pick<RecordWords, "period" | "category"> },
-): string {
-  const { t, locale, words } = copy;
+export function formatTrailValue(field: string, value: RecordTrailValue, copy: TrailValueCopy): string {
+  const { t, locale, words, root } = copy;
   if (value === null || value === "") return t("emptyValue");
   if (typeof value === "boolean") return t(value ? "yes" : "no");
   if (typeof value === "number") {
-    if (field === "figure") return `${formatNumber(value, locale, { maximumFractionDigits: 3 })} tCO2e`;
     // A year is a label, never grouped.
     if (field === "reportingYear") return String(value);
-    return formatNumber(value, locale, { maximumFractionDigits: 6 });
+    return numberText(field, value, locale).text;
   }
   if (words && field === "periodValue") return words.period(value);
   if (words && field === "category") return words.category(value);
-  return value;
+  const key = root ? trailValueKey(field, value) : null;
+  return key && root!.has(key) ? root!(key) : value;
+}
+
+/**
+ * One change's two sides. Two different numbers never read alike: when the
+ * usual precision writes them the same (0.00024 → 0.00048 t), both are
+ * written with more digits until they differ.
+ */
+export function formatTrailChange(
+  field: string,
+  before: RecordTrailValue,
+  after: RecordTrailValue,
+  copy: TrailValueCopy,
+): { before: string; after: string } {
+  let b = formatTrailValue(field, before, copy);
+  let a = formatTrailValue(field, after, copy);
+  if (typeof before === "number" && typeof after === "number" && before !== after && field !== "reportingYear") {
+    let digits = Math.max(numberText(field, before, copy.locale).digits, numberText(field, after, copy.locale).digits);
+    while (a === b && digits < MAX_FRACTION_DIGITS) {
+      digits += 1;
+      b = numberAt(field, before, copy.locale, digits);
+      a = numberAt(field, after, copy.locale, digits);
+    }
+  }
+  return { before: b, after: a };
 }

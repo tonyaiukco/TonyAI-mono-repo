@@ -6718,6 +6718,8 @@ export type RecordTrailValue = string | number | boolean | null;
  * path to one leaf of a structured input (`parameters.equipment.1.refillKg`),
  * or an `input.`-prefixed key of the record's additional context
  * (`input.invoice_no`, `input.supplier`). A location is given by its name.
+ * A key holding a `.` or `~` is escaped in its path as JSON Pointer does
+ * (`~1`, `~0`), so `{"a.b": 1}` and `{"a": {"b": 1}}` stay two fields.
  */
 export interface RecordTrailChangeDTO {
   field: string;

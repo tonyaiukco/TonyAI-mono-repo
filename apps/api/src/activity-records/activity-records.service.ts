@@ -1747,6 +1747,21 @@ export class ActivityRecordsService {
     // compare-and-set behind the lock: it cannot miss under the protocol, and
     // if a writer ever bypasses the protocol it turns that writer's damage
     // into this request's 409 (P2025, mapped by `withLockedRecord`).
+    //
+    // WP5: which submission this is. The column, or the record's own `submit`
+    // audit rows when they say more: a submit made by an image from before the
+    // column (the deploy window) wrote a row but raised nothing, and the next
+    // submit must not name itself as a submission already in the trail. Read
+    // under the record lock, in the write's transaction.
+    const submission =
+      status === ActivityRecordStatus.submitted
+        ? Math.max(
+            record.submissionCount,
+            await tx.auditLog.count({
+              where: { entity: 'activity_record', entityId: record.id, action: 'submit' },
+            }),
+          ) + 1
+        : null;
     const updated = await tx.activityRecord.update({
       where: { id: record.id, status: record.status },
       data: {
@@ -1768,12 +1783,10 @@ export class ActivityRecordsService {
         // per-attempt history stays in `audit_log`. Same shape as `reviewedAt`
         // directly above, deliberately — two fields answering "most recently,
         // when" should not disagree about what "most recently" means.
-        // WP5: the count of submissions, raised in this same compare-and-set
-        // update, so a lost race raises nothing and a bulk submit counts each
+        // WP5: the count of submissions, set in this same compare-and-set
+        // update, so a lost race writes nothing and a bulk submit counts each
         // record through the submit it calls per id. Nothing else changes it.
-        ...(status === ActivityRecordStatus.submitted
-          ? { submittedAt: new Date(), submissionCount: { increment: 1 } }
-          : {}),
+        ...(submission !== null ? { submittedAt: new Date(), submissionCount: submission } : {}),
         // A recalled record is a draft again: it is not in the review queue,
         // and the queue's clock starts afresh at its next submit (BUG-R2-03).
         ...(status === ActivityRecordStatus.draft ? { submittedAt: null } : {}),
@@ -1795,9 +1808,17 @@ export class ActivityRecordsService {
         entityId: record.id,
         diff: {
           transition: { from: record.status, to: status },
-          // Which submission this is (WP5): the count after this write.
-          ...(status === ActivityRecordStatus.submitted
-            ? { submission: updated.submissionCount }
+          // Which submission this is (WP5): the count after this write, and
+          // the author's variance reason as it went for review — the record's
+          // own, which the anomaly gate required before the submit; written
+          // here so the record's history shows it on the submit itself.
+          ...(submission !== null
+            ? {
+                submission: updated.submissionCount,
+                ...(extra.varianceReason === undefined && updated.varianceReason
+                  ? { varianceReason: updated.varianceReason }
+                  : {}),
+              }
             : {}),
           ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
           ...(extra.varianceReason !== undefined

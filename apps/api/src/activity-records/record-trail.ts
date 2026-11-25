@@ -103,11 +103,18 @@ function asValue(v: unknown): RecordTrailValue {
 }
 
 /** Flattens a structured input to its leaves, keyed by dotted path. */
+/**
+ * One path segment, kept apart from the separator: a key holding a dot
+ * (`{"meter.reading": 12}`) must not read as the nested `{"meter": {"reading": 12}}`.
+ * JSON Pointer's escapes: `~` as `~0`, then `.` as `~1`.
+ */
+const segment = (key: string) => key.replace(/~/g, '~0').replace(/\./g, '~1');
+
 function leaves(value: unknown, prefix: string, out: Map<string, RecordTrailValue>): void {
   if (Array.isArray(value)) {
     value.forEach((item, i) => leaves(item, `${prefix}.${i}`, out));
   } else if (isObject(value)) {
-    for (const [key, item] of Object.entries(value)) leaves(item, `${prefix}.${key}`, out);
+    for (const [key, item] of Object.entries(value)) leaves(item, `${prefix}.${segment(key)}`, out);
   } else {
     out.set(prefix, asValue(value));
   }
@@ -182,8 +189,16 @@ export function buildRecordTrail(
   lookups: TrailLookups,
 ): RecordTrailEventDTO[] {
   let submissions = 0;
+  // The record's variance reason as its last saved snapshot held it: a submit
+  // row written before submits carried the reason (WP5) is given it from there,
+  // since a submit itself never changes it.
+  let savedVarianceReason: string | null = null;
   return rows.map((row) => {
     const diff = isObject(row.diff) ? row.diff : {};
+    const saved = isObject(diff.after) ? diff.after : null;
+    if (saved && (row.action === 'create' || row.action === 'update')) {
+      savedVarianceReason = text(saved.varianceReason);
+    }
     const transition = isObject(diff.transition) ? diff.transition : null;
     const target = transition && typeof transition.to === 'string' ? transition.to : null;
 
@@ -196,21 +211,24 @@ export function buildRecordTrail(
 
     let submission: number | null = null;
     if (kind === 'submit') {
+      // Never lower than the order says: a row that names a number already
+      // given (a submit around the release's deploy window) reads as the next.
       submission =
         typeof diff.submission === 'number' && Number.isInteger(diff.submission) && diff.submission > 0
-          ? diff.submission
+          ? Math.max(diff.submission, submissions + 1)
           : submissions + 1;
       submissions = submission;
       kind = submission > 1 ? 'resubmitted' : 'submitted';
     }
 
+    // A return before `reviewNote` existed stored its note as `varianceReason`.
     const reason =
       kind === 'returned'
-        ? text(diff.reviewNote)
+        ? (text(diff.reviewNote) ?? text(diff.varianceReason))
         : kind === 'voided'
           ? text(diff.voidReason)
           : kind === 'submitted' || kind === 'resubmitted'
-            ? text(diff.varianceReason)
+            ? (text(diff.varianceReason) ?? savedVarianceReason)
             : null;
 
     const changes =

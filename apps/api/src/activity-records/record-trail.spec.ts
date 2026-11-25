@@ -261,6 +261,72 @@ describe('buildRecordTrail — the events of one record, in order', () => {
   });
 });
 
+describe('buildRecordTrail — the owner review of 52ceb7e8', () => {
+  it("gives a submit row written without the reason the author's reason from the last saved snapshot", () => {
+    const events = buildRecordTrail(
+      [
+        row('create', { after: snapshot({ varianceReason: null }) }),
+        row('update', { before: snapshot(), after: snapshot({ activityValue: 9000, varianceReason: 'New chiller since March' }) }),
+        row('submit', transition('draft', 'submitted')),
+        row('recall', transition('submitted', 'draft')),
+        row('update', { before: snapshot({ varianceReason: 'New chiller since March' }), after: snapshot({ varianceReason: null, activityValue: 1000 }) }),
+        row('submit', transition('draft', 'submitted')),
+      ],
+      lookups,
+    );
+    expect(events[2]).toMatchObject({ kind: 'submitted', reason: 'New chiller since March' });
+    // Cleared since: the second submit went without one.
+    expect(events[5]).toMatchObject({ kind: 'resubmitted', reason: null });
+  });
+
+  it('prefers the reason the submit row itself carries', () => {
+    const [, event] = buildRecordTrail(
+      [
+        row('create', { after: snapshot({ varianceReason: 'old' }) }),
+        row('submit', transition('draft', 'submitted', { submission: 1, varianceReason: 'as submitted' })),
+      ],
+      lookups,
+    );
+    expect(event.reason).toBe('as submitted');
+  });
+
+  it('reads the note of a return logged before `reviewNote` existed', () => {
+    const [event] = buildRecordTrail(
+      [row('update', transition('submitted', 'rejected', { varianceReason: 'The March invoice is missing' }), reviewer)],
+      lookups,
+    );
+    expect(event).toMatchObject({ kind: 'returned', reason: 'The March invoice is missing' });
+  });
+
+  it('never numbers a submission lower than its order (a submit made in the deploy window)', () => {
+    const events = buildRecordTrail(
+      [
+        row('submit', transition('draft', 'submitted')),
+        row('recall', transition('submitted', 'draft')),
+        row('submit', transition('draft', 'submitted', { submission: 1 })),
+      ],
+      lookups,
+    );
+    expect(events.map((e) => [e.kind, e.submission])).toEqual([
+      ['submitted', 1],
+      ['recalled', null],
+      ['resubmitted', 2],
+    ]);
+  });
+
+  it('keeps a key holding a dot apart from a nested key', () => {
+    const changes = editChanges(
+      snapshot({ input: { 'meter.reading': 12 } }),
+      snapshot({ input: { meter: { reading: 12 } } }),
+      lookups,
+    );
+    expect(changes).toEqual([
+      { field: 'input.meter.reading', before: null, after: 12 },
+      { field: 'input.meter~1reading', before: 12, after: null },
+    ]);
+  });
+});
+
 describe('editChanges — each changed input, before and after', () => {
   it.each([
     ['activityValue', 1000, 1300, 'activityValue'],

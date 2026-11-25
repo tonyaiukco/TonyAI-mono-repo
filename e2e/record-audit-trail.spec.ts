@@ -303,6 +303,27 @@ test('the audit page opens a record event in its timeline, marked; a deleted dra
     const sheet = page.getByRole('dialog');
     await expect(sheet).toContainText(gone);
     await expect(page.getByTestId('record-trail')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+
+    // A late 404 from an opening the admin has left never closes what they chose since.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const TRAIL = `**/api/v1/activity-records/${gone}/audit-trail`;
+    await page.route(TRAIL, async (route) => {
+      await held;
+      return route.fallback();
+    });
+    const answered = page.waitForResponse((r) => r.url().endsWith(`/activity-records/${gone}/audit-trail`));
+    await page.locator('table tbody tr').first().click();
+    await expect(page.getByTestId('record-trail-loading')).toBeVisible();
+    await page.getByTestId('record-trail-stored').click();
+    await expect(sheet).toContainText(gone);
+    release();
+    expect((await answered).status()).toBe(404);
+    await page.waitForTimeout(300);
+    await expect(sheet).toContainText(gone);
+    await page.unroute(TRAIL);
   } finally {
     await deleteRecordsAsService(request, [kept]);
   }

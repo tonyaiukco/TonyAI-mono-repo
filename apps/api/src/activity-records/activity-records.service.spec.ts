@@ -111,6 +111,8 @@ function createPrismaMock() {
     },
     auditLog: {
       create: vi.fn(),
+      // The record's earlier `submit` rows (WP5's submission number): none by default.
+      count: vi.fn().mockResolvedValue(0),
     },
     // Default []: no actor resolves, so every resolved name reads null — the
     // deleted-profile case. Tests that care about a real name stub it.
@@ -4419,7 +4421,7 @@ describe('ActivityRecordsService — submittedAt', () => {
     const dto = await service.submit(dataEntry(), 'rec-s');
 
     const call = prisma.activityRecord.update.mock.calls.at(-1)![0];
-    expect(call.data.submissionCount).toEqual({ increment: 1 });
+    expect(call.data.submissionCount).toBe(1);
     // The increment rides the compare-and-set: a lost race raises nothing.
     expect(call.where).toEqual({ id: 'rec-s', status: ActivityRecordStatus.draft });
     expect(dto.submissionCount).toBe(1);
@@ -4445,13 +4447,74 @@ describe('ActivityRecordsService — submittedAt', () => {
 
     const dto = await service.submit(dataEntry(), 'rec-s');
 
-    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toEqual({ increment: 1 });
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(2);
     expect(dto.submissionCount).toBe(2);
     expect(audit.record).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ diff: expect.objectContaining({ submission: 2 }) }),
       prisma.tx,
     );
+  });
+
+  it('names the next submission after the record\'s own submit rows when the column says less (the deploy window)', async () => {
+    const { prisma, service } = arrange();
+    // Submitted once by an image from before the column: a `submit` row, a count of 0.
+    prisma.activityRecord.findUnique.mockResolvedValue(submittable({ submissionCount: 0 }));
+    prisma.auditLog.count.mockResolvedValue(1);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
+      _count: { evidenceLinks: 1 },
+    }));
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+
+    expect(prisma.auditLog.count).toHaveBeenCalledWith({
+      where: { entity: 'activity_record', entityId: 'rec-s', action: 'submit' },
+    });
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(2);
+    expect(dto.submissionCount).toBe(2);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ diff: expect.objectContaining({ submission: 2 }) }),
+      prisma.tx,
+    );
+  });
+
+  it('keeps the column when it says more than the submit rows (a backfilled floor)', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({ status: ActivityRecordStatus.rejected, submissionCount: 3, createdBy: 'user-entry' }),
+    );
+    prisma.auditLog.count.mockResolvedValue(1);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
+      _count: { evidenceLinks: 1 },
+    }));
+    await service.submit(dataEntry(), 'rec-s');
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data.submissionCount).toBe(4);
+  });
+
+  it("writes the author's variance reason into the submit row, as the record holds it", async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({ varianceReason: 'New chiller since March' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', varianceReason: 'New chiller since March', ...data }),
+      _count: { evidenceLinks: 1 },
+    }));
+    await service.submit(dataEntry(), 'rec-s');
+    const diff = audit.record.mock.calls.at(-1)![1].diff;
+    expect(diff).toMatchObject({ submission: 1, varianceReason: 'New chiller since March' });
+    // The column is not rewritten by the submit.
+    expect(prisma.activityRecord.update.mock.calls.at(-1)![0].data).not.toHaveProperty('varianceReason');
+  });
+
+  it('writes no reason into a submit row when the record has none', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(submittable({ varianceReason: null }));
+    await service.submit(dataEntry(), 'rec-s');
+    expect(audit.record.mock.calls.at(-1)![1].diff).not.toHaveProperty('varianceReason');
   });
 
   it('leaves the count alone on a recall, and the recall names no submission', async () => {

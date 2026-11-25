@@ -156,6 +156,30 @@ describe('WP5 — a record\'s audit trail over HTTP', () => {
     expect(firstEdit.changes[0]).toEqual({ field: 'activityValue', before: 1000, after: 1200 });
   });
 
+  it("shows the author's variance reason on the submit, as the record held it (owner review)", async () => {
+    const entry = A.users.dataEntry;
+    const created = await ok<ActivityRecordDTO>(entry, 'POST', '/activity-records', {
+      subsidiaryId: A.subsidiaryId,
+      locationId: null,
+      reportingYear: 2026,
+      reportingPeriod: 'monthly',
+      periodValue: 'June',
+      category: 'Electricity',
+      activityType: null,
+      activityValue: 1000,
+      activityUnit: 'kWh',
+      varianceReason: 'New chiller since March',
+      input: null,
+    });
+    await attachEvidence(owner, A, [created.id]);
+    await ok(entry, 'POST', `/activity-records/${created.id}/submit`);
+
+    const row = await owner.auditLog.findFirstOrThrow({ where: { entityId: created.id, action: 'submit' } });
+    expect(row.diff).toMatchObject({ submission: 1, varianceReason: 'New chiller since March' });
+    const trail = JSON.parse((await trailOf(A.users.consultant, created.id)).text) as RecordAuditTrailDTO;
+    expect(trail.events.find((e) => e.kind === 'submitted')?.reason).toBe('New chiller since March');
+  });
+
   it('is read by the three organisation-wide roles and the author, never written', async () => {
     const approved = await elevenEventStory(A);
     const auditRows = () => owner.auditLog.count({ where: { entityId: approved.id } });

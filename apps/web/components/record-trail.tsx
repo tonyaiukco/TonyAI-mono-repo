@@ -22,7 +22,7 @@ import { api, ApiError } from "@/lib/api";
 import { useRecordWords } from "@/lib/i18n/hooks";
 import { cn } from "@/lib/utils";
 import {
-  formatTrailValue,
+  formatTrailChange,
   trailFieldLabel,
   trailKindLabel,
   TRAIL_KIND_STYLE,
@@ -82,6 +82,7 @@ export function RecordTrail({
 }) {
   const t = useTranslations("recordTrail");
   const tRoles = useTranslations("users");
+  const tRoot = useTranslations();
   const locale = useLocale() as Locale;
   const words = useRecordWords();
   const [state, setState] = useState<TrailState>({ kind: "loading" });
@@ -94,6 +95,11 @@ export function RecordTrail({
   useEffect(() => {
     if (!open || !recordId) return;
     const mine = ++seq.current;
+    // Closed, or opened on another record, before this read answered: its
+    // answer — a late 404 included — no longer speaks for the screen.
+    const cleanup = () => {
+      if (seq.current === mine) seq.current += 1;
+    };
     setState({ kind: "loading" });
     api
       .getRecordAuditTrail(recordId)
@@ -108,6 +114,7 @@ export function RecordTrail({
         }
         setState({ kind: err instanceof ApiError && err.status === 403 ? "refused" : "error" });
       });
+    return cleanup;
   }, [open, recordId, attempt]);
 
   const tt = t as unknown as TrailTranslator;
@@ -225,19 +232,25 @@ export function RecordTrail({
                           </tr>
                         </thead>
                         <tbody>
-                          {event.changes.map((change) => (
-                            <tr key={change.field} data-testid="record-trail-change" data-field={change.field}>
-                              <th scope="row" className="pr-2 text-left font-medium align-top">
-                                {trailFieldLabel(change.field, tt)}
-                              </th>
-                              <td className="pr-2 font-mono align-top line-through decoration-muted-foreground/50">
-                                {formatTrailValue(change.field, change.before, { t: tt, locale, words })}
-                              </td>
-                              <td className="font-mono align-top">
-                                {formatTrailValue(change.field, change.after, { t: tt, locale, words })}
-                              </td>
-                            </tr>
-                          ))}
+                          {event.changes.map((change) => {
+                            const shown = formatTrailChange(change.field, change.before, change.after, {
+                              t: tt,
+                              locale,
+                              words,
+                              root: tRoot as unknown as TrailTranslator,
+                            });
+                            return (
+                              <tr key={change.field} data-testid="record-trail-change" data-field={change.field}>
+                                <th scope="row" className="pr-2 text-left font-medium align-top">
+                                  {trailFieldLabel(change.field, tt)}
+                                </th>
+                                <td className="pr-2 font-mono align-top line-through decoration-muted-foreground/50">
+                                  {shown.before}
+                                </td>
+                                <td className="font-mono align-top">{shown.after}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     )}

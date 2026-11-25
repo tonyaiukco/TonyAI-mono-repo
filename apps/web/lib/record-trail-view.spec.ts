@@ -5,12 +5,17 @@ import type { Locale, RecordTrailEventKind } from "@/lib/types";
 import { RECORD_TRAIL_EVENT_KINDS } from "@/lib/types";
 import { recordWordsFor } from "@/lib/i18n/testing";
 import {
+  formatTrailChange,
   formatTrailValue,
+  trailValueKey,
   trailFieldLabel,
   trailKindLabel,
   TRAIL_KIND_STYLE,
   type TrailTranslator,
 } from "./record-trail-view";
+
+const rootFor = (locale: Locale): TrailTranslator =>
+  createTranslator({ locale, messages: MESSAGES[locale], onError: (e) => { throw e; } }) as unknown as TrailTranslator;
 
 const tFor = (locale: Locale): TrailTranslator =>
   createTranslator({
@@ -111,5 +116,37 @@ describe("record trail — fields and values", () => {
     expect(trailFieldLabel("input.total_kwh", t)).toBe("input.total_kwh");
     expect(trailFieldLabel("parameters.equipment.0.newPart", t)).toBe("parameters.equipment.0.newPart");
     expect(trailFieldLabel("constructor", t)).toBe("constructor");
+  });
+});
+
+describe("record trail — the owner review of 52ceb7e8", () => {
+  it("never writes two different small figures alike", () => {
+    const tr = { t: tFor("tr"), locale: "tr" as const };
+    expect(formatTrailChange("figure", 0.00024, 0.00048, tr)).toEqual({ before: "0,0002 tCO2e", after: "0,0005 tCO2e" });
+    expect(formatTrailChange("figure", 1.2341, 1.2344, tr)).toEqual({ before: "1,2341 tCO2e", after: "1,2344 tCO2e" });
+    // A difference the usual precision shows keeps it.
+    expect(formatTrailChange("figure", 0.442, 0.5304, tr)).toEqual({ before: "0,442 tCO2e", after: "0,53 tCO2e" });
+  });
+
+  it("never writes a non-zero figure as zero", () => {
+    expect(formatTrailValue("figure", 0.00024, { t: tFor("en"), locale: "en" })).toBe("0.0002 tCO2e");
+    expect(formatTrailValue("figure", 0, { t: tFor("en"), locale: "en" })).toBe("0 tCO2e");
+  });
+
+  it("words a stored code by its label in Turkish", () => {
+    const copy = { t: tFor("tr"), locale: "tr" as const, root: rootFor("tr") };
+    expect(formatTrailChange("reportingPeriod", "monthly", "quarterly", copy)).toEqual({ before: "Aylık", after: "Çeyreklik" });
+    expect(formatTrailValue("parameters.selfGenerationSource", "natural_gas_chp", copy)).toBe("Doğal gaz kojenerasyonu");
+    expect(formatTrailValue("parameters.cvBasis", "gross", copy)).toBe("Brüt");
+    expect(formatTrailValue("parameters.equipment.1.leakRateChoice", "alternative", copy)).toBe("alternatif oran");
+    expect(formatTrailValue("parameters.equipment.0.equipmentType", "chiller", copy)).toBe("Chiller (soğutma grubu)");
+  });
+
+  it("shows a code it has no word for, or an odd one, as stored", () => {
+    const copy = { t: tFor("tr"), locale: "tr" as const, root: rootFor("tr") };
+    expect(formatTrailValue("reportingPeriod", "fortnightly", copy)).toBe("fortnightly");
+    expect(formatTrailValue("reportingPeriod", "constructor", copy)).toBe("constructor");
+    expect(trailValueKey("input.notes", "monthly")).toBeNull();
+    expect(trailValueKey("reportingPeriod", "a.b")).toBeNull();
   });
 });
