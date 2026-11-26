@@ -48,6 +48,7 @@ import {
   tonnesLabel,
   uploadErrorMessage,
   type IssueGroup,
+  issueSentence,
 } from "@/lib/bulk-upload-view";
 import { AcceptedRows } from "@/components/data-entry/bulk-accepted-rows";
 import { Button } from "@/components/ui/button";
@@ -86,8 +87,11 @@ type Busy = "none" | "checking" | "importing" | "submitting";
 export function BulkUploadPanel({
   canManage,
   onImported,
+  companyName,
 }: {
   canManage: boolean;
+  /** A company's name, for the reporting company column of the preview. */
+  companyName?: (id: string) => string | undefined;
   /** Fires after any ATTEMPTED apply, so the page can refresh what is stale. */
   onImported: () => void;
 }) {
@@ -365,7 +369,7 @@ export function BulkUploadPanel({
               </div>
             </div>
 
-            <AcceptedRows rows={report.accepted} />
+            <AcceptedRows rows={report.accepted} companyName={companyName} />
 
             {errorGroups.length > 0 && (
               <IssueList groups={errorGroups} tone="error" unit={countUnit(report)} />
@@ -597,13 +601,14 @@ function IssueItem({ issue }: { issue: BulkUploadRowIssue }) {
   const tErrors = useTranslations("errors");
   const tEntry = useTranslations("dataEntry");
   const t = useTranslations("bulkUpload");
+  const describe = useDescribeError();
   return (
     <li className="text-xs">
       <span className="font-mono opacity-70">{t("row", { row: issue.row })}</span>
       {issue.column && (
         <span className="opacity-70"> · {tEntry(`bulkColumns.${issue.column}`)}</span>
       )}
-      <span className="block">{issue.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : issue.message}</span>
+      <span className="block">{issue.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : issueSentence(issue, describe)}</span>
     </li>
   );
 }

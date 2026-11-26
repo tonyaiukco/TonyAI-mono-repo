@@ -129,8 +129,17 @@ export const SEED_ROLES: ReadonlyArray<readonly [string, UserRole]> = [
   [VIEWER_EMAIL, 'auditor'],
 ];
 
-/** `entry@tonyai.local`'s grants in the seed: the two `SUB` entries marked entry-accessible. */
+/** `entry@tonyai.local`'s companies in the seed: the two `SUB` entries marked entry-accessible. */
 export const SEED_ENTRY_GRANTS: readonly string[] = [SUB.energy, SUB.logistics];
+/** …with their kinds (inc26-central-reporter-onboarding): TonyAI Energy its main company,
+ *  TonyAI Logistics a company of its central reporter grant. */
+export const SEED_ENTRY_ACCESS: ReadonlyArray<{ subsidiaryId: string; kind: 'assigned' | 'central_reporter' }> = [
+  { subsidiaryId: SUB.energy, kind: 'assigned' },
+  { subsidiaryId: SUB.logistics, kind: 'central_reporter' },
+];
+/** The seed standard user's main company, and its grant's company. */
+export const SEED_ENTRY_MAIN = SUB.energy;
+export const SEED_ENTRY_GRANT = SUB.logistics;
 /** The categories ticked on each of the standard user's seed grants: all thirteen, sorted, as the seed writes them. */
 export const SEED_ENTRY_CATEGORIES: readonly Category[] = [...CATEGORIES].sort();
 /** `approver@tonyai.local`'s grants in the seed: every company but TonyAI Trading, the fallback
@@ -195,38 +204,47 @@ export async function resetSeedAccess(request: APIRequestContext): Promise<void>
     if (res.status() !== 200) throw new Error(`reset grants of ${APPROVER_EMAIL}: ${res.status()} ${await res.text()}`);
   }
 
+  // The standard user: its main company through the ordinary access route (a
+  // super_admin's; it never touches the grant), the grant through the grant's
+  // own route (the masterkey's; inc26-central-reporter-onboarding).
   const entry = find(ENTRY_EMAIL);
-  const entryGrants = SEED_ENTRY_GRANTS.map((subsidiaryId) => ({ subsidiaryId, categories: [...SEED_ENTRY_CATEGORIES] }));
-  if (sameAccess(entry.access, entryGrants)) return;
-  const held = new Set(entry.access.map((g) => g.subsidiaryId));
-  if (SEED_ENTRY_GRANTS.every((id) => held.has(id))) {
-    // Nothing to add: categories and withdrawals pass the API.
-    const res = await request.put(`${API_BASE}/users/${entry.id}/access`, {
-      headers: bearer(await getAccessToken(request, APPROVER_EMAIL)),
-      data: { access: entryGrants },
-    });
-    if (res.status() !== 200) throw new Error(`reset grants of ${ENTRY_EMAIL}: ${res.status()} ${await res.text()}`);
-    return;
-  }
-  await withOwner((owner) =>
-    owner.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `DELETE FROM user_subsidiary_access WHERE user_id = $1::uuid AND NOT (subsidiary_id = ANY($2::uuid[]))`,
-        entry.id,
-        [...SEED_ENTRY_GRANTS],
+  const every = [...SEED_ENTRY_CATEGORIES];
+  const kindOf = (g: { kind?: string }) => (g.kind === 'central_reporter' ? 'central_reporter' : 'assigned');
+  const assigned = entry.access.filter((g) => kindOf(g) === 'assigned');
+  const grantRows = entry.access.filter((g) => kindOf(g) === 'central_reporter');
+  const mainOk = sameAccess(assigned, [{ subsidiaryId: SEED_ENTRY_MAIN, categories: every }]);
+  const grantOk = sameAccess(grantRows, [{ subsidiaryId: SEED_ENTRY_GRANT, categories: every }]);
+  if (mainOk && grantOk) return;
+  if (!mainOk) {
+    if (assigned.some((g) => g.subsidiaryId === SEED_ENTRY_MAIN)) {
+      // Nothing to add: categories and withdrawals pass the API.
+      const res = await request.put(`${API_BASE}/users/${entry.id}/access`, {
+        headers: bearer(await getAccessToken(request, APPROVER_EMAIL)),
+        data: { access: [{ subsidiaryId: SEED_ENTRY_MAIN, categories: every }] },
+      });
+      if (res.status() !== 200) throw new Error(`reset the main company of ${ENTRY_EMAIL}: ${res.status()} ${await res.text()}`);
+    } else {
+      // The API never adds a second company (R6) nor a main company to a grant
+      // holder that lost it: the seed's own write, as the database owner.
+      await withOwner((owner) =>
+        owner.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`DELETE FROM user_subsidiary_access WHERE user_id = $1::uuid`, entry.id);
+          await tx.$executeRawUnsafe(
+            `INSERT INTO user_subsidiary_access (user_id, subsidiary_id, organisation_id, categories)
+             SELECT p.id, $2::uuid, p.organisation_id, $3::text[] FROM profiles p WHERE p.id = $1::uuid`,
+            entry.id,
+            SEED_ENTRY_MAIN,
+            every,
+          );
+        }),
       );
-      for (const subsidiaryId of SEED_ENTRY_GRANTS) {
-        await tx.$executeRawUnsafe(
-          `INSERT INTO user_subsidiary_access (user_id, subsidiary_id, organisation_id, categories)
-           SELECT p.id, $2::uuid, p.organisation_id, $3::text[] FROM profiles p WHERE p.id = $1::uuid
-           ON CONFLICT (user_id, subsidiary_id) DO UPDATE SET categories = EXCLUDED.categories`,
-          entry.id,
-          subsidiaryId,
-          [...SEED_ENTRY_CATEGORIES],
-        );
-      }
-    }),
-  );
+    }
+  }
+  const res = await request.put(`${API_BASE}/users/${entry.id}/central-reporter-grant`, {
+    headers: bearer(admin),
+    data: { subsidiaryIds: [SEED_ENTRY_GRANT], categories: every },
+  });
+  if (res.status() !== 200) throw new Error(`reset the grant of ${ENTRY_EMAIL}: ${res.status()} ${await res.text()}`);
 }
 
 /** Rows in the live "Subsidiary register" table on /subsidiaries (excludes header). */
@@ -624,6 +642,38 @@ async function asOwner(what: string, step: (prisma: OwnerClient) => Promise<unkn
   } catch (e) {
     return `${what} owner delete failed — ${(e as Error).message}`;
   }
+}
+
+/**
+ * Finishes a registered organisation's setup wizard through the API, as its
+ * masterkey (inc26-central-reporter-onboarding, D8): a spec that needs the full
+ * tool for a registered account calls it before it navigates there. Answers
+ * the organisation's `onboardingCompletedAt`.
+ */
+export async function finishOnboarding(request: APIRequestContext, email: string, password = PASSWORD): Promise<string> {
+  const token = await getAccessToken(request, email, password);
+  const res = await request.post(`${API_BASE}/organisation/onboarding/complete`, { headers: bearer(token) });
+  if (res.status() !== 200) throw new Error(`finish onboarding for ${email}: ${res.status()} ${await res.text()}`);
+  return (await res.json()).onboardingCompletedAt as string;
+}
+
+/**
+ * A draft record written by the database owner for `authorEmail` — the shape a
+ * writer other than the API stores (inc26-central-reporter-onboarding: a
+ * company's own user's record in a period, for the period rule). Answers its id.
+ */
+export async function insertDraftAsOwner(authorEmail: string, subsidiaryId: string, category: string, scope: number, periodValue: string): Promise<string> {
+  return withOwner(async (owner) => {
+    const rows = await owner.$queryRawUnsafe<{ id: string }[]>(
+      `INSERT INTO activity_records (id, subsidiary_id, reporting_year, reporting_period, period_value, category, scope, status, activity_value, activity_unit, calculation, created_by, updated_at)
+       SELECT gen_random_uuid(), $2::uuid, $3, 'quarterly', $4, $5, $6, 'draft', 1, 'tonnes', '{"tCo2e":0,"factorId":"e2e-placeholder"}'::jsonb, p.id, now()
+         FROM profiles p WHERE p.email = $1
+       RETURNING id::text AS id`,
+      authorEmail, subsidiaryId, E2E_YEAR, periodValue, category, scope,
+    );
+    if (rows.length !== 1) throw new Error(`no profile ${authorEmail}`);
+    return rows[0]!.id;
+  });
 }
 
 /**

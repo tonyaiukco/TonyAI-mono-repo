@@ -4,7 +4,7 @@ import type { Category, UserAccessGrantDTO } from '@tonyai/shared-types';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../audit/audit.service';
 import type { PrismaService } from '../prisma/prisma.service';
-import { AccessAdminService, tenantAdminLockKey } from './access-admin.service';
+import { AccessAdminService, conflictsVisibleTo, tenantAdminLockKey } from './access-admin.service';
 import type { RequestUser } from './auth.types';
 
 // DB-free: the refusals that must happen before any query, and — on an
@@ -157,7 +157,7 @@ const ASSOCIATE = 'dddddddd-0000-4000-8000-00000000000d'; // inc26-group-tree: a
 const SECTOR_GROUP = 'ffffffff-0000-4000-8000-00000000000f'; // and a sector group
 
 interface ProfileRow { id: string; email: string; role: string; organisationId: string; disabledAt: Date | null }
-interface GrantRow { userId: string; subsidiaryId: string; organisationId: string; categories: string[] }
+interface GrantRow { userId: string; subsidiaryId: string; organisationId: string; categories: string[]; kind?: string }
 interface AuditRow { actorId: string; actorRole: string; action: string; entity: string; entityId: string | null; diff?: unknown }
 interface State {
   profiles: ProfileRow[];
@@ -176,7 +176,15 @@ const SUBSIDIARIES = [
   { id: SECTOR_GROUP, organisationId: ORG, nodeType: 'sector_group', control: 'controlled' },
 ];
 
-type Seed = { id: string; role: string; grants?: Record<string, readonly string[]>; organisationId?: string; disabled?: boolean };
+type Seed = {
+  id: string;
+  role: string;
+  grants?: Record<string, readonly string[]>;
+  /** inc26-central-reporter-onboarding: a company of a central reporter grant, with its categories. */
+  reports?: Record<string, readonly string[]>;
+  organisationId?: string;
+  disabled?: boolean;
+};
 
 /** The people of the in-memory organisation; each test seeds those it needs. */
 function world(seed: Seed[]) {
@@ -184,9 +192,14 @@ function world(seed: Seed[]) {
     profiles: seed.map((p) => ({
       id: p.id, email: `${p.id}@tonyai.test`, role: p.role, organisationId: p.organisationId ?? ORG, disabledAt: p.disabled ? new Date() : null,
     })),
-    grants: seed.flatMap((p) => Object.entries(p.grants ?? {}).map(([subsidiaryId, categories]) => ({
-      userId: p.id, subsidiaryId, organisationId: p.organisationId ?? ORG, categories: [...categories],
-    }))),
+    grants: seed.flatMap((p) => [
+      ...Object.entries(p.grants ?? {}).map(([subsidiaryId, categories]) => ({
+        userId: p.id, subsidiaryId, organisationId: p.organisationId ?? ORG, categories: [...categories], kind: 'assigned',
+      })),
+      ...Object.entries(p.reports ?? {}).map(([subsidiaryId, categories]) => ({
+        userId: p.id, subsidiaryId, organisationId: p.organisationId ?? ORG, categories: [...categories], kind: 'central_reporter',
+      })),
+    ]),
     invitations: [],
     audits: [],
   };
@@ -202,7 +215,7 @@ function world(seed: Seed[]) {
         const [userId, organisationId] = values as string[];
         const gone = draft.grants.filter((g) => g.userId === userId && g.organisationId === organisationId);
         draft.grants = draft.grants.filter((g) => !gone.includes(g));
-        return gone.map((g) => ({ subsidiaryId: g.subsidiaryId }));
+        return gone.map((g) => ({ subsidiaryId: g.subsidiaryId, kind: g.kind ?? 'assigned', categories: [...g.categories] }));
       }
       throw new Error(`unexpected raw query: ${sql}`);
     }),
@@ -246,10 +259,23 @@ function world(seed: Seed[]) {
           .map(({ nodeType, control }) => ({ nodeType, control }))),
     },
     userSubsidiaryAccess: {
-      findMany: vi.fn(async ({ where }: { where: { userId: string; organisationId: string } }) =>
-        draft.grants
+      findMany: vi.fn(async ({ where }: {
+        where: { userId: string | { not: string }; organisationId: string; subsidiaryId?: { in: string[] } };
+      }) => {
+        // The single-entry read (design D4): the other accounts' rows at some companies, with their holder's role.
+        if (typeof where.userId === 'object') {
+          const not = where.userId.not;
+          return draft.grants
+            .filter((g) => g.userId !== not && g.organisationId === where.organisationId && where.subsidiaryId!.in.includes(g.subsidiaryId))
+            .map((g) => ({
+              userId: g.userId, subsidiaryId: g.subsidiaryId, kind: g.kind ?? 'assigned', categories: [...g.categories],
+              profile: { role: draft.profiles.find((q) => q.id === g.userId)?.role ?? null },
+            }));
+        }
+        return draft.grants
           .filter((g) => g.userId === where.userId && g.organisationId === where.organisationId)
-          .map((g) => ({ subsidiaryId: g.subsidiaryId, categories: [...g.categories] }))),
+          .map((g) => ({ subsidiaryId: g.subsidiaryId, categories: [...g.categories], kind: g.kind ?? 'assigned' }));
+      }),
       deleteMany: vi.fn(async ({ where }: { where: { userId: string; organisationId: string; subsidiaryId: { in: string[] } } }) => {
         const before = draft.grants.length;
         draft.grants = draft.grants.filter(
@@ -258,12 +284,13 @@ function world(seed: Seed[]) {
         return { count: before - draft.grants.length };
       }),
       createMany: vi.fn(async ({ data }: { data: GrantRow[] }) => {
-        draft.grants.push(...data.map((g) => ({ ...g, categories: [...g.categories] })));
+        draft.grants.push(...data.map((g) => ({ ...g, categories: [...g.categories], kind: g.kind ?? 'assigned' })));
         return { count: data.length };
       }),
-      update: vi.fn(async ({ where, data }: { where: { userId_subsidiaryId: { userId: string; subsidiaryId: string } }; data: { categories: string[] } }) => {
+      update: vi.fn(async ({ where, data }: { where: { userId_subsidiaryId: { userId: string; subsidiaryId: string } }; data: { categories: string[]; kind?: string } }) => {
         const g = draft.grants.find((r) => r.userId === where.userId_subsidiaryId.userId && r.subsidiaryId === where.userId_subsidiaryId.subsidiaryId)!;
         g.categories = [...data.categories];
+        if (data.kind !== undefined) g.kind = data.kind;
         return {};
       }),
     },
@@ -308,6 +335,11 @@ function world(seed: Seed[]) {
       accessibleSubsidiaryIds: p.role === 'super_admin' || p.role === 'standard_user' ? own : [A, B, C], ...over,
     };
   };
+  /** A profile's rows now with their kinds: company → `kind:categories`. */
+  const rowsOf = (id: string) => Object.fromEntries(
+    state.grants.filter((g) => g.userId === id).sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId))
+      .map((g) => [g.subsidiaryId, `${g.kind ?? 'assigned'}:${g.categories.join(',')}`]),
+  );
   /** A profile's grants now: company → sorted-as-stored categories. */
   const grantsOf = (id: string) => Object.fromEntries(
     state.grants.filter((g) => g.userId === id).sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId)).map((g) => [g.subsidiaryId, g.categories]),
@@ -315,7 +347,7 @@ function world(seed: Seed[]) {
   const roleOf = (id: string) => state.profiles.find((q) => q.id === id)?.role;
   /** Mutates the committed state — what another request did since authentication. */
   const meanwhile = (fn: (s: State) => void) => fn(state);
-  return { service, prisma, audit, tx, as, grantsOf, roleOf, meanwhile, state: () => state, audits: () => state.audits, transactions };
+  return { service, prisma, audit, tx, as, grantsOf, rowsOf, roleOf, meanwhile, state: () => state, audits: () => state.audits, transactions };
 }
 
 /** The state, as a value: compare before and after a refusal. */
@@ -491,7 +523,7 @@ describe('Decision 9 — set role', () => {
     // audit rows are read from (the in-memory stub cannot evaluate its WHERE).
     const [strings, ...values] = w.tx.$queryRaw.mock.calls.find(([s]) => s.join('?').includes('DELETE'))!;
     expect(strings.join('?').replace(/\s+/g, ' ').trim()).toBe(
-      'DELETE FROM user_subsidiary_access WHERE user_id = ?::uuid AND organisation_id = ?::uuid RETURNING subsidiary_id::text AS "subsidiaryId"',
+      'DELETE FROM user_subsidiary_access WHERE user_id = ?::uuid AND organisation_id = ?::uuid RETURNING subsidiary_id::text AS "subsidiaryId", kind, categories',
     );
     expect(values).toEqual([T, ORG]);
   });
@@ -1123,5 +1155,301 @@ describe("a child company's creator (inc26-group-tree, design D5)", () => {
     await createChild(w, w.as(MK), A, C);
     expect(w.grantsOf(MK)).toEqual({});
     expect(w.audits()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inc26-central-reporter-onboarding (tasks 3.2–3.5, 3.7): the grant is rows of
+// `user_subsidiary_access` with kind `central_reporter`; only a masterkey
+// writes it, and every other access write leaves it exactly as it was.
+// ---------------------------------------------------------------------------
+
+describe('central reporting — ordinary access writes act on assigned rows only (task 3.2)', () => {
+  const R = 'reporter'; // main company C, a grant for A and B
+  const grantRows = { [A]: ['Mobile Combustion'], [B]: ['Mobile Combustion'] };
+  const reporterWorld = (extra: Seed[] = []) => world([
+    { id: MK, role: 'masterkey' },
+    { id: SA, role: 'super_admin', grants: { [A]: [] } },
+    { id: 'sa-c', role: 'super_admin', grants: { [C]: [] } },
+    { id: 'sa-bc', role: 'super_admin', grants: { [B]: [], [C]: [] } },
+    { id: 'sa-ac', role: 'super_admin', grants: { [A]: [], [C]: [] } },
+    { id: R, role: 'standard_user', grants: { [C]: ['Water'] }, reports: grantRows },
+    ...extra,
+  ]);
+  const grant = (subsidiaryId: string, categories: string[] = []): UserAccessGrantDTO => ({ subsidiaryId, categories: categories as Category[] });
+
+  it("an earlier client's body changes the main company's categories and leaves the grant as it was", async () => {
+    const w = reporterWorld();
+    await w.service.replaceSubsidiaryAccess(w.as('sa-c'), R, [grant(C, ['Water', 'Electricity'])]);
+    expect(w.rowsOf(R)).toEqual({
+      [A]: 'central_reporter:Mobile Combustion',
+      [B]: 'central_reporter:Mobile Combustion',
+      [C]: 'assigned:Electricity,Water',
+    });
+  });
+
+  it('a super_admin of an owning company saving the same access again (no assigned row it sees) writes nothing', async () => {
+    const w = reporterWorld();
+    const before = snapshot(w);
+    await w.service.replaceSubsidiaryAccess(w.as(SA), R, []);
+    expect(w.state()).toEqual(before);
+  });
+
+  it('naming the grant company as an assignment is refused as an added second company, naming no company', async () => {
+    const w = reporterWorld();
+    const before = snapshot(w);
+    const refusal = await w.service.replaceSubsidiaryAccess(w.as(SA), R, [grant(A, ['Mobile Combustion'])]).catch((e) => e);
+    expect(refusal.response).toMatchObject({ code: 'standard_user_single_company' });
+    expect(refusal.response.params).toBeUndefined();
+    expect(w.state()).toEqual(before);
+  });
+
+  it('moving the main company to a company outside the grant is allowed, the grant companies not counted', async () => {
+    const w = world([
+      { id: 'sa-bc', role: 'super_admin', grants: { [B]: [], [C]: [] } },
+      { id: R, role: 'standard_user', grants: { [C]: ['Water'] }, reports: { [A]: ['Mobile Combustion'] } },
+    ]);
+    await w.service.replaceSubsidiaryAccess(w.as('sa-bc'), R, [grant(B, ['Water'])]);
+    expect(w.rowsOf(R)).toEqual({ [A]: 'central_reporter:Mobile Combustion', [B]: 'assigned:Water' });
+  });
+
+  it('a central reporter keeps a main company (task 3.4): withdrawn, or moved into the grant, is refused', async () => {
+    const w = reporterWorld();
+    const before = snapshot(w);
+    await expect(w.service.replaceSubsidiaryAccess(w.as('sa-c'), R, [])).rejects.toMatchObject({ response: { code: 'central_reporter_needs_main_entity' } });
+    await expect(w.service.replaceSubsidiaryAccess(w.as('sa-ac'), R, [grant(A, ['Water'])]))
+      .rejects.toMatchObject({ response: { code: 'central_reporter_needs_main_entity' } });
+    expect(w.state()).toEqual(before);
+  });
+});
+
+describe('central reporting — single entry in the invitation and the access change (task 3.3)', () => {
+  const R = 'acct-r7'; // an id no sentence can contain
+  const U = 'own-user';
+  const grant = (subsidiaryId: string, categories: string[] = []): UserAccessGrantDTO => ({ subsidiaryId, categories: categories as Category[] });
+  const base = () => world([
+    { id: SA, role: 'super_admin', grants: { [A]: [] } },
+    { id: R, role: 'standard_user', grants: { [C]: ['Water'] }, reports: { [A]: ['Mobile Combustion'] } },
+    { id: U, role: 'standard_user' },
+  ]);
+
+  it('an invitation opening a central reporter\'s category: refused, side central_reporter, nothing created', async () => {
+    const w = base();
+    const before = snapshot(w);
+    const refusal = await w.service.inviteMember(w.as(SA), {
+      email: 'new@tonyai.test', fullName: 'New', role: UserRole.standard_user, language: 'en',
+      access: [grant(A, ['Electricity', 'Mobile Combustion'])],
+    }).catch((e) => e);
+    expect(refusal.response).toMatchObject({
+      code: 'single_entry_conflict',
+      params: { side: 'central_reporter' },
+      conflicts: [{ subsidiaryId: A, categories: ['Mobile Combustion'] }],
+    });
+    expect(JSON.stringify(refusal.response)).not.toContain(R);
+    expect(w.state()).toEqual(before);
+  });
+
+  it('an access change opening it: refused, the user unchanged; a different category is saved', async () => {
+    const w = base();
+    const before = snapshot(w);
+    await expect(w.service.replaceSubsidiaryAccess(w.as(SA), U, [grant(A, ['Mobile Combustion'])]))
+      .rejects.toMatchObject({ response: { code: 'single_entry_conflict', params: { side: 'central_reporter' } } });
+    expect(w.state()).toEqual(before);
+    await w.service.replaceSubsidiaryAccess(w.as(SA), U, [grant(A, ['Electricity'])]);
+    expect(w.rowsOf(U)).toEqual({ [A]: 'assigned:Electricity' });
+  });
+
+  it('lists only the companies the reader may read', () => {
+    const conflicts = [{ subsidiaryId: A, categories: ['Fuel' as Category] }, { subsidiaryId: C, categories: ['Water' as Category] }];
+    expect(conflictsVisibleTo(conflicts, new Set([A]))).toEqual([{ subsidiaryId: A, categories: ['Fuel'] }]);
+    expect(conflictsVisibleTo(conflicts, null)).toEqual(conflicts);
+  });
+});
+
+describe('central reporting — the masterkey gives, changes and withdraws the grant (task 3.5)', () => {
+  const R = 'reporter';
+  const MC = ['Mobile Combustion'] as Category[];
+  const base = (extra: Seed[] = []) => world([
+    { id: MK, role: 'masterkey' },
+    { id: SA, role: 'super_admin', grants: { [A]: [], [C]: [] } },
+    { id: R, role: 'standard_user', grants: { [C]: ['Water'] } },
+    ...extra,
+  ]);
+
+  it('gives a grant for two companies beside the main company; one audit row each, kind and categories, no address or name', async () => {
+    const w = base();
+    await w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [B, A], categories: ['Natural Gas', 'Mobile Combustion'] as Category[] });
+    expect(w.rowsOf(R)).toEqual({
+      [A]: 'central_reporter:Mobile Combustion,Natural Gas',
+      [B]: 'central_reporter:Mobile Combustion,Natural Gas',
+      [C]: 'assigned:Water',
+    });
+    const rows = w.audits().filter((a) => a.entity === 'subsidiary_access');
+    expect(rows).toEqual([A, B].map((subsidiaryId) => ({
+      actorId: MK, actorRole: 'masterkey', action: 'create', entity: 'subsidiary_access', entityId: R,
+      diff: { subsidiaryId, kind: 'central_reporter', categories: ['Mobile Combustion', 'Natural Gas'] },
+    })));
+    expect(JSON.stringify(w.audits())).not.toMatch(/@tonyai\.test/);
+  });
+
+  it('narrows (a company withdrawn, audited with what it held), re-categorises, and withdraws the whole grant with no company', async () => {
+    const w = base();
+    await w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [A, B], categories: MC });
+    const auditsBefore = w.audits().length;
+    await w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [A], categories: ['Electricity'] as Category[] });
+    expect(w.rowsOf(R)).toEqual({ [A]: 'central_reporter:Electricity', [C]: 'assigned:Water' });
+    expect(w.audits().slice(auditsBefore).map((a) => [a.action, a.diff])).toEqual([
+      ['update', { subsidiaryId: A, before: { kind: 'central_reporter', categories: MC }, after: { kind: 'central_reporter', categories: ['Electricity'] } }],
+      ['delete', { subsidiaryId: B, kind: 'central_reporter', categories: MC }],
+    ]);
+    await w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [], categories: [] });
+    expect(w.rowsOf(R)).toEqual({ [C]: 'assigned:Water' });
+    // Saving the same thing again writes nothing.
+    const before = snapshot(w);
+    await w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [], categories: [] });
+    expect(w.state()).toEqual(before);
+  });
+
+  it('refuses companies with no category as invalid input, before the database', async () => {
+    const w = base();
+    await expect(w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [A], categories: [] })).rejects.toBeInstanceOf(BadRequestException);
+    expect(w.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(['super_admin', 'standard_user', 'auditor'] as const)('a %s is forbidden, nothing written', async (role) => {
+    const w = base([{ id: 'actor-x', role, grants: role === 'auditor' ? {} : { [A]: [] } }]);
+    await expect(w.service.setCentralReporterGrant(w.as('actor-x'), R, { subsidiaryIds: [A], categories: MC })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(w.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('the holder must be a standard user with exactly one main company outside the grant', async () => {
+    const w = base([{ id: 'none', role: 'standard_user' }, { id: 'sa-target', role: 'super_admin', grants: { [A]: [] } }]);
+    const before = snapshot(w);
+    await expect(w.service.setCentralReporterGrant(w.as(MK), 'sa-target', { subsidiaryIds: [B], categories: MC }))
+      .rejects.toMatchObject({ response: { code: 'access_role_mismatch' } });
+    await expect(w.service.setCentralReporterGrant(w.as(MK), 'none', { subsidiaryIds: [B], categories: MC }))
+      .rejects.toMatchObject({ response: { code: 'central_reporter_needs_main_entity' } });
+    await expect(w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [C], categories: MC }))
+      .rejects.toMatchObject({ response: { code: 'central_reporter_needs_main_entity' } });
+    expect(w.state()).toEqual(before);
+  });
+
+  it('names only companies of the organisation that hold records', async () => {
+    const w = base();
+    const before = snapshot(w);
+    await expect(w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [A, ASSOCIATE], categories: MC }))
+      .rejects.toMatchObject({ response: { code: 'subsidiary_not_assignable' } });
+    await expect(w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [SECTOR_GROUP], categories: MC }))
+      .rejects.toMatchObject({ response: { code: 'subsidiary_not_assignable' } });
+    await expect(w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [X], categories: MC }))
+      .rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    expect(w.state()).toEqual(before);
+  });
+
+  it("refuses a grant where companies' own users hold the categories, listing each company, naming no user", async () => {
+    const w = base([
+      { id: 'own-a', role: 'standard_user', grants: { [A]: ['Mobile Combustion'] } },
+      { id: 'own-b', role: 'standard_user', grants: { [B]: ['Mobile Combustion', 'Electricity'] } },
+    ]);
+    const before = snapshot(w);
+    const refusal = await w.service.setCentralReporterGrant(w.as(MK), R, {
+      subsidiaryIds: [A, B], categories: ['Electricity', 'Mobile Combustion'] as Category[],
+    }).catch((e) => e);
+    expect(refusal.response).toMatchObject({
+      code: 'single_entry_conflict',
+      params: { side: 'company_users' },
+      conflicts: [
+        { subsidiaryId: A, categories: ['Mobile Combustion'] },
+        { subsidiaryId: B, categories: ['Electricity', 'Mobile Combustion'] },
+      ],
+    });
+    expect(JSON.stringify(refusal.response)).not.toMatch(/own-a|own-b/);
+    expect(w.state()).toEqual(before);
+  });
+
+  describe('a carried-over account is converted by the grant (C7)', () => {
+    const carried = () => world([
+      { id: MK, role: 'masterkey' },
+      { id: R, role: 'standard_user', grants: { [A]: ['Electricity'], [B]: ['Electricity'], [C]: ['Mobile Combustion'] } },
+    ]);
+
+    it('the named companies become the grant\'s with its categories; the one left keeps its own; audited before and after', async () => {
+      const w = carried();
+      await w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [B, C], categories: MC });
+      expect(w.rowsOf(R)).toEqual({
+        [A]: 'assigned:Electricity',
+        [B]: 'central_reporter:Mobile Combustion',
+        [C]: 'central_reporter:Mobile Combustion',
+      });
+      expect(w.audits().map((a) => [a.action, a.diff])).toEqual([
+        ['update', { subsidiaryId: B, before: { kind: 'assigned', categories: ['Electricity'] }, after: { kind: 'central_reporter', categories: MC } }],
+        ['update', { subsidiaryId: C, before: { kind: 'assigned', categories: MC }, after: { kind: 'central_reporter', categories: MC } }],
+      ]);
+    });
+
+    it('a grant naming one of three leaves two assigned: refused, nothing changed', async () => {
+      const w = carried();
+      const before = snapshot(w);
+      await expect(w.service.setCentralReporterGrant(w.as(MK), R, { subsidiaryIds: [C], categories: MC }))
+        .rejects.toMatchObject({ response: { code: 'central_reporter_needs_main_entity' } });
+      expect(w.state()).toEqual(before);
+    });
+  });
+});
+
+describe('central reporting — withdrawals by other paths (task 3.7)', () => {
+  it("a role change withdraws a grant's rows, each audited with its kind and the categories it held", async () => {
+    const w = world([
+      { id: MK, role: 'masterkey' },
+      { id: 'reporter', role: 'standard_user', grants: { [C]: ['Water'] }, reports: { [A]: ['Mobile Combustion'] } },
+    ]);
+    await w.service.setRole(w.as(MK), 'reporter', UserRole.auditor);
+    expect(w.grantsOf('reporter')).toEqual({});
+    const withdrawals = w.audits().filter((a) => a.entity === 'subsidiary_access').map((a) => a.diff);
+    expect(withdrawals).toEqual([
+      { subsidiaryId: A, reason: 'role changed from standard_user to auditor', kind: 'central_reporter', categories: ['Mobile Combustion'] },
+      { subsidiaryId: C, reason: 'role changed from standard_user to auditor' },
+    ]);
+  });
+});
+
+describe('central reporting — the review passes of 2026-11-26 (qa-auditor A5, A11, A18/A20, A23)', () => {
+  const grantRow = (subsidiaryId: string, categories: string[] = []): UserAccessGrantDTO => ({ subsidiaryId, categories: categories as Category[] });
+
+  it("a re-categorisation alone that opens a reporter's category is refused with its conflict listed", async () => {
+    const w = world([
+      { id: SA, role: 'super_admin', grants: { [A]: [] } },
+      { id: 'rep', role: 'standard_user', grants: { [C]: ['Water'] }, reports: { [A]: ['Mobile Combustion'] } },
+      { id: 'own', role: 'standard_user', grants: { [A]: ['Electricity'] } },
+    ]);
+    const refusal = await w.service.replaceSubsidiaryAccess(w.as(SA), 'own', [grantRow(A, ['Electricity', 'Mobile Combustion'])]).catch((e) => e);
+    expect(refusal.response).toMatchObject({ code: 'single_entry_conflict', conflicts: [{ subsidiaryId: A, categories: ['Mobile Combustion'] }] });
+  });
+
+  it('saving the same grant again writes nothing — no update, no audit row', async () => {
+    const w = world([{ id: MK, role: 'masterkey' }, { id: 'rep', role: 'standard_user', grants: { [C]: ['Water'] }, reports: { [A]: ['Fuel'] } }]);
+    const before = snapshot(w);
+    await w.service.setCentralReporterGrant(w.as(MK), 'rep', { subsidiaryIds: [A], categories: ['Fuel'] as Category[] });
+    expect(w.state()).toEqual(before);
+    expect(w.tx.userSubsidiaryAccess.update).not.toHaveBeenCalled();
+  });
+
+  it('a company named twice in a grant is invalid input, before the database', async () => {
+    const w = world([{ id: MK, role: 'masterkey' }]);
+    await expect(w.service.setCentralReporterGrant(w.as(MK), 'rep', { subsidiaryIds: [A, A.toUpperCase()], categories: ['Fuel'] as Category[] }))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(w.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("an invitation raced by another writer's grant: TA024's refusal answered single_entry_conflict with an empty list", async () => {
+    const w = world([{ id: SA, role: 'super_admin', grants: { [A]: [] } }]);
+    w.tx.userSubsidiaryAccess.createMany.mockRejectedValueOnce(new Prisma.PrismaClientUnknownRequestError(
+      'PostgresError { code: "TA024", message: "single_entry_conflict: side=central_reporter; at subsidiary x", severity: "ERROR" }',
+      { clientVersion: 'test' },
+    ) as never);
+    const refusal = await w.service.inviteMember(w.as(SA), {
+      email: 'raced@tonyai.test', fullName: 'Raced', role: UserRole.standard_user, language: 'en', access: [grantRow(A, ['Fuel'])],
+    }).catch((e) => e);
+    expect(refusal.response).toMatchObject({ code: 'single_entry_conflict', params: { side: 'central_reporter' }, conflicts: [] });
   });
 });

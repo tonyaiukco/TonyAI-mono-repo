@@ -3,7 +3,7 @@
 import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } from "@/lib/i18n/message-keys";
 import { conversionNote, grossToNetRatioOf } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
-import { categoryGate, categoryGateMessage, entryCompanies, fallbackCategory } from "@/lib/entry-categories-view";
+import { categoryGate, categoryGateMessage, entryCompanies, entryReportingEntity, fallbackCategory } from "@/lib/entry-categories-view";
 
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -2064,6 +2064,10 @@ function DataEntryPageInner() {
   // Which categories the picker offers (inc26-roles-approval-chain, Decision
   // 6): a standard user only those ticked on their grant for the company.
   const categoryChoice = categoryGate(user, subsidiaryId, linkedCategory);
+  // The company a new record here reports for, when it is not this one: a
+  // central reporter's grant company names the main company before the save.
+  const reportedById = editMode ? null : entryReportingEntity(user, subsidiaryId);
+  const reportedBy = reportedById ? subsidiaries.find((s) => s.id === reportedById) : undefined;
   const categoryGateText = categoryGateMessage(
     categoryChoice,
     {
@@ -2901,6 +2905,10 @@ function DataEntryPageInner() {
                 <div id={bulkPanelId} hidden={!bulkOpen} className="space-y-6">
               <BulkUploadPanel
                 canManage={mayAuthorRecords(user)}
+                companyName={(id) => {
+                  const company = subsidiaries.find((s) => s.id === id);
+                  return company ? (company.tradingName ?? company.legalName) : undefined;
+                }}
                 onImported={() => {
                   // Both the previous-submissions list and CoveragePanel are
                   // looking at pre-import numbers at the exact moment the user
@@ -2933,6 +2941,11 @@ function DataEntryPageInner() {
                 lacks. Kept in view beside a long form on wide screens
                 (BUG-R2-05); below it on narrow ones. */}
             <div className="space-y-6 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
+              {reportedById && (
+                <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm" data-testid="entry-reported-by">
+                  {t("reportedBy", { company: reportedBy?.tradingName ?? reportedBy?.legalName ?? "—" })}
+                </p>
+              )}
               <PreviewCard
                 previewing={previewing}
                 preview={preview}

@@ -89,7 +89,8 @@
       "super_admin": "Bu kayda şirketinin bir Süper Yöneticisi karar verir. Kaydı okuyabilirsiniz, ancak incelemeye alamaz, iade edemez veya onaylayamazsınız.",
       "masterkey": "Bu kayda bir Masterkey karar verir. Kaydı okuyabilirsiniz, ancak incelemeye alamaz, iade edemez veya onaylayamazsınız.",
       "author": "Bu kayda onu giren Masterkey karar verir. Kaydı okuyabilirsiniz, ancak incelemeye alamaz, iade edemez veya onaylayamazsınız."
-    }
+    },
+    "reportedBy": "Raporlayan şirket"
   },
   "toast": {
     "reviewed": "İncelemeye alındı",

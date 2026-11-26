@@ -28,7 +28,8 @@
     "would_block_submit": "Cannot be submitted yet",
     "evidence_required": "Needs an evidence file",
     "category_not_granted": "Category not assigned to you",
-    "entity_closed_to_data_entry": "Closed to data entry"
+    "entity_closed_to_data_entry": "Closed to data entry",
+    "single_entry_period_conflict": "Period already entered by the other party"
   },
   "codes": {
     "bad_request": "The request could not be processed.",
@@ -168,7 +169,10 @@
     "entity_closed_to_data_entry": "This entity is outside the Scope 1 and 2 inventory (an associate or a sector group), so data entry is closed for it.",
     "subsidiary_not_assignable": "An associate or a sector group cannot be assigned to a user. Nothing was changed.",
     "boundary_subsidiary_not_reportable": "An associate or a sector group is outside the inventory boundary and cannot be declared in it.",
-    "geography_without_factors": "No emission factor set in this environment can price {geography}. Choose a geography the factor library covers."
+    "geography_without_factors": "No emission factor set in this environment can price {geography}. Choose a geography the factor library covers.",
+    "central_reporter_needs_main_entity": "A central reporter keeps exactly one main company outside the grant, and this change would leave them with none or several. Nothing was changed.",
+    "single_entry_conflict": "These categories are already open to the company's own standard users, so they cannot also be opened to a central reporter. Nothing was changed.",
+    "single_entry_period_conflict": "The company's own users already entered {category} for {period} {year}, so a central reporter cannot enter it for this company in that period."
   },
   "variants": {
     "variance_reason_required": {
@@ -187,6 +191,12 @@
     },
     "evidence_backs_locked_records": {
       "hidden": "This file also backs records that can no longer change, some of them outside your access, so it cannot be deleted. Remove it from each editable record instead."
+    },
+    "single_entry_conflict": {
+      "central_reporter": "These categories are already open to a central reporter at this company, so they cannot also be opened to its own standard users. Nothing was changed."
+    },
+    "single_entry_period_conflict": {
+      "central_reporter": "A central reporter already entered {category} for {period} {year} for this company, so its own users cannot enter it in that period."
     }
   },
   "bulkOutcomes": {

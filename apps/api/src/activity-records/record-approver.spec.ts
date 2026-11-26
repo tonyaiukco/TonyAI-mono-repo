@@ -538,3 +538,50 @@ describe('awaitingDecisionWhere — the review queue\'s default view as a filter
     expect(db.profile.findMany).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// inc26-central-reporter-onboarding (task 4.7, design D7): a record entered
+// under a central reporter grant is decided for its OWNING company — the
+// record's company — by the routing that exists; the reporting entity is not
+// an input to it.
+// ---------------------------------------------------------------------------
+
+describe("a central reporter's record is decided for its owning company (D7)", () => {
+  const REP = 'u-reporter'; // a standard user: main company sub-r, a grant for sub-a and sub-c
+  const SAR = 'u-sa-r'; // the reporting company's super_admin, not granted sub-a
+  const reporterOrg = (extra: Account[] = []) => org([
+    { id: REP, role: 'standard_user', grants: ['sub-r', 'sub-a', 'sub-c'] },
+    { id: SAR, role: 'super_admin', grants: ['sub-r'] },
+    ...extra,
+  ]);
+  const reported = (id: string, subsidiaryId: string, status = 'submitted') => ({ ...pending(id, REP, subsidiaryId, status), reportedBySubsidiaryId: 'sub-r' });
+
+  it("routes to the owning company's super_admin, else the masterkey — never to the reporting company's", async () => {
+    const map = await approversFor(asTx(dbOf(reporterOrg())), [reported('owned-a', 'sub-a'), reported('owned-c', 'sub-c')]);
+    expect(Object.fromEntries(map)).toEqual({ 'owned-a': 'super_admin', 'owned-c': 'masterkey' });
+    const db = dbOf(reporterOrg());
+    await expect(assertRecordApprover(asTx(db), sa(), { createdBy: REP, subsidiaryId: 'sub-a' }, 'approve')).resolves.toBe('super_admin');
+    await expect(assertRecordApprover(asTx(db), mk(), { createdBy: REP, subsidiaryId: 'sub-c' }, 'approve')).resolves.toBe('masterkey');
+  });
+
+  it('a reporter made a super_admin after submitting is decided by a masterkey', async () => {
+    const db = dbOf(org([{ id: REP, role: 'super_admin', grants: ['sub-r'] }, { id: SAR, role: 'super_admin', grants: ['sub-r'] }]));
+    expect((await approversFor(asTx(db), [reported('p', 'sub-a')])).get('p')).toBe('masterkey');
+    await expect(assertRecordApprover(asTx(db), mk(), { createdBy: REP, subsidiaryId: 'sub-a' }, 'approve')).resolves.toBe('masterkey');
+  });
+
+  it("a disabled reporter's record is taken into review and returned by the owning company's super_admin", async () => {
+    const db = dbOf(org([{ id: REP, role: 'standard_user', disabledAt: new Date(), grants: ['sub-r', 'sub-a'] }]));
+    expect((await approversFor(asTx(db), [reported('p', 'sub-a')])).get('p')).toBe('super_admin');
+    for (const kind of ['review', 'reject'] as const) {
+      await expect(assertRecordApprover(asTx(db), sa(), { createdBy: REP, subsidiaryId: 'sub-a' }, kind)).resolves.toBe('super_admin');
+    }
+  });
+
+  it('the reporting entity changes nothing: the same record with and without one is routed alike', async () => {
+    const db = dbOf(reporterOrg());
+    const withEntity = await approversFor(asTx(db), [reported('x', 'sub-a')]);
+    const without = await approversFor(asTx(db), [pending('x', REP, 'sub-a')]);
+    expect(withEntity.get('x')).toBe(without.get('x'));
+  });
+});

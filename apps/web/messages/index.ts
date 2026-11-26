@@ -32,6 +32,7 @@ import enReview from "./en/review.json";
 import enAudit from "./en/audit.json";
 import enRecordTrail from "./en/recordTrail.json";
 import enSubsidiaries from "./en/subsidiaries.json";
+import enOnboarding from "./en/onboarding.json";
 import trAuth from "./tr/auth.json";
 import trBoundary from "./tr/boundary.json";
 import trCategories from "./tr/categories.json";
@@ -65,6 +66,7 @@ import trReview from "./tr/review.json";
 import trAudit from "./tr/audit.json";
 import trRecordTrail from "./tr/recordTrail.json";
 import trSubsidiaries from "./tr/subsidiaries.json";
+import trOnboarding from "./tr/onboarding.json";
 
 /**
  * The UI catalogues (LP3-01): one JSON file per namespace per locale, so two
@@ -109,6 +111,7 @@ import trSubsidiaries from "./tr/subsidiaries.json";
  *   audit       the audit trail; action and entity codes stay raw identifiers (M2)
  *   recordTrail one record's history as a timeline — review sheet, Data Entry, audit page (WP5)
  *   subsidiaries  the Subsidiaries list and detail, locations and period locks (LP4-04 slice 2 PR C)
+ *   onboarding    the masterkey's setup wizard and its gate (inc26-central-reporter-onboarding)
  *   emissions   the Emissions screen — its tabs, the record drawer and the withdrawal (`lib/void-view.ts`) (LP4-04)
  */
 const en = {
@@ -145,6 +148,7 @@ const en = {
   audit: enAudit,
   recordTrail: enRecordTrail,
   subsidiaries: enSubsidiaries,
+  onboarding: enOnboarding,
 };
 
 export type Messages = typeof en;
@@ -183,6 +187,7 @@ const tr: Messages = {
   audit: trAudit,
   recordTrail: trRecordTrail,
   subsidiaries: trSubsidiaries,
+  onboarding: trOnboarding,
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { en, tr };

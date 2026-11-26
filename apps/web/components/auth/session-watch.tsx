@@ -8,6 +8,7 @@ import { lastActivity, recordActivity, withSessionLock } from "@/lib/idle-sessio
 import { endingSessionHere, watchSession } from "@/lib/session-watch";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore, useReportingContextStore } from "@/lib/store";
+import { OnboardingGate } from "@/components/auth/onboarding-gate";
 
 export function SessionWatch({ children }: { children: ReactNode }) {
   const path = usePathname();
@@ -40,5 +41,8 @@ function SessionGate({ path, children }: { path: string; children: ReactNode }) 
     });
   }, [path]);
 
-  return isPublicPath(path) || ready ? children : null;
+  if (isPublicPath(path)) return children;
+  // A protected path: the setup wizard's gate decides once the session is
+  // ready (inc26-central-reporter-onboarding, D9).
+  return ready ? <OnboardingGate path={path}>{children}</OnboardingGate> : null;
 }

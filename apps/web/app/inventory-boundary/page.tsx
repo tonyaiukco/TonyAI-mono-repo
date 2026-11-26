@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useBoundaryCalls } from "@/lib/use-boundary-calls";
 import { api, ApiError } from "@/lib/api";
 import { formatNumber } from "@/lib/i18n/number";
 import { useErrorToast } from "@/lib/i18n/hooks";
@@ -37,7 +38,6 @@ import {
   boundaryActions,
   boundaryName,
   gapLines,
-  newestFirst,
   subsidiaryRows,
   undeclaredSubsidiaries,
   versionState,
@@ -97,6 +97,8 @@ export default function InventoryBoundaryPage() {
  * standard user reads only its granted subsidiaries' part (the API's `granted_subsidiaries`).
  */
 function InventoryBoundaryScreen() {
+  // The boundary's calls, shared with the setup wizard's step 5 (inc26-central-reporter-onboarding, 8.2).
+  const calls = useBoundaryCalls();
   const t = useTranslations("boundary");
   const tContext = useTranslations("reportingContext");
   const tPeriods = useTranslations("periods");
@@ -145,7 +147,7 @@ function InventoryBoundaryScreen() {
     }
     setDetailLoading(true);
     try {
-      const dto = await api.getInventoryBoundary(id);
+      const dto = await calls.open(id);
       if (seq === detailSeq.current) setDetail(dto);
     } catch (e) {
       if (seq !== detailSeq.current) return;
@@ -154,7 +156,7 @@ function InventoryBoundaryScreen() {
     } finally {
       if (seq === detailSeq.current) setDetailLoading(false);
     }
-  }, [errorToast]);
+  }, [calls, errorToast]);
 
   /** The year's versions and the previous year's newest (a new year starts from it); then `select`, else the newest. */
   const loadYear = useCallback(async (forYear: number, select?: string | null) => {
@@ -163,16 +165,16 @@ function InventoryBoundaryScreen() {
     setFailed(false);
     try {
       const [list, prior] = await Promise.all([
-        api.listInventoryBoundaries(forYear),
+        calls.listYear(forYear),
         // Feeds one copy button only: its failure costs the button, not the year.
         forYear > REPORTING_YEAR_MIN
-          ? api.listInventoryBoundaries(forYear - 1).catch((): InventoryBoundaryVersionSummary[] => [])
+          ? calls.listYear(forYear - 1).catch((): InventoryBoundaryVersionSummary[] => [])
           : Promise.resolve([]),
       ]);
       if (seq !== loadSeq.current) return;
-      const sorted = newestFirst(list);
+      const sorted = list;
       setVersions(sorted);
-      setPriorNewest(newestFirst(prior)[0] ?? null);
+      setPriorNewest(prior[0] ?? null);
       const keep = select !== undefined && sorted.some((v) => v.id === select) ? select : sorted[0]?.id ?? null;
       await loadDetail(keep);
     } catch (e) {
@@ -182,7 +184,7 @@ function InventoryBoundaryScreen() {
       setFailed(true);
       errorToast(e);
     }
-  }, [errorToast, loadDetail]);
+  }, [calls, errorToast, loadDetail]);
 
   useEffect(() => {
     if (year !== null) void loadYear(year);
@@ -224,7 +226,7 @@ function InventoryBoundaryScreen() {
     if (year === null) return;
     setBusy("create");
     try {
-      const dto = await api.createInventoryBoundary(copyOf ? { reportingYear: year, copyOf: copyOf.id } : { reportingYear: year });
+      const dto = await calls.openNew(year, copyOf?.id);
       toast.success(t("toast.created", { version: dto.version }));
       reload(dto.id);
     } catch (e) {
@@ -240,14 +242,14 @@ function InventoryBoundaryScreen() {
     try {
       // A confirmation freezes for good, and the API takes no precondition:
       // confirm only what this screen shows, else show what changed first.
-      const fresh = await api.getInventoryBoundary(detail.id);
+      const fresh = await calls.open(detail.id);
       if (fresh.frozenAt === null && versionFingerprint(fresh.boundary) !== versionFingerprint(detail.boundary)) {
         toast.error(t("toast.versionChanged", { version: detail.version }));
         setConfirmOpen(false);
         showIfCurrent(fresh);
         return;
       }
-      const dto = await api.confirmInventoryBoundary(detail.id);
+      const dto = await calls.confirm(detail.id);
       toast.success(t("toast.confirmed", { version: dto.version }));
       setConfirmOpen(false);
       reload(dto.id);
@@ -303,7 +305,7 @@ function InventoryBoundaryScreen() {
         .map((e) => ({ id: e.locationId as string, name: e.locationName ?? (e.locationId as string) }));
       // A frozen version shows what it declares; an open one offers the subsidiary's locations too.
       const listed = actions.edit
-        ? (await api.listLocations(row.id)).filter((l) => l.subsidiaryId === row.id).map((l) => ({ id: l.id, name: l.name }))
+        ? await calls.sitesOf(row.id)
         : [];
       const sites = [...declaredSites, ...listed.filter((l) => !declaredSites.some((d) => d.id === l.id))];
       setEditor({
@@ -327,7 +329,7 @@ function InventoryBoundaryScreen() {
     try {
       // D4: the API's last write wins, so a save first checks that nobody
       // changed this subsidiary's declaration since the form was opened.
-      const fresh = await api.getInventoryBoundary(editor.versionId);
+      const fresh = await calls.open(editor.versionId);
       if (fresh.frozenAt !== null) {
         toast.error(t("toast.frozenElsewhere"));
         setEditor(null);
@@ -340,7 +342,7 @@ function InventoryBoundaryScreen() {
         showIfCurrent(fresh);
         return;
       }
-      const dto = await api.putInventoryBoundarySubsidiary(editor.versionId, editor.subsidiaryId, request);
+      const dto = await calls.writeDeclaration(editor.versionId, editor.subsidiaryId, request);
       showIfCurrent(dto);
       const gaps = gapLines(dto, editor.subsidiaryId).length;
       toast.success(t("toast.saved", { name: editor.name }), gaps > 0 ? { description: t("toast.savedWithGaps", { count: formatNumber(gaps, locale) }) } : undefined);

@@ -91,9 +91,11 @@ import type {
   ReplaceUserAccessRequest,
   UpdateUserRoleRequest,
   UserSummaryDTO,
+  CentralReporterGrantInput,
+  SingleEntryConflictDTO,
 } from "@tonyai/shared-types";
 import {
-  DEFAULT_PAGE_LIMIT, TARGET_PROGRESS_MAX_IDS, isApiErrorCode, isCursorPage,
+  DEFAULT_PAGE_LIMIT, TARGET_PROGRESS_MAX_IDS, isApiErrorCode, isCategory, isCursorPage,
   REPORTING_CONTEXT_API_PATHS, REPORTING_CONTEXT_KEYS, GROUP_INTENSITY_METRICS,
   isReportingContext, matchesReportingContext,
 } from "@tonyai/shared-types";
@@ -137,6 +139,9 @@ export class ApiError extends Error {
     /** Raw Retry-After value on a 429, if exposed by the API/proxy. PR B exposes
      * it through CORS. No automatic batch retry is implied. */
     readonly retryAfter?: string,
+    /** `single_entry_conflict` only: the companies in conflict with their
+     *  categories, as identifiers the screen words (inc26-central-reporter-onboarding). */
+    readonly conflicts?: SingleEntryConflictDTO[],
   ) {
     super(message);
     this.name = "ApiError";
@@ -227,11 +232,13 @@ export async function apiError(res: Response): Promise<ApiError> {
   let message: string | string[] = `API ${res.status}`;
   let code: ApiErrorCode | undefined;
   let params: ApiErrorParams | undefined;
+  let conflicts: SingleEntryConflictDTO[] | undefined;
   try {
     const body = await res.json();
     message = body?.message ?? message;
     code = isApiErrorCode(body?.code) ? body.code : undefined;
     params = errorParams(body?.params);
+    conflicts = code === "single_entry_conflict" ? conflictList(body?.conflicts) : undefined;
   } catch {
     /* a 413 from the proxy, or any non-JSON body — keep the status sentence */
   }
@@ -242,7 +249,20 @@ export async function apiError(res: Response): Promise<ApiError> {
     code,
     params,
     res.status === 429 ? res.headers.get("Retry-After") ?? undefined : undefined,
+    conflicts,
   );
+}
+
+/** A `single_entry_conflict` body's list, keeping only well-formed entries:
+ *  an id string and the categories this build knows. */
+function conflictList(raw: unknown): SingleEntryConflictDTO[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry): SingleEntryConflictDTO[] => {
+    const id = (entry as { subsidiaryId?: unknown })?.subsidiaryId;
+    const list = (entry as { categories?: unknown })?.categories;
+    if (typeof id !== "string" || !Array.isArray(list)) return [];
+    return [{ subsidiaryId: id, categories: list.filter(isCategory) }];
+  });
 }
 
 /** Where a disabled account lands: the sign-in page, which says why. */
@@ -473,6 +493,9 @@ export const api = {
    *  caller's own scope; grants outside it are left untouched. */
   replaceUserAccess: (id: string, body: ReplaceUserAccessRequest) =>
     apiFetch<UserSummaryDTO>(`/users/${id}/access`, { method: "PUT", body: JSON.stringify(body) }),
+  /** A standard user's central reporter grant, the whole of it — a masterkey's (inc26-central-reporter-onboarding). */
+  setCentralReporterGrant: (id: string, body: CentralReporterGrantInput) =>
+    apiFetch<UserSummaryDTO>(`/users/${id}/central-reporter-grant`, { method: "PUT", body: JSON.stringify(body) }),
   disableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/disable`, { method: "POST" }),
   enableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/enable`, { method: "POST" }),
   /**
@@ -557,6 +580,8 @@ export const api = {
 
   // --- The organisation (inc26-group-tree) ---
   getOrganisation: () => apiFetch<OrganisationDTO>("/organisation"),
+  /** The masterkey finishes the setup wizard (inc26-central-reporter-onboarding D8); a second call answers the finished organisation. */
+  completeOnboarding: () => apiFetch<OrganisationDTO>("/organisation/onboarding/complete", { method: "POST" }),
   setConsolidationApproach: (body: UpdateConsolidationApproachInput) =>
     apiFetch<OrganisationDTO>("/organisation/consolidation-approach", {
       method: "PATCH",

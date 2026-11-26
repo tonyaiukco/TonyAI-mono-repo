@@ -272,9 +272,11 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
     'updated_at',
   ],
   // A standard user's ticked categories change in place (inc26-roles-
-  // approval-chain, one UPDATE and one audit row); a grant's user, company and
+  // approval-chain, one UPDATE and one audit row), and so does a row's kind
+  // (inc26-central-reporter-onboarding C7: a carried-over account's assigned
+  // company becomes a grant company); a grant's user, company and
   // organisation never do — a grant is added or withdrawn whole.
-  user_subsidiary_access: ['categories'],
+  user_subsidiary_access: ['categories', 'kind'],
   // Everything an edit changes; never `id` or `organisation_id`, so not even a
   // bug can move a subsidiary — and every record, file and lock under it — to
   // another tenant. A new column needs its grant here and in a migration.
@@ -302,7 +304,8 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
   ],
   // The consolidation approach (inc26-group-tree, D8) and the row's version;
   // never the organisation's name, country, geography or offboarding.
-  organisations: ['consolidation_approach', 'updated_at'],
+  // inc26-central-reporter-onboarding (D8): the wizard's finish, set once.
+  organisations: ['consolidation_approach', 'updated_at', 'onboarding_completed_at'],
   // What `confirm` writes — and PR C's capture, which freezes unconfirmed —
   // the four columns the guard lets change (TA014); never the organisation,
   // year, version or author.
@@ -1047,6 +1050,15 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'locations', trigger: 'locations_note_removal', fn: 'locations_note_removal', type: ROW | ON.delete },
   // A delete never makes a boundary declaring a closed node current again (TA022).
   { table: 'inventory_boundaries', trigger: 'inventory_boundaries_keep_current_reportable', fn: 'inventory_boundaries_keep_current_reportable', type: ROW | BEFORE | ON.delete },
+  // inc26-central-reporter-onboarding (D2, D4, D5): single entry on access
+  // rows (TA024), the reporting entity worked out and frozen (TA025), single
+  // entry per period on records (TA026), and a reporting company kept in its
+  // organisation (TA027). Not narrowed: each returns at once when its columns
+  // did not change.
+  { table: 'user_subsidiary_access', trigger: 'user_subsidiary_access_single_entry', fn: 'user_subsidiary_access_single_entry', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'activity_records', trigger: 'activity_records_reporting_entity', fn: 'activity_records_reporting_entity', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'activity_records', trigger: 'activity_records_single_entry', fn: 'activity_records_single_entry', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'subsidiaries', trigger: 'subsidiaries_reporting_entity_stays', fn: 'subsidiaries_reporting_entity_stays', type: ROW | BEFORE | ON.update },
 ]);
 
 /**
@@ -1144,6 +1156,10 @@ export const INTEGRITY_CHECKS = Object.freeze([
   // holding; the share percent is a percentage.
   ['subsidiaries', 'subsidiaries_root_check', '09210997478fc6effe8bb45885cca4f8'],
   ['subsidiaries', 'subsidiaries_share_percent_check', '809fd0c8686e3550c74c384a8ad19770'],
+  // inc26-central-reporter-onboarding (D3): an access row's two kinds, and a
+  // grant row's non-empty category list.
+  ['user_subsidiary_access', 'user_subsidiary_access_grant_categories_check', '02361f259a7b2ebc1388f6b3834ad671'],
+  ['user_subsidiary_access', 'user_subsidiary_access_kind_check', '891b383edada73300e95a42b978235b3'],
 ]);
 
 /**
@@ -1218,6 +1234,8 @@ const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
 export const RECORD_FOREIGN_KEYS = Object.freeze([
   ['activity_records_import_batch_id_fkey', '7058a8305daff968e129c1e3f0ab5801'],
   ['activity_records_location_id_subsidiary_id_fkey', '3221f47aaba83bbcdf1c5a4443e32cd8'],
+  // inc26-central-reporter-onboarding (D1): the reporting entity, RESTRICT both ways.
+  ['activity_records_reported_by_subsidiary_id_fkey', '34099d6c2c56fd1c033bebb9c5c2ec05'],
   ['activity_records_subsidiary_id_fkey', '8b855abe0326a26240a4a9f99e9146c7'],
 ]);
 const REFERENTIAL_ACTIONS = Object.freeze({ a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' });

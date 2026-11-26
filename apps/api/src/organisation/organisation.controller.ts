@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post } from '@nestjs/common';
 import type { OrganisationDTO } from '@tonyai/shared-types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
@@ -21,5 +21,12 @@ export class OrganisationController {
     @Body() dto: UpdateConsolidationApproachDto,
   ): Promise<OrganisationDTO> {
     return this.service.setConsolidationApproach(user, dto);
+  }
+
+  /** The masterkey finishes the setup wizard (inc26-central-reporter-onboarding D8). */
+  @Post('onboarding/complete')
+  @HttpCode(200)
+  completeOnboarding(@CurrentUser() user: RequestUser): Promise<OrganisationDTO> {
+    return this.service.completeOnboarding(user);
   }
 }

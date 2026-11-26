@@ -352,6 +352,9 @@ test('a standard user granted one category sees no other category\'s record or f
   await administer(request, APPROVER_EMAIL, `/users/${entryId}/access`, 'put', {
     access: [{ subsidiaryId: SUB.energy, categories: ['Electricity'] }],
   });
+  // Logistics is the seed's central reporter grant: only the masterkey's grant
+  // route withdraws it (inc26-central-reporter-onboarding).
+  await administer(request, ADMIN_EMAIL, `/users/${entryId}/central-reporter-grant`, 'put', { subsidiaryIds: [], categories: [] });
   const admin = await getAccessToken(request, ADMIN_EMAIL);
   const entry = await getAccessToken(request, ENTRY_EMAIL);
 

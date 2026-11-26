@@ -1,5 +1,6 @@
 import type { CursorPageParams } from './bounded-access';
 import type { ConsolidationApproach, ControlKind, LocationType, NodeType } from './group-tree';
+import type { SingleEntryConflictDTO, UserAccessRowDTO } from './central-reporting';
 
 export type DataStatus = 'complete' | 'incomplete' | 'missing';
 
@@ -674,6 +675,12 @@ export const ROLE_CAPABILITIES = Object.freeze({
   'users.set_access': ['masterkey', 'super_admin'],
   'users.set_role': ['masterkey'],
   'users.disable': ['masterkey'],
+  /** Give, change or withdraw a standard user's central reporter grant
+   *  (INC-2.6 §1, §4.1, §6: only the masterkey gives it). */
+  'central_reporter.grant': ['masterkey'],
+  /** Run the setup wizard of a new organisation and finish it (INC-2.6 §7.1:
+   *  the masterkey's onboarding flow). */
+  'onboarding.run': ['masterkey'],
 } as const satisfies Record<string, readonly UserRole[]>);
 export type Capability = keyof typeof ROLE_CAPABILITIES;
 export const CAPABILITIES = Object.freeze(Object.keys(ROLE_CAPABILITIES)) as readonly Capability[];
@@ -1708,8 +1715,9 @@ export interface UserSummaryDTO {
   status: UserAccountStatus;
   /** Granted companies — super_admin and standard_user only; empty for the
    *  organisation-wide roles. A super_admin reader sees only the grants
-   *  inside its own companies. */
-  access: UserAccessGrantDTO[];
+   *  inside its own companies. Each row states its `kind`: the main or
+   *  assigned company, or a company of a central reporter grant. */
+  access: UserAccessRowDTO[];
   disabledAt: string | null;
   /** The account's enabled state has not reached Supabase Auth yet (K4); the
    *  API refuses it either way, and `pnpm onboarding reconcile` retries. */
@@ -1839,11 +1847,17 @@ export interface AuthUser {
   organisationId: string | null;
   accessibleSubsidiaryIds: string[];
   /** The caller's own grants with their categories (`GET /me`): lists for a
-   *  super_admin and a standard user, empty for the organisation-wide roles. */
-  access: UserAccessGrantDTO[];
+   *  super_admin and a standard user, empty for the organisation-wide roles.
+   *  Each row states its `kind` (a central reporter grant's companies are
+   *  `central_reporter`). */
+  access: UserAccessRowDTO[];
   /** The UI language the user chose — `en` until they choose. */
   language: Locale;
   theme: string;
+  /** A masterkey of an organisation whose setup is not finished: the web holds
+   *  them on the setup wizard (INC-2.6 §7.1; inc26-central-reporter-onboarding
+   *  D8, D9). False for every other role and every finished organisation. */
+  onboardingPending: boolean;
 }
 
 /** Subsidiary row as returned/accepted by the API (DB-shaped, not the UI view model). */
@@ -2006,6 +2020,11 @@ export const SUBSIDIARY_BLOCKER_KINDS = [
   /** inc26-group-tree (RD9): a child node, and any facility, now block. */
   'children',
   'locations',
+  /** inc26-central-reporter-onboarding (C6): records of other companies name
+   *  this company as their reporting entity. Checked in the delete only. */
+  'reportedRecords',
+  /** (B2) the company is a central reporter's main company. Delete only. */
+  'centralReporters',
 ] as const;
 export type SubsidiaryBlockerKind = (typeof SUBSIDIARY_BLOCKER_KINDS)[number];
 
@@ -3284,6 +3303,19 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** params: `geography` — a `GEOGRAPHY_CODES` entry the environment's factor
    *  library prices no set for (the DTO admits only those codes). */
   geography_without_factors: 422,
+  /** The change would leave a central reporter grant's holder without exactly
+   *  one main company outside the grant (inc26-central-reporter-onboarding, B2). */
+  central_reporter_needs_main_entity: 409,
+  /** A category at a company would be opened both to the company's own
+   *  standard users and to a central reporter (§4.2). params: `side`
+   *  (`SingleEntrySide`, a SENTENCE SELECTOR: the party that already holds
+   *  them); the body adds a typed `conflicts` list (`SingleEntryConflictDTO[]`)
+   *  filtered to companies the reader may read, empty for a raced refusal. */
+  single_entry_conflict: 409,
+  /** The other party already entered this category for this company and
+   *  period (§4.2, §5.3). params: `side` (`SingleEntrySide`, a SENTENCE
+   *  SELECTOR), `category`, `year`, `period` (the `PERIOD_VALUES` entry). */
+  single_entry_period_conflict: 409,
 } as const);
 export type DomainErrorCode = keyof typeof DOMAIN_ERROR_STATUS;
 
@@ -3345,6 +3377,10 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     not_record_approver: Object.freeze(['approver']),
     category_not_granted: Object.freeze(['category']),
     geography_without_factors: Object.freeze(['geography']),
+    /** `side` (`SingleEntrySide`): a SENTENCE SELECTOR. */
+    single_entry_conflict: Object.freeze(['side']),
+    /** `side` (`SingleEntrySide`): a SENTENCE SELECTOR. */
+    single_entry_period_conflict: Object.freeze(['side', 'category', 'year', 'period']),
   });
 
 /** What a `variance_reason_required` refusal rests on: a flag on history
@@ -3374,6 +3410,8 @@ export const API_ERROR_SENTENCE_SELECTORS: Readonly<Partial<Record<ApiErrorCode,
   parameters_required: 'input',
   not_record_approver: 'approver',
   evidence_backs_locked_records: 'reach',
+  single_entry_conflict: 'side',
+  single_entry_period_conflict: 'side',
 });
 
 export type ApiErrorParams = Readonly<Record<string, string | number>>;
@@ -3392,6 +3430,10 @@ export interface ApiErrorBody {
   message: string | string[];
   error?: string;
   params?: ApiErrorParams;
+  /** `single_entry_conflict` only: each company in conflict with its
+   *  categories, limited to companies the reader may read; empty when the
+   *  database refused a raced write. */
+  conflicts?: SingleEntryConflictDTO[];
 }
 
 export function isApiErrorCode(value: unknown): value is ApiErrorCode {
@@ -5000,6 +5042,18 @@ export interface ActivityRecordDTO {
    * create resolves without a query at all.
    */
   createdByName: string | null;
+  /**
+   * The reporting entity (INC-2.6 §4; inc26-central-reporter-onboarding D1):
+   * the company of the user who entered the record. `subsidiaryId` is the
+   * owning entity, where the emission counts. Equal to `subsidiaryId` except
+   * for a central reporter's record, where it is the reporter's main company.
+   * Always present; a record stored before the rule answers its own company.
+   */
+  reportedBySubsidiaryId: string;
+  /** The reporting company's name, resolved within the reader's organisation
+   *  (not through the reader's company scope): a trace the owning company's
+   *  approver reads. `null` only when the company row is gone. */
+  reportedBySubsidiaryName: string | null;
   anomalyFlag: boolean;
   /**
    * What the verdict above was taken against: how many comparable periods
@@ -7280,6 +7334,10 @@ export interface BulkUploadRowIssue {
    * imported. `row` is the line at fault, or the first.
    */
   lineRows?: number[];
+  /** The record API's params for a code that carries them, so the screen
+   *  words the row in its reader's language — `single_entry_period_conflict`
+   *  (`side`, `category`, `year`, `period`). */
+  params?: ApiErrorParams;
 }
 
 /**
@@ -7324,6 +7382,10 @@ export const BULK_UPLOAD_ERROR_CODES = [
    *  (inc26-group-tree) — the same name and words as the record API's code.
    *  WP9 turns an associate's rows into "excluded" ones; until then, an error. */
   'entity_closed_to_data_entry',
+  /** The other single-entry party already entered this category for the
+   *  row's company and period (inc26-central-reporter-onboarding, §4.2) — the
+   *  same name as the record API's code; `params` as it carries them. */
+  'single_entry_period_conflict',
   /** Anything the server did not anticipate; the row is refused, not applied. */
   'unexpected',
   /** The request's deadline passed before this row began. Nothing was applied
@@ -7415,6 +7477,13 @@ export interface BulkUploadAcceptedRow {
    * line, in file order; absent for a record of one row. `row` is the first.
    */
   lineRows?: number[];
+  /**
+   * The company the record reports for (inc26-central-reporter-onboarding §4;
+   * owner review of WP8): the row's own company, or a central reporter's main
+   * company for a grant company — shown before an apply. Absent from a server
+   * before WP8.
+   */
+  reportedBySubsidiaryId?: string;
   tCo2e: number | null;
   anomalous: boolean;
 }
@@ -7870,3 +7939,5 @@ export * from './report-consistency';
 export * from './record-references';
 
 export * from './group-tree';
+
+export * from './central-reporting';

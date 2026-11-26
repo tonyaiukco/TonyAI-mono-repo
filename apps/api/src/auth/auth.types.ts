@@ -1,4 +1,4 @@
-import type { Category, UserRole } from '@tonyai/shared-types';
+import type { Category, GrantKind, UserRole } from '@tonyai/shared-types';
 
 /**
  * The authenticated caller, built once per request by the auth guard.
@@ -30,4 +30,12 @@ export interface RequestUser {
    * own records — the read scope fails closed (`recordScopeWhere`).
    */
   categoryGrants?: Readonly<Record<string, readonly Category[]>>;
+  /**
+   * The kind of each granted company (`subsidiaryId → kind`): `assigned`, or
+   * `central_reporter` for a company of a standard user's central reporter
+   * grant (inc26-central-reporter-onboarding D3). Set by the guard for the
+   * granted roles; a company absent here is `assigned`. Read only to answer
+   * `GET /me` — scope and categories never depend on it.
+   */
+  grantKinds?: Readonly<Record<string, GrantKind>>;
 }

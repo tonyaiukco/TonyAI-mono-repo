@@ -10,10 +10,19 @@ import { bulkActivityLabel, readAmountLabel, readInputsLabel } from "@/lib/bulk-
  * and the amount the server read (D15): a file is read dot-decimal, so a
  * Turkish `1.234` meant as a thousand shows here as 1,234 before it lands.
  */
-export function AcceptedRows({ rows }: { rows: BulkUploadAcceptedRow[] }) {
+export function AcceptedRows({
+  rows,
+  companyName,
+}: {
+  rows: BulkUploadAcceptedRow[];
+  /** A company's name, for the reporting company column (owner review of WP8). */
+  companyName?: (id: string) => string | undefined;
+}) {
   const t = useTranslations("dataEntry");
   const tCategory = useTranslations("categories");
   const tPeriod = useTranslations("periods");
+  // Shown only when a row reports for another company — a central reporter's.
+  const showReportedBy = rows.some((row) => reportedByOther(row) !== null);
   const locale = useLocale();
   if (rows.length === 0) return null;
   return (
@@ -32,6 +41,7 @@ export function AcceptedRows({ rows }: { rows: BulkUploadAcceptedRow[] }) {
             <th scope="col" className="p-2">{t("bulkColumns.activityType")}</th>
             <th scope="col" className="p-2 text-right">{t("bulkPreview.amount")}</th>
             <th scope="col" className="p-2">{t("bulkPreview.inputs")}</th>
+            {showReportedBy && <th scope="col" className="p-2">{t("bulkPreview.reportedBy")}</th>}
           </tr>
         </thead>
         <tbody>
@@ -46,10 +56,23 @@ export function AcceptedRows({ rows }: { rows: BulkUploadAcceptedRow[] }) {
               <td className="p-2">{bulkActivityLabel(row.activityType, t)}</td>
               <td className="p-2 text-right font-mono tabular-nums" data-testid="bulk-read-amount">{readAmountLabel(row, locale)}</td>
               <td className="p-2" data-testid="bulk-read-inputs">{readInputsLabel(row.category, row.parameters, locale, t)}</td>
+              {showReportedBy && (
+                <td className="p-2" data-testid="bulk-reported-by">
+                  {(() => {
+                    const id = reportedByOther(row);
+                    return id ? (companyName?.(id) ?? "—") : "";
+                  })()}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+/** The row's reporting company when it is not the row's own, else null. */
+function reportedByOther(row: BulkUploadAcceptedRow): string | null {
+  return row.reportedBySubsidiaryId && row.reportedBySubsidiaryId !== row.subsidiaryId ? row.reportedBySubsidiaryId : null;
 }

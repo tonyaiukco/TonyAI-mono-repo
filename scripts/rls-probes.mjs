@@ -61,7 +61,7 @@ if (!URL_ || !ANON || !SERVICE) {
 }
 
 // The seeded accounts, one per role (INC-2.6). One organisation holds them all.
-const ENTRY_EMAIL = 'entry@tonyai.local'; // standard_user: Energy + Logistics, every category
+const ENTRY_EMAIL = 'entry@tonyai.local'; // standard_user: Energy (main company) + Logistics (central reporter grant), every category
 const ADMIN_EMAIL = 'admin@tonyai.local'; // masterkey: the organisation, no grant
 const AUDITOR_EMAIL = 'review@tonyai.local'; // auditor: the organisation, read-only, no grant
 const SUPER_ADMIN_EMAIL = 'approver@tonyai.local'; // super_admin: Energy, Gas, Mfg, Logistics — not Trading
@@ -637,6 +637,173 @@ async function probeCategoryGrant(entryToken) {
   }
 }
 
+// --- inc26-central-reporter-onboarding: a central reporter's grant ----------
+// The seed makes TonyAI Logistics a company of entry@'s central reporter grant
+// (every category). RLS reads the grant row as it reads any grant row: the
+// company, its categories, and the holder's own records. Three drafts are
+// planted in Logistics as the owner — an Electricity and a Fuel record by the
+// masterkey and a Fuel record by the reporter itself (stored, by TA025, with
+// Energy as its reporting entity) — each linked to one probe file, and a
+// second file linked to the masterkey's Fuel record only. The grant is first
+// narrowed to Electricity and Fuel, then to Electricity (a category taken
+// out), then withdrawn (the company taken out). Written back to the seed's
+// state and the fixtures removed in a finally; a run killed between the two
+// is repaired by the next (only the probe's own fixtures are touched, and a
+// grant row in a state this probe did not leave is not overwritten).
+const GRANT_PROBE = {
+  ticked: '99999999-0c48-4000-8000-0000000000a1', // Logistics, Electricity, masterkey
+  foreign: '99999999-0c48-4000-8000-0000000000a2', // Logistics, Fuel, masterkey
+  own: '99999999-0c48-4000-8000-0000000000a3', // Logistics, Fuel, the reporter
+  evidence: '99999999-0c48-4000-8000-0000000000e1', // linked to the three
+  hiddenEvidence: '99999999-0c48-4000-8000-0000000000e2', // linked to `foreign` only
+};
+const GRANT_PROBE_STATES = [JSON.stringify(ALL_CATEGORIES), JSON.stringify(['Electricity', 'Fuel']), JSON.stringify(['Electricity'])];
+
+async function entryLogisticsRow(entryId) {
+  const res = await fetch(`${URL_}/rest/v1/user_subsidiary_access?select=kind,categories&user_id=eq.${entryId}&subsidiary_id=eq.${LOGISTICS}`, {
+    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+  });
+  return (await res.json())[0] ?? null;
+}
+async function cleanupGrantProbe(entryId) {
+  const owner = await ownerDb();
+  await owner.activityRecord.deleteMany({ where: { id: { in: [GRANT_PROBE.ticked, GRANT_PROBE.foreign, GRANT_PROBE.own] } } });
+  await owner.evidence.deleteMany({ where: { id: { in: [GRANT_PROBE.evidence, GRANT_PROBE.hiddenEvidence] } } });
+  const row = await entryLogisticsRow(entryId);
+  // The probe's own leftovers only: a narrowed grant, or none at all.
+  if (row === null || (row.kind === 'central_reporter' && GRANT_PROBE_STATES.includes(JSON.stringify(row.categories)))) {
+    const organisation = await owner.subsidiary.findUniqueOrThrow({ where: { id: LOGISTICS }, select: { organisationId: true } });
+    await owner.userSubsidiaryAccess.upsert({
+      where: { userId_subsidiaryId: { userId: entryId, subsidiaryId: LOGISTICS } },
+      update: { kind: 'central_reporter', categories: ALL_CATEGORIES },
+      create: { userId: entryId, subsidiaryId: LOGISTICS, organisationId: organisation.organisationId, kind: 'central_reporter', categories: ALL_CATEGORIES },
+    });
+  }
+}
+
+async function probeCentralReporterGrant(entryToken) {
+  console.log("▸ a central reporter's grant (INC-2.6 §4: TonyAI Logistics for entry@)");
+  const entryId = subjectOf(entryToken);
+  await cleanupGrantProbe(entryId); // in case a previous run aborted
+  const before = await entryLogisticsRow(entryId);
+  if (before?.kind !== 'central_reporter' || JSON.stringify(before.categories) !== JSON.stringify(ALL_CATEGORIES)) {
+    check("grant probe: entry's Logistics row is the seed's central reporter grant before the probe", false, `row=${JSON.stringify(before)}`);
+    return;
+  }
+  const setGrant = async (categories) => {
+    const res = await svc('PATCH', `user_subsidiary_access?user_id=eq.${entryId}&subsidiary_id=eq.${LOGISTICS}`, { categories });
+    if (!res.ok) throw new Error(`narrowing entry's Logistics grant failed: ${res.status} ${await res.text()}`);
+  };
+  const ids = async (table, column, query) => {
+    const res = await fetch(`${URL_}/rest/v1/${table}?select=${column}&${query}`, { headers: { apikey: ANON, Authorization: `Bearer ${entryToken}` } });
+    const body = await res.json();
+    return Array.isArray(body) ? body.map((r) => r[column]).sort() : body;
+  };
+  const tail = (v) => (Array.isArray(v) ? v.map((id) => id.slice(-2)).join(',') : JSON.stringify(v));
+  const planted = `(${GRANT_PROBE.ticked},${GRANT_PROBE.foreign},${GRANT_PROBE.own})`;
+  const files = `(${GRANT_PROBE.evidence},${GRANT_PROBE.hiddenEvidence})`;
+  const seen = async () => ({
+    records: await ids('activity_records', 'id', `id=in.${planted}`),
+    links: await ids('activity_record_evidence', 'activity_record_id', `evidence_id=in.${files}`),
+    files: await ids('evidence', 'id', `id=in.${files}`),
+  });
+  try {
+    const owner = await ownerDb();
+    const admin = await owner.profile.findFirstOrThrow({ where: { email: ADMIN_EMAIL } });
+    const record = (id, category, createdBy) => ({
+      id, subsidiaryId: LOGISTICS, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'March', category,
+      scope: category === 'Electricity' ? 2 : 1, activityValue: 1, activityUnit: category === 'Electricity' ? 'kWh' : 'litres',
+      activityType: category === 'Fuel' ? (createdBy === entryId ? 'petrol' : 'diesel') : null,
+      calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, createdBy,
+    });
+    await setGrant(['Electricity', 'Fuel']);
+    await owner.activityRecord.create({ data: record(GRANT_PROBE.ticked, 'Electricity', admin.id) });
+    await owner.activityRecord.create({ data: record(GRANT_PROBE.foreign, 'Fuel', admin.id) });
+    await owner.activityRecord.create({ data: record(GRANT_PROBE.own, 'Fuel', entryId) });
+    const stored = await owner.activityRecord.findUniqueOrThrow({ where: { id: GRANT_PROBE.own }, select: { reportedBySubsidiaryId: true } });
+    check(
+      "activity_records: a central reporter's record, written with no reporting entity, is stored with its main company (TA025)",
+      stored.reportedBySubsidiaryId === ENERGY,
+      `reported_by_subsidiary_id=${stored.reportedBySubsidiaryId}`,
+    );
+    const file = (id) => ({
+      id, subsidiaryId: LOGISTICS, storagePath: `rls-probe/${id}.pdf`,
+      fileName: 'rls-probe-grant.pdf', mimeType: 'application/pdf', sizeBytes: 1, uploadedBy: admin.id,
+    });
+    await owner.evidence.createMany({ data: [file(GRANT_PROBE.evidence), file(GRANT_PROBE.hiddenEvidence)] });
+    await owner.activityRecordEvidence.createMany({
+      data: [
+        ...[GRANT_PROBE.ticked, GRANT_PROBE.foreign, GRANT_PROBE.own].map((activityRecordId) => ({
+          activityRecordId, evidenceId: GRANT_PROBE.evidence, subsidiaryId: LOGISTICS, linkedBy: admin.id,
+        })),
+        { activityRecordId: GRANT_PROBE.foreign, evidenceId: GRANT_PROBE.hiddenEvidence, subsidiaryId: LOGISTICS, linkedBy: admin.id },
+      ],
+    });
+
+    const all = [GRANT_PROBE.ticked, GRANT_PROBE.foreign, GRANT_PROBE.own].sort();
+    let view = await seen();
+    check(
+      "central reporter: at a grant company it reads the grant's categories' records, their links and files",
+      JSON.stringify(view.records) === JSON.stringify(all) && JSON.stringify(view.links) === JSON.stringify([...all, GRANT_PROBE.foreign].sort()) &&
+        JSON.stringify(view.files) === JSON.stringify([GRANT_PROBE.evidence, GRANT_PROBE.hiddenEvidence].sort()),
+      `records=${tail(view.records)}, links=${tail(view.links)}, files=${tail(view.files)}`,
+    );
+
+    await setGrant(['Electricity']);
+    view = await seen();
+    const narrowed = [GRANT_PROBE.ticked, GRANT_PROBE.own].sort();
+    check(
+      'central reporter: after a category is taken out of the grant it reads its own records in it, not another author\'s, nor a file backing only those',
+      JSON.stringify(view.records) === JSON.stringify(narrowed) && JSON.stringify(view.links) === JSON.stringify(narrowed) &&
+        JSON.stringify(view.files) === JSON.stringify([GRANT_PROBE.evidence]),
+      `records=${tail(view.records)}, links=${tail(view.links)}, files=${tail(view.files)}`,
+    );
+
+    const withdraw = await svc('DELETE', `user_subsidiary_access?user_id=eq.${entryId}&subsidiary_id=eq.${LOGISTICS}`);
+    if (!withdraw.ok) throw new Error(`withdrawing entry's Logistics grant failed: ${withdraw.status} ${await withdraw.text()}`);
+    view = await seen();
+    const [records, links, evidence] = await Promise.all([
+      count('activity_records', { token: entryToken, query: `select=id&subsidiary_id=eq.${LOGISTICS}` }),
+      count('activity_record_evidence', { token: entryToken, query: `select=evidence_id&subsidiary_id=eq.${LOGISTICS}` }),
+      count('evidence', { token: entryToken, query: `select=id&subsidiary_id=eq.${LOGISTICS}` }),
+    ]);
+    check(
+      'central reporter: after the company is taken out of the grant it reads nothing of that company, its own records included',
+      view.records.length === 0 && view.links.length === 0 && view.files.length === 0 && records.total === 0 && links.total === 0 && evidence.total === 0,
+      `records=${records.error ?? records.total}, links=${links.error ?? links.total}, files=${evidence.error ?? evidence.total}`,
+    );
+
+    const gas = await count('activity_records', { token: entryToken, query: `select=id&subsidiary_id=eq.${GAS}` });
+    check('central reporter: nothing at a company outside the grant', gas.total === 0, `Gas records=${gas.error ?? gas.total}`);
+
+    // The kind is not the holder's to write: PostgREST never reaches it.
+    const ownRow = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryId}&subsidiary_id=eq.${ENERGY}`, {
+      method: 'PATCH',
+      headers: { apikey: ANON, Authorization: `Bearer ${entryToken}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ kind: 'central_reporter' }),
+    });
+    const ownRowBody = await ownRow.json().catch(() => null);
+    const energyRow = await fetch(`${URL_}/rest/v1/user_subsidiary_access?select=kind&user_id=eq.${entryId}&subsidiary_id=eq.${ENERGY}`, {
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+    }).then((r) => r.json());
+    check(
+      "user_subsidiary_access: a signed-in user cannot write an access row's kind",
+      (!ownRow.ok || (Array.isArray(ownRowBody) && ownRowBody.length === 0)) && energyRow[0]?.kind === 'assigned',
+      `patch=${ownRow.status} ${ownRowBody?.code ?? ''}, Energy kind=${energyRow[0]?.kind}`,
+    );
+  } catch (e) {
+    check('grant probe could run', false, e.message);
+  } finally {
+    await cleanupGrantProbe(entryId);
+    const restored = await entryLogisticsRow(entryId);
+    check(
+      "grant probe: entry's Logistics row is back to the seed's central reporter grant",
+      restored?.kind === 'central_reporter' && JSON.stringify(restored.categories) === JSON.stringify(ALL_CATEGORIES),
+      `row=${JSON.stringify(restored)}`,
+    );
+  }
+}
+
 // --- LP1-03: two organisations, all four roles, malformed grants ------------
 // A fixture of its own, independent of the seed: organisations X and Y, X with
 // two subsidiaries and Y with one, a record in each, and one user per role in
@@ -1176,6 +1343,7 @@ async function main() {
 
     await probeBoundaries(token);
     await probeCategoryGrant(token);
+    await probeCentralReporterGrant(token);
   } finally {
     await cleanupPeriodLocks();
     await cleanupImportBatches();

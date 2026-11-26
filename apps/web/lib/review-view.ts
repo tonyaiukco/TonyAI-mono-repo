@@ -102,6 +102,20 @@ export function reviewSelfGeneration(
  * `now` is injectable so the arithmetic can be pinned at a fixed instant
  * instead of racing the wall clock.
  */
+/**
+ * The reporting company the review sheet names beside the author
+ * (inc26-central-reporter-onboarding, C4): a central reporter's record — its
+ * reporting entity differs from its company — answers that company's name
+ * ("—" when the name is gone); any other record answers null, and the sheet
+ * shows no such line.
+ */
+export function reviewReportingEntity(
+  record: Pick<ActivityRecordDTO, 'subsidiaryId' | 'reportedBySubsidiaryId' | 'reportedBySubsidiaryName'>,
+): string | null {
+  if (!record.reportedBySubsidiaryId || record.reportedBySubsidiaryId === record.subsidiaryId) return null;
+  return record.reportedBySubsidiaryName ?? '—';
+}
+
 export function daysSince(
   iso: string | null,
   now: number = Date.now(),

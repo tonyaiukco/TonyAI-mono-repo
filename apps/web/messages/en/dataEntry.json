@@ -130,7 +130,8 @@
     "readNote": "Numbers in a file are read with a point as the decimal separator: 1.234 means 1.234, not 1,234. Check each amount before you import.",
     "noActivityType": "Not specified",
     "inputs": "Inputs read",
-    "lineRows": "Rows {rows}"
+    "lineRows": "Rows {rows}",
+    "reportedBy": "Reported by company"
   },
   "conversionNote": {
     "detail": "{fromUnit} → {toUnit}: ×{multiplier}. Calorific basis: {calorificBasis}. Derivation: {basis}. Reference conditions: {conditions}. Release: {publisher}, {edition} — {status}.",
@@ -599,5 +600,6 @@
     "none": "No category has been assigned to you for {company}, so there is nothing to enter here. A Super Admin of the company assigns them.",
     "notGranted": "{category} is not assigned to you for {company}, so it cannot be entered here. A Super Admin of the company assigns categories.",
     "noneShort": "No category assigned to you"
-  }
+  },
+  "reportedBy": "Reported by company: {company}"
 }

@@ -48,7 +48,9 @@
     "editAccessFor": "{name} için erişimi düzenle",
     "disable": "Hesabı devre dışı bırak",
     "enable": "Hesabı etkinleştir",
-    "resend": "Daveti yeniden gönder"
+    "resend": "Daveti yeniden gönder",
+    "centralReporter": "Merkezi raportör yetkisi",
+    "centralReporterFor": "{name} için merkezi raportör yetkisi"
   },
   "inviteDialog": {
     "title": "Kullanıcı davet et",
@@ -106,7 +108,9 @@
     "submitting": "Kaydediliyor…",
     "cancel": "Vazgeç",
     "superAdminDescription": "Yalnızca burada işaretlenen bağlı şirketlerde, tüm kategorilerde çalışabilir.",
-    "standardUserDescription": "Yalnızca burada işaretlenen bağlı şirket ve kategorilerde veri girip görebilir."
+    "standardUserDescription": "Yalnızca burada işaretlenen bağlı şirket ve kategorilerde veri girip görebilir.",
+    "grantHeading": "Merkezi raportör olarak tutulanlar",
+    "grantNote": "Merkezi raportör yetkisini yalnızca bir Masterkey değiştirir. Burada kaydetmek onu olduğu gibi bırakır."
   },
   "accessSaved": "Erişim güncellendi",
   "disableDialog": {
@@ -120,6 +124,38 @@
   "authSyncWarning": "Kaydedildi. Giriş engeli kısa süre içinde uygulanacak; uygulama hesabı her durumda reddediyor.",
   "roleChangedStandardUser": "Kullanıcının bağlı şirketini ve kategorilerini o bağlı şirketin süper yöneticisi atar.",
   "errors": {
-    "standardUserSingleCompany": "Standart kullanıcı yalnızca bir bağlı şirkette çalışır ve bu değişiklik ona bir bağlı şirket daha verirdi. Hiçbir şey değiştirilmedi."
+    "standardUserSingleCompany": "Standart kullanıcı yalnızca bir bağlı şirkette çalışır ve bu değişiklik ona bir bağlı şirket daha verirdi. Hiçbir şey değiştirilmedi.",
+    "centralReporterNeedsMainEntity": "Merkezi raportör, yetkinin dışında tam olarak bir ana şirket tutar; bu değişiklik ona hiç ana şirket ya da birden fazla ana şirket bırakırdı. Hiçbir şey değiştirilmedi.",
+    "singleEntry": {
+      "companyUsers": "{company}: şirketin kendi kullanıcıları {categories} kategorilerini zaten tutuyor. Hiçbir şey değiştirilmedi.",
+      "centralReporter": "{company}: bir merkezi raportör {categories} kategorilerini zaten tutuyor. Hiçbir şey değiştirilmedi.",
+      "companyUsersGeneral": "Bu kategoriler zaten şirketin kendi standart kullanıcılarına açık, bu yüzden bir merkezi raportöre de açılamaz. Hiçbir şey değiştirilmedi.",
+      "centralReporterGeneral": "Bu kategoriler bu şirkette zaten bir merkezi raportöre açık, bu yüzden şirketin kendi standart kullanıcılarına da açılamaz. Hiçbir şey değiştirilmedi."
+    }
+  },
+  "grantSummary": "Merkezi raportör: {companies}",
+  "grantDialog": {
+    "title": "{name} için merkezi raportör yetkisi",
+    "description": "Bu kullanıcının merkezi raportör olarak veri gireceği şirketleri ve kategorileri seçin. Kullanıcı, yetkinin dışında bir ana şirketi tutmaya devam eder.",
+    "companiesHeading": "Yetkinin şirketleri",
+    "categoriesHeading": "Yetkinin kategorileri",
+    "mainCompany": "Ana şirket: {name}",
+    "noMainCompany": "Bu seçim kullanıcıya tam olarak bir ana şirket bırakmıyor. Tuttuğu şirketlerden birini işaretsiz bırakın.",
+    "noCategory": "Seçtiğiniz şirketler için en az bir kategori işaretleyin.",
+    "withdrawNote": "Hiçbir şirket işaretlemeden kaydetmek yetkiyi geri alır.",
+    "changesHeading": "Kaydetmeden önce ve sonra",
+    "company": "Şirket",
+    "now": "Şimdi",
+    "after": "Sonra",
+    "notHeld": "Tutulmuyor",
+    "withdrawn": "Geri alınır",
+    "asMain": "Ana şirket: {categories}",
+    "asGrant": "Merkezi raportör: {categories}",
+    "noCategories": "kategori yok",
+    "cancel": "İptal",
+    "submit": "Yetkiyi kaydet",
+    "submitting": "Kaydediliyor…",
+    "saved": "Merkezi raportör yetkisi kaydedildi.",
+    "noUser": "Henüz yetkiyi alabilecek bir kullanıcı yok: merkezi raportör bir standart kullanıcıdır ve standart kullanıcıları şirketlerine bir Süper Yönetici atar."
   }
 }

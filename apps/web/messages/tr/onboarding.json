@@ -1,0 +1,109 @@
+{
+  "title": "Kuruluşunuzu kurun",
+  "stepOf": "Adım {current} / {total}",
+  "next": "İleri",
+  "back": "Geri",
+  "skip": "Atla",
+  "saving": "Kaydediliyor…",
+  "steps": {
+    "holding": "Holding kimliği",
+    "approach": "Konsolidasyon yaklaşımı",
+    "sectorGroups": "Sektör grupları",
+    "companies": "Ana şirketler",
+    "boundaries": "Üst envanter sınırları",
+    "superAdmins": "Süper Yöneticiler",
+    "centralReporter": "Merkezi raportör (isteğe bağlı)",
+    "finish": "Bitir"
+  },
+  "holding": {
+    "description": "Holding, şirket ağacınızın köküdür. Ticari adını girin.",
+    "label": "Holdingin ticari adı",
+    "required": "Devam etmek için holdingin ticari adını girin."
+  },
+  "approach": {
+    "description": "Grubun şirketlerinin emisyonlarını nasıl konsolide ettiğini seçin.",
+    "options": {
+      "operational_control": "Operasyonel kontrol",
+      "financial_control": "Finansal kontrol",
+      "equity_share": "Özsermaye payı"
+    },
+    "comingSoon": "yakında"
+  },
+  "sectorGroups": {
+    "description": "Sektör grupları, holding altında bir sektörün şirketlerini etiketler. İstediğiniz kadar ekleyin ya da hiç eklemeyin.",
+    "nameLabel": "Sektör grubu adı",
+    "add": "Ekle",
+    "list": "Sektör grupları",
+    "none": "Henüz sektör grubu yok. Grup eklemeden devam edebilirsiniz.",
+    "created": "Sektör grubu eklendi.",
+    "suggestions": {
+      "naturalGas": "Doğal gaz",
+      "banking": "Bankacılık",
+      "mining": "Madencilik",
+      "retail": "Perakende",
+      "refinery": "Rafineri",
+      "finance": "Finans",
+      "food": "Gıda",
+      "automotive": "Otomotiv",
+      "construction": "İnşaat",
+      "renewables": "Yenilenebilir"
+    }
+  },
+  "companies": {
+    "description": "Grubun ana şirketlerini holdingin ya da bir sektör grubunun altına ekleyin.",
+    "hint": "İlk toplu yüklemeden önce yakıt kartı ve fatura dosyalarınızda görünen tüm şirketleri oluşturun.",
+    "add": "Şirket ekle",
+    "list": "Şirketler",
+    "none": "Henüz şirket yok. Şirket eklemeden devam edebilirsiniz.",
+    "created": "Şirket eklendi.",
+    "legalNameMissing": "Şirketin yasal adını girin.",
+    "geographyRequired": "Şirketin coğrafyasını seçin.",
+    "sharePercentInvalid": "Pay yüzdesi 0 ile 100 arasında bir sayı olmalıdır.",
+    "naceInvalid": "NACE kodu beklenen biçimde değil.",
+    "associateName": "{name} (iştirak)"
+  },
+  "boundaries": {
+    "description": "Her şirket için envanter sınırının {year} yılında hangi kategorileri kapsadığını beyan edin.",
+    "matrixNote": "Beyan ettiğiniz bir kategoriye veri gelmezse kapsam matrisinde kırmızı görünür.",
+    "none": "Henüz kayıt tutan bir şirket yok.",
+    "declared": "Beyan edildi",
+    "notDeclared": "Beyan edilmedi",
+    "declare": "Beyan et",
+    "edit": "Düzenle",
+    "editorTitle": "{name} envanter sınırı",
+    "confirm": "Sınırı onayla",
+    "confirmed": "Bu yılın sınırı onaylandı.",
+    "saved": "Beyan kaydedildi."
+  },
+  "superAdmins": {
+    "description": "Şirketlerinizi yöneten Süper Yöneticileri, her birini şirketleriyle birlikte davet edin.",
+    "fullName": "Ad soyad",
+    "email": "E-posta",
+    "companies": "Şirketler",
+    "invite": "Davet et",
+    "list": "Süper Yöneticiler",
+    "none": "Henüz Süper Yönetici yok. Davet etmeden devam edebilirsiniz.",
+    "invited": "Davet {email} adresine gönderildi.",
+    "invitedNotDelivered": "{email} için hesap oluşturuldu ancak davet e-postası henüz gönderilemedi.",
+    "languages": {
+      "en": "İngilizce",
+      "tr": "Türkçe"
+    },
+    "row": "{name} · {email} — {companies} · {status}"
+  },
+  "centralReporter": {
+    "description": "İsterseniz bir standart kullanıcıya merkezi raportör yetkisi verin: birden fazla şirket için tek bir kategori listesi.",
+    "noUser": "Henüz yetkiyi alabilecek bir kullanıcı yok: merkezi raportör bir standart kullanıcıdır ve standart kullanıcıları şirketlerine bir Süper Yönetici atar.",
+    "give": "Merkezi raportör yetkisi"
+  },
+  "finish": {
+    "description": "Şirket ağacını ve aracın geri kalanını açmak için kurulumu bitirin.",
+    "submit": "Bitir",
+    "failed": "Kurulum bitirilemedi. Yeniden deneyin."
+  },
+  "gate": {
+    "failed": "Hesabınız yüklenemedi.",
+    "retry": "Yeniden dene",
+    "signOut": "Oturumu kapat"
+  }
+}

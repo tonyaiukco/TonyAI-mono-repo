@@ -3,7 +3,7 @@ import type { CursorPage, UserSummaryDTO } from '@tonyai/shared-types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { CanonicalIdPipe } from './canonical-id.pipe';
-import { InviteUserDto, ListUsersQueryDto, ReplaceUserAccessDto, UpdateUserRoleDto } from './dto/users.dto';
+import { CentralReporterGrantDto, InviteUserDto, ListUsersQueryDto, ReplaceUserAccessDto, UpdateUserRoleDto } from './dto/users.dto';
 import { UserLifecycleService } from './user-lifecycle.service';
 import { UsersQueryService } from './users-query.service';
 
@@ -63,6 +63,20 @@ export class UsersController {
     @Body() dto: ReplaceUserAccessDto,
   ): Promise<UserSummaryDTO> {
     return this.lifecycle.replaceAccess(user, id, dto.access);
+  }
+
+  /**
+   * A standard user's central reporter grant, the whole of it — a masterkey's
+   * power (`central_reporter.grant`; inc26-central-reporter-onboarding D6).
+   * Answers the user's row, as the other access routes do.
+   */
+  @Put(':id/central-reporter-grant')
+  setCentralReporterGrant(
+    @CurrentUser() user: RequestUser,
+    @Param('id', CanonicalIdPipe) id: string,
+    @Body() dto: CentralReporterGrantDto,
+  ): Promise<UserSummaryDTO> {
+    return this.lifecycle.setCentralReporterGrant(user, id, { subsidiaryIds: dto.subsidiaryIds, categories: dto.categories });
   }
 
   @Post(':id/disable')

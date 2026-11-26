@@ -30,8 +30,8 @@ describe('POST /me/password-set (pre-g5-security-hardening)', () => {
  * is proven on PostgreSQL.
  */
 describe('GET /me — the caller\'s access (INC-2.6 §1)', () => {
-  function me(caller: RequestUser) {
-    const findUnique = vi.fn(async () => ({ fullName: caller.fullName, language: 'en', theme: 'light' }));
+  function me(caller: RequestUser, onboardingCompletedAt: Date | null = new Date('2026-11-26T12:00:00Z')) {
+    const findUnique = vi.fn(async () => ({ fullName: caller.fullName, language: 'en', theme: 'light', organisation: { onboardingCompletedAt } }));
     const controller = new AuthController({ profile: { findUnique } } as never, {} as PreferencesService);
     return controller.me(caller);
   }
@@ -44,14 +44,26 @@ describe('GET /me — the caller\'s access (INC-2.6 §1)', () => {
     const body = await me(caller);
     expect(body.role).toBe('standard_user');
     expect(body.access).toEqual([
-      { subsidiaryId: 'sub-1', categories: ['Electricity', 'Natural Gas'] },
-      { subsidiaryId: 'sub-2', categories: [] },
+      { subsidiaryId: 'sub-1', categories: ['Electricity', 'Natural Gas'], kind: 'assigned' },
+      { subsidiaryId: 'sub-2', categories: [], kind: 'assigned' },
+    ]);
+  });
+
+  it('a central reporter: its main company and each grant company, with their kinds (task 3.1)', async () => {
+    const caller = makeStandardUser({
+      accessibleSubsidiaryIds: ['sub-t', 'sub-a'],
+      categoryGrants: { 'sub-t': ['Water'], 'sub-a': ['Mobile Combustion'] },
+      grantKinds: { 'sub-t': 'assigned', 'sub-a': 'central_reporter' },
+    });
+    expect((await me(caller)).access).toEqual([
+      { subsidiaryId: 'sub-t', categories: ['Water'], kind: 'assigned' },
+      { subsidiaryId: 'sub-a', categories: ['Mobile Combustion'], kind: 'central_reporter' },
     ]);
   });
 
   it('a standard user whose grant has no category entry reads an empty list there, never every category', async () => {
     const body = await me(makeStandardUser({ accessibleSubsidiaryIds: ['sub-1'], categoryGrants: {} }));
-    expect(body.access).toEqual([{ subsidiaryId: 'sub-1', categories: [] }]);
+    expect(body.access).toEqual([{ subsidiaryId: 'sub-1', categories: [], kind: 'assigned' }]);
   });
 
   it('the list is a copy: mutating the answer does not reach the request user', async () => {
@@ -64,8 +76,8 @@ describe('GET /me — the caller\'s access (INC-2.6 §1)', () => {
   it('a super_admin: each granted company with no category list, even if the guard carried one', async () => {
     const body = await me(makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'], categoryGrants: { 'sub-1': ['Electricity'] } }));
     expect(body.access).toEqual([
-      { subsidiaryId: 'sub-1', categories: [] },
-      { subsidiaryId: 'sub-2', categories: [] },
+      { subsidiaryId: 'sub-1', categories: [], kind: 'assigned' },
+      { subsidiaryId: 'sub-2', categories: [], kind: 'assigned' },
     ]);
   });
 
@@ -83,5 +95,26 @@ describe('GET /me — the caller\'s access (INC-2.6 §1)', () => {
     expect(body.access).toEqual([]);
     expect(body.accessibleSubsidiaryIds).toEqual(caller.accessibleSubsidiaryIds);
     expect(body.accessibleSubsidiaryIds.length).toBeGreaterThan(0);
+  });
+});
+
+describe('GET /me — onboardingPending (inc26-central-reporter-onboarding, task 7.3)', () => {
+  function me(caller: RequestUser, onboardingCompletedAt: Date | null) {
+    const findUnique = vi.fn(async () => ({ fullName: caller.fullName, language: 'en', theme: 'light', organisation: { onboardingCompletedAt } }));
+    return new AuthController({ profile: { findUnique } } as never, {} as PreferencesService).me(caller);
+  }
+
+  it('a masterkey of an unfinished organisation is pending; of a finished one, not', async () => {
+    expect((await me(makeMasterkey(), null)).onboardingPending).toBe(true);
+    expect((await me(makeMasterkey(), new Date())).onboardingPending).toBe(false);
+  });
+
+  it.each([
+    ['super_admin', makeSuperAdmin()],
+    ['standard_user', makeStandardUser()],
+    ['auditor', makeAuditor()],
+  ] as const)('a %s is never pending, finished or not', async (_role, caller) => {
+    expect((await me(caller, null)).onboardingPending).toBe(false);
+    expect((await me(caller, new Date())).onboardingPending).toBe(false);
   });
 });

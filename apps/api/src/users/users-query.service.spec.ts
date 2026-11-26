@@ -31,7 +31,7 @@ type Row = Parameters<typeof toUserSummary>[0];
 const baseRow = (over: Partial<Row> = {}): Row => ({
   id: 'u', email: 'a@b.test', fullName: 'A', role: 'standard_user', language: 'tr', disabledAt: null,
   authSyncPendingSince: null, createdAt: new Date('2026-10-10T09:00:00.000Z'),
-  subsidiaryAccess: [{ subsidiaryId: 's', categories: ['Electricity'] }],
+  subsidiaryAccess: [{ subsidiaryId: 's', categories: ['Electricity'], kind: 'assigned' }],
   invitation: null, ...over,
 });
 
@@ -50,26 +50,26 @@ describe('toUserSummary', () => {
   it('flags a pending Auth step and reads an unsupported stored language as the default', () => {
     const s = toUserSummary(baseRow({ authSyncPendingSince: new Date(), language: 'de' }));
     expect(s).toMatchObject({
-      authSyncPending: true, language: 'en', access: [{ subsidiaryId: 's', categories: ['Electricity'] }], createdAt: '2026-10-10T09:00:00.000Z',
+      authSyncPending: true, language: 'en', access: [{ subsidiaryId: 's', categories: ['Electricity'], kind: 'assigned' }], createdAt: '2026-10-10T09:00:00.000Z',
     });
     expect(s).not.toHaveProperty('subsidiaryIds');
   });
 
   it('a standard user\'s categories are returned sorted and unique, unknown stored names dropped', () => {
     const s = toUserSummary(baseRow({
-      subsidiaryAccess: [{ subsidiaryId: 's', categories: ['Natural Gas', 'Electricity', 'Natural Gas', 'Steam'] }],
+      subsidiaryAccess: [{ subsidiaryId: 's', categories: ['Natural Gas', 'Electricity', 'Natural Gas', 'Steam'], kind: 'assigned' }],
     }));
-    expect(s.access).toEqual([{ subsidiaryId: 's', categories: ['Electricity', 'Natural Gas'] }]);
+    expect(s.access).toEqual([{ subsidiaryId: 's', categories: ['Electricity', 'Natural Gas'], kind: 'assigned' }]);
   });
 
   it('a super_admin\'s grants carry no categories, whatever is stored', () => {
-    const s = toUserSummary(baseRow({ role: 'super_admin', subsidiaryAccess: [{ subsidiaryId: 's', categories: ['Electricity'] }] }));
-    expect(s.access).toEqual([{ subsidiaryId: 's', categories: [] }]);
+    const s = toUserSummary(baseRow({ role: 'super_admin', subsidiaryAccess: [{ subsidiaryId: 's', categories: ['Electricity'], kind: 'assigned' }] }));
+    expect(s.access).toEqual([{ subsidiaryId: 's', categories: [], kind: 'assigned' }]);
   });
 
   it('a scoped reader sees only the grants inside its companies; an unscoped one all of them', () => {
-    const row = baseRow({ subsidiaryAccess: [{ subsidiaryId: 'a', categories: [] }, { subsidiaryId: 'c', categories: ['Fuel'] }] });
-    expect(toUserSummary(row, new Set(['a'])).access).toEqual([{ subsidiaryId: 'a', categories: [] }]);
+    const row = baseRow({ subsidiaryAccess: [{ subsidiaryId: 'a', categories: [], kind: 'assigned' }, { subsidiaryId: 'c', categories: ['Fuel'], kind: 'assigned' }] });
+    expect(toUserSummary(row, new Set(['a'])).access).toEqual([{ subsidiaryId: 'a', categories: [], kind: 'assigned' }]);
     expect(toUserSummary(row, null).access.map((g) => g.subsidiaryId)).toEqual(['a', 'c']);
   });
 });
@@ -85,6 +85,7 @@ describe('toUserSummary', () => {
 const ORG = 'org-1';
 const A = 'sub-1'; // makeSuperAdmin is granted sub-1 and sub-2; scenarios use sub-1 as "A"
 const C = 'sub-3';
+const B = 'sub-4'; // a company the super_admin granted A is not granted
 
 /** Account ids (uuids: the cursor carries one). */
 const ID = {
@@ -124,7 +125,13 @@ function matches(row: Row & { organisationId: string }, where: Where): boolean {
 }
 
 let seq = 0;
-function member(key: keyof typeof ID, role: Row['role'], grants: Record<string, string[]> = {}, organisationId = ORG) {
+function member(
+  key: keyof typeof ID,
+  role: Row['role'],
+  grants: Record<string, string[]> = {},
+  organisationId = ORG,
+  kinds: Record<string, 'assigned' | 'central_reporter'> = {},
+) {
   seq += 1;
   return {
     ...baseRow({
@@ -133,7 +140,7 @@ function member(key: keyof typeof ID, role: Row['role'], grants: Record<string, 
       email: `${key}@tonyai.test`,
       // Distinct, descending in declaration order — the list is newest first.
       createdAt: new Date(Date.UTC(2026, 9, 10, 9, 0, 0, 1000 - seq)),
-      subsidiaryAccess: Object.entries(grants).map(([subsidiaryId, categories]) => ({ subsidiaryId, categories })),
+      subsidiaryAccess: Object.entries(grants).map(([subsidiaryId, categories]) => ({ subsidiaryId, categories, kind: kinds[subsidiaryId] ?? 'assigned' })),
     }),
     organisationId,
   };
@@ -163,12 +170,48 @@ function scenario() {
 /** A super_admin granted only A. */
 const superAdminOfA = () => makeSuperAdmin({ accessibleSubsidiaryIds: [A] });
 
+describe('UsersQueryService — central reporter rows (inc26-central-reporter-onboarding, task 3.1)', () => {
+  // A standard user whose main company is C (outside the super_admin's) with
+  // a grant for A and B; a carried-over account with A and C; a masterkey
+  // carrying a stray grant row with every category.
+  const reporters = () => directory([
+    member('su-ac', 'standard_user', { [C]: ['Water'], [A]: ['Mobile Combustion'], [B]: ['Mobile Combustion'] }, ORG, { [A]: 'central_reporter', [B]: 'central_reporter' }),
+    member('su-c', 'standard_user', { [A]: ['Electricity'], [C]: ['Fuel'] }),
+    member('mk', 'masterkey', { [A]: ['Electricity', 'Fuel'] }, ORG, { [A]: 'central_reporter' }),
+  ]);
+
+  it("a super_admin granted A sees a reporter's grant row for A alone — never its main company nor its other grant company", async () => {
+    const { service } = reporters();
+    const page = await service.list(superAdminOfA(), {});
+    const reporter = page.items.find((u) => name(u.id) === 'su-ac')!;
+    expect(reporter.access).toEqual([{ subsidiaryId: A, categories: ['Mobile Combustion'], kind: 'central_reporter' }]);
+    expect((await service.summary(superAdminOfA(), ID['su-ac'])).access).toEqual(reporter.access);
+  });
+
+  it('a masterkey sees every row with its kind: the main company, the grant, a carried-over account, a stray grant', async () => {
+    const { service } = reporters();
+    const page = await service.list(makeMasterkey({ organisationId: ORG }), {});
+    const access = (key: string) => page.items.find((u) => name(u.id) === key)!.access;
+    expect(access('su-ac').map((g) => [g.subsidiaryId, g.kind]).sort((x, y) => x[0]!.localeCompare(y[0]!))).toEqual(
+      [[A, 'central_reporter'], [B, 'central_reporter'], [C, 'assigned']].sort((x, y) => x[0]!.localeCompare(y[0]!)),
+    );
+    expect(access('su-c').map((g) => g.kind)).toEqual(['assigned', 'assigned']);
+    // A stray row on an organisation-wide role: its kind as stored, no categories.
+    expect(access('mk')).toEqual([{ subsidiaryId: A, categories: [], kind: 'central_reporter' }]);
+  });
+
+  it('reads an unknown stored kind as assigned', () => {
+    const row = baseRow({ subsidiaryAccess: [{ subsidiaryId: 'a', categories: [], kind: 'owner' }] });
+    expect(toUserSummary(row).access[0]!.kind).toBe('assigned');
+  });
+});
+
 describe('UsersQueryService.list — the accounts its reader administers (task 6.6)', () => {
   it('a super_admin granted A: the standard user granted A and C (shown with A alone) and the one with no grant — nobody else', async () => {
     const { service } = scenario();
     const page = await service.list(superAdminOfA(), {});
     expect(page.items.map((u) => name(u.id))).toEqual(['su-ac', 'su-none']);
-    expect(page.items[0].access).toEqual([{ subsidiaryId: A, categories: ['Electricity'] }]);
+    expect(page.items[0].access).toEqual([{ subsidiaryId: A, categories: ['Electricity'], kind: 'assigned' }]);
     expect(page.items[1].access).toEqual([]);
     expect(page.nextCursor).toBeNull();
   });
@@ -225,7 +268,7 @@ describe('UsersQueryService.summary — one account, as the reader\'s view shows
   it('a super_admin reads a standard user granted A and C with A alone (the response after an access change)', async () => {
     const { service } = scenario();
     const s = await service.summary(superAdminOfA(), ID['su-ac']);
-    expect(s.access).toEqual([{ subsidiaryId: A, categories: ['Electricity'] }]);
+    expect(s.access).toEqual([{ subsidiaryId: A, categories: ['Electricity'], kind: 'assigned' }]);
   });
 
   it('a super_admin reads any standard user of its organisation, with no grant outside its companies', async () => {
@@ -242,7 +285,7 @@ describe('UsersQueryService.summary — one account, as the reader\'s view shows
   it('a masterkey reads any account of its organisation with every grant; another organisation\'s is user_not_found', async () => {
     const { service } = scenario();
     expect((await service.summary(makeMasterkey(), ID['su-ac'])).access.map((g) => g.subsidiaryId)).toEqual([A, C]);
-    expect((await service.summary(makeMasterkey(), ID['sa-other'])).access).toEqual([{ subsidiaryId: A, categories: [] }]);
+    expect((await service.summary(makeMasterkey(), ID['sa-other'])).access).toEqual([{ subsidiaryId: A, categories: [], kind: 'assigned' }]);
     await expect(service.summary(makeMasterkey(), ID['foreign-su'])).rejects.toMatchObject({ response: { code: 'user_not_found' } });
   });
 

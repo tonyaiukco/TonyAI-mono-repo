@@ -1,0 +1,109 @@
+{
+  "title": "Set up your organisation",
+  "stepOf": "Step {current} of {total}",
+  "next": "Next",
+  "back": "Back",
+  "skip": "Skip",
+  "saving": "Saving…",
+  "steps": {
+    "holding": "Holding identity",
+    "approach": "Consolidation approach",
+    "sectorGroups": "Sector groups",
+    "companies": "Main companies",
+    "boundaries": "Upper inventory boundaries",
+    "superAdmins": "Super Admins",
+    "centralReporter": "Central reporter (optional)",
+    "finish": "Finish"
+  },
+  "holding": {
+    "description": "The holding is the root of your company tree. Enter its trading name.",
+    "label": "Trading name of the holding",
+    "required": "Enter the holding's trading name to continue."
+  },
+  "approach": {
+    "description": "Choose how the group consolidates its companies' emissions.",
+    "options": {
+      "operational_control": "Operational control",
+      "financial_control": "Financial control",
+      "equity_share": "Equity share"
+    },
+    "comingSoon": "coming soon"
+  },
+  "sectorGroups": {
+    "description": "Sector groups label the companies of one sector under the holding. Add as many as you need, or none.",
+    "nameLabel": "Sector group name",
+    "add": "Add",
+    "list": "Sector groups",
+    "none": "No sector group yet. You can continue without one.",
+    "created": "Sector group added.",
+    "suggestions": {
+      "naturalGas": "Natural gas",
+      "banking": "Banking",
+      "mining": "Mining",
+      "retail": "Retail",
+      "refinery": "Refinery",
+      "finance": "Finance",
+      "food": "Food",
+      "automotive": "Automotive",
+      "construction": "Construction",
+      "renewables": "Renewables"
+    }
+  },
+  "companies": {
+    "description": "Add the group's main companies under the holding or a sector group.",
+    "hint": "Before the first bulk upload, create every company that appears in your fuel-card and invoice files.",
+    "add": "Add company",
+    "list": "Companies",
+    "none": "No company yet. You can continue without one.",
+    "created": "Company added.",
+    "legalNameMissing": "Enter the company's legal name.",
+    "geographyRequired": "Choose the company's geography.",
+    "sharePercentInvalid": "The share percent must be a number from 0 to 100.",
+    "naceInvalid": "The NACE code is not in the expected form.",
+    "associateName": "{name} (associate)"
+  },
+  "boundaries": {
+    "description": "Declare, for each company, which categories its inventory boundary covers in {year}.",
+    "matrixNote": "A category you declare that receives no data shows red on the coverage matrix.",
+    "none": "No company that holds records yet.",
+    "declared": "Declared",
+    "notDeclared": "Not declared",
+    "declare": "Declare",
+    "edit": "Edit",
+    "editorTitle": "Inventory boundary of {name}",
+    "confirm": "Confirm the boundary",
+    "confirmed": "The boundary of this year is confirmed.",
+    "saved": "Declaration saved."
+  },
+  "superAdmins": {
+    "description": "Invite the Super Admins who run your companies, each with their companies.",
+    "fullName": "Full name",
+    "email": "Email",
+    "companies": "Companies",
+    "invite": "Invite",
+    "list": "Super Admins",
+    "none": "No Super Admin yet. You can continue without one.",
+    "invited": "Invitation sent to {email}.",
+    "invitedNotDelivered": "The account for {email} was created, but the invitation email could not be sent yet.",
+    "languages": {
+      "en": "English",
+      "tr": "Turkish"
+    },
+    "row": "{name} · {email} — {companies} · {status}"
+  },
+  "centralReporter": {
+    "description": "Optionally, give a standard user a central reporter grant: one category list over several companies.",
+    "noUser": "No user can take the grant yet: a central reporter is a standard user, and a Super Admin assigns standard users to their companies.",
+    "give": "Central reporter grant"
+  },
+  "finish": {
+    "description": "Finish the setup to open the company tree and the rest of the tool.",
+    "submit": "Finish",
+    "failed": "The setup could not be finished. Try again."
+  },
+  "gate": {
+    "failed": "Your account could not be loaded.",
+    "retry": "Try again",
+    "signOut": "Sign out"
+  }
+}

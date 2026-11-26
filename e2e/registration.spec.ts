@@ -10,6 +10,7 @@ import {
   getAccessToken,
   login,
   organisationsNamed,
+  finishOnboarding,
   registeredAccount,
   registrationInvitePath,
   auditRowsFor,
@@ -112,7 +113,10 @@ test.describe('self-service registration', () => {
     await page.locator('#new-password').fill(password);
     await page.locator('#repeat-password').fill(password);
     await page.getByRole('button', { name: 'Save the password', exact: true }).click();
-    await page.waitForURL((url) => url.pathname === '/');
+    // The new organisation's masterkey lands on the setup wizard, the first
+    // screen until it is finished (inc26-central-reporter-onboarding, §7.1).
+    await page.waitForURL((url) => url.pathname === '/onboarding');
+    await expect(page.getByTestId('onboarding-title')).toBeVisible();
     // Three tries on the confirm step, then three on the password step.
     expect(acceptCalls).toBe(6);
     // The new password is on the account's own trail, as the account (pre-g5-security-hardening).
@@ -127,14 +131,16 @@ test.describe('self-service registration', () => {
     await page.locator('#email').fill(email);
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await page.waitForURL((url) => url.pathname === '/');
+    await page.waitForURL((url) => url.pathname === '/onboarding');
     expect(acceptCalls).toBe(7);
     await page.unroute('**/api/v1/invitations/accept');
 
     // Signed in as the first administrator of the new organisation, with the invitation closed.
     const token = await getAccessToken(request, email, password);
     const me = await (await request.get(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${token}` } })).json();
-    expect(me).toMatchObject({ email, fullName: 'Ada Yilmaz', role: 'masterkey', organisationId: account.organisationId });
+    expect(me).toMatchObject({ email, fullName: 'Ada Yilmaz', role: 'masterkey', organisationId: account.organisationId, onboardingPending: true });
+    // The rest of this case uses the full tool: the wizard is finished through the API.
+    await finishOnboarding(request, email, password);
     await expect.poll(async () => (await registeredAccount(email))?.invitationStatus).toBe('accepted');
 
     // K1: the new company is born with one subsidiary — itself. Before any

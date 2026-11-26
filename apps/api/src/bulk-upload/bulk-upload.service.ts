@@ -36,6 +36,7 @@ import {
   isRecordActivityTypeAllowed,
   mayAuthorRecords,
   recordActivityTypesFor,
+  type ApiErrorParams,
 } from '@tonyai/shared-types';
 import {
   ActivityRecordsService,
@@ -55,6 +56,7 @@ import { CreateActivityRecordDto } from '../activity-records/dto/create-activity
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { assertCategoryGranted, CategoryNotGrantedError } from '../activity-records/record-scope';
+import { SingleEntryPeriodConflictError } from '../central-reporting/central-reporting-errors';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
@@ -249,6 +251,22 @@ export class BulkUploadService {
             select: { id: true },
           })).map((r) => r.id),
     );
+    // The named companies' organisation, read AFTER the slots and the closed
+    // set (owner's fourth review of WP8, P2): a company moved to another
+    // organisation since the request was authorised — before those reads, as
+    // this later read shows — answers its rows as unknown, never with that
+    // organisation's stored slots or closed state. A move after those reads
+    // left them describing this organisation's data; the record path then
+    // refuses the write.
+    const movedIds = new Set(namedSubsidiaryIds);
+    if (namedSubsidiaryIds.length > 0) {
+      for (const company of await this.prisma.subsidiary.findMany({
+        where: { id: { in: namedSubsidiaryIds } },
+        select: { id: true, organisationId: true },
+      })) {
+        if (company.organisationId === user.organisationId) movedIds.delete(company.id);
+      }
+    }
     // An APPLY gets a batch, created BEFORE the loop so every record can carry
     // its id. A dry run gets none: it must provably write nothing.
     const batchId = dryRun
@@ -281,7 +299,7 @@ export class BulkUploadService {
           await this.processRow(
             user,
             parsed,
-            { dryRun, seenInFile, storedSlots, batchId, closedIds },
+            { dryRun, seenInFile, storedSlots, batchId, closedIds, movedIds },
             { accepted, errors, warnings },
           );
         } catch (error) {
@@ -429,6 +447,7 @@ export class BulkUploadService {
       storedSlots: StoredSlots;
       batchId: string | null;
       closedIds: ReadonlySet<string>;
+      movedIds: ReadonlySet<string>;
     },
     out: {
       accepted: BulkUploadAcceptedRow[];
@@ -531,6 +550,13 @@ export class BulkUploadService {
       }
     }
 
+    // A company no longer in the caller's organisation: unknown, before the
+    // closed set and the slots are asked about it.
+    if (context.movedIds.has(dto.subsidiaryId)) {
+      out.errors.push({ row, column: null, code: 'not_found', message: 'The reporting entity on this row does not exist or is not yours.' });
+      return;
+    }
+
     // A company closed to data entry: the single entry's own refusal, before
     // any slot is counted.
     if (context.closedIds.has(dto.subsidiaryId)) {
@@ -626,6 +652,7 @@ export class BulkUploadService {
         ...this.linesOf(parsed),
         recordId: null,
         ...this.identityOf(dto, preview.periodValue),
+        reportedBySubsidiaryId: preview.reportedBySubsidiaryId ?? dto.subsidiaryId,
         tCo2e: this.figureOf(preview.calculation),
         anomalous: preview.verdict.anomalous,
       });
@@ -650,6 +677,7 @@ export class BulkUploadService {
       ...this.linesOf(parsed),
       recordId: created.id,
       ...this.identityOf(dto, created.periodValue),
+      reportedBySubsidiaryId: created.reportedBySubsidiaryId,
       // What the record holds, not what the row sent: the write stores a
       // double at 16 significant digits, so a formula cell's
       // 0.30000000000000004 lands as 0.3.
@@ -1447,6 +1475,12 @@ export class BulkUploadService {
     // The single-record refusal's own words (inc26-group-tree, D6).
     if (error instanceof EntityClosedToDataEntryError) {
       return { row, column: null, code: 'entity_closed_to_data_entry', message: error.message };
+    }
+    // The period half of single entry (inc26-central-reporter-onboarding D5),
+    // in the dry run and the apply alike, with its params for the screen.
+    if (error instanceof SingleEntryPeriodConflictError) {
+      const body = error.getResponse() as { params?: ApiErrorParams };
+      return { row, column: null, code: 'single_entry_period_conflict', message: error.message, ...(body.params ? { params: body.params } : {}) };
     }
     // Before the generic 403s: a standard user's row outside its categories
     // is that user's own answer, in the dry run and the apply alike.

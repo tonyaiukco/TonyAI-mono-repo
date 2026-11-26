@@ -89,6 +89,11 @@ import {
   subsidiaryNotAssignable,
   treeCycle,
 } from '../subsidiaries/tree-errors';
+import {
+  CentralReporterNeedsMainEntityError,
+  SingleEntryConflictError,
+  SingleEntryPeriodConflictError,
+} from '../central-reporting/central-reporting-errors';
 
 vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -253,6 +258,10 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   subsidiary_not_assignable: () => subsidiaryNotAssignable(),
   boundary_subsidiary_not_reportable: () => boundarySubsidiaryNotReportable(),
   geography_without_factors: () => geographyWithoutFactors('UK'),
+  central_reporter_needs_main_entity: () => new CentralReporterNeedsMainEntityError(),
+  single_entry_conflict: () => new SingleEntryConflictError('company_users', [{ subsidiaryId: 'company-a', categories: ['Mobile Combustion'] }]),
+  single_entry_period_conflict: () =>
+    new SingleEntryPeriodConflictError('central_reporter', { category: 'Electricity', reportingYear: 2026, periodValue: 'March' }),
 };
 
 /** What `fn` threw — it must throw. */

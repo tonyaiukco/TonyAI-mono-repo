@@ -132,7 +132,9 @@
     "periodLocks": "{count} closed reporting period(s)",
     "targets": "{count} reduction target(s)",
     "denominators": "{count} intensity denominator(s)",
-    "openBoundaryVersions": "{count} open inventory boundary version(s) declaring it"
+    "openBoundaryVersions": "{count} open inventory boundary version(s) declaring it",
+    "reportedRecords": "{count} record(s) of other companies naming it as their reporting company",
+    "centralReporters": "{count} central reporter(s) whose main company it is"
   },
   "locations": {
     "drawerTitle": "Operational facilities",

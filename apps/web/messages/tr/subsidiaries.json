@@ -132,7 +132,9 @@
     "periodLocks": "{count} kapalı raporlama dönemi",
     "targets": "{count} azaltım hedefi",
     "denominators": "{count} yoğunluk paydası",
-    "openBoundaryVersions": "Onu beyan eden {count} açık envanter sınırı sürümü"
+    "openBoundaryVersions": "Onu beyan eden {count} açık envanter sınırı sürümü",
+    "reportedRecords": "Onu raporlayan şirket olarak gösteren, başka şirketlere ait {count} kayıt",
+    "centralReporters": "Ana şirketi bu şirket olan {count} merkezi raportör"
   },
   "locations": {
     "drawerTitle": "Operasyonel işletmeler / tesisler",

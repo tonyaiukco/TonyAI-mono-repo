@@ -12,10 +12,15 @@ import {
   type NodeType,
   type InviteUserRequest,
   type Locale,
+  type CentralReporterGrantInput,
+  type SingleEntryConflictDTO,
+  type SingleEntrySide,
   type UserAccessGrantDTO,
+  type UserAccessRowDTO,
   type UserRole,
   type UserSummaryDTO,
 } from "@/lib/types";
+import type { ViewCopy } from "@/lib/i18n/view-translator";
 
 /**
  * The users screen's decisions (LP4-01; the four roles of
@@ -83,6 +88,9 @@ export function initialRoleChoice(target: Pick<UserSummaryDTO, "role">, options:
 export interface RowActions {
   /** "Edit access" in the access cell (and in the menu). */
   editAccess: boolean;
+  /** The central reporter grant (a masterkey, on a standard user's row;
+   *  inc26-central-reporter-onboarding). */
+  centralReporter: boolean;
   changeRole: boolean;
   /** Disable or enable, whichever the account's state calls for. */
   toggleEnabled: boolean;
@@ -103,13 +111,18 @@ export function mayEditAccess(reader: Reader | null | undefined, member: Pick<Us
  * invite the account's role (`reopenInvitation`'s rule).
  */
 export function rowActions(reader: Reader | null | undefined, member: UserSummaryDTO): RowActions {
-  const none: RowActions = { editAccess: false, changeRole: false, toggleEnabled: false, resend: false, menu: false };
+  const none: RowActions = { editAccess: false, centralReporter: false, changeRole: false, toggleEnabled: false, resend: false, menu: false };
   if (!reader || member.id === reader.id) return none;
   const editAccess = mayEditAccess(reader, member);
+  // Only a masterkey gives the grant, and only a standard user takes it (§4.1).
+  const centralReporter = can(reader.role, "central_reporter.grant") && member.role === "standard_user";
   const changeRole = can(reader.role, "users.set_role");
   const toggleEnabled = can(reader.role, "users.disable");
   const resend = canResend(member) && invitableRoles(reader).includes(member.role);
-  return { editAccess, changeRole, toggleEnabled, resend, menu: editAccess || changeRole || toggleEnabled || resend };
+  return {
+    editAccess, centralReporter, changeRole, toggleEnabled, resend,
+    menu: editAccess || centralReporter || changeRole || toggleEnabled || resend,
+  };
 }
 
 // --- The access column -------------------------------------------------------
@@ -117,16 +130,30 @@ export function rowActions(reader: Reader | null | undefined, member: UserSummar
 /** How many granted subsidiaries the users list names before it says "+N more". */
 export const ACCESS_NAMES_SHOWN = 3;
 
+/** A central reporter grant as the access column states it, apart from the main company. */
+export interface GrantSummary {
+  /** At most {@link ACCESS_NAMES_SHOWN} company names, in name order. */
+  names: string[];
+  overflow: number;
+  all: string[];
+  /** The grant's one category list, in the product's order. */
+  categories: Category[];
+}
+
 export type AccessSummary =
   | { key: "wholeOrganisation" | "noAccess" }
   | {
       key: "named";
-      /** At most {@link ACCESS_NAMES_SHOWN} names, in name order. */
+      /** At most {@link ACCESS_NAMES_SHOWN} names, in name order — the
+       *  assigned companies (a standard user's main company). */
       names: string[];
       /** Grants not named in `names`, including any whose subsidiary is not in the map. */
       overflow: number;
       /** Every resolvable name, in name order, for the row's tooltip. */
       all: string[];
+      /** The central reporter grant, stated apart (a super_admin reader sees
+       *  only its own companies of it); null when there is none. */
+      grant: GrantSummary | null;
     };
 
 /**
@@ -144,12 +171,20 @@ export function accessSummary(
   if (!can(user.role, "scope.granted")) return { key: "wholeOrganisation" };
   if (user.access.length === 0) return { key: "noAccess" };
   const collator = new Intl.Collator(localeTag, { sensitivity: "base" });
-  const all = user.access
-    .map((grant) => names.get(grant.subsidiaryId))
-    .filter((name): name is string => name !== undefined)
-    .sort(collator.compare);
-  const shown = all.slice(0, ACCESS_NAMES_SHOWN);
-  return { key: "named", names: shown, overflow: user.access.length - shown.length, all };
+  const named = (rows: readonly UserAccessRowDTO[]) => {
+    const all = rows
+      .map((grant) => names.get(grant.subsidiaryId))
+      .filter((name): name is string => name !== undefined)
+      .sort(collator.compare);
+    const shown = all.slice(0, ACCESS_NAMES_SHOWN);
+    return { names: shown, overflow: rows.length - shown.length, all };
+  };
+  const assigned = user.access.filter((g) => g.kind !== "central_reporter");
+  const grantRows = user.access.filter((g) => g.kind === "central_reporter");
+  const grant = grantRows.length > 0
+    ? { ...named(grantRows), categories: canonicalCategories(grantRows.flatMap((g) => g.categories)) }
+    : null;
+  return { key: "named", ...named(assigned), grant };
 }
 
 // --- The picker ----------------------------------------------------------------
@@ -185,10 +220,22 @@ export function assignableCompanies<S extends { id: string; nodeType: NodeType; 
 /** A selection being edited: the grants the request will send. */
 export type AccessDraft = UserAccessGrantDTO[];
 
-/** The dialog's starting selection: the account's grants as the reader sees them, a super_admin's with no category list. */
+/**
+ * The dialog's starting selection: the account's ASSIGNED companies as the
+ * reader sees them, a super_admin's with no category list. A central reporter
+ * grant's rows are never part of it: the editor draws them read-only and its
+ * save leaves them as they are (inc26-central-reporter-onboarding D6).
+ */
 export function initialDraft(member: Pick<UserSummaryDTO, "role" | "access">): AccessDraft {
   const categories = can(member.role, "scope.categories");
-  return member.access.map((g) => ({ subsidiaryId: g.subsidiaryId, categories: categories ? canonicalCategories(g.categories) : [] }));
+  return member.access
+    .filter((g) => g.kind !== "central_reporter")
+    .map((g) => ({ subsidiaryId: g.subsidiaryId, categories: categories ? canonicalCategories(g.categories) : [] }));
+}
+
+/** The grant's rows the access editor shows read-only, as the reader sees them. */
+export function grantRowsOf(member: Pick<UserSummaryDTO, "access">): UserAccessRowDTO[] {
+  return member.access.filter((g) => g.kind === "central_reporter");
 }
 
 /**
@@ -363,17 +410,132 @@ export function roleChangeFollowUp(reader: Reader | null | undefined, before: Us
   return "none";
 }
 
+// The central reporter grant ------------------------------------------------------
+
+/**
+ * The grant dialog's starting choice (inc26-central-reporter-onboarding,
+ * C7): the companies of the standing grant and its one category list.
+ */
+export interface GrantDraft {
+  subsidiaryIds: string[];
+  categories: Category[];
+}
+
+export function initialGrantDraft(member: Pick<UserSummaryDTO, "access">): GrantDraft {
+  const rows = grantRowsOf(member);
+  return { subsidiaryIds: rows.map((g) => g.subsidiaryId), categories: canonicalCategories(rows.flatMap((g) => g.categories)) };
+}
+
+/**
+ * The companies the grant may name: every company of the organisation that
+ * holds records (§2.1, B8). A carried-over account's held companies are among
+ * them, so ticking one converts it (C7).
+ */
+export function grantableCompanies<S extends { id: string; nodeType: NodeType; control: ControlKind }>(subsidiaries: readonly S[]): S[] {
+  return subsidiaries.filter((s) => holdsRecords(s));
+}
+
+/** One company's categories now and after the grant is saved (C7). */
+export interface GrantChange {
+  subsidiaryId: string;
+  /** null: not held now. */
+  before: { kind: "assigned" | "central_reporter"; categories: Category[] } | null;
+  /** null: withdrawn by the save. */
+  after: { kind: "assigned" | "central_reporter"; categories: Category[] } | null;
+}
+
+export interface GrantPreview {
+  /** The one assigned company left, or null when the save would leave none or several. */
+  mainCompanyId: string | null;
+  /** Every company whose row the save adds, converts, re-categorises or withdraws, and the main company unchanged. */
+  changes: GrantChange[];
+}
+
+/**
+ * What the save would do, shown before it (the dialog's before-and-after
+ * view, C7): the main company named, and for each company the categories held
+ * now and after. The API decides; this mirrors its rule.
+ */
+export function grantPreview(member: Pick<UserSummaryDTO, "access">, draft: GrantDraft): GrantPreview {
+  const named = new Set(draft.subsidiaryIds);
+  const categories = canonicalCategories(draft.categories);
+  const held = new Map(member.access.map((g) => [g.subsidiaryId, g]));
+  const assignedLeft = member.access.filter((g) => g.kind !== "central_reporter" && !named.has(g.subsidiaryId));
+  const changes: GrantChange[] = [];
+  for (const g of assignedLeft) {
+    changes.push({
+      subsidiaryId: g.subsidiaryId,
+      before: { kind: "assigned", categories: canonicalCategories(g.categories) },
+      after: { kind: "assigned", categories: canonicalCategories(g.categories) },
+    });
+  }
+  for (const id of draft.subsidiaryIds) {
+    const now = held.get(id);
+    changes.push({
+      subsidiaryId: id,
+      before: now ? { kind: now.kind, categories: canonicalCategories(now.categories) } : null,
+      after: { kind: "central_reporter", categories },
+    });
+  }
+  for (const g of member.access) {
+    if (g.kind === "central_reporter" && !named.has(g.subsidiaryId)) {
+      changes.push({ subsidiaryId: g.subsidiaryId, before: { kind: "central_reporter", categories: canonicalCategories(g.categories) }, after: null });
+    }
+  }
+  return { mainCompanyId: assignedLeft.length === 1 ? assignedLeft[0]!.subsidiaryId : null, changes };
+}
+
+/** `PUT /users/:id/central-reporter-grant`: no company withdraws the grant. */
+export function grantPayload(draft: GrantDraft): CentralReporterGrantInput {
+  const ids = [...new Set(draft.subsidiaryIds)];
+  return { subsidiaryIds: ids, categories: ids.length > 0 ? canonicalCategories(draft.categories) : [] };
+}
+
 // Refusals ------------------------------------------------------------------------
 
 /**
  * A refusal the users screen words itself (`users.errors.*`), else null and
  * the shared error toast words it.
  */
-export type UsersErrorKey = "errors.standardUserSingleCompany";
+export type UsersErrorKey = "errors.standardUserSingleCompany" | "errors.centralReporterNeedsMainEntity";
 
 export function usersErrorKey(error: unknown): UsersErrorKey | null {
   if (error instanceof ApiError && error.code === "standard_user_single_company") return "errors.standardUserSingleCompany";
+  if (error instanceof ApiError && error.code === "central_reporter_needs_main_entity") return "errors.centralReporterNeedsMainEntity";
   return null;
+}
+
+/** The `users` keys a single-entry refusal is worded with. */
+export type SingleEntryKey =
+  | "errors.singleEntry.companyUsers"
+  | "errors.singleEntry.centralReporter"
+  | "errors.singleEntry.companyUsersGeneral"
+  | "errors.singleEntry.centralReporterGeneral";
+
+/**
+ * A `single_entry_conflict` refusal in the reader's words (design D4): one
+ * sentence per company in conflict, its company and categories named from
+ * the screen's own lists; the side's general sentence when the list is empty
+ * (a refusal the database raised in a race). Null for any other error.
+ */
+export function singleEntryLines(
+  error: unknown,
+  names: ReadonlyMap<string, string>,
+  categoryName: (category: Category) => string,
+  { t, locale }: ViewCopy<SingleEntryKey>,
+): string[] | null {
+  if (!(error instanceof ApiError) || error.code !== "single_entry_conflict") return null;
+  const side: SingleEntrySide = error.params?.side === "central_reporter" ? "central_reporter" : "company_users";
+  const conflicts: SingleEntryConflictDTO[] = error.conflicts ?? [];
+  const which = side === "central_reporter" ? "centralReporter" : "companyUsers";
+  if (conflicts.length === 0) return [t(`errors.singleEntry.${which}General`)];
+  const list = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
+  return conflicts.map((c) =>
+    t(`errors.singleEntry.${which}`, {
+      company: names.get(c.subsidiaryId) ?? "—",
+      categories: list.format(canonicalCategories(c.categories).map(categoryName)),
+    }),
+  );
 }
 
 // List updates ---------------------------------------------------------------------

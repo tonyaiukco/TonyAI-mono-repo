@@ -612,6 +612,13 @@ async function main() {
       reportingCurrency: 'EUR',
     },
   });
+  // The seed organisation is set up (inc26-central-reporter-onboarding D11):
+  // its masterkey is never held on the setup wizard. Set once, where empty,
+  // so a re-run keeps the instant it was first finished.
+  await prisma.organisation.updateMany({
+    where: { id: ORG_ID, onboardingCompletedAt: null },
+    data: { onboardingCompletedAt: new Date() },
+  });
 
   // The organisation's root (inc26-group-tree): the holding it already has — on
   // a database migrated from before the tree, the one the carry-over created —
@@ -821,17 +828,24 @@ async function main() {
     create: { id: viewerId, email: 'viewer@tonyai.local', fullName: 'Vera Viewer', role: UserRole.auditor, organisationId: ORG_ID },
   });
 
-  // The standard user can only access two of the five subsidiaries (tenant
-  // isolation demo), with every category ticked. A re-run restores both the
-  // grants and their categories.
-  const accessibleForEntry = [SUBSIDIARIES[0].id, SUBSIDIARIES[3].id];
+  // The standard user reaches two of the five subsidiaries (tenant isolation
+  // demo), with every category ticked on both: TonyAI Energy is its main
+  // company (`assigned`), TonyAI Logistics a company of its central reporter
+  // grant (inc26-central-reporter-onboarding D11; no other standard user holds
+  // Logistics, so single entry holds). Written before any record, so a record
+  // it enters for Logistics names Energy as its reporting entity (TA025). A
+  // re-run restores both rows, their kinds and their categories.
   const everyCategory = [...CATEGORIES].sort();
-  for (const subsidiaryId of accessibleForEntry) {
+  const entryAccess = [
+    { subsidiaryId: SUBSIDIARIES[0].id, kind: 'assigned' },
+    { subsidiaryId: SUBSIDIARIES[3].id, kind: 'central_reporter' },
+  ] as const;
+  for (const { subsidiaryId, kind } of entryAccess) {
     await prisma.userSubsidiaryAccess.upsert({
       where: { userId_subsidiaryId: { userId: entryId, subsidiaryId } },
-      update: { categories: everyCategory },
+      update: { categories: everyCategory, kind },
       // Same organisation as the profile — the composite keys refuse anything else.
-      create: { userId: entryId, subsidiaryId, organisationId: ORG_ID, categories: everyCategory },
+      create: { userId: entryId, subsidiaryId, organisationId: ORG_ID, categories: everyCategory, kind },
     });
   }
 
@@ -1235,7 +1249,7 @@ const LOCATION_ACTIVITY = [
   const passwordLabel = process.env.TONYAI_TEST_PASSWORD === undefined ? SEED_PASSWORD : '<configured test password>';
   console.log(`  masterkey     -> admin@tonyai.local / ${passwordLabel} (sees all 5 subsidiaries; decides super_admin records, its own, and the fallback)`);
   console.log(`  super_admin   -> approver@tonyai.local / ${passwordLabel} (granted 4 subsidiaries, not TonyAI Trading; decides standard users' records there)`);
-  console.log(`  standard_user -> entry@tonyai.local / ${passwordLabel} (sees 2 subsidiaries, every category)`);
+  console.log(`  standard_user -> entry@tonyai.local / ${passwordLabel} (main company TonyAI Energy; central reporter for TonyAI Logistics; every category)`);
   console.log(`  auditor       -> review@tonyai.local / ${passwordLabel} (org-wide read only)`);
   console.log(`  auditor       -> viewer@tonyai.local / ${passwordLabel} (org-wide read only)`);
 }
