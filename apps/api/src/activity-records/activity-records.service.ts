@@ -484,6 +484,7 @@ export class ActivityRecordsService {
       voidedBy: r.voidedBy,
       voidedAt: r.voidedAt ? r.voidedAt.toISOString() : null,
       importBatchId: r.importBatchId,
+      fuelBatchId: r.fuelBatchId,
       // The reporting entity (inc26-central-reporter-onboarding D1): the stored
       // column, read as it means — empty is the record's own company.
       reportedBySubsidiaryId: r.reportedBySubsidiaryId ?? r.subsidiaryId,

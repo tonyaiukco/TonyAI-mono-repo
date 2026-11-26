@@ -310,6 +310,9 @@ const PERSISTED_KEYS = [
   // inc26-central-reporter-onboarding D1: the stored reporting entity, read as
   // it means (empty is the record's own company). Its NAME is resolved, never audited.
   'reportedBySubsidiaryId',
+  // inc28-fuel-bulk D1: the record's fuel batch, a persisted column (null for
+  // every record but a batch's), audited as `importBatchId` is.
+  'fuelBatchId',
 ].sort();
 
 

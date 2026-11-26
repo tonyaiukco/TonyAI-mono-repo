@@ -111,6 +111,11 @@ const MATRIX: Record<Capability, string> = {
   'users.disable': 'M...',
   'central_reporter.grant': 'M...',
   'onboarding.run': 'M...',
+  // inc28-fuel-bulk D7, D14 (C5, C8).
+  'fuel_account.write': 'M...',
+  'fuel_account.confirm_granted': 'MS..',
+  'fuel_account.read_all': 'M..A',
+  'fuel_rows.take_over': 'M...',
 };
 const COLUMN: Record<UserRole, number> = { masterkey: 0, super_admin: 1, standard_user: 2, auditor: 3 };
 

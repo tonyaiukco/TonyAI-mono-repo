@@ -262,6 +262,31 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   single_entry_conflict: () => new SingleEntryConflictError('company_users', [{ subsidiaryId: 'company-a', categories: ['Mobile Combustion'] }]),
   single_entry_period_conflict: () =>
     new SingleEntryPeriodConflictError('central_reporter', { category: 'Electricity', reportingYear: 2026, periodValue: 'March' }),
+  // inc28-fuel-bulk PR A: the contract only. The fuel services' throw sites
+  // (PR B) are pinned by their own specs (code and params).
+  fuel_file_source_required: () => new BadRequestException(errorBody('fuel_file_source_required', 'x')),
+  fuel_file_usage_required: () => new BadRequestException(errorBody('fuel_file_usage_required', 'x')),
+  fuel_file_declarations_incomplete: () =>
+    new BadRequestException(errorBody('fuel_file_declarations_incomplete', 'x', { row: 12 })),
+  fuel_file_declaration_unknown: () => new BadRequestException(errorBody('fuel_file_declaration_unknown', 'x')),
+  fuel_file_changed: () => new ConflictException(errorBody('fuel_file_changed', 'x')),
+  fuel_file_columns_missing: () =>
+    new BadRequestException(errorBody('fuel_file_columns_missing', 'x', { columns: 'Miktar, Tip' })),
+  fuel_file_columns_ambiguous: () =>
+    new BadRequestException(errorBody('fuel_file_columns_ambiguous', 'x', { columns: 'Miktar' })),
+  fuel_file_sheet_missing: () => new BadRequestException(errorBody('fuel_file_sheet_missing', 'x')),
+  fuel_file_too_many_rows: () =>
+    new BadRequestException(errorBody('fuel_file_too_many_rows', 'x', { rows: 60001, max: 60000 })),
+  fuel_file_too_large: () => new HttpException(errorBody('fuel_file_too_large', 'x', { limitMb: 32 }), 413),
+  record_in_batch: () => new ConflictException(errorBody('record_in_batch', 'x')),
+  fuel_batch_not_found: () => new ResourceNotFoundError('fuel_batch_not_found'),
+  fuel_account_not_found: () => new ResourceNotFoundError('fuel_account_not_found'),
+  fuel_file_not_found: () => new ResourceNotFoundError('fuel_file_not_found'),
+  fuel_batch_not_open: () => new ConflictException(errorBody('fuel_batch_not_open', 'x')),
+  fuel_account_in_use: () => new ConflictException(errorBody('fuel_account_in_use', 'x', { rows: 3 })),
+  fuel_account_exists: () => new ConflictException(errorBody('fuel_account_exists', 'x')),
+  fuel_account_target_forbidden: () => new ForbiddenException(errorBody('fuel_account_target_forbidden', 'x')),
+  fuel_account_target_invalid: () => new HttpException(errorBody('fuel_account_target_invalid', 'x'), 422),
 };
 
 /** What `fn` threw — it must throw. */

@@ -12,6 +12,8 @@ import {
   PARAMETERS_REQUIRED_INPUTS,
   RECORD_APPROVERS,
   BULK_UPLOAD_ISSUE_CODES,
+  FUEL_INVOICE_REF_MAX_LENGTH,
+  FUEL_ROW_ISSUE_CODES,
   CATEGORIES,
   CATEGORY_ACTIVITY_TYPES,
   BULK_SUBMIT_ISSUE_CODES,
@@ -298,11 +300,19 @@ describe("the value bound (LP4-04)", () => {
 });
 
 describe("the bulk import's issue labels (LP4-04)", () => {
-  it.each(SUPPORTED_LOCALES)("%s: one non-empty, distinct label per BULK_UPLOAD_ISSUE_CODES entry, and no stray", (locale) => {
+  // The template import's codes and a fuel upload's row codes (inc28-fuel-bulk)
+  // share the namespace; the hold reasons reuse the template import's names.
+  const ISSUE_CODES = [...new Set<string>([...BULK_UPLOAD_ISSUE_CODES, ...FUEL_ROW_ISSUE_CODES])];
+  it.each(SUPPORTED_LOCALES)("%s: a fuel reference over the limit names the limit the contract holds", (locale) => {
     const labels = MESSAGES[locale].errors.bulkUploadIssues as Record<string, string>;
-    expect(Object.keys(labels).sort()).toEqual([...BULK_UPLOAD_ISSUE_CODES].sort());
+    expect(labels.fuel_reference_too_long).toContain(String(FUEL_INVOICE_REF_MAX_LENGTH));
+  });
+
+  it.each(SUPPORTED_LOCALES)("%s: one non-empty, distinct label per BULK_UPLOAD_ISSUE_CODES and FUEL_ROW_ISSUE_CODES entry, and no stray", (locale) => {
+    const labels = MESSAGES[locale].errors.bulkUploadIssues as Record<string, string>;
+    expect(Object.keys(labels).sort()).toEqual([...ISSUE_CODES].sort());
     expect(Object.values(labels).every((v) => v.trim() !== "")).toBe(true);
-    expect(new Set(Object.values(labels)).size).toBe(BULK_UPLOAD_ISSUE_CODES.length);
+    expect(new Set(Object.values(labels)).size).toBe(ISSUE_CODES.length);
   });
 });
 

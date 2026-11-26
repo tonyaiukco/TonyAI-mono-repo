@@ -804,6 +804,226 @@ async function probeCentralReporterGrant(entryToken) {
   }
 }
 
+// --- inc28-fuel-bulk (D14): fuel accounts, rows and batches -----------------
+// Planted as the owner (the client roles hold SELECT only on the three tables)
+// in the seeded organisation and in the foreign one, found again by fixed ids.
+// entry@'s Energy grant is narrowed to Mobile Combustion for the probe, so a
+// stationary (`Fuel`) row and batch of Energy fall outside its categories.
+const FUEL_PROBE = {
+  accEnergy: '99999999-28f0-4000-8000-0000000000a1',
+  accTrading: '99999999-28f0-4000-8000-0000000000a2',
+  accUnmatched: '99999999-28f0-4000-8000-0000000000a3',
+  accForeign: '99999999-28f0-4000-8000-0000000000a4',
+  imp: '99999999-28f0-4000-8000-0000000000b1',
+  impForeign: '99999999-28f0-4000-8000-0000000000b2',
+  batchLogistics: '99999999-28f0-4000-8000-0000000000c1',
+  batchTrading: '99999999-28f0-4000-8000-0000000000c2',
+  batchEnergyFuel: '99999999-28f0-4000-8000-0000000000c3',
+  batchEnergyMobile: '99999999-28f0-4000-8000-0000000000c4',
+  batchForeign: '99999999-28f0-4000-8000-0000000000c5',
+  // entry@'s own batches: in Trading (not granted) and in Energy (stationary,
+  // `Fuel`, unticked during the probe).
+  batchEntryTrading: '99999999-28f0-4000-8000-0000000000c6',
+  batchEntryEnergyFuel: '99999999-28f0-4000-8000-0000000000c7',
+  rowLogisticsMobile: '99999999-28f0-4000-8000-0000000000d1',
+  rowLogisticsFuel: '99999999-28f0-4000-8000-0000000000d2',
+  rowTrading: '99999999-28f0-4000-8000-0000000000d3',
+  rowNoCompanyAdmin: '99999999-28f0-4000-8000-0000000000d4',
+  rowNoCompanyEntry: '99999999-28f0-4000-8000-0000000000d5',
+  rowEnergyMobile: '99999999-28f0-4000-8000-0000000000d6',
+  rowEnergyFuel: '99999999-28f0-4000-8000-0000000000d7',
+  rowForeign: '99999999-28f0-4000-8000-0000000000d8',
+  // Rows with a company held by a scoped user: entry@'s in Trading, in no
+  // batch (it reads it) and in a batch (it does not: a batched row follows its
+  // batch); approver@'s in Trading (it does not: a super_admin reads a row
+  // with a company by grant only).
+  rowEntryHeldTrading: '99999999-28f0-4000-8000-0000000000d9',
+  rowEntryBatchedTrading: '99999999-28f0-4000-8000-0000000000da',
+  rowSuperAdminHeldTrading: '99999999-28f0-4000-8000-0000000000db',
+  // Rows in Energy stationary (`Fuel`, unticked for entry@ during the probe)
+  // batches: entry@'s own batch (it reads the batch, so its rows) and the
+  // masterkey's (it reads neither).
+  rowInEntryEnergyFuelBatch: '99999999-28f0-4000-8000-0000000000dc',
+  rowInAdminEnergyFuelBatch: '99999999-28f0-4000-8000-0000000000dd',
+};
+const FUEL_PROBE_NARROWED = ['Mobile Combustion'];
+const SEED_FUEL_ACCOUNTS = ['55555555-5555-5555-5555-5555555f0001', '55555555-5555-5555-5555-5555555f0002'];
+
+// The fuel probe's own rows, by their fixed ids only. entry@'s grant is
+// never touched here: the probe narrows it only from the seed's exact state
+// and restores exactly what it read (`probeFuelTables`).
+async function cleanupFuelProbe() {
+  const owner = await ownerDb();
+  const ids = (prefix) => Object.entries(FUEL_PROBE).filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
+  await owner.fuelRow.deleteMany({ where: { id: { in: ids('row') } } });
+  await owner.fuelBatch.deleteMany({ where: { id: { in: ids('batch') } } });
+  await owner.fuelAccount.deleteMany({ where: { id: { in: ids('acc') } } });
+  await owner.importBatch.deleteMany({ where: { id: { in: ids('imp') } } });
+}
+
+async function seedFuelProbe(entryId) {
+  // Narrowing entry@'s Energy grant is the caller's step (probeFuelTables).
+  const owner = await ownerDb();
+  const admin = await profileByEmail(ADMIN_EMAIL);
+  const superAdmin = await profileByEmail(SUPER_ADMIN_EMAIL);
+  const org = admin.organisation_id;
+  const sha = (n) => String(n).padStart(64, 'a');
+  const confirmed = (id, organisationId, subsidiaryId, code) => ({
+    id, organisationId, source: 'petrol_ofisi', code, name: `RLS probe ${code}`, subsidiaryId,
+    state: 'confirmed', confirmedBy: admin.id, confirmedAt: new Date(), createdBy: admin.id,
+  });
+  await owner.fuelAccount.createMany({
+    data: [
+      confirmed(FUEL_PROBE.accEnergy, org, ENERGY, 'RLS-PROBE-ENERGY'),
+      confirmed(FUEL_PROBE.accTrading, org, TRADING, 'RLS-PROBE-TRADING'),
+      { id: FUEL_PROBE.accUnmatched, organisationId: org, source: 'petrol_ofisi', code: 'RLS-PROBE-UNMATCHED', name: 'RLS probe unmatched', createdBy: admin.id },
+      confirmed(FUEL_PROBE.accForeign, FOREIGN_ORG, FOREIGN_SUB_ID, 'RLS-PROBE-FOREIGN'),
+    ],
+  });
+  const imp = (id, organisationId) => ({
+    id, organisationId, uploadedBy: admin.id, subsidiaryIds: [], fileName: 'rls-probe-fuel.xlsx', fileFormat: 'xlsx',
+    sizeBytes: 1, sha256: sha(id.slice(-2)), status: 'completed', totalRows: 1, source: 'petrol_ofisi',
+  });
+  await owner.importBatch.createMany({ data: [imp(FUEL_PROBE.imp, org), imp(FUEL_PROBE.impForeign, FOREIGN_ORG)] });
+  const batch = (id, organisationId, subsidiaryId, fuelAccountId, usage, createdBy = admin.id) => ({
+    id, organisationId, subsidiaryId, fuelAccountId, source: 'petrol_ofisi', invoiceRef: `RLS-${id.slice(-2)}`, sequence: 1,
+    usage, category: usage === 'stationary' ? 'Fuel' : 'Mobile Combustion', createdBy,
+  });
+  const LOGISTICS_ACCOUNT = SEED_FUEL_ACCOUNTS[0];
+  await owner.fuelBatch.createMany({
+    data: [
+      batch(FUEL_PROBE.batchLogistics, org, LOGISTICS, LOGISTICS_ACCOUNT, 'on_road'),
+      batch(FUEL_PROBE.batchTrading, org, TRADING, FUEL_PROBE.accTrading, 'on_road'),
+      batch(FUEL_PROBE.batchEnergyFuel, org, ENERGY, FUEL_PROBE.accEnergy, 'stationary'),
+      batch(FUEL_PROBE.batchEnergyMobile, org, ENERGY, FUEL_PROBE.accEnergy, 'on_road'),
+      batch(FUEL_PROBE.batchForeign, FOREIGN_ORG, FOREIGN_SUB_ID, FUEL_PROBE.accForeign, 'on_road'),
+      batch(FUEL_PROBE.batchEntryTrading, org, TRADING, FUEL_PROBE.accTrading, 'on_road', entryId),
+      batch(FUEL_PROBE.batchEntryEnergyFuel, org, ENERGY, FUEL_PROBE.accEnergy, 'stationary', entryId),
+    ],
+  });
+  const row = (id, n, organisationId, importBatchId, fuelAccountId, subsidiaryId, usage, holderId, extra = {}) => ({
+    id, organisationId, importBatchId, holderId, source: 'petrol_ofisi', dedupeDigest: sha(`d${n}`), fuelAccountId,
+    rawFuel: 'Motorin Med', fuel: 'diesel', usage, litres: '10.000', transactionAt: new Date('2025-03-14T10:00:00Z'),
+    year: 2025, month: 3, invoiceRef: 'RLS-INV', fileRow: n + 1, state: subsidiaryId ? 'ready' : 'waiting_account', subsidiaryId,
+    ...extra,
+  });
+  await owner.fuelRow.createMany({
+    data: [
+      row(FUEL_PROBE.rowLogisticsMobile, 1, org, FUEL_PROBE.imp, LOGISTICS_ACCOUNT, LOGISTICS, 'on_road', admin.id),
+      row(FUEL_PROBE.rowLogisticsFuel, 2, org, FUEL_PROBE.imp, LOGISTICS_ACCOUNT, LOGISTICS, 'stationary', admin.id),
+      row(FUEL_PROBE.rowTrading, 3, org, FUEL_PROBE.imp, FUEL_PROBE.accTrading, TRADING, 'on_road', admin.id),
+      row(FUEL_PROBE.rowNoCompanyAdmin, 4, org, FUEL_PROBE.imp, FUEL_PROBE.accUnmatched, null, 'on_road', admin.id),
+      row(FUEL_PROBE.rowNoCompanyEntry, 5, org, FUEL_PROBE.imp, FUEL_PROBE.accUnmatched, null, 'on_road', entryId),
+      row(FUEL_PROBE.rowEnergyMobile, 6, org, FUEL_PROBE.imp, FUEL_PROBE.accEnergy, ENERGY, 'on_road', admin.id),
+      row(FUEL_PROBE.rowEnergyFuel, 7, org, FUEL_PROBE.imp, FUEL_PROBE.accEnergy, ENERGY, 'stationary', admin.id),
+      row(FUEL_PROBE.rowForeign, 8, FOREIGN_ORG, FUEL_PROBE.impForeign, FUEL_PROBE.accForeign, FOREIGN_SUB_ID, 'on_road', admin.id),
+      row(FUEL_PROBE.rowEntryHeldTrading, 9, org, FUEL_PROBE.imp, FUEL_PROBE.accTrading, TRADING, 'on_road', entryId,
+        { state: 'held', holdReason: 'fuel_out_of_scope' }),
+      row(FUEL_PROBE.rowEntryBatchedTrading, 10, org, FUEL_PROBE.imp, FUEL_PROBE.accTrading, TRADING, 'on_road', entryId,
+        { state: 'assigned', fuelBatchId: FUEL_PROBE.batchEntryTrading, invoiceRef: `RLS-${FUEL_PROBE.batchEntryTrading.slice(-2)}` }),
+      row(FUEL_PROBE.rowSuperAdminHeldTrading, 11, org, FUEL_PROBE.imp, FUEL_PROBE.accTrading, TRADING, 'on_road', superAdmin.id,
+        { state: 'held', holdReason: 'fuel_out_of_scope' }),
+      row(FUEL_PROBE.rowInEntryEnergyFuelBatch, 12, org, FUEL_PROBE.imp, FUEL_PROBE.accEnergy, ENERGY, 'stationary', entryId,
+        { state: 'assigned', fuelBatchId: FUEL_PROBE.batchEntryEnergyFuel, invoiceRef: `RLS-${FUEL_PROBE.batchEntryEnergyFuel.slice(-2)}` }),
+      row(FUEL_PROBE.rowInAdminEnergyFuelBatch, 13, org, FUEL_PROBE.imp, FUEL_PROBE.accEnergy, ENERGY, 'stationary', admin.id,
+        { state: 'assigned', fuelBatchId: FUEL_PROBE.batchEnergyFuel, invoiceRef: `RLS-${FUEL_PROBE.batchEnergyFuel.slice(-2)}` }),
+    ],
+  });
+}
+
+async function probeFuelTables(entryToken) {
+  console.log('▸ fuel accounts, rows and batches (inc28-fuel-bulk D14)');
+  const entryId = subjectOf(entryToken);
+  await cleanupFuelProbe(); // in case a previous run aborted
+  // entry@'s Energy grant is narrowed only from the seed's exact state, and put
+  // back to exactly what was read: the probe never widens a grant.
+  const before = await entryEnergyCategories(entryId);
+  if (JSON.stringify(before) !== JSON.stringify(ALL_CATEGORIES)) {
+    check("fuel probe: entry's Energy grant is the seed's (every category) before the probe", false, `categories=${JSON.stringify(before)}`);
+    return;
+  }
+  let narrowed = false;
+  const writeProbeId = randomUUID();
+  try {
+    await seedFuelProbe(entryId);
+    await setEntryEnergyCategories(entryId, FUEL_PROBE_NARROWED);
+    narrowed = true;
+    const planted = (prefix) => Object.entries(FUEL_PROBE).filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
+    const accounts = [...planted('acc'), ...SEED_FUEL_ACCOUNTS];
+    const scope = { acc: accounts, row: planted('row'), batch: planted('batch') };
+    const TABLE = { acc: 'fuel_accounts', row: 'fuel_rows', batch: 'fuel_batches' };
+    const seen = async (token, kind) => {
+      const headers = { apikey: ANON };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${URL_}/rest/v1/${TABLE[kind]}?select=id&id=in.(${scope[kind].join(',')})`, { headers });
+      const body = await res.json();
+      return Array.isArray(body) ? body.map((r) => r.id).sort() : body;
+    };
+    const P = FUEL_PROBE;
+    const ORG_ACCOUNTS = [P.accEnergy, P.accTrading, P.accUnmatched, ...SEED_FUEL_ACCOUNTS];
+    const ORG_ROWS = planted('row').filter((id) => id !== P.rowForeign);
+    const ORG_BATCHES = planted('batch').filter((id) => id !== P.batchForeign);
+    const expected = {
+      anon: { acc: [], row: [], batch: [] },
+      // Organisation-wide, never the foreign organisation's.
+      masterkey: { acc: ORG_ACCOUNTS, row: ORG_ROWS, batch: ORG_BATCHES },
+      auditor: { acc: ORG_ACCOUNTS, row: ORG_ROWS, batch: ORG_BATCHES },
+      // Granted Energy and Logistics (not Trading): their accounts, rows and
+      // batches; no unmatched account, the associate's never (nobody holds it),
+      // no row without a company it does not hold.
+      super_admin: {
+        acc: [P.accEnergy, SEED_FUEL_ACCOUNTS[0]],
+        row: [P.rowLogisticsMobile, P.rowLogisticsFuel, P.rowEnergyMobile, P.rowEnergyFuel, P.rowInEntryEnergyFuelBatch, P.rowInAdminEnergyFuelBatch],
+        batch: [P.batchLogistics, P.batchEnergyFuel, P.batchEnergyMobile, P.batchEntryEnergyFuel],
+      },
+      // No account list; Logistics (every category) and Energy's Mobile
+      // Combustion, not Energy's stationary row and batch; its own row with no
+      // company, not the masterkey's.
+      // Its own batch in a granted company even in an unticked category, never
+      // in Trading; its held row in Trading while in no batch, not once batched;
+      // a batch's rows exactly when it reads the batch (its own Energy `Fuel`
+      // batch's row, not the masterkey's Energy `Fuel` batch's).
+      standard_user: {
+        acc: [],
+        row: [P.rowLogisticsMobile, P.rowLogisticsFuel, P.rowNoCompanyEntry, P.rowEnergyMobile, P.rowEntryHeldTrading, P.rowInEntryEnergyFuelBatch],
+        batch: [P.batchLogistics, P.batchEnergyMobile, P.batchEntryEnergyFuel],
+      },
+    };
+    const tokens = {
+      anon: null,
+      masterkey: await getToken(ADMIN_EMAIL),
+      auditor: await getToken(AUDITOR_EMAIL),
+      super_admin: await getToken(SUPER_ADMIN_EMAIL),
+      standard_user: entryToken,
+    };
+    for (const [role, want] of Object.entries(expected)) {
+      for (const kind of ['acc', 'row', 'batch']) {
+        const got = await seen(tokens[role], kind);
+        check(
+          `${TABLE[kind]}: ${role} reads exactly D14's rows (another organisation, an ungranted company, an unticked category, a row with no company it does not hold)`,
+          JSON.stringify(got) === JSON.stringify([...want[kind]].sort()),
+          `seen=${JSON.stringify(got)}`,
+        );
+      }
+    }
+    // The client roles read and never write (SELECT only).
+    const write = await fetch(`${URL_}/rest/v1/fuel_accounts`, {
+      method: 'POST',
+      headers: { apikey: ANON, Authorization: `Bearer ${tokens.masterkey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: writeProbeId, organisation_id: (await profileByEmail(ADMIN_EMAIL)).organisation_id, source: 'shell', code: 'RLS-PROBE-WRITE', name: 'x', created_by: subjectOf(tokens.masterkey), updated_at: new Date().toISOString() }),
+    });
+    check('fuel_accounts: a signed-in masterkey cannot insert through PostgREST', !write.ok, `status=${write.status}`);
+  } finally {
+    await cleanupFuelProbe();
+    // Only the account this probe tried to write, by the id it chose.
+    const owner = await ownerDb();
+    await owner.fuelAccount.deleteMany({ where: { id: writeProbeId } });
+    if (narrowed) await setEntryEnergyCategories(entryId, before);
+    const after = await entryEnergyCategories(entryId);
+    check("fuel probe: entry's Energy grant is back to exactly what it was", JSON.stringify(after) === JSON.stringify(before), `categories=${JSON.stringify(after)}`);
+  }
+}
+
 // --- LP1-03: two organisations, all four roles, malformed grants ------------
 // A fixture of its own, independent of the seed: organisations X and Y, X with
 // two subsidiaries and Y with one, a record in each, and one user per role in
@@ -1344,6 +1564,7 @@ async function main() {
     await probeBoundaries(token);
     await probeCategoryGrant(token);
     await probeCentralReporterGrant(token);
+    await probeFuelTables(token);
   } finally {
     await cleanupPeriodLocks();
     await cleanupImportBatches();

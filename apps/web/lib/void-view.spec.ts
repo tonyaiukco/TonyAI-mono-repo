@@ -80,6 +80,7 @@ const record = (over: Partial<ActivityRecordDTO> = {}): ActivityRecordDTO => ({
   reportedBySubsidiaryId: 'sub-1',
   reportedBySubsidiaryName: null,
   importBatchId: null,
+  fuelBatchId: null,
   subsidiaryId: 'sub-1',
   locationId: null,
   reportingYear: 2026,

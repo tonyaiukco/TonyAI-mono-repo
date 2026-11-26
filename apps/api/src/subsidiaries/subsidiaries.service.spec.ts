@@ -726,6 +726,51 @@ describe('SubsidiariesService', () => {
     });
   });
 
+  describe('fuel blockers (inc28-fuel-bulk: their keys RESTRICT the delete)', () => {
+    const fuel = (prisma: PrismaMock, counts: { rows?: number; batches?: number; accounts?: number }) => {
+      for (const db of [prisma, prisma.txClient]) {
+        db.fuelRow.count.mockResolvedValue(counts.rows ?? 0);
+        db.fuelBatch.count.mockResolvedValue(counts.batches ?? 0);
+        db.fuelAccount.count.mockResolvedValue(counts.accounts ?? 0);
+      }
+    };
+
+    it('keeps a company that holds fuel rows, which are never deleted: a 409, not the foreign key\'s 500', async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      fuel(prisma, { rows: 25, batches: 2, accounts: 1 });
+      const e = await service.remove(makeMasterkey(), 'sub-1').catch((err: unknown) => err);
+      expect(e).toMatchObject({ response: { code: 'subsidiary_in_use' } });
+      expect((e as Error).message).toMatch(/25 row\(s\) of uploaded fuel files belong to this subsidiary/);
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses the delete of a company a fuel account is mapped or proposed to, until the mapping goes', async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      fuel(prisma, { accounts: 2 });
+      const e = await service.remove(makeMasterkey(), 'sub-1').catch((err: unknown) => err);
+      expect(e).toMatchObject({ response: { code: 'subsidiary_in_use' } });
+      expect((e as Error).message).toMatch(/2 fuel account\(s\) mapped or proposed to it/);
+      expect(prisma.txClient.fuelAccount.count).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-1' } });
+      fuel(prisma, {});
+      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      await service.remove(makeMasterkey(), 'sub-1');
+      expect(prisma.txClient.subsidiary.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it('names them to an organisation-wide reader only, and adds no field to the panel', async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      fuel(prisma, { accounts: 1 });
+      const org = await service.summary(makeMasterkey(), 'sub-1');
+      expect(org.blockerCounts).toEqual([{ kind: 'fuelAccounts', count: 1 }]);
+      expect(org).not.toHaveProperty('fuelAccounts');
+      const scoped = await service.summary(makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] }), 'sub-1');
+      expect(scoped.blockerCounts).toEqual([]);
+    });
+  });
+
   describe('summary — the counts behind the control panel', () => {
     it('reports every dependent class, and is tenant-scoped', async () => {
       const user = makeMasterkey();

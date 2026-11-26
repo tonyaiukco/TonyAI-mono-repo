@@ -114,6 +114,11 @@ export function createPrismaMock() {
     // cascades, to audit each.
     userSubsidiaryAccess: { count: vi.fn(), findMany: vi.fn() },
     inventoryBoundary: { findFirst: vi.fn() },
+    // inc28-fuel-bulk: a company's fuel rows, batches and accounts keep the
+    // delete from reaching their RESTRICT keys (subsidiary_in_use, not a 500).
+    fuelRow: { count: vi.fn() },
+    fuelBatch: { count: vi.fn() },
+    fuelAccount: { count: vi.fn() },
     // The object handed to `$transaction` callbacks, with its OWN spies for
     // every model — see `createTxClient` below.
     txClient: null as unknown as typeof mock,
