@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "use-intl";
 import { toast } from "sonner";
+import { noteOnboardingFinished } from "@/components/auth/onboarding-gate";
 import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,9 +35,9 @@ import { useSignOut } from "@/lib/use-sign-out";
  */
 export default function OnboardingPage() {
   const t = useTranslations("onboarding");
-  const router = useRouter();
   const signOut = useSignOut();
   const showError = useErrorToast();
+  const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const [step, setStep] = useState<OnboardingStep>("holding");
   const [passed, setPassed] = useState<Set<OnboardingStep>>(new Set());
@@ -52,6 +52,12 @@ export default function OnboardingPage() {
   useEffect(() => {
     reload().catch(showError);
   }, [reload, showError]);
+  // The account in the store, as every other page fills it: the profile's
+  // language is applied from it (`LocaleSync`) on the wizard's first screen
+  // (owner review of WP8, P2). The gate keeps its own read.
+  useEffect(() => {
+    if (!user) api.me().then(setUser, () => undefined);
+  }, [user, setUser]);
 
   function advance() {
     setPassed((p) => new Set(p).add(step));
@@ -63,10 +69,10 @@ export default function OnboardingPage() {
     setFinishing(true);
     try {
       await api.completeOnboarding();
-      // The gate decides from the store when it holds an account: the account
-      // as it stands now goes there before the navigation.
+      // The gate leads on: noted as this tab's Finish, it sends the finished
+      // account to the company tree (a later visit here goes to the dashboard).
+      noteOnboardingFinished();
       setUser(await api.me());
-      router.replace("/subsidiaries");
     } catch (e) {
       showError(e);
       toast.error(t("finish.failed"));

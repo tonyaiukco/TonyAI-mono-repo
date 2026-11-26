@@ -4,7 +4,7 @@ import { describeFor } from '@/lib/i18n/testing';
 import { MESSAGES } from '@/messages';
 import type { BulkUploadRowIssue, UserAccessRowDTO } from '@/lib/types';
 import { issueSentence } from './bulk-upload-view';
-import { categoryGate, offeredCategories } from './entry-categories-view';
+import { categoryGate, entryReportingEntity, offeredCategories } from './entry-categories-view';
 
 /**
  * Data Entry for a central reporter (inc26-central-reporter-onboarding, task
@@ -58,5 +58,18 @@ describe('the period refusal in the reader\'s language', () => {
     const row: BulkUploadRowIssue = { row: 4, column: null, code: 'single_entry_period_conflict', message: 'English', params };
     expect(issueSentence(row, describeFor('tr'))).toBe(describeFor('tr')(refusal).title);
     expect(issueSentence({ ...row, code: 'duplicate_existing', params: undefined }, describeFor('tr'))).toBe('English');
+  });
+});
+
+describe('Data Entry names the reporting company before the save (owner review of WP8, P2)', () => {
+  it("a grant company answers the main company; the main company and another role's answer nothing", () => {
+    expect(entryReportingEntity(reporter, 'A')).toBe('T');
+    expect(entryReportingEntity(reporter, 'T')).toBeNull();
+    expect(entryReportingEntity({ role: 'super_admin', access: [] }, 'A')).toBeNull();
+    expect(entryReportingEntity(null, 'A')).toBeNull();
+  });
+
+  it('a grant company of an account with no single main company names none (the API refuses the save)', () => {
+    expect(entryReportingEntity({ role: 'standard_user', access: reporter.access.filter((r) => r.kind !== 'assigned') }, 'A')).toBeNull();
   });
 });

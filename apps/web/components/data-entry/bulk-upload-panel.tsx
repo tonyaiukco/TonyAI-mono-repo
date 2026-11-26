@@ -87,8 +87,11 @@ type Busy = "none" | "checking" | "importing" | "submitting";
 export function BulkUploadPanel({
   canManage,
   onImported,
+  companyName,
 }: {
   canManage: boolean;
+  /** A company's name, for the reporting company column of the preview. */
+  companyName?: (id: string) => string | undefined;
   /** Fires after any ATTEMPTED apply, so the page can refresh what is stale. */
   onImported: () => void;
 }) {
@@ -366,7 +369,7 @@ export function BulkUploadPanel({
               </div>
             </div>
 
-            <AcceptedRows rows={report.accepted} />
+            <AcceptedRows rows={report.accepted} companyName={companyName} />
 
             {errorGroups.length > 0 && (
               <IssueList groups={errorGroups} tone="error" unit={countUnit(report)} />

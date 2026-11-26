@@ -130,7 +130,8 @@
     "readNote": "Dosyadaki sayılarda ondalık ayırıcı noktadır: dosyadaki 1.234, 1,234 olarak okunur (bin iki yüz otuz dört değil). İçe aktarmadan önce her miktarı kontrol edin.",
     "noActivityType": "Belirtilmemiş",
     "inputs": "Okunan girdiler",
-    "lineRows": "Satırlar {rows}"
+    "lineRows": "Satırlar {rows}",
+    "reportedBy": "Raporlayan şirket"
   },
   "conversionNote": {
     "detail": "{fromUnit} → {toUnit}: ×{multiplier}. Isıl değer temeli: {calorificBasis}. Türetim: {basis}. Referans koşulları: {conditions}. Yayın: {publisher}, {edition} — {status}.",
@@ -599,5 +600,6 @@
     "none": "{company} için size henüz bir kategori atanmadı, bu yüzden burada girilecek bir şey yok. Kategorileri şirketin bir Süper Yöneticisi atar.",
     "notGranted": "{category} kategorisi {company} için size atanmadı, bu yüzden burada girilemez. Kategorileri şirketin bir Süper Yöneticisi atar.",
     "noneShort": "Size atanmış kategori yok"
-  }
+  },
+  "reportedBy": "Raporlayan şirket: {company}"
 }

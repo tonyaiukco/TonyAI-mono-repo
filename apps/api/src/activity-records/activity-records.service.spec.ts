@@ -156,6 +156,8 @@ function createPrismaMock() {
         return ['sub-1', 'sub-2'].map((subsidiaryId) => ({ subsidiaryId, kind: 'assigned', categories: [...CATEGORIES] }));
       }
       if (sql.includes('LEFT JOIN profiles p ON p.id = r.created_by')) return [];
+      // The exact-duplicate look: none by default.
+      if (sql.includes('r.activity_type IS NOT DISTINCT FROM')) return [];
       return [{ id: 'locked' }];
     }),
     $executeRaw: vi.fn().mockResolvedValue(1),
@@ -7109,9 +7111,13 @@ function centralReporter(): RequestUser {
 }
 
 /** Routes the raw reads: the access re-read FOR SHARE, and the period rule's look. */
-function routeRaw(prisma: PrismaMock, opts: { access?: { subsidiaryId: string; kind: string; categories: string[] }[]; otherParty?: boolean }) {
+function routeRaw(prisma: PrismaMock, opts: { access?: { subsidiaryId: string; kind: string; categories: string[] }[]; otherParty?: boolean; duplicate?: boolean | 'slot_kind'; duplicateReads?: { exact: boolean }[][]; accessReads?: { subsidiaryId: string; kind: string; categories: string[] }[][] }) {
+  let read = 0;
   const route = async (strings: TemplateStringsArray): Promise<unknown[]> => {
     const sql = strings.join('?');
+    if (sql.includes('FOR KEY SHARE')) return [];
+    if (sql.includes('r.activity_type IS NOT DISTINCT FROM')) return opts.duplicate ? [{ exact: opts.duplicate !== 'slot_kind' }] : opts.duplicateReads ? opts.duplicateReads.shift() ?? [] : [];
+    if (sql.includes('FROM user_subsidiary_access') && opts.accessReads) return opts.accessReads[Math.min(read++, opts.accessReads.length - 1)]!;
     if (sql.includes('FROM user_subsidiary_access')) return opts.access ?? [];
     if (sql.includes('LEFT JOIN profiles p ON p.id = r.created_by')) return opts.otherParty ? [{ found: 1 }] : [];
     return [{ id: 'locked' }];
@@ -7149,7 +7155,7 @@ describe('central reporting — the reporting entity on the create path (task 4.
     prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new', reportedBySubsidiaryId: 'sub-2' }));
     prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-2', tradingName: 'TonyAI Energy', legalName: 'TonyAI Energy A.Ş.' }]);
     const dto = await service.create(centralReporter(), CREATE_DTO);
-    expect(rawSql(prisma).find((q) => q.includes('FROM user_subsidiary_access'))).toMatch(/FOR SHARE/);
+    expect(rawSql(prisma).find((q) => q.includes('kind, categories'))).toMatch(/FOR SHARE/);
     expect(prisma.activityRecord.create.mock.calls[0][0].data).not.toHaveProperty('reportedBySubsidiaryId');
     expect(dto).toMatchObject({ subsidiaryId: 'sub-1', reportedBySubsidiaryId: 'sub-2', reportedBySubsidiaryName: 'TonyAI Energy' });
   });
@@ -7290,7 +7296,7 @@ describe('central reporting — one party enters a category for a company in a p
       reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'April', category: 'Electricity',
     });
     prisma.activityRecord.findUnique.mockResolvedValue(draft);
-    routeRaw(prisma, { otherParty: true });
+    routeRaw(prisma, { otherParty: true, access: REPORTER_ACCESS });
     await expect(service.update(centralReporter(), 'rec-d', { periodValue: 'March' }))
       .rejects.toMatchObject({ response: { code: 'single_entry_period_conflict', params: { side: 'company_users', period: 'March' } } });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -7312,5 +7318,107 @@ describe('central reporting — an edit raced into a taken period (qa-auditor S6
     await expect(service.update(centralReporter(), 'rec-d', { periodValue: 'March' })).rejects.toMatchObject({
       response: { code: 'single_entry_period_conflict', params: { side: 'company_users', category: 'Electricity', year: 2024, period: 'March' } },
     });
+  });
+});
+
+describe("the owner's review of WP8 (2026-11-26)", () => {
+  const draft = () => makeRecord({
+    id: 'rec-d', subsidiaryId: 'sub-1', status: ActivityRecordStatus.draft, createdBy: 'user-entry', reportedBySubsidiaryId: 'sub-2',
+    reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'April', category: 'Electricity',
+  });
+
+  it('P1: an edit after the company was withdrawn is refused inside the write, and nothing is written', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    routeRaw(prisma, { access: [REPORTER_ACCESS[1]!] });
+    await expect(service.update(centralReporter(), 'rec-d', { activityValue: 5 })).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('P1: an edit after its category was withdrawn is refused with category_not_granted', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    routeRaw(prisma, { access: [{ ...REPORTER_ACCESS[0]!, categories: ['Water'] }, REPORTER_ACCESS[1]!] });
+    await expect(service.update(centralReporter(), 'rec-d', { activityValue: 5 })).rejects.toBeInstanceOf(CategoryNotGrantedError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("P2: the companies are locked FOR KEY SHARE before the access rows — a company delete's order", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS });
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new', reportedBySubsidiaryId: 'sub-2' }));
+    await service.create(centralReporter(), CREATE_DTO);
+    const sql = rawSql(prisma);
+    const keyShare = sql.findIndex((q) => q.includes('FOR KEY SHARE'));
+    expect(keyShare).toBeGreaterThanOrEqual(0);
+    expect(keyShare).toBeLessThan(sql.findIndex((q) => q.includes('kind, categories')));
+  });
+
+  it('P2: a read that waited on a moved main company is taken again, and the write follows the new one', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { accessReads: [[REPORTER_ACCESS[0]!], [REPORTER_ACCESS[0]!, { subsidiaryId: 'sub-3', kind: 'assigned', categories: ['Water'] }]] });
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new', reportedBySubsidiaryId: 'sub-3' }));
+    await expect(service.create(centralReporter(), CREATE_DTO)).resolves.toMatchObject({ reportedBySubsidiaryId: 'sub-3' });
+    expect(rawSql(prisma).filter((q) => q.includes('kind, categories'))).toHaveLength(2);
+    // The companies again before the second read: companies, rows, companies, rows (security review).
+    const order = rawSql(prisma).filter((q) => q.includes('FOR KEY SHARE') || q.includes('kind, categories'))
+      .map((q) => (q.includes('FOR KEY SHARE') ? 'companies' : 'rows'));
+    expect(order).toEqual(['companies', 'rows', 'companies', 'rows']);
+  });
+
+  it('P2: a read with the company present and one main company is not taken again', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS });
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new', reportedBySubsidiaryId: 'sub-2' }));
+    await service.create(centralReporter(), CREATE_DTO);
+    expect(rawSql(prisma).filter((q) => q.includes('kind, categories'))).toHaveLength(1);
+  });
+
+  it('P2: an exact repeat answers record_duplicate before the period rule, on a create and on an edit', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS, duplicate: true, otherParty: true });
+    await expect(service.create(centralReporter(), CREATE_DTO)).rejects.toBeInstanceOf(DuplicateActivityRecordError);
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    await expect(service.update(centralReporter(), 'rec-d', { periodValue: 'March' })).rejects.toBeInstanceOf(DuplicateActivityRecordError);
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('the category is judged before the duplicate look: an ungranted category never learns of a record there (R5)', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS, duplicate: true });
+    await expect(service.create(centralReporter(), { ...CREATE_DTO, category: 'Water' })).rejects.toBeInstanceOf(CategoryNotGrantedError);
+    // An edit whose category was withdrawn meanwhile: refused under the lock, before the look.
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    routeRaw(prisma, { access: [{ ...REPORTER_ACCESS[0]!, categories: ['Water'] }, REPORTER_ACCESS[1]!], duplicate: true });
+    await expect(service.update(centralReporter(), 'rec-d', { periodValue: 'March' })).rejects.toBeInstanceOf(CategoryNotGrantedError);
+    expect(rawSql(prisma).some((q) => q.includes('r.activity_type IS NOT DISTINCT FROM'))).toBe(false);
+  });
+
+  it("an edit moving a draft into a category withdrawn meanwhile is judged on the new category (QA P3-1)", async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    // The request's access ticks Water; the committed rows tick Electricity only.
+    routeRaw(prisma, { access: REPORTER_ACCESS });
+    const user = standardUser({
+      accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+      categoryGrants: { 'sub-1': ['Electricity', 'Water'], 'sub-2': ['Water'] },
+      grantKinds: { 'sub-1': 'central_reporter', 'sub-2': 'assigned' },
+    });
+    await expect(service.update(user, 'rec-d', { category: 'Water', activityUnit: 'm3' })).rejects.toBeInstanceOf(CategoryNotGrantedError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a repeat committed between the preview and the write still answers record_duplicate (QA P3-2)', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS, duplicateReads: [[], [{ exact: true }]] });
+    await expect(service.create(centralReporter(), CREATE_DTO)).rejects.toBeInstanceOf(DuplicateActivityRecordError);
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it("a slot holding the other kind answers TA002's conflict before the period rule, as the bulk upload does (QA P3-3)", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS, duplicate: 'slot_kind', otherParty: true });
+    await expect(service.create(centralReporter(), CREATE_DTO)).rejects.toBeInstanceOf(ActivityTypeSlotConflictError);
   });
 });

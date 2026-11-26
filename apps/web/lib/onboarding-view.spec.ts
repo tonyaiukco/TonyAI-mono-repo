@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GATE_AUTO_RETRIES,
+  grantCandidates,
+  retriesOnAuthEvent,
   ONBOARDING_STEPS,
   approachWrite,
   boundaryCompanies,
@@ -37,9 +40,15 @@ describe('the gate (D9)', () => {
     expect(onboardingRedirect({ role, onboardingPending: true }, '/users')).toBeNull();
   });
 
-  it('a finished masterkey is sent from the wizard to the company tree (Finish) and held nowhere', () => {
-    expect(onboardingRedirect({ role: 'masterkey', onboardingPending: false }, '/onboarding')).toBe('/subsidiaries');
+  it("a finished masterkey opening the wizard's address later goes to the dashboard, and is held nowhere", () => {
+    expect(onboardingRedirect({ role: 'masterkey', onboardingPending: false }, '/onboarding')).toBe('/');
     expect(onboardingRedirect({ role: 'masterkey', onboardingPending: false }, '/users')).toBeNull();
+  });
+
+  it("this tab's Finish leads to the company tree; for no other role", () => {
+    expect(onboardingRedirect({ role: 'masterkey', onboardingPending: false }, '/onboarding', true)).toBe('/subsidiaries');
+    expect(onboardingRedirect({ role: 'super_admin', onboardingPending: false }, '/onboarding', true)).toBe('/');
+    expect(onboardingRedirect({ role: 'masterkey', onboardingPending: true }, '/onboarding', true)).toBeNull();
   });
 
   it('decides nothing before the account is known', () => {
@@ -112,5 +121,33 @@ describe('steps 3 to 5: groups, companies, boundaries (8.6, 8.7)', () => {
 
   it('the boundary step lists companies that hold records — no sector group, no associate', () => {
     expect(boundaryCompanies(nodes).map((n) => n.id)).toEqual(['root', 'A']);
+  });
+});
+
+describe("the gate's automatic retry (owner review of WP8, P2)", () => {
+  it('any Auth event but a sign-out retries — INITIAL_SESSION included — up to the bound', () => {
+    for (const event of ['INITIAL_SESSION', 'SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED']) {
+      expect(retriesOnAuthEvent(event, 0)).toBe(true);
+      expect(retriesOnAuthEvent(event, GATE_AUTO_RETRIES - 1)).toBe(true);
+      expect(retriesOnAuthEvent(event, GATE_AUTO_RETRIES)).toBe(false);
+    }
+  });
+
+  it('a sign-out never does', () => {
+    expect(retriesOnAuthEvent('SIGNED_OUT', 0)).toBe(false);
+  });
+});
+
+describe("step 7's candidates (owner review of WP8, P2)", () => {
+  const row = (subsidiaryId: string, kind: 'assigned' | 'central_reporter') => ({ subsidiaryId, categories: ['Fuel' as const], kind });
+  it('only a standard user with exactly one main company', () => {
+    const users = [
+      { id: 'ok', role: 'standard_user' as const, access: [row('a', 'assigned')] },
+      { id: 'reporter', role: 'standard_user' as const, access: [row('a', 'assigned'), row('b', 'central_reporter')] },
+      { id: 'none', role: 'standard_user' as const, access: [] },
+      { id: 'carried', role: 'standard_user' as const, access: [row('a', 'assigned'), row('b', 'assigned')] },
+      { id: 'admin', role: 'super_admin' as const, access: [row('a', 'assigned')] },
+    ];
+    expect(grantCandidates(users).map((u) => u.id)).toEqual(['ok', 'reporter']);
   });
 });

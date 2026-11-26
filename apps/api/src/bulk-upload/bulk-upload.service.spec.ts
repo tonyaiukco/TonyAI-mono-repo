@@ -1286,6 +1286,8 @@ describe('BulkUploadService — the figures that reach the write', () => {
       activityValue: 1200,
       activityUnit: 'kWh',
       parameters: null,
+      // The company the record reports for: here its own (WP8).
+      reportedBySubsidiaryId: SUB_1,
       tCo2e: 0.528,
       anomalous: false,
     });
@@ -3950,5 +3952,24 @@ describe('BulkUploadService — a standard user\'s categories (INC-2.6 §1, §7.
       expect(report.accepted.map((a) => a.row)).toEqual([2, 3]);
       expect((dryRun ? records.previewCreate : records.create)).toHaveBeenCalledTimes(2);
     }
+  });
+});
+
+describe("BulkUploadService — the reporting company before an apply (owner review of WP8, P2)", () => {
+  it("a dry run names each row's reporting company: the preview's, or the row's own when it answers none", async () => {
+    const { records, service } = build();
+    records.previewCreate
+      .mockResolvedValueOnce({ subsidiaryId: SUB_1, locationId: null, periodValue: 'January', calculation: SNAPSHOT, scope: 2, verdict: { anomalous: false, priorCount: 0, baseline: null }, reportedBySubsidiaryId: 'main-co' })
+      .mockResolvedValueOnce({ subsidiaryId: SUB_1, locationId: null, periodValue: 'February', calculation: SNAPSHOT, scope: 2, verdict: { anomalous: false, priorCount: 0, baseline: null }, reportedBySubsidiaryId: null });
+    const report = await service.import(standardUser(), csvFile([row(), row({ periodValue: 'February' })]), DRY);
+    expect(report.accepted.map((a) => a.reportedBySubsidiaryId)).toEqual(['main-co', SUB_1]);
+  });
+
+  it("an apply names the stored record's", async () => {
+    const { records, service } = build();
+    records.create.mockImplementationOnce((_user: unknown, dto: { periodValue: string; activityValue: number; activityUnit: string }) =>
+      Promise.resolve({ id: 'rec-x', calculation: SNAPSHOT, anomalyFlag: false, periodValue: dto.periodValue, varianceReason: null, activityValue: dto.activityValue, activityUnit: dto.activityUnit, parameters: null, reportedBySubsidiaryId: 'main-co' }));
+    const report = await service.import(standardUser(), csvFile([row()]), NOTHING);
+    expect(report.accepted[0]?.reportedBySubsidiaryId).toBe('main-co');
   });
 });

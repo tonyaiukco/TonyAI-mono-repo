@@ -1,4 +1,4 @@
-import { can, CATEGORIES, holdsRecords, type AuthUser, type Category, type ControlKind, type NodeType } from '@/lib/types';
+import { can, CATEGORIES, holdsRecords, reportingEntityFor, type AuthUser, type Category, type ControlKind, type NodeType } from '@/lib/types';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
 
 /**
@@ -82,4 +82,17 @@ export function categoryGateMessage(
  */
 export function entryCompanies<S extends { nodeType: NodeType; control: ControlKind }>(subsidiaries: readonly S[]): S[] {
   return subsidiaries.filter((s) => holdsRecords(s));
+}
+
+/**
+ * The company a new record for `subsidiaryId` would report for, shown before
+ * it is saved (inc26-central-reporter-onboarding §4; owner review of WP8,
+ * P2): a central reporter's grant company answers its main company — the
+ * value TA025 will store; `null` when the record reports for its own company,
+ * and nothing needs saying.
+ */
+export function entryReportingEntity(user: EntryUser | null, subsidiaryId: string): string | null {
+  if (!user || !subsidiaryId) return null;
+  const entity = reportingEntityFor(user.access ?? [], subsidiaryId);
+  return entity === subsidiaryId ? null : entity;
 }

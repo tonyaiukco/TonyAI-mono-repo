@@ -59,7 +59,8 @@
     "legalNameMissing": "Şirketin yasal adını girin.",
     "geographyRequired": "Şirketin coğrafyasını seçin.",
     "sharePercentInvalid": "Pay yüzdesi 0 ile 100 arasında bir sayı olmalıdır.",
-    "naceInvalid": "NACE kodu beklenen biçimde değil."
+    "naceInvalid": "NACE kodu beklenen biçimde değil.",
+    "associateName": "{name} (iştirak)"
   },
   "boundaries": {
     "description": "Her şirket için envanter sınırının {year} yılında hangi kategorileri kapsadığını beyan edin.",
@@ -87,7 +88,8 @@
     "languages": {
       "en": "İngilizce",
       "tr": "Türkçe"
-    }
+    },
+    "row": "{name} · {email} — {companies} · {status}"
   },
   "centralReporter": {
     "description": "İsterseniz bir standart kullanıcıya merkezi raportör yetkisi verin: birden fazla şirket için tek bir kategori listesi.",

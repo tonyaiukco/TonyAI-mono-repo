@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { api } from "@/lib/api";
-import { newestFirst, versionState } from "@/lib/inventory-boundary-view";
+import { newestFirst } from "@/lib/inventory-boundary-view";
 import type {
   InventoryBoundaryVersionDTO,
   InventoryBoundaryVersionSummary,
@@ -22,10 +22,13 @@ export interface BoundaryCalls {
   confirm(versionId: string): Promise<InventoryBoundaryVersionDTO>;
   sitesOf(subsidiaryId: string): Promise<{ id: string; name: string }[]>;
   /**
-   * The wizard's write: into the year's open version, or — when the year has
-   * none open — a version opened by this first saved declaration (D10).
+   * The wizard's write (D10), into the version the editor was opened on — never
+   * one chosen again at save time (owner review of WP8, P1): a version
+   * confirmed meanwhile answers `boundary_frozen`. When the year had no
+   * version, this first saved declaration opens one; a version opened by
+   * someone else meanwhile answers the API's own refusal.
    */
-  declareInYear(reportingYear: number, subsidiaryId: string, request: PutInventoryBoundarySubsidiaryRequest): Promise<InventoryBoundaryVersionDTO>;
+  declare(versionId: string | null, reportingYear: number, subsidiaryId: string, request: PutInventoryBoundarySubsidiaryRequest): Promise<InventoryBoundaryVersionDTO>;
 }
 
 export const boundaryCalls: BoundaryCalls = {
@@ -36,11 +39,8 @@ export const boundaryCalls: BoundaryCalls = {
   confirm: (versionId) => api.confirmInventoryBoundary(versionId),
   sitesOf: async (subsidiaryId) =>
     (await api.listLocations(subsidiaryId)).filter((l) => l.subsidiaryId === subsidiaryId).map((l) => ({ id: l.id, name: l.name })),
-  declareInYear: async (reportingYear, subsidiaryId, request) => {
-    const newest = (await boundaryCalls.listYear(reportingYear))[0];
-    const open = newest && versionState(newest) === "open" ? newest.id : (await boundaryCalls.openNew(reportingYear)).id;
-    return boundaryCalls.writeDeclaration(open, subsidiaryId, request);
-  },
+  declare: async (versionId, reportingYear, subsidiaryId, request) =>
+    boundaryCalls.writeDeclaration(versionId ?? (await boundaryCalls.openNew(reportingYear)).id, subsidiaryId, request),
 };
 
 /** The calls, for a component. */

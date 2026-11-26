@@ -1,4 +1,4 @@
-import { can, holdsRecords, type AuthUser, type ConsolidationApproach, type ControlKind, type NodeType } from '@/lib/types';
+import { can, holdsRecords, mainCompanyOf, type AuthUser, type UserSummaryDTO, type ConsolidationApproach, type ControlKind, type NodeType } from '@/lib/types';
 
 /**
  * The masterkey's setup wizard (inc26-central-reporter-onboarding, INC-2.6
@@ -25,21 +25,42 @@ export const ONBOARDING_PATH = '/onboarding';
 
 /**
  * Where the gate sends a signed-in account (D9): a masterkey of an unfinished
- * organisation to the wizard from any other protected path; a masterkey whose
- * organisation is finished away from the wizard to the company tree (§7.1
- * step 8: Finish leads there, and a finished wizard never shows again);
- * anyone else away from the wizard to the dashboard; null to stay.
+ * organisation to the wizard from any other protected path; anyone else —
+ * a masterkey whose organisation is finished included — away from the wizard
+ * to the dashboard (spec "Only a masterkey is given the wizard"); null to
+ * stay. `justFinished`: this tab's Finish, which leads to the company tree
+ * instead (§7.1 step 8) — a later visit to the wizard's address does not.
  */
 export function onboardingRedirect(
   user: Pick<AuthUser, 'role' | 'onboardingPending'> | null,
   pathname: string,
+  justFinished = false,
 ): string | null {
   if (!user) return null;
-  const onWizard = pathname === ONBOARDING_PATH || pathname.startsWith(`${ONBOARDING_PATH}/`);
+  const onWizard = isWizardPath(pathname);
   const held = can(user.role, 'onboarding.run') && user.onboardingPending === true;
   if (held && !onWizard) return ONBOARDING_PATH;
-  if (!held && onWizard) return can(user.role, 'onboarding.run') ? '/subsidiaries' : '/';
+  if (!held && onWizard) return justFinished && can(user.role, 'onboarding.run') ? '/subsidiaries' : '/';
   return null;
+}
+
+export function isWizardPath(pathname: string): boolean {
+  return pathname === ONBOARDING_PATH || pathname.startsWith(`${ONBOARDING_PATH}/`);
+}
+
+/** The automatic retries a run of failed account reads may take. */
+export const GATE_AUTO_RETRIES = 3;
+
+/**
+ * The gate's automatic retry of a failed account read (owner review of WP8,
+ * P2): on an Auth event while the read is failed — any but a sign-out, the
+ * `INITIAL_SESSION` its one subscription is handed included, since a sign-in
+ * that settled before the gate mounted leaves only that event — and at most
+ * `GATE_AUTO_RETRIES` times in a run of failures. No event, no retry: a
+ * failure that persists stays on screen, and only "Try again" reads again.
+ */
+export function retriesOnAuthEvent(event: string, retriesSoFar: number): boolean {
+  return event !== 'SIGNED_OUT' && retriesSoFar < GATE_AUTO_RETRIES;
 }
 
 /**
@@ -148,4 +169,13 @@ export function companiesOf<N extends Pick<WizardNode, 'nodeType'>>(nodes: reado
 /** Step 5's companies: those that hold records — no sector group, no associate (§2.1). */
 export function boundaryCompanies<N extends Pick<WizardNode, 'nodeType' | 'control'>>(nodes: readonly N[]): N[] {
   return nodes.filter((n) => holdsRecords(n));
+}
+
+/**
+ * Step 7's candidates (§7.1; owner review of WP8, P2): a standard user who
+ * holds exactly one main company — the only account the grant's rules accept
+ * (B2). Anyone else would be offered a grant the API refuses.
+ */
+export function grantCandidates<U extends Pick<UserSummaryDTO, 'role' | 'access'>>(users: readonly U[]): U[] {
+  return users.filter((u) => u.role === 'standard_user' && mainCompanyOf(u.access) !== null);
 }

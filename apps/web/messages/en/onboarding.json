@@ -59,7 +59,8 @@
     "legalNameMissing": "Enter the company's legal name.",
     "geographyRequired": "Choose the company's geography.",
     "sharePercentInvalid": "The share percent must be a number from 0 to 100.",
-    "naceInvalid": "The NACE code is not in the expected form."
+    "naceInvalid": "The NACE code is not in the expected form.",
+    "associateName": "{name} (associate)"
   },
   "boundaries": {
     "description": "Declare, for each company, which categories its inventory boundary covers in {year}.",
@@ -87,7 +88,8 @@
     "languages": {
       "en": "English",
       "tr": "Turkish"
-    }
+    },
+    "row": "{name} · {email} — {companies} · {status}"
   },
   "centralReporter": {
     "description": "Optionally, give a standard user a central reporter grant: one category list over several companies.",

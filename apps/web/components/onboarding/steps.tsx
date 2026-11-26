@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "use-intl";
 import { toast } from "sonner";
 import { Info, Plus } from "lucide-react";
@@ -10,7 +10,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { CompanyFields, EMPTY_COMPANY_FORM, type CompanyForm } from "@/components/subsidiaries/company-fields";
 import { DeclarationEditor } from "@/components/inventory-boundary/declaration-editor";
 import { CentralReporterDialog } from "@/components/users/central-reporter-dialog";
-import { api } from "@/lib/api";
+import { ReportingContextBar, ReportingContextInvalid } from "@/components/reporting-context/reporting-context-bar";
+import { api, ApiError } from "@/lib/api";
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { emptyDraft, draftFromSnapshot } from "@/lib/inventory-boundary-form";
 import { gapLines, versionState } from "@/lib/inventory-boundary-view";
@@ -19,6 +20,7 @@ import {
   boundaryCompanies,
   companiesOf,
   companyParents,
+  grantCandidates,
   holdingAction,
   rootOf,
   sectorGroupsOf,
@@ -28,10 +30,10 @@ import {
 import { parseNaceCode, parseSharePercent } from "@/lib/subsidiaries-view";
 import { usePricedGeographies } from "@/lib/use-priced-geographies";
 import { boundaryCalls } from "@/lib/use-boundary-calls";
+import { useReportingContext } from "@/lib/use-reporting-context";
 import { invitePayload } from "@/lib/users-view";
 import {
   CONSOLIDATION_APPROACHES,
-  DEFAULT_REPORTING_YEAR,
   SUPPORTED_LOCALES,
   UPCOMING_CONSOLIDATION_APPROACHES,
   type ConsolidationApproach,
@@ -305,7 +307,7 @@ export function CompaniesStep({ nodes, reload, onNext, footer }: StepProps) {
           {t("companies.add")}
         </Button>
       </div>
-      <NodeList title={t("companies.list")} empty={t("companies.none")} names={companiesOf(nodes).map((c) => c.legalName)} testId="onboarding-company-list" />
+      <NodeList title={t("companies.list")} empty={t("companies.none")} names={companiesOf(nodes).map((c) => (c.control === "associate" ? t("companies.associateName", { name: c.legalName }) : c.legalName))} testId="onboarding-company-list" />
       {footer({ onClick: onNext })}
     </div>
   );
@@ -313,10 +315,21 @@ export function CompaniesStep({ nodes, reload, onNext, footer }: StepProps) {
 
 // --- Step 5: inventory boundaries ---------------------------------------------------------
 
-export function BoundariesStep({ nodes, onNext, footer }: StepProps) {
+export function BoundariesStep(props: StepProps) {
+  // The reporting context reads the URL (`useSearchParams`), which Next wants under Suspense.
+  return (
+    <Suspense fallback={null}>
+      <BoundariesInYear {...props} />
+    </Suspense>
+  );
+}
+
+function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
   const t = useTranslations("onboarding");
   const showError = useErrorToast();
-  const year = DEFAULT_REPORTING_YEAR;
+  // The selected reporting year, as on the boundary screen (owner review of WP8, P2).
+  const contextView = useReportingContext();
+  const year = contextView.status === "ready" ? contextView.context.year : null;
   const companies = boundaryCompanies(nodes);
   const [detail, setDetail] = useState<InventoryBoundaryVersionDTO | null>(null);
   const [editing, setEditing] = useState<SubsidiaryDTO | null>(null);
@@ -324,9 +337,21 @@ export function BoundariesStep({ nodes, onNext, footer }: StepProps) {
   const [saving, setSaving] = useState(false);
 
   // Reads on entry and writes nothing (D10): the year's newest version, if any.
+  // Each load is numbered: an answer for a year the bar has left is dropped
+  // (security review), so the version on screen is always the year's.
+  const loadSeq = useRef(0);
+  // Nothing is declared until the year's versions are read: a save before then
+  // could open a version beside a confirmed one it never saw.
+  const [loaded, setLoaded] = useState(false);
   const load = useCallback(async () => {
+    if (year === null) return;
+    const seq = ++loadSeq.current;
+    setLoaded(false);
     const newest = (await boundaryCalls.listYear(year))[0];
-    setDetail(newest ? await boundaryCalls.open(newest.id) : null);
+    const opened = newest ? await boundaryCalls.open(newest.id) : null;
+    if (seq !== loadSeq.current) return;
+    setDetail(opened);
+    setLoaded(true);
   }, [year]);
   useEffect(() => {
     load().catch(showError);
@@ -334,6 +359,12 @@ export function BoundariesStep({ nodes, onNext, footer }: StepProps) {
 
   const open = detail ? versionState(detail) === "open" : true;
   const declared = (id: string) => !!detail && draftFromSnapshot(detail.boundary, id) !== null;
+  // One object per opened editor: a re-render (Save's busy state) must not hand
+  // the editor a new start and wipe what was typed (owner review of WP8, P2).
+  const initial = useMemo(
+    () => (editing && detail ? draftFromSnapshot(detail.boundary, editing.id) : null) ?? emptyDraft(),
+    [detail, editing],
+  );
 
   async function edit(company: SubsidiaryDTO) {
     try {
@@ -345,15 +376,22 @@ export function BoundariesStep({ nodes, onNext, footer }: StepProps) {
   }
 
   async function save(request: PutInventoryBoundarySubsidiaryRequest) {
-    if (!editing) return;
+    if (!editing || year === null || !loaded) return;
+    // Never into another year's version than the one the bar shows.
+    if (detail && detail.reportingYear !== year) return void (await load().catch(showError));
     setSaving(true);
     try {
-      // A version is opened by the first saved declaration when the year has none open.
-      setDetail(await boundaryCalls.declareInYear(year, editing.id, request));
+      // Into the version on screen; the first saved declaration opens one when the year had none.
+      setDetail(await boundaryCalls.declare(detail?.id ?? null, year, editing.id, request));
       toast.success(t("boundaries.saved"));
       setEditing(null);
     } catch (e) {
       showError(e);
+      // Confirmed, deleted, or opened by someone else, meanwhile: show the year as it is now.
+      if (e instanceof ApiError && (e.code === "boundary_frozen" || e.code === "boundary_draft_open" || e.code === "boundary_not_found")) {
+        setEditing(null);
+        await load().catch(showError);
+      }
     } finally {
       setSaving(false);
     }
@@ -368,8 +406,13 @@ export function BoundariesStep({ nodes, onNext, footer }: StepProps) {
     }
   }
 
+  if (contextView.status === "invalid") {
+    return <ReportingContextInvalid invalid={contextView.invalid} onReset={contextView.reset} />;
+  }
+  if (year === null) return null;
   return (
     <div className="space-y-4">
+      <ReportingContextBar context={contextView.context} subsidiaries={null} onSelect={contextView.select} fields={["year"]} />
       <p className="text-sm text-muted-foreground">{t("boundaries.description", { year })}</p>
       <p className="text-xs text-muted-foreground" data-testid="onboarding-matrix-note">{t("boundaries.matrixNote")}</p>
       {companies.length === 0 ? (
@@ -381,7 +424,7 @@ export function BoundariesStep({ nodes, onNext, footer }: StepProps) {
               <span>{c.legalName}</span>
               <span className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">{declared(c.id) ? t("boundaries.declared") : t("boundaries.notDeclared")}</span>
-                <Button size="sm" variant="outline" disabled={!open} onClick={() => void edit(c)}>
+                <Button size="sm" variant="outline" disabled={!open || !loaded} onClick={() => void edit(c)}>
                   {declared(c.id) ? t("boundaries.edit") : t("boundaries.declare")}
                 </Button>
               </span>
@@ -401,7 +444,7 @@ export function BoundariesStep({ nodes, onNext, footer }: StepProps) {
           onOpenChange={(o) => !o && setEditing(null)}
           title={t("boundaries.editorTitle", { name: editing.legalName })}
           readOnly={false}
-          initial={(detail && draftFromSnapshot(detail.boundary, editing.id)) ?? emptyDraft()}
+          initial={initial}
           sites={sites}
           gaps={detail ? gapLines(detail, editing.id) : []}
           saving={saving}
@@ -431,7 +474,9 @@ export function SuperAdminsStep({ nodes, onNext, footer }: StepProps) {
   const t = useTranslations("onboarding");
   const locale = useLocale() as Locale;
   const showError = useErrorToast();
+  const tUsers = useTranslations("users");
   const companies = boundaryCompanies(nodes);
+  const names = useMemo(() => new Map(nodes.map((n) => [n.id, n.legalName])), [nodes]);
   const [admins, setAdmins] = useState<UserSummaryDTO[]>([]);
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
@@ -493,11 +538,19 @@ export function SuperAdminsStep({ nodes, onNext, footer }: StepProps) {
             </label>
           ))}
         </div>
-        <Button disabled={busy || !email.trim() || !fullName.trim()} onClick={() => void invite()}>
+        {/* One or more companies per invitation (§7.1 step 6; owner review of WP8, P2). */}
+        <Button disabled={busy || !email.trim() || !fullName.trim() || ticked.length === 0} onClick={() => void invite()} data-testid="onboarding-invite-submit">
           {t("superAdmins.invite")}
         </Button>
       </div>
-      <NodeList title={t("superAdmins.list")} empty={t("superAdmins.none")} names={admins.map((a) => `${a.fullName} · ${a.email}`)} testId="onboarding-admin-list" />
+      <NodeList title={t("superAdmins.list")} empty={t("superAdmins.none")} names={admins.map((a) =>
+          t("superAdmins.row", {
+            name: a.fullName,
+            email: a.email,
+            companies: a.access.map((g) => names.get(g.subsidiaryId) ?? "—").join(", ") || "—",
+            status: tUsers(`status.${a.status}`),
+          }),
+        )} testId="onboarding-admin-list" />
       {footer({ onClick: onNext })}
     </div>
   );
@@ -510,7 +563,8 @@ export function CentralReporterStep({ nodes, onNext, footer }: StepProps) {
   const [target, setTarget] = useState<UserSummaryDTO | null>(null);
   const names = useMemo(() => new Map(nodes.map((n) => [n.id, n.legalName])), [nodes]);
   useEffect(() => {
-    everyUser().then((all) => setUsers(all.filter((u) => u.role === "standard_user")), showError);
+    // Only a standard user with one main company can take the grant (B2; owner review of WP8, P2).
+    everyUser().then((all) => setUsers(grantCandidates(all)), showError);
   }, [showError]);
 
   return (

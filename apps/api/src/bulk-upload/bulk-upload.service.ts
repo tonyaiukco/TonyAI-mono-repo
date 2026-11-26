@@ -628,6 +628,7 @@ export class BulkUploadService {
         ...this.linesOf(parsed),
         recordId: null,
         ...this.identityOf(dto, preview.periodValue),
+        reportedBySubsidiaryId: preview.reportedBySubsidiaryId ?? dto.subsidiaryId,
         tCo2e: this.figureOf(preview.calculation),
         anomalous: preview.verdict.anomalous,
       });
@@ -652,6 +653,7 @@ export class BulkUploadService {
       ...this.linesOf(parsed),
       recordId: created.id,
       ...this.identityOf(dto, created.periodValue),
+      reportedBySubsidiaryId: created.reportedBySubsidiaryId,
       // What the record holds, not what the row sent: the write stores a
       // double at 16 significant digits, so a formula cell's
       // 0.30000000000000004 lands as 0.3.

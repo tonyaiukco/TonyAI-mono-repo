@@ -107,6 +107,7 @@ import { assertCategoryGranted, inRecordScope } from './record-scope';
 import { recordCentralReportingRefusal } from '../central-reporting/central-reporting-errors';
 import {
   accessRowsOf,
+  assertNotExactDuplicate,
   assertSingleEntryPeriod,
   lockAuthorAccess,
   partyOf,
@@ -884,10 +885,11 @@ export class ActivityRecordsService {
    * role once per batch: a security control that only runs on the path someone
    * remembered to guard is not a control.
    *
-   * **It does NOT decide uniqueness.** The `NULLS NOT DISTINCT` conflict is
-   * raised by Postgres on the insert and reaches `create` as a `P2002`, so a
-   * preview cannot see it: a caller previewing a batch must detect duplicates
-   * itself — against the rows already stored AND against the rest of the file.
+   * **It decides uniqueness only against what is stored now.** An exact repeat
+   * of a live record answers `record_duplicate` (owner review of WP8), but a
+   * concurrent insert and the slot-kind rule (`TA002`) are raised by Postgres on
+   * the insert: a caller previewing a batch must still detect duplicates itself —
+   * against the rows already stored AND against the rest of the file.
    *
    * **It costs four to five queries per call** (period lock, subsidiary,
    * optional location, emission factor, anomaly baseline), none of them cached.
@@ -974,6 +976,16 @@ export class ActivityRecordsService {
     // the access the guard read — no lock and no write: an early answer,
     // asked again inside `create` on the access as it is committed then.
     const reportedBySubsidiaryId = reportingEntityOf(accessRowsOf(user), dto.subsidiaryId);
+    // An exact repeat answers as a duplicate first, as the bulk upload does.
+    await assertNotExactDuplicate(this.prisma, {
+      subsidiaryId: dto.subsidiaryId,
+      locationId: dto.locationId ?? null,
+      category: dto.category,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
+      periodValue,
+      activityType,
+    });
     await assertSingleEntryPeriod(this.prisma, partyOf(user.role, dto.subsidiaryId, reportedBySubsidiaryId), {
       subsidiaryId: dto.subsidiaryId,
       category: dto.category,
@@ -1054,6 +1066,10 @@ export class ActivityRecordsService {
         // the party worked out from the same rows TA025 will read.
         const access = await lockAuthorAccess(tx, user, subsidiaryId, dto.category);
         const reportingEntity = access ? reportingEntityOf(access, subsidiaryId) : subsidiaryId;
+        await assertNotExactDuplicate(tx, {
+          subsidiaryId, locationId, category: dto.category, reportingYear: dto.reportingYear,
+          reportingPeriod: dto.reportingPeriod, periodValue, activityType,
+        });
         await assertSingleEntryPeriod(tx, partyOf(user.role, subsidiaryId, reportingEntity), {
           subsidiaryId,
           category: dto.category,
@@ -1312,7 +1328,15 @@ export class ActivityRecordsService {
           // An edit that moves a draft to another category or period meets
           // the period half of single entry (D5): the record's own party — by
           // its stored reporting entity and its author, who is the editor.
+          // The author's access as it is committed now (C10; owner review of
+          // WP8, P1): a company or category withdrawn after the request was
+          // authorised is not written to — the same judgement a create makes.
+          // Only the author edits (assertCanEdit).
+          await lockAuthorAccess(tx, user, current.subsidiaryId, category);
           if (moves || changesCategory) {
+            await assertNotExactDuplicate(tx, {
+              subsidiaryId: current.subsidiaryId, locationId, category, reportingYear, reportingPeriod, periodValue, activityType,
+            }, current.id);
             await assertSingleEntryPeriod(tx, recordParty(current, user.role), {
               subsidiaryId: current.subsidiaryId, category, reportingYear, reportingPeriod, periodValue,
             }, current.id);

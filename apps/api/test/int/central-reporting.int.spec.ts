@@ -720,6 +720,110 @@ describe('a record follows the access committed when it is stored (task 4.2, C10
       await b.$disconnect();
     }
   });
+
+  // --- the owner's review of WP8 (2026-11-26) -------------------------------------
+
+  it("P2: a create whose access read began before the main company's move commits names the new main company", async () => {
+    await setOwnCategories(['Water']);
+    const user = await reporter();
+    const moved = await company('Int-test moved main company');
+    const a = connect();
+    const b = connect();
+    try {
+      const moving = deferred();
+      const commit = deferred();
+      const move = a.$transaction(async (tx) => {
+        await tx.userSubsidiaryAccess.delete({ where: { userId_subsidiaryId: { userId: user.id, subsidiaryId: T() } } });
+        await tx.userSubsidiaryAccess.create({ data: { userId: user.id, subsidiaryId: moved, organisationId: tenant.organisationId, categories: ['Water'] } });
+        moving.resolve();
+        await commit.promise;
+      }, { timeout: 20_000 });
+      await moving.promise;
+      // Its locking read waits on the deleted row; its snapshot predates the new one.
+      const pidB = await backendPid(b);
+      const create = lifecycleServices(b).records.create(user, { ...dto, subsidiaryId: S() });
+      expect(await settledOrBlocked(create, pidB, observer)).toBe('blocked');
+      commit.resolve();
+      await move;
+      const record = await create;
+      expect(record.reportedBySubsidiaryId).toBe(moved);
+    } finally {
+      await a.$disconnect();
+      await b.$disconnect();
+    }
+  });
+
+  it("P2: a create takes the companies before the access rows — a company delete's order — so the two cannot deadlock", async () => {
+    await setOwnCategories(['Water']);
+    const user = await reporter();
+    const a = connect();
+    const b = connect();
+    try {
+      const locked = deferred();
+      const finish = deferred();
+      let accessDeleted = false;
+      // A company delete: the company FOR UPDATE, then its access rows; rolled back.
+      const del = a.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${T()}::uuid FOR UPDATE`;
+        locked.resolve();
+        await finish.promise;
+        await tx.$executeRaw`DELETE FROM user_subsidiary_access WHERE subsidiary_id = ${T()}::uuid`;
+        accessDeleted = true;
+        throw new Error('rollback');
+      }, { timeout: 20_000 }).catch((e: Error) => e.message);
+      await locked.promise;
+      const pidB = await backendPid(b);
+      const create = lifecycleServices(b).records.create(user, { ...dto, subsidiaryId: S() });
+      // Waits on the company, holding none of the access rows yet…
+      expect(await settledOrBlocked(create, pidB, observer)).toBe('blocked');
+      // …so the delete's removal of them goes through.
+      finish.resolve();
+      expect(await del).toBe('rollback');
+      expect(accessDeleted).toBe(true);
+      const record = await create;
+      expect(record.reportedBySubsidiaryId).toBe(T());
+    } finally {
+      await a.$disconnect();
+      await b.$disconnect();
+    }
+  });
+
+  it('P1: an edit sent after the grant was withdrawn is refused inside its write, and changes nothing', async () => {
+    await setOwnCategories(['Water']);
+    const user = await reporter();
+    const draft = await lifecycleServices(runtime).records.create(user, { ...dto, subsidiaryId: S(), periodValue: 'March' });
+    await accessAdmin(owner).setCentralReporterGrant(tenant.users.masterkey, user.id, { subsidiaryIds: [], categories: [] });
+    // `user` is the request's access, read before the withdrawal.
+    await expect(lifecycleServices(runtime).records.update(user, draft.id, { activityValue: 250 }))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: draft.id } })).activityValue).toBe(100);
+  });
+
+  it("P1: an edit sent after its category was withdrawn is refused with category_not_granted", async () => {
+    await setOwnCategories(['Water']);
+    const user = await reporter();
+    const draft = await lifecycleServices(runtime).records.create(user, { ...dto, subsidiaryId: S(), periodValue: 'April' });
+    await accessAdmin(owner).setCentralReporterGrant(tenant.users.masterkey, user.id, { subsidiaryIds: [S()], categories: ['Fuel'] });
+    await expect(lifecycleServices(runtime).records.update(user, draft.id, { activityValue: 250 }))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'category_not_granted' }) });
+    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: draft.id } })).activityValue).toBe(100);
+  });
+
+  it("P2: an exact repeat of the company user's record, entered by the reporter it was handed to, answers record_duplicate as the bulk upload does", async () => {
+    const own = await createRecord(runtime, tenant, { periodValue: 'May' });
+    await setOwnCategories(['Water']);
+    const user = await reporter();
+    await expect(lifecycleServices(runtime).records.create(user, {
+      ...dto, subsidiaryId: S(), locationId: own.locationId, reportingYear: own.reportingYear, reportingPeriod: own.reportingPeriod as 'monthly',
+      periodValue: own.periodValue, category: own.category as Category, activityType: own.activityType,
+    })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_duplicate' }) });
+    // Another facility of the same month is the period rule's.
+    const other = await site('Int-test another facility');
+    await expect(lifecycleServices(runtime).records.create(user, {
+      ...dto, subsidiaryId: S(), locationId: other, reportingYear: own.reportingYear, reportingPeriod: own.reportingPeriod as 'monthly',
+      periodValue: own.periodValue, category: own.category as Category, activityType: own.activityType,
+    })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'single_entry_period_conflict' }) });
+  });
 });
 
 describe('a reporting company is not deleted (task 4.6, C6)', () => {
@@ -909,5 +1013,40 @@ describe('the QA and security reviews of 2026-11-26', () => {
     await createRecord(runtime, tenant, { periodValue: 'July' });
     await expect(lifecycleServices(runtime).records.previewCreate(reporter, { ...dto, periodValue: 'July' }))
       .rejects.toMatchObject({ response: expect.objectContaining({ code: 'single_entry_period_conflict' }) });
+  });
+});
+
+describe('the exact repeat and the slot kind, through the service (QA review of the owner-review round)', () => {
+  async function fuelReporter(): Promise<RequestUser> {
+    const id = await reporterAt(['Fuel']);
+    const profile = await owner.profile.findUniqueOrThrow({ where: { id } });
+    return {
+      id, email: profile.email, fullName: profile.fullName, role: 'standard_user', organisationId: tenant.organisationId,
+      accessibleSubsidiaryIds: [T(), S()],
+      categoryGrants: { [T()]: ['Water'], [S()]: ['Fuel'] },
+      grantKinds: { [T()]: 'assigned', [S()]: 'central_reporter' },
+    };
+  }
+  const fuel = (periodValue: string, activityType: string) => ({
+    subsidiaryId: S(), reportingYear: 2026, reportingPeriod: 'monthly' as const, periodValue,
+    category: 'Fuel' as const, activityType, activityValue: 10, activityUnit: 'litres',
+  });
+
+  it("another activity type in the other party's period is the period rule's, not a duplicate", async () => {
+    await createRecord(runtime, tenant, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', periodValue: 'June' });
+    await setOwnCategories(['Water']);
+    const user = await fuelReporter();
+    await expect(lifecycleServices(runtime).records.create(user, fuel('June', 'petrol')))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'single_entry_period_conflict' }) });
+    await expect(lifecycleServices(runtime).records.create(user, fuel('June', 'diesel')))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'record_duplicate' }) });
+  });
+
+  it("a typed record where an untyped one stands answers TA002's conflict before the period rule", async () => {
+    await createRecord(runtime, tenant, { category: 'Fuel', activityType: null, activityUnit: 'litres', periodValue: 'July' });
+    await setOwnCategories(['Water']);
+    const user = await fuelReporter();
+    await expect(lifecycleServices(runtime).records.create(user, fuel('July', 'diesel')))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'slot_holds_untyped' }) });
   });
 });

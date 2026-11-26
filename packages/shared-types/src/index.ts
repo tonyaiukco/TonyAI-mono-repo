@@ -7477,6 +7477,13 @@ export interface BulkUploadAcceptedRow {
    * line, in file order; absent for a record of one row. `row` is the first.
    */
   lineRows?: number[];
+  /**
+   * The company the record reports for (inc26-central-reporter-onboarding §4;
+   * owner review of WP8): the row's own company, or a central reporter's main
+   * company for a grant company — shown before an apply. Absent from a server
+   * before WP8.
+   */
+  reportedBySubsidiaryId?: string;
   tCo2e: number | null;
   anomalous: boolean;
 }

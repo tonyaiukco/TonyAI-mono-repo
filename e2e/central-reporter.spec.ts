@@ -1,6 +1,7 @@
 import { test, expect, request as playwrightRequest, type APIRequestContext } from '@playwright/test';
 import type { SubsidiaryDTO, UserSummaryDTO } from '@tonyai/shared-types';
 import enCategories from '../apps/web/messages/en/categories.json';
+import enDataEntry from '../apps/web/messages/en/dataEntry.json';
 import enErrors from '../apps/web/messages/en/errors.json';
 import enReview from '../apps/web/messages/en/review.json';
 import enUsers from '../apps/web/messages/en/users.json';
@@ -24,6 +25,7 @@ import {
   removeE2EInvitedAccounts,
   insertDraftAsOwner,
   resetSeedAccess,
+  selectSubsidiary,
 } from './helpers';
 
 /**
@@ -95,6 +97,16 @@ test('a masterkey gives the grant on the users screen; the owning company decide
   created.push(id);
   const read = await (await request.get(`${API_BASE}/activity-records/${id}`, { headers: bearer(entryToken) })).json();
   expect(read).toMatchObject({ subsidiaryId: SEED_ENTRY_GRANT, reportedBySubsidiaryId: SEED_ENTRY_MAIN });
+
+  // Data Entry names the reporting company before a save — for the grant's company only (owner review of WP8).
+  await page.getByTestId('sign-out').click();
+  await page.waitForURL('**/login');
+  await login(page, ENTRY_EMAIL);
+  await page.goto('/data-entry');
+  await selectSubsidiary(page, 'TonyAI Logistics (TR)');
+  await expect(page.getByTestId('entry-reported-by')).toHaveText(enDataEntry.reportedBy.replace('{company}', 'TonyAI Energy'));
+  await selectSubsidiary(page, 'TonyAI Energy (TR)');
+  await expect(page.getByTestId('entry-reported-by')).toHaveCount(0);
 
   // A super admin without the owning company sees nothing of it.
   const invite = await request.post(`${API_BASE}/users/invitations`, {
@@ -175,8 +187,24 @@ test('a conflicting assignment and a taken period are refused in the reader\'s w
       activityValue: 2, activityUnit: 'tonnes', locationId: null, input: null, varianceReason: null,
     },
   });
+  // An exact repeat of the company user's record is a duplicate, as in the bulk upload (owner review of WP8).
   expect(refused.status()).toBe(409);
-  expect(await refused.json()).toMatchObject({
+  expect(await refused.json()).toMatchObject({ code: 'record_duplicate' });
+  // At one of the company's facilities, the same period is the other party's.
+  const sites = (await (await request.get(`${API_BASE}/locations?subsidiaryId=${SEED_ENTRY_GRANT}`, {
+    headers: bearer(await getAccessToken(request, ENTRY_EMAIL)),
+  })).json()) as { id: string; subsidiaryId: string }[];
+  const facility = sites.find((l) => l.subsidiaryId === SEED_ENTRY_GRANT);
+  expect(facility).toBeDefined();
+  const taken = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(await getAccessToken(request, ENTRY_EMAIL)),
+    data: {
+      subsidiaryId: SEED_ENTRY_GRANT, reportingYear: E2E_YEAR, reportingPeriod: 'quarterly', periodValue: 'Q1', category: 'Waste',
+      activityValue: 2, activityUnit: 'tonnes', locationId: facility!.id, input: null, varianceReason: null,
+    },
+  });
+  expect(taken.status()).toBe(409);
+  expect(await taken.json()).toMatchObject({
     code: 'single_entry_period_conflict', params: { side: 'company_users', category: 'Waste', year: E2E_YEAR, period: 'Q1' },
   });
   // The reporter's own next period passes.
