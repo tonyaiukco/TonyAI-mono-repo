@@ -140,6 +140,10 @@ export interface OrganisationDTO {
   legalName: string;
   tradingName: string | null;
   consolidationApproach: ConsolidationApproach;
+  /** When the masterkey finished the setup wizard (inc26-central-reporter-
+   *  onboarding D8); null while it is open. Organisations that existed when the
+   *  wizard shipped were stamped finished by its migration (C1). */
+  onboardingCompletedAt: string | null;
 }
 
 /** `PATCH /organisation/consolidation-approach`. `equity_share` is refused as invalid. */

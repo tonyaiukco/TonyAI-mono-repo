@@ -1,6 +1,6 @@
 import { MESSAGES } from '@/messages';
 import { describe, it, expect, vi } from 'vitest';
-import { reviewCalorificBasis, reviewReferences, reviewSelfGeneration, daysSince, waitingLabel as waitingLabelWith } from './review-view';
+import { reviewCalorificBasis, reviewReferences, reviewReportingEntity, reviewSelfGeneration, daysSince, waitingLabel as waitingLabelWith } from './review-view';
 import { copyFor } from '@/lib/i18n/testing';
 
 const waitingLabel = (iso: string | null, now?: number) => waitingLabelWith(iso, copyFor('review'), now);
@@ -243,5 +243,17 @@ describe('the review sheet\'s self-generation block (self-gen-form, design 7)', 
         record({ category: 'Natural Gas', parameters: { selfGenerationSource: 'solar', selfGeneratedKwh: 1, cvBasis: 'net' } as never }),
       ),
     ).toBeNull();
+  });
+});
+
+describe('reviewReportingEntity (inc26-central-reporter-onboarding, task 5.5)', () => {
+  it("names the reporting company of a central reporter's record", () => {
+    expect(reviewReportingEntity({ subsidiaryId: 'a', reportedBySubsidiaryId: 't', reportedBySubsidiaryName: 'Supply Co' })).toBe('Supply Co');
+    expect(reviewReportingEntity({ subsidiaryId: 'a', reportedBySubsidiaryId: 't', reportedBySubsidiaryName: null })).toBe('—');
+  });
+
+  it("shows no line for a record of the company's own user, nor for an older answer without the field", () => {
+    expect(reviewReportingEntity({ subsidiaryId: 'a', reportedBySubsidiaryId: 'a', reportedBySubsidiaryName: 'Alpha' })).toBeNull();
+    expect(reviewReportingEntity({ subsidiaryId: 'a', reportedBySubsidiaryId: undefined as never, reportedBySubsidiaryName: null })).toBeNull();
   });
 });

@@ -12,7 +12,9 @@ import { OrganisationService } from './organisation.service';
 
 /** The organisation read and its consolidation approach (inc26-group-tree, 5.1). */
 
-const ORG = { id: 'org-1', legalName: 'TonyAI Holding A.Ş.', tradingName: null, consolidationApproach: 'operational_control' };
+const FINISHED = new Date('2026-11-26T12:00:00.000Z');
+const ORG = { id: 'org-1', legalName: 'TonyAI Holding A.Ş.', tradingName: null, consolidationApproach: 'operational_control', onboardingCompletedAt: FINISHED as Date | null };
+const ORG_DTO = { ...ORG, onboardingCompletedAt: FINISHED.toISOString() };
 
 function build() {
   const tx = {
@@ -47,7 +49,7 @@ describe('OrganisationService', () => {
   });
 
   it.each([...USER_ROLES])('lets a %s read its own organisation: id, names and the approach — nothing else', async (role) => {
-    expect(await w.service.get(as(role))).toEqual(ORG);
+    expect(await w.service.get(as(role))).toEqual(ORG_DTO);
     expect(w.prisma.organisation.findUnique).toHaveBeenCalledWith({ where: { id: 'org-1' } });
   });
 
@@ -112,5 +114,44 @@ describe('UpdateConsolidationApproachDto', () => {
     for (const value of ['equity_share', 'Operational_Control', '', null, undefined]) {
       expect(errors({ consolidationApproach: value }), String(value)).not.toEqual([]);
     }
+  });
+});
+
+describe('OrganisationService.completeOnboarding (inc26-central-reporter-onboarding, task 7.4)', () => {
+  let w: ReturnType<typeof build>;
+  beforeEach(() => {
+    w = build();
+    w.tx.organisation.findUnique.mockResolvedValue({ ...ORG, onboardingCompletedAt: null });
+  });
+
+  it('a masterkey finishes: the timestamp set under the administrative lock, one audit row', async () => {
+    const dto = await w.service.completeOnboarding(as('masterkey'));
+    expect(dto.onboardingCompletedAt).toEqual(expect.any(String));
+    expect(w.tx.organisation.update).toHaveBeenCalledWith({ where: { id: 'org-1' }, data: { onboardingCompletedAt: expect.any(Date) } });
+    expect(w.audit.record).toHaveBeenCalledTimes(1);
+    expect(w.audit.record.mock.calls[0][1]).toMatchObject({
+      action: 'update', entity: 'organisation', entityId: 'org-1', diff: { before: { onboardingCompletedAt: null } },
+    });
+    expect(w.tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(w.tx.organisation.findUnique.mock.invocationCallOrder[0]);
+  });
+
+  it('a second call answers the finished organisation and writes nothing', async () => {
+    w.tx.organisation.findUnique.mockResolvedValue({ ...ORG });
+    expect(await w.service.completeOnboarding(as('masterkey'))).toEqual(ORG_DTO);
+    expect(w.tx.organisation.update).not.toHaveBeenCalled();
+    expect(w.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('a masterkey disabled while the request waited finishes nothing', async () => {
+    w.tx.profile.findUnique.mockResolvedValue({
+      role: 'masterkey', organisationId: 'org-1', disabledAt: new Date(), organisation: { offboardedAt: null }, subsidiaryAccess: [],
+    } as never);
+    await expect(w.service.completeOnboarding(as('masterkey'))).rejects.toBeDefined();
+    expect(w.tx.organisation.update).not.toHaveBeenCalled();
+  });
+
+  it.each(USER_ROLES.filter((r) => !can(r, 'onboarding.run')))('refuses a %s as forbidden, before anything is read', async (role) => {
+    await expect(w.service.completeOnboarding(as(role))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(w.prisma.$transaction).not.toHaveBeenCalled();
   });
 });

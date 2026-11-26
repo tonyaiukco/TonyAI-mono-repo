@@ -50,7 +50,7 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     guard = new SupabaseAuthGuard(reflector, prisma as unknown as PrismaService);
   });
 
-  const profileOf = (role: string, subsidiaryAccess: Array<{ subsidiaryId: string; categories?: string[] }>, organisationId: string | null = 'org-1') => ({
+  const profileOf = (role: string, subsidiaryAccess: Array<{ subsidiaryId: string; categories?: string[]; kind?: string }>, organisationId: string | null = 'org-1') => ({
     id: 'user-1',
     email: 'u@x',
     role,
@@ -117,6 +117,22 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     );
   });
 
+  it("states each granted company's kind: a central reporter's grant beside its main company, nothing of another organisation (task 3.1)", async () => {
+    prisma.profile.findUnique.mockResolvedValue(profileOf('standard_user', [
+      { subsidiaryId: 'sub-1', categories: ['Electricity'], kind: 'assigned' },
+      { subsidiaryId: 'sub-2', categories: ['Mobile Combustion'], kind: 'central_reporter' },
+      { subsidiaryId: 'sub-foreign', categories: ['Fuel'], kind: 'central_reporter' },
+      { subsidiaryId: 'sub-3', categories: ['Water'], kind: 'unknown' },
+    ]));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }, { id: 'sub-2' }, { id: 'sub-3' }]);
+    const { context, request } = makeContext();
+    await guard.canActivate(context);
+    // The grant is scope like any grant: its company and its categories.
+    expect(request.user?.accessibleSubsidiaryIds).toEqual(['sub-1', 'sub-2', 'sub-3']);
+    expect(request.user?.categoryGrants).toEqual({ 'sub-1': ['Electricity'], 'sub-2': ['Mobile Combustion'], 'sub-3': ['Water'] });
+    expect(request.user?.grantKinds).toEqual({ 'sub-1': 'assigned', 'sub-2': 'central_reporter', 'sub-3': 'assigned' });
+  });
+
   it('keeps only category names the product knows', async () => {
     prisma.profile.findUnique.mockResolvedValue(profileOf('standard_user', [
       { subsidiaryId: 'sub-1', categories: ['Electricity', 'Steam', 'electricity', ''] },
@@ -138,6 +154,8 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     );
     expect(request.user?.accessibleSubsidiaryIds).toEqual(['s1', 's2']);
     expect(request.user?.categoryGrants).toEqual({});
+    // A stray grant row (WP6 carried some onto these roles) is no kind of access either.
+    expect(request.user?.grantKinds).toEqual({});
   });
 
   it.each(['masterkey', 'auditor', 'super_admin', 'standard_user'])(

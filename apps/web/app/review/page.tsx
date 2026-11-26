@@ -78,7 +78,7 @@ import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
 import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
 import { formatComputedAmount, formatNumber, formatReadAmount } from "@/lib/i18n/number";
-import { reviewCalorificBasis, reviewReferences, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
+import { reviewCalorificBasis, reviewReferences, reviewReportingEntity, reviewSelfGeneration, waitingLabel } from "@/lib/review-view";
 import { categoryWithActivity } from "@/lib/vocabulary";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -1040,6 +1040,16 @@ export default function ReviewPage() {
                     </Fragment>
                   );
                 })}
+                {/* A central reporter's record: the company that reported it,
+                    beside its author (inc26-central-reporter-onboarding, C4). */}
+                {reviewReportingEntity(selected) !== null && (
+                  <>
+                    <span className="text-muted-foreground">{t("sheet.reportedBy")}</span>
+                    <span className="col-span-2" data-testid="review-reported-by">
+                      {reviewReportingEntity(selected)}
+                    </span>
+                  </>
+                )}
               </div>
 
               {/* Stated as its own block, not a dash in the table: approving

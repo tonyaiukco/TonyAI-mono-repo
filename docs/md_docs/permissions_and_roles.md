@@ -60,6 +60,8 @@ Every row is a capability of `ROLE_CAPABILITIES` in `@tonyai/shared-types`, aske
 | `record_trail.read_any` | Any readable record's history (a standard user reads its own records') | ✅ | ✅ | ❌ | ✅ |
 | `users.list` · `users.invite` · `users.set_access` | List, invite and set the access of accounts (`INVITABLE_ROLES`, `ACCESS_ASSIGNABLE_ROLES`: a masterkey super_admins and auditors, a super_admin standard users in its companies) | ✅ | ✅ | ❌ | ❌ |
 | `users.set_role` · `users.disable` | Change a role, disable or enable an account (never one's own) | ✅ | ❌ | ❌ | ❌ |
+| `onboarding.run` | Run a new organisation's setup wizard and finish it (INC-2.6 §7.1; `POST /organisation/onboarding/complete`) | ✅ | ❌ | ❌ | ❌ |
+| `central_reporter.grant` | Give, change or withdraw a standard user's central reporter grant: one category list over several owning companies, beside the user's one main company (INC-2.6 §4.1; `PUT /users/:id/central-reporter-grant`) | ✅ | ❌ | ❌ | ❌ |
 
 Everyone resets their own password from the sign-in page and changes their own language and theme.
 

@@ -103,12 +103,15 @@ function countBoundaryVersions(prisma: PrismaMock, { frozen = 0, open = 0 }: { f
   prisma.txClient.inventoryBoundarySubsidiary.count.mockImplementation(impl);
 }
 
-function countRecords(prisma: PrismaMock, statuses: string[]): void {
+function countRecords(prisma: PrismaMock, statuses: string[], reportedElsewhere = 0): void {
   // Both clients: `summary()` counts on the default one and the delete guard
   // counts on the transaction's, and a test that means "the database contains
   // these records" should not have to know which path it is exercising. Reads
   // are client-agnostic; mutations are not, and those are asserted per-client.
   const impl = async ({ where }: any) => {
+    // Records of other companies naming this one as their reporting entity
+    // (inc26-central-reporter-onboarding, C6).
+    if (where.reportedBySubsidiaryId !== undefined) return reportedElsewhere;
     const f = where.status;
     return statuses.filter((s) => (f.in ? f.in.includes(s) : !f.notIn.includes(s)))
       .length;
@@ -669,6 +672,60 @@ describe('SubsidiariesService', () => {
     });
   });
 
+  describe('central reporting blockers (inc26-central-reporter-onboarding, task 4.6)', () => {
+    const reportersOf = (prisma: PrismaMock, n: number) => {
+      const impl = async ({ where }: any) => (where?.kind === 'assigned' ? n : 0);
+      prisma.userSubsidiaryAccess.count.mockImplementation(impl);
+      prisma.txClient.userSubsidiaryAccess.count.mockImplementation(impl);
+    };
+
+    it("refuses the delete of a company other companies' records name as their reporting company, and words it in the 409", async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, [], 40);
+      const e = await service.remove(makeMasterkey(), 'sub-1').catch((err: unknown) => err);
+      expect(e).toMatchObject({ response: { code: 'subsidiary_in_use' } });
+      expect((e as Error).message).toMatch(/40 record\(s\) of other companies naming it as their reporting company/);
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it("refuses the delete of a central reporter's main company, until the reporter moves or the grant is withdrawn", async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      reportersOf(prisma, 1);
+      const e = await service.remove(makeMasterkey(), 'sub-1').catch((err: unknown) => err);
+      expect((e as Error).message).toMatch(/1 central reporter\(s\) whose main company it is/);
+      expect(prisma.txClient.userSubsidiaryAccess.count).toHaveBeenCalledWith({
+        where: { subsidiaryId: 'sub-1', kind: 'assigned', profile: { role: 'standard_user', subsidiaryAccess: { some: { kind: 'central_reporter' } } } },
+      });
+      // Once the reporter has moved: deleted.
+      reportersOf(prisma, 0);
+      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      await service.remove(makeMasterkey(), 'sub-1');
+      expect(prisma.txClient.subsidiary.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it("an organisation-wide reader's panel names both, and adds neither to the company's own counts", async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, [], 40);
+      reportersOf(prisma, 1);
+      const s = await service.summary(makeMasterkey(), 'sub-1');
+      expect(s.blockerCounts).toEqual([{ kind: 'reportedRecords', count: 40 }, { kind: 'centralReporters', count: 1 }]);
+      expect(s).toMatchObject({ terminalRecords: 0, reviewRecords: 0, openRecords: 0 });
+      expect(s).not.toHaveProperty('reportedRecords');
+      expect(s).not.toHaveProperty('centralReporters');
+    });
+
+    it("a company-scoped reader's panel is unchanged by another company's forty records, and is not told of them", async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, [], 40);
+      reportersOf(prisma, 1);
+      const s = await service.summary(makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] }), 'sub-1');
+      expect(s.blockerCounts).toEqual([]);
+      expect(s.hasBlockingDependents).toBe(false);
+      expect(prisma.txClient.activityRecord.count.mock.calls.some(([a]) => a.where.reportedBySubsidiaryId !== undefined)).toBe(false);
+    });
+  });
+
   describe('summary — the counts behind the control panel', () => {
     it('reports every dependent class, and is tenant-scoped', async () => {
       const user = makeMasterkey();
@@ -863,7 +920,13 @@ describe('SubsidiariesService', () => {
         expect(counter).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-1' } });
       }
       for (const call of prisma.txClient.activityRecord.count.mock.calls) {
-        expect(call[0].where).toMatchObject({ subsidiaryId: 'sub-1' });
+        // The company's own records — or, for the central reporting blocker,
+        // other companies' records naming it as their reporting entity.
+        if (call[0].where.reportedBySubsidiaryId !== undefined) {
+          expect(call[0].where).toEqual({ reportedBySubsidiaryId: 'sub-1', subsidiaryId: { not: 'sub-1' } });
+        } else {
+          expect(call[0].where).toMatchObject({ subsidiaryId: 'sub-1' });
+        }
       }
     });
 

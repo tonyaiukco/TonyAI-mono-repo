@@ -157,6 +157,8 @@ describe('a new address — the organisation, its default subsidiary, its first 
       geographyCode: 'TR',
       reportingCurrency: 'TRY',
       offboardedAt: null,
+      // Born unfinished: its masterkey is held on the setup wizard (inc26-central-reporter-onboarding, 7.5).
+      onboardingCompletedAt: null,
     });
     expect(profile.subsidiaryAccess).toEqual([]);
     // K1: the company itself as its one subsidiary, so a facility can be added at once.

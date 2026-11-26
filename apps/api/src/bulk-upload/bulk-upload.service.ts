@@ -36,6 +36,7 @@ import {
   isRecordActivityTypeAllowed,
   mayAuthorRecords,
   recordActivityTypesFor,
+  type ApiErrorParams,
 } from '@tonyai/shared-types';
 import {
   ActivityRecordsService,
@@ -55,6 +56,7 @@ import { CreateActivityRecordDto } from '../activity-records/dto/create-activity
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { assertCategoryGranted, CategoryNotGrantedError } from '../activity-records/record-scope';
+import { SingleEntryPeriodConflictError } from '../central-reporting/central-reporting-errors';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
@@ -1447,6 +1449,12 @@ export class BulkUploadService {
     // The single-record refusal's own words (inc26-group-tree, D6).
     if (error instanceof EntityClosedToDataEntryError) {
       return { row, column: null, code: 'entity_closed_to_data_entry', message: error.message };
+    }
+    // The period half of single entry (inc26-central-reporter-onboarding D5),
+    // in the dry run and the apply alike, with its params for the screen.
+    if (error instanceof SingleEntryPeriodConflictError) {
+      const body = error.getResponse() as { params?: ApiErrorParams };
+      return { row, column: null, code: 'single_entry_period_conflict', message: error.message, ...(body.params ? { params: body.params } : {}) };
     }
     // Before the generic 403s: a standard user's row outside its categories
     // is that user's own answer, in the dry run and the apply alike.

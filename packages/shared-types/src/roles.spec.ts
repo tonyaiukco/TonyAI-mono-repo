@@ -109,6 +109,8 @@ const MATRIX: Record<Capability, string> = {
   'users.set_access': 'MS..',
   'users.set_role': 'M...',
   'users.disable': 'M...',
+  'central_reporter.grant': 'M...',
+  'onboarding.run': 'M...',
 };
 const COLUMN: Record<UserRole, number> = { masterkey: 0, super_admin: 1, standard_user: 2, auditor: 3 };
 

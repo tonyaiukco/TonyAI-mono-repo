@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InvitationStatus } from '@tonyai/db';
-import type { UserRole, UserSummaryDTO, UserAccessGrantDTO } from '@tonyai/shared-types';
+import type { CentralReporterGrantInput, UserRole, UserSummaryDTO, UserAccessGrantDTO } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { AccessAdminService, type InviteMember } from '../auth/access-admin.service';
 import { AccountDisabledError } from '../auth/access-errors';
@@ -48,6 +48,11 @@ export class UserLifecycleService {
 
   async replaceAccess(actor: RequestUser, profileId: string, access: UserAccessGrantDTO[]): Promise<UserSummaryDTO> {
     await this.access.replaceSubsidiaryAccess(actor, profileId, access);
+    return this.query.summary(actor, profileId);
+  }
+
+  async setCentralReporterGrant(actor: RequestUser, profileId: string, grant: CentralReporterGrantInput): Promise<UserSummaryDTO> {
+    await this.access.setCentralReporterGrant(actor, profileId, grant);
     return this.query.summary(actor, profileId);
   }
 

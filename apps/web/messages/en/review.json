@@ -89,7 +89,8 @@
       "super_admin": "A Super Admin of its company decides this record. You can read it, but not take it into review, return or approve it.",
       "masterkey": "A Masterkey decides this record. You can read it, but not take it into review, return or approve it.",
       "author": "Its author, a Masterkey, decides this record. You can read it, but not take it into review, return or approve it."
-    }
+    },
+    "reportedBy": "Reported by company"
   },
   "toast": {
     "reviewed": "Taken into review",

@@ -10,7 +10,11 @@ import {
   Matches,
   MaxLength,
   MinLength,
+  Validate,
   ValidateNested,
+  ValidatorConstraint,
+  type ValidationArguments,
+  type ValidatorConstraintInterface,
 } from 'class-validator';
 import {
   CATEGORIES,
@@ -24,6 +28,7 @@ import {
   type RegistrationRequest,
   type ReplaceUserAccessRequest,
   type Category,
+  type CentralReporterGrantInput,
   type UpdateUserRoleRequest,
   type UserAccessGrantDTO,
   type UserRole,
@@ -98,6 +103,38 @@ export class ReplaceUserAccessDto implements ReplaceUserAccessRequest {
   @ValidateNested({ each: true })
   @Type(() => AccessGrantDto)
   access!: AccessGrantDto[];
+}
+
+/** A grant that names companies names at least one category (§4.1). */
+@ValidatorConstraint({ name: 'grantNamesCategories' })
+class GrantNamesCategories implements ValidatorConstraintInterface {
+  validate(categories: unknown, args: ValidationArguments): boolean {
+    const ids = (args.object as { subsidiaryIds?: unknown }).subsidiaryIds;
+    return !(Array.isArray(ids) && ids.length > 0) || (Array.isArray(categories) && categories.length > 0);
+  }
+
+  defaultMessage(): string {
+    return 'a central reporter grant that names companies names at least one category';
+  }
+}
+
+/**
+ * PUT /api/v1/users/:id/central-reporter-grant — the whole grant
+ * (inc26-central-reporter-onboarding D6): the companies and the one category
+ * list. No company withdraws it; companies with no category are invalid input.
+ */
+export class CentralReporterGrantDto implements CentralReporterGrantInput {
+  @IsArray()
+  @ArrayMaxSize(MAX_GRANTS)
+  @Transform(({ value }: { value: unknown }) => (Array.isArray(value) ? value.map((v) => canonicalUuid(v) ?? v) : value))
+  @Matches(UUID_SHAPE, { each: true, message: 'each subsidiaryId must be an id' })
+  subsidiaryIds!: string[];
+
+  @IsArray()
+  @ArrayMaxSize(CATEGORIES.length)
+  @IsIn(CATEGORIES, { each: true })
+  @Validate(GrantNamesCategories)
+  categories!: Category[];
 }
 
 /** GET /api/v1/users — `CursorPage` bounds (LP4-05's contract). */

@@ -144,7 +144,20 @@ function createPrismaMock() {
     // The lifecycle locks (`lifecycle-lock.ts`): row locks read back one row
     // — the record was there to lock — and the period's advisory lock runs as
     // a statement.
-    $queryRaw: vi.fn().mockResolvedValue([{ id: 'locked' }]),
+    //
+    // Two more readers share it (inc26-central-reporter-onboarding): a standard
+    // user's access re-read FOR SHARE inside a create — by default its
+    // committed access is what the guard read for `makeStandardUser` (sub-1 and
+    // sub-2, every category, assigned) — and the period rule's look for the
+    // other party's record, which by default finds none.
+    $queryRaw: vi.fn(async (strings: any, ..._values: unknown[]): Promise<any[]> => {
+      const sql = (strings as string[]).join('?');
+      if (sql.includes('FROM user_subsidiary_access')) {
+        return ['sub-1', 'sub-2'].map((subsidiaryId) => ({ subsidiaryId, kind: 'assigned', categories: [...CATEGORIES] }));
+      }
+      if (sql.includes('LEFT JOIN profiles p ON p.id = r.created_by')) return [];
+      return [{ id: 'locked' }];
+    }),
     $executeRaw: vi.fn().mockResolvedValue(1),
     activityRecord: {
       // Default [] so the anomaly baseline query finds no priors (no anomaly)
@@ -162,6 +175,8 @@ function createPrismaMock() {
     // subsidiary stub `null`.
     subsidiary: {
       findUnique: vi.fn(async () => makeSubsidiary()),
+      // The reporting entities' names (C4): none resolves by default.
+      findMany: vi.fn().mockResolvedValue([]),
     },
     location: {
       findUnique: vi.fn(),
@@ -286,6 +301,9 @@ const PERSISTED_KEYS = [
   'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
   'reviewedBy', 'reviewedAt', 'reviewNote', 'submittedAt', 'submissionCount', 'voidReason', 'voidedBy',
   'voidedAt', 'importBatchId', 'evidenceCount', 'createdAt', 'updatedAt',
+  // inc26-central-reporter-onboarding D1: the stored reporting entity, read as
+  // it means (empty is the record's own company). Its NAME is resolved, never audited.
+  'reportedBySubsidiaryId',
 ].sort();
 
 
@@ -7072,5 +7090,227 @@ describe('ActivityRecordsService — a node closed to data entry (inc26-group-tr
       ),
     );
     await expect(service.create(masterkey(), CREATE_DTO)).rejects.toBeInstanceOf(EntityClosedToDataEntryError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inc26-central-reporter-onboarding (tasks 4.1, 4.3, 4.4): a record's owning
+// and reporting entity, the access re-read inside the write, and the period
+// half of single entry.
+// ---------------------------------------------------------------------------
+
+/** A central reporter: main company sub-2, a grant for sub-1 (Electricity). */
+function centralReporter(): RequestUser {
+  return standardUser({
+    accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
+    categoryGrants: { 'sub-1': ['Electricity'], 'sub-2': ['Water'] },
+    grantKinds: { 'sub-1': 'central_reporter', 'sub-2': 'assigned' },
+  });
+}
+
+/** Routes the raw reads: the access re-read FOR SHARE, and the period rule's look. */
+function routeRaw(prisma: PrismaMock, opts: { access?: { subsidiaryId: string; kind: string; categories: string[] }[]; otherParty?: boolean }) {
+  const route = async (strings: TemplateStringsArray): Promise<unknown[]> => {
+    const sql = strings.join('?');
+    if (sql.includes('FROM user_subsidiary_access')) return opts.access ?? [];
+    if (sql.includes('LEFT JOIN profiles p ON p.id = r.created_by')) return opts.otherParty ? [{ found: 1 }] : [];
+    return [{ id: 'locked' }];
+  };
+  prisma.$queryRaw.mockImplementation(route as never);
+}
+const rawSql = (prisma: PrismaMock) => prisma.$queryRaw.mock.calls.map((c) => (c[0] as unknown as string[]).join('?'));
+const REPORTER_ACCESS = [
+  { subsidiaryId: 'sub-1', kind: 'central_reporter', categories: ['Electricity'] },
+  { subsidiaryId: 'sub-2', kind: 'assigned', categories: ['Water'] },
+];
+
+describe('central reporting — the reporting entity on the create path (task 4.1)', () => {
+  it.each([
+    ['a central reporter, for a grant company: its main company', centralReporter(), 'sub-2'],
+    ['the same reporter, for its main company: the company itself', centralReporter(), 'sub-1x'],
+    ['a standard user for its one company', standardUser(), 'sub-1'],
+    ['a super_admin', superAdmin(), 'sub-1'],
+    ['a masterkey (no grants)', masterkey(), 'sub-1'],
+    ['a carried-over account with two assigned companies', standardUser({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] }), 'sub-1'],
+  ] as const)('previewCreate answers %s, with no locking read and no write', async (_case, user, expected) => {
+    const { prisma, service } = build();
+    const dto = expected === 'sub-1x' ? { ...CREATE_DTO, subsidiaryId: 'sub-2', category: 'Water' as const, activityUnit: 'm3' } : CREATE_DTO;
+    const preview = await service.previewCreate(user, dto);
+    expect(preview.reportedBySubsidiaryId).toBe(expected === 'sub-1x' ? 'sub-2' : expected);
+    expect(rawSql(prisma).some((q) => q.includes('FOR SHARE'))).toBe(false);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it("create re-reads a standard user's access FOR SHARE inside its transaction, and never writes the column itself", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS });
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new', reportedBySubsidiaryId: 'sub-2' }));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-2', tradingName: 'TonyAI Energy', legalName: 'TonyAI Energy A.Ş.' }]);
+    const dto = await service.create(centralReporter(), CREATE_DTO);
+    expect(rawSql(prisma).find((q) => q.includes('FROM user_subsidiary_access'))).toMatch(/FOR SHARE/);
+    expect(prisma.activityRecord.create.mock.calls[0][0].data).not.toHaveProperty('reportedBySubsidiaryId');
+    expect(dto).toMatchObject({ subsidiaryId: 'sub-1', reportedBySubsidiaryId: 'sub-2', reportedBySubsidiaryName: 'TonyAI Energy' });
+  });
+
+  it.each([['a super_admin', superAdmin()], ['a masterkey', masterkey()]] as const)('create takes no access lock for %s', async (_role, user) => {
+    const { prisma, service } = build();
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new' }));
+    await service.create(user, CREATE_DTO);
+    expect(rawSql(prisma).some((q) => q.includes('FROM user_subsidiary_access'))).toBe(false);
+  });
+
+  it('a grant withdrawn before the write: refused as an unknown company, nothing written', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: [REPORTER_ACCESS[1]!] });
+    await expect(service.create(centralReporter(), CREATE_DTO)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('a category taken out of the grant before the write: category_not_granted, nothing written', async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: [{ ...REPORTER_ACCESS[0]!, categories: ['Fuel'] }, REPORTER_ACCESS[1]!] });
+    await expect(service.create(centralReporter(), CREATE_DTO)).rejects.toMatchObject({ response: { code: 'category_not_granted' } });
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('update, submit, recall and the decisions never write the column', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted, createdBy: 'user-entry', reportedBySubsidiaryId: 'sub-2' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-a', status: data.status, reportedBySubsidiaryId: 'sub-2' }));
+    await service.approve(superAdmin(), 'rec-a');
+    for (const [arg] of prisma.activityRecord.update.mock.calls) expect((arg as { data: object }).data).not.toHaveProperty('reportedBySubsidiaryId');
+  });
+});
+
+describe('central reporting — every answer states both entities (task 4.3)', () => {
+  it('an older record (empty column) answers its own company, by name', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-old', subsidiaryId: 'sub-1' }));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1', tradingName: null, legalName: 'Legal One' }]);
+    expect(await service.get(standardUser(), 'rec-old')).toMatchObject({ reportedBySubsidiaryId: 'sub-1', reportedBySubsidiaryName: 'Legal One' });
+  });
+
+  it("names a reporting company the reader is not granted: looked up in the reader's organisation, not its scope", async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-r', subsidiaryId: 'sub-1', status: ActivityRecordStatus.submitted, createdBy: 'user-entry', reportedBySubsidiaryId: 'sub-9' }),
+    );
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-9', tradingName: 'Supply Co', legalName: 'Supply Co A.Ş.' }]);
+    const dto = await service.get(superAdmin({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-r');
+    expect(dto).toMatchObject({ subsidiaryId: 'sub-1', reportedBySubsidiaryId: 'sub-9', reportedBySubsidiaryName: 'Supply Co' });
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['sub-9'] }, organisationId: 'org-1' },
+      select: { id: true, tradingName: true, legalName: true },
+    });
+  });
+
+  it('a page resolves its reporting entities in one query', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([
+      { ...makeRecord({ subsidiaryId: 'sub-1' }), _count: { evidenceLinks: 0 }, location: null },
+      { ...makeRecord({ subsidiaryId: 'sub-1', reportedBySubsidiaryId: 'sub-9' }), _count: { evidenceLinks: 0 }, location: null },
+      { ...makeRecord({ subsidiaryId: 'sub-2' }), _count: { evidenceLinks: 0 }, location: null },
+    ]);
+    prisma.subsidiary.findMany.mockResolvedValue([
+      { id: 'sub-1', tradingName: 'One', legalName: 'One Ltd' }, { id: 'sub-2', tradingName: 'Two', legalName: 'Two Ltd' },
+      { id: 'sub-9', tradingName: 'Nine', legalName: 'Nine Ltd' },
+    ]);
+    const page = await service.listPage(masterkey(), {});
+    expect(page.items.map((r) => [r.reportedBySubsidiaryId, r.reportedBySubsidiaryName])).toEqual([['sub-1', 'One'], ['sub-9', 'Nine'], ['sub-2', 'Two']]);
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['approve', 'recall'] as const)('the %s answer carries the same two entities as the create did', async (step) => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', subsidiaryId: 'sub-1', status: ActivityRecordStatus.submitted, createdBy: 'user-entry', reportedBySubsidiaryId: 'sub-2' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-a', subsidiaryId: 'sub-1', status: data.status, reportedBySubsidiaryId: 'sub-2' }));
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-2', tradingName: 'Main', legalName: 'Main Ltd' }]);
+    const dto = step === 'approve' ? await service.approve(superAdmin(), 'rec-a') : await service.recall(centralReporter(), 'rec-a');
+    expect(dto).toMatchObject({ subsidiaryId: 'sub-1', reportedBySubsidiaryId: 'sub-2', reportedBySubsidiaryName: 'Main' });
+  });
+});
+
+describe('central reporting — one party enters a category for a company in a period (task 4.4)', () => {
+  it("previewCreate refuses a reporter where the company's own user holds the period: its side and values, no write, no audit", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { otherParty: true });
+    const refusal = await service.previewCreate(centralReporter(), CREATE_DTO).catch((e) => e);
+    expect(refusal.response).toMatchObject({
+      code: 'single_entry_period_conflict',
+      params: { side: 'company_users', category: 'Electricity', year: 2024, period: 'Annual' },
+    });
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it("create refuses the company's own user where a central reporter holds the period", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { otherParty: true, access: [{ subsidiaryId: 'sub-1', kind: 'assigned', categories: [...CATEGORIES] }] });
+    await expect(service.create(standardUser(), CREATE_DTO)).rejects.toMatchObject({
+      response: { code: 'single_entry_period_conflict', params: { side: 'central_reporter' } },
+    });
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it("a super_admin's and a masterkey's record is no party's: the rule is not asked", async () => {
+    for (const user of [superAdmin(), masterkey()]) {
+      const { prisma, service } = build();
+      routeRaw(prisma, { otherParty: true });
+      prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new' }));
+      await service.create(user, CREATE_DTO);
+      expect(rawSql(prisma).some((q) => q.includes('LEFT JOIN profiles'))).toBe(false);
+    }
+  });
+
+  it("the database refusing a raced record (TA026) answers the same code with the request's values", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: REPORTER_ACCESS });
+    prisma.activityRecord.create.mockRejectedValue(new Prisma.PrismaClientUnknownRequestError(
+      'PostgresError { code: "TA026", message: "single_entry_period_conflict: side=company_users; subsidiary x", severity: "ERROR" }',
+      { clientVersion: 'test' },
+    ));
+    await expect(service.create(centralReporter(), CREATE_DTO)).rejects.toMatchObject({
+      response: { code: 'single_entry_period_conflict', params: { side: 'company_users', category: 'Electricity', year: 2024, period: 'Annual' } },
+    });
+  });
+
+  it('an edit moving a draft into a taken period is refused, and nothing is written', async () => {
+    const { prisma, service } = build();
+    const draft = makeRecord({
+      id: 'rec-d', subsidiaryId: 'sub-1', status: ActivityRecordStatus.draft, createdBy: 'user-entry', reportedBySubsidiaryId: 'sub-2',
+      reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'April', category: 'Electricity',
+    });
+    prisma.activityRecord.findUnique.mockResolvedValue(draft);
+    routeRaw(prisma, { otherParty: true });
+    await expect(service.update(centralReporter(), 'rec-d', { periodValue: 'March' }))
+      .rejects.toMatchObject({ response: { code: 'single_entry_period_conflict', params: { side: 'company_users', period: 'March' } } });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('central reporting — an edit raced into a taken period (qa-auditor S6)', () => {
+  it("the database's TA026 refusal on an edit answers single_entry_period_conflict with the edit's values", async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({
+      id: 'rec-d', subsidiaryId: 'sub-1', status: ActivityRecordStatus.draft, createdBy: 'user-entry', reportedBySubsidiaryId: 'sub-2',
+      reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'April', category: 'Electricity',
+    }));
+    prisma.activityRecord.update.mockRejectedValue(new Prisma.PrismaClientUnknownRequestError(
+      'PostgresError { code: "TA026", message: "single_entry_period_conflict: side=company_users; subsidiary x", severity: "ERROR" }',
+      { clientVersion: 'test' },
+    ));
+    await expect(service.update(centralReporter(), 'rec-d', { periodValue: 'March' })).rejects.toMatchObject({
+      response: { code: 'single_entry_period_conflict', params: { side: 'company_users', category: 'Electricity', year: 2024, period: 'March' } },
+    });
   });
 });

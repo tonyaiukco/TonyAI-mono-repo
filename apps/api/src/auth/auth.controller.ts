@@ -16,7 +16,10 @@ export class AuthController {
 
   @Get('me')
   async me(@CurrentUser() user: RequestUser): Promise<AuthUser> {
-    const profile = await this.prisma.profile.findUnique({ where: { id: user.id } });
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: user.id },
+      include: { organisation: { select: { onboardingCompletedAt: true } } },
+    });
     return {
       id: user.id,
       email: user.email,
@@ -31,6 +34,8 @@ export class AuthController {
         ? user.accessibleSubsidiaryIds.map((subsidiaryId) => ({
             subsidiaryId,
             categories: can(user.role, 'scope.categories') ? [...(user.categoryGrants?.[subsidiaryId] ?? [])] : [],
+            // The main company or a central reporter grant's company (D3).
+            kind: user.grantKinds?.[subsidiaryId] ?? 'assigned',
           }))
         : [],
       // The column's CHECK admits only supported locales; a row from before it
@@ -38,6 +43,9 @@ export class AuthController {
       // the web cannot load a catalogue for.
       language: isLocale(profile?.language) ? profile.language : DEFAULT_LOCALE,
       theme: profile?.theme ?? 'light',
+      // A masterkey of an organisation whose setup is not finished (D8): the
+      // web holds them on the wizard. Read from the role the guard read now.
+      onboardingPending: can(user.role, 'onboarding.run') && !!profile?.organisation && profile.organisation.onboardingCompletedAt === null,
     };
   }
 

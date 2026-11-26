@@ -24,13 +24,56 @@ export class OrganisationService {
     private readonly audit: AuditService,
   ) {}
 
-  private static toDTO(o: Pick<Organisation, 'id' | 'legalName' | 'tradingName' | 'consolidationApproach'>): OrganisationDTO {
+  private static toDTO(
+    o: Pick<Organisation, 'id' | 'legalName' | 'tradingName' | 'consolidationApproach' | 'onboardingCompletedAt'>,
+  ): OrganisationDTO {
     return {
       id: o.id,
       legalName: o.legalName,
       tradingName: o.tradingName,
       consolidationApproach: o.consolidationApproach,
+      onboardingCompletedAt: o.onboardingCompletedAt ? o.onboardingCompletedAt.toISOString() : null,
     };
+  }
+
+  /**
+   * The masterkey finishes the setup wizard (INC-2.6 §7.1; design D8): under
+   * the organisation's administrative lock, the masterkey re-read, the
+   * timestamp set where it is empty and one audit row written only when it
+   * changed. A second call — another masterkey's open tab — answers the
+   * finished organisation and writes nothing.
+   */
+  async completeOnboarding(user: RequestUser): Promise<OrganisationDTO> {
+    if (!can(user.role, 'onboarding.run')) {
+      throw new ForbiddenException('Only a masterkey finishes the setup of an organisation');
+    }
+    const organisationId = user.organisationId;
+    if (!organisationId) throw new ForbiddenException('No organisation context for this user');
+    return this.prisma.$transaction(async (tx) => {
+      await lockAndReadActor(tx, user, organisationId, 'onboarding.run');
+      await tx.$queryRaw`SELECT id FROM organisations WHERE id = ${organisationId}::uuid FOR UPDATE`;
+      const before = await tx.organisation.findUnique({ where: { id: organisationId } });
+      if (!before) throw noOrganisation();
+      if (before.onboardingCompletedAt !== null) return OrganisationService.toDTO(before);
+      const after = await tx.organisation.update({
+        where: { id: organisationId },
+        data: { onboardingCompletedAt: new Date() },
+      });
+      await this.audit.record(
+        user,
+        {
+          action: 'update',
+          entity: 'organisation',
+          entityId: organisationId,
+          diff: {
+            before: { onboardingCompletedAt: null },
+            after: { onboardingCompletedAt: after.onboardingCompletedAt?.toISOString() ?? null },
+          },
+        },
+        tx,
+      );
+      return OrganisationService.toDTO(after);
+    });
   }
 
   async get(user: RequestUser): Promise<OrganisationDTO> {

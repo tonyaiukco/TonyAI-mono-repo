@@ -57,6 +57,16 @@ import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
 interface SubsidiaryDependentCounts {
   terminalRecords: number;
   /**
+   * inc26-central-reporter-onboarding: records of OTHER companies that name
+   * this company as their reporting entity (C6), and central reporters whose
+   * main company this is (B2). Counted for a delete and for an
+   * organisation-wide reader's panel only — the records belong to companies a
+   * company-scoped reader may not read — and never added to the company's own
+   * record counts. Neither is in the panel's DTO: the blockers say so.
+   */
+  reportedRecords: number;
+  centralReporters: number;
+  /**
    * Inventory boundary versions declaring the subsidiary (LP3-04 W9): frozen
    * ones — confirmed or captured, never changed — keep it for good; an open
    * one can drop it. Neither is in the panel's DTO: the blockers say so.
@@ -639,6 +649,9 @@ export class SubsidiariesService {
     /** The reader's companies, for the panel: a child it cannot read is not
      *  counted (nor named). None for a delete, which counts every child. */
     childScope?: readonly string[],
+    /** Whether to count the two central reporting blockers: a delete always
+     *  does, the panel only for an organisation-wide reader. */
+    countReporting = true,
   ): Promise<SubsidiaryDependentCounts> {
     // Annotated, not inferred: assignability is what catches a status that no
     // longer exists in the Prisma enum, and it names the bad one. The same trap
@@ -666,6 +679,8 @@ export class SubsidiariesService {
       frozenBoundaryVersions,
       openBoundaryVersions,
       children,
+      reportedRecords,
+      centralReporters,
     ] =
       await Promise.all([
         db.activityRecord.count({
@@ -690,9 +705,23 @@ export class SubsidiariesService {
         db.inventoryBoundarySubsidiary.count({ where: { subsidiaryId: id, boundary: { frozenAt: { not: null } } } }),
         db.inventoryBoundarySubsidiary.count({ where: { subsidiaryId: id, boundary: { frozenAt: null } } }),
         db.subsidiary.count({ where: { parentId: id, ...(childScope ? { id: { in: [...childScope] } } : {}) } }),
+        countReporting
+          ? db.activityRecord.count({ where: { reportedBySubsidiaryId: id, subsidiaryId: { not: id } } })
+          : Promise.resolve(0),
+        countReporting
+          ? db.userSubsidiaryAccess.count({
+              where: {
+                subsidiaryId: id,
+                kind: 'assigned',
+                profile: { role: 'standard_user', subsidiaryAccess: { some: { kind: 'central_reporter' } } },
+              },
+            })
+          : Promise.resolve(0),
       ]);
     return {
       terminalRecords,
+      reportedRecords,
+      centralReporters,
       frozenBoundaryVersions,
       openBoundaryVersions,
       reviewRecords,
@@ -725,7 +754,7 @@ export class SubsidiariesService {
       async (tx) => {
         const row = await tx.subsidiary.findUnique({ where: { id } });
         if (!row || row.organisationId !== user.organisationId) throw new ResourceNotFoundError('subsidiary_not_found');
-        return this.countDependents(tx, id, recordScopeWhere(user), user.accessibleSubsidiaryIds);
+        return this.countDependents(tx, id, recordScopeWhere(user), user.accessibleSubsidiaryIds, can(user.role, 'scope.organisation'));
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15_000 },
     );
@@ -734,11 +763,15 @@ export class SubsidiariesService {
       locationsHoldingForeignRecords: _alarm,
       frozenBoundaryVersions: _frozen,
       openBoundaryVersions: _open,
+      reportedRecords: _reported,
+      centralReporters: _reporters,
       ...reportable
     } = counts;
     void _alarm;
     void _frozen;
     void _open;
+    void _reported;
+    void _reporters;
     return {
       subsidiaryId: id,
       ...reportable,
@@ -850,6 +883,14 @@ export class SubsidiariesService {
     if (c.openBoundaryVersions > 0) {
       add('openBoundaryVersions', `${c.openBoundaryVersions} open inventory boundary version(s) declaring it`);
     }
+    // inc26-central-reporter-onboarding: the trace of another company's
+    // records (C6), and a central reporter's one main company (B2).
+    if (c.reportedRecords > 0) {
+      add('reportedRecords', `${c.reportedRecords} record(s) of other companies naming it as their reporting company`);
+    }
+    if (c.centralReporters > 0) {
+      add('centralReporters', `${c.centralReporters} central reporter(s) whose main company it is`);
+    }
     if (blockers.length === 0) return null;
 
     return {
@@ -865,6 +906,12 @@ export class SubsidiariesService {
           : '') +
         (c.reviewRecords > 0
           ? '; a record awaiting review must be returned by a reviewer before it can be removed'
+          : '') +
+        (c.reportedRecords > 0
+          ? '; a record another company owns names this one as the company that reported it, a trace that never changes, so those records have to go first'
+          : '') +
+        (c.centralReporters > 0
+          ? '; a central reporter keeps one main company, so move the reporter to another main company or withdraw the grant first'
           : '') +
         '), then delete the subsidiary.',
     };
@@ -916,8 +963,8 @@ export class SubsidiariesService {
       // (security review, WP7) — only the rows this statement removed (owner
       // review, P2). A child company a super_admin created carries one from
       // the start.
-      const grants = await tx.$queryRaw<{ userId: string }[]>`
-        DELETE FROM user_subsidiary_access WHERE subsidiary_id = ${id}::uuid RETURNING user_id::text AS "userId"`;
+      const grants = await tx.$queryRaw<{ userId: string; kind: string; categories: string[] }[]>`
+        DELETE FROM user_subsidiary_access WHERE subsidiary_id = ${id}::uuid RETURNING user_id::text AS "userId", kind, categories`;
       // The audit's `before` is the row the delete removed — not the read
       // before the transaction, which a move or rename may have overtaken.
       const deleted = await tx.subsidiary.delete({ where: { id } });
@@ -926,12 +973,13 @@ export class SubsidiariesService {
         { action: 'delete', entity: 'subsidiary', entityId: id, diff: { before: this.toDTO(deleted) } },
         tx,
       );
-      for (const { userId } of [...grants].sort((a, b) => a.userId.localeCompare(b.userId))) {
-        await this.audit.record(
-          user,
-          { action: 'delete', entity: 'subsidiary_access', entityId: userId, diff: { subsidiaryId: id, reason: 'company deleted' } },
-          tx,
-        );
+      for (const { userId, kind, categories } of [...grants].sort((a, b) => a.userId.localeCompare(b.userId))) {
+        // A central reporter grant's row names its kind and the categories it
+        // held, as every withdrawal of one does (inc26-central-reporter-onboarding D6).
+        const diff = kind === 'central_reporter'
+          ? { subsidiaryId: id, reason: 'company deleted', kind, categories: [...categories].sort() }
+          : { subsidiaryId: id, reason: 'company deleted' };
+        await this.audit.record(user, { action: 'delete', entity: 'subsidiary_access', entityId: userId, diff }, tx);
       }
     }, { timeout: 15_000 });
     return { id, deleted: true };

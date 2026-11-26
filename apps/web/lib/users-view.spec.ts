@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
 import { copyFor } from '@/lib/i18n/testing';
-import { CATEGORIES, type Category, type InvitationStateDTO, type UserRole, type UserSummaryDTO } from '@/lib/types';
+import {
+  CATEGORIES,
+  type Category,
+  type InvitationStateDTO,
+  type UserAccessGrantDTO,
+  type UserAccessRowDTO,
+  type UserRole,
+  type UserSummaryDTO,
+} from '@/lib/types';
 import {
   accessPayload,
   accessSummary,
@@ -41,12 +49,17 @@ const invitation = (over: Partial<InvitationStateDTO> = {}): InvitationStateDTO 
   status: 'sent', language: 'en', attempts: 1, lastErrorStep: null, lastErrorCode: null,
   lastAttemptAt: '2026-10-10T10:00:00.000Z', sentAt: '2026-10-10T10:00:00.000Z', acceptedAt: null, ...over,
 });
-const member = (over: Partial<UserSummaryDTO> = {}): UserSummaryDTO => ({
+/** A listed account; an access row with no kind is an assigned one (inc26-central-reporter-onboarding). */
+type MemberOver = Partial<Omit<UserSummaryDTO, 'access'>> & { access?: (UserAccessGrantDTO & { kind?: UserAccessRowDTO['kind'] })[] };
+const member = (over: MemberOver = {}): UserSummaryDTO => ({
   id: 'u1', email: 'a@b.test', fullName: 'A', role: 'standard_user', language: 'en', status: 'invited',
-  access: [], disabledAt: null, authSyncPending: false, invitation: invitation(), createdAt: '2026-10-10T09:00:00.000Z',
+  disabledAt: null, authSyncPending: false, invitation: invitation(), createdAt: '2026-10-10T09:00:00.000Z',
   ...over,
+  access: (over.access ?? []).map((g) => ({ kind: 'assigned' as const, ...g })),
 });
 const grant = (subsidiaryId: string, categories: Category[] = []) => ({ subsidiaryId, categories });
+/** An access row as the API answers it (inc26-central-reporter-onboarding): assigned unless named. */
+const row = (subsidiaryId: string, kind: UserAccessRowDTO['kind'] = 'assigned', categories: Category[] = []): UserAccessRowDTO => ({ subsidiaryId, categories, kind });
 const companies = (...ids: string[]) =>
   ids.map((id) => ({ id, legalName: id.toUpperCase(), nodeType: 'company' as const, control: 'controlled' as const }));
 
@@ -103,6 +116,7 @@ describe('The users list states each account\'s access', () => {
       names: ['Ankara Dağıtım', 'Bursa Dağıtım', 'Çorum Dağıtım'],
       overflow: 2,
       all: ['Ankara Dağıtım', 'Bursa Dağıtım', 'Çorum Dağıtım', 'Denizli Dağıtım', 'İzmir Dağıtım'],
+      grant: null,
     });
     expect(en('accessMore', { count: '2' })).toBe('+2 more');
     expect(tr('accessMore', { count: '2' })).toBe('+2 daha');
@@ -130,7 +144,7 @@ describe('The users list states each account\'s access', () => {
 
   it('counts a grant whose subsidiary is not loaded instead of showing its id', () => {
     const summary = accessSummary(member({ access: [grant('den'), grant('unknown-id')] }), names, 'tr-TR');
-    expect(summary).toEqual({ key: 'named', names: ['Denizli Dağıtım'], overflow: 1, all: ['Denizli Dağıtım'] });
+    expect(summary).toEqual({ key: 'named', names: ['Denizli Dağıtım'], overflow: 1, all: ['Denizli Dağıtım'], grant: null });
     expect(JSON.stringify(summary)).not.toContain('unknown-id');
   });
 });
@@ -418,7 +432,7 @@ describe('The masterkey administers super_admins and auditors', () => {
 
   it('A masterkey changes their own role: their own row offers nothing', () => {
     expect(rowActions(masterkey, member({ id: 'mk', role: 'masterkey' }))).toEqual({
-      editAccess: false, changeRole: false, toggleEnabled: false, resend: false, menu: false,
+      editAccess: false, centralReporter: false, changeRole: false, toggleEnabled: false, resend: false, menu: false,
     });
     expect(rowActions(masterkey, member({ id: 'other', role: 'masterkey' }))).toMatchObject({ changeRole: true, toggleEnabled: true });
   });
@@ -449,7 +463,7 @@ describe('A super_admin assigns standard users in their own companies', () => {
   it('A super_admin changes a role: not offered, nor disabling or enabling', () => {
     const row = member({ id: 'su', role: 'standard_user', status: 'active', invitation: null });
     expect(rowActions(superAdmin('a'), row)).toEqual({
-      editAccess: true, changeRole: false, toggleEnabled: false, resend: false, menu: true,
+      editAccess: true, centralReporter: false, changeRole: false, toggleEnabled: false, resend: false, menu: true,
     });
     expect(roleChangeOptions(superAdmin('a'))).toEqual([]);
   });
@@ -465,7 +479,7 @@ describe('The users list shows the accounts its reader administers', () => {
   it('A super_admin\'s list: the standard users are editable, the first shown with company A alone', () => {
     const first = member({ id: 'u1', role: 'standard_user', access: [grant('a')] });
     const third = member({ id: 'u3', role: 'standard_user', access: [] });
-    expect(accessSummary(first, new Map([['a', 'Alpha']]), 'en-GB')).toEqual({ key: 'named', names: ['Alpha'], overflow: 0, all: ['Alpha'] });
+    expect(accessSummary(first, new Map([['a', 'Alpha']]), 'en-GB')).toEqual({ key: 'named', names: ['Alpha'], overflow: 0, all: ['Alpha'], grant: null });
     expect(accessSummary(third, new Map(), 'en-GB')).toEqual({ key: 'noAccess' });
     for (const row of [first, third]) expect(rowActions(superAdmin('a'), row).editAccess).toBe(true);
     // A row the API would not list for them offers nothing either.
@@ -491,16 +505,15 @@ describe('list updates', () => {
 describe("reloadAfterAccessSave (owner's review: a withdrawn last visible grant re-reads the list)", () => {
   const sa = { id: "sa", role: "super_admin" as const, accessibleSubsidiaryIds: ["A"] };
   const mk = { id: "mk", role: "masterkey" as const, accessibleSubsidiaryIds: ["A", "C"] };
-  const grant = (id: string) => ({ subsidiaryId: id, categories: [] });
 
   it("re-reads when a super_admin's save leaves the row with no grant it can see", () => {
-    expect(reloadAfterAccessSave(sa, { access: [grant("A")] }, { access: [] })).toBe(true);
+    expect(reloadAfterAccessSave(sa, { access: [row("A")] }, { access: [] })).toBe(true);
   });
   it("keeps the row when a grant it can see remains, or when there was none to withdraw", () => {
-    expect(reloadAfterAccessSave(sa, { access: [grant("A")] }, { access: [grant("A")] })).toBe(false);
-    expect(reloadAfterAccessSave(sa, { access: [] }, { access: [grant("A")] })).toBe(false);
+    expect(reloadAfterAccessSave(sa, { access: [row("A")] }, { access: [row("A")] })).toBe(false);
+    expect(reloadAfterAccessSave(sa, { access: [] }, { access: [row("A")] })).toBe(false);
   });
   it("never re-reads for a masterkey, who sees every account and grant", () => {
-    expect(reloadAfterAccessSave(mk, { access: [grant("A")] }, { access: [] })).toBe(false);
+    expect(reloadAfterAccessSave(mk, { access: [row("A")] }, { access: [] })).toBe(false);
   });
 });

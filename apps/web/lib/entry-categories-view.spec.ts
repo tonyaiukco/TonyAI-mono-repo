@@ -11,7 +11,9 @@ import { entryCompanies, categoryGate, categoryGateMessage, fallbackCategory, of
  */
 const A = 'company-a';
 const B = 'company-b';
-const standardUser = (access: EntryUser['access']): EntryUser => ({ role: 'standard_user', access });
+/** An access row with no kind is an assigned one (inc26-central-reporter-onboarding). */
+const standardUser = (access: (Omit<EntryUser['access'][number], 'kind'> & { kind?: EntryUser['access'][number]['kind'] })[]): EntryUser =>
+  ({ role: 'standard_user', access: access.map((g) => ({ kind: 'assigned' as const, ...g })) });
 const named = (locale: 'en' | 'tr') => ({
   company: 'Acme Energy',
   category: (value: Category) => MESSAGES[locale].categories[value],
@@ -71,7 +73,7 @@ describe('the category gate — edges', () => {
     'offers a %s every category, whatever its grants say',
     (role) => {
       // A super_admin's grant carries no categories and covers them all.
-      expect(offeredCategories({ role, access: [{ subsidiaryId: A, categories: [] }] }, A)).toEqual(CATEGORIES);
+      expect(offeredCategories({ role, access: [{ subsidiaryId: A, categories: [], kind: 'assigned' }] }, A)).toEqual(CATEGORIES);
     },
   );
 

@@ -28,7 +28,8 @@
     "would_block_submit": "Henüz incelemeye gönderilemez",
     "evidence_required": "Kanıt dosyası gerekiyor",
     "category_not_granted": "Kategori size atanmamış",
-    "entity_closed_to_data_entry": "Veri girişine kapalı"
+    "entity_closed_to_data_entry": "Veri girişine kapalı",
+    "single_entry_period_conflict": "Dönem diğer tarafça girilmiş"
   },
   "codes": {
     "query_too_broad": "Bu istek işleme sınırını aşıyor. Filtreleri daraltın veya daha küçük bir rapor isteyin.",
@@ -168,7 +169,10 @@
     "entity_closed_to_data_entry": "Bu birim Kapsam 1 ve 2 envanterinin dışında (öz kaynak şirketi ya da sektör grubu); bu nedenle veri girişine kapalı.",
     "subsidiary_not_assignable": "Öz kaynak şirketi ya da sektör grubu bir kullanıcıya atanamaz. Hiçbir şey değiştirilmedi.",
     "boundary_subsidiary_not_reportable": "Öz kaynak şirketi ya da sektör grubu envanter sınırının dışındadır ve sınırda beyan edilemez.",
-    "geography_without_factors": "Bu ortamdaki hiçbir emisyon faktörü seti {geography} için hesaplama yapamıyor. Faktör kütüphanesinin kapsadığı bir coğrafya seçin."
+    "geography_without_factors": "Bu ortamdaki hiçbir emisyon faktörü seti {geography} için hesaplama yapamıyor. Faktör kütüphanesinin kapsadığı bir coğrafya seçin.",
+    "central_reporter_needs_main_entity": "Merkezi raportör, grant dışında tam olarak bir ana şirket tutar; bu değişiklik ona hiç ana şirket ya da birden fazla ana şirket bırakırdı. Hiçbir şey değiştirilmedi.",
+    "single_entry_conflict": "Bu kategoriler zaten şirketin kendi standart kullanıcılarına açık, bu yüzden bir merkezi raportöre de açılamaz. Hiçbir şey değiştirilmedi.",
+    "single_entry_period_conflict": "Şirketin kendi kullanıcıları {period} {year} için {category} verisini zaten girdi, bu yüzden bir merkezi raportör bu dönemde bu şirket için bu kategoriyi giremez."
   },
   "variants": {
     "variance_reason_required": {
@@ -187,6 +191,12 @@
     },
     "evidence_backs_locked_records": {
       "hidden": "Bu dosya artık değişemeyen başka kayıtları da destekliyor, bunların bir kısmı erişiminizin dışında; bu yüzden silinemez. Bunun yerine her düzenlenebilir kayıttan ayrı ayrı kaldırın."
+    },
+    "single_entry_conflict": {
+      "central_reporter": "Bu kategoriler bu şirkette zaten bir merkezi raportöre açık, bu yüzden şirketin kendi standart kullanıcılarına da açılamaz. Hiçbir şey değiştirilmedi."
+    },
+    "single_entry_period_conflict": {
+      "central_reporter": "Bir merkezi raportör {period} {year} için bu şirketin {category} verisini zaten girdi, bu yüzden şirketin kendi kullanıcıları bu dönemde bu kategoriyi giremez."
     }
   },
   "bulkOutcomes": {

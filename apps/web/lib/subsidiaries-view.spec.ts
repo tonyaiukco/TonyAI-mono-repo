@@ -25,6 +25,9 @@ const SERVER: Record<string, (n: number) => string> = {
   // inc26-group-tree (RD9): a child node and any facility block.
   children: (n) => `${n} child company node(s)`,
   locations: (n) => `${n} facility(ies)`,
+  // inc26-central-reporter-onboarding: shown to an organisation-wide reader only.
+  reportedRecords: (n) => `${n} record(s) of other companies naming it as their reporting company`,
+  centralReporters: (n) => `${n} central reporter(s) whose main company it is`,
 };
 
 describe('blockerLines', () => {
@@ -165,5 +168,26 @@ describe('the share percent and NACE fields (inc26-group-tree)', () => {
     expect(parseNaceCode(' c10.11 ')).toBe('C10.11');
     for (const ok of ['C', '10', '10.1', '35.21']) expect(parseNaceCode(ok), ok).toBe(ok);
     for (const bad of ['Z', '1', '10.111', 'C10.11.1', 'hello']) expect(parseNaceCode(bad), bad).toBe('invalid');
+  });
+});
+
+describe('the central reporting blockers on the panel (inc26-central-reporter-onboarding, task 5.6)', () => {
+  it("words both for a masterkey, whose summary carries them, in English and Turkish", () => {
+    const summary = {
+      blockers: ['x', 'y'],
+      blockerCounts: [{ kind: 'reportedRecords', count: 40 }, { kind: 'centralReporters', count: 1 }] satisfies SubsidiaryBlockerCount[],
+    };
+    expect(blockerLines(summary, en)).toEqual([
+      '40 record(s) of other companies naming it as their reporting company',
+      '1 central reporter(s) whose main company it is',
+    ]);
+    expect(blockerLines(summary, tr)).toEqual([
+      'Onu raporlayan şirket olarak gösteren, başka şirketlere ait 40 kayıt',
+      'Ana şirketi bu şirket olan 1 merkezi raportör',
+    ]);
+  });
+
+  it('shows nothing to a company-scoped reader, whose summary the API answers without them', () => {
+    expect(blockerLines({ blockers: [], blockerCounts: [] }, tr)).toEqual([]);
   });
 });

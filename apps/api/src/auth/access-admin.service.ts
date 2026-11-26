@@ -15,8 +15,12 @@ import {
   isCategory,
   isLocale,
   isUserRole,
+  singleEntryConflicts,
   type Capability,
   type Category,
+  type CentralReporterGrantInput,
+  type GrantKind,
+  type SingleEntryAccessRow,
   type ConsentKind,
   type Locale,
   type UserAccessGrantDTO,
@@ -25,6 +29,11 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { createDefaultSubsidiary } from '../subsidiaries/default-subsidiary';
 import { subsidiaryNotAssignable, treeTriggerRefusal } from '../subsidiaries/tree-errors';
+import {
+  CentralReporterNeedsMainEntityError,
+  SingleEntryConflictError,
+  accessTriggerRefusal,
+} from '../central-reporting/central-reporting-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AccessRoleMismatchError,
@@ -159,19 +168,23 @@ export class AccessAdminService {
       // subsidiary deleted (or a grant added by the seed) between a read and
       // a delete would otherwise be audited without being removed, or the
       // reverse (`security-rls` round 2).
-      const grants = await tx.$queryRaw<{ subsidiaryId: string }[]>`
+      const grants = await tx.$queryRaw<{ subsidiaryId: string; kind: string; categories: string[] }[]>`
         DELETE FROM user_subsidiary_access
         WHERE user_id = ${profileId}::uuid AND organisation_id = ${organisationId}::uuid
-        RETURNING subsidiary_id::text AS "subsidiaryId"`;
+        RETURNING subsidiary_id::text AS "subsidiaryId", kind, categories`;
       grants.sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId));
-      for (const { subsidiaryId } of grants) {
+      for (const { subsidiaryId, kind, categories } of grants) {
         await this.audit.record(
           admin,
           {
             action: 'delete',
             entity: 'subsidiary_access',
             entityId: profileId,
-            diff: { subsidiaryId, reason: `role changed from ${target.role} to ${role}` },
+            // A central reporter grant's row names its kind and the categories
+            // it held, as every withdrawal of one does (design D6).
+            diff: kind === 'central_reporter'
+              ? { subsidiaryId, reason: `role changed from ${target.role} to ${role}`, kind, categories: sortedCategories(categories) }
+              : { subsidiaryId, reason: `role changed from ${target.role} to ${role}` },
           },
           tx,
         );
@@ -190,7 +203,7 @@ export class AccessAdminService {
   async replaceSubsidiaryAccess(actor: RequestUser, rawProfileId: string, access: UserAccessGrantDTO[]): Promise<void> {
     const organisationId = assertActorMay(actor, 'users.set_access');
     const profileId = canonicalId(rawProfileId);
-    await this.prisma.$transaction(async (tx) => {
+    await mapAccessRefusals(this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId, 'users.set_access');
       const target = await findMember(tx, organisationId, profileId);
       assertMaySetAccessOf(admin, target.role, access.length > 0);
@@ -199,18 +212,25 @@ export class AccessAdminService {
       await assertSubsidiaries(tx, organisationId, wanted.map((g) => g.subsidiaryId), admin.scope);
       const heldAll = await tx.userSubsidiaryAccess.findMany({
         where: { userId: profileId, organisationId },
-        select: { subsidiaryId: true, categories: true },
+        select: { subsidiaryId: true, categories: true, kind: true },
       });
       const inScope = (id: string) => admin.scope === null || admin.scope.has(id);
-      const held = heldAll.filter((g) => inScope(g.subsidiaryId));
       // A scoped actor asking nothing of an account it does not administer
       // (grants, none inside its companies) learns nothing about it either:
       // answered as an unknown account, as its users list hides it (owner's
       // review, P1). Withdrawing its own last visible grant is a different
-      // request — that grant is in scope — and is allowed.
-      if (admin.scope !== null && wanted.length === 0 && heldAll.length > 0 && held.length === 0) {
+      // request — that grant is in scope — and is allowed. A central reporter
+      // row inside its companies is one it sees (task 3.1), so an empty save
+      // of such an account is answered, and changes nothing.
+      if (admin.scope !== null && wanted.length === 0 && heldAll.length > 0 && !heldAll.some((g) => inScope(g.subsidiaryId))) {
         throw new ResourceNotFoundError('user_not_found');
       }
+      // This request writes `assigned` rows only (design D6): a central
+      // reporter grant's rows are neither counted, removed, widened nor
+      // re-labelled here — only the masterkey's grant request changes them.
+      const assignedAll = heldAll.filter((g) => g.kind !== 'central_reporter');
+      const grantRows = heldAll.filter((g) => g.kind === 'central_reporter');
+      const held = assignedAll.filter((g) => inScope(g.subsidiaryId));
       const wantedById = new Map(wanted.map((g) => [g.subsidiaryId, g.categories]));
       const heldById = new Map(held.map((g) => [g.subsidiaryId, sortedCategories(g.categories)]));
       const removed = held.map((g) => g.subsidiaryId).filter((id) => !wantedById.has(id)).sort();
@@ -219,10 +239,27 @@ export class AccessAdminService {
         ? wanted.filter((g) => heldById.has(g.subsidiaryId) && !sameList(heldById.get(g.subsidiaryId)!, g.categories))
         : [];
       // One company per standard user (ruling R6), counted over ALL their
-      // grants — those the actor cannot see included. Only an ADDED company is
-      // refused: an account carried over with several is edited down, not up.
-      if (can(target.role, 'scope.categories') && added.length > 0 && heldAll.length - removed.length + added.length > 1) {
+      // assigned companies — those the actor cannot see included, a central
+      // reporter grant's not. Only an ADDED company is refused: an account
+      // carried over with several is edited down, not up.
+      const assignedAfter = assignedAll.length - removed.length + added.length;
+      if (grantRows.length > 0) {
+        // B2: a grant holder keeps exactly one main company outside the grant.
+        // Naming a grant company beside the main company is an added second
+        // company, as for anyone; any other way of losing the one main
+        // company — withdrawn, or moved into the grant — is this refusal.
+        const grantIds = new Set(grantRows.map((g) => g.subsidiaryId));
+        const namesGrantCompany = added.some((g) => grantIds.has(g.subsidiaryId));
+        if (namesGrantCompany && assignedAfter > 1) throw new StandardUserSingleCompanyError();
+        if (namesGrantCompany || assignedAfter !== 1) throw new CentralReporterNeedsMainEntityError();
+      }
+      if (can(target.role, 'scope.categories') && added.length > 0 && assignedAfter > 1) {
         throw new StandardUserSingleCompanyError();
+      }
+      // Single entry (§4.2): nothing this change opens to the account may be
+      // open to the other party at the same company.
+      if (can(target.role, 'scope.categories') && (added.length > 0 || recategorised.length > 0)) {
+        await assertSingleEntry(tx, organisationId, profileId, target.role, wanted.map((g) => ({ ...g, kind: 'assigned' as const })), admin.scope);
       }
       if (removed.length) {
         await tx.userSubsidiaryAccess.deleteMany({
@@ -256,7 +293,90 @@ export class AccessAdminService {
           tx,
         );
       }
-    });
+    }));
+  }
+
+  /**
+   * A standard user's central reporter grant (INC-2.6 §1, §4.1, §6; design
+   * D6), the whole of it: one category list over the companies named, beside
+   * the account's one main company. A masterkey's power only
+   * (`central_reporter.grant`). Each named company becomes a grant company —
+   * an assigned one converted in place (C7: a carried-over account's), a
+   * standing grant company re-categorised, any other created; each standing
+   * grant company not named is withdrawn; no company withdraws the grant.
+   * Exactly one assigned company must be left (B2), and nothing may open a
+   * category to both parties (§4.2). One audit row per company changed, with
+   * the kind and the categories before and after; nothing changed writes
+   * nothing.
+   */
+  async setCentralReporterGrant(actor: RequestUser, rawProfileId: string, input: CentralReporterGrantInput): Promise<void> {
+    const organisationId = assertActorMay(actor, 'central_reporter.grant');
+    const profileId = canonicalId(rawProfileId);
+    const grant = normaliseGrant(input);
+    await mapAccessRefusals(this.prisma.$transaction(async (tx) => {
+      const admin = await lockAndReadActor(tx, actor, organisationId, 'central_reporter.grant');
+      const target = await findMember(tx, organisationId, profileId);
+      if (target.role !== 'standard_user') throw new AccessRoleMismatchError();
+      // The masterkey's own organisation, companies that hold records only.
+      await assertSubsidiaries(tx, organisationId, grant.subsidiaryIds, null);
+      const heldRows = await tx.userSubsidiaryAccess.findMany({
+        where: { userId: profileId, organisationId },
+        select: { subsidiaryId: true, categories: true, kind: true },
+      });
+      const held = new Map(heldRows.map((g) => [g.subsidiaryId, { kind: kindOf(g.kind), categories: sortedCategories(g.categories) }]));
+      const named = new Set(grant.subsidiaryIds);
+      const assignedLeft = heldRows.filter((g) => kindOf(g.kind) === 'assigned' && !named.has(g.subsidiaryId));
+      if (grant.subsidiaryIds.length > 0 && assignedLeft.length !== 1) throw new CentralReporterNeedsMainEntityError();
+
+      const proposed = [
+        ...assignedLeft.map((g) => ({ subsidiaryId: g.subsidiaryId, categories: sortedCategories(g.categories), kind: 'assigned' as const })),
+        ...grant.subsidiaryIds.map((subsidiaryId) => ({ subsidiaryId, categories: grant.categories, kind: 'central_reporter' as const })),
+      ];
+      await assertSingleEntry(tx, organisationId, profileId, target.role, proposed, null);
+
+      const changes: { subsidiaryId: string; before: GrantRowState | null; after: GrantRowState | null }[] = [];
+      for (const subsidiaryId of grant.subsidiaryIds) {
+        const before = held.get(subsidiaryId) ?? null;
+        const after: GrantRowState = { kind: 'central_reporter', categories: grant.categories };
+        if (before && before.kind === after.kind && sameList(before.categories, after.categories)) continue;
+        changes.push({ subsidiaryId, before, after });
+      }
+      for (const [subsidiaryId, before] of held) {
+        if (before.kind === 'central_reporter' && !named.has(subsidiaryId)) changes.push({ subsidiaryId, before, after: null });
+      }
+      changes.sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId));
+      // Withdrawals first, then conversions and re-categorisations, then new
+      // rows: the order in which no step needs a row another step removes.
+      const withdrawn = changes.filter((c) => c.after === null).map((c) => c.subsidiaryId);
+      if (withdrawn.length) {
+        await tx.userSubsidiaryAccess.deleteMany({ where: { userId: profileId, organisationId, subsidiaryId: { in: withdrawn } } });
+      }
+      for (const c of changes) {
+        if (c.after === null || c.before === null) continue;
+        await tx.userSubsidiaryAccess.update({
+          where: { userId_subsidiaryId: { userId: profileId, subsidiaryId: c.subsidiaryId } },
+          data: { kind: c.after.kind, categories: c.after.categories },
+        });
+      }
+      const created = changes.filter((c) => c.before === null && c.after !== null);
+      if (created.length) {
+        try {
+          await tx.userSubsidiaryAccess.createMany({
+            data: created.map((c) => ({
+              userId: profileId, subsidiaryId: c.subsidiaryId, organisationId, kind: 'central_reporter', categories: grant.categories,
+            })),
+          });
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+            throw new ResourceNotFoundError('subsidiary_not_found');
+          }
+          throw treeTriggerRefusal(err) ?? err;
+        }
+      }
+      for (const c of changes) {
+        await this.audit.record(admin, grantChangeRow(profileId, c.subsidiaryId, c.before, c.after), tx);
+      }
+    }));
   }
 
   /**
@@ -340,6 +460,11 @@ export class AccessAdminService {
             organisationId,
           },
         });
+        // Single entry (§4.2): the invited user's categories may not be open
+        // to a central reporter at the same company.
+        if (can(input.role, 'scope.categories')) {
+          await assertSingleEntry(tx, organisationId, profileId, input.role, access.map((g) => ({ ...g, kind: 'assigned' as const })), admin.scope);
+        }
         await createGrants(tx, profileId, organisationId, access);
         await tx.invitation.create({ data: { profileId, language: input.language, invitedBy: admin.id } });
         await this.audit.record(
@@ -358,6 +483,10 @@ export class AccessAdminService {
         return 'created' as const;
       });
     } catch (err) {
+      // A grant raced by another access write: the database's single-entry
+      // refusal answered as the API's own.
+      const raced = accessTriggerRefusal(err);
+      if (raced) throw raced;
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         // Another tenant took the address between the lookup and the insert:
         // the same refusal, audited in a transaction of its own. The lock was
@@ -726,8 +855,114 @@ async function createGrants(
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
       throw new ResourceNotFoundError('subsidiary_not_found');
     }
-    // Ticked associate after the check above: TA020 refused the grant.
-    throw treeTriggerRefusal(err) ?? err;
+    // Ticked associate after the check above: TA020 refused the grant; a
+    // category opened to the other party meanwhile: TA024.
+    throw treeTriggerRefusal(err) ?? accessTriggerRefusal(err) ?? err;
+  }
+}
+
+/** A stored kind as the service reads it: anything but a grant row is assigned. */
+function kindOf(kind: string): GrantKind {
+  return kind === 'central_reporter' ? 'central_reporter' : 'assigned';
+}
+
+/** An access row's kind and categories, before or after a grant change. */
+interface GrantRowState {
+  kind: GrantKind;
+  categories: Category[];
+}
+
+/**
+ * The grant request's input: each company once (400 otherwise), canonical
+ * ids, each category one of `CATEGORIES`, stored sorted and unique. Companies
+ * with no category are invalid input (§4.1: one category list per grant); no
+ * company is a withdrawal, whatever the list.
+ */
+function normaliseGrant(input: CentralReporterGrantInput): { subsidiaryIds: string[]; categories: Category[] } {
+  const ids = (input.subsidiaryIds ?? []).map(canonicalId);
+  if (new Set(ids).size !== ids.length) throw new BadRequestException('Each company may appear once');
+  const raw = input.categories ?? [];
+  if (raw.some((c) => !isCategory(c))) throw new BadRequestException('Unknown category');
+  const categories = sortedCategories(raw);
+  if (ids.length > 0 && categories.length === 0) throw new BadRequestException('A central reporter grant names at least one category');
+  return { subsidiaryIds: [...ids].sort(), categories: ids.length > 0 ? categories : [] };
+}
+
+/** The audit row of one company of a grant changed: its kind and categories before and after, never an address or a name. */
+function grantChangeRow(profileId: string, subsidiaryId: string, before: GrantRowState | null, after: GrantRowState | null) {
+  const state = (s: GrantRowState) => ({ kind: s.kind, categories: s.categories });
+  if (before === null && after !== null) {
+    return { action: 'create' as const, entity: 'subsidiary_access' as const, entityId: profileId, diff: { subsidiaryId, ...state(after) } };
+  }
+  if (after === null && before !== null) {
+    return { action: 'delete' as const, entity: 'subsidiary_access' as const, entityId: profileId, diff: { subsidiaryId, ...state(before) } };
+  }
+  return {
+    action: 'update' as const,
+    entity: 'subsidiary_access' as const,
+    entityId: profileId,
+    diff: { subsidiaryId, before: state(before!), after: state(after!) },
+  };
+}
+
+/**
+ * Single entry, what is opened (§4.2; design D4): `proposed` is every access
+ * row `profileId` would hold after the write; the other accounts' rows at
+ * those companies are read in the same transaction, under the administrative
+ * lock the caller holds. A conflict is refused with `single_entry_conflict`,
+ * its list limited to companies `scope` reads (null: all). TA024 holds the
+ * same rule for every writer and a race.
+ */
+async function assertSingleEntry(
+  tx: Prisma.TransactionClient,
+  organisationId: string,
+  profileId: string,
+  holderRole: string,
+  proposed: readonly { subsidiaryId: string; categories: readonly Category[]; kind: GrantKind }[],
+  scope: ReadonlySet<string> | null,
+): Promise<void> {
+  if (holderRole !== 'standard_user' || proposed.length === 0) return;
+  const companies = [...new Set(proposed.map((r) => r.subsidiaryId))];
+  const others = await tx.userSubsidiaryAccess.findMany({
+    where: { organisationId, subsidiaryId: { in: companies }, userId: { not: profileId } },
+    select: { userId: true, subsidiaryId: true, kind: true, categories: true, profile: { select: { role: true } } },
+  });
+  const standing: SingleEntryAccessRow[] = others.map((r) => ({
+    userId: r.userId,
+    subsidiaryId: r.subsidiaryId,
+    kind: kindOf(r.kind),
+    categories: sortedCategories(r.categories),
+    holderRole: r.profile.role,
+  }));
+  const conflicts = singleEntryConflicts(
+    standing,
+    proposed.map((r) => ({ userId: profileId, subsidiaryId: r.subsidiaryId, kind: r.kind, categories: r.categories, holderRole })),
+  );
+  if (conflicts.length === 0) return;
+  throw new SingleEntryConflictError(conflicts[0]!.side, conflictsVisibleTo(conflicts, scope));
+}
+
+/**
+ * The conflicts a refusal lists: only companies its reader may read (null: the
+ * whole organisation), as identifiers, never an account (design D4). The
+ * companies a request names are inside its reader's scope already; this holds
+ * the rule should that ever change.
+ */
+export function conflictsVisibleTo(
+  conflicts: readonly { subsidiaryId: string; categories: readonly Category[] }[],
+  scope: ReadonlySet<string> | null,
+): { subsidiaryId: string; categories: Category[] }[] {
+  return conflicts
+    .filter((c) => scope === null || scope.has(c.subsidiaryId))
+    .map((c) => ({ subsidiaryId: c.subsidiaryId, categories: [...c.categories] }));
+}
+
+/** A write's database refusals answered as the API's own: TA024's single entry. */
+async function mapAccessRefusals<T>(write: Promise<T>): Promise<T> {
+  try {
+    return await write;
+  } catch (err) {
+    throw accessTriggerRefusal(err) ?? err;
   }
 }
 

@@ -49,7 +49,8 @@ executives in multi-entity groups across the UK, Türkiye and the EU.
 | Area | What it does |
 | --- | --- |
 | Group tree | Companies as one tree of any depth — holding, sub-holdings, sector groups, companies, child companies — with controlled companies and associates, one consolidation approach and a roll-up per node |
-| Data entry | Monthly activity records per subsidiary or site; bulk CSV/XLSX import with a dry run |
+| Data entry | Monthly activity records per subsidiary or site; bulk CSV/XLSX import with a dry run; each record names its owning company and the company that reported it |
+| Central reporting | A masterkey gives a standard user a central reporter grant — one category list over several companies beside its main company — and a category and period are entered by one party only |
 | Review and approval | Submit, review, approve; nobody approves a record they created |
 | Evidence | Files attached to records, stored privately and served through short-lived signed URLs |
 | Calculation | Factor resolution and unit normalisation; each result keeps the factor and version used |
@@ -60,7 +61,7 @@ executives in multi-entity groups across the UK, Türkiye and the EU.
 | Analytics | Dashboard KPIs, the coverage matrix and emissions analysis |
 | Reports | Live reports, and issued reports reproduced from a retained, fingerprinted dataset, as PDF, Excel and CSV |
 | Audit trail | An append-only log of every change |
-| Users and access | Invitations, password reset, four roles and tenant-scoped grants |
+| Users and access | Invitations, password reset, four roles and tenant-scoped grants; a new organisation's masterkey sets it up in an eight-step wizard |
 
 ## Architecture
 
@@ -96,7 +97,7 @@ How a request travels from sign-in to the database:
   subsidiaries, composite foreign keys keep every grant inside its own organisation,
   and Row Level Security confines direct database clients.
 - **Four roles:** `masterkey` (the whole organisation), `super_admin` (its assigned
-  companies), `standard_user` (one company, its assigned categories) and `auditor`
+  companies), `standard_user` (one main company, its assigned categories, and optionally a central reporter grant) and `auditor`
   (reads everything, changes nothing). Only a `masterkey` changes organisation
   structure, and a record is approved along an approval chain set by who entered it.
 - **Append-only audit log:** every change writes one row; nothing updates or deletes it.
@@ -156,7 +157,7 @@ All seed users share the password `TonyAI-CI!2026`, the seed's `TONYAI_TEST_PASS
 | --- | --- | --- |
 | `admin@tonyai.local` | `masterkey` | The whole group tree: the root, 5 companies, a sector group, a child company and an associate |
 | `approver@tonyai.local` | `super_admin` | 4 companies — all but TonyAI Trading — and the child company it created under TonyAI Energy; approves the standard user's records there |
-| `entry@tonyai.local` | `standard_user` | 2 subsidiaries, every category (isolation demo) |
+| `entry@tonyai.local` | `standard_user` | main company TonyAI Energy plus a central reporter grant for TonyAI Logistics, every category on both (isolation demo) |
 | `review@tonyai.local` | `auditor` | Organisation-wide, read only |
 | `viewer@tonyai.local` | `auditor` | Organisation-wide, read only |
 

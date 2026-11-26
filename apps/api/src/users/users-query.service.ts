@@ -5,6 +5,7 @@ import {
   DEFAULT_LOCALE,
   can,
   isCategory,
+  isGrantKind,
   isLocale,
   type Category,
   type CursorPage,
@@ -34,7 +35,7 @@ const SUMMARY_SELECT = {
   disabledAt: true,
   authSyncPendingSince: true,
   createdAt: true,
-  subsidiaryAccess: { select: { subsidiaryId: true, categories: true }, orderBy: { subsidiaryId: 'asc' } },
+  subsidiaryAccess: { select: { subsidiaryId: true, categories: true, kind: true }, orderBy: { subsidiaryId: 'asc' } },
   invitation: {
     select: {
       status: true,
@@ -86,6 +87,10 @@ export function toUserSummary(row: SummaryRow, scope: ReadonlySet<string> | null
         subsidiaryId: g.subsidiaryId,
         // Categories are a standard user's; a super_admin's grant covers all.
         categories: can(row.role, 'scope.categories') ? [...new Set(g.categories.filter(isCategory))].sort() : ([] as Category[]),
+        // The main company or a central reporter grant's company (D3). A
+        // super_admin reader sees only the rows inside its own companies, so
+        // never a reporter's main company outside them.
+        kind: isGrantKind(g.kind) ? g.kind : 'assigned',
       })),
     disabledAt: iso(row.disabledAt),
     authSyncPending: row.authSyncPendingSince !== null,

@@ -57,6 +57,8 @@ import {
   type UserSummaryDTO,
 } from "@/lib/types";
 import {
+  grantRowsOf,
+  singleEntryLines,
   accessPayload,
   accessSummary,
   accessWarnings,
@@ -89,6 +91,7 @@ import {
   reloadAfterAccessSave,
 } from "@/lib/users-view";
 import { cn } from "@/lib/utils";
+import { CentralReporterDialog } from "@/components/users/central-reporter-dialog";
 import { useSignOut } from "@/lib/use-sign-out";
 
 const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
@@ -98,16 +101,24 @@ const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
 };
 
 /** Toasts a refusal: the users screen's own sentence for a code it words, the shared one otherwise. */
-function useUsersErrorToast(): (error: unknown) => void {
+function useUsersErrorToast(names: ReadonlyMap<string, string>): (error: unknown) => void {
   const t = useTranslations("users");
+  const tCategory = useTranslations("categories");
+  const locale = useLocale() as Locale;
   const errorToast = useErrorToast();
   return useCallback(
     (error: unknown) => {
+      // A single-entry refusal names each company and category in the reader's words.
+      const lines = singleEntryLines(error, names, (c) => tCategory(c), { t, locale });
+      if (lines) {
+        toast.error(lines.join(" "));
+        return;
+      }
       const key = usersErrorKey(error);
       if (key) toast.error(t(key));
       else errorToast(error);
     },
-    [t, errorToast],
+    [t, tCategory, locale, names, errorToast],
   );
 }
 
@@ -126,7 +137,6 @@ export default function UsersPage() {
   const locale = useLocale() as Locale;
   const signOut = useSignOut();
   const errorToast = useErrorToast();
-  const usersErrorToast = useUsersErrorToast();
   const { user, setUser } = useAuthStore();
   const [users, setUsers] = useState<UserSummaryDTO[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -138,6 +148,7 @@ export default function UsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [roleTarget, setRoleTarget] = useState<UserSummaryDTO | null>(null);
   const [accessTarget, setAccessTarget] = useState<UserSummaryDTO | null>(null);
+  const [grantTarget, setGrantTarget] = useState<UserSummaryDTO | null>(null);
   const [disableTarget, setDisableTarget] = useState<UserSummaryDTO | null>(null);
 
   const formatDate = useMemo(
@@ -145,6 +156,9 @@ export default function UsersPage() {
     [locale],
   );
   const subsidiaryNames = useMemo(() => new Map(subsidiaries.map((s) => [s.id, s.legalName])), [subsidiaries]);
+  const usersErrorToast = useUsersErrorToast(subsidiaryNames);
+  const tCategory = useTranslations("categories");
+  const categoryList = useMemo(() => new Intl.ListFormat(locale, { style: "short", type: "conjunction" }), [locale]);
   const assignable = useMemo(() => assignableCompanies(user, subsidiaries), [user, subsidiaries]);
   const inviteRoles = invitableRoles(user);
 
@@ -326,7 +340,7 @@ export default function UsersPage() {
                             </TableCell>
                             <TableCell className="text-sm">
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                {access.key === "named" ? (
+                                {access.key === "named" && access.all.length + access.overflow > 0 ? (
                                   <span
                                     className="flex min-w-0 max-w-xs items-baseline gap-1"
                                     title={access.all.join(", ") || undefined}
@@ -340,7 +354,24 @@ export default function UsersPage() {
                                       </span>
                                     )}
                                   </span>
-                                ) : access.key === "noAccess" ? (
+                                ) : null}
+                                {access.key === "named" && access.grant && (
+                                  <span
+                                    className="flex min-w-0 max-w-xs items-baseline gap-1 text-muted-foreground"
+                                    title={access.grant.all.join(", ") || undefined}
+                                    data-testid="user-access-grant"
+                                  >
+                                    <span className="truncate">
+                                      {t("grantSummary", { companies: access.grant.names.join(", ") })}
+                                      {" · "}
+                                      {categoryList.format(access.grant.categories.map((c) => tCategory(c)))}
+                                    </span>
+                                    {access.grant.overflow > 0 && (
+                                      <span className="shrink-0">{t("accessMore", { count: formatNumber(access.grant.overflow, locale) })}</span>
+                                    )}
+                                  </span>
+                                )}
+                                {access.key === "named" ? null : access.key === "noAccess" ? (
                                   <span className="flex items-center gap-1 text-amber-700" data-testid="user-access-none">
                                     <AlertTriangle className="h-3.5 w-3.5" />
                                     {t("noAccess")}
@@ -384,6 +415,14 @@ export default function UsersPage() {
                                     {actions.editAccess && (
                                       <DropdownMenuItem onSelect={() => setAccessTarget(member)}>
                                         {t("actions.editAccess")}
+                                      </DropdownMenuItem>
+                                    )}
+                                    {actions.centralReporter && (
+                                      <DropdownMenuItem
+                                        onSelect={() => setGrantTarget(member)}
+                                        aria-label={t("actions.centralReporterFor", { name: member.fullName })}
+                                      >
+                                        {t("actions.centralReporter")}
                                       </DropdownMenuItem>
                                     )}
                                     {actions.resend && (
@@ -483,6 +522,16 @@ export default function UsersPage() {
             if (reloadAfterAccessSave(user, target, updated)) void load();
           })
         }
+      />
+      <CentralReporterDialog
+        target={grantTarget}
+        companies={subsidiaries}
+        names={subsidiaryNames}
+        onClose={() => setGrantTarget(null)}
+        onSaved={(updated) => {
+          setUsers((list) => replaceUser(list, updated));
+          setGrantTarget(null);
+        }}
       />
       <AlertDialog open={disableTarget !== null} onOpenChange={(open) => !open && setDisableTarget(null)}>
         <AlertDialogContent>
@@ -808,7 +857,7 @@ function InviteDialog({
   onInvited: (created: UserSummaryDTO) => void;
 }) {
   const t = useTranslations("users");
-  const usersErrorToast = useUsersErrorToast();
+  const usersErrorToast = useUsersErrorToast(names);
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<UserRole | null>(roles[0] ?? null);
@@ -994,7 +1043,9 @@ function AccessDialog({
   onSave: (target: UserSummaryDTO, draft: AccessDraft) => Promise<void>;
 }) {
   const t = useTranslations("users");
+  const tCategory = useTranslations("categories");
   const initial = useMemo(() => (target ? initialDraft(target) : []), [target]);
+  const grantRows = useMemo(() => (target ? grantRowsOf(target) : []), [target]);
   const [draft, setDraft] = useState<AccessDraft>([]);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
@@ -1020,6 +1071,20 @@ function AccessDialog({
             assignable={assignable}
             names={names}
           />
+        )}
+        {grantRows.length > 0 && (
+          <section className="space-y-2 rounded-md border bg-muted/30 p-3" data-testid="access-grant-rows">
+            <p className="text-sm font-medium">{t("accessDialog.grantHeading")}</p>
+            <ul className="space-y-1 text-sm">
+              {grantRows.map((g) => (
+                <li key={g.subsidiaryId} className="flex flex-wrap gap-x-2">
+                  <span className="font-medium">{names.get(g.subsidiaryId) ?? "—"}</span>
+                  <span className="text-muted-foreground">{g.categories.map((c) => tCategory(c)).join(", ")}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">{t("accessDialog.grantNote")}</p>
+          </section>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

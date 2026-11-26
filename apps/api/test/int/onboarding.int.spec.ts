@@ -794,7 +794,7 @@ describe('roles and subsidiary access', () => {
       // A company named twice is refused, not deduplicated (INC-2.6 DTO).
       await expect(s.lifecycle.replaceAccess(A.users.masterkey, target, [grant(extra.id), grant(extra.id)])).rejects.toMatchObject({ status: 400 });
       const updated = await s.lifecycle.replaceAccess(A.users.masterkey, target, [grant(extra.id)]);
-      expect(updated.access).toEqual([grant(extra.id)]);
+      expect(updated.access).toEqual([{ ...grant(extra.id), kind: 'assigned' }]);
       // One transaction's rows can share `created_at` to the millisecond (and
       // tied rows come back in storage order), so they are compared as a set,
       // never by their order ("LP3-04 PR D follow-ups" (21)).
@@ -1094,7 +1094,10 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
       const real = new AuthAdminService();
       const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
       const before = await owner.subsidiary.findMany({ where: { organisationId: D.organisationId }, select: { id: true }, orderBy: { id: 'asc' } });
+      const setupBefore = (await owner.organisation.findUniqueOrThrow({ where: { id: D.organisationId } })).onboardingCompletedAt;
       const report = await operator.provision({ organisationId: D.organisationId, adminEmail: address(), adminName: 'Second Admin', language: 'en' }, true);
+      // Adding an administrator changes nothing of the setup state (7.5).
+      expect((await owner.organisation.findUniqueOrThrow({ where: { id: D.organisationId } })).onboardingCompletedAt).toEqual(setupBefore);
       added = report.admin.id;
       expect(report).toMatchObject({ organisation: { id: D.organisationId, created: false }, subsidiary: { id: null, created: false } });
       expect(await owner.subsidiary.findMany({ where: { organisationId: D.organisationId }, select: { id: true }, orderBy: { id: 'asc' } })).toEqual(before);
@@ -1152,6 +1155,8 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     createdOrgs.push(orgId);
     invitedIds.push(first.admin.id!);
     expect(first).toMatchObject({ applied: true, organisation: { created: true }, subsidiary: { created: true }, admin: { created: true }, delivery: { delivered: true } });
+    // Born unfinished: its masterkey is held on the setup wizard (inc26-central-reporter-onboarding, 7.5).
+    expect((await owner.organisation.findUniqueOrThrow({ where: { id: orgId } })).onboardingCompletedAt).toBeNull();
     // Its first administrator is a masterkey (INC-2.6: the organisation-wide role).
     expect((await owner.profile.findUniqueOrThrow({ where: { id: first.admin.id! } })).role).toBe(UserRole.masterkey);
     // K1: born with its one subsidiary — the company itself — so a facility can be added at once.

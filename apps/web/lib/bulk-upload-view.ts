@@ -267,6 +267,22 @@ export interface IssueGroup {
 }
 
 /**
+ * A row issue's sentence. A code the record API words with params — the
+ * period half of single entry (inc26-central-reporter-onboarding) — is worded
+ * in the reader's language from them, as the save's refusal is; every other
+ * row keeps the server's sentence (K5).
+ */
+export function issueSentence(
+  issue: Pick<BulkUploadRowIssue, 'code' | 'message' | 'params'>,
+  describe: (error: unknown) => { title: string },
+): string {
+  if (issue.code === 'single_entry_period_conflict' && issue.params) {
+    return describe(new ApiError(issue.message, 409, 'single_entry_period_conflict', issue.params)).title;
+  }
+  return issue.message;
+}
+
+/**
  * Group issues by what is wrong, commonest first.
  *
  * A user fixing a file works one problem at a time — "seventeen rows name a

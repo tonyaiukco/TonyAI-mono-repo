@@ -55,7 +55,7 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 | --- | --- | --- | --- |
 | `admin@tonyai.local` | `TonyAI-CI!2026` | `masterkey` | the whole group tree — root, 5 companies, a sector group, a child company, an associate (no grant) — decides a `super_admin`'s records, its own (a self-approval) and the fallback |
 | `approver@tonyai.local` | `TonyAI-CI!2026` | `super_admin` | 4 companies — every seed company but TonyAI Trading, which keeps no super_admin so the fallback to the masterkey has a home — and the child company it created under TonyAI Energy; decides the standard user's records in them |
-| `entry@tonyai.local` | `TonyAI-CI!2026` | `standard_user` | 2 subsidiaries (TonyAI Energy and TonyAI Logistics), every category ticked — shaped like an account carried over from the earlier role model (tenant‑isolation demo) |
+| `entry@tonyai.local` | `TonyAI-CI!2026` | `standard_user` | main company TonyAI Energy (`assigned`) and a central reporter grant for TonyAI Logistics (`central_reporter`), every category ticked on both — the records it enters for Logistics name Energy as their reporting company (tenant‑isolation and central reporting demo) |
 | `review@tonyai.local` | `TonyAI-CI!2026` | `auditor` | organisation‑wide read only; no writes |
 | `viewer@tonyai.local` | `TonyAI-CI!2026` | `auditor` | organisation‑wide read only — dashboards, Emissions and reports; no writes |
 

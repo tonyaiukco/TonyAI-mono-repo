@@ -10,7 +10,9 @@ import {
   AUDITOR_EMAIL,
   ENTRY_EMAIL,
   SEED_APPROVER_GRANTS,
-  SEED_ENTRY_GRANTS,
+  SEED_ENTRY_ACCESS,
+  SEED_ENTRY_GRANT,
+  SEED_ENTRY_MAIN,
   SUB,
   VIEWER_EMAIL,
   bearer,
@@ -135,7 +137,9 @@ test('the access column names the grants; a masterkey edits a super admin\'s com
 
   // A standard user's row is named but not the masterkey's to edit (ruling R3).
   const entryRow = rowOf(page, ENTRY_EMAIL);
-  await expect(entryRow.getByTestId('user-access-names')).toHaveText(sortedNames(subs, SEED_ENTRY_GRANTS, 'en').join(', '));
+  // Its main company, and its central reporter grant stated apart (inc26-central-reporter-onboarding).
+  await expect(entryRow.getByTestId('user-access-names')).toHaveText(sortedNames(subs, [SEED_ENTRY_MAIN], 'en').join(', '));
+  await expect(entryRow.getByTestId('user-access-grant')).toContainText(sortedNames(subs, [SEED_ENTRY_GRANT], 'en')[0]!);
   await expect(entryRow.getByRole('button', { name: fill(enUsers.actions.editAccessFor, { name: entry.fullName }) })).toHaveCount(0);
   await expect(entryRow).toContainText(enUsers.roles.standard_user);
 
@@ -312,10 +316,11 @@ test('a standard user made by the masterkey is assigned by the super admin: one 
 
   const after = await seedUser(VIEWER_EMAIL);
   expect(after.role).toBe('standard_user');
-  expect(after.access).toEqual([{ subsidiaryId: SUB.energy, categories: ['Electricity', 'Water'] }]);
+  // The main company as saved; the seed's central reporter grant stands beside it (inc26-central-reporter-onboarding).
+  expect(after.access.filter((g) => g.kind === 'assigned')).toEqual([{ subsidiaryId: SUB.energy, categories: ['Electricity', 'Water'], kind: 'assigned' }]);
 });
 
-test('a super admin lists only the standard users it administers; a carried-over account\'s companies are held', async ({ page }) => {
+test('a super admin lists only the standard users it administers; a central reporter\'s grant is shown read-only beside its main company', async ({ page }) => {
   const entry = await seedUser(ENTRY_EMAIL);
   const subs = await subsidiaries();
   await login(page, APPROVER_EMAIL);
@@ -336,28 +341,22 @@ test('a super admin lists only the standard users it administers; a carried-over
   const row = rowOf(page, ENTRY_EMAIL);
   await row.getByRole('button', { name: fill(enUsers.actions.editAccessFor, { name: entry.fullName }) }).click();
   const dialog = page.getByRole('dialog', { name: fill(enUsers.accessDialog.title, { name: entry.fullName }) });
-  await expect(dialog.getByText(enUsers.picker.heldHeading)).toBeVisible();
-  await expect(dialog.getByTestId('held-companies-note')).toHaveText(enUsers.picker.heldNote);
-  const held = dialog.getByTestId('held-company');
-  await expect(held).toHaveCount(2);
-  for (const id of SEED_ENTRY_GRANTS) {
-    const name = subs.find((s) => s.id === id)!.legalName;
-    const block = held.filter({ hasText: name });
-    await expect(block.getByTestId('category-picker-count')).toHaveText(fill(enUsers.picker.categoriesCount, { count: 13, total: 13 }));
-  }
-  // No company can be added: no radio, no company checkbox.
-  await expect(dialog.getByRole('radio')).toHaveCount(0);
-
-  // Withdrawn when saved, and kept again on request; cancelled, nothing changes.
-  const logistics = subs.find((s) => s.id === SUB.logistics)!.legalName;
-  await dialog.getByRole('button', { name: fill(enUsers.picker.withdrawFor, { name: logistics }) }).click();
-  await expect(held.filter({ hasText: logistics })).toContainText(enUsers.picker.withdrawn);
-  await expect(held.filter({ hasText: logistics }).getByTestId('category-picker')).toHaveCount(0);
-  await dialog.getByRole('button', { name: fill(enUsers.picker.restoreFor, { name: logistics }) }).click();
-  await expect(held.filter({ hasText: logistics }).getByTestId('category-picker')).toBeVisible();
-  await dialog.getByRole('button', { name: enUsers.accessDialog.cancel }).click();
+  // The main company is the one company it chooses, with its thirteen categories;
+  // the grant's company is drawn read-only and is not part of what the editor saves.
+  await expect(dialog.getByTestId('held-company')).toHaveCount(0);
+  await expect(dialog.getByTestId('category-picker-count')).toHaveText(fill(enUsers.picker.categoriesCount, { count: 13, total: 13 }));
+  const grant = dialog.getByTestId('access-grant-rows');
+  await expect(grant).toContainText(enUsers.accessDialog.grantHeading);
+  await expect(grant).toContainText(subs.find((s) => s.id === SEED_ENTRY_GRANT)!.legalName);
+  await expect(grant).toContainText(enUsers.accessDialog.grantNote);
+  await expect(grant.getByRole('checkbox')).toHaveCount(0);
+  // Saved unchanged: nothing is written, and the grant stands.
+  await dialog.getByRole('button', { name: enUsers.accessDialog.submit }).click();
   await expect(dialog).toHaveCount(0);
-  expect((await seedUser(ENTRY_EMAIL)).access.map((g) => g.subsidiaryId).sort()).toEqual([...SEED_ENTRY_GRANTS].sort());
+  const after = await seedUser(ENTRY_EMAIL);
+  expect(after.access.map((g) => `${g.subsidiaryId}:${g.kind}`).sort()).toEqual(
+    SEED_ENTRY_ACCESS.map((g) => `${g.subsidiaryId}:${g.kind}`).sort(),
+  );
 });
 
 for (const [who, email] of [['a standard user', ENTRY_EMAIL], ['an auditor', AUDITOR_EMAIL]] as const) {

@@ -484,6 +484,12 @@ describe('SubsidiariesService — the group tree', () => {
         expect(audit.record).not.toHaveBeenCalled();
       });
 
+      it("counts every access row of the company — a central reporter grant's too, whatever its kind (task 3.7)", async () => {
+        prisma.subsidiary.findUnique.mockResolvedValue(company());
+        await service.update(masterkey(), 'sub-2', { control: 'associate' });
+        expect(prisma.txClient.userSubsidiaryAccess.count).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-2' } });
+      });
+
       it('counts every record of the company, whatever its status', async () => {
         prisma.subsidiary.findUnique.mockResolvedValue(company());
         await service.update(masterkey(), 'sub-2', { control: 'associate' });
@@ -683,7 +689,14 @@ describe('SubsidiariesService — the group tree', () => {
       // Only the grants this delete's own statement removed (owner review, P2).
       prisma.txClient.$queryRaw.mockImplementation((async (sql: TemplateStringsArray, ...values: unknown[]) =>
         sql.join('?').includes('DELETE FROM user_subsidiary_access')
-          ? (values[0] === 'sub-2' ? [{ userId: 'u-b' }, { userId: 'u-a' }] : [])
+          ? (values[0] === 'sub-2'
+            ? [
+              { userId: 'u-b', kind: 'assigned', categories: [] },
+              { userId: 'u-a', kind: 'assigned', categories: ['Fuel'] },
+              // inc26-central-reporter-onboarding (task 3.7): a grant row of the owning company.
+              { userId: 'u-r', kind: 'central_reporter', categories: ['Mobile Combustion', 'Electricity'] },
+            ]
+            : [])
           : [{ id: 'locked' }]) as never);
       await service.remove(masterkey(), 'sub-2');
       expect(prisma.txClient.$queryRaw.mock.calls.map((c) => (c[0] as unknown as string[]).join('?')).find((q) => q.includes('DELETE')))
@@ -692,6 +705,10 @@ describe('SubsidiariesService — the group tree', () => {
       expect(grantRows).toEqual([
         { action: 'delete', entity: 'subsidiary_access', entityId: 'u-a', diff: { subsidiaryId: 'sub-2', reason: 'company deleted' } },
         { action: 'delete', entity: 'subsidiary_access', entityId: 'u-b', diff: { subsidiaryId: 'sub-2', reason: 'company deleted' } },
+        {
+          action: 'delete', entity: 'subsidiary_access', entityId: 'u-r',
+          diff: { subsidiaryId: 'sub-2', reason: 'company deleted', kind: 'central_reporter', categories: ['Electricity', 'Mobile Combustion'] },
+        },
       ]);
       expect(audit.record.mock.calls.every((c) => c[2] === prisma.txClient)).toBe(true);
     });

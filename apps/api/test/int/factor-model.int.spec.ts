@@ -134,13 +134,18 @@ describe('K5 — a snapshot that has left draft never changes', () => {
         { scope: 1 },
         { reportingPeriod: 'quarterly' },
         { periodValue: 'December' },
-        { subsidiary: { connect: { id: foreign.subsidiaryId } } },
       ] as Prisma.ActivityRecordUpdateInput[]) {
         const e = await failure(client.activityRecord.update({ where: { id: rec.id }, data }));
         expect(sqlstateOf(e), JSON.stringify(data)).toBe('TA001');
         // The service's own mapping reads the real error, not a fixture of it.
         expect(recordTriggerCode(e)).toBe('TA001');
       }
+      // Moving the record to another company: since inc26-central-reporter-
+      // onboarding, TA025 (`activity_records_reporting_entity`, which fires
+      // first by name) refuses it before K5 does — the record's reporting
+      // entity is its own company and never changes. Refused either way.
+      const moved = await failure(client.activityRecord.update({ where: { id: rec.id }, data: { subsidiary: { connect: { id: foreign.subsidiaryId } } } }));
+      expect(sqlstateOf(moved)).toBe('TA025');
     }
     // What the lifecycle legitimately writes on such a row still lands.
     await runtime.activityRecord.update({
@@ -374,7 +379,9 @@ describe('a slot holds typed records or one untyped record, never both', () => {
     for (const isolationLevel of ['RepeatableRead', 'Serializable'] as const) {
       const e = await failure(
         owner.$transaction(
-          (tx) => createRecord(tx as unknown as PrismaService, tenant, { ...nextSlot(), category: 'Fuel', scope: 1, activityUnit: 'litres', activityType: 'diesel' }),
+          // A masterkey's record is no single-entry party, so TA026 (which also
+          // requires READ COMMITTED of a party's record) steps aside for TA003.
+          (tx) => createRecord(tx as unknown as PrismaService, tenant, { ...nextSlot(), category: 'Fuel', scope: 1, activityUnit: 'litres', activityType: 'diesel', createdBy: tenant.users.masterkey.id }),
           { isolationLevel },
         ),
       );
@@ -383,7 +390,8 @@ describe('a slot holds typed records or one untyped record, never both', () => {
   });
 
   it('refuses a draft moved to another slot or to the other kind under a stricter isolation level — and lets a same-slot edit or a status step through', async () => {
-    const diesel = { category: 'Fuel', scope: 1, activityUnit: 'litres', activityType: 'diesel' };
+    // The masterkey's: no single-entry party, so TA026 steps aside for TA003.
+    const diesel = { category: 'Fuel', scope: 1, activityUnit: 'litres', activityType: 'diesel', createdBy: tenant.users.masterkey.id };
     const typedDraft = await createRecord(owner, tenant, { ...nextSlot(), ...diesel });
     const untypedDraft = await createRecord(owner, tenant, { ...nextSlot(), ...diesel, activityType: null });
     const approved = await createRecord(owner, tenant, { ...nextSlot(), ...diesel, status: ActivityRecordStatus.approved });

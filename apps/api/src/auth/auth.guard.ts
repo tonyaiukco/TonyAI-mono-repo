@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { tokenVerifier, TokenVerificationError } from './token-verifier';
 import { AccountDisabledError, SessionRevokedError } from './access-errors';
-import { can, isCategory, type Category } from '@tonyai/shared-types';
+import { can, isCategory, isGrantKind, type Category, type GrantKind } from '@tonyai/shared-types';
 import type { RequestUser } from './auth.types';
 
 /**
@@ -122,6 +122,7 @@ export class SupabaseAuthGuard implements CanActivate {
     // does not know gets nothing.
     let accessibleSubsidiaryIds: string[] = [];
     const categoryGrants: Record<string, Category[]> = {};
+    const grantKinds: Record<string, GrantKind> = {};
     if (!profile.organisationId) {
       // No organisation → default-deny, for every role. Otherwise a null
       // `organisationId` would make the organisation-wide query below an
@@ -142,6 +143,10 @@ export class SupabaseAuthGuard implements CanActivate {
           })
         : [];
       accessibleSubsidiaryIds = sameOrg.map((s) => s.id);
+      const inOrganisation = new Set(accessibleSubsidiaryIds);
+      for (const grant of profile.subsidiaryAccess) {
+        if (inOrganisation.has(grant.subsidiaryId)) grantKinds[grant.subsidiaryId] = isGrantKind(grant.kind) ? grant.kind : 'assigned';
+      }
       if (can(profile.role, 'scope.categories')) {
         const inScope = new Set(accessibleSubsidiaryIds);
         for (const grant of profile.subsidiaryAccess) {
@@ -166,6 +171,7 @@ export class SupabaseAuthGuard implements CanActivate {
       organisationId: profile.organisationId,
       accessibleSubsidiaryIds,
       categoryGrants,
+      grantKinds,
     };
     request.user = user;
     return true;

@@ -247,7 +247,16 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // and truncate guard on `report_datasets`; PR D's issuance guard and
     // truncate guard on `report_issuances`. LP4-02 PR2 adds factor_parameters
     // (6 triggers: 4 BEFORE + 2 AFTER).
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2 + 8);
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2 + 8 + 4);
+    // inc26-central-reporter-onboarding's four (TA024–TA027), none narrowed.
+    for (const [table, trigger, type] of [
+      ['user_subsidiary_access', 'user_subsidiary_access_single_entry', 1 | 2 | 4 | 16],
+      ['activity_records', 'activity_records_reporting_entity', 1 | 2 | 4 | 16],
+      ['activity_records', 'activity_records_single_entry', 1 | 2 | 4 | 16],
+      ['subsidiaries', 'subsidiaries_reporting_entity_stays', 1 | 2 | 16],
+    ]) {
+      expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === trigger)).toEqual({ table, trigger, fn: trigger, type });
+    }
     // inc26-group-tree's eight (TA018–TA023, the facility-removal note and the current-boundary delete guard), each on its own events.
     for (const [table, trigger] of [
       ['subsidiaries', 'subsidiaries_tree_shape'],
@@ -485,7 +494,8 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
 
   it('reports a record key that answers its parent\'s delete or key change with an action, that changed, or that is gone (LP4-01)', async () => {
     expect(RECORD_FOREIGN_KEYS.map(([name]) => name).sort()).toEqual([
-      'activity_records_import_batch_id_fkey', 'activity_records_location_id_subsidiary_id_fkey', 'activity_records_subsidiary_id_fkey',
+      'activity_records_import_batch_id_fkey', 'activity_records_location_id_subsidiary_id_fkey',
+      'activity_records_reported_by_subsidiary_id_fkey', 'activity_records_subsidiary_id_fkey',
     ]);
     for (const [, definitionMd5] of RECORD_FOREIGN_KEYS) expect(definitionMd5).toMatch(/^[0-9a-f]{32}$/);
     const keys = (name, change) => allKeys.map((k) => (k.name === name ? { ...k, ...change } : k));
@@ -892,9 +902,10 @@ describe("the runtime role's inventory boundary grants (LP3-04's write path)", (
     }
   });
 
-  it('adds and withdraws a grant whole, and changes only its categories — never its user, company or organisation (inc26)', () => {
+  it('adds and withdraws a grant whole, and changes only its categories and kind — never its user, company or organisation (inc26)', () => {
     expect(RUNTIME_TABLE_PRIVILEGES.user_subsidiary_access).toEqual(['SELECT', 'INSERT', 'DELETE']);
-    expect(RUNTIME_COLUMN_UPDATES.user_subsidiary_access).toEqual(['categories']);
+    // `kind`: a carried-over account's company converted in place (C7).
+    expect(RUNTIME_COLUMN_UPDATES.user_subsidiary_access).toEqual(['categories', 'kind']);
     for (const column of ['user_id', 'subsidiary_id', 'organisation_id', 'created_at']) {
       expect(RUNTIME_COLUMN_UPDATES.user_subsidiary_access).not.toContain(column);
     }

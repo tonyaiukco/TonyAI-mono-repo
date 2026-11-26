@@ -48,7 +48,9 @@
     "editAccessFor": "Edit access for {name}",
     "disable": "Disable account",
     "enable": "Enable account",
-    "resend": "Re-send invitation"
+    "resend": "Re-send invitation",
+    "centralReporter": "Central reporter grant",
+    "centralReporterFor": "Central reporter grant for {name}"
   },
   "inviteDialog": {
     "title": "Invite a user",
@@ -106,7 +108,9 @@
     "submitting": "Saving…",
     "cancel": "Cancel",
     "superAdminDescription": "They work in the subsidiaries ticked here, in every category, and nothing else.",
-    "standardUserDescription": "They enter and see data only in the subsidiary and categories ticked here."
+    "standardUserDescription": "They enter and see data only in the subsidiary and categories ticked here.",
+    "grantHeading": "Held as a central reporter",
+    "grantNote": "Only a Masterkey changes a central reporter grant. Saving here leaves it as it is."
   },
   "accessSaved": "Access updated",
   "disableDialog": {
@@ -120,6 +124,38 @@
   "authSyncWarning": "Saved. The sign-in block will be applied shortly; the account is refused by the app either way.",
   "roleChangedStandardUser": "A super admin of the user's subsidiary assigns their subsidiary and categories.",
   "errors": {
-    "standardUserSingleCompany": "A standard user works in one subsidiary only, and this change would give them another. Nothing was changed."
+    "standardUserSingleCompany": "A standard user works in one subsidiary only, and this change would give them another. Nothing was changed.",
+    "centralReporterNeedsMainEntity": "A central reporter keeps exactly one main company outside the grant, and this change would leave them with none or several. Nothing was changed.",
+    "singleEntry": {
+      "companyUsers": "{company}: the company's own users already hold {categories}. Nothing was changed.",
+      "centralReporter": "{company}: a central reporter already holds {categories}. Nothing was changed.",
+      "companyUsersGeneral": "These categories are already open to the company's own standard users, so they cannot also be opened to a central reporter. Nothing was changed.",
+      "centralReporterGeneral": "These categories are already open to a central reporter at this company, so they cannot also be opened to its own standard users. Nothing was changed."
+    }
+  },
+  "grantSummary": "Central reporter: {companies}",
+  "grantDialog": {
+    "title": "Central reporter grant for {name}",
+    "description": "Choose the companies this user enters data for as a central reporter, and the categories. The user keeps one main company outside the grant.",
+    "companiesHeading": "Companies of the grant",
+    "categoriesHeading": "Categories of the grant",
+    "mainCompany": "Main company: {name}",
+    "noMainCompany": "This choice leaves the user without exactly one main company. Leave one company they hold unticked.",
+    "noCategory": "Tick at least one category for the companies you chose.",
+    "withdrawNote": "Saving with no company ticked withdraws the grant.",
+    "changesHeading": "Before and after saving",
+    "company": "Company",
+    "now": "Now",
+    "after": "After",
+    "notHeld": "Not held",
+    "withdrawn": "Withdrawn",
+    "asMain": "Main company: {categories}",
+    "asGrant": "Central reporter: {categories}",
+    "noCategories": "no category",
+    "cancel": "Cancel",
+    "submit": "Save grant",
+    "submitting": "Saving…",
+    "saved": "Central reporter grant saved.",
+    "noUser": "No user can take the grant yet: a central reporter is a standard user, and a Super Admin assigns standard users to their companies."
   }
 }

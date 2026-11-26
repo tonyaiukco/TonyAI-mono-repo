@@ -29,7 +29,7 @@ test('a standard user: scoped reads + period-lock write gated in the UI', async 
   await page.goto('/subsidiaries');
   await expect(page.getByRole('heading', { name: 'Subsidiaries' })).toBeVisible();
 
-  // Sees exactly the 2 subsidiaries it has access to (Energy + Logistics).
+  // Sees exactly the 2 subsidiaries it has access to: its main company Energy and its grant company Logistics.
   await expect(subsidiaryRows(page)).toHaveCount(2);
 
   // masterkey-only write controls are hidden for a standard user (the API also 403s).

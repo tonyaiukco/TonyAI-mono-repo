@@ -191,6 +191,11 @@ model Organisation {
   /// One approach for the group (INC-2.6 §3, RD4), set by the masterkey;
   /// `equity_share` is announced, not stored.
   consolidationApproach ConsolidationApproach @default(operational_control) @map("consolidation_approach")
+  /// When the masterkey finished the setup wizard (inc26-central-reporter-
+  /// onboarding D8); null while it is open. The runtime role may set it, never
+  /// insert it, so every organisation is born unfinished; those that existed
+  /// when the wizard shipped were stamped finished by its migration (C1).
+  onboardingCompletedAt DateTime?           @map("onboarding_completed_at") @db.Timestamptz(6)
   createdAt           DateTime            @default(now()) @map("created_at")
   updatedAt           DateTime            @updatedAt @map("updated_at")
 
@@ -309,6 +314,9 @@ model Subsidiary {
   inventoryBoundaries InventoryBoundarySubsidiary[]
   access              UserSubsidiaryAccess[]
   activityRecords     ActivityRecord[]
+  /// Records of other companies this company entered as a central reporter's
+  /// main company (`activity_records.reported_by_subsidiary_id`).
+  reportedRecords     ActivityRecord[]              @relation("ActivityRecordReportedBy")
   periodLocks         PeriodLock[]
   targets             Target[]
   denominators        SubsidiaryDenominator[]
@@ -468,6 +476,15 @@ model ActivityRecord {
   // records, never with them.
   importBatchId             String?                  @map("import_batch_id") @db.Uuid
   importBatch               ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  // The reporting entity (INC-2.6 §4; inc26-central-reporter-onboarding D1):
+  // the company of the user who entered the record. NULL means the record's own
+  // company (`subsidiary_id`, the owning entity) -- every record stored before
+  // this column, and every record but a central reporter's. Worked out and
+  // frozen by trigger TA025 from the author's access when the record is stored;
+  // no writer sets or changes it. RESTRICT both ways: a company named here is
+  // not deleted (C6), and TA027 keeps it in the record's organisation.
+  reportedBySubsidiaryId    String?                  @map("reported_by_subsidiary_id") @db.Uuid
+  reportedBySubsidiary      Subsidiary?              @relation("ActivityRecordReportedBy", fields: [reportedBySubsidiaryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   evidenceLinks             ActivityRecordEvidence[]
   createdAt                 DateTime                 @default(now()) @map("created_at")
   updatedAt                 DateTime                 @updatedAt @map("updated_at")
@@ -487,6 +504,7 @@ model ActivityRecord {
   @@index([subsidiaryId])
   @@index([locationId])
   @@index([importBatchId])
+  @@index([reportedBySubsidiaryId])
   // LP4-05 PR C keyset pages (measured on 50,904 rows, 20 subsidiaries):
   // `newest` within one subsidiary, `newest` across an organisation, and the
   // review queue (its pending statuses first, then the longest wait).
@@ -691,6 +709,11 @@ model UserSubsidiaryAccess {
   /// `activity_records.category`). A super_admin's grant keeps `{}` and covers
   /// every category; it is never read for one.
   categories     String[]   @default([])
+  /// `assigned` (a super_admin's company, a standard user's main company) or
+  /// `central_reporter` (a company of a standard user's central reporter grant,
+  /// INC-2.6 §4.1; written only by the grant's own request). CHECKs hold the
+  /// two values and a grant row's non-empty categories; TA024 holds single entry.
+  kind           String     @default("assigned")
   createdAt      DateTime   @default(now()) @map("created_at")
 
   @@id([userId, subsidiaryId])

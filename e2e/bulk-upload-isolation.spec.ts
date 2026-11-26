@@ -322,8 +322,10 @@ test('a standard user\'s row in a category not ticked for its company is refused
       headers: bearer(approver),
       data: {
         access: [
+          // The main company only: Logistics is the seed's central reporter
+          // grant, every category, which this request never touches
+          // (inc26-central-reporter-onboarding).
           { subsidiaryId: SUB.energy, categories: SEED_ENTRY_CATEGORIES.filter((c) => c !== E2E_BULK_CATEGORY) },
-          { subsidiaryId: SUB.logistics, categories: [...SEED_ENTRY_CATEGORIES] },
         ],
       },
     });

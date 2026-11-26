@@ -63,6 +63,7 @@ import {
   recordParameterShape,
   recordActivityTypesFor,
   REPORTING_PERIODS,
+  recordParty,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { treeTriggerRefusal } from '../subsidiaries/tree-errors';
@@ -103,6 +104,15 @@ import { closedRecordIds } from './closed-periods';
 import { normaliseRecordFilters, RECORD_SORTS, recordFilterWhere, type RecordFilters } from './record-page';
 import { approversFor, awaitingDecisionWhere, deciderFor } from './record-approver';
 import { assertCategoryGranted, inRecordScope } from './record-scope';
+import { recordCentralReportingRefusal } from '../central-reporting/central-reporting-errors';
+import {
+  accessRowsOf,
+  assertSingleEntryPeriod,
+  lockAuthorAccess,
+  partyOf,
+  reportingEntityOf,
+  reportingNamesFor,
+} from '../central-reporting/record-entities';
 
 /** A write that leaves a record in draft or returned: no record of it is pending. */
 const NO_APPROVERS: ReadonlyMap<string, RecordApprover | null> = new Map();
@@ -314,6 +324,7 @@ function requireCanonicalPeriodValue(
 /** The resolved-at-read-time fields, named once so both the DTO's audit
  *  snapshot and the guard below stay in step. */
 type ResolvedRecordFields =
+  | 'reportedBySubsidiaryName'
   | 'locationName'
   | 'createdByName'
   | 'reviewedByName'
@@ -471,6 +482,9 @@ export class ActivityRecordsService {
       voidedBy: r.voidedBy,
       voidedAt: r.voidedAt ? r.voidedAt.toISOString() : null,
       importBatchId: r.importBatchId,
+      // The reporting entity (inc26-central-reporter-onboarding D1): the stored
+      // column, read as it means — empty is the record's own company.
+      reportedBySubsidiaryId: r.reportedBySubsidiaryId ?? r.subsidiaryId,
       evidenceCount,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -483,9 +497,14 @@ export class ActivityRecordsService {
     actors: Map<string, ResolvedProfile>,
     fuelRecords: Map<string, GenerationFuelRecordState>,
     approvers: ReadonlyMap<string, RecordApprover | null>,
+    reportingNames: ReadonlyMap<string, string>,
   ): ActivityRecordDTO {
     return {
       ...this.toAuditSnapshot(r, evidenceCount),
+      // Resolved within the reader's organisation, not its company scope (C4):
+      // the owning company's approver reads the name of the company that
+      // reported. Required like the actors' names, for the same reason.
+      reportedBySubsidiaryName: reportingNames.get(r.reportedBySubsidiaryId ?? r.subsidiaryId) ?? null,
       // Who decides it now (inc26-roles-approval-chain): a pending record's
       // approver, worked out on every read; null on every other status.
       // Required like the names: a write's answer replaces the screen's row.
@@ -783,13 +802,15 @@ export class ActivityRecordsService {
     const fuelRecords = await this.fuelRecordsFor(user, page);
     // Two queries for the whole page (its authors, its companies), never one per row.
     const approvers = await approversFor(this.prisma, page);
+    // One query for the page's reporting entities, never one per row.
+    const reportingNames = await reportingNamesFor(this.prisma, user.organisationId, page);
     return toCursorPage(
       rows,
       limit,
       sort,
       binding,
       (r) => sort.keys.map((k) => r[k.field as 'createdAt' | 'submittedAt' | 'id']),
-      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors, fuelRecords, approvers), periodLocked: locked.has(r.id) }),
+      (r) => ({ ...this.toDTO(r, r._count.evidenceLinks, actors, fuelRecords, approvers, reportingNames), periodLocked: locked.has(r.id) }),
     );
   }
 
@@ -817,13 +838,14 @@ export class ActivityRecordsService {
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    const [evidenceCount, actors, fuelRecords, approvers] = await Promise.all([
+    const [evidenceCount, actors, fuelRecords, approvers, reportingNames] = await Promise.all([
       this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } }),
       this.actorsFor(user, [record]),
       this.fuelRecordsFor(user, [record]),
       approversFor(this.prisma, [record]),
+      reportingNamesFor(this.prisma, user.organisationId, [record]),
     ]);
-    return this.toDTO(record, evidenceCount, actors, fuelRecords, approvers);
+    return this.toDTO(record, evidenceCount, actors, fuelRecords, approvers, reportingNames);
   }
 
   /** `scoped` narrowed to the pending records the caller decides, when the
@@ -895,6 +917,10 @@ export class ActivityRecordsService {
     calculation: ActivityCalculationSnapshot;
     scope: number;
     verdict: AnomalyVerdict;
+    /** The reporting entity the record would be stored with (D2): the
+     *  caller's main company for a company of its central reporter grant,
+     *  the company itself otherwise — the answer TA025 stores. */
+    reportedBySubsidiaryId: string;
   }> {
     if (!mayAuthorRecords(user)) {
       throw new CreateRoleRefusedError();
@@ -944,6 +970,17 @@ export class ActivityRecordsService {
       reportingPeriod: dto.reportingPeriod,
       periodValue,
     });
+    // The reporting entity and the period half of single entry (D2, D5), from
+    // the access the guard read — no lock and no write: an early answer,
+    // asked again inside `create` on the access as it is committed then.
+    const reportedBySubsidiaryId = reportingEntityOf(accessRowsOf(user), dto.subsidiaryId);
+    await assertSingleEntryPeriod(this.prisma, partyOf(user.role, dto.subsidiaryId, reportedBySubsidiaryId), {
+      subsidiaryId: dto.subsidiaryId,
+      category: dto.category,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
+      periodValue,
+    });
 
     const { calculation, scope } = await this.recordCalculation.computeSnapshot(
       dto.subsidiaryId,
@@ -979,6 +1016,7 @@ export class ActivityRecordsService {
       calculation,
       scope,
       verdict,
+      reportedBySubsidiaryId,
     };
   }
 
@@ -1011,6 +1049,19 @@ export class ActivityRecordsService {
         // then counts the new draft like any other record).
         await lockPeriodsShared(tx, [period]);
         await this.assertPeriodNotLocked(period, tx);
+        // A standard user's access as it is committed now (C10), locked until
+        // this record commits: the company and the category judged again, and
+        // the party worked out from the same rows TA025 will read.
+        const access = await lockAuthorAccess(tx, user, subsidiaryId, dto.category);
+        const reportingEntity = access ? reportingEntityOf(access, subsidiaryId) : subsidiaryId;
+        await assertSingleEntryPeriod(tx, partyOf(user.role, subsidiaryId, reportingEntity), {
+          subsidiaryId,
+          category: dto.category,
+          reportingYear: dto.reportingYear,
+          reportingPeriod: dto.reportingPeriod,
+          periodValue,
+        });
+        // The reporting entity is never written here: TA025 works it out.
         const row = await tx.activityRecord.create({
           // Same include as every other read path — the create response is what
           // the subsidiary create flow renders, and it must not claim the record
@@ -1068,9 +1119,16 @@ export class ActivityRecordsService {
       // TA019: the company was ticked associate after the early check.
       const closed = treeTriggerRefusal(e);
       if (closed) throw closed;
+      // TA026: the other party's record committed meanwhile; TA025: the main
+      // company was withdrawn meanwhile.
+      const raced = recordCentralReportingRefusal(e, { category: dto.category, reportingYear: dto.reportingYear, periodValue });
+      if (raced) throw raced;
       throw asLostRace(e);
     }
-    return this.toDTO(created, 0, await this.actorsFor(user, [created]), created.fuelRecords, NO_APPROVERS);
+    return this.toDTO(
+      created, 0, await this.actorsFor(user, [created]), created.fuelRecords, NO_APPROVERS,
+      await reportingNamesFor(this.prisma, user.organisationId, [created]),
+    );
   }
 
   /** The record gate of design D6: `holdsRecords` on the company named. */
@@ -1251,6 +1309,14 @@ export class ActivityRecordsService {
           if (changedSince(existing, current)) throw new RecordChangedError();
           await this.assertPeriodNotLocked(periodOf(current), tx);
           if (moves) await this.assertPeriodNotLocked(target, tx);
+          // An edit that moves a draft to another category or period meets
+          // the period half of single entry (D5): the record's own party — by
+          // its stored reporting entity and its author, who is the editor.
+          if (moves || changesCategory) {
+            await assertSingleEntryPeriod(tx, recordParty(current, user.role), {
+              subsidiaryId: current.subsidiaryId, category, reportingYear, reportingPeriod, periodValue,
+            }, current.id);
+          }
           // The record's files, read under its row lock: an upload linking a
           // file checks the link's key with FOR KEY SHARE on this row, which
           // the lock blocks, so the set cannot grow before this commits.
@@ -1311,11 +1377,17 @@ export class ActivityRecordsService {
       const trigger = recordTriggerCode(e);
       if (trigger === 'TA002') throw new ActivityTypeSlotConflictError(activityType !== null);
       if (trigger === 'TA001') throw new SnapshotImmutableError();
+      // TA026: the other party's record for the target period committed meanwhile.
+      const raced = recordCentralReportingRefusal(e, { category, reportingYear, periodValue });
+      if (raced) throw raced;
       throw e;
     }
     // Only the files that went with the commit; their rows are already gone.
     await this.evidence.removeBlobs(removedFiles.map((f) => f.storagePath));
-    return this.toDTO(updated, evidenceCount, await this.actorsFor(user, [updated]), updated.fuelRecords, NO_APPROVERS);
+    return this.toDTO(
+      updated, evidenceCount, await this.actorsFor(user, [updated]), updated.fuelRecords, NO_APPROVERS,
+      await reportingNamesFor(this.prisma, user.organisationId, [updated]),
+    );
   }
 
   async remove(
@@ -1783,8 +1855,12 @@ export class ActivityRecordsService {
 
   /** The response for a committed write: resolved actor names, after the transaction. */
   private async writtenDTO(user: RequestUser, row: WrittenRecord & FuelResolved): Promise<ActivityRecordDTO> {
-    const [actors, approvers] = await Promise.all([this.actorsFor(user, [row]), approversFor(this.prisma, [row])]);
-    return this.toDTO(row, row._count.evidenceLinks, actors, row.fuelRecords, approvers);
+    const [actors, approvers, reportingNames] = await Promise.all([
+      this.actorsFor(user, [row]),
+      approversFor(this.prisma, [row]),
+      reportingNamesFor(this.prisma, user.organisationId, [row]),
+    ]);
+    return this.toDTO(row, row._count.evidenceLinks, actors, row.fuelRecords, approvers, reportingNames);
   }
 
   /**
