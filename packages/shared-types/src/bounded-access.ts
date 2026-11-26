@@ -83,6 +83,10 @@ export interface ActivityRecordPageFilters extends ListActivityRecordsParams {
   /** The review queue's default view (inc26-roles-approval-chain): only the
    *  pending records the caller decides (`recordApprover`). Wire: `true`. */
   awaitingMyDecision?: boolean;
+  /** inc28-fuel-bulk D10: `false` leaves fuel batches' records out — the review
+   *  queue's Records list and its count, which list batches apart; `true`
+   *  keeps only batches' records. Omitted: every record. */
+  inBatch?: boolean;
 }
 
 export interface ActivityRecordPageParams extends ActivityRecordPageFilters, CursorPageParams {

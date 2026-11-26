@@ -12,7 +12,7 @@ import { FuelUploadsService } from '../../src/fuel-files/fuel-uploads.service';
 import { FuelAccountsService } from '../../src/fuel-accounts/fuel-accounts.service';
 import { errorCodeOf } from '../../src/common/api-error';
 import { row as sheetRow, xlsx, OFFICE_RELATIONSHIPS, SPREADSHEETML } from '../xlsx';
-import { addMember, connect, connectOwner, createTenant, type Tenant } from './db';
+import { addMember, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
 import { failingAuditClient, lifecycleServices } from './services';
 import { loadTrReleases } from './tr-releases';
 
@@ -286,5 +286,32 @@ describe('a mapping change racing a step (task 5.3) and an invoice’s two sums 
     // After the re-upload: the 4 rows stored again, excluded, naming the withdrawn ones.
     expect([await scope1(), await invoiceLitres()]).toEqual([689.01, 769.01]);
     expect(await owner.fuelRow.count({ where: { organisationId: tenant.organisationId, state: 'excluded', replacesId: { not: null } } })).toBe(4);
+  });
+});
+
+describe('the slot key and the slot kind beside manual records (task 6.2)', () => {
+  const march = { reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'March', category: 'Mobile Combustion', activityUnit: 'litres', scope: 1 };
+
+  it('lets a batch record stand beside a manual record of the same type and month', async () => {
+    await createRecord(owner, tenant, { ...march, activityType: 'on_road_diesel', activityValue: 50, createdBy: tenant.users.masterkey.id });
+    await confirmed('SLOT', tenant.subsidiaryId);
+    const user = await masterkey();
+    const up = await upload(user, sales([['S-1', 'SLOT', '02.03.2025', 'Motorin', 10, 'OZK-S']]));
+    expect(await services().formation.formBatches(user, up.id)).toMatchObject({ formedBatches: 1 });
+    expect(await owner.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId, periodValue: 'March', activityType: 'on_road_diesel' } })).toBe(2);
+    // A second manual record of that type and month is still a duplicate.
+    const dto = { subsidiaryId: tenant.subsidiaryId, ...march, activityType: 'on_road_diesel', activityValue: 5 };
+    const refused = await services().records.previewCreate(user, dto as never).catch((e: unknown) => e);
+    expect(errorCodeOf(refused)).toBe('record_duplicate');
+  });
+
+  it('answers the slot-kind conflict alike from a manual preview and a batch’s formation when an untyped record holds the slot', async () => {
+    await createRecord(owner, tenant, { ...march, activityType: null, activityValue: 50, createdBy: tenant.users.masterkey.id });
+    await confirmed('KIND', tenant.subsidiaryId);
+    const user = await masterkey();
+    const dto = { subsidiaryId: tenant.subsidiaryId, ...march, activityType: 'on_road_diesel', activityValue: 5 };
+    expect(errorCodeOf(await services().records.previewCreate(user, dto as never).catch((e: unknown) => e))).toBe('slot_holds_untyped');
+    const up = await upload(user, sales([['K-1', 'KIND', '02.03.2025', 'Motorin', 10, 'OZK-K']]));
+    expect(await services().formation.formBatches(user, up.id)).toMatchObject({ held: [{ reason: 'slot_holds_untyped' }] });
   });
 });
