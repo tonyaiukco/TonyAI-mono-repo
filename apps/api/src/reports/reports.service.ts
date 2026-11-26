@@ -286,7 +286,7 @@ export class ReportsService {
     const associates = selected.length === 0 || user.accessibleSubsidiaryIds.length === 0 || !can(user.role, 'scope.organisation')
       ? []
       : await db.subsidiary.findMany({
-          where: { id: { in: user.accessibleSubsidiaryIds }, control: 'associate' },
+          where: { id: { in: user.accessibleSubsidiaryIds }, organisationId: user.organisationId ?? undefined, control: 'associate' },
           select: { legalName: true, tradingName: true },
           orderBy: [{ legalName: 'asc' }, { id: 'asc' }],
         });

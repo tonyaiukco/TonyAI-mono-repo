@@ -276,6 +276,35 @@ describe('LocationsService', () => {
     // Granted sub-1 and sub-2; sub-3 is a company of the SAME organisation it
     // is not granted — answered as unknown, never 403, so nothing about it leaks.
     const superAdmin = makeSuperAdmin();
+    /** The account as the write re-reads it under the admin lock. */
+    const standing = (over: Record<string, unknown> = {}) =>
+      prisma.txClient.profile.findUnique.mockResolvedValue({
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null },
+        subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-2' }], ...over,
+      });
+    beforeEach(() => standing());
+
+    it("writes nothing once its grant on the company was withdrawn, or the company moved to another organisation, while the request waited (owner's fifth review, P2)", async () => {
+      standing({ subsidiaryAccess: [{ subsidiaryId: 'sub-1' }] });
+      await expect(service.create(superAdmin, { subsidiaryId: 'sub-2', name: 'Plant', geographyCode: 'TR' }))
+        .rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      const loc = makeLocation({ id: 'loc-2', subsidiaryId: 'sub-2' });
+      prisma.location.findUnique.mockResolvedValue(loc);
+      prisma.txClient.location.findUnique.mockResolvedValue(loc);
+      await expect(service.update(superAdmin, 'loc-2', { locationType: 'warehouse' }))
+        .rejects.toMatchObject({ response: { code: 'location_not_found' } });
+      // Granted, but the company is no longer in the actor's organisation.
+      standing();
+      prisma.txClient.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) =>
+        (sql.join('?').includes('FROM subsidiaries') ? [] : [{ id: 'locked' }])) as never);
+      await expect(service.create(superAdmin, { subsidiaryId: 'sub-2', name: 'Plant', geographyCode: 'TR' }))
+        .rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      await expect(service.update(superAdmin, 'loc-2', { locationType: 'warehouse' }))
+        .rejects.toMatchObject({ response: { code: 'location_not_found' } });
+      expect(prisma.txClient.location.create).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
 
     it('creates a location in a granted company, audited as itself in the same transaction', async () => {
       const created = makeLocation({ subsidiaryId: 'sub-2', name: 'Plant' });

@@ -99,7 +99,9 @@ describe('EmissionsService.rollUp', () => {
     expect(where.reportingYear).toBe(2026);
     expect(where.status).toEqual({ in: ['submitted', 'under_review', 'approved', 'locked'] });
     expect(where.AND).toHaveLength(1);
-    expect(w.prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['A'] } });
+    // …and in the reader's own organisation, for the nodes and the records (owner's fifth review, P2).
+    expect(w.prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['A'] }, organisationId: 'org-1' });
+    expect(where.subsidiary).toEqual({ organisationId: 'org-1' });
     // Scope 1 and 2 only, before the row budget; one REPEATABLE READ snapshot
     // for the tree, the records and the releases (owner's fourth review, P2).
     expect(where.scope).toEqual({ in: [1, 2] });

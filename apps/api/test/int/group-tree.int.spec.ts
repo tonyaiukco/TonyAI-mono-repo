@@ -490,6 +490,7 @@ describe('the API over the database', () => {
     return {
       subsidiaries: new SubsidiariesService(client, audit, locations, new AccessAdminService(client, audit), calculations),
       access: new AccessAdminService(client, audit),
+      locations,
       boundaries: new InventoryBoundariesService(client, audit),
       emissions: new EmissionsService(client),
     };
@@ -650,6 +651,7 @@ describe('the API over the database', () => {
 
   it("a company moved to another organisation meanwhile is unknown to its former organisation's update and delete (owner's fourth review, P2)", async () => {
     const company = await node({ nodeType: 'company', name: 'Int-test transferred' });
+    const site = await owner.location.create({ data: { subsidiaryId: company, name: 'Int-test transferred site', geographyCode: 'UK' } });
     // The masterkey's request read it in A; an operator moves it to B before the write.
     const user = masterkey(company);
     const foreign = await createTenant();
@@ -659,6 +661,22 @@ describe('the API over the database', () => {
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
       await expect(services(runtime).subsidiaries.remove(user, company))
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+      // Its facilities too: no new one, no change, nothing removed (owner's fifth review, P2).
+      await expect(services(runtime).locations.create(user, { subsidiaryId: company, name: 'Written from A', geographyCode: 'UK' }))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+      await expect(services(runtime).locations.update(user, site.id, { locationType: 'warehouse' }))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'location_not_found' }) });
+      expect(await owner.location.findMany({ where: { subsidiaryId: company }, select: { id: true, locationType: true } }))
+        .toEqual([{ id: site.id, locationType: null }]);
+      // Nor read: A's roll-up and its exclusions note say nothing of it (owner's fifth review, P2).
+      const associate = await node({ nodeType: 'company', control: 'associate', name: 'Int-test transferred associate' });
+      await owner.subsidiary.update({ where: { id: associate }, data: { organisationId: foreign.organisationId, parentId: foreign.subsidiaryId } });
+      const stale = masterkey(company, associate);
+      const roll = await services(runtime).emissions.rollUp(stale, { reportingYear: 2026 });
+      expect(roll.rows.map((r) => r.subsidiaryId)).not.toContain(company);
+      expect(roll.rows.map((r) => r.subsidiaryId)).not.toContain(associate);
+      expect(roll.rows.map((r) => r.subsidiaryId)).toContain(tenant.subsidiaryId);
+      expect(await services(runtime).subsidiaries.boundaryExclusions(stale)).toEqual([]);
       expect(await owner.subsidiary.findUniqueOrThrow({ where: { id: company } }))
         .toMatchObject({ organisationId: foreign.organisationId, legalName: 'Int-test transferred' });
     } finally {

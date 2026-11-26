@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "use-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -54,23 +54,36 @@ export function ConsolidationCard({
   const canSet = can(role, "consolidation.write");
   const readsExclusions = can(role, "scope.organisation");
 
+  // Only the newest read's answer is shown: a slower, earlier read never
+  // overwrites a later one (owner's fifth review of WP7, P2).
+  const seq = useRef(0);
+  const [reading, setReading] = useState(false);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     setFailed(false);
+    // The previous list is invalid the moment a re-read starts (a delete, a
+    // create): never shown while the new one is read.
+    setExclusions(null);
+    setReading(true);
     try {
       const [org, excluded] = await Promise.all([
         api.getOrganisation(),
         readsExclusions ? api.listBoundaryExclusions() : Promise.resolve(null),
       ]);
+      if (mine !== seq.current) return;
       setOrganisation(org);
       setExclusions(excluded);
       onApproach?.(org.consolidationApproach);
     } catch (e) {
+      if (mine !== seq.current) return;
       // Never the previous answer after a failed re-read: a deleted associate
       // would stay named, or "none" would outlive a new one (owner's fourth
       // review of WP7, P2). The note says it could not be read.
       setExclusions(null);
       setFailed(true);
       showStableError(e);
+    } finally {
+      if (mine === seq.current) setReading(false);
     }
   }, [readsExclusions, onApproach, showStableError]);
 
@@ -134,7 +147,9 @@ export function ConsolidationCard({
         {readsExclusions && organisation && (
           <div className="space-y-1 border-t border-border pt-3" data-testid="boundary-exclusions">
             <p className="text-sm font-medium">{t("exclusions.title")}</p>
-            {exclusions === null ? (
+            {reading ? (
+              <p className="text-sm text-muted-foreground">{t("exclusions.loading")}</p>
+            ) : exclusions === null ? (
               <p className="text-sm text-muted-foreground">{t("exclusions.loadFailed")}</p>
             ) : exclusions.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t("exclusions.none")}</p>

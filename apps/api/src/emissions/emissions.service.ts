@@ -649,8 +649,12 @@ export class EmissionsService {
     const { nodes, rows, withdrawn } = await this.prisma.$transaction(
       async (tx) => {
         const [nodes, rows] = await Promise.all([
+          // In the reader's own organisation too: ids taken when the request
+          // arrived could name a company an operator moved to another one
+          // since — it is neither shown nor counted (owner's fifth review of
+          // WP7, P2).
           tx.subsidiary.findMany({
-            where: { id: { in: user.accessibleSubsidiaryIds } },
+            where: { id: { in: user.accessibleSubsidiaryIds }, organisationId: user.organisationId ?? undefined },
             select: { id: true, parentId: true, nodeType: true, control: true },
             orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           }),
@@ -659,6 +663,7 @@ export class EmissionsService {
             select: SUMMARY_RECORD_SELECT,
             where: {
               subsidiaryId: { in: user.accessibleSubsidiaryIds },
+              subsidiary: { organisationId: user.organisationId ?? undefined },
               AND: [recordScopeWhere(user)],
               reportingYear,
               scope: { in: [1, 2] },

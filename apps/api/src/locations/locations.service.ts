@@ -10,6 +10,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { boundaryGuardRefused } from '../inventory-boundary/errors';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
+import { lockAndReadActor } from '../auth/access-admin.service';
 // `CreateSubsidiaryLocationDto` is the base of `CreateLocationDto` and is what
 // the shared writer takes: the parameter used to build its own
 // `Omit<CreateLocationDto, 'subsidiaryId'>`, which made the shape's THIRD
@@ -215,9 +216,30 @@ export class LocationsService {
     // rows and audit entries. Wrapped in a transaction here too — this endpoint
     // used to write its audit row outside the mutation, so a crash between them
     // left a location with no trail.
-    return this.prisma.$transaction((tx) =>
-      this.writeLocationForTrustedParent(tx, user, parent, dto),
-    );
+    return this.prisma.$transaction(async (tx) => {
+      const writer = await this.lockWritableParent(tx, user, dto.subsidiaryId);
+      return this.writeLocationForTrustedParent(tx, writer, parent, dto);
+    });
+  }
+
+  /**
+   * The facility writer and its company as they stand, inside the write (owner's
+   * fifth review of WP7, P2): the actor re-read under the organisation's
+   * administrative lock — a super_admin whose grant on the company was
+   * withdrawn, or an account disabled or demoted, while the request waited
+   * writes nothing — then the company locked FOR SHARE in the actor's own
+   * organisation, so one an operator moved to another organisation meanwhile
+   * answers as unknown and stays where it is until this write ends. Returns the
+   * re-read actor, whose role the audit row names.
+   */
+  private async lockWritableParent(tx: Prisma.TransactionClient, user: RequestUser, subsidiaryId: string): Promise<RequestUser> {
+    const organisationId = user.organisationId as string;
+    const actor = await lockAndReadActor(tx, user, organisationId, 'location.write');
+    if (actor.scope !== null && !actor.scope.has(subsidiaryId)) throw new ResourceNotFoundError('subsidiary_not_found');
+    const [held] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM subsidiaries WHERE id = ${subsidiaryId}::uuid AND organisation_id = ${organisationId}::uuid FOR SHARE`;
+    if (!held) throw new ResourceNotFoundError('subsidiary_not_found');
+    return { ...user, role: actor.role };
   }
 
   async update(
@@ -245,15 +267,26 @@ export class LocationsService {
       // against THIS value, so an edit that read an older one cannot write
       // back a geography the library no longer prices; the audit's `before`
       // is this row too (owner review of WP7, P2).
+      // The actor, then the facility, then its company — the admin lock first,
+      // as every writer of grants and the tree takes it.
+      const organisationId = user.organisationId as string;
+      const actor = await lockAndReadActor(tx, user, organisationId, 'location.write');
       await tx.$queryRaw`SELECT id FROM locations WHERE id = ${id}::uuid FOR UPDATE`;
       const current = await tx.location.findUnique({ where: { id } });
       if (!current) throw new ResourceNotFoundError('location_not_found');
+      // Its company in the actor's organisation and, for a scoped actor, still
+      // granted (owner's fifth review of WP7, P2).
+      if (actor.scope !== null && !actor.scope.has(current.subsidiaryId)) throw new ResourceNotFoundError('location_not_found');
+      const [held] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM subsidiaries WHERE id = ${current.subsidiaryId}::uuid AND organisation_id = ${organisationId}::uuid FOR SHARE`;
+      if (!held) throw new ResourceNotFoundError('location_not_found');
+      const writer = { ...user, role: actor.role };
       if (dto.geographyCode !== undefined && dto.geographyCode !== current.geographyCode) {
         await assertPricedGeography(this.calculations, dto.geographyCode);
       }
       const row = await tx.location.update({ where: { id }, data });
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'update',
           entity: 'location',
@@ -380,9 +413,11 @@ export class LocationsService {
     // Delete + audit in one transaction (see subsidiaries.remove).
     try {
       await this.prisma.$transaction(async (tx) => {
+        // The actor and the company as they stand (owner's fifth review of WP7, P2).
+        const writer = await this.lockWritableParent(tx, user, existing.subsidiaryId);
         // Deleted by a concurrent request since it was read: the answer it
         // would get now, not a 500 (pre-pilot defects).
-        if (!(await this.deleteLocationForTrustedParent(tx, user, existing))) {
+        if (!(await this.deleteLocationForTrustedParent(tx, writer, existing))) {
           throw new ResourceNotFoundError('location_not_found');
         }
       });

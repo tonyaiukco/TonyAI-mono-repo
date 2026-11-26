@@ -2726,7 +2726,7 @@ describe('ReportsService — the methodology text states the stored approach (in
     const html = buildReportHtml(await service.assemble(admin, q));
     expect(html).toContain('Left outside Scope 1 and 2 as associates (equity, not consolidated): Dünya &lt;b&gt;Katılım&lt;/b&gt;.');
     const read = prisma.subsidiary.findMany.mock.calls.find((c) => (c[0] as { where?: { control?: string } })?.where?.control === 'associate');
-    expect((read![0] as { where: unknown }).where).toEqual({ id: { in: ['sub-1', 'sub-2'] }, control: 'associate' });
+    expect((read![0] as { where: unknown }).where).toEqual({ id: { in: ['sub-1', 'sub-2'] }, organisationId: 'org-1', control: 'associate' });
   });
 
   it('names the approach and the associates on every live report — a PDF without its methodology notes, and the workbook summary (owner review of WP7, P2)', async () => {

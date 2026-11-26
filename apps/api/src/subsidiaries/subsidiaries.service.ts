@@ -183,7 +183,9 @@ export class SubsidiariesService {
     // third review of WP7, P2; the spec's super_admin report names none).
     if (!can(user.role, 'scope.organisation') || user.accessibleSubsidiaryIds.length === 0) return [];
     const rows = await this.prisma.subsidiary.findMany({
-      where: { id: { in: user.accessibleSubsidiaryIds }, control: 'associate' },
+      // In the reader's own organisation: an associate moved to another one
+      // since the request arrived is not named (owner's fifth review of WP7, P2).
+      where: { id: { in: user.accessibleSubsidiaryIds }, organisationId: user.organisationId ?? undefined, control: 'associate' },
       select: { id: true, legalName: true, sharePercent: true },
       orderBy: [{ legalName: 'asc' }, { id: 'asc' }],
     });

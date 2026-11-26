@@ -265,6 +265,7 @@
     "none": "No company is excluded.",
     "item": "{name} — outside Scope 1 and 2 as an associate",
     "itemShare": "{name} ({share} %) — outside Scope 1 and 2 as an associate",
+    "loading": "Loading…",
     "loadFailed": "The boundary exclusions could not be loaded."
   }
 }

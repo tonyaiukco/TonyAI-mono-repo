@@ -146,6 +146,7 @@ export default function SubsidiariesPage() {
   const pricedGeos = usePricedGeographies();
 
   const [listVersion, setListVersion] = useState(0);
+  const [exclusionsVersion, setExclusionsVersion] = useState(0);
   async function refresh() {
     setLoading(true);
     try {
@@ -390,6 +391,10 @@ export default function SubsidiariesPage() {
     try {
       await api.deleteSubsidiary(deletingId);
       toast.success(t("list.deleted"));
+      // The exclusions note is read again at once, whatever the list's own
+      // re-read answers — a deleted associate must not stay named (owner's
+      // fifth review of WP7, P2).
+      setExclusionsVersion((v) => v + 1);
       await refresh();
     } catch (e) {
       showError(e);
@@ -434,7 +439,7 @@ export default function SubsidiariesPage() {
             <SummaryCard title={t("list.cards.geographies")} value={formatNumber(geographies, locale)} icon={<Globe className="h-4 w-4 text-primary" />} hint={t("list.cards.geographiesHint")} />
           </div>
 
-          <ConsolidationCard role={user?.role} refreshKey={listVersion} />
+          <ConsolidationCard role={user?.role} refreshKey={listVersion + exclusionsVersion} />
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-4">

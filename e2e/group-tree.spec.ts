@@ -379,3 +379,26 @@ test("a link to a closed node selects nothing and applies nothing; the review qu
   await expect(page.getByRole('option', { name: /Bosphorus|Utilities Group/ })).toHaveCount(0);
   await page.keyboard.press('Escape');
 });
+
+test("a deleted associate leaves the exclusions note at once, even when the list's re-read fails (owner's fifth review of WP7)", async ({ page, request }) => {
+  const admin = await getAccessToken(request, ADMIN_EMAIL);
+  const roots = (await api<SubsidiaryDTO[]>(request, admin, 'get', '/subsidiaries')).json.filter((s) => s.nodeType === 'holding');
+  const associate = await node(request, admin, { legalName: 'E2E Tree Short-lived Associate', nodeType: 'company', parentId: roots[0].id, control: 'associate', locations: [] });
+  try {
+    await login(page, ADMIN_EMAIL);
+    await page.goto('/subsidiaries');
+    const note = page.getByTestId('boundary-exclusions');
+    await expect(note).toContainText('E2E Tree Short-lived Associate');
+    // The company list's own re-read fails after the delete (its facilities read answers 503).
+    await page.route('**/api/v1/locations**', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{"statusCode":503,"code":"internal_error","message":"unavailable"}' }));
+    await page.getByTestId(`tree-row-${associate.id}`).getByRole('button', { name: enSubsidiaries.list.delete }).click();
+    await page.getByRole('button', { name: enSubsidiaries.list.deleteConfirm, exact: true }).click();
+    await expect(page.getByText(enSubsidiaries.list.deleted)).toBeVisible();
+    await expect(note).not.toContainText('E2E Tree Short-lived Associate');
+    await expect(note).toContainText('Bosphorus Associates A.Ş.');
+  } finally {
+    await page.unroute('**/api/v1/locations**');
+    const left = (await api<SubsidiaryDTO[]>(request, admin, 'get', '/subsidiaries')).json.find((s) => s.id === associate.id);
+    if (left) await api(request, admin, 'delete', `/subsidiaries/${associate.id}`);
+  }
+});

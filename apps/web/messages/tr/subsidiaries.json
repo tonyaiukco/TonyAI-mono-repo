@@ -265,6 +265,7 @@
     "none": "Hiçbir şirket hariç tutulmuyor.",
     "item": "{name} — öz kaynak şirketi olarak Kapsam 1 ve 2 dışında",
     "itemShare": "{name} (%{share}) — öz kaynak şirketi olarak Kapsam 1 ve 2 dışında",
+    "loading": "Yükleniyor…",
     "loadFailed": "Sınır dışında bırakılanlar yüklenemedi."
   }
 }

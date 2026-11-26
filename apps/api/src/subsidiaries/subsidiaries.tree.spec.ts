@@ -745,7 +745,7 @@ describe('SubsidiariesService — the group tree', () => {
         { subsidiaryId: 'sub-y', legalName: 'Other', sharePercent: null },
       ]);
       expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: { in: masterkey().accessibleSubsidiaryIds }, control: 'associate' } }),
+        expect.objectContaining({ where: { id: { in: masterkey().accessibleSubsidiaryIds }, organisationId: 'org-1', control: 'associate' } }),
       );
     });
 
