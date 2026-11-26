@@ -329,9 +329,10 @@ export default function SubsidiaryDetailPage() {
                       locations panel below has its own `Geography *`, and a
                       label-scoped selector matching both would be ambiguous. */}
                   <Field label={t("fields.reportingGeography")}>
+                    {/* A sector group's is its parent's (D10): shown, never changed. */}
                     <Select
                       value={form.geographyCode}
-                      disabled={!canManage}
+                      disabled={!canManage || subsidiary.nodeType === "sector_group"}
                       onValueChange={(v) => setForm({ ...form, geographyCode: v })}
                     >
                       <SelectTrigger>

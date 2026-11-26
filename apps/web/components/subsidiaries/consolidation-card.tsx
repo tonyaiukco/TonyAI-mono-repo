@@ -96,9 +96,15 @@ export function ConsolidationCard({
     setSaving(true);
     try {
       const saved = await api.setConsolidationApproach({ consolidationApproach: value as ConsolidationApproach });
+      // Any read started before the save is now older than what was saved: it
+      // must not turn the screen back (owner's sixth review of WP7, P2). Its
+      // answer is dropped; the exclusions it was reading are read again.
+      const readInFlight = reading;
+      seq.current++;
       setOrganisation(saved);
       onApproach?.(saved.consolidationApproach);
       toast.success(t("consolidation.saved"));
+      if (readInFlight) void load();
     } catch (e) {
       showError(e);
     } finally {

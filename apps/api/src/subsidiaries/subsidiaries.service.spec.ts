@@ -167,7 +167,7 @@ describe('SubsidiariesService', () => {
 
       expect(prisma.subsidiary.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
-        where: { id: { in: ['sub-1', 'sub-2'] } },
+        where: { id: { in: ['sub-1', 'sub-2'] }, organisationId: 'org-1' },
         orderBy: { createdAt: 'asc' },
       });
       expect(result).toHaveLength(2);
@@ -181,7 +181,7 @@ describe('SubsidiariesService', () => {
       const result = await service.list(user);
 
       expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
-        where: { id: { in: [] } },
+        where: { id: { in: [] }, organisationId: 'org-1' },
         orderBy: { createdAt: 'asc' },
       });
       expect(result).toEqual([]);

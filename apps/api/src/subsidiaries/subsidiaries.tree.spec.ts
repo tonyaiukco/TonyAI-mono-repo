@@ -555,6 +555,18 @@ describe('SubsidiariesService — the group tree', () => {
         expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
       });
 
+      it("refuses a sector group's geography change — it is its parent's (owner's sixth review, P3)", async () => {
+        prisma.subsidiary.findUnique.mockResolvedValue(company({ nodeType: 'sector_group', geographyCode: 'TR' }));
+        await expect(service.update(masterkey(), 'sub-2', { geographyCode: 'UK' })).rejects.toMatchObject({
+          response: { code: 'node_placement_invalid' },
+        });
+        expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
+        // Sent back unchanged with a rename: no change to refuse.
+        prisma.txClient.subsidiary.update.mockResolvedValue(company({ nodeType: 'sector_group', geographyCode: 'TR' }));
+        await service.update(masterkey(), 'sub-2', { legalName: 'Renamed', geographyCode: 'TR' });
+        expect(prisma.txClient.subsidiary.update).toHaveBeenCalledTimes(1);
+      });
+
       it('judges the stored-geography exception against the row as locked: a stale edit cannot write an unpriced one back (owner review, P2)', async () => {
         // Read as EU before the transaction; changed to TR meanwhile.
         prisma.subsidiary.findUnique.mockResolvedValue(company({ geographyCode: 'EU' }));
@@ -704,6 +716,21 @@ describe('SubsidiariesService — the group tree', () => {
       await service.remove(masterkey(), 'sub-2');
       const row = audit.record.mock.calls.map((c) => c[1]).find((r) => r.entity === 'subsidiary');
       expect(row.diff.before).toMatchObject({ legalName: 'Renamed meanwhile', parentId: 'sub-b' });
+    });
+  });
+
+  describe("a company moved to another organisation since the request arrived (owner's sixth review of WP7, P2)", () => {
+    it('is unknown to the detail, the summary, an update and a delete', async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-2', organisationId: 'org-2' }));
+      for (const read of [
+        () => service.get(masterkey(), 'sub-2'),
+        () => service.summary(masterkey(), 'sub-2'),
+        () => service.update(masterkey(), 'sub-2', { legalName: 'x' }),
+        () => service.remove(masterkey(), 'sub-2'),
+      ]) {
+        await expect(read()).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      }
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 

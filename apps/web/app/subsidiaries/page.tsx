@@ -57,6 +57,7 @@ import {
   NODE_TYPES,
   SUBSIDIARY_STATUSES,
   selectableReportingYears,
+  type CreateSubsidiaryInput,
 } from "@/lib/types";
 import type {
   CreateSubsidiaryLocationInput,
@@ -150,17 +151,20 @@ export default function SubsidiariesPage() {
   async function refresh() {
     setLoading(true);
     try {
-      const [list, locs] = await Promise.all([
-        api.listSubsidiaries(),
-        api.listLocations(),
-      ]);
-      setSubsidiaries(list);
-      setLocations(locs);
-      // Every reading of the list after the first: the exclusions note and
-      // the roll-up read again with it.
-      setListVersion((v) => v + 1);
-    } catch (e) {
-      showError(e);
+      // Each read stands on its own: a failed facilities read must not keep
+      // the company list as it was — a deleted company would stay in the tree
+      // (owner's sixth review of WP7, P2).
+      const [list, locs] = await Promise.allSettled([api.listSubsidiaries(), api.listLocations()]);
+      if (list.status === "fulfilled") {
+        setSubsidiaries(list.value);
+        // Every reading of the list after the first: the exclusions note and
+        // the roll-up read again with it.
+        setListVersion((v) => v + 1);
+      } else {
+        showError(list.reason);
+      }
+      if (locs.status === "fulfilled") setLocations(locs.value);
+      else if (list.status === "fulfilled") showError(locs.reason);
     } finally {
       setLoading(false);
     }
@@ -353,24 +357,24 @@ export default function SubsidiariesPage() {
   async function persist() {
     setSaving(true);
     try {
-      const body = {
+      const common = {
         legalName: form.legalName.trim(),
         tradingName: form.tradingName || null,
         location: form.location || null,
-        // A sector group's is its parent's, set by the API (D10).
-        ...(form.nodeType === "sector_group" ? {} : { geographyCode: form.geographyCode }),
         sector: form.sector || null,
         reportingStatus: form.reportingStatus,
         ...(form.parentId ? { parentId: form.parentId } : {}),
-        nodeType: form.nodeType,
         ...(canManage && mayBeAssociate(form.nodeType) && form.associate ? { control: "associate" as const } : {}),
         naceCode: parseNaceCode(form.naceCode) as string | null,
         sharePercent: parseSharePercent(form.sharePercent, locale as "en" | "tr") as number | null,
       };
-      const created = await api.createSubsidiary({
-        ...body,
-        locations: form.nodeType === "sector_group" ? [] : draftLocations,
-      });
+      // A sector group's geography is its parent's, set by the API (D10); every
+      // other node sends its own.
+      const body: CreateSubsidiaryInput =
+        form.nodeType === "sector_group"
+          ? { ...common, nodeType: "sector_group", locations: [] }
+          : { ...common, nodeType: form.nodeType, geographyCode: form.geographyCode, locations: draftLocations };
+      const created = await api.createSubsidiary(body);
       toast.success(t("list.created"));
       setAddOpen(false);
       setForm(emptyForm);
@@ -391,6 +395,9 @@ export default function SubsidiariesPage() {
     try {
       await api.deleteSubsidiary(deletingId);
       toast.success(t("list.deleted"));
+      // Gone from the tree at once, whatever the re-read below answers.
+      const gone = deletingId;
+      setSubsidiaries((list) => list.filter((s) => s.id !== gone));
       // The exclusions note is read again at once, whatever the list's own
       // re-read answers — a deleted associate must not stay named (owner's
       // fifth review of WP7, P2).

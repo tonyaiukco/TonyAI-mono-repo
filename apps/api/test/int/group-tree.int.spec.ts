@@ -666,6 +666,8 @@ describe('the API over the database', () => {
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
       await expect(services(runtime).locations.update(user, site.id, { locationType: 'warehouse' }))
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'location_not_found' }) });
+      await expect(services(runtime).locations.remove(user, site.id))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
       expect(await owner.location.findMany({ where: { subsidiaryId: company }, select: { id: true, locationType: true } }))
         .toEqual([{ id: site.id, locationType: null }]);
       // Nor read: A's roll-up and its exclusions note say nothing of it (owner's fifth review, P2).
@@ -677,6 +679,10 @@ describe('the API over the database', () => {
       expect(roll.rows.map((r) => r.subsidiaryId)).not.toContain(associate);
       expect(roll.rows.map((r) => r.subsidiaryId)).toContain(tenant.subsidiaryId);
       expect(await services(runtime).subsidiaries.boundaryExclusions(stale)).toEqual([]);
+      // Nor the company screen's list and detail (owner's sixth review, P2).
+      expect((await services(runtime).subsidiaries.list(stale)).map((s) => s.id)).not.toContain(company);
+      await expect(services(runtime).subsidiaries.get(stale, company))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
       expect(await owner.subsidiary.findUniqueOrThrow({ where: { id: company } }))
         .toMatchObject({ organisationId: foreign.organisationId, legalName: 'Int-test transferred' });
     } finally {

@@ -43,6 +43,11 @@ describe('LocationsService', () => {
 
     audit.record.mockClear();
     prisma = createPrismaMock();
+    // A site's delete counts its records and versions inside the write, after
+    // its actor is re-read (owner's sixth review of WP7): the same rows the
+    // root client's stubs describe.
+    prisma.txClient.activityRecord.count.mockImplementation((args: unknown) => prisma.activityRecord.count(args));
+    prisma.txClient.inventoryBoundarySite.count.mockImplementation((args: unknown) => prisma.inventoryBoundarySite.count(args));
     calculations.coverage.mockClear();
     service = new LocationsService(prisma as unknown as PrismaService, auditMock(), calculationsMock());
   });
@@ -550,7 +555,30 @@ describe('LocationsService', () => {
       await expect(service.remove(user, existing.id)).rejects.toMatchObject({
         response: { code: 'location_in_boundary', params: { count: 7 } },
       });
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // Counted inside the write, after the actor is re-read — and nothing deleted.
+      expect(prisma.txClient.location.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.profile.findUnique.mock.invocationCallOrder[0])
+        .toBeLessThan(prisma.txClient.inventoryBoundarySite.count.mock.invocationCallOrder[0]);
+    });
+
+    it("tells a caller whose grant was withdrawn meanwhile nothing of what depends on the site (owner's sixth review, P2)", async () => {
+      const existing = makeLocation({ subsidiaryId: 'sub-2' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.activityRecord.count.mockResolvedValue(3);
+      prisma.inventoryBoundarySite.count.mockResolvedValue(2);
+      prisma.txClient.profile.findUnique.mockResolvedValue({
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [{ subsidiaryId: 'sub-1' }],
+      });
+      await expect(service.remove(makeSuperAdmin(), existing.id)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      expect(prisma.txClient.activityRecord.count).not.toHaveBeenCalled();
+      expect(prisma.txClient.inventoryBoundarySite.count).not.toHaveBeenCalled();
+    });
+
+    it("audits the row the delete removed, not the read before the transaction (owner's sixth review, P2)", async () => {
+      prisma.location.findUnique.mockResolvedValue(makeLocation({ id: 'loc-9', subsidiaryId: 'sub-1', name: 'Before' }));
+      prisma.txClient.location.delete.mockResolvedValue(makeLocation({ id: 'loc-9', subsidiaryId: 'sub-1', name: 'Renamed meanwhile', locationType: 'warehouse' }));
+      await service.remove(makeMasterkey(), 'loc-9');
+      expect(audit.record.mock.calls.at(-1)![1].diff.before).toMatchObject({ name: 'Renamed meanwhile', locationType: 'warehouse' });
     });
 
     it('answers a version declaring the site between the check and the delete with the same 409, not a 500 (W9)', async () => {

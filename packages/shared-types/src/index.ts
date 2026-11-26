@@ -1920,12 +1920,13 @@ export interface SubsidiaryDTO {
  */
 export const MAX_LOCATIONS_PER_CREATE = 50;
 
-export interface CreateSubsidiaryInput {
+/** A node's fields, but its geography (see `CreateSubsidiaryInput`). */
+export interface CreateSubsidiaryFields {
   legalName: string;
   tradingName?: string | null;
   location?: string | null;
   /** Required, and priced, for every node but a sector group, which takes its
-   *  parent's (D10; owner review of WP7). */
+   *  parent's (D10) — `CreateSubsidiaryInput` states which. */
   geographyCode?: string;
   businessArea?: string | null;
   sector?: string | null;
@@ -1978,7 +1979,18 @@ export interface CreateSubsidiaryInput {
  * especially easy here, where `location` and `locations` are one keystroke
  * apart. Locations are managed through `/locations`.
  */
-export type UpdateSubsidiaryInput = Omit<Partial<CreateSubsidiaryInput>, 'locations'>;
+/**
+ * `POST /subsidiaries`: a geography is required of every node but a sector
+ * group, which takes its parent's whatever is sent (D10) — the type says so,
+ * as the API's validation does (owner's sixth review of WP7, P3).
+ */
+export type CreateSubsidiaryInput = CreateSubsidiaryFields &
+  (
+    | { nodeType: 'sector_group'; geographyCode?: string }
+    | { nodeType?: Exclude<NodeType, 'sector_group'>; geographyCode: string }
+  );
+
+export type UpdateSubsidiaryInput = Omit<Partial<CreateSubsidiaryFields>, 'locations'>;
 
 /** What can stand in the way of deleting a subsidiary (`SubsidiarySummaryDTO`). */
 export const SUBSIDIARY_BLOCKER_KINDS = [

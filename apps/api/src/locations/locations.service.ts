@@ -306,8 +306,8 @@ export class LocationsService {
    * each operated. An open version can drop it; a frozen one keeps it, and so
    * the site stays.
    */
-  private async assertNotDeclared(locationId: string): Promise<void> {
-    const versions = await this.prisma.inventoryBoundarySite.count({ where: { locationId } });
+  private async assertNotDeclared(locationId: string, db: Prisma.TransactionClient | PrismaService = this.prisma): Promise<void> {
+    const versions = await db.inventoryBoundarySite.count({ where: { locationId } });
     if (versions > 0) {
       throw new ConflictException(
         errorBody(
@@ -335,8 +335,8 @@ export class LocationsService {
    * The count is part of the message because "you cannot delete this" without a
    * number leaves the user with no idea what to do next.
    */
-  private async assertNoRecords(locationId: string): Promise<void> {
-    const count = await this.prisma.activityRecord.count({
+  private async assertNoRecords(locationId: string, db: Prisma.TransactionClient | PrismaService = this.prisma): Promise<void> {
+    const count = await db.activityRecord.count({
       where: { locationId },
     });
     if (count > 0) {
@@ -383,8 +383,9 @@ export class LocationsService {
     user: RequestUser,
     location: Location,
   ): Promise<boolean> {
+    let deleted: Location;
     try {
-      await db.location.delete({ where: { id: location.id } });
+      deleted = await db.location.delete({ where: { id: location.id } });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') return false;
       throw err;
@@ -395,7 +396,10 @@ export class LocationsService {
         action: 'delete',
         entity: 'location',
         entityId: location.id,
-        diff: { before: this.toDTO(location) },
+        // The row the delete removed, not the read before the transaction —
+        // a rename or a new type meanwhile is what was deleted (owner's sixth
+        // review of WP7, P2).
+        diff: { before: this.toDTO(deleted) },
       },
       db,
     );
@@ -408,13 +412,16 @@ export class LocationsService {
   ): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
-    await this.assertNoRecords(id);
-    await this.assertNotDeclared(id);
     // Delete + audit in one transaction (see subsidiaries.remove).
     try {
       await this.prisma.$transaction(async (tx) => {
         // The actor and the company as they stand (owner's fifth review of WP7, P2).
         const writer = await this.lockWritableParent(tx, user, existing.subsidiaryId);
+        // Only then what depends on the site: a caller whose grant was
+        // withdrawn meanwhile learns no count of its records or versions
+        // (owner's sixth review of WP7, P2).
+        await this.assertNoRecords(id, tx);
+        await this.assertNotDeclared(id, tx);
         // Deleted by a concurrent request since it was read: the answer it
         // would get now, not a 500 (pre-pilot defects).
         if (!(await this.deleteLocationForTrustedParent(tx, writer, existing))) {

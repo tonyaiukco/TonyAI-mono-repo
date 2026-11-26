@@ -153,8 +153,11 @@ export class SubsidiariesService {
   }
 
   async list(user: RequestUser): Promise<SubsidiaryDTO[]> {
+    // In the reader's own organisation too: ids taken when the request arrived
+    // could name a company an operator moved to another one since (owner's
+    // sixth review of WP7, P2).
     const subs = await this.prisma.subsidiary.findMany({
-      where: { id: { in: user.accessibleSubsidiaryIds } },
+      where: { id: { in: user.accessibleSubsidiaryIds }, organisationId: user.organisationId ?? undefined },
       orderBy: { createdAt: 'asc' },
     });
     const readable = SubsidiariesService.readable(user);
@@ -167,7 +170,8 @@ export class SubsidiariesService {
       throw new ResourceNotFoundError('subsidiary_not_found');
     }
     const s = await this.prisma.subsidiary.findUnique({ where: { id } });
-    if (!s) throw new ResourceNotFoundError('subsidiary_not_found');
+    // Moved to another organisation since the request arrived: unknown here.
+    if (!s || s.organisationId !== user.organisationId) throw new ResourceNotFoundError('subsidiary_not_found');
     return this.toDTO(s, SubsidiariesService.readable(user));
   }
 
@@ -451,7 +455,12 @@ export class SubsidiariesService {
       // Judged against the row as locked, so an edit that read an older value
       // cannot write back one the library no longer prices (owner review of
       // WP7, P2).
-      if (dto.geographyCode !== undefined && dto.geographyCode !== current.geographyCode && current.nodeType !== 'sector_group') {
+      if (dto.geographyCode !== undefined && dto.geographyCode !== current.geographyCode) {
+        // A sector group's is its parent's (D10), set when it was created: not
+        // a value of its own (owner's sixth review of WP7, P3).
+        if (current.nodeType === 'sector_group') {
+          throw nodePlacementInvalid("A sector group takes its parent's geography; it has none of its own to change.");
+        }
         await assertPricedGeography(this.calculations, dto.geographyCode);
       }
       const moves = dto.parentId !== undefined && dto.parentId !== current.parentId;
@@ -922,7 +931,10 @@ export class SubsidiariesService {
       throw new ResourceNotFoundError('subsidiary_not_found');
     }
     const row = await this.prisma.subsidiary.findUnique({ where: { id } });
-    if (!row) throw new ResourceNotFoundError('subsidiary_not_found');
+    // Moved to another organisation since the request arrived: unknown here
+    // (owner's sixth review of WP7, P2) — the summary, the update's and the
+    // delete's first read alike.
+    if (!row || row.organisationId !== user.organisationId) throw new ResourceNotFoundError('subsidiary_not_found');
     return row;
   }
 }

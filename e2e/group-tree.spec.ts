@@ -394,6 +394,9 @@ test("a deleted associate leaves the exclusions note at once, even when the list
     await page.getByTestId(`tree-row-${associate.id}`).getByRole('button', { name: enSubsidiaries.list.delete }).click();
     await page.getByRole('button', { name: enSubsidiaries.list.deleteConfirm, exact: true }).click();
     await expect(page.getByText(enSubsidiaries.list.deleted)).toBeVisible();
+    // Gone from the tree at once too (owner's sixth review, P2).
+    await expect(page.getByTestId(`tree-row-${associate.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`tree-row-${SUB.energy}`)).toBeVisible();
     await expect(note).not.toContainText('E2E Tree Short-lived Associate');
     await expect(note).toContainText('Bosphorus Associates A.Ş.');
   } finally {

@@ -136,7 +136,12 @@ export function GroupTreeCard({
             {t("tree.associateClosed")}
           </p>
         )}
-        <Fact label={t("tree.parent")} value={parent ? parent.legalName : t("tree.parentTop")} />
+        {/* No parent is the top; a parent not (yet) read is a dash, never
+            "the top" (owner's sixth review of WP7, P3). */}
+        <Fact
+          label={t("tree.parent")}
+          value={subsidiary.parentId === null ? t("tree.parentTop") : parent ? parent.legalName : "—"}
+        />
         <Fact
           label={t("tree.createdBy")}
           value={subsidiary.createdByRole ? tRoles(`roles.${subsidiary.createdByRole}`) : t("tree.carriedOver")}
