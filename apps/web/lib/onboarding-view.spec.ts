@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CATEGORIES } from '@/lib/types';
 import {
   GATE_AUTO_RETRIES,
   boundaryStepView,
@@ -173,11 +174,27 @@ describe("step 7 offers only a user a grant can be given to (owner's second revi
   const row = (subsidiaryId: string) => ({ subsidiaryId, categories: ['Fuel' as const], kind: 'assigned' as const });
   const company = (id: string, extra: Partial<{ nodeType: 'company' | 'sector_group'; control: 'controlled' | 'associate' }> = {}) =>
     ({ id, nodeType: 'company' as const, control: 'controlled' as const, ...extra });
-  const user = { role: 'standard_user' as const, access: [row('A')] };
+  const user = { id: 'u', role: 'standard_user' as const, access: [row('A')] };
   it("no one when the user's main company is the organisation's only company that holds records", () => {
     expect(grantCandidatesIn([user], [company('A'), company('G', { nodeType: 'sector_group' }), company('X', { control: 'associate' })])).toEqual([]);
   });
   it('the user once another company holds records', () => {
     expect(grantCandidatesIn([user], [company('A'), company('B')])).toEqual([user]);
+  });
+
+  it("no one when every category of every other company is its own users' (single entry; owner's third review, P2)", () => {
+    const all = CATEGORIES.map((c) => c);
+    const a = { id: 'a', role: 'standard_user' as const, access: [{ subsidiaryId: 'A', categories: all, kind: 'assigned' as const }] };
+    const b = { id: 'b', role: 'standard_user' as const, access: [{ subsidiaryId: 'B', categories: all, kind: 'assigned' as const }] };
+    expect(grantCandidatesIn([a, b], [company('A'), company('B')])).toEqual([]);
+    // One category left open at B: a may take it.
+    const bNarrow = { ...b, access: [{ subsidiaryId: 'B', categories: all.filter((c) => c !== 'Water'), kind: 'assigned' as const }] };
+    expect(grantCandidatesIn([a, bNarrow], [company('A'), company('B')]).map((u) => u.id)).toEqual(['a']);
+  });
+
+  it("a super_admin's rows at the other company close nothing", () => {
+    const a = { id: 'a', role: 'standard_user' as const, access: [row('A')] };
+    const admin = { id: 's', role: 'super_admin' as const, access: [{ subsidiaryId: 'B', categories: [], kind: 'assigned' as const }] };
+    expect(grantCandidatesIn([a, admin], [company('A'), company('B')]).map((u) => u.id)).toEqual(['a']);
   });
 });

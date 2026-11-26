@@ -158,13 +158,18 @@ export async function lockAuthorAccess(
   if (!author?.same) throw authorRefusal(action);
   // After the profile: an access change that held it has committed, so the
   // companies its rows now name are among those locked (security review).
-  await lockAuthorCompanies(tx, user.id, subsidiaryId);
+  // The record's company must still be in the author's organisation, judged
+  // under the lock, which a move to another organisation (a key change) waits
+  // for — for every role, a masterkey's included (owner's third review, P1).
+  if (!(await lockAuthorCompanies(tx, user.id, subsidiaryId, user.organisationId))) {
+    throw new ResourceNotFoundError('subsidiary_not_found');
+  }
   if (can(user.role, 'scope.organisation')) return null;
   let access = await readLockedAccess(tx, user.id, user.organisationId);
   if (can(user.role, 'scope.categories') && looksShort(access, subsidiaryId)) {
     // The same order again: a company the second read can name (the new main
     // company) is locked before its row, as on the first pass (security review).
-    await lockAuthorCompanies(tx, user.id, subsidiaryId);
+    await lockAuthorCompanies(tx, user.id, subsidiaryId, user.organisationId);
     access = await readLockedAccess(tx, user.id, user.organisationId);
   }
   const row = access.find((r) => r.subsidiaryId === subsidiaryId);
@@ -181,15 +186,20 @@ function authorRefusal(action: 'create' | 'edit'): Error {
     : new ForbiddenException('Your role may not modify activity records');
 }
 
-/** The record's company and every company the author's access rows name, `FOR KEY SHARE`, in id order. */
-async function lockAuthorCompanies(tx: Db, userId: string, subsidiaryId: string): Promise<void> {
-  await tx.$queryRaw`
-    SELECT s.id
+/**
+ * The record's company and every company the author's access rows name,
+ * `FOR KEY SHARE`, in id order. Answers whether the record's company, as
+ * locked, is in `organisationId`.
+ */
+async function lockAuthorCompanies(tx: Db, userId: string, subsidiaryId: string, organisationId: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ id: string; organisationId: string }[]>`
+    SELECT s.id::text AS id, s.organisation_id::text AS "organisationId"
       FROM subsidiaries s
      WHERE s.id = ${subsidiaryId}::uuid
         OR s.id IN (SELECT u.subsidiary_id FROM user_subsidiary_access u WHERE u.user_id = ${userId}::uuid)
      ORDER BY s.id
        FOR KEY SHARE`;
+  return rows.some((r) => r.id === subsidiaryId && r.organisationId === organisationId);
 }
 
 async function readLockedAccess(tx: Db, userId: string, organisationId: string): Promise<UserAccessRowDTO[]> {

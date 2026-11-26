@@ -333,7 +333,11 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
   const year = contextView.status === "ready" ? contextView.context.year : null;
   const companies = boundaryCompanies(nodes);
   const [detail, setDetail] = useState<InventoryBoundaryVersionDTO | null>(null);
-  const [editing, setEditing] = useState<SubsidiaryDTO | null>(null);
+  // The editor, bound to the year and version it was opened on and to the load
+  // it was opened from (owner's third review of WP8, P1): a save writes there,
+  // and an answer after the year changed is dropped.
+  const [editing, setEditing] = useState<BoundaryEditing | null>(null);
+  const editingToken = useRef(0);
   const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -350,6 +354,8 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
     const seq = ++loadSeq.current;
     setLoadedFor(null);
     setDetail(null);
+    // An editor opened on the year being left closes with it (review of the third round).
+    setEditing(null);
     const newest = (await boundaryCalls.listYear(year))[0];
     const opened = newest ? await boundaryCalls.open(newest.id) : null;
     if (seq !== loadSeq.current) return;
@@ -370,29 +376,49 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
   const [initial, setInitial] = useState(() => emptyDraft());
 
   async function edit(company: SubsidiaryDTO) {
+    if (year === null || !view.ready) return;
+    const at = { year, versionId: version?.id ?? null, seq: loadSeq.current, start: version };
     try {
-      setSites(await boundaryCalls.sitesOf(company.id));
-      setInitial((version ? draftFromSnapshot(version.boundary, company.id) : null) ?? emptyDraft());
-      setEditing(company);
+      const sitesOf = await boundaryCalls.sitesOf(company.id);
+      // The year changed (or was read again) while the sites were fetched: the
+      // editor would open on one year's declaration and save into another's.
+      if (at.seq !== loadSeq.current) return;
+      setSites(sitesOf);
+      setInitial((at.start ? draftFromSnapshot(at.start.boundary, company.id) : null) ?? emptyDraft());
+      setEditing({ company, year: at.year, versionId: at.versionId, seq: at.seq, token: ++editingToken.current });
     } catch (e) {
       showError(e);
     }
   }
 
+  /** Closes the editor only if it is still the one this answer belongs to. */
+  const closeEditor = (token: number) => setEditing((e) => (e && e.token === token ? null : e));
+
   async function save(request: PutInventoryBoundarySubsidiaryRequest) {
-    if (!editing || year === null || !view.ready) return;
+    const target = editing;
+    if (!target || target.seq !== loadSeq.current) return;
+    const current = () => target.seq === loadSeq.current;
     setSaving(true);
     try {
-      // Into the version on screen; the first saved declaration opens one when
-      // the year had none, kept on screen at once so a failed write is retried into it.
-      setDetail(await boundaryCalls.declare(version?.id ?? null, year, editing.id, request, setDetail));
+      // Into the version the editor was opened on; the first saved declaration
+      // opens one when the year had none, kept at once so a failed write is
+      // retried into it.
+      const written = await boundaryCalls.declare(target.versionId, target.year, target.company.id, request, (opened) => {
+        if (!current()) return;
+        setDetail(opened);
+        // This editor, or another opened on the same load meanwhile, writes into it.
+        setEditing((e) => (e && e.seq === target.seq && e.versionId === null ? { ...e, versionId: opened.id } : e));
+      });
+      // An answer for a year the bar has left changes nothing on screen (owner's third review, P2).
+      if (!current()) return;
+      setDetail(written);
       toast.success(t("boundaries.saved"));
-      setEditing(null);
+      closeEditor(target.token);
     } catch (e) {
       showError(e);
       // Confirmed, deleted, or opened by someone else, meanwhile: show the year as it is now.
-      if (e instanceof ApiError && (e.code === "boundary_frozen" || e.code === "boundary_draft_open" || e.code === "boundary_not_found")) {
-        setEditing(null);
+      if (current() && e instanceof ApiError && (e.code === "boundary_frozen" || e.code === "boundary_draft_open" || e.code === "boundary_not_found")) {
+        closeEditor(target.token);
         await load().catch(showError);
       }
     } finally {
@@ -448,11 +474,11 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
         <DeclarationEditor
           open
           onOpenChange={(o) => !o && setEditing(null)}
-          title={t("boundaries.editorTitle", { name: editing.legalName })}
+          title={t("boundaries.editorTitle", { name: editing.company.legalName })}
           readOnly={false}
           initial={initial}
           sites={sites}
-          gaps={version ? gapLines(version, editing.id) : []}
+          gaps={version ? gapLines(version, editing.company.id) : []}
           saving={saving}
           onSave={(request) => void save(request)}
         />
@@ -560,6 +586,15 @@ export function SuperAdminsStep({ nodes, onNext, footer }: StepProps) {
       {footer({ onClick: onNext })}
     </div>
   );
+}
+
+interface BoundaryEditing {
+  company: SubsidiaryDTO;
+  year: number;
+  versionId: string | null;
+  /** The load the editor was opened from. */
+  seq: number;
+  token: number;
 }
 
 export function CentralReporterStep({ nodes, onNext, footer }: StepProps) {

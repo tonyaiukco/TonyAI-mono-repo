@@ -1,4 +1,4 @@
-import { can, holdsRecords, mainCompanyOf, type AuthUser, type UserSummaryDTO, type ConsolidationApproach, type ControlKind, type NodeType } from '@/lib/types';
+import { can, CATEGORIES, holdsRecords, mainCompanyOf, singleEntryConflicts, type AuthUser, type SingleEntryAccessRow, type UserSummaryDTO, type ConsolidationApproach, type ControlKind, type NodeType } from '@/lib/types';
 
 /**
  * The masterkey's setup wizard (inc26-central-reporter-onboarding, INC-2.6
@@ -198,14 +198,30 @@ export function boundaryStepView<V extends { reportingYear: number }>(
 
 /**
  * Step 7's candidates (§7.1; owner's reviews of WP8, P2): a standard user who
- * holds exactly one main company (B2) and for whom a grant company exists — a
- * company that holds records other than that main company. Anyone else would
- * be offered a grant the API refuses.
+ * holds exactly one main company (B2) and for whom a grant could be saved — a
+ * company that holds records, other than that main company, with at least one
+ * category the single-entry rule leaves open to a central reporter there (no
+ * company user of it holds the category; `singleEntryConflicts`, the rule the
+ * API applies). Anyone else would be offered a grant the API refuses.
+ * `users`: every account of the organisation, whose rows are the standing.
  */
-export function grantCandidatesIn<U extends Pick<UserSummaryDTO, 'role' | 'access'>>(
+export function grantCandidatesIn<U extends Pick<UserSummaryDTO, 'id' | 'role' | 'access'>>(
   users: readonly U[],
   nodes: readonly Pick<WizardNode, 'id' | 'nodeType' | 'control'>[],
 ): U[] {
   const recordHolders = nodes.filter((n) => holdsRecords(n)).map((n) => n.id);
-  return grantCandidates(users).filter((u) => recordHolders.some((id) => id !== mainCompanyOf(u.access)));
+  const standing: SingleEntryAccessRow[] = users.flatMap((u) =>
+    u.access.map((row) => ({ userId: u.id, subsidiaryId: row.subsidiaryId, kind: row.kind ?? 'assigned', categories: row.categories, holderRole: u.role })),
+  );
+  const grantableAt = (user: U, subsidiaryId: string) =>
+    CATEGORIES.some(
+      (category) =>
+        singleEntryConflicts(standing, [
+          { userId: user.id, subsidiaryId, kind: 'central_reporter', categories: [category], holderRole: 'standard_user' },
+        ]).length === 0,
+    );
+  return grantCandidates(users).filter((u) => {
+    const main = mainCompanyOf(u.access);
+    return recordHolders.some((id) => id !== main && grantableAt(u, id));
+  });
 }

@@ -1139,3 +1139,25 @@ describe("the owner's second review of WP8 (2026-11-26)", () => {
     }
   });
 });
+
+describe("the owner's third review of WP8 (2026-11-26)", () => {
+  it("P1: a masterkey's create whose company moved to another organisation while it waited writes nothing", async () => {
+    const free = await company('Int-test moved while a masterkey writes');
+    const foreign = await createTenant();
+    try {
+      const masterkey: RequestUser = { ...tenant.users.masterkey, accessibleSubsidiaryIds: [...tenant.users.masterkey.accessibleSubsidiaryIds, free] };
+      const hold = holdBefore(runtime, 'PeriodLock', 'findFirst');
+      const create = lifecycleServices(hold.client).records.create(masterkey, {
+        subsidiaryId: free, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'September',
+        category: 'Electricity', activityValue: 100, activityUnit: 'kWh',
+      });
+      await hold.reached();
+      await owner.subsidiary.update({ where: { id: free }, data: { organisationId: foreign.organisationId, parentId: foreign.subsidiaryId } });
+      hold.release();
+      await expect(create).rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+      expect(await owner.activityRecord.count({ where: { subsidiaryId: free } })).toBe(0);
+    } finally {
+      await foreign.cleanup();
+    }
+  });
+});

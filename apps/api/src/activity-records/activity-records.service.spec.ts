@@ -150,8 +150,10 @@ function createPrismaMock() {
     // committed access is what the guard read for `makeStandardUser` (sub-1 and
     // sub-2, every category, assigned) — and the period rule's look for the
     // other party's record, which by default finds none.
-    $queryRaw: vi.fn(async (strings: any, ..._values: unknown[]): Promise<any[]> => {
+    $queryRaw: vi.fn(async (strings: any, ...values: unknown[]): Promise<any[]> => {
       const sql = (strings as string[]).join('?');
+      // The record's company as locked (owner's third review): in the tests' organisation.
+      if (sql.includes('FOR KEY SHARE')) return [{ id: values[0], organisationId: 'org-1' }];
       if (sql.includes('FROM user_subsidiary_access')) {
         return ['sub-1', 'sub-2'].map((subsidiaryId) => ({ subsidiaryId, kind: 'assigned', categories: [...CATEGORIES] }));
       }
@@ -7113,11 +7115,12 @@ function centralReporter(): RequestUser {
 }
 
 /** Routes the raw reads: the access re-read FOR SHARE, and the period rule's look. */
-function routeRaw(prisma: PrismaMock, opts: { access?: { subsidiaryId: string; kind: string; categories: string[] }[]; otherParty?: boolean; duplicate?: boolean | 'slot_kind'; duplicateReads?: { exact: boolean }[][]; authorChanged?: boolean; accessReads?: { subsidiaryId: string; kind: string; categories: string[] }[][] }) {
+function routeRaw(prisma: PrismaMock, opts: { access?: { subsidiaryId: string; kind: string; categories: string[] }[]; otherParty?: boolean; duplicate?: boolean | 'slot_kind'; duplicateReads?: { exact: boolean }[][]; authorChanged?: boolean; companyMoved?: boolean; accessReads?: { subsidiaryId: string; kind: string; categories: string[] }[][] }) {
   let read = 0;
-  const route = async (strings: TemplateStringsArray): Promise<unknown[]> => {
+  const route = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]> => {
     const sql = strings.join('?');
-    if (sql.includes('FOR KEY SHARE')) return [];
+    // The record's company as locked: in the tests' organisation unless moved.
+    if (sql.includes('FOR KEY SHARE')) return [{ id: values[0], organisationId: opts.companyMoved ? 'org-elsewhere' : 'org-1' }];
     if (sql.includes('FROM profiles p')) return [{ same: opts.authorChanged !== true }];
     if (sql.includes('r.activity_type IS NOT DISTINCT FROM')) return opts.duplicate ? [{ exact: opts.duplicate !== 'slot_kind' }] : opts.duplicateReads ? opts.duplicateReads.shift() ?? [] : [];
     if (sql.includes('FROM user_subsidiary_access') && opts.accessReads) return opts.accessReads[Math.min(read++, opts.accessReads.length - 1)]!;
@@ -7474,5 +7477,22 @@ describe("the owner's review of WP8 (2026-11-26)", () => {
       .map((q) => (q.includes('FOR KEY SHARE') ? 'companies' : q.includes('FROM profiles p') ? 'profile' : q.includes('kind, categories') ? 'rows' : null))
       .filter((x) => x !== null);
     expect(order).toEqual(['profile', 'companies', 'rows']);
+  });
+
+  it("P1 (third review): a company moved to another organisation before the write is refused as unknown, for a masterkey too", async () => {
+    for (const user of [masterkey(), superAdmin(), centralReporter()]) {
+      const { prisma, service } = build();
+      routeRaw(prisma, { access: [...REPORTER_ACCESS], companyMoved: true });
+      await expect(service.create(user, CREATE_DTO)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('P1 (third review): an edit of a draft whose company moved to another organisation is refused, nothing written', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    routeRaw(prisma, { access: [...REPORTER_ACCESS], companyMoved: true });
+    await expect(service.update(centralReporter(), 'rec-d', { activityValue: 5 })).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 });

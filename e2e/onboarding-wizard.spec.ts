@@ -140,6 +140,30 @@ test('a registered masterkey sets up its organisation in the wizard, and is held
   }
   await pickYear(page, yearOnScreen);
   await expect(row).toContainText(enOnboarding.boundaries.declared);
+  // Edit clicked, then the year changed before the company's sites arrived: the
+  // editor does not open on one year's declaration to save into another's
+  // (owner's third review of WP8, P1).
+  {
+    let releaseSites!: () => void;
+    const sitesHeld = new Promise<void>((resolve) => (releaseSites = resolve));
+    await page.route('**/api/v1/locations**', async (route) => {
+      await sitesHeld;
+      await route.continue();
+    });
+    const sitesAsked = page.waitForRequest('**/api/v1/locations**');
+    await row.getByRole('button', { name: enOnboarding.boundaries.edit }).click();
+    await sitesAsked;
+    const yearRead = page.waitForResponse((r) => r.url().includes('/api/v1/inventory-boundaries') && r.url().includes('reportingYear=2025'));
+    await pickYear(page, '2025');
+    await yearRead;
+    releaseSites();
+    await expect(row).toContainText(enOnboarding.boundaries.declared);
+    await page.waitForTimeout(1_000);
+    await expect(page.getByTestId('declaration-save')).toHaveCount(0);
+    await page.unroute('**/api/v1/locations**');
+    await pickYear(page, yearOnScreen);
+    await expect(row).toContainText(enOnboarding.boundaries.declared);
+  }
   await next(page);
   // 6. An invited super admin.
   await expect(step(page)).toHaveText(enOnboarding.steps.superAdmins);
