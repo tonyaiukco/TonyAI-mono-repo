@@ -206,14 +206,18 @@ export function parseShellInvoiceRef(ref: string): { year: number; month: number
 
 /**
  * A Petrol Ofisi invoice's reference (`Fatura Numarası`) or a tanker
- * delivery's (`EVRAK NO`): the code as written, trimmed (D4); null when empty
- * or longer than the stored limit, which refuses the row.
+ * delivery's (`EVRAK NO`): the code as written, trimmed (D4). An empty cell
+ * and a reference longer than the stored limit both refuse the row, each for
+ * its own reason (`fuel_reference_too_long`; the empty cell's code is the
+ * adapter's: `fuel_key_missing` for a key, `fuel_cell_missing` otherwise).
  */
-export function documentInvoiceRef(raw: string | null | undefined): string | null {
-  if (typeof raw !== 'string') return null;
-  const ref = raw.trim();
-  if (ref.length === 0 || ref.length > FUEL_INVOICE_REF_MAX_LENGTH) return null;
-  return ref;
+export type DocumentInvoiceRef = { ref: string } | { refused: 'empty' | 'too_long' };
+
+export function documentInvoiceRef(raw: string | null | undefined): DocumentInvoiceRef {
+  const ref = typeof raw === 'string' ? raw.trim() : '';
+  if (ref.length === 0) return { refused: 'empty' };
+  if (ref.length > FUEL_INVOICE_REF_MAX_LENGTH) return { refused: 'too_long' };
+  return { ref };
 }
 
 // ── Row states ──────────────────────────────────────────────────────────────
@@ -290,12 +294,15 @@ export const FUEL_BATCH_OPEN_STATUSES = ['draft', 'rejected'] as const satisfies
 
 /**
  * Why a file row is refused and never stored (B12, D4): an empty key cell,
- * another cell the column map needs, a quantity that is not a positive number
- * or Turkish-format text, a transaction date that cannot be read.
+ * another cell the column map needs, an invoice or delivery number over the
+ * stored limit, a quantity that is not a positive number or Turkish-format
+ * text, a transaction date that cannot be read.
  */
 export const FUEL_ROW_REFUSAL_CODES = [
   'fuel_key_missing',
   'fuel_cell_missing',
+  /** An invoice or delivery number longer than `FUEL_INVOICE_REF_MAX_LENGTH`. */
+  'fuel_reference_too_long',
   'fuel_quantity_unreadable',
   'fuel_date_unreadable',
 ] as const;

@@ -849,19 +849,20 @@ const FUEL_PROBE = {
 const FUEL_PROBE_NARROWED = ['Mobile Combustion'];
 const SEED_FUEL_ACCOUNTS = ['55555555-5555-5555-5555-5555555f0001', '55555555-5555-5555-5555-5555555f0002'];
 
-async function cleanupFuelProbe(entryId) {
+// The fuel probe's own rows, by their fixed ids only. entry@'s grant is
+// never touched here: the probe narrows it only from the seed's exact state
+// and restores exactly what it read (`probeFuelTables`).
+async function cleanupFuelProbe() {
   const owner = await ownerDb();
   const ids = (prefix) => Object.entries(FUEL_PROBE).filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
   await owner.fuelRow.deleteMany({ where: { id: { in: ids('row') } } });
   await owner.fuelBatch.deleteMany({ where: { id: { in: ids('batch') } } });
   await owner.fuelAccount.deleteMany({ where: { id: { in: ids('acc') } } });
   await owner.importBatch.deleteMany({ where: { id: { in: ids('imp') } } });
-  if (JSON.stringify(await entryEnergyCategories(entryId)) === JSON.stringify(FUEL_PROBE_NARROWED)) {
-    await setEntryEnergyCategories(entryId, ALL_CATEGORIES);
-  }
 }
 
 async function seedFuelProbe(entryId) {
+  // Narrowing entry@'s Energy grant is the caller's step (probeFuelTables).
   const owner = await ownerDb();
   const admin = await profileByEmail(ADMIN_EMAIL);
   const superAdmin = await profileByEmail(SUPER_ADMIN_EMAIL);
@@ -928,15 +929,25 @@ async function seedFuelProbe(entryId) {
         { state: 'assigned', fuelBatchId: FUEL_PROBE.batchEnergyFuel, invoiceRef: `RLS-${FUEL_PROBE.batchEnergyFuel.slice(-2)}` }),
     ],
   });
-  await setEntryEnergyCategories(entryId, FUEL_PROBE_NARROWED);
 }
 
 async function probeFuelTables(entryToken) {
   console.log('▸ fuel accounts, rows and batches (inc28-fuel-bulk D14)');
   const entryId = subjectOf(entryToken);
-  await cleanupFuelProbe(entryId); // in case a previous run aborted
+  await cleanupFuelProbe(); // in case a previous run aborted
+  // entry@'s Energy grant is narrowed only from the seed's exact state, and put
+  // back to exactly what was read: the probe never widens a grant.
+  const before = await entryEnergyCategories(entryId);
+  if (JSON.stringify(before) !== JSON.stringify(ALL_CATEGORIES)) {
+    check("fuel probe: entry's Energy grant is the seed's (every category) before the probe", false, `categories=${JSON.stringify(before)}`);
+    return;
+  }
+  let narrowed = false;
+  const writeProbeId = randomUUID();
   try {
     await seedFuelProbe(entryId);
+    await setEntryEnergyCategories(entryId, FUEL_PROBE_NARROWED);
+    narrowed = true;
     const planted = (prefix) => Object.entries(FUEL_PROBE).filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
     const accounts = [...planted('acc'), ...SEED_FUEL_ACCOUNTS];
     const scope = { acc: accounts, row: planted('row'), batch: planted('batch') };
@@ -999,13 +1010,17 @@ async function probeFuelTables(entryToken) {
     const write = await fetch(`${URL_}/rest/v1/fuel_accounts`, {
       method: 'POST',
       headers: { apikey: ANON, Authorization: `Bearer ${tokens.masterkey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: randomUUID(), organisation_id: (await profileByEmail(ADMIN_EMAIL)).organisation_id, source: 'shell', code: 'RLS-PROBE-WRITE', name: 'x', created_by: subjectOf(tokens.masterkey), updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ id: writeProbeId, organisation_id: (await profileByEmail(ADMIN_EMAIL)).organisation_id, source: 'shell', code: 'RLS-PROBE-WRITE', name: 'x', created_by: subjectOf(tokens.masterkey), updated_at: new Date().toISOString() }),
     });
     check('fuel_accounts: a signed-in masterkey cannot insert through PostgREST', !write.ok, `status=${write.status}`);
   } finally {
-    await cleanupFuelProbe(entryId);
+    await cleanupFuelProbe();
+    // Only the account this probe tried to write, by the id it chose.
     const owner = await ownerDb();
-    await owner.fuelAccount.deleteMany({ where: { code: 'RLS-PROBE-WRITE' } });
+    await owner.fuelAccount.deleteMany({ where: { id: writeProbeId } });
+    if (narrowed) await setEntryEnergyCategories(entryId, before);
+    const after = await entryEnergyCategories(entryId);
+    check("fuel probe: entry's Energy grant is back to exactly what it was", JSON.stringify(after) === JSON.stringify(before), `categories=${JSON.stringify(after)}`);
   }
 }
 

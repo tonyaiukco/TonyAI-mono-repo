@@ -330,7 +330,7 @@ ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_fuel_check"
   CHECK ("fuel" IS NULL OR "fuel" IN ('diesel', 'petrol'));
 ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_values_check"
   CHECK (
-    "litres" > 0 AND "month" BETWEEN 1 AND 12 AND "file_row" >= 1
+    "litres" > 0 AND "litres" < 'Infinity'::numeric AND "month" BETWEEN 1 AND 12 AND "file_row" >= 1
     AND "dedupe_digest" ~ '^[0-9a-f]{64}$'
     AND length("invoice_ref") BETWEEN 1 AND 64
     AND ("replaces_id" IS NULL OR "replaces_id" <> "id")
@@ -634,14 +634,14 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 7. Runtime grants (runtime-role.mjs RUNTIME_TABLE_PRIVILEGES, RUNTIME_COLUMN_UPDATES)
 -- ---------------------------------------------------------------------------
--- Nothing of the three is deleted (C14). An account's source, code and
--- organisation, a batch's company, account and invoice, and a row's key,
+-- Nothing of the three is deleted (C14). An account's name is the one last
+-- read (display only); its source, code and organisation, a batch's company, account and invoice, and a row's key,
 -- litres, account and import never change; only the columns a step writes
 -- are updatable. `import_batches.source` and `activity_records.fuel_batch_id`
 -- are covered by those tables' existing table-wide grants.
 
 GRANT SELECT, INSERT ON "fuel_accounts", "fuel_batches", "fuel_rows" TO "tonyai_runtime";
-GRANT UPDATE ("subsidiary_id", "state", "confirmed_by", "confirmed_at", "updated_at")
+GRANT UPDATE ("name", "subsidiary_id", "state", "confirmed_by", "confirmed_at", "updated_at")
   ON "fuel_accounts" TO "tonyai_runtime";
 GRANT UPDATE ("usage", "category", "status", "submitted_at", "submission_count", "reviewed_by", "reviewed_at",
   "review_note", "variance_reason", "withdrawn_by", "withdrawn_at", "withdrawn_reason", "updated_at")

@@ -39,7 +39,8 @@
     "fuel_account_unmatched": "Account not mapped",
     "fuel_name_unmatched": "Fuel name not recognised",
     "fuel_out_of_scope": "Outside your access",
-    "slot_holds_untyped": "Period holds a record without a fuel"
+    "slot_holds_untyped": "Period holds a record without a fuel",
+    "fuel_reference_too_long": "Number longer than 64 characters"
   },
   "codes": {
     "bad_request": "The request could not be processed.",

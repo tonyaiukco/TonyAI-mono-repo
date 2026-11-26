@@ -39,7 +39,8 @@
     "fuel_account_unmatched": "Hesap eşlenmemiş",
     "fuel_name_unmatched": "Yakıt adı tanınmadı",
     "fuel_out_of_scope": "Erişiminiz dışında",
-    "slot_holds_untyped": "Dönemde yakıtı belirtilmemiş bir kayıt var"
+    "slot_holds_untyped": "Dönemde yakıtı belirtilmemiş bir kayıt var",
+    "fuel_reference_too_long": "Numara 64 karakterden uzun"
   },
   "codes": {
     "query_too_broad": "Bu istek işleme sınırını aşıyor. Filtreleri daraltın veya daha küçük bir rapor isteyin.",

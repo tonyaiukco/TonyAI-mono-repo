@@ -256,7 +256,8 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
   // batch's declarations, lifecycle and withdrawal; a row re-stated, taken
   // over, declared (a tanker delivery's fuel and period), put in a batch or
   // withdrawn.
-  fuel_accounts: ['subsidiary_id', 'state', 'confirmed_by', 'confirmed_at', 'updated_at'],
+  // An account's name is display only: the one a later file gives replaces it.
+  fuel_accounts: ['name', 'subsidiary_id', 'state', 'confirmed_by', 'confirmed_at', 'updated_at'],
   fuel_batches: [
     'usage',
     'category',

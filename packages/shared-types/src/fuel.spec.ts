@@ -153,13 +153,15 @@ describe('Shell half-month and invoice references (C2, D1)', () => {
   });
 
   it('keeps a document reference as written, trimmed, with leading zeros', () => {
-    expect(documentInvoiceRef(' OZK2025000011923 ')).toBe('OZK2025000011923');
-    expect(documentInvoiceRef('000123')).toBe('000123');
-    expect(documentInvoiceRef('')).toBeNull();
-    expect(documentInvoiceRef('   ')).toBeNull();
-    expect(documentInvoiceRef(null)).toBeNull();
-    expect(documentInvoiceRef('x'.repeat(FUEL_INVOICE_REF_MAX_LENGTH))).toHaveLength(FUEL_INVOICE_REF_MAX_LENGTH);
-    expect(documentInvoiceRef('x'.repeat(FUEL_INVOICE_REF_MAX_LENGTH + 1))).toBeNull();
+    expect(documentInvoiceRef(' OZK2025000011923 ')).toEqual({ ref: 'OZK2025000011923' });
+    expect(documentInvoiceRef('000123')).toEqual({ ref: '000123' });
+    expect(documentInvoiceRef('x'.repeat(FUEL_INVOICE_REF_MAX_LENGTH))).toEqual({ ref: 'x'.repeat(FUEL_INVOICE_REF_MAX_LENGTH) });
+  });
+
+  it('tells an empty reference from one over the limit, so the row is refused for its own reason', () => {
+    for (const empty of ['', '   ', null, undefined]) expect(documentInvoiceRef(empty)).toEqual({ refused: 'empty' });
+    expect(documentInvoiceRef('x'.repeat(FUEL_INVOICE_REF_MAX_LENGTH + 1))).toEqual({ refused: 'too_long' });
+    expect(documentInvoiceRef(` ${'x'.repeat(FUEL_INVOICE_REF_MAX_LENGTH)} `)).toEqual({ ref: 'x'.repeat(FUEL_INVOICE_REF_MAX_LENGTH) });
   });
 });
 

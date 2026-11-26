@@ -306,6 +306,18 @@ describe('the live-row dedupe index (D5)', () => {
       expect(stored!.litres, litres).toBe(litres);
       expect((await runtime.fuelRow.findUniqueOrThrow({ where: { id: row.id } })).litres.toString(), litres).toBe(litres);
     }
+    // Not a number and infinity are no quantity, though both are `> 0` to
+    // Postgres; written by the owner, since the runtime role never changes litres.
+    const row = await runtime.fuelRow.findFirstOrThrow({ where: { importBatchId: imp.id } });
+    for (const special of ['NaN', 'Infinity']) {
+      expect(
+        await refused(owner.$executeRaw`UPDATE fuel_rows SET litres = ${special}::numeric WHERE id = ${row.id}::uuid`),
+        special,
+      ).toMatchObject({ state: '23514' });
+    }
+    expect(await refused(runtime.$executeRaw`UPDATE fuel_rows SET litres = 1 WHERE id = ${row.id}::uuid`)).toMatchObject({
+      state: '42501',
+    });
     // Their sum, as the database adds it, is exact.
     const [sum] = await runtime.$queryRaw<{ total: string }[]>`SELECT sum(litres)::text AS total FROM fuel_rows WHERE import_batch_id = ${imp.id}::uuid`;
     expect(sum!.total).toBe('17143.108356789');
@@ -444,6 +456,25 @@ describe('the CHECKs and keys of each table (D1, D4, D8)', () => {
     name: 'x',
     createdBy: tenant.users.masterkey.id,
     ...data,
+  });
+
+  it('keeps one account per code: a later name replaces the shown one, the mapping stays', async () => {
+    const acc = await account(tenant.subsidiaryId, '120.01.1675');
+    expect(
+      await refused(runtime.fuelAccount.create({ data: accountData({ code: '120.01.1675', name: 'Another fleet name' }) })),
+    ).toMatchObject({ state: '23505' });
+    const renamed = await runtime.fuelAccount.update({ where: { id: acc.id }, data: { name: 'Another fleet name' } });
+    expect(renamed).toMatchObject({
+      name: 'Another fleet name',
+      subsidiaryId: tenant.subsidiaryId,
+      state: 'confirmed',
+      confirmedBy: acc.confirmedBy,
+    });
+    expect(renamed.confirmedAt).toEqual(acc.confirmedAt);
+    // Its source and code never change.
+    expect(await refused(runtime.fuelAccount.update({ where: { id: acc.id }, data: { code: '120.01.1676' } }))).toMatchObject({
+      state: '42501',
+    });
   });
 
   it('holds an account’s source, code and mapping state', async () => {
