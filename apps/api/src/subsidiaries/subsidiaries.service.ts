@@ -67,6 +67,14 @@ interface SubsidiaryDependentCounts {
   reportedRecords: number;
   centralReporters: number;
   /**
+   * inc28-fuel-bulk: the company's fuel rows (stored, never deleted: C14) and
+   * its fuel batches, and the fuel accounts mapped or proposed to it. Their
+   * keys RESTRICT the delete; counted for a delete and for an
+   * organisation-wide reader's panel only, like the two above.
+   */
+  fuelRows: number;
+  fuelAccounts: number;
+  /**
    * Inventory boundary versions declaring the subsidiary (LP3-04 W9): frozen
    * ones — confirmed or captured, never changed — keep it for good; an open
    * one can drop it. Neither is in the panel's DTO: the blockers say so.
@@ -681,6 +689,9 @@ export class SubsidiariesService {
       children,
       reportedRecords,
       centralReporters,
+      fuelRows,
+      fuelBatches,
+      fuelAccounts,
     ] =
       await Promise.all([
         db.activityRecord.count({
@@ -717,11 +728,18 @@ export class SubsidiariesService {
               },
             })
           : Promise.resolve(0),
+        countReporting ? db.fuelRow.count({ where: { subsidiaryId: id } }) : Promise.resolve(0),
+        countReporting ? db.fuelBatch.count({ where: { subsidiaryId: id } }) : Promise.resolve(0),
+        countReporting ? db.fuelAccount.count({ where: { subsidiaryId: id } }) : Promise.resolve(0),
       ]);
     return {
       terminalRecords,
       reportedRecords,
       centralReporters,
+      // A batch always holds rows; its own count only keeps the delete from
+      // reaching a foreign key should one ever stand alone.
+      fuelRows: fuelRows > 0 ? fuelRows : fuelBatches,
+      fuelAccounts,
       frozenBoundaryVersions,
       openBoundaryVersions,
       reviewRecords,
@@ -765,6 +783,8 @@ export class SubsidiariesService {
       openBoundaryVersions: _open,
       reportedRecords: _reported,
       centralReporters: _reporters,
+      fuelRows: _fuelRows,
+      fuelAccounts: _fuelAccounts,
       ...reportable
     } = counts;
     void _alarm;
@@ -772,6 +792,8 @@ export class SubsidiariesService {
     void _open;
     void _reported;
     void _reporters;
+    void _fuelRows;
+    void _fuelAccounts;
     return {
       subsidiaryId: id,
       ...reportable,
@@ -854,6 +876,12 @@ export class SubsidiariesService {
         counts: [{ kind: 'frozenBoundaryVersions', count: c.frozenBoundaryVersions }],
       };
     }
+    if (c.fuelRows > 0) {
+      const message =
+        `${c.fuelRows} row(s) of uploaded fuel files belong to this subsidiary. Fuel rows are ` +
+        'never deleted, so a subsidiary that holds them stays. Set its status to "inactive" to retire it instead.';
+      return { message, blockers: [message], counts: [{ kind: 'fuelRows', count: c.fuelRows }] };
+    }
 
     // Nothing terminal — so everything below IS removable, and the message
     // should say how rather than send the user to "inactive" for a subsidiary
@@ -891,6 +919,8 @@ export class SubsidiariesService {
     if (c.centralReporters > 0) {
       add('centralReporters', `${c.centralReporters} central reporter(s) whose main company it is`);
     }
+    // inc28-fuel-bulk: an account's mapping or the tool's proposal names it.
+    if (c.fuelAccounts > 0) add('fuelAccounts', `${c.fuelAccounts} fuel account(s) mapped or proposed to it`);
     if (blockers.length === 0) return null;
 
     return {
@@ -913,6 +943,7 @@ export class SubsidiariesService {
         (c.centralReporters > 0
           ? '; a central reporter keeps one main company, so move the reporter to another main company or withdraw the grant first'
           : '') +
+        (c.fuelAccounts > 0 ? '; a masterkey changes or withdraws each fuel account\'s mapping first' : '') +
         '), then delete the subsidiary.',
     };
   }

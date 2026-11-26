@@ -134,7 +134,9 @@
     "denominators": "{count} yoğunluk paydası",
     "openBoundaryVersions": "Onu beyan eden {count} açık envanter sınırı sürümü",
     "reportedRecords": "Onu raporlayan şirket olarak gösteren, başka şirketlere ait {count} kayıt",
-    "centralReporters": "Ana şirketi bu şirket olan {count} merkezi raportör"
+    "centralReporters": "Ana şirketi bu şirket olan {count} merkezi raportör",
+    "fuelRows": "Bu bağlı şirkete ait, yüklenmiş yakıt dosyalarından {count} satır var. Yakıt satırları hiç silinmez, bu yüzden onları tutan bir bağlı şirket kalır. Bunun yerine durumunu \"pasif\" yaparak kullanımdan kaldırın.",
+    "fuelAccounts": "Ona eşlenmiş veya önerilmiş {count} yakıt hesabı"
   },
   "locations": {
     "drawerTitle": "Operasyonel işletmeler / tesisler",

@@ -4,8 +4,11 @@
 -- has no fuel batch, and every import of today reads `template` from its
 -- default. The previous API image keeps working on this schema (design
 -- "Migration Plan" 2): the index is only wider, and it never writes a batch.
--- Once batch records exist, TA029 refuses that image's every write to them,
--- and nothing else it does changes. No forward-only mark.
+-- Once batch records exist, TA029 refuses that image's every insert, edit,
+-- delete and review step on them, so no batch record's figure, slot or review
+-- status changes through it; a void and a period lock still act as D9
+-- allows, and its evidence links (`activity_record_evidence`) are not
+-- guarded. No forward-only mark.
 --
 -- WP9 (`inc28-fuel-bulk`), PR A — INC-2.8, INC-2.9 §3: fuel accounts, fuel
 -- rows and fuel batches (design D1), the slot key widened by the batch (D2),
@@ -24,6 +27,7 @@
 -- New error codes:
 --   TA028  a record's fuel batch changed after insert                    → 409
 --   TA029  a record of a fuel batch written outside a step of that batch  → 409
+--          (a step declares `<batch id>:<its transaction id>`, see TA029)
 --
 -- Hand-written: `prisma migrate dev` re-proposes dropping the raw NULLS NOT
 -- DISTINCT index "activity_records_reporting_entity_period_category_key" on
@@ -180,6 +184,9 @@ CREATE UNIQUE INDEX "fuel_batches_id_subsidiary_id_key" ON "fuel_batches"("id", 
 CREATE UNIQUE INDEX "fuel_batches_id_fuel_account_id_key" ON "fuel_batches"("id", "fuel_account_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "fuel_batches_id_invoice_ref_key" ON "fuel_batches"("id", "invoice_ref");
+
+-- CreateIndex
 CREATE INDEX "fuel_rows_import_batch_id_state_idx" ON "fuel_rows"("import_batch_id", "state");
 
 -- CreateIndex
@@ -205,6 +212,9 @@ CREATE INDEX "activity_records_fuel_batch_id_idx" ON "activity_records"("fuel_ba
 
 -- CreateIndex
 CREATE UNIQUE INDEX "import_batches_id_organisation_id_key" ON "import_batches"("id", "organisation_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "import_batches_id_source_key" ON "import_batches"("id", "source");
 
 -- AddForeignKey
 ALTER TABLE "activity_records" ADD CONSTRAINT "activity_records_fuel_batch_id_subsidiary_id_fkey" FOREIGN KEY ("fuel_batch_id", "subsidiary_id") REFERENCES "fuel_batches"("id", "subsidiary_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
@@ -234,6 +244,9 @@ ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_organisation_id_fkey" FOREIGN 
 ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_import_batch_id_organisation_id_fkey" FOREIGN KEY ("import_batch_id", "organisation_id") REFERENCES "import_batches"("id", "organisation_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
+ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_import_batch_id_source_fkey" FOREIGN KEY ("import_batch_id", "source") REFERENCES "import_batches"("id", "source") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
 ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_fuel_account_id_organisation_id_fkey" FOREIGN KEY ("fuel_account_id", "organisation_id") REFERENCES "fuel_accounts"("id", "organisation_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
@@ -249,6 +262,9 @@ ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_fuel_batch_id_fuel_account_id_
 ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_fuel_batch_id_subsidiary_id_fkey" FOREIGN KEY ("fuel_batch_id", "subsidiary_id") REFERENCES "fuel_batches"("id", "subsidiary_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
+ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_fuel_batch_id_invoice_ref_fkey" FOREIGN KEY ("fuel_batch_id", "invoice_ref") REFERENCES "fuel_batches"("id", "invoice_ref") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+-- AddForeignKey
 ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_replaces_id_organisation_id_fkey" FOREIGN KEY ("replaces_id", "organisation_id") REFERENCES "fuel_rows"("id", "organisation_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 
@@ -261,7 +277,7 @@ ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_replaces_id_organisation_id_fk
 ALTER TABLE "import_batches" ADD CONSTRAINT "import_batches_source_check"
   CHECK ("source" IN ('template', 'shell', 'petrol_ofisi', 'tanker'));
 ALTER TABLE "import_batches" ADD CONSTRAINT "import_batches_fuel_import_check"
-  CHECK ("source" = 'template' OR ("storage_path" IS NULL AND cardinality("subsidiary_ids") = 0));
+  CHECK ("source" = 'template' OR ("storage_path" IS NULL AND COALESCE(cardinality("subsidiary_ids"), 0) = 0));
 
 -- An account: its source, a code, and the columns of its mapping state (C4, C5).
 ALTER TABLE "fuel_accounts" ADD CONSTRAINT "fuel_accounts_source_check"
@@ -368,6 +384,13 @@ ALTER TABLE "fuel_rows" ADD CONSTRAINT "fuel_rows_state_columns_check"
     false
   ));
 
+-- A batch's record is typed, of a fuel category (D6: every fuel and usage
+-- pair names an activity type). With the batch in the slot key, an untyped
+-- record in a batch would otherwise sit beside the slot's one untyped manual
+-- record and another batch's: TA002 refuses only a mix of typed and untyped.
+ALTER TABLE "activity_records" ADD CONSTRAINT "activity_records_fuel_batch_typed_check"
+  CHECK ("fuel_batch_id" IS NULL OR ("activity_type" IS NOT NULL AND "category" IN ('Mobile Combustion', 'Fuel')));
+
 -- ---------------------------------------------------------------------------
 -- 4. The live-row dedupe index (D5) and the widened slot index (D2)
 -- ---------------------------------------------------------------------------
@@ -419,8 +442,10 @@ ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_fuel_batc
 
 -- TA029: a record of a fuel batch is inserted, changed or deleted only inside
 -- a step of that batch: a transaction that declared it with
--- set_config('tonyai.fuel_batch_step', '<batch id>', true), which only the
--- batch service does. Two exceptions, each changing nothing but its own
+-- set_config('tonyai.fuel_batch_step', '<batch id>:' || pg_current_xact_id(), true),
+-- which only the batch service does. The transaction id binds the declaration
+-- to its own transaction, so one written for the whole session by a slip
+-- (`is_local` false) is worth nothing in the next. Two exceptions, each changing nothing but its own
 -- columns: a void (the status to `voided`, the void's three columns and
 -- `updated_at`) and a period lock's flip (`approved` <-> `locked` and
 -- `updated_at`). An API image from before batches never declares a batch, so
@@ -456,7 +481,8 @@ BEGIN
     RETURN NEW;
   END IF;
   declared := pg_catalog.current_setting('tonyai.fuel_batch_step', true);
-  IF declared IS NOT NULL AND declared = batch_id::text THEN
+  IF declared IS NOT NULL
+     AND declared = batch_id::text || ':' || pg_catalog.pg_current_xact_id()::text THEN
     IF TG_OP = 'DELETE' THEN
       RETURN OLD;
     END IF;
@@ -470,14 +496,14 @@ BEGIN
       probe."voided_by" := OLD."voided_by";
       probe."voided_at" := OLD."voided_at";
       probe."updated_at" := OLD."updated_at";
-      IF pg_catalog.to_jsonb(probe) = pg_catalog.to_jsonb(OLD) THEN
+      IF probe IS NOT DISTINCT FROM OLD THEN
         RETURN NEW;
       END IF;
     ELSIF (OLD."status" = 'approved' AND NEW."status" = 'locked')
        OR (OLD."status" = 'locked' AND NEW."status" = 'approved') THEN
       probe."status" := OLD."status";
       probe."updated_at" := OLD."updated_at";
-      IF pg_catalog.to_jsonb(probe) = pg_catalog.to_jsonb(OLD) THEN
+      IF probe IS NOT DISTINCT FROM OLD THEN
         RETURN NEW;
       END IF;
     END IF;
@@ -502,9 +528,10 @@ ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_fuel_batc
 -- auditor read their organisation; a super_admin a granted company's; a
 -- standard user a granted company's in the categories of its grant (a row's
 -- or batch's category: `Fuel` for the stationary usage, Mobile Combustion
--- otherwise), its own batch only in a company it is still granted, and its
--- held rows as their holder; a row with no company only its holder; accounts
--- never a standard user.
+-- otherwise), its own batch only in a company it is still granted, and the
+-- rows it holds while they are in no batch (a batched row follows its batch,
+-- so a withdrawn grant closes it at once); a row with no company only its
+-- holder; accounts never a standard user.
 
 ALTER TABLE "fuel_accounts" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "fuel_batches" ENABLE ROW LEVEL SECURITY;
@@ -560,8 +587,8 @@ CREATE POLICY "fuel_rows_select_scoped" ON "fuel_rows" FOR SELECT TO authenticat
       AND (
         p."role" = ANY (ARRAY['masterkey'::"UserRole", 'auditor'::"UserRole"])
         OR ("fuel_rows"."subsidiary_id" IS NULL AND "fuel_rows"."holder_id" = p."id")
-        OR ("fuel_rows"."subsidiary_id" IS NOT NULL AND "fuel_rows"."holder_id" = p."id"
-          AND p."role" = 'standard_user'::"UserRole")
+        OR ("fuel_rows"."subsidiary_id" IS NOT NULL AND "fuel_rows"."fuel_batch_id" IS NULL
+          AND "fuel_rows"."holder_id" = p."id" AND p."role" = 'standard_user'::"UserRole")
       )
   )
   OR EXISTS (

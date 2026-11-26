@@ -134,7 +134,9 @@
     "denominators": "{count} intensity denominator(s)",
     "openBoundaryVersions": "{count} open inventory boundary version(s) declaring it",
     "reportedRecords": "{count} record(s) of other companies naming it as their reporting company",
-    "centralReporters": "{count} central reporter(s) whose main company it is"
+    "centralReporters": "{count} central reporter(s) whose main company it is",
+    "fuelRows": "{count} row(s) of uploaded fuel files belong to this subsidiary. Fuel rows are never deleted, so a subsidiary that holds them stays. Set its status to \"inactive\" to retire it instead.",
+    "fuelAccounts": "{count} fuel account(s) mapped or proposed to it"
   },
   "locations": {
     "drawerTitle": "Operational facilities",

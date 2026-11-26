@@ -573,11 +573,14 @@ model ImportBatch {
   source         String            @default("template")
   records        ActivityRecord[]
   fuelRows       FuelRow[]
+  fuelRowsBySource FuelRow[]       @relation("FuelRowImportSource")
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")
 
-  // The target of `fuel_rows`' composite foreign key: a row's import is of its organisation.
+  // Targets of `fuel_rows`' composite foreign keys: a row's import is of its
+  // organisation and of its source, which then never changes.
   @@unique([id, organisationId])
+  @@unique([id, source])
   @@index([organisationId, createdAt])
   @@index([uploadedBy, createdAt])
   @@map("import_batches")
@@ -1330,6 +1333,7 @@ model FuelBatch {
   records         ActivityRecord[]
   rowsByAccount   FuelRow[]        @relation("FuelRowBatchAccount")
   rowsBySubsidiary FuelRow[]       @relation("FuelRowBatchSubsidiary")
+  rowsByInvoice   FuelRow[]        @relation("FuelRowBatchInvoice")
   createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -1337,6 +1341,7 @@ model FuelBatch {
   // Targets of the records' and rows' composite foreign keys.
   @@unique([id, subsidiaryId])
   @@unique([id, fuelAccountId])
+  @@unique([id, invoiceRef])
   @@index([organisationId, status])
   @@index([subsidiaryId, status])
   @@map("fuel_batches")
@@ -1358,6 +1363,8 @@ model FuelRow {
   // The import that first stored it.
   importBatchId  String       @map("import_batch_id") @db.Uuid
   importBatch    ImportBatch  @relation(fields: [importBatchId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  // A row's source is its import's.
+  importSource   ImportBatch  @relation("FuelRowImportSource", fields: [importBatchId, source], references: [id, source], onDelete: Restrict, onUpdate: Restrict)
   holderId       String       @map("holder_id") @db.Uuid
   source         String
   dedupeDigest   String       @map("dedupe_digest") @db.Char(64)
@@ -1382,6 +1389,8 @@ model FuelRow {
   // An assigned row's account and company are its batch's.
   batchAccount   FuelBatch?   @relation("FuelRowBatchAccount", fields: [fuelBatchId, fuelAccountId], references: [id, fuelAccountId], onDelete: Restrict, onUpdate: Restrict)
   batchSubsidiary FuelBatch?  @relation("FuelRowBatchSubsidiary", fields: [fuelBatchId, subsidiaryId], references: [id, subsidiaryId], onDelete: Restrict, onUpdate: Restrict)
+  // … and its invoice the batch's (B9: a batch is one invoice).
+  batchInvoice   FuelBatch?   @relation("FuelRowBatchInvoice", fields: [fuelBatchId, invoiceRef], references: [id, invoiceRef], onDelete: Restrict, onUpdate: Restrict)
   withdrawnBy    String?      @map("withdrawn_by") @db.Uuid
   withdrawnAt    DateTime?    @map("withdrawn_at") @db.Timestamptz(6)
   withdrawnReason String?     @map("withdrawn_reason")

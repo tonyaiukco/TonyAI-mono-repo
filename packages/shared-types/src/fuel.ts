@@ -9,6 +9,7 @@
  * No runtime import from `./index`: `index.ts` re-exports this module.
  */
 import type { ActivityRecordStatus, Category, RecordApprover } from './index';
+import { RECORD_INVOICE_NO_MAX_LENGTH } from './record-references';
 
 // ── Sources ─────────────────────────────────────────────────────────────────
 
@@ -142,20 +143,28 @@ const FUEL_RECORD_TARGETS: Readonly<Record<ManualFuel, Partial<Record<FuelEntryU
       on_road: target('Mobile Combustion', 'on_road_lpg', LITRES, false),
       stationary: target('Fuel', 'lpg', Object.freeze(['kg'] as const), false),
     },
+    // `MARINE_GAS_OIL_UNITS`, spelled out: no runtime import from `./index` (a spec pins them equal).
     marine_gas_oil: {
       marine: target('Mobile Combustion', 'marine_gas_oil', Object.freeze(['kg', 'tonnes'] as const), false),
     },
   });
 
+const own = (object: object, key: string): boolean => Object.prototype.hasOwnProperty.call(object, key);
+
+/** The pairs of a fuel, or none for a name this build does not know (never an inherited key). */
+const pairsOf = (fuel: string): Partial<Record<FuelEntryUsage, FuelRecordTarget>> =>
+  own(FUEL_RECORD_TARGETS, fuel) ? FUEL_RECORD_TARGETS[fuel as ManualFuel] : {};
+
 /** The record a fuel and usage become, or null for a pair the library does not price (D6). */
 export function fuelRecordTarget(fuel: ManualFuel, usage: FuelEntryUsage): FuelRecordTarget | null {
-  return FUEL_RECORD_TARGETS[fuel]?.[usage] ?? null;
+  const pairs = pairsOf(fuel);
+  return own(pairs, usage) ? pairs[usage]! : null;
 }
 
 /** The usages offered for a fuel, in D6's order (C15). Marine gas oil answers its one fixed usage. */
 export function fuelUsagesFor(fuel: ManualFuel): readonly FuelEntryUsage[] {
-  const pairs = FUEL_RECORD_TARGETS[fuel] ?? {};
-  return ([...FUEL_USAGES, FUEL_MARINE_USAGE] as const).filter((usage) => pairs[usage] !== undefined);
+  const pairs = pairsOf(fuel);
+  return ([...FUEL_USAGES, FUEL_MARINE_USAGE] as const).filter((usage) => own(pairs, usage));
 }
 
 // ── Periods and invoices ────────────────────────────────────────────────────
@@ -174,8 +183,8 @@ export function shellHalfMonth(day: number): 1 | 2 {
   return day <= 15 ? 1 : 2;
 }
 
-/** The longest invoice reference stored, the manual form's `invoice_no` limit. */
-export const FUEL_INVOICE_REF_MAX_LENGTH = 64;
+/** The longest invoice reference stored: a batch's records carry it as `input.invoice_no` (C17). */
+export const FUEL_INVOICE_REF_MAX_LENGTH = RECORD_INVOICE_NO_MAX_LENGTH;
 
 /**
  * A Shell invoice's reference within its account (D1): the half-month of the
@@ -486,10 +495,10 @@ export interface FuelUploadDTO {
   fileName: string;
   fileSize: number;
   fileSha256: string;
-  usage: FuelUsage | null;
   uploadedBy: string;
   uploadedByName: string | null;
   createdAt: string;
+  /** The import's `total_rows`, `rejected_count`, and the rest that were not stored: `total − accepted − rejected`. */
   rowsRead: number;
   rowsRefused: number;
   rowsDuplicate: number;

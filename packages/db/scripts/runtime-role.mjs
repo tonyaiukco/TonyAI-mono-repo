@@ -1119,6 +1119,9 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
  */
 export const INTEGRITY_CHECKS = Object.freeze([
   ['activity_records', 'activity_records_activity_type_check', '209bc4e708c65029678d21cb1c434ea6'],
+  // inc28-fuel-bulk (D2, D6): a batch's record is typed, of a fuel category,
+  // so the widened slot key holds one untyped record per slot as before.
+  ['activity_records', 'activity_records_fuel_batch_typed_check', 'e752bf359c39794abb78b625ebbe7f2b'],
   // LP4-02 (33): what a record says, held for every writer at the door.
   ['activity_records', 'activity_records_activity_value_check', 'eeef9e2c8cf6539c36909ac41432c40a'],
   // LP4-02 (D3): per-record calculation parameters shape; ng-kwh-engine adds

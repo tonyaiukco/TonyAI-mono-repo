@@ -278,7 +278,7 @@ async function populateTenant(
 /**
  * Test-only teardown of synthetic organisations' fuel data (inc28-fuel-bulk),
  * as the owner: each batch's records inside a step that declares the batch
- * (TA029 refuses the owner too), then rows (replacements before what they
+ * for its transaction (TA029 refuses the owner too), then rows (replacements before what they
  * replace), batches and accounts — nothing of the three is deleted in the
  * product, and their keys RESTRICT the organisation's deletion.
  */
@@ -293,7 +293,7 @@ export async function deleteFuelData(
   });
   for (const { id } of batches) {
     await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${id}, true)`;
+      await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${id}::text || ':' || pg_current_xact_id()::text, true)`;
       await tx.activityRecord.deleteMany({ where: { fuelBatchId: id } });
     });
   }

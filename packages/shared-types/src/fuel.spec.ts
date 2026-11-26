@@ -17,7 +17,16 @@ import {
   type FuelEntryUsage,
   type FuelRowState,
 } from './fuel';
-import { isRecordActivityTypeAllowed, unitsForCategory } from './index';
+import {
+  FUEL_BATCH_OPEN_STATUSES,
+  FUEL_INVOICE_ROW_STATES,
+  FUEL_TANKER_MAX_DELIVERIES,
+  FUEL_TRAY_ROW_STATES,
+  FUEL_UPLOAD_MAX_ROWS,
+  FUEL_UPLOAD_MAX_SIZE_BYTES,
+} from './fuel';
+import { isRecordActivityTypeAllowed, MARINE_GAS_OIL_UNITS, unitsForCategory } from './index';
+import { RECORD_INVOICE_NO_MAX_LENGTH } from './record-references';
 
 describe('recogniseFuel (INC-2.8 §2)', () => {
   it.each([
@@ -204,5 +213,31 @@ describe('fuelRowState (D8)', () => {
     const row = { withdrawn: false, inBatch: false, account: 'records' as const, fuel: 'diesel' as const };
     expect(fuelRowState({ ...row, holdReason: 'fuel_out_of_scope' })).toBe('held');
     expect(fuelRowState({ ...row, holdReason: null })).toBe('ready');
+  });
+});
+
+describe('the fuel contract’s constants', () => {
+  it('pins C18’s provisional limits until the measurement sets them', () => {
+    expect(FUEL_UPLOAD_MAX_ROWS).toBe(60_000);
+    expect(FUEL_UPLOAD_MAX_SIZE_BYTES).toBe(32 * 1024 * 1024);
+    expect(FUEL_TANKER_MAX_DELIVERIES).toBe(1_000);
+  });
+
+  it('names the open batch statuses, the tray’s rows and an invoice’s live rows', () => {
+    expect(FUEL_BATCH_OPEN_STATUSES).toEqual(['draft', 'rejected']);
+    expect(FUEL_TRAY_ROW_STATES).toEqual(['waiting_account', 'waiting_fuel']);
+    expect(FUEL_INVOICE_ROW_STATES).toEqual(['assigned', 'excluded']);
+  });
+
+  it('keeps an invoice reference within the record’s invoice number, and MGO in its own units', () => {
+    expect(FUEL_INVOICE_REF_MAX_LENGTH).toBe(RECORD_INVOICE_NO_MAX_LENGTH);
+    expect(fuelRecordTarget('marine_gas_oil', 'marine')!.units).toEqual([...MARINE_GAS_OIL_UNITS]);
+  });
+
+  it('answers nothing for a name this build does not know, an inherited key included', () => {
+    expect(fuelRecordTarget('__proto__' as never, 'toString' as never)).toBeNull();
+    expect(fuelRecordTarget('diesel', 'constructor' as never)).toBeNull();
+    expect(fuelRecordTarget('kerosene' as never, 'on_road')).toBeNull();
+    expect(fuelUsagesFor('toString' as never)).toEqual([]);
   });
 });

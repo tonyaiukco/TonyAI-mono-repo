@@ -2036,6 +2036,14 @@ export const SUBSIDIARY_BLOCKER_KINDS = [
   'reportedRecords',
   /** (B2) the company is a central reporter's main company. Delete only. */
   'centralReporters',
+  /** inc28-fuel-bulk: rows of uploaded fuel files of the company, never
+   *  deleted (C14), so the company stays. Organisation-wide readers and the
+   *  delete only. */
+  'fuelRows',
+  /** inc28-fuel-bulk: fuel accounts mapped or proposed to the company; a
+   *  masterkey changes or withdraws each mapping first. Organisation-wide
+   *  readers and the delete only. */
+  'fuelAccounts',
 ] as const;
 export type SubsidiaryBlockerKind = (typeof SUBSIDIARY_BLOCKER_KINDS)[number];
 

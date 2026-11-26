@@ -708,8 +708,10 @@ describe('the import preview in the user\'s language (LP4-04)', () => {
   });
 
   it('defaults to the English catalogue — the map the exhaustiveness tests pin', () => {
-    for (const [code, label] of Object.entries(ISSUE_CODE_LABEL)) {
-      expect(label).toBe((en.bulkUploadIssues as Record<string, string>)[code]);
+    // The catalogue's English words every template code (the catalogue also
+    // words a fuel upload's row codes, pinned by `messages.spec.ts`).
+    for (const code of BULK_UPLOAD_ISSUE_CODES) {
+      expect((en.bulkUploadIssues as Record<string, string>)[code]?.trim(), code).toBeTruthy();
     }
   });
 

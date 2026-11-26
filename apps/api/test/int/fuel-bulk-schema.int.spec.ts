@@ -87,7 +87,7 @@ async function account(subsidiaryId: string, code = `PO-${randomUUID().slice(0, 
 }
 
 /** A fuel import: no file kept, no company named (C19). */
-async function fuelImport(organisationId = tenant.organisationId) {
+async function fuelImport(organisationId = tenant.organisationId, source = 'petrol_ofisi') {
   return runtime.importBatch.create({
     data: {
       organisationId,
@@ -99,7 +99,7 @@ async function fuelImport(organisationId = tenant.organisationId) {
       sha256: digest(randomUUID()),
       status: 'completed',
       totalRows: 1,
-      source: 'petrol_ofisi',
+      source,
     },
   });
 }
@@ -166,10 +166,14 @@ const mobile = (data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {}) =
     ...data,
   });
 
-/** A write inside a step that declares `batchId`, as the batch service will (D9). */
+/** Declares `batchId` for this transaction, as the batch service will (D9): `<batch id>:<transaction id>`. */
+const declare = (tx: Prisma.TransactionClient, batchId: string) =>
+  tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${batchId}::text || ':' || pg_current_xact_id()::text, true)`;
+
+/** A write inside a step that declares `batchId`. */
 function inStep<T>(client: PrismaService, batchId: string, write: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
   return client.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${batchId}, true)`;
+    await declare(tx, batchId);
     return write(tx);
   });
 }
@@ -213,6 +217,20 @@ describe('the slot key gains the batch (D2)', () => {
     expect(await refused(runtime.activityRecord.create({ data: mobile({ activityType: null }) }))).toMatchObject({
       state: 'TA002',
     });
+  });
+
+  it('refuses an untyped or non-fuel record in a batch, so the slot keeps one untyped record (fuel_batch_typed_check)', async () => {
+    const acc = await account(tenant.subsidiaryId);
+    const first = await batch(tenant.subsidiaryId, acc.id, 'INV-U1');
+    const second = await batch(tenant.subsidiaryId, acc.id, 'INV-U2');
+    await runtime.activityRecord.create({ data: mobile({ activityType: null }) });
+    for (const b of [first, second]) {
+      expect(await refused(batchRecord(b.id, { activityType: null }))).toMatchObject({ state: '23514' });
+    }
+    expect(
+      await refused(batchRecord(first.id, { category: 'Electricity', activityType: 'grid', activityUnit: 'kWh' })),
+    ).toMatchObject({ state: '23514' });
+    expect(await owner.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(1);
   });
 
   it('still refuses any record for an associate, a batch’s included (TA019)', async () => {
@@ -279,6 +297,28 @@ describe('the live-row dedupe index (D5)', () => {
     });
   });
 
+  it('keeps one organisation’s key apart from another’s: both rows stand', async () => {
+    const foreign = await createTenant();
+    try {
+      const key = digest('petrol_ofisi|SATIS-SHARED');
+      const acc = await account(tenant.subsidiaryId);
+      const imp = await fuelImport();
+      await runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { dedupeDigest: key }) });
+      const foreignAcc = await account(foreign.subsidiaryId, 'PO-F', foreign.organisationId);
+      const foreignImp = await fuelImport(foreign.organisationId);
+      await runtime.fuelRow.create({
+        data: rowData(foreignImp.id, foreignAcc.id, {
+          organisationId: foreign.organisationId,
+          subsidiaryId: foreign.subsidiaryId,
+          dedupeDigest: key,
+        }),
+      });
+      expect(await owner.fuelRow.count({ where: { dedupeDigest: key } })).toBe(2);
+    } finally {
+      await foreign.cleanup();
+    }
+  });
+
   it('keeps one key per organisation and source apart from another source’s', async () => {
     const acc = await account(tenant.subsidiaryId);
     const imp = await fuelImport();
@@ -293,8 +333,9 @@ describe('the live-row dedupe index (D5)', () => {
         createdBy: tenant.users.masterkey.id,
       },
     });
+    const shellImport = await fuelImport(tenant.organisationId, 'shell');
     await runtime.fuelRow.create({
-      data: rowData(imp.id, shell.id, {
+      data: rowData(shellImport.id, shell.id, {
         source: 'shell',
         dedupeDigest: key,
         invoiceRef: '2025-03-1',
@@ -373,6 +414,175 @@ describe('the composite keys hold a chain in one company and one organisation (D
       expect(await refused(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, data) })), JSON.stringify(data)).toMatchObject({
         state: '23514',
       });
+    }
+  });
+});
+
+describe('the CHECKs and keys of each table (D1, D4, D8)', () => {
+  const check = async (write: Promise<unknown>, what: string) =>
+    expect(await refused(write), what).toMatchObject({ state: '23514' });
+  const key = async (write: Promise<unknown>, what: string) =>
+    expect(await refused(write), what).toMatchObject({ state: '23503' });
+  const accountData = (data: Partial<Prisma.FuelAccountUncheckedCreateInput>): Prisma.FuelAccountUncheckedCreateInput => ({
+    organisationId: tenant.organisationId,
+    source: 'petrol_ofisi',
+    code: `C-${randomUUID().slice(0, 6)}`,
+    name: 'x',
+    createdBy: tenant.users.masterkey.id,
+    ...data,
+  });
+
+  it('holds an account’s source, code and mapping state', async () => {
+    const now = new Date();
+    const by = tenant.users.masterkey.id;
+    await check(runtime.fuelAccount.create({ data: accountData({ source: 'bp' }) }), 'unknown source');
+    await check(runtime.fuelAccount.create({ data: accountData({ code: '' }) }), 'empty code');
+    await check(runtime.fuelAccount.create({ data: accountData({ subsidiaryId: tenant.subsidiaryId }) }), 'unmatched with a company');
+    await check(runtime.fuelAccount.create({ data: accountData({ state: 'proposed' }) }), 'proposed with no company');
+    await check(
+      runtime.fuelAccount.create({ data: accountData({ state: 'proposed', subsidiaryId: tenant.subsidiaryId, confirmedBy: by, confirmedAt: now }) }),
+      'proposed and confirmed',
+    );
+    await check(runtime.fuelAccount.create({ data: accountData({ state: 'confirmed', subsidiaryId: tenant.subsidiaryId }) }), 'confirmed by nobody');
+    await check(runtime.fuelAccount.create({ data: accountData({ state: 'mapped' }) }), 'unknown state');
+  });
+
+  it('holds what an import is: a fuel import keeps no file and names no company (C19)', async () => {
+    const base = await fuelImport();
+    const data = { ...(await owner.importBatch.findUniqueOrThrow({ where: { id: base.id } })), id: undefined, sha256: digest('x') };
+    const { id: _id, createdAt: _c, updatedAt: _u, ...row } = data;
+    void _id;
+    void _c;
+    void _u;
+    await check(runtime.importBatch.create({ data: { ...row, source: 'csv' } }), 'unknown source');
+    await check(runtime.importBatch.create({ data: { ...row, storagePath: `import-sources/${randomUUID()}` } }), 'a kept file');
+    await check(runtime.importBatch.create({ data: { ...row, subsidiaryIds: [tenant.subsidiaryId] } }), 'a named company');
+  });
+
+  it('holds a batch’s vocabularies, category by usage, Shell half-month, submission and withdrawal', async () => {
+    const acc = await account(tenant.subsidiaryId);
+    const shellAcc = await runtime.fuelAccount.create({
+      data: accountData({ source: 'shell', state: 'confirmed', subsidiaryId: tenant.subsidiaryId, confirmedBy: tenant.users.masterkey.id, confirmedAt: new Date() }),
+    });
+    const base = {
+      organisationId: tenant.organisationId,
+      subsidiaryId: tenant.subsidiaryId,
+      fuelAccountId: acc.id,
+      source: 'petrol_ofisi',
+      invoiceRef: 'INV-C',
+      sequence: 1,
+      usage: 'on_road',
+      category: 'Mobile Combustion',
+      createdBy: tenant.users.masterkey.id,
+    };
+    const by = tenant.users.masterkey.id;
+    for (const [what, data] of [
+      ['stationary as Mobile Combustion', { usage: 'stationary' }],
+      ['on-road as Fuel', { category: 'Fuel' }],
+      ['an unknown usage', { usage: 'marine' }],
+      ['an unknown status', { status: 'cancelled' }],
+      ['sequence 0', { sequence: 0 }],
+      ['an empty invoice', { invoiceRef: '' }],
+      ['an invoice over 64 characters', { invoiceRef: 'x'.repeat(65) }],
+      ['submitted with no submission', { status: 'submitted' }],
+      ['approved with no submission', { status: 'approved', submittedAt: new Date() }],
+      ['withdrawn with no reason', { status: 'withdrawn', withdrawnBy: by, withdrawnAt: new Date() }],
+      ['withdrawn with a blank reason', { status: 'withdrawn', withdrawnBy: by, withdrawnAt: new Date(), withdrawnReason: '  ' }],
+      ['a draft carrying a withdrawal', { withdrawnBy: by, withdrawnAt: new Date(), withdrawnReason: 'x' }],
+    ] as const) {
+      await check(runtime.fuelBatch.create({ data: { ...base, ...data } }), what);
+    }
+    await check(
+      runtime.fuelBatch.create({ data: { ...base, fuelAccountId: shellAcc.id, source: 'shell', invoiceRef: 'OZK0000000000001' } }),
+      'a Shell invoice that is no half-month',
+    );
+    await runtime.fuelBatch.create({ data: { ...base, fuelAccountId: shellAcc.id, source: 'shell', invoiceRef: '2025-03-2' } });
+    await key(runtime.fuelBatch.create({ data: { ...base, source: 'shell', invoiceRef: '2025-03-1' } }), 'a source not its account’s');
+  });
+
+  it('puts a Shell row in its transaction date’s half-month: day 15 the first, day 16 and the last day the second', async () => {
+    const shellAcc = await runtime.fuelAccount.create({
+      data: accountData({ source: 'shell', state: 'confirmed', subsidiaryId: tenant.subsidiaryId, confirmedBy: tenant.users.masterkey.id, confirmedAt: new Date() }),
+    });
+    const imp = await fuelImport(tenant.organisationId, 'shell');
+    const shellRow = (day: number, invoiceRef: string, hour = 12) =>
+      runtime.fuelRow.create({
+        data: rowData(imp.id, shellAcc.id, {
+          source: 'shell',
+          transactionAt: new Date(Date.UTC(2025, 2, day, hour, 50)),
+          invoiceRef,
+        }),
+      });
+    await shellRow(15, '2025-03-1', 23);
+    await check(shellRow(15, '2025-03-2'), 'day 15 in the second half');
+    await shellRow(16, '2025-03-2', 0);
+    await check(shellRow(16, '2025-03-1'), 'day 16 in the first half');
+    await shellRow(31, '2025-03-2', 23);
+    await check(shellRow(31, '2025-04-1'), 'the 31st in another month');
+  });
+
+  it('holds a row’s shape by source and its columns by state', async () => {
+    const acc = await account(tenant.subsidiaryId);
+    const imp = await fuelImport();
+    const tankerAcc = await runtime.fuelAccount.create({
+      data: accountData({ source: 'tanker', code: 'ÖRNEK DEPO A.Ş.', state: 'confirmed', subsidiaryId: tenant.subsidiaryId, confirmedBy: tenant.users.masterkey.id, confirmedAt: new Date() }),
+    });
+    const tankerImp = await fuelImport(tenant.organisationId, 'tanker');
+    const tanker = (data: Partial<Prisma.FuelRowUncheckedCreateInput>) =>
+      runtime.fuelRow.create({
+        data: rowData(tankerImp.id, tankerAcc.id, { source: 'tanker', transactionAt: null, rawFuel: null, invoiceRef: '000101', ...data }),
+      });
+    await tanker({});
+    await check(tanker({ dedupeDigest: digest('t2'), transactionAt: new Date('2025-03-01T00:00:00Z') }), 'a tanker row with a date');
+    await check(tanker({ dedupeDigest: digest('t3'), rawFuel: 'Motorin' }), 'a tanker row with a raw name');
+    await check(tanker({ dedupeDigest: digest('t4'), fuel: null, state: 'waiting_fuel' }), 'a tanker row with no fuel');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { rawFuel: null }) }), 'a card row with no raw name');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { transactionAt: null }) }), 'a card row with no date');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { month: 13 }) }), 'month 13');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { dedupeDigest: 'ABC' }) }), 'a digest that is no sha256');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { fuel: 'lpg' }) }), 'a fuel no file names');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { usage: 'marine' }) }), 'an unknown usage');
+    const b = await batch(tenant.subsidiaryId, acc.id);
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { state: 'excluded', fuelBatchId: b.id }) }), 'an excluded row in a batch');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { state: 'excluded', holdReason: 'period_locked' }) }), 'an excluded row with a hold');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { state: 'waiting_fuel' }) }), 'waiting for a fuel it has');
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { state: 'ready', holdReason: 'period_locked' }) }), 'ready with a hold');
+    await check(
+      runtime.fuelRow.create({
+        data: rowData(imp.id, acc.id, { state: 'withdrawn', withdrawnState: 'withdrawn', withdrawnBy: tenant.users.masterkey.id, withdrawnAt: new Date(), withdrawnReason: 'x' }),
+      }),
+      'withdrawn from withdrawn',
+    );
+    await check(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { withdrawnReason: 'x' }) }), 'a live row carrying a withdrawal');
+  });
+
+  it('keeps a row’s source its import’s and its account’s, its invoice its batch’s, and its replacement in the organisation', async () => {
+    const acc = await account(tenant.subsidiaryId);
+    const imp = await fuelImport();
+    const shellImp = await fuelImport(tenant.organisationId, 'shell');
+    await key(runtime.fuelRow.create({ data: rowData(shellImp.id, acc.id) }), 'a Petrol Ofisi row in a Shell import');
+    await key(
+      runtime.fuelRow.create({ data: rowData(shellImp.id, acc.id, { source: 'shell', invoiceRef: '2025-03-1' }) }),
+      'a Shell row of a Petrol Ofisi account',
+    );
+    const b = await batch(tenant.subsidiaryId, acc.id, 'INV-ONE');
+    await runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { state: 'assigned', fuelBatchId: b.id, invoiceRef: 'INV-ONE' }) });
+    await key(
+      runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { state: 'assigned', fuelBatchId: b.id, invoiceRef: 'INV-TWO' }) }),
+      'a row of another invoice in the batch',
+    );
+    // The import's source is fixed once rows name it.
+    await key(runtime.importBatch.update({ where: { id: imp.id }, data: { source: 'template' } }), 'a fuel import turned template');
+    const foreign = await createTenant();
+    try {
+      const foreignAcc = await account(foreign.subsidiaryId, 'PO-R', foreign.organisationId);
+      const foreignImp = await fuelImport(foreign.organisationId);
+      const foreignRow = await runtime.fuelRow.create({
+        data: rowData(foreignImp.id, foreignAcc.id, { organisationId: foreign.organisationId, subsidiaryId: foreign.subsidiaryId }),
+      });
+      await key(runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { replacesId: foreignRow.id }) }), 'replacing another organisation’s row');
+    } finally {
+      await foreign.cleanup();
     }
   });
 });
@@ -476,20 +686,88 @@ describe('TA029: a batch’s record is written only inside a step of that batch 
     expect(voided.status).toBe(ActivityRecordStatus.voided);
   });
 
-  it('refuses a void that changes another column too', async () => {
+  /** A batch whose one record is approved, as its steps would leave it. */
+  async function approvedBatch() {
     const { batch: b, record } = await draftBatch();
     await inStep(runtime, b.id, async (tx) => {
       await tx.activityRecord.update({ where: { id: record.id }, data: { status: ActivityRecordStatus.submitted, submittedAt: new Date(), submissionCount: 1 } });
       await tx.activityRecord.update({ where: { id: record.id }, data: { status: ActivityRecordStatus.approved } });
     });
+    return { batch: b, record };
+  }
+
+  it('refuses a void that changes another column too', async () => {
+    const { record } = await approvedBatch();
+    const voiding = { status: ActivityRecordStatus.voided, voidReason: 'x', voidedBy: tenant.users.masterkey.id, voidedAt: new Date() };
+    for (const extra of [{ reviewNote: 'smuggled' }, { anomalyFlag: true }, { varianceReason: 'smuggled' }, { activityValue: 1 }]) {
+      expect(
+        await refused(runtime.activityRecord.update({ where: { id: record.id }, data: { ...voiding, ...extra } })),
+        JSON.stringify(extra),
+      ).toMatchObject({ state: 'TA029' });
+    }
+    expect((await snapshot(record.id)).status).toBe(ActivityRecordStatus.approved);
+  });
+
+  it('refuses a period lock’s flip that changes another column too, either way', async () => {
+    const { batch: b, record } = await approvedBatch();
+    for (const extra of [{ reviewNote: 'smuggled' }, { anomalyFlag: true }, { voidReason: 'smuggled' }]) {
+      expect(
+        await refused(runtime.activityRecord.update({ where: { id: record.id }, data: { status: ActivityRecordStatus.locked, ...extra } })),
+        JSON.stringify(extra),
+      ).toMatchObject({ state: 'TA029' });
+    }
+    await runtime.activityRecord.update({ where: { id: record.id }, data: { status: ActivityRecordStatus.locked } });
     expect(
       await refused(
-        runtime.activityRecord.update({
-          where: { id: record.id },
-          data: { status: ActivityRecordStatus.voided, voidReason: 'x', voidedBy: tenant.users.masterkey.id, voidedAt: new Date(), activityValue: 1 },
-        }),
+        runtime.activityRecord.update({ where: { id: record.id }, data: { status: ActivityRecordStatus.approved, reviewNote: 'smuggled' } }),
       ),
     ).toMatchObject({ state: 'TA029' });
+    // Not a lock's flip: locked to draft, even inside a step of another batch.
+    expect(
+      await refused(inStep(runtime, randomUUID(), (tx) => tx.activityRecord.update({ where: { id: record.id }, data: { status: ActivityRecordStatus.draft } }))),
+    ).toMatchObject({ state: 'TA029' });
+    expect((await snapshot(record.id)).status).toBe(ActivityRecordStatus.locked);
+    void b;
+  });
+
+  it('refuses the earlier image’s own service paths on a batch’s record, and nothing changes', async () => {
+    const { record } = await draftBatch();
+    const before = await snapshot(record.id);
+    const { records } = lifecycleServices(runtime);
+    const author = tenant.users.masterkey;
+    for (const [what, call] of [
+      ['edit', () => records.update(author, record.id, { activityValue: 77 })],
+      ['delete', () => records.remove(author, record.id)],
+      ['submit', () => records.submit(author, record.id)],
+    ] as const) {
+      await expect(call(), what).rejects.toBeDefined();
+    }
+    expect(await snapshot(record.id)).toEqual(before);
+  });
+
+  it('refuses a declaration written for the whole session, and one of another transaction', async () => {
+    const { batch: b, record } = await draftBatch();
+    try {
+      // A slip: `is_local` false. The declaration outlives its transaction but
+      // names that transaction, so the next one is refused.
+      await second.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${b.id}::text || ':' || pg_current_xact_id()::text, false)`;
+      });
+      expect(await refused(second.activityRecord.update({ where: { id: record.id }, data: { reviewNote: 'x' } }))).toMatchObject({
+        state: 'TA029',
+      });
+      // The batch's id alone, as a declaration without its transaction.
+      expect(
+        await refused(
+          second.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${b.id}, true)`;
+            return tx.activityRecord.update({ where: { id: record.id }, data: { reviewNote: 'x' } });
+          }),
+        ),
+      ).toMatchObject({ state: 'TA029' });
+    } finally {
+      await second.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', '', false)`;
+    }
   });
 
   it('leaves a manual record to today’s lifecycle', async () => {
@@ -504,10 +782,10 @@ describe('TA029: a batch’s record is written only inside a step of that batch 
   it('lets the runtime role declare a batch for its own transaction only', async () => {
     const id = randomUUID();
     const [inside] = await runtime.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${id}, true)`;
-      return tx.$queryRaw<{ v: string }[]>`SELECT current_setting('tonyai.fuel_batch_step', true) AS v`;
+      await declare(tx, id);
+      return tx.$queryRaw<{ v: string; xid: string }[]>`SELECT current_setting('tonyai.fuel_batch_step', true) AS v, pg_current_xact_id()::text AS xid`;
     });
-    expect(inside.v).toBe(id);
+    expect(inside.v).toBe(`${id}:${inside.xid}`);
     const [after] = await runtime.$queryRaw<{ v: string | null }[]>`SELECT nullif(current_setting('tonyai.fuel_batch_step', true), '') AS v`;
     expect(after.v).toBeNull();
   });

@@ -28,6 +28,10 @@ const SERVER: Record<string, (n: number) => string> = {
   // inc26-central-reporter-onboarding: shown to an organisation-wide reader only.
   reportedRecords: (n) => `${n} record(s) of other companies naming it as their reporting company`,
   centralReporters: (n) => `${n} central reporter(s) whose main company it is`,
+  // inc28-fuel-bulk: rows of uploaded fuel files keep the company; a mapped or proposed account blocks.
+  fuelRows: (n) =>
+    `${n} row(s) of uploaded fuel files belong to this subsidiary. Fuel rows are never deleted, so a subsidiary that holds them stays. Set its status to "inactive" to retire it instead.`,
+  fuelAccounts: (n) => `${n} fuel account(s) mapped or proposed to it`,
 };
 
 describe('blockerLines', () => {

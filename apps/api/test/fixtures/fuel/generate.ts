@@ -7,9 +7,10 @@
  * What they hold, so the adapters' specs (PR B) can name it:
  *  - every documented fuel name (six petrol, five diesel) and one no rule
  *    recognises (`Otogaz LPG`);
- *  - a shared Petrol Ofisi invoice, `OZK2025000011923`: 15 rows (669.38 L) of a
- *    controlled company's account, 1 row (19.63 L) of a second controlled
- *    account, and 4 rows (80.00 L) of an associate's account;
+ *  - a shared Petrol Ofisi invoice (a synthetic number in the documented
+ *    `OZK…` shape): 15 rows (669.38 L) of a controlled company's account, 1 row
+ *    (19.63 L) of a second controlled account, and 4 rows (80.00 L) of an
+ *    associate's account — the figures of INC-2.8 §7's shared invoice;
  *  - a period-shift row (Petrol Ofisi: 15 March carrying the second half's
  *    invoice) and a fill at 31 March 23:50 (Shell: March, second half);
  *  - two Shell fills of one card and station on one day, 08:10 and 17:45;
@@ -107,7 +108,8 @@ export const PETROL_OFISI_HEADER = [
   'Satış ID', 'Filo Kod Adı', 'Filo', 'Plaka', 'Kart No', 'Tarih', 'Dönem', 'İstasyon', 'Tip', 'Miktar', 'Birim Fiyat',
   'Tutar', 'Fatura Numarası',
 ];
-export const SHARED_INVOICE = 'OZK2025000011923';
+export const SHARED_INVOICE = 'OZK0000000000001';
+export const SHELL_DIESEL_NAMES = ['Motorin Med', 'Motorin Ultimate', 'Motorin - Shell Vp Diesel', 'MOTORIN-SHELL VP DIESEL'];
 
 function petrolOfisiRows(): Cell[][] {
   const controlled = ['PO-0001', 'Örnek Taşımacılık Filo'];
@@ -127,7 +129,7 @@ function petrolOfisiRows(): Cell[][] {
   // Four rows of the associate's account on it (80.00 L).
   for (let i = 0; i < 4; i += 1) sale(associate, at(2025, 3, 7 + i, 8, 0), 'Kurşunsuz 95 Benzin', 20, SHARED_INVOICE);
   // A period-shift row: 15 March, invoiced in the second half; `Dönem` reads like a date.
-  sale(controlled, at(2025, 3, 15, 18, 0), 'Motorin Med', '1.168,00', 'OZK2025000012000', '2025-03-02');
+  sale(controlled, at(2025, 3, 15, 18, 0), 'Motorin Med', '1.168,00', 'OZK0000000000002', '2025-03-02');
   // A sale with no invoice number.
   sale(controlled, at(2025, 3, 18, 8, 0), 'Motorin Med', 12, null);
   // A `Satış ID` twice in the file.
@@ -153,9 +155,10 @@ function tankerRows(): Cell[][] {
     ['PETROL OFİSİ TANKER ALIMLARI (TEST)'],
     [],
     TANKER_HEADER,
-    // The money columns' data sit one column right of their headers.
-    ...deliveries.map(([doc, desc, litres], i): Cell[] => [i + 1, doc, desc, litres, null, litres * 40, litres * 40 * 0.2]),
-    [null, null, 'TOPLAM', total, null, total * 40, total * 40 * 0.2],
+    // The money headers are shifted against their data: under `BİRİM FİYAT`
+    // stands the amount, under `TUTAR` the tax, under `KDV` the unit price.
+    ...deliveries.map(([doc, desc, litres], i): Cell[] => [i + 1, doc, desc, litres, litres * 40, litres * 40 * 0.2, 40]),
+    [null, null, 'TOPLAM', total, total * 40, total * 40 * 0.2, null],
   ];
 }
 
