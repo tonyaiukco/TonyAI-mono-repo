@@ -266,6 +266,19 @@ describe('InventoryBoundariesService', () => {
       expect(db.tx.inventoryBoundary.delete).toHaveBeenCalledTimes(1);
     });
 
+    it('audits a declaration as the role that authorised it under the lock (owner\'s third review, P2)', async () => {
+      // A masterkey made a super_admin of this company while the write waited.
+      db.tx.profile.findUnique.mockResolvedValue({
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [{ subsidiaryId: SUB_ID }],
+      });
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID });
+      db.tx.inventoryBoundarySubsidiary.findUnique.mockResolvedValue(null);
+      await service.putSubsidiary(admin, ID, SUB_ID, BODY).catch(() => undefined);
+      expect(db.tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ entity: 'inventory_boundary', role: 'super_admin' }),
+      }));
+    });
+
     it("answers with the writer's companies as re-read under the lock — a company withdrawn meanwhile is not in it (owner review, P1)", async () => {
       const OTHER = '5b000000-0000-4000-8000-000000000009';
       // Authenticated with both companies; B withdrawn while the write waited.

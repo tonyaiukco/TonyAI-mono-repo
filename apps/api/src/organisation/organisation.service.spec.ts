@@ -17,6 +17,13 @@ const ORG = { id: 'org-1', legalName: 'TonyAI Holding A.Ş.', tradingName: null,
 function build() {
   const tx = {
     $queryRaw: vi.fn(async () => [{ id: 'org-1' }]),
+    // The masterkey re-read under the administrative lock (owner's third review of WP7).
+    $executeRaw: vi.fn(async () => 1),
+    profile: {
+      findUnique: vi.fn(async () => ({
+        role: 'masterkey', organisationId: 'org-1', disabledAt: null as Date | null, organisation: { offboardedAt: null }, subsidiaryAccess: [],
+      })),
+    },
     organisation: {
       findUnique: vi.fn(async () => ({ ...ORG })),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ ...ORG, ...data })),
@@ -61,6 +68,21 @@ describe('OrganisationService', () => {
       diff: { before: { consolidationApproach: 'operational_control' }, after: { consolidationApproach: 'financial_control' } },
     });
     expect(w.audit.record.mock.calls[0][2]).toBe(w.tx);
+  });
+
+  it.each([
+    ['demoted', { role: 'auditor' }],
+    ['disabled', { disabledAt: new Date() }],
+  ])('a masterkey %s while the request waited changes nothing (owner review, P2)', async (_what, over) => {
+    w.tx.profile.findUnique.mockResolvedValue({
+      role: 'masterkey', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [], ...over,
+    } as never);
+    await expect(w.service.setConsolidationApproach(as('masterkey'), { consolidationApproach: 'financial_control' } as never)).rejects.toBeDefined();
+    expect(w.tx.organisation.update).not.toHaveBeenCalled();
+    expect(w.audit.record).not.toHaveBeenCalled();
+    // Re-read under the admin lock, before the organisation row is locked.
+    expect(w.tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(w.tx.profile.findUnique.mock.invocationCallOrder[0]);
+    expect(w.tx.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('writes and audits nothing when the approach is already the one sent', async () => {

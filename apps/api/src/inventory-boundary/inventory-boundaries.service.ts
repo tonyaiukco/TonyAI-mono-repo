@@ -216,8 +216,10 @@ export class InventoryBoundariesService {
       await tx.inventoryBoundarySubsidiary.deleteMany({ where: { boundaryId: header.id, subsidiaryId: subsidiary.id } });
       const rows = declarationRows({ boundaryId: header.id, organisationId, subsidiaryId: subsidiary.id }, body, randomUUID);
       await insertDeclaration(tx, rows);
+      // Audited as the writer the lock re-read: the role that authorised it
+      // (owner's third review of WP7, P2).
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'update',
           entity: 'inventory_boundary',
@@ -244,8 +246,10 @@ export class InventoryBoundariesService {
       await tx.inventoryBoundarySubsidiary.delete({
         where: { boundaryId_subsidiaryId: { boundaryId: header.id, subsidiaryId: before.subsidiaryId } },
       });
+      // Audited as the writer the lock re-read: the role that authorised it
+      // (owner's third review of WP7, P2).
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'update',
           entity: 'inventory_boundary',

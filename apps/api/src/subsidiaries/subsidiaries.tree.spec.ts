@@ -671,6 +671,16 @@ describe('SubsidiariesService — the group tree', () => {
   });
 
   describe('the actor as it stands, and the row as deleted (owner review of WP7, P2)', () => {
+    it('a masterkey demoted while the request waited creates nothing (third review, P2)', async () => {
+      tree(prisma, [ROOT]);
+      prisma.txClient.profile.findUnique.mockResolvedValue({
+        role: 'auditor', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [],
+      });
+      await expect(service.create(masterkey(), { legalName: 'New', geographyCode: 'TR', parentId: 'sub-root' } as never)).rejects.toBeDefined();
+      expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
     const company = (over: Partial<Subsidiary> = {}) => makeSubsidiary({ id: 'sub-2', parentId: 'sub-root', nodeType: 'company', geographyCode: 'TR', ...over });
 
     it.each([
@@ -737,6 +747,12 @@ describe('SubsidiariesService — the group tree', () => {
       expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: { in: masterkey().accessibleSubsidiaryIds }, control: 'associate' } }),
       );
+    });
+
+    it('names none to a scoped reader, and reads nothing for it (owner\'s third review, P2)', async () => {
+      prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-x', legalName: 'Withdrawn Since', sharePercent: null }]);
+      expect(await service.boundaryExclusions(makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-x'] }))).toEqual([]);
+      expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
     });
 
     it('reads within the auditor\'s set too', async () => {

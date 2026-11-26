@@ -2773,7 +2773,11 @@ describe('ReportsService — the methodology text states the stored approach (in
     const data = await service.assemble(superAdmin, q);
     expect(data.consolidationApproach).toBe('financial_control');
     expect(data.excludedAssociates).toEqual([]);
+    // Not even read: ids taken when the request arrived could name a company
+    // withdrawn from it and ticked associate since (owner's third review, P2).
+    withAssociate('Withdrawn Since');
+    expect((await service.assemble(superAdmin, q)).excludedAssociates).toEqual([]);
     const read = prisma.subsidiary.findMany.mock.calls.find((c) => (c[0] as { where?: { control?: string } })?.where?.control === 'associate');
-    expect((read![0] as { where: { id: unknown } }).where.id).toEqual({ in: ['sub-1'] });
+    expect(read).toBeUndefined();
   });
 });

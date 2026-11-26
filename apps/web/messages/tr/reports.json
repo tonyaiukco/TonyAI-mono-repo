@@ -53,6 +53,7 @@
     "financial_control": "finansal kontrol"
   },
   "methodologyExclusions": "Öz kaynak şirketi olarak Kapsam 1 ve 2 dışında tutulanlar (konsolide edilmez): {names}.",
+  "consolidationLine": "<strong>Konsolidasyon yaklaşımı:</strong> {approach}.",
   "methodologyApproachLoading": "okunuyor…",
   "methodologyApproachUnavailable": "burada okunamadı (oluşturulan rapor belirtir)",
   "methodologyExclusionsUnavailable": "Kapsam 1 ve 2 dışında bırakılan öz kaynak şirketleri de burada okunamadı; oluşturulan rapor bunları listeler.",

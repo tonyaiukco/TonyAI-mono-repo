@@ -442,6 +442,44 @@ describe('the races, at READ COMMITTED on two connections (task 2.6)', () => {
     await expect(late).resolves.toMatchObject({ subsidiaryId: k2 });
     expect((await owner.subsidiary.findUniqueOrThrow({ where: { id: p2 } })).parentId).toBe(sector);
   });
+
+  it("the newest version's delete and a tick of a company the version before declares, at once: one is refused, whichever comes first (owner's third review, P1)", async () => {
+    /** A frozen V1 declaring `company`, an open V2 leaving it out, in `year`. */
+    const setUp = async (year: number) => {
+      const company = await node({ nodeType: 'company', name: `Int-test declared ${year}` });
+      const site = await owner.location.create({ data: { subsidiaryId: company, name: 'Int-test site', geographyCode: 'UK' } });
+      const other = await node({ nodeType: 'company', name: `Int-test other ${year}` });
+      const otherSite = await owner.location.create({ data: { subsidiaryId: other, name: 'Int-test other site', geographyCode: 'UK' } });
+      await createBoundary(owner, { ...tenant, subsidiaryId: company }, { locationId: site.id, reportingYear: year, version: 1, frozen: true });
+      const v2 = await createBoundary(owner, { ...tenant, subsidiaryId: other }, { locationId: otherSite.id, reportingYear: year, version: 2 });
+      return { company, v2: v2.boundaryId };
+    };
+
+    // The delete first, held open: the tick waits for it, then meets V1 current.
+    const a = await setUp(2026);
+    const deleting = heldTransaction(runtime, (tx) => tx.inventoryBoundary.delete({ where: { id: a.v2 } }));
+    await deleting.written;
+    const tickPid = await backendPid(other); // read while idle: `tick` then holds the one pooled connection
+    const tick = other.subsidiary.update({ where: { id: a.company }, data: { control: 'associate' } });
+    tick.catch(() => undefined);
+    expect(await settledOrBlocked(tick, tickPid, owner)).toBe('blocked');
+    deleting.release();
+    await deleting.committed;
+    expect(await refused(tick)).toMatchObject({ state: 'TA018', message: expect.stringMatching(/control_change_blocked/) });
+
+    // The tick first, held open: the delete waits for it, then is refused.
+    const b = await setUp(2029);
+    const ticking = heldTransaction(runtime, (tx) => tx.subsidiary.update({ where: { id: b.company }, data: { control: 'associate' } }));
+    await ticking.written;
+    const deletePid = await backendPid(other); // read while idle: `remove` then holds the one pooled connection
+    const remove = other.inventoryBoundary.delete({ where: { id: b.v2 } });
+    remove.catch(() => undefined);
+    expect(await settledOrBlocked(remove, deletePid, owner)).toBe('blocked');
+    ticking.release();
+    await ticking.committed;
+    expect(await refused(remove)).toMatchObject({ state: 'TA022', message: expect.stringMatching(/boundary_subsidiary_not_reportable/) });
+    expect(await owner.inventoryBoundary.count({ where: { id: b.v2 } })).toBe(1);
+  });
 });
 
 describe('the API over the database', () => {

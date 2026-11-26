@@ -234,8 +234,13 @@ export function LocationsPanel({
           </div>
         )}
 
-        {/* Add / edit form — masterkey only */}
-        {canManage ? (
+        {/* Add / edit form — masterkey only; never for a sector group, which
+            holds no facility (TA021; owner's third review of WP7, P3). */}
+        {subsidiary?.nodeType === 'sector_group' ? (
+          <p className="border-t border-border pt-4 text-xs text-muted-foreground" data-testid="sector-group-no-facility">
+            {t('tree.noFacilitySectorGroup')}
+          </p>
+        ) : canManage ? (
           <div className="space-y-4 border-t border-border pt-4">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">

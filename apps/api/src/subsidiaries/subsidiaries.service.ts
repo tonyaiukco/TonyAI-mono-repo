@@ -177,7 +177,11 @@ export class SubsidiariesService {
    * grant can name an associate. Name and share percent only.
    */
   async boundaryExclusions(user: RequestUser): Promise<BoundaryExclusionDTO[]> {
-    if (user.accessibleSubsidiaryIds.length === 0) return [];
+    // A scoped reader (a super_admin, a standard user) names no associate: no
+    // grant can name one, and a list read through ids taken when the request
+    // arrived could name a company withdrawn from it and ticked since (owner's
+    // third review of WP7, P2; the spec's super_admin report names none).
+    if (!can(user.role, 'scope.organisation') || user.accessibleSubsidiaryIds.length === 0) return [];
     const rows = await this.prisma.subsidiary.findMany({
       where: { id: { in: user.accessibleSubsidiaryIds }, control: 'associate' },
       select: { id: true, legalName: true, sharePercent: true },
@@ -255,6 +259,10 @@ export class SubsidiariesService {
     // below in this same transaction.
     const byCreator = !can(user.role, 'company.write');
     if (byCreator) await this.accessAdmin.lockChildCompanyCreator(tx, user, placement.parentId as string);
+    // A masterkey as it stands too, under the same lock: one disabled or
+    // demoted while this request waited creates nothing (owner's third review
+    // of WP7, P2).
+    else await lockAndReadActor(tx, user, user.organisationId as string, 'company.write');
     let created: Subsidiary;
     try {
       created = await tx.subsidiary.create({

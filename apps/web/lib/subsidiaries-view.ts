@@ -127,12 +127,18 @@ export function treeRows<T extends TreeNode>(
     TYPE_ORDER[a.nodeType] - TYPE_ORDER[b.nodeType] || a.legalName.localeCompare(b.legalName, locale) || a.id.localeCompare(b.id);
   const rows: TreeRow<T>[] = [];
   const seen = new Set<string>();
-  const walk = (n: T, depth: number, visible: boolean) => {
-    if (seen.has(n.id)) return;
-    seen.add(n.id);
-    const kids = [...(children.get(n.id) ?? [])].sort(order);
-    if (visible) rows.push({ node: n, depth, hasChildren: kids.length > 0 });
-    for (const k of kids) walk(k, depth + 1, visible && !collapsed.has(n.id));
+  // Pre-order with an explicit stack, not recursion: a valid chain of child
+  // companies is not bounded by the call stack (owner's third review of WP7, P3).
+  const walk = (root: T, rootDepth: number, rootVisible: boolean) => {
+    const stack: { n: T; depth: number; visible: boolean }[] = [{ n: root, depth: rootDepth, visible: rootVisible }];
+    while (stack.length > 0) {
+      const { n, depth, visible } = stack.pop()!;
+      if (seen.has(n.id)) continue;
+      seen.add(n.id);
+      const kids = [...(children.get(n.id) ?? [])].sort(order);
+      if (visible) rows.push({ node: n, depth, hasChildren: kids.length > 0 });
+      for (let i = kids.length - 1; i >= 0; i--) stack.push({ n: kids[i], depth: depth + 1, visible: visible && !collapsed.has(n.id) });
+    }
   };
   for (const t of [...tops].sort(order)) walk(t, 0, true);
   // Anything a cycle kept from every top, once, at the top level.

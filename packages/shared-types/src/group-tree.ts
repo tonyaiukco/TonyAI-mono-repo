@@ -224,28 +224,45 @@ export function rollUp(
   const result = new Map<string, RollUpResult>();
   const onPath = new Set<string>();
 
-  const visit = (node: RollUpNode): ScopeFigures | null => {
-    const done = result.get(node.id);
-    if (done) return done.rollUp;
-    if (onPath.has(node.id)) return null; // a cycle in the input: add nothing twice
+  // Depth-first with an explicit stack, not recursion: a valid chain of
+  // child companies is not bounded by the JavaScript call stack (owner's
+  // third review of WP7, P3).
+  interface Frame {
+    node: RollUpNode;
+    kids: readonly RollUpNode[];
+    next: number;
+    own: ScopeFigures | null;
+    /** Null for an associate: it adds nothing anywhere, but its children are
+     *  still answered. */
+    rolled: ScopeFigures | null;
+  }
+  const open = (node: RollUpNode): Frame => {
     onPath.add(node.id);
-    let rolled: ScopeFigures | null;
-    let own: ScopeFigures | null;
-    if (node.control === 'associate') {
-      own = null;
-      rolled = null;
-      for (const child of children.get(node.id) ?? []) visit(child); // still answer every node
-    } else {
-      own = node.nodeType === 'sector_group' ? null : { ...(ownOf(node.id) ?? ZERO) };
-      rolled = own ? { ...own } : { ...ZERO };
-      for (const child of children.get(node.id) ?? []) {
-        const c = visit(child);
-        if (c) rolled = add(rolled, c);
+    const associate = node.control === 'associate';
+    const own = associate || node.nodeType === 'sector_group' ? null : { ...(ownOf(node.id) ?? ZERO) };
+    return { node, kids: children.get(node.id) ?? [], next: 0, own, rolled: associate ? null : own ? { ...own } : { ...ZERO } };
+  };
+  const visit = (start: RollUpNode): void => {
+    if (result.has(start.id) || onPath.has(start.id)) return;
+    const stack: Frame[] = [open(start)];
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1];
+      if (top.next < top.kids.length) {
+        const child = top.kids[top.next++];
+        const done = result.get(child.id);
+        if (done) {
+          if (top.rolled && done.rollUp) top.rolled = add(top.rolled, done.rollUp);
+        } else if (!onPath.has(child.id)) {
+          stack.push(open(child)); // a node already on the path (a cycle) adds nothing twice
+        }
+        continue;
       }
+      stack.pop();
+      onPath.delete(top.node.id);
+      result.set(top.node.id, { own: top.own, rollUp: top.rolled });
+      const parent = stack[stack.length - 1];
+      if (parent?.rolled && top.rolled) parent.rolled = add(parent.rolled, top.rolled);
     }
-    onPath.delete(node.id);
-    result.set(node.id, { own, rollUp: rolled });
-    return rolled;
   };
 
   for (const n of nodes) visit(n);

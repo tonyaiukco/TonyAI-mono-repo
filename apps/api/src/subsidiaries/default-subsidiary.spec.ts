@@ -56,7 +56,6 @@ describe('createDefaultSubsidiary (UAT round 2, K1)', () => {
         nodeType: 'holding',
         control: 'controlled',
         parentId: null,
-        createdByRole: 'masterkey',
       },
       select: { id: true },
     });

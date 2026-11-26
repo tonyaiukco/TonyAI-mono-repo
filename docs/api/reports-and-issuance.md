@@ -14,7 +14,11 @@ every live workbook's Summary sheet has two rows for it ("Consolidation
 approach", and "Associates outside Scope 1 and 2" — their names, or "None");
 `GET /reports/meta` carries both (`consolidationApproach`,
 `excludedAssociates`), read in the preview's own snapshot, so a preview never
-pairs fresh figures with an earlier approach. A live PDF's methodology note
+pairs fresh figures with an earlier approach, and the preview states them
+whether or not the methodology notes are included. A scoped reader (a
+`super_admin`, a standard user) is named no associate. The CSV export is the
+record ledger alone — its rows and one header, no summary — and carries
+neither. A live PDF's methodology note
 also states the organisation's stored approach — "Consolidation approach: operational control." or "financial
 control." (TR "operasyonel kontrol" / "finansal kontrol") — in place of the
 fixed "Boundary: operational control." it carried before, and names the

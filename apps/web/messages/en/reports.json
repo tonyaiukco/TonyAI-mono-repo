@@ -53,6 +53,7 @@
     "financial_control": "financial control"
   },
   "methodologyExclusions": "Left outside Scope 1 and 2 as associates (equity, not consolidated): {names}.",
+  "consolidationLine": "<strong>Consolidation approach:</strong> {approach}.",
   "methodologyApproachLoading": "being read…",
   "methodologyApproachUnavailable": "not read here (the generated report states it)",
   "methodologyExclusionsUnavailable": "The associates left outside Scope 1 and 2 could not be read here either; the generated report lists them.",

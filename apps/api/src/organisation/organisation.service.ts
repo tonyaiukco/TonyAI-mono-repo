@@ -3,6 +3,7 @@ import { can, type OrganisationDTO } from '@tonyai/shared-types';
 import type { Organisation } from '@tonyai/db';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { lockAndReadActor } from '../auth/access-admin.service';
 import { errorBody } from '../common/api-error';
 
 /** No organisation to read: the generic 404, which names nothing. */
@@ -48,6 +49,10 @@ export class OrganisationService {
     if (!organisationId) throw new ForbiddenException('No organisation context for this user');
     return this.prisma.$transaction(async (tx) => {
       // Locked, so two masterkeys changing it at once audit the value each replaced.
+      // The masterkey as it stands, under the organisation's administrative
+      // lock: one disabled or demoted while this request waited changes
+      // nothing (owner's third review of WP7, P2). Then the row.
+      await lockAndReadActor(tx, user, organisationId, 'consolidation.write');
       await tx.$queryRaw`SELECT id FROM organisations WHERE id = ${organisationId}::uuid FOR UPDATE`;
       const before = await tx.organisation.findUnique({ where: { id: organisationId } });
       if (!before) throw noOrganisation();

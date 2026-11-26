@@ -97,6 +97,16 @@ describe('treeRows — the company screen as a tree (inc26-group-tree)', () => {
   ];
   const shape = (rows: ReturnType<typeof treeRows>) => rows.map((r) => `${'  '.repeat(r.depth)}${r.node.id}${r.hasChildren ? '+' : ''}`);
 
+  it("walks a chain far deeper than the call stack, in order (owner's third review of WP7, P3)", () => {
+    const depth = 50_000;
+    const chain = Array.from({ length: depth }, (_, k) => n(`n${k}`, k === 0 ? null : `n${k - 1}`, k === 0 ? 'holding' : 'child_company'));
+    const rows = treeRows(chain.reverse());
+    expect(rows).toHaveLength(depth);
+    expect(rows[0].node.id).toBe('n0');
+    expect(rows[depth - 1]).toMatchObject({ depth: depth - 1, hasChildren: false });
+    expect(treeRows(chain, new Set(['n0']))).toHaveLength(1);
+  });
+
   it('puts the root first and every node under its parent, siblings by type then name', () => {
     expect(shape(treeRows(TREE))).toEqual(['H+', '  S', '  G+', '    A+', '      B', '  C1', '  C2']);
   });

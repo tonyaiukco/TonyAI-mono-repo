@@ -224,7 +224,7 @@
     "uncalculatedMark": "Incomplete: {count} record(s) behind this figure have no figure — no factor could price them.",
     "uncalculatedNote": "Figures marked as incomplete leave out records no factor could price, and so does every roll-up above them; a zero so marked is not a measured zero.",
     "createdBy": "Created by",
-    "carriedOver": "Not recorded (created before the group tree)",
+    "carriedOver": "Created by the system, or before the group tree",
     "parent": "Parent",
     "parentTop": "None — the top of the tree you can read",
     "ghgBasis": "GHG basis",

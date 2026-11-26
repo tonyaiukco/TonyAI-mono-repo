@@ -280,7 +280,10 @@ export class ReportsService {
     const org = user.organisationId
       ? await db.organisation.findUnique({ where: { id: user.organisationId }, select: { consolidationApproach: true } })
       : null;
-    const associates = selected.length === 0 || user.accessibleSubsidiaryIds.length === 0
+    // A scoped reader's report names no associate: no grant can name one, and
+    // ids taken when the request arrived could name a company withdrawn from
+    // it and ticked since (owner's third review of WP7, P2).
+    const associates = selected.length === 0 || user.accessibleSubsidiaryIds.length === 0 || !can(user.role, 'scope.organisation')
       ? []
       : await db.subsidiary.findMany({
           where: { id: { in: user.accessibleSubsidiaryIds }, control: 'associate' },

@@ -224,7 +224,7 @@
     "uncalculatedMark": "Eksik: bu rakamın arkasındaki {count} kaydın rakamı yok — hiçbir faktör bunları fiyatlayamadı.",
     "uncalculatedNote": "Eksik işaretli rakamlar, hiçbir faktörün fiyatlayamadığı kayıtları dışarıda bırakıyor; üstlerindeki her toplam da öyle. Böyle işaretli bir sıfır ölçülmüş bir sıfır değildir.",
     "createdBy": "Oluşturan",
-    "carriedOver": "Kaydedilmedi (grup ağacından önce oluşturuldu)",
+    "carriedOver": "Sistem tarafından ya da grup ağacından önce oluşturuldu",
     "parent": "Üst düğüm",
     "parentTop": "Yok — görebildiğiniz ağacın en üstü",
     "ghgBasis": "Sera gazı esası",

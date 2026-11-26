@@ -103,6 +103,16 @@ const node = (id: string, parentId: string | null, nodeType: NodeType, control: 
   ({ id, parentId, nodeType, control });
 
 describe('rollUp — own plus the children (§5.2)', () => {
+  it('folds a chain far deeper than the call stack (owner\'s third review of WP7, P3)', () => {
+    const depth = 50_000;
+    const nodes = Array.from({ length: depth }, (_, k) => ({
+      id: `n${k}`, parentId: k === 0 ? null : `n${k - 1}`, nodeType: k === 0 ? 'holding' : k === 1 ? 'company' : 'child_company', control: 'controlled',
+    } as const));
+    const r = rollUp(nodes, new Map(nodes.map((n) => [n.id, t(1)])));
+    expect(r.get('n0')?.rollUp?.total).toBe(depth);
+    expect(r.get(`n${depth - 1}`)?.rollUp?.total).toBe(1);
+  });
+
   it('sums the not-authoritative count up the tree with the tonnes; an associate adds none (owner review of WP7, P1)', () => {
     const r = rollUp(
       [

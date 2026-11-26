@@ -640,14 +640,25 @@ BEGIN
   IF previous_id IS NULL THEN
     RETURN OLD;
   END IF;
+  -- Every company the version before declares, locked FOR SHARE in id order
+  -- BEFORE any is judged — a company still controlled here may be mid-tick,
+  -- and a lock taken only on rows already closed would let that tick and this
+  -- delete both commit (owner's third review of WP7, P1). The API locks the
+  -- same set the same way.
+  PERFORM 1
+     FROM "public"."subsidiaries" s
+     JOIN "public"."inventory_boundary_subsidiaries" d ON d."subsidiary_id" = s."id"
+    WHERE d."boundary_id" = previous_id
+    ORDER BY s."id"
+      FOR SHARE OF s;
+  -- A new statement: it reads each company as committed once its lock was had.
   SELECT s."id" INTO closed_id
     FROM "public"."subsidiaries" s
     JOIN "public"."inventory_boundary_subsidiaries" d ON d."subsidiary_id" = s."id"
    WHERE d."boundary_id" = previous_id
      AND (s."node_type" = 'sector_group' OR s."control" = 'associate')
    ORDER BY s."id"
-   LIMIT 1
-     FOR SHARE OF s;
+   LIMIT 1;
   IF closed_id IS NOT NULL THEN
     RAISE EXCEPTION USING
       ERRCODE = 'TA022',

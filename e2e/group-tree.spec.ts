@@ -228,8 +228,15 @@ test("a super_admin declares its own company in the masterkey's open version and
     expect((await api(request, admin, 'patch', '/organisation/consolidation-approach', { consolidationApproach: 'financial_control' })).status).toBe(200);
     await login(page, ADMIN_EMAIL);
     await page.goto('/reports');
-    await expect(page.getByText(/Consolidation approach: financial control\./)).toBeVisible();
+    const line = page.getByTestId('report-consolidation');
+    await expect(line).toContainText('Consolidation approach: financial control.');
+    await expect(line).toContainText('Bosphorus Associates A.Ş.');
     await expect(page.getByText(/Boundary: operational control/)).toHaveCount(0);
+    // The methodology notes left out: the approach and the associates stay, as on the PDF.
+    await page.getByLabel('Methodology notes').click();
+    await expect(page.getByText(/^Methodology:/)).toHaveCount(0);
+    await expect(line).toContainText('Consolidation approach: financial control.');
+    await expect(line).toContainText('Bosphorus Associates A.Ş.');
   } finally {
     await api(request, admin, 'patch', '/organisation/consolidation-approach', { consolidationApproach: 'operational_control' });
     await api(request, admin, 'delete', `/inventory-boundaries/${opened.json.id}`);

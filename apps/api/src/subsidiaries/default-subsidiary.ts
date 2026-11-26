@@ -62,11 +62,11 @@ export async function createDefaultSubsidiary(
       trackingGranularity: DEFAULT_SUBSIDIARY_SETTINGS.trackingGranularity,
       nodeType: DEFAULT_SUBSIDIARY_SETTINGS.nodeType,
       control: DEFAULT_SUBSIDIARY_SETTINGS.control,
+      // No creator role: registration and the operator's provisioning create
+      // it before any account exists, audited as the system — the tree card
+      // says "created by the system, or before the group tree" (owner's
+      // second and third reviews of WP7, P3).
       parentId: null,
-      // Created for the organisation's first masterkey (registration, or the
-      // operator's provisioning): its tree card names that role, not "before
-      // the group tree" (owner review of WP7, P3).
-      createdByRole: 'masterkey',
     },
     select: { id: true },
   });

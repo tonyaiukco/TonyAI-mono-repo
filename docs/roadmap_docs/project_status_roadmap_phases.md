@@ -69,6 +69,17 @@
     - **P3, the tree's year picker.** It offers the years every reporting screen does.
     - **P3, a new organisation's root.** It records `masterkey` as its creator.
     - **Measured locally after the fixes (2026-11-26):** typecheck, lint (0 errors, the 3 earlier warnings), build; `pnpm test` shared-types 808, db 261, web 1,704, api 4,983; `test:int` 44 files, 1,429 tests; `db:seed` twice; `rls:probe` 126 checks, 0 failed; the `runtime-role` check; the migration-diff gate; the whole e2e suite on built servers, 317/317.
+  - **Owner's third review (`49babbbe`, 2026-11-26), all nine findings verified in the code and fixed:**
+    - **P1, a delete racing a tick.** The version-delete trigger locked only companies already closed, so a tick of a still-controlled company and the delete of the open version could both commit. It now locks every company the version before declares, `FOR SHARE` in id order, before judging any — as the API does. A two-connection integration case pins both orders and killed the old trigger.
+    - **P2, the masterkey as it stands.** A company's creation and a consolidation-approach change re-read the masterkey under the administrative lock.
+    - **P2, scoped readers and associates.** A scoped reader is named no associate: the live report and `GET /subsidiaries/boundary-exclusions` no longer read through ids taken when the request arrived (the spec's super_admin scenario).
+    - **P2, the preview without methodology notes.** The preview states the approach and the associates whatever its options, as the PDF does. The spec now says the CSV ledger carries neither.
+    - **P2, a rolled-back API.** The preview survives a meta read without the two fields: its figures stay and the approach reads "not read here".
+    - **P2, a declaration's audit row.** It names the role re-read under the lock.
+    - **P3, the system-created root.** The previous round's `masterkey` creator was reverted: registration and the operator create the root before any account, audited as the system, and the tree card now reads "Created by the system, or before the group tree".
+    - **P3, a sector group's facilities.** A sector group's page offers no facility form.
+    - **P3, deep trees.** The roll-up fold and the tree walk are iterative: a chain of 50,000 nodes folds and draws.
+    - **Measured locally after the fixes (2026-11-26):** typecheck, lint (0 errors, the 3 earlier warnings), build; `pnpm test` shared-types 809, db 261, web 1,708, api 4,988; `test:int` 44 files, 1,430 tests; `db:seed` twice; `rls:probe` 126 checks, 0 failed; the `runtime-role` check; the migration-diff gate; the whole e2e suite on built servers, 317/317.
   - **Hosted QA, for WP6 (task 9.2):** the per-role account counts were read and the owner's signed-in check was recorded; both are in WP6's entry.
   - **Next:** the owner reviews the pushed branch before any PR is opened; after the merge, read hosted QA back (one root per organisation with companies, one known main total unchanged, the revision suffix).
 - **UAT ROUND 4, WP6 `inc26-roles-approval-chain` (INC-2.6 §1, §1.1, §6; BUG-14): THE FOUR ROLES OF THE DOCUMENT, A COMPANY-SCOPED SUPER_ADMIN, A CATEGORY-SCOPED STANDARD USER AND A ROUTED APPROVAL CHAIN; MERGED AS [PR #364](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/364) (merge `b7edcb96`, 2026-11-25 17:18 UTC, QA `ci100-2`; branch `feat/inc26-roles-approval-chain`, after three owner reviews; Claude Code; Decisions 2026-11-25 (sixth) and (seventh); OpenSpec `inc26-roles-approval-chain`, local).**
