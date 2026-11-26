@@ -88,6 +88,7 @@ import {
   lockActivityRecordRow,
   lockEvidenceRows,
   lockPeriodsShared,
+  declareFuelBatchStep,
   periodOf,
   samePeriod,
   regate,
@@ -400,6 +401,18 @@ export function submitRowsOf(recordId: string, organisationId: string | null): P
   };
 }
 
+/**
+ * A fuel batch's submission of one of its records (inc28-fuel-bulk D12): the
+ * batch's verdict for the record's fuel, and the batch's one variance reason.
+ */
+export interface FuelBatchSubmission {
+  verdict: AnomalyVerdict;
+  varianceReason: string | null;
+}
+
+/** A record as the create wrote it, with its fuel records resolved. */
+export type CreatedRecord = ActivityRecord & { location: { name: string } | null } & FuelResolved;
+
 @Injectable()
 export class ActivityRecordsService {
   private readonly logger = new Logger(ActivityRecordsService.name);
@@ -635,31 +648,46 @@ export class ActivityRecordsService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         await lockPeriodsShared(tx, [periodOf(seen), ...alsoPeriods]);
-        // Deleted meanwhile by a concurrent request, which audited it.
-        if (!(await lockActivityRecordRow(tx, seen.id))) {
-          throw new ResourceNotFoundError('record_not_found');
-        }
-        const current = await tx.activityRecord.findUnique({
-          where: { id: seen.id },
-          include: { location: { select: { name: true } } },
-        });
-        if (!current) throw new ResourceNotFoundError('record_not_found');
-        // The record's company, locked FOR KEY SHARE (a move to another
-        // organisation is a key update, so it waits for this write), must
-        // still be in the caller's organisation: a record that moved with its
-        // company answers as unknown to every lifecycle step (security review
-        // of the owner's fourth round; the create's rule, third review).
-        if (!(await lockCompanyInOrganisation(tx, current.subsidiaryId, organisationId))) {
-          throw new ResourceNotFoundError('record_not_found');
-        }
-        if (!samePeriod(periodOf(seen), periodOf(current))) {
-          throw new RecordChangedError();
-        }
-        return fn(tx, current);
+        return fn(tx, await this.lockSeenRecord(tx, seen, organisationId));
       }, LIFECYCLE_TX);
     } catch (e) {
       throw asLostRace(e);
     }
+  }
+
+  /**
+   * Steps 3-4 of the lifecycle protocol inside a caller's transaction that
+   * already shares the record's period (task 6.1): the row locked and re-read,
+   * its company still in the organisation, its period the one read. A fuel
+   * batch's step takes its periods' locks in sorted order first, then each
+   * record through this.
+   */
+  async lockSeenRecord(
+    tx: Prisma.TransactionClient,
+    seen: ActivityRecord,
+    organisationId: string | null,
+  ): Promise<ActivityRecord & { location: { name: string } | null }> {
+    // Deleted meanwhile by a concurrent request, which audited it.
+    if (!(await lockActivityRecordRow(tx, seen.id))) {
+      throw new ResourceNotFoundError('record_not_found');
+    }
+    const current = await tx.activityRecord.findUnique({
+      where: { id: seen.id },
+      include: { location: { select: { name: true } } },
+    });
+    if (!current) throw new ResourceNotFoundError('record_not_found');
+    // The record's company, locked FOR KEY SHARE (a move to another
+    // organisation is a key update, so it waits for this write), must
+    // still be in the caller's organisation: a record that moved with its
+    // company answers as unknown to every lifecycle step (security review
+    // of the owner's fourth round; the create's rule, third review).
+    if (!(await lockCompanyInOrganisation(tx, current.subsidiaryId, organisationId))) {
+      throw new ResourceNotFoundError('record_not_found');
+    }
+    if (!samePeriod(periodOf(seen), periodOf(current))) {
+      throw new RecordChangedError();
+    }
+    return current;
   }
 
   /**
@@ -1070,110 +1098,141 @@ export class ActivityRecordsService {
     dto: CreateActivityRecordDto,
     provenance?: { importBatchId: string },
   ): Promise<ActivityRecordDTO> {
-    const { subsidiaryId, locationId, periodValue, activityType, calculation, scope, verdict } =
-      await this.previewCreate(user, dto);
+    const prepared = await this.previewCreate(user, dto);
+    let created: CreatedRecord;
+    try {
+      created = await this.prisma.$transaction(
+        (tx) => this.createInTransaction(tx, user, dto, prepared, provenance ?? {}),
+        LIFECYCLE_TX,
+      );
+    } catch (e) {
+      throw this.createRefusal(e, dto, prepared);
+    }
+    return this.toDTO(
+      created, 0, await this.actorsFor(user, [created]), created.fuelRecords, NO_APPROVERS,
+      await reportingNamesFor(this.prisma, user.organisationId, [created]),
+    );
+  }
+
+  /**
+   * The create's write, inside a caller's transaction (inc28-fuel-bulk D8,
+   * task 6.1): the single-record path runs it in its own transaction, a fuel
+   * batch's step in the batch's. `prepared` is `previewCreate`'s answer for
+   * the same `dto`. A record of a fuel batch is written only in a step that
+   * declared the batch for its own transaction (TA029); the declaration is
+   * made here, from the server-side provenance, never from a request body.
+   */
+  async createInTransaction(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    dto: CreateActivityRecordDto,
+    prepared: Awaited<ReturnType<ActivityRecordsService['previewCreate']>>,
+    provenance: { importBatchId?: string; fuelBatchId?: string },
+  ): Promise<CreatedRecord> {
+    const { subsidiaryId, locationId, periodValue, activityType, calculation, scope, verdict } = prepared;
     const period: PeriodKey = {
       subsidiaryId,
       reportingYear: dto.reportingYear,
       reportingPeriod: dto.reportingPeriod,
       periodValue,
     };
-
-    let created: ActivityRecord & { location: { name: string } | null } & FuelResolved;
-    try {
-      created = await this.prisma.$transaction(async (tx) => {
-        // A create has no row to lock, so the period lock is the whole of its
-        // serialisation: a `lock` of this period either committed before this
-        // point (and the check below sees it) or waits for this commit (and
-        // then counts the new draft like any other record).
-        await lockPeriodsShared(tx, [period]);
-        // The author's standing as it is committed now (C10), locked until this
-        // record commits: role, company — still in the organisation — and
-        // category judged again, and the party worked out from the same rows
-        // TA025 will read. Before the period's read: a company moved to another
-        // organisation answers as unknown, not with that organisation's lock.
-        const access = await lockAuthorAccess(tx, user, subsidiaryId, dto.category, 'create');
-        await this.assertPeriodNotLocked(period, tx);
-        const reportingEntity = access ? reportingEntityOf(access, subsidiaryId) : subsidiaryId;
-        await assertNotExactDuplicate(tx, {
-          subsidiaryId, locationId, category: dto.category, reportingYear: dto.reportingYear,
-          reportingPeriod: dto.reportingPeriod, periodValue, activityType,
-        });
-        await assertSingleEntryPeriod(tx, partyOf(user.role, subsidiaryId, reportingEntity), {
-          subsidiaryId,
-          category: dto.category,
-          reportingYear: dto.reportingYear,
-          reportingPeriod: dto.reportingPeriod,
-          periodValue,
-        });
-        // The reporting entity is never written here: TA025 works it out.
-        const row = await tx.activityRecord.create({
-          // Same include as every other read path — the create response is what
-          // the subsidiary create flow renders, and it must not claim the record
-          // has no location seconds after being handed one.
-          include: { location: { select: { name: true } } },
-          data: {
-            subsidiaryId,
-            locationId,
-            reportingYear: dto.reportingYear,
-            reportingPeriod: dto.reportingPeriod,
-            periodValue,
-            category: dto.category,
-            activityType,
-            scope,
-            status: ActivityRecordStatus.draft,
-            anomalyFlag: verdict.anomalous,
-            anomalyBaselinePriorCount: verdict.priorCount,
-            anomalyBaselineTCo2e: verdict.baseline,
-            activityValue: dto.activityValue,
-            // The vocabulary's canonical spelling; the snapshot keeps the entered
-            // one as `inputUnit` until the record is next edited. See `storedUnit`.
-            activityUnit: storedUnit(dto.activityUnit),
-            input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
-            parameters: (dto.parameters ?? undefined) as Prisma.InputJsonValue | undefined,
-            calculation: calculation as unknown as Prisma.InputJsonValue,
-            createdBy: user.id,
-            varianceReason: dto.varianceReason ?? null,
-            importBatchId: provenance?.importBatchId ?? null,
-          },
-        });
-        await this.auditCreateUpdateDelete(
-          user,
-          'create',
-          row.id,
-          { after: this.toAuditSnapshot(row) },
-          tx,
-        );
-        return Object.assign(row, { fuelRecords: await this.fuelRecordsIn(tx, user, [row]) });
-      }, LIFECYCLE_TX);
-    } catch (e) {
-      // Unique constraint (subsidiary, location, year, period, periodValue,
-      // category) is a user-actionable conflict, not a server error.
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
-      ) {
-        throw new DuplicateActivityRecordError();
-      }
-      // The slot already holds the other kind (typed vs untyped) — LP3-03's
-      // trigger, under its own advisory lock, so a concurrent pair cannot
-      // both pass.
-      if (recordTriggerCode(e) === 'TA002') {
-        throw new ActivityTypeSlotConflictError(activityType !== null);
-      }
-      // TA019: the company was ticked associate after the early check.
-      const closed = treeTriggerRefusal(e);
-      if (closed) throw closed;
-      // TA026: the other party's record committed meanwhile; TA025: the main
-      // company was withdrawn meanwhile.
-      const raced = recordCentralReportingRefusal(e, { category: dto.category, reportingYear: dto.reportingYear, periodValue });
-      if (raced) throw raced;
-      throw asLostRace(e);
-    }
-    return this.toDTO(
-      created, 0, await this.actorsFor(user, [created]), created.fuelRecords, NO_APPROVERS,
-      await reportingNamesFor(this.prisma, user.organisationId, [created]),
+    const fuelBatchId = provenance.fuelBatchId ?? null;
+    if (fuelBatchId !== null) await declareFuelBatchStep(tx, fuelBatchId);
+    // A create has no row to lock, so the period lock is the whole of its
+    // serialisation: a `lock` of this period either committed before this
+    // point (and the check below sees it) or waits for this commit (and
+    // then counts the new draft like any other record).
+    await lockPeriodsShared(tx, [period]);
+    // The author's standing as it is committed now (C10), locked until this
+    // record commits: role, company — still in the organisation — and
+    // category judged again, and the party worked out from the same rows
+    // TA025 will read. Before the period's read: a company moved to another
+    // organisation answers as unknown, not with that organisation's lock.
+    const access = await lockAuthorAccess(tx, user, subsidiaryId, dto.category, 'create');
+    await this.assertPeriodNotLocked(period, tx);
+    const reportingEntity = access ? reportingEntityOf(access, subsidiaryId) : subsidiaryId;
+    await assertNotExactDuplicate(tx, {
+      subsidiaryId, locationId, category: dto.category, reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod, periodValue, activityType, fuelBatchId,
+    });
+    await assertSingleEntryPeriod(tx, partyOf(user.role, subsidiaryId, reportingEntity), {
+      subsidiaryId,
+      category: dto.category,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
+      periodValue,
+    });
+    // The reporting entity is never written here: TA025 works it out.
+    const row = await tx.activityRecord.create({
+      // Same include as every other read path — the create response is what
+      // the subsidiary create flow renders, and it must not claim the record
+      // has no location seconds after being handed one.
+      include: { location: { select: { name: true } } },
+      data: {
+        subsidiaryId,
+        locationId,
+        reportingYear: dto.reportingYear,
+        reportingPeriod: dto.reportingPeriod,
+        periodValue,
+        category: dto.category,
+        activityType,
+        scope,
+        status: ActivityRecordStatus.draft,
+        anomalyFlag: verdict.anomalous,
+        anomalyBaselinePriorCount: verdict.priorCount,
+        anomalyBaselineTCo2e: verdict.baseline,
+        activityValue: dto.activityValue,
+        // The vocabulary's canonical spelling; the snapshot keeps the entered
+        // one as `inputUnit` until the record is next edited. See `storedUnit`.
+        activityUnit: storedUnit(dto.activityUnit),
+        input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
+        parameters: (dto.parameters ?? undefined) as Prisma.InputJsonValue | undefined,
+        calculation: calculation as unknown as Prisma.InputJsonValue,
+        createdBy: user.id,
+        varianceReason: dto.varianceReason ?? null,
+        importBatchId: provenance.importBatchId ?? null,
+        fuelBatchId,
+      },
+    });
+    await this.auditCreateUpdateDelete(
+      user,
+      'create',
+      row.id,
+      { after: this.toAuditSnapshot(row) },
+      tx,
     );
+    return Object.assign(row, { fuelRecords: await this.fuelRecordsIn(tx, user, [row]) });
+  }
+
+  /** What a refused create answers (the single-record path; a batch step holds its rows with the same code). */
+  createRefusal(
+    e: unknown,
+    dto: CreateActivityRecordDto,
+    prepared: { activityType: string | null; periodValue: string },
+  ): unknown {
+    const { activityType, periodValue } = prepared;
+    // Unique constraint (subsidiary, location, year, period, periodValue,
+    // category) is a user-actionable conflict, not a server error.
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === 'P2002'
+    ) {
+      return new DuplicateActivityRecordError();
+    }
+    // The slot already holds the other kind (typed vs untyped) — LP3-03's
+    // trigger, under its own advisory lock, so a concurrent pair cannot
+    // both pass.
+    if (recordTriggerCode(e) === 'TA002') {
+      return new ActivityTypeSlotConflictError(activityType !== null);
+    }
+    // TA019: the company was ticked associate after the early check.
+    const closed = treeTriggerRefusal(e);
+    if (closed) return closed;
+    // TA026: the other party's record committed meanwhile; TA025: the main
+    // company was withdrawn meanwhile.
+    const raced = recordCentralReportingRefusal(e, { category: dto.category, reportingYear: dto.reportingYear, periodValue });
+    if (raced) return raced;
+    return asLostRace(e);
   }
 
   /** The record gate of design D6: `holdsRecords` on the company named. */
@@ -1505,25 +1564,39 @@ export class ActivityRecordsService {
     // names them commits with them. Only their blobs wait for the commit.
     const deleted = await this.withLockedRecord(existing, user.organisationId, async (tx, current) => {
       regate(existing, current, () => this.assertCanDelete(user, current));
-      await this.assertPeriodNotLocked(periodOf(current), tx);
-      const fileIds = await this.evidence.fileIdsFor(current.id, tx);
-      await lockEvidenceRows(tx, fileIds);
-      await tx.activityRecord.delete({ where: { id: current.id } });
-      const gone = await this.evidence.deleteUnlinkedRows(fileIds, tx);
-      await this.auditCreateUpdateDelete(
-        user,
-        'delete',
-        current.id,
-        {
-          before: this.toAuditSnapshot(current, fileIds.length),
-          evidence: { fileIds, deletedFileIds: gone.map((f) => f.id) },
-        },
-        tx,
-      );
-      return gone;
+      return this.removeLocked(tx, user, current);
     });
     await this.evidence.removeBlobs(deleted.map((f) => f.storagePath));
     return { id: existing.id, deleted: true };
+  }
+
+  /**
+   * The delete's write on a record already locked, after its gates (task 6.1):
+   * the record, the files it was the last to hold, and its audit row. Answers
+   * those files, whose blobs the caller removes after the commit. A fuel
+   * batch's step calls it inside its own transaction.
+   */
+  async removeLocked(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    current: ActivityRecord,
+  ): Promise<Array<{ id: string; storagePath: string }>> {
+    await this.assertPeriodNotLocked(periodOf(current), tx);
+    const fileIds = await this.evidence.fileIdsFor(current.id, tx);
+    await lockEvidenceRows(tx, fileIds);
+    await tx.activityRecord.delete({ where: { id: current.id } });
+    const gone = await this.evidence.deleteUnlinkedRows(fileIds, tx);
+    await this.auditCreateUpdateDelete(
+      user,
+      'delete',
+      current.id,
+      {
+        before: this.toAuditSnapshot(current, fileIds.length),
+        evidence: { fileIds, deletedFileIds: gone.map((f) => f.id) },
+      },
+      tx,
+    );
+    return gone;
   }
 
   // --- Workflow transitions --------------------------------------------------
@@ -1548,102 +1621,130 @@ export class ActivityRecordsService {
       throw new SubmitRoleRefusedError();
     }
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
-    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
-      regate(seen, record, () => {
-        if (!SUBMITTABLE_STATUSES.has(record.status)) {
-          throw new BadRequestException(
-            errorBody(
-              'record_not_submittable',
-              `Only a draft or returned record can be submitted (current status "${record.status}")`,
-              { status: record.status },
-            ),
-          );
-        }
-        // Only the author submits (decision D02, 2026-09-29) — a draft as much
-        // as a rejected record, and `masterkey` is not exempt. Resubmitting
-        // REVERSES a reviewer's decision, and submitting at all moves a
-        // colleague's half-finished figure out of their hands into review. It
-        // is also what makes the submitter always the creator, which the
-        // approval gate (D01) relies on.
-        if (record.createdBy !== user.id) {
-          throw new SubmitAuthorRefusedError(
-            record.status === ActivityRecordStatus.rejected,
-          );
-        }
-      });
-      // A category withdrawn since the draft was made stops its submit (the
-      // author can still recall or delete it): on the row as locked.
-      assertCategoryGranted(user, record.subsidiaryId, record.category);
-      // Period-lock gate (FR §4.2): no submissions into a closed period.
-      await this.assertPeriodNotLocked(periodOf(record), tx);
-      // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
-      // cannot be submitted without at least one supporting file.
-      // The count is only worth a query when the category could need one, so the
-      // short-circuit stays here; the RULE over the two values is the contract's,
-      // shared with the checkbox the client offers, because it has already been
-      // copied wrongly once. Counted under the row lock: a detach must take the
-      // same lock to remove a link, so the file counted here is still attached
-      // when the status changes.
-      const evidenceCount = isEvidenceRequired(record.category)
-        ? await tx.activityRecordEvidence.count({ where: { activityRecordId: id } })
-        : 0;
-      if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
-        throw new EvidenceRequiredError(record.category);
-      }
-      // C8: a typed category's record is committed only once it names its
-      // fuel or gas. A pre-LP3-03 record may be edited untyped, and a direct
-      // writer may insert one; neither is submitted so. Before K11, so the
-      // answer names the remedy — choose the type — not "save again".
-      assertActivityTypeNamed(record.category, record.activityType ?? null);
-      // K11: the figure the anomaly gate reads, and the one this submit hands
-      // to review, is the one the engine gives now — or nothing moves.
-      this.assertFresh('submit', seen, record, recomputed);
-      // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
-      // submit time — a comparable period may have been committed since the draft
-      // was saved. The API is the final enforcement layer, so it recomputes rather
-      // than trusting the write-time flag, and persists the fresh value.
-      // A record with no calculated figure is not comparable to anything, so it
-      // is not evaluated at all. Passing 0 instead — which is what a naive
-      // `?? 0` does — reads as a 100% drop against any real baseline and would
-      // block the submit demanding a variance comment for a value that was never
-      // computed. Harmless while a category is uniformly factor-less, and a live
-      // bug the day a factor lands mid-year and the priors become calculable.
-      const calc = record.calculation as unknown as ActivityCalculationSnapshot;
-      const verdict = await this.recordCalculation.detectAnomalyFor(
-        calc,
-        {
-          subsidiaryId: record.subsidiaryId,
-          locationId: record.locationId,
-          activityType: record.activityType,
-          category: record.category,
-          reportingPeriod: record.reportingPeriod,
-          reportingYear: record.reportingYear,
-          periodValue: record.periodValue,
-          excludeId: record.id,
-        },
-        {
-          activityValue: record.activityValue,
-          activityUnit: record.activityUnit,
-          parameters: record.parameters ?? null,
-        },
-        tx,
-      );
-      if (verdict.anomalous && !record.varianceReason?.trim()) {
-        throw new VarianceReasonRequiredError(varianceBasisOf(verdict));
-      }
-      // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
-      // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so
-      // the review stamp was only half-cleared, and it dead-coded the reviewer
-      // sheet's "Previous review note" — a consultant re-reviewing a bounced-back
-      // record would see something indistinguishable from a first submission. The
-      // stale-note problem it was meant to solve is a RENDERING one, fixed where
-      // it belongs: `/emissions` shows the note only on a `rejected` record.
-      // The verdict travels whole: the flag and the window it was taken against
-      // are one fact, and `transition` takes them as one argument so that
-      // persisting a flag beside a window nobody can name is not expressible.
-      return this.transition(tx, user, record, ActivityRecordStatus.submitted, { verdict });
-    });
+    const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
+      this.submitLocked(tx, user, seen, record, recomputed),
+    );
     return this.writtenDTO(user, updated);
+  }
+
+  /**
+   * The submit's gates and write on a record already locked (task 6.1): the
+   * single-record path through `withLockedRecord`, a fuel batch's step inside
+   * its own transaction with the batch's one anomaly verdict and variance
+   * reason (D12) in place of the record's own.
+   */
+  async submitLocked(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    seen: ActivityRecord,
+    record: ActivityRecord & { location: { name: string } | null },
+    recomputed: Awaited<ReturnType<ActivityRecordCalculation['recompute']>>,
+    batch?: FuelBatchSubmission,
+  ): Promise<WrittenRecord & FuelResolved> {
+    regate(seen, record, () => {
+      if (!SUBMITTABLE_STATUSES.has(record.status)) {
+        throw new BadRequestException(
+          errorBody(
+            'record_not_submittable',
+            `Only a draft or returned record can be submitted (current status "${record.status}")`,
+            { status: record.status },
+          ),
+        );
+      }
+      // Only the author submits (decision D02, 2026-09-29) — a draft as much
+      // as a rejected record, and `masterkey` is not exempt. Resubmitting
+      // REVERSES a reviewer's decision, and submitting at all moves a
+      // colleague's half-finished figure out of their hands into review. It
+      // is also what makes the submitter always the creator, which the
+      // approval gate (D01) relies on.
+      if (record.createdBy !== user.id) {
+        throw new SubmitAuthorRefusedError(
+          record.status === ActivityRecordStatus.rejected,
+        );
+      }
+    });
+    // A category withdrawn since the draft was made stops its submit (the
+    // author can still recall or delete it): on the row as locked.
+    assertCategoryGranted(user, record.subsidiaryId, record.category);
+    // Period-lock gate (FR §4.2): no submissions into a closed period.
+    await this.assertPeriodNotLocked(periodOf(record), tx);
+    // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
+    // cannot be submitted without at least one supporting file.
+    // The count is only worth a query when the category could need one, so the
+    // short-circuit stays here; the RULE over the two values is the contract's,
+    // shared with the checkbox the client offers, because it has already been
+    // copied wrongly once. Counted under the row lock: a detach must take the
+    // same lock to remove a link, so the file counted here is still attached
+    // when the status changes.
+    const evidenceCount = isEvidenceRequired(record.category)
+      ? await tx.activityRecordEvidence.count({ where: { activityRecordId: record.id } })
+      : 0;
+    if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
+      throw new EvidenceRequiredError(record.category);
+    }
+    // C8: a typed category's record is committed only once it names its
+    // fuel or gas. A pre-LP3-03 record may be edited untyped, and a direct
+    // writer may insert one; neither is submitted so. Before K11, so the
+    // answer names the remedy — choose the type — not "save again".
+    assertActivityTypeNamed(record.category, record.activityType ?? null);
+    // K11: the figure the anomaly gate reads, and the one this submit hands
+    // to review, is the one the engine gives now — or nothing moves.
+    this.assertFresh('submit', seen, record, recomputed);
+    // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
+    // submit time — a comparable period may have been committed since the draft
+    // was saved. The API is the final enforcement layer, so it recomputes rather
+    // than trusting the write-time flag, and persists the fresh value.
+    // A record with no calculated figure is not comparable to anything, so it
+    // is not evaluated at all. Passing 0 instead — which is what a naive
+    // `?? 0` does — reads as a 100% drop against any real baseline and would
+    // block the submit demanding a variance comment for a value that was never
+    // computed. Harmless while a category is uniformly factor-less, and a live
+    // bug the day a factor lands mid-year and the priors become calculable.
+    if (batch) {
+      // A fuel batch is checked per invoice and fuel (D12): its verdict, and
+      // its one variance reason, stored on each flagged record.
+      if (batch.verdict.anomalous && !batch.varianceReason?.trim()) {
+        throw new VarianceReasonRequiredError(varianceBasisOf(batch.verdict));
+      }
+      return this.transition(tx, user, record, ActivityRecordStatus.submitted, {
+        verdict: batch.verdict,
+        ...(batch.verdict.anomalous ? { varianceReason: batch.varianceReason!.trim() } : {}),
+      });
+    }
+    const calc = record.calculation as unknown as ActivityCalculationSnapshot;
+    const verdict = await this.recordCalculation.detectAnomalyFor(
+      calc,
+      {
+        subsidiaryId: record.subsidiaryId,
+        locationId: record.locationId,
+        activityType: record.activityType,
+        category: record.category,
+        reportingPeriod: record.reportingPeriod,
+        reportingYear: record.reportingYear,
+        periodValue: record.periodValue,
+        excludeId: record.id,
+      },
+      {
+        activityValue: record.activityValue,
+        activityUnit: record.activityUnit,
+        parameters: record.parameters ?? null,
+      },
+      tx,
+    );
+    if (verdict.anomalous && !record.varianceReason?.trim()) {
+      throw new VarianceReasonRequiredError(varianceBasisOf(verdict));
+    }
+    // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
+    // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so
+    // the review stamp was only half-cleared, and it dead-coded the reviewer
+    // sheet's "Previous review note" — a consultant re-reviewing a bounced-back
+    // record would see something indistinguishable from a first submission. The
+    // stale-note problem it was meant to solve is a RENDERING one, fixed where
+    // it belongs: `/emissions` shows the note only on a `rejected` record.
+    // The verdict travels whole: the flag and the window it was taken against
+    // are one fact, and `transition` takes them as one argument so that
+    // persisting a flag beside a window nobody can name is not expressible.
+    return this.transition(tx, user, record, ActivityRecordStatus.submitted, { verdict });
   }
 
   /**
@@ -1668,19 +1769,29 @@ export class ActivityRecordsService {
         'Your role may not modify activity records',
       );
     }
-    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
-      regate(seen, record, () => {
-        if (!isRecallable(record.status)) {
-          throw new RecordNotRecallableError(record.status);
-        }
-        if (record.createdBy !== user.id) {
-          throw new AuthorOnlyRefusedError('recall');
-        }
-      });
-      await this.assertPeriodNotLocked(periodOf(record), tx);
-      return this.transition(tx, user, record, ActivityRecordStatus.draft);
-    });
+    const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
+      this.recallLocked(tx, user, seen, record),
+    );
     return this.writtenDTO(user, updated);
+  }
+
+  /** The recall's gates and write on a record already locked (task 6.1). */
+  async recallLocked(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    seen: ActivityRecord,
+    record: ActivityRecord & { location: { name: string } | null },
+  ): Promise<WrittenRecord & FuelResolved> {
+    regate(seen, record, () => {
+      if (!isRecallable(record.status)) {
+        throw new RecordNotRecallableError(record.status);
+      }
+      if (record.createdBy !== user.id) {
+        throw new AuthorOnlyRefusedError('recall');
+      }
+    });
+    await this.assertPeriodNotLocked(periodOf(record), tx);
+    return this.transition(tx, user, record, ActivityRecordStatus.draft);
   }
 
   /**
@@ -1704,28 +1815,39 @@ export class ActivityRecordsService {
       );
     }
     const seen = await this.loadScoped(user, id);
-    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
-      regate(seen, record, () => {
-        if (record.status !== ActivityRecordStatus.submitted) {
-          throw new BadRequestException(
-            errorBody(
-              'record_not_reviewable',
-              `Only a submitted record can be taken into review (current status "${record.status}")`,
-              { status: record.status },
-            ),
-          );
-        }
-        assertSameSubmission(record, seenSubmittedAt);
-      });
-      // The approver check (INC-2.6 §1.1), on the row as locked, after the role
-      // gate and the re-gate, before anything is written: a non-masterkey
-      // author is refused `self_review_forbidden` (WP5), anyone but the
-      // record's approver `not_record_approver`.
-      const decider = await deciderFor(tx, user, record, 'review');
-      await this.assertPeriodNotLocked(periodOf(record), tx);
-      return this.transition(tx, decider, record, ActivityRecordStatus.under_review);
-    });
+    const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
+      this.startReviewLocked(tx, user, seen, record, seenSubmittedAt),
+    );
     return this.writtenDTO(user, updated);
+  }
+
+  /** Taking into review on a record already locked (task 6.1). */
+  async startReviewLocked(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    seen: ActivityRecord,
+    record: ActivityRecord & { location: { name: string } | null },
+    seenSubmittedAt: SeenSubmission | undefined,
+  ): Promise<WrittenRecord & FuelResolved> {
+    regate(seen, record, () => {
+      if (record.status !== ActivityRecordStatus.submitted) {
+        throw new BadRequestException(
+          errorBody(
+            'record_not_reviewable',
+            `Only a submitted record can be taken into review (current status "${record.status}")`,
+            { status: record.status },
+          ),
+        );
+      }
+      assertSameSubmission(record, seenSubmittedAt);
+    });
+    // The approver check (INC-2.6 §1.1), on the row as locked, after the role
+    // gate and the re-gate, before anything is written: a non-masterkey
+    // author is refused `self_review_forbidden` (WP5), anyone but the
+    // record's approver `not_record_approver`.
+    const decider = await deciderFor(tx, user, record, 'review');
+    await this.assertPeriodNotLocked(periodOf(record), tx);
+    return this.transition(tx, decider, record, ActivityRecordStatus.under_review);
   }
 
   async approve(user: RequestUser, id: string, seenSubmittedAt?: SeenSubmission): Promise<ActivityRecordDTO> {
@@ -1737,58 +1859,70 @@ export class ActivityRecordsService {
     const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
-    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
-      regate(seen, record, () => {
-        if (
-          record.status !== ActivityRecordStatus.submitted &&
-          record.status !== ActivityRecordStatus.under_review
-        ) {
-          throw new BadRequestException(
-            errorBody(
-              'record_not_approvable',
-              `Only a submitted or under_review record can be approved (current status "${record.status}")`,
-              { status: record.status },
-            ),
-          );
-        }
-        assertSameSubmission(record, seenSubmittedAt);
-      });
-      // Who approves (INC-2.6 §1.1): segregation of duties (D01) for every
-      // author but a masterkey — `self_approval_forbidden`, whatever role the
-      // author held when creating it — and then only the record's approver
-      // (`not_record_approver`). A masterkey approving their own record is a
-      // self-approval, logged as such by `transition`. Only the author may
-      // submit, so the submitter IS the creator and one comparison covers both.
-      const decider = await deciderFor(tx, user, record, 'approve');
-      // Period-lock gate (defense-in-depth): no review transitions in a closed
-      // period.
-      await this.assertPeriodNotLocked(periodOf(record), tx);
-      // K3, as at submit and in the same place in the order: a record of an
-      // evidence-required category submitted before its category needed a file
-      // (Mobile Combustion, Refrigerants, Fugitive Gas until 2026-11-10) is not
-      // approved without one. No exemption by date or audit row — both are
-      // forgeable (C8's decision). Counted under the row lock; a detach is
-      // refused once the record is submitted, so the count holds.
-      const evidenceCount = isEvidenceRequired(record.category)
-        ? await tx.activityRecordEvidence.count({ where: { activityRecordId: record.id } })
-        : 0;
-      if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
-        throw new ApprovalEvidenceMissingError(record.category);
-      }
-      // C8, as at submit: an untyped record of a typed category — one
-      // submitted before the rule — is returned to its author to name its type.
-      assertActivityTypeNamed(record.category, record.activityType ?? null);
-      // K11: a factor release published or withdrawn since the submit, or a
-      // figure rewritten outside the API, is refused here — the reviewer
-      // returns the record and its author saves it again (L4).
-      this.assertFresh('approve', seen, record, recomputed);
-      // Clear any earlier rejection note: an approved record showing last
-      // round's rejection reason would misread as "approved, but rejected".
-      return this.transition(tx, decider, record, ActivityRecordStatus.approved, {
-        reviewNote: null,
-      });
-    });
+    const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
+      this.approveLocked(tx, user, seen, record, seenSubmittedAt, recomputed),
+    );
     return this.writtenDTO(user, updated);
+  }
+
+  /** The approval's gates and write on a record already locked (task 6.1). */
+  async approveLocked(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    seen: ActivityRecord,
+    record: ActivityRecord & { location: { name: string } | null },
+    seenSubmittedAt: SeenSubmission | undefined,
+    recomputed: Awaited<ReturnType<ActivityRecordCalculation['recompute']>>,
+  ): Promise<WrittenRecord & FuelResolved> {
+    regate(seen, record, () => {
+      if (
+        record.status !== ActivityRecordStatus.submitted &&
+        record.status !== ActivityRecordStatus.under_review
+      ) {
+        throw new BadRequestException(
+          errorBody(
+            'record_not_approvable',
+            `Only a submitted or under_review record can be approved (current status "${record.status}")`,
+            { status: record.status },
+          ),
+        );
+      }
+      assertSameSubmission(record, seenSubmittedAt);
+    });
+    // Who approves (INC-2.6 §1.1): segregation of duties (D01) for every
+    // author but a masterkey — `self_approval_forbidden`, whatever role the
+    // author held when creating it — and then only the record's approver
+    // (`not_record_approver`). A masterkey approving their own record is a
+    // self-approval, logged as such by `transition`. Only the author may
+    // submit, so the submitter IS the creator and one comparison covers both.
+    const decider = await deciderFor(tx, user, record, 'approve');
+    // Period-lock gate (defense-in-depth): no review transitions in a closed
+    // period.
+    await this.assertPeriodNotLocked(periodOf(record), tx);
+    // K3, as at submit and in the same place in the order: a record of an
+    // evidence-required category submitted before its category needed a file
+    // (Mobile Combustion, Refrigerants, Fugitive Gas until 2026-11-10) is not
+    // approved without one. No exemption by date or audit row — both are
+    // forgeable (C8's decision). Counted under the row lock; a detach is
+    // refused once the record is submitted, so the count holds.
+    const evidenceCount = isEvidenceRequired(record.category)
+      ? await tx.activityRecordEvidence.count({ where: { activityRecordId: record.id } })
+      : 0;
+    if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
+      throw new ApprovalEvidenceMissingError(record.category);
+    }
+    // C8, as at submit: an untyped record of a typed category — one
+    // submitted before the rule — is returned to its author to name its type.
+    assertActivityTypeNamed(record.category, record.activityType ?? null);
+    // K11: a factor release published or withdrawn since the submit, or a
+    // figure rewritten outside the API, is refused here — the reviewer
+    // returns the record and its author saves it again (L4).
+    this.assertFresh('approve', seen, record, recomputed);
+    // Clear any earlier rejection note: an approved record showing last
+    // round's rejection reason would misread as "approved, but rejected".
+    return this.transition(tx, decider, record, ActivityRecordStatus.approved, {
+      reviewNote: null,
+    });
   }
 
   /**
@@ -1868,33 +2002,45 @@ export class ActivityRecordsService {
     }
     const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
-    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
-      regate(seen, record, () => {
-        if (
-          record.status !== ActivityRecordStatus.submitted &&
-          record.status !== ActivityRecordStatus.under_review
-        ) {
-          throw new BadRequestException(
-            errorBody(
-              'record_not_rejectable',
-              `Only a submitted or under_review record can be returned (current status "${record.status}")`,
-              { status: record.status },
-            ),
-          );
-        }
-        assertSameSubmission(record, seenSubmittedAt);
-      });
-      // Returning belongs to the record's approver too (INC-2.6 §1.1, §1.2).
-      const decider = await deciderFor(tx, user, record, 'reject');
-      // Period-lock gate (defense-in-depth): symmetric with approve.
-      await this.assertPeriodNotLocked(periodOf(record), tx);
-      // The reviewer's reason goes in reviewNote — overwriting varianceReason
-      // would destroy the author's own anomaly justification (VAR §4).
-      return this.transition(tx, decider, record, ActivityRecordStatus.rejected, {
-        reviewNote: varianceReason,
-      });
-    });
+    const updated = await this.withLockedRecord(seen, user.organisationId, (tx, record) =>
+      this.rejectLocked(tx, user, seen, record, varianceReason, seenSubmittedAt),
+    );
     return this.writtenDTO(user, updated);
+  }
+
+  /** The return's gates and write on a record already locked (task 6.1). */
+  async rejectLocked(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    seen: ActivityRecord,
+    record: ActivityRecord & { location: { name: string } | null },
+    varianceReason: string,
+    seenSubmittedAt: SeenSubmission | undefined,
+  ): Promise<WrittenRecord & FuelResolved> {
+    regate(seen, record, () => {
+      if (
+        record.status !== ActivityRecordStatus.submitted &&
+        record.status !== ActivityRecordStatus.under_review
+      ) {
+        throw new BadRequestException(
+          errorBody(
+            'record_not_rejectable',
+            `Only a submitted or under_review record can be returned (current status "${record.status}")`,
+            { status: record.status },
+          ),
+        );
+      }
+      assertSameSubmission(record, seenSubmittedAt);
+    });
+    // Returning belongs to the record's approver too (INC-2.6 §1.1, §1.2).
+    const decider = await deciderFor(tx, user, record, 'reject');
+    // Period-lock gate (defense-in-depth): symmetric with approve.
+    await this.assertPeriodNotLocked(periodOf(record), tx);
+    // The reviewer's reason goes in reviewNote — overwriting varianceReason
+    // would destroy the author's own anomaly justification (VAR §4).
+    return this.transition(tx, decider, record, ActivityRecordStatus.rejected, {
+      reviewNote: varianceReason,
+    });
   }
 
   /**

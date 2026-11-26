@@ -196,3 +196,14 @@ export function asLostRace(error: unknown): unknown {
   }
   return error;
 }
+
+/**
+ * Declares, for the caller's transaction only, that it is a step of fuel
+ * batch `fuelBatchId` (inc28-fuel-bulk D9): TA029 refuses any write of a
+ * batch's record without it, so an earlier API image — which never declares —
+ * cannot change one. Bound to the transaction's own id, so it cannot outlive
+ * it on a pooled connection.
+ */
+export async function declareFuelBatchStep(tx: RawClient, fuelBatchId: string): Promise<void> {
+  await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${fuelBatchId}::text || ':' || pg_current_xact_id()::text, true)`;
+}

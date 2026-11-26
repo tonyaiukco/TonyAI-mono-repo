@@ -910,6 +910,7 @@ export class BulkUploadService {
         periodValue: true,
         category: true,
         activityType: true,
+        fuelBatchId: true,
       },
       take: STORED_RECORDS_CAP + 1,
     });
@@ -923,7 +924,10 @@ export class BulkUploadService {
       throw new QueryTooBroadError();
     }
     for (const r of stored) {
-      slots.keys.add(
+      // A template row is a manual record: the exact repeat is looked for among
+      // manual records only, the slot kind over every record, a fuel batch's
+      // included (inc28-fuel-bulk D2).
+      if (!r.fuelBatchId) slots.keys.add(
         this.slotKey(
           r.subsidiaryId,
           r.locationId,
