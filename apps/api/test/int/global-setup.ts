@@ -12,7 +12,7 @@ import {
 } from '../../../../packages/db/scripts/runtime-role.mjs';
 import { BUCKETS } from '../../src/storage/buckets';
 import { StorageService } from '../../src/storage/storage.service';
-import { TENANT_EMAIL_PATTERN, TENANT_ORG_PREFIX, tenantIntents } from './db';
+import { TENANT_EMAIL_PATTERN, TENANT_ORG_PREFIX, deleteFuelData, tenantIntents } from './db';
 
 /**
  * Runs once before any integration spec. It refuses — loudly, never by
@@ -131,6 +131,9 @@ export default async function setup(): Promise<void> {
         where: { OR: [{ organisationId: { in: orgIds } }, { userId: { in: profileIds } }] },
       });
       await prisma.profile.deleteMany({ where: { id: { in: profileIds } } });
+      // A batch's records inside its own step (TA029), then the fuel rows,
+      // batches and accounts whose keys RESTRICT the organisation's deletion.
+      await deleteFuelData(prisma, orgIds);
       // Records before their organisation (LP4-01: no foreign key's action reaches them).
       await prisma.activityRecord.deleteMany({ where: { subsidiaryId: { in: subsidiaryIds } } });
       await prisma.organisation.deleteMany({ where: { id: { in: orgIds } } });

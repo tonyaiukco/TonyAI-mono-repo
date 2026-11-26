@@ -246,8 +246,15 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // geography guard on subsidiaries and sites; LP3-04 PR C's dataset guard
     // and truncate guard on `report_datasets`; PR D's issuance guard and
     // truncate guard on `report_issuances`. LP4-02 PR2 adds factor_parameters
-    // (6 triggers: 4 BEFORE + 2 AFTER).
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2 + 8 + 4);
+    // (6 triggers: 4 BEFORE + 2 AFTER). inc28-fuel-bulk adds TA028 and TA029.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2 + 8 + 4 + 2);
+    // inc28-fuel-bulk (D9): TA028 on update; TA029 on every write event.
+    for (const [trigger, type] of [
+      ['activity_records_fuel_batch_fixed', 1 | 2 | 16],
+      ['activity_records_fuel_batch_step', 1 | 2 | 4 | 8 | 16],
+    ]) {
+      expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === trigger)).toEqual({ table: 'activity_records', trigger, fn: trigger, type });
+    }
     // inc26-central-reporter-onboarding's four (TA024–TA027), none narrowed.
     for (const [table, trigger, type] of [
       ['user_subsidiary_access', 'user_subsidiary_access_single_entry', 1 | 2 | 4 | 16],
@@ -494,7 +501,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
 
   it('reports a record key that answers its parent\'s delete or key change with an action, that changed, or that is gone (LP4-01)', async () => {
     expect(RECORD_FOREIGN_KEYS.map(([name]) => name).sort()).toEqual([
-      'activity_records_import_batch_id_fkey', 'activity_records_location_id_subsidiary_id_fkey',
+      'activity_records_fuel_batch_id_subsidiary_id_fkey', 'activity_records_import_batch_id_fkey', 'activity_records_location_id_subsidiary_id_fkey',
       'activity_records_reported_by_subsidiary_id_fkey', 'activity_records_subsidiary_id_fkey',
     ]);
     for (const [, definitionMd5] of RECORD_FOREIGN_KEYS) expect(definitionMd5).toMatch(/^[0-9a-f]{32}$/);

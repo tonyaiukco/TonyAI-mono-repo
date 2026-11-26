@@ -212,6 +212,14 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // Storage sweeper read — never an update or a delete (the guard, TA017,
   // refuses them for every writer but the organisation's own deletion).
   report_issuances: ['SELECT', 'INSERT'],
+  // inc28-fuel-bulk (D1, C14): accounts, batches and rows are written by the
+  // fuel services and never deleted — a batch or a row is withdrawn. UPDATE on
+  // the columns a step writes only (RUNTIME_COLUMN_UPDATES): an account's
+  // source and code, a batch's company, account and invoice, and a row's key,
+  // litres, account and import never change.
+  fuel_accounts: ['SELECT', 'INSERT'],
+  fuel_batches: ['SELECT', 'INSERT'],
+  fuel_rows: ['SELECT', 'INSERT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });
@@ -244,6 +252,42 @@ export const RUNTIME_COLUMN_INSERTS = Object.freeze({
 
 /** Column-level UPDATE grants on tables whose table-level UPDATE is withheld. */
 export const RUNTIME_COLUMN_UPDATES = Object.freeze({
+  // inc28-fuel-bulk (D7, D8, D9, D13): a mapping confirmed or changed; a
+  // batch's declarations, lifecycle and withdrawal; a row re-stated, taken
+  // over, declared (a tanker delivery's fuel and period), put in a batch or
+  // withdrawn.
+  fuel_accounts: ['subsidiary_id', 'state', 'confirmed_by', 'confirmed_at', 'updated_at'],
+  fuel_batches: [
+    'usage',
+    'category',
+    'status',
+    'submitted_at',
+    'submission_count',
+    'reviewed_by',
+    'reviewed_at',
+    'review_note',
+    'variance_reason',
+    'withdrawn_by',
+    'withdrawn_at',
+    'withdrawn_reason',
+    'updated_at',
+  ],
+  fuel_rows: [
+    'holder_id',
+    'fuel',
+    'usage',
+    'year',
+    'month',
+    'state',
+    'hold_reason',
+    'subsidiary_id',
+    'fuel_batch_id',
+    'withdrawn_by',
+    'withdrawn_at',
+    'withdrawn_reason',
+    'withdrawn_state',
+    'updated_at',
+  ],
   // The role changes at runtime (AccessAdminService), and so does the UI
   // language, the user's own (LP3-01, PATCH /me/preferences); the
   // organisation never does (D17). LP4-01: an account is disabled and enabled
@@ -1059,6 +1103,11 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'activity_records', trigger: 'activity_records_reporting_entity', fn: 'activity_records_reporting_entity', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'activity_records', trigger: 'activity_records_single_entry', fn: 'activity_records_single_entry', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'subsidiaries', trigger: 'subsidiaries_reporting_entity_stays', fn: 'subsidiaries_reporting_entity_stays', type: ROW | BEFORE | ON.update },
+  // inc28-fuel-bulk (D9): a record's fuel batch fixed after insert (TA028),
+  // and a batch's record written only inside a step of that batch, a void and
+  // a period lock's flip excepted (TA029).
+  { table: 'activity_records', trigger: 'activity_records_fuel_batch_fixed', fn: 'activity_records_fuel_batch_fixed', type: ROW | BEFORE | ON.update },
+  { table: 'activity_records', trigger: 'activity_records_fuel_batch_step', fn: 'activity_records_fuel_batch_step', type: ROW | BEFORE | ON.insert | ON.delete | ON.update },
 ]);
 
 /**
@@ -1232,6 +1281,8 @@ const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
  * them, or ALWAYS.
  */
 export const RECORD_FOREIGN_KEYS = Object.freeze([
+  // inc28-fuel-bulk (D1): a record's fuel batch, in the record's company, RESTRICT both ways.
+  ['activity_records_fuel_batch_id_subsidiary_id_fkey', '656307a4e11a356e1caf8b9edce80ee7'],
   ['activity_records_import_batch_id_fkey', '7058a8305daff968e129c1e3f0ab5801'],
   ['activity_records_location_id_subsidiary_id_fkey', '3221f47aaba83bbcdf1c5a4443e32cd8'],
   // inc26-central-reporter-onboarding (D1): the reporting entity, RESTRICT both ways.

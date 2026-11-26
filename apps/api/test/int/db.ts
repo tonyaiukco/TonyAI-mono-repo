@@ -265,6 +265,7 @@ async function populateTenant(
           where: { OR: [{ organisationId: organisation.id }, { userId: { in: profileIds } }] },
         });
         await prisma.profile.deleteMany({ where: { id: { in: profileIds } } });
+        await deleteFuelData(prisma, [organisation.id]);
         await prisma.activityRecord.deleteMany({ where: { subsidiary: { organisationId: organisation.id } } });
         await prisma.organisation.delete({ where: { id: organisation.id } });
       } finally {
@@ -272,6 +273,37 @@ async function populateTenant(
       }
     },
   };
+}
+
+/**
+ * Test-only teardown of synthetic organisations' fuel data (inc28-fuel-bulk),
+ * as the owner: each batch's records inside a step that declares the batch
+ * (TA029 refuses the owner too), then rows (replacements before what they
+ * replace), batches and accounts — nothing of the three is deleted in the
+ * product, and their keys RESTRICT the organisation's deletion.
+ */
+export async function deleteFuelData(
+  prisma: Pick<PrismaService, 'fuelBatch' | 'fuelRow' | 'fuelAccount' | '$transaction'>,
+  organisationIds: string[],
+): Promise<void> {
+  if (organisationIds.length === 0) return;
+  const batches = await prisma.fuelBatch.findMany({
+    where: { organisationId: { in: organisationIds } },
+    select: { id: true },
+  });
+  for (const { id } of batches) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT set_config('tonyai.fuel_batch_step', ${id}, true)`;
+      await tx.activityRecord.deleteMany({ where: { fuelBatchId: id } });
+    });
+  }
+  const where = { organisationId: { in: organisationIds } };
+  for (;;) {
+    const removed = await prisma.fuelRow.deleteMany({ where: { ...where, replacedBy: { none: {} } } });
+    if (removed.count === 0) break;
+  }
+  await prisma.fuelBatch.deleteMany({ where });
+  await prisma.fuelAccount.deleteMany({ where });
 }
 
 export interface MemberOptions {

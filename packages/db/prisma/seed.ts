@@ -868,6 +868,30 @@ async function main() {
   // A re-run against a database where the super_admin held Trading drops it.
   await prisma.userSubsidiaryAccess.deleteMany({ where: { userId: approverId, subsidiaryId: FALLBACK_SUBSIDIARY_ID } });
 
+  // inc28-fuel-bulk (D19): two Petrol Ofisi fuel accounts mapped by the
+  // masterkey before any upload — one to TonyAI Logistics, one to the
+  // associate, whose rows a later upload stores as excluded. Synthetic codes
+  // and names, no real account. Create-only, like every seed row.
+  console.log('Seeding fuel accounts (synthetic Petrol Ofisi codes)...');
+  for (const fuelAccount of [
+    { id: '55555555-5555-5555-5555-5555555f0001', code: 'PO-SEED-0001', name: 'TonyAI Logistics fleet', subsidiaryId: SUBSIDIARIES[3].id },
+    { id: '55555555-5555-5555-5555-5555555f0002', code: 'PO-SEED-0002', name: 'Bosphorus Associates fleet', subsidiaryId: SEED_TREE_NODES.associate.id },
+  ]) {
+    await prisma.fuelAccount.upsert({
+      where: { id: fuelAccount.id },
+      update: {},
+      create: {
+        ...fuelAccount,
+        organisationId: ORG_ID,
+        source: 'petrol_ofisi',
+        state: 'confirmed',
+        confirmedBy: adminId,
+        confirmedAt: new Date(),
+        createdBy: adminId,
+      },
+    });
+  }
+
   console.log('Seeding demo activity records (prototype data, Scope 1 & 2)...');
   await ensureEvidenceBucket();
   await ensureImportSourcesBucket();

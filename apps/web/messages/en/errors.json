@@ -29,7 +29,17 @@
     "evidence_required": "Needs an evidence file",
     "category_not_granted": "Category not assigned to you",
     "entity_closed_to_data_entry": "Closed to data entry",
-    "single_entry_period_conflict": "Period already entered by the other party"
+    "single_entry_period_conflict": "Period already entered by the other party",
+    "fuel_key_missing": "Key cell empty",
+    "fuel_cell_missing": "Required cell empty",
+    "fuel_quantity_unreadable": "Quantity not readable",
+    "fuel_date_unreadable": "Date not readable",
+    "fuel_duplicate": "Already stored",
+    "fuel_duplicate_unbatched": "Stored, waiting under another upload",
+    "fuel_account_unmatched": "Account not mapped",
+    "fuel_name_unmatched": "Fuel name not recognised",
+    "fuel_out_of_scope": "Outside your access",
+    "slot_holds_untyped": "Period holds a record without a fuel"
   },
   "codes": {
     "bad_request": "The request could not be processed.",
@@ -172,7 +182,26 @@
     "geography_without_factors": "No emission factor set in this environment can price {geography}. Choose a geography the factor library covers.",
     "central_reporter_needs_main_entity": "A central reporter keeps exactly one main company outside the grant, and this change would leave them with none or several. Nothing was changed.",
     "single_entry_conflict": "These categories are already open to the company's own standard users, so they cannot also be opened to a central reporter. Nothing was changed.",
-    "single_entry_period_conflict": "The company's own users already entered {category} for {period} {year}, so a central reporter cannot enter it for this company in that period."
+    "single_entry_period_conflict": "The company's own users already entered {category} for {period} {year}, so a central reporter cannot enter it for this company in that period.",
+    "fuel_file_source_required": "Choose the fuel file's source: Shell, Petrol Ofisi or tanker deliveries.",
+    "fuel_file_usage_required": "Choose how the fuel in this file was used: on-road, off-road, or stationary or generator.",
+    "fuel_file_declarations_incomplete": "Every delivery to be stored needs its fuel, usage, year and month. Nothing was stored.",
+    "fuel_file_declaration_unknown": "A choice names a delivery that this file does not store. Read the file again and apply it. Nothing was stored.",
+    "fuel_file_changed": "The file applied is not the file that was read. Read it again before applying it. Nothing was stored.",
+    "fuel_file_columns_missing": "The file lacks the columns this source needs: {columns}. Check that the right source is chosen. Nothing was stored.",
+    "fuel_file_columns_ambiguous": "The file has more than one column headed {columns}. Nothing was stored.",
+    "fuel_file_sheet_missing": "The workbook has no sheet this source is read from. Check that the right source is chosen. Nothing was stored.",
+    "fuel_file_too_many_rows": "The file has {rows} rows; a fuel file may hold {max}. Nothing was stored.",
+    "fuel_file_too_large": "The fuel file is larger than {limitMb} MB. Nothing was stored.",
+    "record_in_batch": "This record belongs to a fuel batch. Act on the batch instead.",
+    "fuel_batch_not_found": "Fuel batch not found",
+    "fuel_account_not_found": "Fuel account not found",
+    "fuel_file_not_found": "Fuel upload not found",
+    "fuel_batch_not_open": "This batch is no longer a draft or returned, so it cannot be changed.",
+    "fuel_account_in_use": "{rows} rows of this account are in batches or excluded, so its company cannot be changed. Nothing was changed.",
+    "fuel_account_exists": "An account with this source and code already exists.",
+    "fuel_account_target_forbidden": "You cannot map this account to that company.",
+    "fuel_account_target_invalid": "A fuel account can be mapped only to a company of this organisation, not to a sector group."
   },
   "variants": {
     "variance_reason_required": {

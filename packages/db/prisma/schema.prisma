@@ -176,6 +176,9 @@ model Organisation {
   subsidiaries        Subsidiary[]
   profiles            Profile[]
   importBatches       ImportBatch[]
+  fuelAccounts        FuelAccount[]
+  fuelBatches         FuelBatch[]
+  fuelRows            FuelRow[]
   inventoryBoundaries InventoryBoundary[]
   reportDatasets      ReportDataset[]
   reportIssuances     ReportIssuance[]
@@ -317,6 +320,9 @@ model Subsidiary {
   /// Records of other companies this company entered as a central reporter's
   /// main company (`activity_records.reported_by_subsidiary_id`).
   reportedRecords     ActivityRecord[]              @relation("ActivityRecordReportedBy")
+  fuelAccounts        FuelAccount[]
+  fuelBatches         FuelBatch[]
+  fuelRows            FuelRow[]
   periodLocks         PeriodLock[]
   targets             Target[]
   denominators        SubsidiaryDenominator[]
@@ -485,6 +491,13 @@ model ActivityRecord {
   // not deleted (C6), and TA027 keeps it in the record's organisation.
   reportedBySubsidiaryId    String?                  @map("reported_by_subsidiary_id") @db.Uuid
   reportedBySubsidiary      Subsidiary?              @relation("ActivityRecordReportedBy", fields: [reportedBySubsidiaryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // The fuel batch this record is the sum of (inc28-fuel-bulk D1), or null for
+  // every other record. The pair keeps the record in its batch's company.
+  // Set at insert only (TA028); a record of a batch is written only inside a
+  // step that declares that batch (TA029). RESTRICT both ways, as every key of
+  // this table: a batch is withdrawn, never deleted.
+  fuelBatchId               String?                  @map("fuel_batch_id") @db.Uuid
+  fuelBatch                 FuelBatch?               @relation(fields: [fuelBatchId, subsidiaryId], references: [id, subsidiaryId], onDelete: Restrict, onUpdate: Restrict)
   evidenceLinks             ActivityRecordEvidence[]
   createdAt                 DateTime                 @default(now()) @map("created_at")
   updatedAt                 DateTime                 @updatedAt @map("updated_at")
@@ -501,9 +514,12 @@ model ActivityRecord {
   // DISTINCT, so it lives in raw SQL like the RLS policies. A slot holds typed
   // records or one untyped record, never both: a trigger in the same
   // migration, since the index cannot see it (NULL ≠ 'diesel').
+  // inc28-fuel-bulk (D2) widens the key with `fuel_batch_id`, last: a manual
+  // record keeps one per slot, and each fuel batch holds one per slot and type.
   @@index([subsidiaryId])
   @@index([locationId])
   @@index([importBatchId])
+  @@index([fuelBatchId])
   @@index([reportedBySubsidiaryId])
   // LP4-05 PR C keyset pages (measured on 50,904 rows, 20 subsidiaries):
   // `newest` within one subsidiary, `newest` across an organisation, and the
@@ -551,10 +567,17 @@ model ImportBatch {
   acceptedCount  Int?              @map("accepted_count")
   rejectedCount  Int?              @map("rejected_count")
   completedAt    DateTime?         @map("completed_at")
+  // What was uploaded (inc28-fuel-bulk D1): the TonyAI template, or a fuel
+  // source (`IMPORT_SOURCES`, CHECKed). A fuel import keeps no Storage object
+  // (C19) and names no company in `subsidiaryIds`; its rows do.
+  source         String            @default("template")
   records        ActivityRecord[]
+  fuelRows       FuelRow[]
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")
 
+  // The target of `fuel_rows`' composite foreign key: a row's import is of its organisation.
+  @@unique([id, organisationId])
   @@index([organisationId, createdAt])
   @@index([uploadedBy, createdAt])
   @@map("import_batches")
@@ -1225,4 +1248,156 @@ model ReportIssuance {
   @@unique([datasetId, language, template, includeMethodologyNotes, includeEvidenceSummary])
   @@index([organisationId, reportingYear, issuedAt(sort: Desc)])
   @@map("report_issuances")
+}
+
+// ── Fuel bulk upload (inc28-fuel-bulk) ─────────────────────────────────────
+//
+// Three tables (design D1). A provider file's rows are stored as rows, never
+// as records; a batch (owning company × invoice) holds one activity record per
+// fuel and month, the sum of its rows. Every vocabulary column is text with a
+// CHECK in the migration (`FUEL_SOURCES`, `FUEL_ROW_STATES`, …), as are the
+// columns each state requires. Every row, batch, account and record of a chain
+// is in one organisation (composite foreign keys). Nothing here is deleted:
+// rows and batches are withdrawn (C14). RLS: the migration, D14's matrix.
+
+// A provider's account (`Müşteri Kodu`, `Filo Kod Adı`, a tanker file's
+// `AÇIKLAMA`) and the company its fuel belongs to (INC-2.8 §3.2). `unmatched`:
+// no company; `proposed`: the tool's name match (C4), changing nothing until a
+// person confirms it; `confirmed`: the owning company (C5, D7).
+model FuelAccount {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  source         String
+  code           String
+  // Display only: the account is its source and code.
+  name           String
+  subsidiaryId   String?      @map("subsidiary_id") @db.Uuid
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  state          String       @default("unmatched")
+  // Who confirmed the mapping, and when; no FK, like `createdBy`.
+  confirmedBy    String?      @map("confirmed_by") @db.Uuid
+  confirmedAt    DateTime?    @map("confirmed_at") @db.Timestamptz(6)
+  // The uploader who first sent the account, or the masterkey who added it.
+  createdBy      String       @map("created_by") @db.Uuid
+  batches        FuelBatch[]  @relation("FuelBatchAccount")
+  rows           FuelRow[]    @relation("FuelRowAccount")
+  rowsBySource   FuelRow[]    @relation("FuelRowAccountSource")
+  batchesBySource FuelBatch[] @relation("FuelBatchAccountSource")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([organisationId, source, code])
+  // Targets of the batches' and rows' composite foreign keys.
+  @@unique([id, organisationId])
+  @@unique([id, source])
+  @@index([subsidiaryId])
+  @@map("fuel_accounts")
+}
+
+// The review unit (INC-2.8 §6): one owning company × one invoice of one
+// account — `invoiceRef` is `Fatura Numarası`, the Shell half-month
+// (`2025-03-1`) or `EVRAK NO` — with one usage. A later row of the invoice
+// joins an open batch of the same holder and usage, or forms the next
+// `sequence` (C9). Its status moves with its records in one transaction (D9).
+model FuelBatch {
+  id              String           @id @default(uuid()) @db.Uuid
+  organisationId  String           @map("organisation_id") @db.Uuid
+  organisation    Organisation     @relation(fields: [organisationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subsidiaryId    String           @map("subsidiary_id") @db.Uuid
+  subsidiary      Subsidiary       @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  fuelAccountId   String           @map("fuel_account_id") @db.Uuid
+  fuelAccount     FuelAccount      @relation("FuelBatchAccount", fields: [fuelAccountId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  source          String
+  // The batch's source is its account's.
+  accountSource   FuelAccount      @relation("FuelBatchAccountSource", fields: [fuelAccountId, source], references: [id, source], onDelete: Restrict, onUpdate: Restrict)
+  invoiceRef      String           @map("invoice_ref")
+  sequence        Int
+  usage           String
+  category        String
+  // The holder who formed it: its records' author (C8). No FK, like `createdBy`.
+  createdBy       String           @map("created_by") @db.Uuid
+  status          String           @default("draft")
+  submittedAt     DateTime?        @map("submitted_at") @db.Timestamptz(6)
+  submissionCount Int              @default(0) @map("submission_count")
+  reviewedBy      String?          @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime?        @map("reviewed_at") @db.Timestamptz(6)
+  reviewNote      String?          @map("review_note")
+  varianceReason  String?          @map("variance_reason")
+  withdrawnBy     String?          @map("withdrawn_by") @db.Uuid
+  withdrawnAt     DateTime?        @map("withdrawn_at") @db.Timestamptz(6)
+  withdrawnReason String?          @map("withdrawn_reason")
+  records         ActivityRecord[]
+  rowsByAccount   FuelRow[]        @relation("FuelRowBatchAccount")
+  rowsBySubsidiary FuelRow[]       @relation("FuelRowBatchSubsidiary")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([fuelAccountId, invoiceRef, sequence])
+  // Targets of the records' and rows' composite foreign keys.
+  @@unique([id, subsidiaryId])
+  @@unique([id, fuelAccountId])
+  @@index([organisationId, status])
+  @@index([subsidiaryId, status])
+  @@map("fuel_batches")
+}
+
+// One provider file row, as its column map reads it (D4); no card number,
+// station code or plate. `dedupeDigest` = sha256(source | key) (D5), unique
+// over live rows by a partial index in the migration. `state` is decided by
+// `fuelRowState` (D8); the migration's CHECKs hold the columns each state
+// needs. `holderId` is who will author its batch (C8): the uploader, or a
+// masterkey after a takeover. `subsidiaryId` is its account's confirmed
+// company, written under the account's row lock (D7). A withdrawn row keeps
+// what it was (`withdrawnState`); a later upload of its key names it in
+// `replacesId`.
+model FuelRow {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // The import that first stored it.
+  importBatchId  String       @map("import_batch_id") @db.Uuid
+  importBatch    ImportBatch  @relation(fields: [importBatchId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  holderId       String       @map("holder_id") @db.Uuid
+  source         String
+  dedupeDigest   String       @map("dedupe_digest") @db.Char(64)
+  fuelAccountId  String       @map("fuel_account_id") @db.Uuid
+  fuelAccount    FuelAccount  @relation("FuelRowAccount", fields: [fuelAccountId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  accountSource  FuelAccount  @relation("FuelRowAccountSource", fields: [fuelAccountId, source], references: [id, source], onDelete: Restrict, onUpdate: Restrict)
+  rawFuel        String?      @map("raw_fuel")
+  fuel           String?
+  usage          String
+  litres         Decimal      @db.Decimal(14, 3)
+  // As the file wrote it, no time zone (D4); null for a tanker delivery.
+  transactionAt  DateTime?    @map("transaction_at") @db.Timestamp(0)
+  year           Int
+  month          Int
+  invoiceRef     String       @map("invoice_ref")
+  fileRow        Int          @map("file_row")
+  state          String
+  holdReason     String?      @map("hold_reason")
+  subsidiaryId   String?      @map("subsidiary_id") @db.Uuid
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  fuelBatchId    String?      @map("fuel_batch_id") @db.Uuid
+  // An assigned row's account and company are its batch's.
+  batchAccount   FuelBatch?   @relation("FuelRowBatchAccount", fields: [fuelBatchId, fuelAccountId], references: [id, fuelAccountId], onDelete: Restrict, onUpdate: Restrict)
+  batchSubsidiary FuelBatch?  @relation("FuelRowBatchSubsidiary", fields: [fuelBatchId, subsidiaryId], references: [id, subsidiaryId], onDelete: Restrict, onUpdate: Restrict)
+  withdrawnBy    String?      @map("withdrawn_by") @db.Uuid
+  withdrawnAt    DateTime?    @map("withdrawn_at") @db.Timestamptz(6)
+  withdrawnReason String?     @map("withdrawn_reason")
+  withdrawnState String?      @map("withdrawn_state")
+  replacesId     String?      @map("replaces_id") @db.Uuid
+  replaces       FuelRow?     @relation("FuelRowReplaces", fields: [replacesId, organisationId], references: [id, organisationId], onDelete: Restrict, onUpdate: Restrict)
+  replacedBy     FuelRow[]    @relation("FuelRowReplaces")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([id, organisationId])
+  @@index([importBatchId, state])
+  @@index([fuelAccountId, state])
+  @@index([fuelBatchId])
+  @@index([holderId, state])
+  @@index([subsidiaryId, state])
+  @@index([fuelAccountId, invoiceRef])
+  @@map("fuel_rows")
 }

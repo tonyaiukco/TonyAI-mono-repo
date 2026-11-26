@@ -681,6 +681,17 @@ export const ROLE_CAPABILITIES = Object.freeze({
   /** Run the setup wizard of a new organisation and finish it (INC-2.6 §7.1:
    *  the masterkey's onboarding flow). */
   'onboarding.run': ['masterkey'],
+  /** Add a fuel account by hand, confirm it to any company, change or
+   *  withdraw its mapping (inc28-fuel-bulk C5, D7; an associate only so). */
+  'fuel_account.write': ['masterkey'],
+  /** Confirm a proposal that names a granted company (INC-2.6 §6, INC-2.9
+   *  §3.3: "yalnız kendi şirketine"); a masterkey any company. */
+  'fuel_account.confirm_granted': ['masterkey', 'super_admin'],
+  /** Every fuel account, row and upload of the organisation (D14); a
+   *  super_admin reads its granted companies' by scope, a standard user none. */
+  'fuel_account.read_all': ['masterkey', 'auditor'],
+  /** Become the holder of an upload's unbatched rows (C8, D8), audited. */
+  'fuel_rows.take_over': ['masterkey'],
 } as const satisfies Record<string, readonly UserRole[]>);
 export type Capability = keyof typeof ROLE_CAPABILITIES;
 export const CAPABILITIES = Object.freeze(Object.keys(ROLE_CAPABILITIES)) as readonly Capability[];
@@ -3316,6 +3327,43 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
    *  period (§4.2, §5.3). params: `side` (`SingleEntrySide`, a SENTENCE
    *  SELECTOR), `category`, `year`, `period` (the `PERIOD_VALUES` entry). */
   single_entry_period_conflict: 409,
+  /** inc28-fuel-bulk (design "Error codes"). A fuel upload names no source,
+   *  a card upload no usage, a tanker upload lacks a delivery's declaration,
+   *  or declares a delivery it does not store. */
+  fuel_file_source_required: 400,
+  fuel_file_usage_required: 400,
+  fuel_file_declarations_incomplete: 400,
+  fuel_file_declaration_unknown: 400,
+  /** The applied file's SHA-256 is not the previewed one (D3). */
+  fuel_file_changed: 409,
+  /** Strict header refusal (D4). params: `columns` — the source's own
+   *  expected headers, comma-joined, never a header the file wrote. */
+  fuel_file_columns_missing: 400,
+  fuel_file_columns_ambiguous: 400,
+  /** The source's named sheet (Shell: `items`) is not in the workbook. */
+  fuel_file_sheet_missing: 400,
+  /** params: `rows` (the populated rows) and `max` (C18). */
+  fuel_file_too_many_rows: 400,
+  /** params: `limitMb` (C18). */
+  fuel_file_too_large: 413,
+  /** A single-record step on a record of a fuel batch (D9); void and the
+   *  period lock are the exceptions. */
+  record_in_batch: 409,
+  /** Outside the reader's scope, or of another organisation (D14). */
+  fuel_batch_not_found: 404,
+  fuel_account_not_found: 404,
+  fuel_file_not_found: 404,
+  /** Declarations, files, withdrawal or submit on a batch that is not a draft
+   *  or returned (C14). */
+  fuel_batch_not_open: 409,
+  /** A mapping holding live assigned or excluded rows (C14). params: `rows`. */
+  fuel_account_in_use: 409,
+  /** Adding a source and code already stored. */
+  fuel_account_exists: 409,
+  /** A target the actor may not confirm (C5). */
+  fuel_account_target_forbidden: 403,
+  /** A target that is a sector group, or not of the organisation (C5). */
+  fuel_account_target_invalid: 422,
 } as const);
 export type DomainErrorCode = keyof typeof DOMAIN_ERROR_STATUS;
 
@@ -3381,6 +3429,11 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     single_entry_conflict: Object.freeze(['side']),
     /** `side` (`SingleEntrySide`): a SENTENCE SELECTOR. */
     single_entry_period_conflict: Object.freeze(['side', 'category', 'year', 'period']),
+    fuel_file_columns_missing: Object.freeze(['columns']),
+    fuel_file_columns_ambiguous: Object.freeze(['columns']),
+    fuel_file_too_many_rows: Object.freeze(['rows', 'max']),
+    fuel_file_too_large: Object.freeze(['limitMb']),
+    fuel_account_in_use: Object.freeze(['rows']),
   });
 
 /** What a `variance_reason_required` refusal rests on: a flag on history
@@ -5178,6 +5231,12 @@ export interface ActivityRecordDTO {
   voidedAt: string | null;
   /** The bulk import that created this record, or null for one entered by hand. */
   importBatchId: string | null;
+  /**
+   * The fuel batch this record is the sum of (inc28-fuel-bulk D1), or null for
+   * every other record. Fixed after insert (TA028); a record of a batch is
+   * changed only by its batch's steps (TA029, `record_in_batch`).
+   */
+  fuelBatchId: string | null;
   /** Number of evidence files linked to this record (FR §4.1). */
   evidenceCount: number;
   /**
@@ -6952,6 +7011,13 @@ export const AUDIT_ENTITIES = [
   'report_dataset',
   // LP3-04 PR D: a report issuance; `entityId` is its `issuanceId`.
   'report_issuance',
+  // inc28-fuel-bulk: a fuel account's mapping added, confirmed, changed or
+  // withdrawn (the source, code and company before and after in the diff); a
+  // fuel upload's audit row names its import (`import_batch`).
+  'fuel_account',
+  // inc28-fuel-bulk: a fuel batch's lifecycle step, files, declarations or
+  // withdrawal; `entityId` is the batch.
+  'fuel_batch',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
@@ -7941,3 +8007,5 @@ export * from './record-references';
 export * from './group-tree';
 
 export * from './central-reporting';
+
+export * from './fuel';

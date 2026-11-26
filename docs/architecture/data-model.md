@@ -71,6 +71,30 @@ Four `ENABLE ALWAYS` triggers hold the rules for every writer (the previous API 
 
 The two CHECKs, the four triggers and the foreign key are pinned in `packages/db/scripts/runtime-role.mjs`. The migration `20261126180000_inc26_central_reporting` rewrites no row: every existing access row reads `assigned` from its default.
 
+
+### Fuel bulk upload (`inc28-fuel-bulk`)
+
+A provider's fuel file (Shell, Petrol Ofisi, tanker; INC-2.8 §1) is stored as **rows**, never as one record per fill: 51,000 records a year would break every screen's record limit. Three tables, migration `20261127120000_inc28_fuel_bulk`; nothing in them is deleted — a batch or a row is **withdrawn** and kept.
+
+| Table | What it is | Key facts |
+| --- | --- | --- |
+| `fuel_accounts` | A provider account (`Müşteri Kodu`, `Filo Kod Adı`, a tanker file's `AÇIKLAMA`) and the company its fuel belongs to | Unique per organisation, source and code; the name is display only. `state`: `unmatched` (no company), `proposed` (the tool's name match, changes nothing), `confirmed` (the owning company, with who and when). The company is a composite key `(subsidiary_id, organisation_id)` |
+| `fuel_batches` | The review unit (§6): one owning company × one invoice of one account × one usage | `invoice_ref` is `Fatura Numarası`, the Shell half-month (`2025-03-1`, days 1–15; `-2`, 16 to the end) or `EVRAK NO`; unique per account, invoice and `sequence` (a further batch of the invoice counts on). `category` follows the usage: stationary is `Fuel`, on-road and off-road Mobile Combustion. Status as a record's, plus `withdrawn` with who, when and why |
+| `fuel_rows` | One file row, mapped columns only (no card number, station code or plate) | `dedupe_digest` = sha256 of the source's key; `holder_id` (who will author its batch); `litres numeric(14,3)`; `transaction_at` as written, no time zone (null for a tanker delivery); `year`, `month`; `invoice_ref`; `state`; `hold_reason`; `subsidiary_id` (its account's confirmed company); `fuel_batch_id`; `replaces_id` (the withdrawn row a later upload replaces) |
+
+**Row states** (`fuelRowState` in `@tonyai/shared-types`, D8), decided in this order: `withdrawn`; `assigned` (in a batch); `waiting_account` (no confirmed company); `excluded` (an associate's, whatever the fuel name: outside Scope 1, in its invoice's rows only); `waiting_fuel` (no rule recognises the name); `held` (a formation step refused it; the reason stored); `ready`. CHECKs hold each state's columns, also for a withdrawn row by `withdrawn_state`, the state it left.
+
+**Held by the database.** Every link of a chain stays in one organisation (composite keys to `subsidiaries`, `fuel_accounts`, `import_batches` and `fuel_rows` by `(id, organisation_id)`); a batch's and a row's source are their account's; an assigned row's account and company are its batch's (`(fuel_batch_id, fuel_account_id)`, `(fuel_batch_id, subsidiary_id)`); a record's batch is in the record's company. A row's key is stored once among the organisation's live rows of a source (`fuel_rows_live_dedupe_key`, partial: `WHERE state <> 'withdrawn'`). A card row's year and month are its transaction date's, a Shell row's invoice its half-month. All keys `RESTRICT`.
+
+**The slot key.** `activity_records.fuel_batch_id` (null for every record of today) is the raw index `activity_records_reporting_entity_period_category_key`'s last column: (company, site, year, period, value, category, activity type, batch), `NULLS NOT DISTINCT`, live records only. A manual record keeps one per slot; each batch holds one record per slot and type. The slot-kind rule (`TA002`: typed records or one untyped record) stays slot-wide, batches included. `import_batches.source` says what an import is (`template`, `shell`, `petrol_ofisi`, `tanker`); a fuel import keeps no file and names no company in `subsidiary_ids` (CHECKed).
+
+Two `ENABLE ALWAYS` triggers on `activity_records`, pinned in `runtime-role.mjs`:
+
+| Trigger | Code | What it holds |
+| --- | --- | --- |
+| `activity_records_fuel_batch_fixed` | `TA028` | A record's batch is set at insert and never changes, even inside a step (`fuel_batch_fixed`) |
+| `activity_records_fuel_batch_step` | `TA029` | A record of a batch is inserted, changed or deleted only in a transaction that declared that batch (`set_config('tonyai.fuel_batch_step', id, true)`, the batch service's step). Two exceptions, each changing only its own columns: a void, and a period lock's `approved` ↔ `locked` flip. An API image from before batches never declares one, so it cannot change a batch's record or a total through it (`record_in_batch`). A guard against an earlier image and a slip, not against a caller holding the runtime role |
+
 ---
 
 ## Roles (RBAC)

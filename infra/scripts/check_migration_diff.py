@@ -30,13 +30,14 @@ BEGIN
       AND i.indimmediate AND i.indnullsnotdistinct AND am.amname = 'btree'
       AND i.indexprs IS NULL
       AND pg_catalog.pg_get_expr(i.indpred, i.indrelid) = '(status <> ''voided''::"ActivityRecordStatus")'
-      AND i.indnkeyatts = 7 AND i.indnatts = 7
+      AND i.indnkeyatts = 8 AND i.indnatts = 8
       AND ARRAY(SELECT a.attname::text
                 FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
                 JOIN pg_catalog.pg_attribute a ON a.attrelid = tbl.oid AND a.attnum = k.attnum
                 ORDER BY k.ord) = ARRAY['subsidiary_id', 'location_id', 'reporting_year',
-                                       'reporting_period', 'period_value', 'category', 'activity_type']
-      AND pg_catalog.pg_get_indexdef(i.indexrelid) = 'CREATE UNIQUE INDEX activity_records_reporting_entity_period_category_key ON public.activity_records USING btree (subsidiary_id, location_id, reporting_year, reporting_period, period_value, category, activity_type) NULLS NOT DISTINCT WHERE (status <> ''voided''::"ActivityRecordStatus")'
+                                       'reporting_period', 'period_value', 'category', 'activity_type',
+                                       'fuel_batch_id']
+      AND pg_catalog.pg_get_indexdef(i.indexrelid) = 'CREATE UNIQUE INDEX activity_records_reporting_entity_period_category_key ON public.activity_records USING btree (subsidiary_id, location_id, reporting_year, reporting_period, period_value, category, activity_type, fuel_batch_id) NULLS NOT DISTINCT WHERE (status <> ''voided''::"ActivityRecordStatus")'
   ) THEN
     RAISE EXCEPTION 'Required live-record unique index contract is missing or changed';
   END IF;

@@ -45,7 +45,11 @@ import { copyFor, describeFor } from '@/lib/i18n/testing';
  * Moved here from the module, its only users being these specs (LP4-04 slice 2
  * follow-up (15)).
  */
-const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = en.bulkUploadIssues;
+// The template import's labels: the catalogue also words a fuel upload's row
+// codes (inc28-fuel-bulk), pinned by `messages.spec.ts`.
+const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = Object.fromEntries(
+  BULK_UPLOAD_ISSUE_CODES.map((code) => [code, (en.bulkUploadIssues as Record<string, string>)[code]]),
+) as Record<BulkUploadIssueCode, string>;
 
 const up = () => copyFor('bulkUpload');
 const applyConfirmation = (r: BulkUploadReportDTO) => applyConfirmationIn(r, up());
@@ -704,7 +708,9 @@ describe('the import preview in the user\'s language (LP4-04)', () => {
   });
 
   it('defaults to the English catalogue — the map the exhaustiveness tests pin', () => {
-    expect(ISSUE_CODE_LABEL).toEqual(en.bulkUploadIssues);
+    for (const [code, label] of Object.entries(ISSUE_CODE_LABEL)) {
+      expect(label).toBe((en.bulkUploadIssues as Record<string, string>)[code]);
+    }
   });
 
   it('writes an amount with its unit symbol, by locale, from the number', () => {

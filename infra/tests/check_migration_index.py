@@ -22,7 +22,7 @@ def main():
     name = 'activity_records_reporting_entity_period_category_key'
     drop = 'DROP INDEX public.' + name + ';'
     valid = ('CREATE UNIQUE INDEX ' + name + ' ON public.activity_records '
-             '(subsidiary_id, location_id, reporting_year, reporting_period, period_value, category, activity_type) '
+             '(subsidiary_id, location_id, reporting_year, reporting_period, period_value, category, activity_type, fuel_batch_id) '
              'NULLS NOT DISTINCT WHERE status <> \'voided\';')
     def check_variant(create):
         # Each connection owns a transaction; failure or explicit ROLLBACK leaves
@@ -31,10 +31,10 @@ def main():
         return check(sql)
 
     if check_variant(valid).returncode:
-        sys.exit('FAIL: valid seven-column index must pass.')
+        sys.exit('FAIL: valid eight-column index must pass.')
     if check(INDEX_CONTRACT_SQL).returncode:
         sys.exit('FAIL: rollback did not preserve the control index.')
-    print('PASS: valid seven-column index accepted; original index retained.', flush=True)
+    print('PASS: valid eight-column index accepted; original index retained.', flush=True)
 
     variants = [
         ('missing index', ''),
@@ -42,21 +42,26 @@ def main():
         ('quoted mixed-case name', valid.replace(name, '"A' + name[1:] + '"')),
         ('nonunique index', valid.replace('UNIQUE ', '').replace('NULLS NOT DISTINCT ', '')),
         ('NULLS DISTINCT', valid.replace('NULLS NOT DISTINCT ', '')),
-        ('legacy six-column key', valid.replace(', activity_type)', ')')),
-        ('activity_type replacing category', valid.replace('category, activity_type)', 'activity_type)')),
-        ('activity_type not last', valid.replace('category, activity_type', 'activity_type, category')),
+        ('legacy six-column key', valid.replace(', activity_type, fuel_batch_id)', ')')),
+        ('legacy seven-column key', valid.replace(', fuel_batch_id)', ')')),
+        ('activity_type replacing category', valid.replace('category, activity_type,', 'activity_type,')),
+        ('activity_type before category', valid.replace('category, activity_type', 'activity_type, category')),
+        ('fuel_batch_id not last', valid.replace('activity_type, fuel_batch_id', 'fuel_batch_id, activity_type')),
+        ('fuel_batch_id replacing activity_type', valid.replace('activity_type, fuel_batch_id)', 'fuel_batch_id)')),
         ('missing key', valid.replace('location_id, ', '')),
         ('replaced key', valid.replace('location_id, ', 'id, ')),
         ('reordered keys', valid.replace('subsidiary_id, location_id', 'location_id, subsidiary_id')),
-        ('eighth key', valid.replace('activity_type)', 'activity_type, id)')),
-        ('INCLUDE column', valid.replace('activity_type) ', 'activity_type) INCLUDE (id) ')),
+        ('ninth key', valid.replace('fuel_batch_id)', 'fuel_batch_id, id)')),
+        ('INCLUDE column', valid.replace('fuel_batch_id) ', 'fuel_batch_id) INCLUDE (id) ')),
         ('expression key', valid.replace('reporting_year,', '(reporting_year + 0),')),
-        ('activity_type expression', valid.replace('activity_type)', 'lower(activity_type))')),
+        ('activity_type expression', valid.replace('activity_type,', 'lower(activity_type),')),
         ('different sort order', valid.replace('reporting_year,', 'reporting_year DESC,')),
-        ('activity_type DESC', valid.replace('activity_type)', 'activity_type DESC)')),
-        ('activity_type NULLS FIRST', valid.replace('activity_type)', 'activity_type NULLS FIRST)')),
-        ('activity_type collation', valid.replace('activity_type)', 'activity_type COLLATE "C")')),
-        ('activity_type operator class', valid.replace('activity_type)', 'activity_type text_pattern_ops)')),
+        ('activity_type DESC', valid.replace('activity_type,', 'activity_type DESC,')),
+        ('fuel_batch_id DESC', valid.replace('fuel_batch_id)', 'fuel_batch_id DESC)')),
+        ('activity_type NULLS FIRST', valid.replace('activity_type,', 'activity_type NULLS FIRST,')),
+        ('fuel_batch_id NULLS FIRST', valid.replace('fuel_batch_id)', 'fuel_batch_id NULLS FIRST)')),
+        ('activity_type collation', valid.replace('activity_type,', 'activity_type COLLATE "C",')),
+        ('activity_type operator class', valid.replace('activity_type,', 'activity_type text_pattern_ops,')),
         ('storage parameter', valid.replace(' WHERE ', ' WITH (fillfactor = 50) WHERE ')),
         ('no predicate', valid.replace(" WHERE status <> 'voided'", '')),
         ('reversed predicate', valid.replace("status <> 'voided'", "status = 'voided'")),

@@ -73,6 +73,9 @@ const NOT_FOUND_MESSAGES = {
   target_not_found: 'Target not found',
   denominator_not_found: 'Denominator not found',
   import_batch_not_found: 'Import not found',
+  fuel_batch_not_found: 'Fuel batch not found',
+  fuel_account_not_found: 'Fuel account not found',
+  fuel_file_not_found: 'Fuel upload not found',
 } as const satisfies Partial<Record<ApiErrorCode, string>>;
 export type NotFoundCode = keyof typeof NOT_FOUND_MESSAGES;
 
