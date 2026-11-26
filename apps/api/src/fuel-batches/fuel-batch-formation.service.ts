@@ -1,0 +1,296 @@
+import { randomUUID } from 'node:crypto';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import type { ActivityRecord } from '@tonyai/db';
+import {
+  fuelRecordTarget,
+  isFileFuel,
+  PERIOD_VALUES,
+  type FileFuel,
+  type FormFuelBatchesResultDTO,
+  type FuelHoldReason,
+  type FuelSource,
+  type FuelUsage,
+} from '@tonyai/shared-types';
+import type { RequestUser } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
+import { WorkDeadline } from '../common/work-deadline';
+import { readRuntimeConfig } from '../common/runtime-config';
+import { PrismaService } from '../prisma/prisma.service';
+import { ActivityRecordsService } from '../activity-records/activity-records.service';
+import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
+import { declareFuelBatchStep } from '../activity-records/lifecycle-lock';
+import { CategoryNotGrantedError } from '../activity-records/record-scope';
+import {
+  ActivityTypeSlotConflictError,
+  EntityClosedToDataEntryError,
+  PeriodLockedError,
+} from '../activity-records/errors';
+import { SingleEntryPeriodConflictError } from '../central-reporting/central-reporting-errors';
+import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
+import { sumDecimals } from '../fuel-files/decimal';
+import { usageCategory } from '../fuel-files/fuel-scope';
+import { FuelUploadsService } from '../fuel-files/fuel-uploads.service';
+
+/**
+ * Batches formed by their rows' holder, in bounded steps (inc28-fuel-bulk D8,
+ * C8, C9). One group — an account, an invoice reference and a usage — is one
+ * transaction: under an advisory lock on (account, invoice) and the account's
+ * row `FOR SHARE`, the group's ready rows join the holder's open batch of that
+ * invoice and usage, or a batch with the next sequence is inserted; each
+ * (fuel, month) sum becomes a record through the record service's own create
+ * core, so every gate a manual record meets is met here. Any refusal rolls
+ * the group back and holds its rows with the reason, in a second, small
+ * transaction. A step ends at its deadline; the page calls again while rows
+ * are processable.
+ */
+
+/** "TFBF": the advisory-lock namespace of an invoice's batches. */
+const INVOICE_LOCK_NAMESPACE = 0x54464246;
+const GROUP_TX = { timeout: 30_000, maxWait: 10_000 } as const;
+
+interface GroupKey {
+  accountId: string;
+  invoiceRef: string;
+  usage: FuelUsage;
+}
+
+interface LockedRow {
+  id: string;
+  fuel: string;
+  year: number;
+  month: number;
+  litres: string;
+  subsidiary_id: string;
+}
+
+/** A record's key within a batch (D13): its fuel and calendar month. */
+const keyOf = (fuel: string, year: number, month: number) => `${fuel}|${year}|${month}`;
+
+export class GroupHeld extends Error {
+  constructor(readonly reason: FuelHoldReason) {
+    super(reason);
+  }
+}
+
+/** A record service refusal, as the hold reason the rows keep (D8 row 6), by class. */
+export function holdReasonOf(error: unknown): FuelHoldReason {
+  if (error instanceof GroupHeld) return error.reason;
+  if (error instanceof NoEmissionFactorError || error instanceof FactorLibraryConflictError) return 'no_factor';
+  if (error instanceof PeriodLockedError) return 'period_locked';
+  if (error instanceof EntityClosedToDataEntryError) return 'entity_closed_to_data_entry';
+  if (error instanceof SingleEntryPeriodConflictError) return 'single_entry_period_conflict';
+  if (error instanceof CategoryNotGrantedError) return 'category_not_granted';
+  if (error instanceof ActivityTypeSlotConflictError) return 'slot_holds_untyped';
+  // The holder's standing: a company outside its grant, a withdrawn grant, a narrowed role.
+  if (error instanceof NotFoundException || error instanceof ForbiddenException) return 'fuel_out_of_scope';
+  return 'unexpected';
+}
+
+@Injectable()
+export class FuelBatchFormationService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly records: ActivityRecordsService,
+    private readonly uploads: FuelUploadsService,
+  ) {}
+
+  async formBatches(user: RequestUser, importId: string, options: { retryHeld?: boolean } = {}): Promise<FormFuelBatchesResultDTO> {
+    const upload = await this.uploads.visibleUpload(user, importId, { asHolder: true });
+    // Only the rows' holder forms their batches (C8): another user, a super_admin included, is refused.
+    if (!(await this.holdsAny(user, upload.id))) throw new ForbiddenException();
+
+    if (options.retryHeld) {
+      await this.prisma.fuelRow.updateMany({
+        where: { importBatchId: upload.id, holderId: user.id, fuelBatchId: null, state: 'held' },
+        data: { state: 'ready', holdReason: null },
+      });
+    }
+
+    const deadline = new WorkDeadline(readRuntimeConfig().BULK_DEADLINE_MS);
+    const groups = await this.prisma.$queryRaw<Array<{ account_id: string; invoice_ref: string; usage: string }>>`
+      SELECT fuel_account_id::text AS account_id, invoice_ref, usage FROM fuel_rows
+      WHERE import_batch_id = ${upload.id}::uuid AND holder_id = ${user.id}::uuid AND state = 'ready'
+      GROUP BY fuel_account_id, invoice_ref, usage
+      ORDER BY fuel_account_id, invoice_ref, usage`;
+
+    let formedBatches = 0;
+    let joinedBatches = 0;
+    for (const group of groups) {
+      if (deadline.expired) break;
+      const key: GroupKey = { accountId: group.account_id, invoiceRef: group.invoice_ref, usage: group.usage as FuelUsage };
+      try {
+        const outcome = await this.formGroup(user, upload.id, upload.source as FuelSource, key);
+        if (outcome === 'formed') formedBatches += 1;
+        if (outcome === 'joined') joinedBatches += 1;
+      } catch (error) {
+        await this.holdGroup(upload.id, user.id, key, holdReasonOf(error));
+      }
+    }
+
+    const summary = await this.uploads.detail(user, upload.id);
+    return {
+      formedBatches,
+      joinedBatches,
+      processableRows: summary.processableRows,
+      held: summary.held,
+      waiting: [
+        { reason: 'fuel_account_unmatched' as const, ...summary.rows.waiting_account },
+        { reason: 'fuel_name_unmatched' as const, ...summary.rows.waiting_fuel },
+      ].filter((w) => w.rows > 0),
+    };
+  }
+
+  private async holdsAny(user: RequestUser, importId: string): Promise<boolean> {
+    return (await this.prisma.fuelRow.count({ where: { importBatchId: importId, holderId: user.id, fuelBatchId: null } })) > 0;
+  }
+
+  /** The group's rows held with the reason, in a small transaction of their own (D8). */
+  private async holdGroup(importId: string, holderId: string, key: GroupKey, reason: FuelHoldReason): Promise<void> {
+    await this.prisma.fuelRow.updateMany({
+      where: {
+        importBatchId: importId,
+        holderId,
+        fuelAccountId: key.accountId,
+        invoiceRef: key.invoiceRef,
+        usage: key.usage,
+        state: 'ready',
+      },
+      data: { state: 'held', holdReason: reason },
+    });
+  }
+
+  /** One group, whole or not at all. */
+  private async formGroup(user: RequestUser, importId: string, source: FuelSource, key: GroupKey): Promise<'formed' | 'joined' | 'none'> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${INVOICE_LOCK_NAMESPACE}::int4, hashtext(${key.accountId} || '|' || ${key.invoiceRef}))`;
+      const [account] = await tx.$queryRaw<Array<{ state: string; subsidiary_id: string | null }>>`
+        SELECT state, subsidiary_id::text FROM fuel_accounts WHERE id = ${key.accountId}::uuid FOR SHARE`;
+      const rows = await tx.$queryRaw<LockedRow[]>`
+        SELECT id::text, fuel, year, month, litres::text, subsidiary_id::text FROM fuel_rows
+        WHERE import_batch_id = ${importId}::uuid AND holder_id = ${user.id}::uuid AND state = 'ready'
+          AND fuel_account_id = ${key.accountId}::uuid AND invoice_ref = ${key.invoiceRef} AND usage = ${key.usage}
+        ORDER BY id FOR UPDATE`;
+      if (rows.length === 0) return 'none';
+      const subsidiaryId = rows[0]!.subsidiary_id;
+      // A mapping changed since the rows were stated re-stated them itself (D7); never form under an old company.
+      if (account?.state !== 'confirmed' || rows.some((r) => r.subsidiary_id !== account.subsidiary_id)) return 'none';
+      // B4: a company outside the holder's current scope is held, never tried.
+      if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) throw new GroupHeld('fuel_out_of_scope');
+
+      const [open] = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+        SELECT id::text, status FROM fuel_batches
+        WHERE fuel_account_id = ${key.accountId}::uuid AND invoice_ref = ${key.invoiceRef}
+          AND usage = ${key.usage} AND created_by = ${user.id}::uuid AND status IN ('draft', 'rejected')
+        ORDER BY sequence DESC LIMIT 1 FOR UPDATE`;
+      const batchId = open?.id ?? randomUUID();
+      await declareFuelBatchStep(tx, batchId);
+      if (!open) {
+        const [{ next }] = await tx.$queryRaw<Array<{ next: number }>>`
+          SELECT COALESCE(max(sequence), 0)::int + 1 AS next FROM fuel_batches
+          WHERE fuel_account_id = ${key.accountId}::uuid AND invoice_ref = ${key.invoiceRef}`;
+        await tx.fuelBatch.create({
+          data: {
+            id: batchId,
+            organisationId: user.organisationId!,
+            subsidiaryId,
+            fuelAccountId: key.accountId,
+            source,
+            invoiceRef: key.invoiceRef,
+            sequence: next!,
+            usage: key.usage,
+            category: usageCategory(key.usage),
+            createdBy: user.id,
+          },
+        });
+      }
+
+      // The batch's records by key, from all its live rows: those it holds and those joining now (D13).
+      const existingRows = open
+        ? await tx.$queryRaw<Array<{ fuel: string; year: number; month: number; litres: string }>>`
+            SELECT fuel, year, month, litres::text FROM fuel_rows WHERE fuel_batch_id = ${batchId}::uuid AND state = 'assigned'`
+        : [];
+      const sums = new Map<string, { fuel: FileFuel; year: number; month: number; litres: string[] }>();
+      for (const row of [...existingRows, ...rows]) {
+        if (!isFileFuel(row.fuel)) throw new GroupHeld('unexpected');
+        const k = keyOf(row.fuel, row.year, row.month);
+        const sum = sums.get(k) ?? { fuel: row.fuel, year: row.year, month: row.month, litres: [] };
+        sums.set(k, sum);
+        sum.litres.push(row.litres);
+      }
+      const existingRecords: ActivityRecord[] = open
+        ? await tx.activityRecord.findMany({ where: { fuelBatchId: batchId, status: { not: 'voided' } }, orderBy: { id: 'asc' } })
+        : [];
+      const recordByKey = new Map(
+        existingRecords.map((r) => [keyOf(fuelOfActivityType(r.activityType), r.reportingYear, monthOf(r.periodValue)), r]),
+      );
+
+      for (const [k, sum] of [...sums.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        const target = fuelRecordTarget(sum.fuel, key.usage)!;
+        const quantity = Number(sumDecimals(sum.litres));
+        const existing = recordByKey.get(k);
+        if (existing) {
+          const locked = await this.records.lockSeenRecord(tx, existing, user.organisationId);
+          await this.records.updateBatchQuantityLocked(tx, user, locked, quantity);
+          continue;
+        }
+        const dto = Object.assign(new CreateActivityRecordDto(), {
+          subsidiaryId,
+          locationId: null,
+          reportingYear: sum.year,
+          reportingPeriod: 'monthly',
+          periodValue: PERIOD_VALUES.monthly[sum.month - 1],
+          category: target.category,
+          activityType: target.activityType,
+          activityValue: quantity,
+          activityUnit: target.units[0]!,
+          // C17: the invoice number when the source has one; Shell's half-month is not one.
+          ...(source === 'shell' ? {} : { input: { invoice_no: key.invoiceRef } }),
+        }) as CreateActivityRecordDto;
+        const prepared = await this.records.previewCreate(user, dto, { fuelBatchId: batchId });
+        try {
+          await this.records.createInTransaction(tx, user, dto, prepared, { fuelBatchId: batchId });
+        } catch (error) {
+          throw this.records.createRefusal(error, dto, prepared);
+        }
+      }
+
+      await tx.$executeRaw`
+        UPDATE fuel_rows SET fuel_batch_id = ${batchId}::uuid, state = 'assigned', updated_at = now()
+        WHERE id = ANY(${rows.map((r) => r.id)}::uuid[])`;
+      await this.audit.record(
+        user,
+        {
+          action: open ? 'update' : 'create',
+          entity: 'fuel_batch',
+          entityId: batchId,
+          diff: {
+            fuelBatch: {
+              importId,
+              accountId: key.accountId,
+              invoiceRef: key.invoiceRef,
+              usage: key.usage,
+              rowsAdded: rows.length,
+              litresAdded: sumDecimals(rows.map((r) => r.litres)),
+            },
+          },
+        },
+        tx,
+      );
+      return open ? 'joined' : 'formed';
+    }, GROUP_TX);
+  }
+}
+
+/** The fuel a batch record's activity type names (D6's table, read back). */
+function fuelOfActivityType(activityType: string | null): string {
+  if (!activityType) return '';
+  if (activityType.endsWith('diesel')) return 'diesel';
+  if (activityType.endsWith('petrol')) return 'petrol';
+  return activityType;
+}
+
+function monthOf(periodValue: string): number {
+  return (PERIOD_VALUES.monthly as readonly string[]).indexOf(periodValue) + 1;
+}
+

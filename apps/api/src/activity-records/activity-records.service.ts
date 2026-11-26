@@ -946,6 +946,8 @@ export class ActivityRecordsService {
   async previewCreate(
     user: RequestUser,
     dto: CreateActivityRecordDto,
+    /** A fuel batch's record (inc28-fuel-bulk D2): the exact repeat is looked for in that batch only. */
+    options: { fuelBatchId?: string } = {},
   ): Promise<{
     /**
      * The identities this method VALIDATED, returned rather than left for the
@@ -1038,6 +1040,7 @@ export class ActivityRecordsService {
         reportingPeriod: dto.reportingPeriod,
         periodValue,
         activityType,
+        fuelBatchId: options.fuelBatchId ?? null,
       });
       await assertSingleEntryPeriod(this.prisma, partyOf(user.role, dto.subsidiaryId, reportedBySubsidiaryId), {
         subsidiaryId: dto.subsidiaryId,
@@ -1597,6 +1600,48 @@ export class ActivityRecordsService {
       tx,
     );
     return gone;
+  }
+
+  /**
+   * A fuel batch's record given a new quantity in the batch's own step
+   * (inc28-fuel-bulk D13): rows joined an open batch, so the record of one
+   * fuel and month sums more litres. The same record and id, re-priced by
+   * the engine, its author's standing and its period judged under the lock,
+   * audited as an edit. The single-record edit (`update`) is untouched.
+   */
+  async updateBatchQuantityLocked(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    record: ActivityRecord,
+    activityValue: number,
+  ): Promise<void> {
+    if (record.createdBy !== user.id) throw new AuthorOnlyRefusedError('edit');
+    const { calculation, scope } = await this.recordCalculation.computeSnapshot(
+      record.subsidiaryId,
+      user.accessibleSubsidiaryIds,
+      record.category as Category,
+      record.reportingYear,
+      activityValue,
+      record.activityUnit,
+      record.locationId,
+      record.activityType,
+      { reportingPeriod: record.reportingPeriod, parameters: (record.parameters ?? null) as RecordParameters | null },
+      false,
+    );
+    await lockAuthorAccess(tx, user, record.subsidiaryId, record.category, 'edit');
+    await this.assertPeriodNotLocked(periodOf(record), tx);
+    const row = await tx.activityRecord.update({
+      where: { id: record.id, status: record.status },
+      data: { activityValue, scope, calculation: calculation as unknown as Prisma.InputJsonValue },
+      include: { location: { select: { name: true } } },
+    });
+    await this.auditCreateUpdateDelete(
+      user,
+      'update',
+      record.id,
+      { before: this.toAuditSnapshot(record), after: this.toAuditSnapshot(row) },
+      tx,
+    );
   }
 
   // --- Workflow transitions --------------------------------------------------

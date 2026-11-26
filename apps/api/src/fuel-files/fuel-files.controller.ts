@@ -1,13 +1,14 @@
 import { Body, Controller, Get, HttpCode, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { FuelFilePreviewDTO, FuelTrayDTO, FuelUploadDTO } from '@tonyai/shared-types';
+import type { FormFuelBatchesResultDTO, FuelFilePreviewDTO, FuelTrayDTO, FuelUploadDTO } from '@tonyai/shared-types';
+import { FuelBatchFormationService } from '../fuel-batches/fuel-batch-formation.service';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { FUEL_MULTIPART_LIMITS } from '../common/multipart-limits';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import { RuntimeUploadWorkInterceptor } from '../common/runtime-request';
 import { FuelFileFieldsDto } from './dto/fuel-file-fields.dto';
-import { TakeOverFuelRowsDto, WithdrawFuelRowsDto } from './dto/fuel-rows.dto';
+import { FormFuelBatchesDto, TakeOverFuelRowsDto, WithdrawFuelRowsDto } from './dto/fuel-rows.dto';
 import { FuelFilesService } from './fuel-files.service';
 import { FuelUploadsService } from './fuel-uploads.service';
 
@@ -21,6 +22,7 @@ export class FuelFilesController {
   constructor(
     private readonly files: FuelFilesService,
     private readonly uploads: FuelUploadsService,
+    private readonly formation: FuelBatchFormationService,
   ) {}
 
   @Post('preview')
@@ -77,5 +79,15 @@ export class FuelFilesController {
     @Body() body: TakeOverFuelRowsDto,
   ): Promise<FuelUploadDTO> {
     return this.uploads.takeOver(user, id, body);
+  }
+
+  @Post(':id/form-batches')
+  @HttpCode(200)
+  formBatches(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUuidParamPipe) id: string,
+    @Body() body: FormFuelBatchesDto,
+  ): Promise<FormFuelBatchesResultDTO> {
+    return this.formation.formBatches(user, id, body);
   }
 }
