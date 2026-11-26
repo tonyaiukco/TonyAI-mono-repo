@@ -6085,6 +6085,85 @@ export function withFirstPeriodCeiling(
 }
 
 /**
+ * A fuel batch's record as the per-invoice check reads it (inc28-fuel-bulk D12).
+ * `fuel` is read from the record's activity type (`on_road_diesel` → `diesel`).
+ */
+export interface FuelBatchAnomalyRecord {
+  id: string;
+  activityType: string | null;
+  /** The record's figure, or null when it has none. */
+  tCo2e: number | null;
+  ceiling: CeilingInput;
+}
+
+/** A fuel batch — an invoice of one account and usage — as the check reads it. */
+export interface FuelBatchAnomalyInvoice {
+  id: string;
+  /** Its invoice period: the earliest transaction date as `yyyymmdd`; a tanker delivery's declared month as `yyyymm01`. */
+  period: number;
+  invoiceRef: string;
+  /** Submitted, under review or approved: an invoice that counts as history. */
+  counted: boolean;
+  /** Its live records. */
+  records: readonly FuelBatchAnomalyRecord[];
+}
+
+/** The fuel a batch record's activity type names (D6's table read back): its last word. */
+export function fuelOfBatchActivityType(activityType: string | null): string | null {
+  if (!activityType) return null;
+  const parts = activityType.split('_');
+  return parts.slice(parts.length >= 3 && parts[parts.length - 2] === 'gas' ? -3 : -1).join('_');
+}
+
+/**
+ * D12: a fuel batch is checked per invoice and fuel. One observation is the
+ * batch's figure for one fuel — the sum of its records of that fuel, whatever
+ * their months. Its history is the earlier counted invoices of the same
+ * account and usage that hold that fuel (`earlier` is every other invoice of
+ * that account and usage; this selects), newest first by invoice period, ties
+ * by invoice reference; `computeAnomalyVerdict` judges them unchanged. With no
+ * earlier invoice, each record is judged by its own first-period ceiling. The
+ * verdict is stored on every record of that fuel: answered by record id.
+ *
+ * ONE function for the API's batch submit and `pnpm anomaly:recompute`, so the
+ * two cannot disagree about the same record.
+ */
+export function judgeFuelBatch(
+  batch: FuelBatchAnomalyInvoice,
+  earlier: readonly FuelBatchAnomalyInvoice[],
+): Record<string, AnomalyVerdict> {
+  const before = (other: FuelBatchAnomalyInvoice) =>
+    other.period < batch.period || (other.period === batch.period && other.invoiceRef < batch.invoiceRef);
+  const history = earlier
+    .filter((other) => other.id !== batch.id && other.counted && before(other))
+    .sort((a, b) => b.period - a.period || (a.invoiceRef < b.invoiceRef ? 1 : a.invoiceRef > b.invoiceRef ? -1 : 0));
+  const figureOf = (records: readonly FuelBatchAnomalyRecord[]): number | null => {
+    const figures = records.map((r) => r.tCo2e).filter((v): v is number => v !== null);
+    return figures.length === 0 ? null : figures.reduce((sum, v) => sum + v, 0);
+  };
+  const verdicts: Record<string, AnomalyVerdict> = {};
+  const fuels = [...new Set(batch.records.map((r) => fuelOfBatchActivityType(r.activityType)))];
+  for (const fuel of fuels) {
+    const records = batch.records.filter((r) => fuelOfBatchActivityType(r.activityType) === fuel);
+    const observation = figureOf(records);
+    const priors = history
+      .map((other) => other.records.filter((r) => fuelOfBatchActivityType(r.activityType) === fuel))
+      .filter((held) => held.length > 0)
+      .map(figureOf);
+    for (const record of records) {
+      if (observation === null || record.tCo2e === null) {
+        verdicts[record.id] = anomalyNotEvaluated();
+      } else if (priors.length === 0) {
+        verdicts[record.id] = withFirstPeriodCeiling(anomalyNotEvaluated(0), record.ceiling);
+      } else {
+        verdicts[record.id] = computeAnomalyVerdict(observation, priors);
+      }
+    }
+  }
+  return verdicts;
+}
+
+/**
  * Is this a verdict stored BEFORE the ceilings existed, that the ceiling would
  * now flag?
  *

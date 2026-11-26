@@ -68,6 +68,7 @@ import {
   buildPools,
   exitCodeFor,
   findStale,
+  batchVerdictsOf,
   describeVerdict,
   indexRecord,
   isLoopback,
@@ -149,6 +150,8 @@ async function main() {
       // it already explains itself (`classify`, `unexplained_flag`).
       varianceReason: true,
       updatedAt: true,
+      // A fuel batch's record is judged per invoice and fuel (inc28-fuel-bulk D12).
+      fuelBatchId: true,
       subsidiary: { select: { legalName: true, organisationId: true } },
     },
   });
@@ -167,7 +170,16 @@ async function main() {
 
   // A verdict scored before the short-history check and committed since is
   // kept as it is, and is not drift (see `keepsLegacyVerdict`).
-  const { stale, keptLegacy, keptPreCeiling } = findStale(scoreable, pools, lockedPeriods);
+  // A batch's invoice period: its earliest transaction date, or a tanker delivery's declared month.
+  const invoices = (
+    await prisma.$queryRaw`
+      SELECT b.id::text, b.fuel_account_id::text AS "accountId", b.usage, b.invoice_ref AS "invoiceRef", b.status,
+             min(COALESCE(to_char(r.transaction_at, 'YYYYMMDD')::int, r.year * 10000 + r.month * 100 + 1))::int AS period
+      FROM fuel_batches b JOIN fuel_rows r ON r.fuel_batch_id = b.id AND r.state = 'assigned'
+      GROUP BY b.id`
+  );
+  const batchVerdicts = batchVerdictsOf(invoices, records);
+  const { stale, keptLegacy, keptPreCeiling } = findStale(scoreable, pools, lockedPeriods, batchVerdicts);
 
   console.log(
     `Checked ${scoreable.length} record(s)` +

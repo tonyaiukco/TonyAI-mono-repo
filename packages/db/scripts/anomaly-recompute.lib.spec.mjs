@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as lib from './anomaly-recompute.lib.mjs';
 import {
   BASELINE_TOLERANCE,
   buildPools,
@@ -638,5 +639,29 @@ describe('parseArgs', () => {
       allowRemoteHost: 'db.example.com',
       unknown: [],
     });
+  });
+});
+
+describe('fuel batch records (inc28-fuel-bulk D12)', () => {
+  const calc = (tCo2e) => ({ factorId: 'f', tCo2e });
+  const row = (id, fuelBatchId, tCo2e, status = 'submitted') => ({
+    id, fuelBatchId, status, subsidiaryId: 's', locationId: null, category: 'Mobile Combustion',
+    activityType: 'on_road_diesel', activityValue: 1000, activityUnit: 'litres', parameters: null,
+    reportingPeriod: 'monthly', reportingYear: 2025, periodValue: 'March', calculation: calc(tCo2e),
+  });
+
+  it('leaves batch records out of the manual pools, and judges them by their invoice', () => {
+    const records = [row('m1', null, 10), row('b1', 'B1', 10), row('b2', 'B2', 30, 'draft')];
+    const pools = lib.buildPools(records.map(lib.indexRecord));
+    expect([...pools.values()].flat().map((i) => i.row.id)).toEqual(['m1']);
+    const invoices = [
+      { id: 'B1', accountId: 'A', usage: 'on_road', invoiceRef: 'I1', status: 'approved', period: 20250301 },
+      { id: 'B2', accountId: 'A', usage: 'on_road', invoiceRef: 'I2', status: 'draft', period: 20250316 },
+      { id: 'B3', accountId: 'Z', usage: 'on_road', invoiceRef: 'I0', status: 'approved', period: 20250201 },
+    ];
+    const verdicts = lib.batchVerdictsOf(invoices, records);
+    expect(verdicts.get('b1')).toMatchObject({ priorCount: 0 });
+    expect(verdicts.get('b2')).toEqual({ anomalous: true, priorCount: 1, baseline: 10 });
+    expect(lib.freshVerdict(lib.indexRecord(records[2]), pools, verdicts)).toEqual(verdicts.get('b2'));
   });
 });
