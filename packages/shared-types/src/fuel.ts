@@ -354,8 +354,9 @@ export const FUEL_TANKER_MAX_DELIVERIES = 1_000;
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 //
-// Litres travel as decimal text (`numeric(14,3)` as Postgres writes it, e.g.
-// `"669.380"`): a sum of 45,000 rows is never a float. A company the reader may
+// Litres travel as decimal text (`"669.38"`), with the precision the file gave
+// (the column is an unconstrained `numeric`): a sum of 45,000 rows is never a
+// float, and no digit is rounded away. A company the reader may
 // not read is never named (D14): its id and name are null, and the outcome
 // says "outside your scope".
 
@@ -417,22 +418,30 @@ export interface FuelRowIssueDTO {
   code: FuelRowIssueCode;
 }
 
-/** What an account's rows of a previewed file would become (D3). */
-export type FuelPreviewOutcome = 'batches' | 'excluded' | 'waiting_account' | 'outside_scope';
+/**
+ * What a previewed file's rows of one account would become (D3, D8): enter
+ * batches, be excluded (an associate's), wait for an account, wait for a fuel
+ * name no rule recognises, or be held as outside the caller's scope.
+ */
+export const FUEL_PREVIEW_OUTCOMES = ['batches', 'excluded', 'waiting_account', 'waiting_fuel', 'outside_scope'] as const;
+export type FuelPreviewOutcome = (typeof FUEL_PREVIEW_OUTCOMES)[number];
 
+/**
+ * One account of a previewed file. Its rows can split: 100 L of diesel enter
+ * batches while 20 L of an unrecognised product wait in the tray, so each
+ * outcome carries its own rows and litres (only outcomes with rows are listed).
+ */
 export interface FuelPreviewAccountDTO {
   /** Null for an account not stored yet. */
   accountId: string | null;
   code: string;
   name: string;
-  outcome: FuelPreviewOutcome;
   /** Named only when the caller may read the company. */
   subsidiaryId: string | null;
   subsidiaryName: string | null;
   /** Whether the company is the tool's proposal rather than a confirmed mapping. */
   proposed: boolean;
-  rows: number;
-  litres: string;
+  outcomes: Array<FuelRowCountDTO & { outcome: FuelPreviewOutcome }>;
 }
 
 /** A tanker delivery of a first read (C3): what it needs before the file is applied. */
@@ -470,8 +479,8 @@ export interface FuelFilePreviewDTO {
   /** Duplicates of a stored row or of an earlier row of the file. */
   duplicates: FuelRowIssueDTO[];
   accounts: FuelPreviewAccountDTO[];
-  /** Raw fuel names no rule recognises, with their rows and litres. */
-  unrecognisedNames: Array<FuelRowCountDTO & { rawName: string }>;
+  /** Raw fuel names no rule recognises, per account (its code), with their rows and litres. */
+  unrecognisedNames: Array<FuelRowCountDTO & { accountCode: string; rawName: string }>;
   /** A tanker file's deliveries; empty for a card file. */
   deliveries: FuelTankerDeliveryDTO[];
 }

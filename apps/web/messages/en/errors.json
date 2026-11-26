@@ -185,7 +185,7 @@
     "single_entry_period_conflict": "The company's own users already entered {category} for {period} {year}, so a central reporter cannot enter it for this company in that period.",
     "fuel_file_source_required": "Choose the fuel file's source: Shell, Petrol Ofisi or tanker deliveries.",
     "fuel_file_usage_required": "Choose how the fuel in this file was used: on-road, off-road, or stationary or generator.",
-    "fuel_file_declarations_incomplete": "Every delivery to be stored needs its fuel, usage, year and month. Nothing was stored.",
+    "fuel_file_declarations_incomplete": "The delivery on row {row} has no fuel, usage, year or month chosen. Every delivery to be stored needs all four. Nothing was stored.",
     "fuel_file_declaration_unknown": "A choice names a delivery that this file does not store. Read the file again and apply it. Nothing was stored.",
     "fuel_file_changed": "The file applied is not the file that was read. Read it again before applying it. Nothing was stored.",
     "fuel_file_columns_missing": "The file lacks the columns this source needs: {columns}. Check that the right source is chosen. Nothing was stored.",

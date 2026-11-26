@@ -7,6 +7,9 @@
  * What they hold, so the adapters' specs (PR B) can name it:
  *  - every documented fuel name (six petrol, five diesel) and one no rule
  *    recognises (`Otogaz LPG`);
+ *  - the accounts the seed maps (`PO-0001` to TonyAI Logistics, `PO-9001` to
+ *    the associate), and one it does not (`000456`), so a clean seed routes the
+ *    file's rows without a further mapping;
  *  - a shared Petrol Ofisi invoice (a synthetic number in the documented
  *    `OZK…` shape): 15 rows (669.38 L) of a controlled company's account, 1 row
  *    (19.63 L) of a second controlled account, and 4 rows (80.00 L) of an
@@ -18,7 +21,8 @@
  *  - a `Dönem` code that looks like a date (`2025-03-02`);
  *  - Turkish-format quantity text (`1.168,00`, `31,86`) beside numeric cells,
  *    and a dot-decimal text (`1168.5`) the adapters refuse;
- *  - a sale with no `Fatura Numarası`, and a `Satış ID` twice in one file;
+ *  - a valid sale twice in one file (one `Satış ID`), and apart from it a sale
+ *    with no `Fatura Numarası`;
  *  - the tanker file's title row above its header, money headers shifted
  *    against their data, and the last row `TOPLAM` with no `EVRAK NO`;
  *  - two refusals of a whole file: a header twice, and a Shell workbook with no
@@ -130,10 +134,10 @@ function petrolOfisiRows(): Cell[][] {
   for (let i = 0; i < 4; i += 1) sale(associate, at(2025, 3, 7 + i, 8, 0), 'Kurşunsuz 95 Benzin', 20, SHARED_INVOICE);
   // A period-shift row: 15 March, invoiced in the second half; `Dönem` reads like a date.
   sale(controlled, at(2025, 3, 15, 18, 0), 'Motorin Med', '1.168,00', 'OZK0000000000002', '2025-03-02');
-  // A sale with no invoice number.
-  sale(controlled, at(2025, 3, 18, 8, 0), 'Motorin Med', 12, null);
-  // A `Satış ID` twice in the file.
+  // The same valid sale twice in the file: stored once, then a duplicate.
   rows.push([...rows[rows.length - 1]!]);
+  // A sale with no invoice number, on its own.
+  sale(controlled, at(2025, 3, 18, 8, 0), 'Motorin Med', 12, null);
   return rows;
 }
 

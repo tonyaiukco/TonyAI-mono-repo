@@ -3336,8 +3336,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
    *  SELECTOR), `category`, `year`, `period` (the `PERIOD_VALUES` entry). */
   single_entry_period_conflict: 409,
   /** inc28-fuel-bulk (design "Error codes"). A fuel upload names no source,
-   *  a card upload no usage, a tanker upload lacks a delivery's declaration,
-   *  or declares a delivery it does not store. */
+   *  a card upload no usage, a tanker upload lacks a delivery's declaration
+   *  (params: `row`, the file row of the first such delivery — its `EVRAK
+   *  NO` is file text, never a param), or declares a delivery it does not store. */
   fuel_file_source_required: 400,
   fuel_file_usage_required: 400,
   fuel_file_declarations_incomplete: 400,
@@ -3437,6 +3438,7 @@ export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly st
     single_entry_conflict: Object.freeze(['side']),
     /** `side` (`SingleEntrySide`): a SENTENCE SELECTOR. */
     single_entry_period_conflict: Object.freeze(['side', 'category', 'year', 'period']),
+    fuel_file_declarations_incomplete: Object.freeze(['row']),
     fuel_file_columns_missing: Object.freeze(['columns']),
     fuel_file_columns_ambiguous: Object.freeze(['columns']),
     fuel_file_too_many_rows: Object.freeze(['rows', 'max']),

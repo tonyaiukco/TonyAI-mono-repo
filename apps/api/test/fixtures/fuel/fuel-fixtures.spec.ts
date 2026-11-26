@@ -104,9 +104,16 @@ describe('the synthetic fuel workbooks (D19)', () => {
     // `Dönem` is a text code that looks like a date; a `Satış ID` appears twice; one sale has no invoice.
     const period = PETROL_OFISI_HEADER.indexOf('Dönem');
     expect(rows.slice(1).every((r) => typeof r[period] === 'string')).toBe(true);
-    const ids = rows.slice(1).map((r) => r[PETROL_OFISI_HEADER.indexOf('Satış ID')]);
+    const idCol = PETROL_OFISI_HEADER.indexOf('Satış ID');
+    const ids = rows.slice(1).map((r) => r[idCol]);
     expect(new Set(ids).size).toBe(ids.length - 1);
-    expect(rows.slice(1).filter((r) => r[invoice] === undefined)).not.toHaveLength(0);
+    // The repeated sale is a valid one (it has its invoice); the sale with no invoice is another.
+    const repeated = rows.slice(1).filter((r) => ids.filter((id) => id === r[idCol]).length === 2);
+    expect(repeated).toHaveLength(2);
+    expect(repeated.every((r) => typeof r[invoice] === 'string' && (r[invoice] as string).length > 0)).toBe(true);
+    const noInvoice = rows.slice(1).filter((r) => r[invoice] === undefined);
+    expect(noInvoice).toHaveLength(1);
+    expect(ids.filter((id) => id === noInvoice[0]![idCol])).toHaveLength(1);
     const twice = await sheetRows(files['petrol-ofisi-miktar-twice.xlsx']!, 'SatisListesi');
     expect(twice[0]!.filter((h) => h === 'Miktar')).toHaveLength(2);
   });

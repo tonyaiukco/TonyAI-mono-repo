@@ -840,6 +840,11 @@ const FUEL_PROBE = {
   rowEntryHeldTrading: '99999999-28f0-4000-8000-0000000000d9',
   rowEntryBatchedTrading: '99999999-28f0-4000-8000-0000000000da',
   rowSuperAdminHeldTrading: '99999999-28f0-4000-8000-0000000000db',
+  // Rows in Energy stationary (`Fuel`, unticked for entry@ during the probe)
+  // batches: entry@'s own batch (it reads the batch, so its rows) and the
+  // masterkey's (it reads neither).
+  rowInEntryEnergyFuelBatch: '99999999-28f0-4000-8000-0000000000dc',
+  rowInAdminEnergyFuelBatch: '99999999-28f0-4000-8000-0000000000dd',
 };
 const FUEL_PROBE_NARROWED = ['Mobile Combustion'];
 const SEED_FUEL_ACCOUNTS = ['55555555-5555-5555-5555-5555555f0001', '55555555-5555-5555-5555-5555555f0002'];
@@ -917,6 +922,10 @@ async function seedFuelProbe(entryId) {
         { state: 'assigned', fuelBatchId: FUEL_PROBE.batchEntryTrading, invoiceRef: `RLS-${FUEL_PROBE.batchEntryTrading.slice(-2)}` }),
       row(FUEL_PROBE.rowSuperAdminHeldTrading, 11, org, FUEL_PROBE.imp, FUEL_PROBE.accTrading, TRADING, 'on_road', superAdmin.id,
         { state: 'held', holdReason: 'fuel_out_of_scope' }),
+      row(FUEL_PROBE.rowInEntryEnergyFuelBatch, 12, org, FUEL_PROBE.imp, FUEL_PROBE.accEnergy, ENERGY, 'stationary', entryId,
+        { state: 'assigned', fuelBatchId: FUEL_PROBE.batchEntryEnergyFuel, invoiceRef: `RLS-${FUEL_PROBE.batchEntryEnergyFuel.slice(-2)}` }),
+      row(FUEL_PROBE.rowInAdminEnergyFuelBatch, 13, org, FUEL_PROBE.imp, FUEL_PROBE.accEnergy, ENERGY, 'stationary', admin.id,
+        { state: 'assigned', fuelBatchId: FUEL_PROBE.batchEnergyFuel, invoiceRef: `RLS-${FUEL_PROBE.batchEnergyFuel.slice(-2)}` }),
     ],
   });
   await setEntryEnergyCategories(entryId, FUEL_PROBE_NARROWED);
@@ -953,17 +962,19 @@ async function probeFuelTables(entryToken) {
       // no row without a company it does not hold.
       super_admin: {
         acc: [P.accEnergy, SEED_FUEL_ACCOUNTS[0]],
-        row: [P.rowLogisticsMobile, P.rowLogisticsFuel, P.rowEnergyMobile, P.rowEnergyFuel],
+        row: [P.rowLogisticsMobile, P.rowLogisticsFuel, P.rowEnergyMobile, P.rowEnergyFuel, P.rowInEntryEnergyFuelBatch, P.rowInAdminEnergyFuelBatch],
         batch: [P.batchLogistics, P.batchEnergyFuel, P.batchEnergyMobile, P.batchEntryEnergyFuel],
       },
       // No account list; Logistics (every category) and Energy's Mobile
       // Combustion, not Energy's stationary row and batch; its own row with no
       // company, not the masterkey's.
       // Its own batch in a granted company even in an unticked category, never
-      // in Trading; its held row in Trading while in no batch, not once batched.
+      // in Trading; its held row in Trading while in no batch, not once batched;
+      // a batch's rows exactly when it reads the batch (its own Energy `Fuel`
+      // batch's row, not the masterkey's Energy `Fuel` batch's).
       standard_user: {
         acc: [],
-        row: [P.rowLogisticsMobile, P.rowLogisticsFuel, P.rowNoCompanyEntry, P.rowEnergyMobile, P.rowEntryHeldTrading],
+        row: [P.rowLogisticsMobile, P.rowLogisticsFuel, P.rowNoCompanyEntry, P.rowEnergyMobile, P.rowEntryHeldTrading, P.rowInEntryEnergyFuelBatch],
         batch: [P.batchLogistics, P.batchEnergyMobile, P.batchEntryEnergyFuel],
       },
     };

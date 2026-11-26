@@ -185,7 +185,7 @@
     "single_entry_period_conflict": "Şirketin kendi kullanıcıları {period} {year} için {category} verisini zaten girdi, bu yüzden bir merkezi raportör bu dönemde bu şirket için bu kategoriyi giremez.",
     "fuel_file_source_required": "Yakıt dosyasının kaynağını seçin: Shell, Petrol Ofisi ya da tanker teslimatları.",
     "fuel_file_usage_required": "Bu dosyadaki yakıtın kullanımını seçin: karayolu, arazi ya da sabit veya jeneratör.",
-    "fuel_file_declarations_incomplete": "Kaydedilecek her teslimat için yakıt, kullanım, yıl ve ay seçilmelidir. Hiçbir şey kaydedilmedi.",
+    "fuel_file_declarations_incomplete": "{row}. satırdaki teslimat için yakıt, kullanım, yıl veya ay seçilmemiş. Kaydedilecek her teslimat için dördü de seçilmelidir. Hiçbir şey kaydedilmedi.",
     "fuel_file_declaration_unknown": "Bir seçim, bu dosyanın kaydetmeyeceği bir teslimatı gösteriyor. Dosyayı yeniden okuyup uygulayın. Hiçbir şey kaydedilmedi.",
     "fuel_file_changed": "Uygulanan dosya, okunan dosya değil. Uygulamadan önce dosyayı yeniden okuyun. Hiçbir şey kaydedilmedi.",
     "fuel_file_columns_missing": "Dosyada bu kaynağın gerektirdiği sütunlar yok: {columns}. Doğru kaynağın seçildiğini kontrol edin. Hiçbir şey kaydedilmedi.",

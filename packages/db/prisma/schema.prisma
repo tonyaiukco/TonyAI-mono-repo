@@ -1374,7 +1374,9 @@ model FuelRow {
   rawFuel        String?      @map("raw_fuel")
   fuel           String?
   usage          String
-  litres         Decimal      @db.Decimal(14, 3)
+  // Unconstrained `numeric`: the precision the file gives, kept (fuel-file-upload
+  // "A quantity SHALL keep the precision the file gives").
+  litres         Decimal      @db.Decimal
   // As the file wrote it, no time zone (D4); null for a tanker delivery.
   transactionAt  DateTime?    @map("transaction_at") @db.Timestamp(0)
   year           Int

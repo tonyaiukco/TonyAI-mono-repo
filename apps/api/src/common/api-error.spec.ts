@@ -266,7 +266,8 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   // (PR B) are pinned by their own specs (code and params).
   fuel_file_source_required: () => new BadRequestException(errorBody('fuel_file_source_required', 'x')),
   fuel_file_usage_required: () => new BadRequestException(errorBody('fuel_file_usage_required', 'x')),
-  fuel_file_declarations_incomplete: () => new BadRequestException(errorBody('fuel_file_declarations_incomplete', 'x')),
+  fuel_file_declarations_incomplete: () =>
+    new BadRequestException(errorBody('fuel_file_declarations_incomplete', 'x', { row: 12 })),
   fuel_file_declaration_unknown: () => new BadRequestException(errorBody('fuel_file_declaration_unknown', 'x')),
   fuel_file_changed: () => new ConflictException(errorBody('fuel_file_changed', 'x')),
   fuel_file_columns_missing: () =>

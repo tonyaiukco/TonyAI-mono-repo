@@ -135,7 +135,7 @@ CREATE TABLE "fuel_rows" (
     "raw_fuel" TEXT,
     "fuel" TEXT,
     "usage" TEXT NOT NULL,
-    "litres" DECIMAL(14,3) NOT NULL,
+    "litres" DECIMAL NOT NULL,
     "transaction_at" TIMESTAMP(0),
     "year" INTEGER NOT NULL,
     "month" INTEGER NOT NULL,
@@ -529,8 +529,9 @@ ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_fuel_batc
 -- standard user a granted company's in the categories of its grant (a row's
 -- or batch's category: `Fuel` for the stationary usage, Mobile Combustion
 -- otherwise), its own batch only in a company it is still granted, and the
--- rows it holds while they are in no batch (a batched row follows its batch,
--- so a withdrawn grant closes it at once); a row with no company only its
+-- rows it holds while they are in no batch; a row in a batch is read exactly
+-- when its batch is (so a reader of its own batch reads its rows, and a
+-- withdrawn grant closes both at once); a row with no company only its
 -- holder; accounts never a standard user.
 
 ALTER TABLE "fuel_accounts" ENABLE ROW LEVEL SECURITY;
@@ -584,26 +585,39 @@ CREATE POLICY "fuel_rows_select_scoped" ON "fuel_rows" FOR SELECT TO authenticat
     SELECT 1 FROM "profiles" p
     WHERE p."id" = (SELECT auth.uid())
       AND p."organisation_id" = "fuel_rows"."organisation_id"
-      AND (
-        p."role" = ANY (ARRAY['masterkey'::"UserRole", 'auditor'::"UserRole"])
-        OR ("fuel_rows"."subsidiary_id" IS NULL AND "fuel_rows"."holder_id" = p."id")
-        OR ("fuel_rows"."subsidiary_id" IS NOT NULL AND "fuel_rows"."fuel_batch_id" IS NULL
-          AND "fuel_rows"."holder_id" = p."id" AND p."role" = 'standard_user'::"UserRole")
-      )
+      AND p."role" = ANY (ARRAY['masterkey'::"UserRole", 'auditor'::"UserRole"])
   )
-  OR EXISTS (
-    SELECT 1 FROM "user_subsidiary_access" usa
-    JOIN "profiles" p ON p."id" = usa."user_id"
-    JOIN "subsidiaries" s ON s."id" = usa."subsidiary_id"
-    WHERE usa."user_id" = (SELECT auth.uid())
-      AND usa."subsidiary_id" = "fuel_rows"."subsidiary_id"
-      AND p."organisation_id" = "fuel_rows"."organisation_id"
-      AND s."organisation_id" = "fuel_rows"."organisation_id"
-      AND (
-        p."role" = 'super_admin'::"UserRole"
-        OR (CASE WHEN "fuel_rows"."usage" = 'stationary' THEN 'Fuel' ELSE 'Mobile Combustion' END) = ANY (usa."categories")
-      )
-  )
+  -- A row in a batch: exactly when the batch is readable (its own policy
+  -- applies to this subquery).
+  OR ("fuel_rows"."fuel_batch_id" IS NOT NULL AND EXISTS (
+    SELECT 1 FROM "fuel_batches" b
+    WHERE b."id" = "fuel_rows"."fuel_batch_id"
+      AND b."organisation_id" = "fuel_rows"."organisation_id"
+  ))
+  -- A row in no batch: its holder (a standard user also with a company); a
+  -- granted company's reader by role and category.
+  OR ("fuel_rows"."fuel_batch_id" IS NULL AND (
+    EXISTS (
+      SELECT 1 FROM "profiles" p
+      WHERE p."id" = (SELECT auth.uid())
+        AND p."organisation_id" = "fuel_rows"."organisation_id"
+        AND "fuel_rows"."holder_id" = p."id"
+        AND ("fuel_rows"."subsidiary_id" IS NULL OR p."role" = 'standard_user'::"UserRole")
+    )
+    OR EXISTS (
+      SELECT 1 FROM "user_subsidiary_access" usa
+      JOIN "profiles" p ON p."id" = usa."user_id"
+      JOIN "subsidiaries" s ON s."id" = usa."subsidiary_id"
+      WHERE usa."user_id" = (SELECT auth.uid())
+        AND usa."subsidiary_id" = "fuel_rows"."subsidiary_id"
+        AND p."organisation_id" = "fuel_rows"."organisation_id"
+        AND s."organisation_id" = "fuel_rows"."organisation_id"
+        AND (
+          p."role" = 'super_admin'::"UserRole"
+          OR (CASE WHEN "fuel_rows"."usage" = 'stationary' THEN 'Fuel' ELSE 'Mobile Combustion' END) = ANY (usa."categories")
+        )
+    )
+  ))
 );
 
 DO $$

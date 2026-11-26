@@ -297,6 +297,20 @@ describe('the live-row dedupe index (D5)', () => {
     });
   });
 
+  it('keeps the litres the file gives, every digit (fuel-file-upload: a quantity keeps its precision)', async () => {
+    const acc = await account(tenant.subsidiaryId);
+    const imp = await fuelImport();
+    for (const litres of ['1.2345', '0.0004', '1168.123456789', '15973.75']) {
+      const row = await runtime.fuelRow.create({ data: rowData(imp.id, acc.id, { litres: new Prisma.Decimal(litres) }) });
+      const [stored] = await runtime.$queryRaw<{ litres: string }[]>`SELECT litres::text AS litres FROM fuel_rows WHERE id = ${row.id}::uuid`;
+      expect(stored!.litres, litres).toBe(litres);
+      expect((await runtime.fuelRow.findUniqueOrThrow({ where: { id: row.id } })).litres.toString(), litres).toBe(litres);
+    }
+    // Their sum, as the database adds it, is exact.
+    const [sum] = await runtime.$queryRaw<{ total: string }[]>`SELECT sum(litres)::text AS total FROM fuel_rows WHERE import_batch_id = ${imp.id}::uuid`;
+    expect(sum!.total).toBe('17143.108356789');
+  });
+
   it('keeps one organisation’s key apart from another’s: both rows stand', async () => {
     const foreign = await createTenant();
     try {
