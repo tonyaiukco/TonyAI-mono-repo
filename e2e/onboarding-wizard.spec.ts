@@ -109,6 +109,10 @@ test('a registered masterkey sets up its organisation in the wizard, and is held
   await page.getByTestId('onboarding-company-form').locator('input').first().fill('E2E Wizard Company');
   await page.getByTestId('onboarding-company-add').click();
   await expect(page.getByTestId('onboarding-company-list')).toContainText('E2E Wizard Company');
+  // A second company that holds records, for step 5's two-editor cases.
+  await page.getByTestId('onboarding-company-form').locator('input').first().fill('E2E Wizard Second');
+  await page.getByTestId('onboarding-company-add').click();
+  await expect(page.getByTestId('onboarding-company-list')).toContainText('E2E Wizard Second');
   // An associate is listed with the associate label (§7.1 step 4).
   await page.getByTestId('onboarding-company-form').locator('input').first().fill('E2E Wizard Associate');
   await page.getByTestId('onboarding-company-form').getByRole('checkbox').click();
@@ -161,6 +165,68 @@ test('a registered masterkey sets up its organisation in the wizard, and is held
     await page.waitForTimeout(1_000);
     await expect(page.getByTestId('declaration-save')).toHaveCount(0);
     await page.unroute('**/api/v1/locations**');
+    await pickYear(page, yearOnScreen);
+    await expect(row).toContainText(enOnboarding.boundaries.declared);
+  }
+  const second = page.getByTestId('onboarding-boundary-list').locator('li', { hasText: 'E2E Wizard Second' });
+  const editorTitle = page.getByTestId('declaration-editor').getByRole('heading', { name: /E2E Wizard/ });
+  // Edit on one company, then Declare on another, in one year: only the last
+  // click opens, however late the first company's sites arrive (owner's fourth review, P2).
+  {
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+    let held = false;
+    await page.route('**/api/v1/locations**', async (route) => {
+      if (!held) {
+        held = true;
+        await firstHeld;
+      }
+      await route.continue();
+    });
+    await row.getByRole('button', { name: enOnboarding.boundaries.edit }).click();
+    await second.getByRole('button', { name: enOnboarding.boundaries.declare }).click();
+    await expect(editorTitle).toContainText('E2E Wizard Second');
+    releaseFirst();
+    await page.waitForTimeout(1_000);
+    await expect(editorTitle).toContainText('E2E Wizard Second');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('declaration-save')).toHaveCount(0);
+    await page.unroute('**/api/v1/locations**');
+  }
+  // A year with no version: the first declaration opens it; a second company's
+  // editor opened before that answer still writes into the same version (owner's fourth review, P2).
+  {
+    await pickYear(page, '2024');
+    await expect(row).toContainText(enOnboarding.boundaries.notDeclared);
+    let releaseOpen!: () => void;
+    const openHeld = new Promise<void>((resolve) => (releaseOpen = resolve));
+    await page.route('**/api/v1/inventory-boundaries', async (route) => {
+      if (route.request().method() === 'POST') await openHeld;
+      await route.continue();
+    });
+    let releaseSites!: () => void;
+    const sitesHeld = new Promise<void>((resolve) => (releaseSites = resolve));
+    await row.getByRole('button', { name: enOnboarding.boundaries.declare }).click();
+    await page.getByTestId('declaration-save').click();
+    await page.keyboard.press('Escape');
+    await page.route('**/api/v1/locations**', async (route) => {
+      await sitesHeld;
+      await route.continue();
+    });
+    const sitesAsked = page.waitForRequest('**/api/v1/locations**');
+    await second.getByRole('button', { name: enOnboarding.boundaries.declare }).click();
+    await sitesAsked;
+    releaseOpen();
+    await expect(row).toContainText(enOnboarding.boundaries.declared);
+    releaseSites();
+    await expect(editorTitle).toContainText('E2E Wizard Second');
+    await page.getByTestId('declaration-save').click();
+    await expect(second).toContainText(enOnboarding.boundaries.declared);
+    await page.unroute('**/api/v1/inventory-boundaries');
+    await page.unroute('**/api/v1/locations**');
+    const token = await getAccessToken(request, email, password);
+    const versions2024 = (await (await request.get(`${API_BASE}/inventory-boundaries?reportingYear=2024`, { headers: bearer(token) })).json()) as unknown[];
+    expect(versions2024).toHaveLength(1);
     await pickYear(page, yearOnScreen);
     await expect(row).toContainText(enOnboarding.boundaries.declared);
   }

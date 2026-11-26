@@ -251,6 +251,22 @@ export class BulkUploadService {
             select: { id: true },
           })).map((r) => r.id),
     );
+    // The named companies' organisation, read AFTER the slots and the closed
+    // set (owner's fourth review of WP8, P2): a company moved to another
+    // organisation since the request was authorised — before those reads, as
+    // this later read shows — answers its rows as unknown, never with that
+    // organisation's stored slots or closed state. A move after those reads
+    // left them describing this organisation's data; the record path then
+    // refuses the write.
+    const movedIds = new Set(namedSubsidiaryIds);
+    if (namedSubsidiaryIds.length > 0) {
+      for (const company of await this.prisma.subsidiary.findMany({
+        where: { id: { in: namedSubsidiaryIds } },
+        select: { id: true, organisationId: true },
+      })) {
+        if (company.organisationId === user.organisationId) movedIds.delete(company.id);
+      }
+    }
     // An APPLY gets a batch, created BEFORE the loop so every record can carry
     // its id. A dry run gets none: it must provably write nothing.
     const batchId = dryRun
@@ -283,7 +299,7 @@ export class BulkUploadService {
           await this.processRow(
             user,
             parsed,
-            { dryRun, seenInFile, storedSlots, batchId, closedIds },
+            { dryRun, seenInFile, storedSlots, batchId, closedIds, movedIds },
             { accepted, errors, warnings },
           );
         } catch (error) {
@@ -431,6 +447,7 @@ export class BulkUploadService {
       storedSlots: StoredSlots;
       batchId: string | null;
       closedIds: ReadonlySet<string>;
+      movedIds: ReadonlySet<string>;
     },
     out: {
       accepted: BulkUploadAcceptedRow[];
@@ -531,6 +548,13 @@ export class BulkUploadService {
         out.errors.push({ row, column: 'category', code: 'category_not_granted', message: error.message });
         return;
       }
+    }
+
+    // A company no longer in the caller's organisation: unknown, before the
+    // closed set and the slots are asked about it.
+    if (context.movedIds.has(dto.subsidiaryId)) {
+      out.errors.push({ row, column: null, code: 'not_found', message: 'The reporting entity on this row does not exist or is not yours.' });
+      return;
     }
 
     // A company closed to data entry: the single entry's own refusal, before

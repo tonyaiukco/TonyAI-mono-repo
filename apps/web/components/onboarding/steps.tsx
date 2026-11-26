@@ -338,6 +338,17 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
   // and an answer after the year changed is dropped.
   const [editing, setEditing] = useState<BoundaryEditing | null>(null);
   const editingToken = useRef(0);
+  // The last Edit clicked: only its sites answer opens the editor (owner's
+  // fourth review of WP8, P2).
+  const editRequest = useRef(0);
+  // The version a first declaration opened on this load, for every editor of
+  // it — one already open, or one whose sites are still on the way (owner's
+  // fourth review of WP8, P2).
+  const openedOnLoad = useRef<{ seq: number; id: string } | null>(null);
+  const openedFor = (seq: number) => (openedOnLoad.current?.seq === seq ? openedOnLoad.current.id : null);
+  // A first declaration opening the year's version right now: another editor's
+  // save waits for it rather than open a second one.
+  const opening = useRef<{ seq: number; done: Promise<void> } | null>(null);
   const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -377,15 +388,17 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
 
   async function edit(company: SubsidiaryDTO) {
     if (year === null || !view.ready) return;
-    const at = { year, versionId: version?.id ?? null, seq: loadSeq.current, start: version };
+    const request = ++editRequest.current;
+    const at = { year, versionId: version?.id ?? openedFor(loadSeq.current), seq: loadSeq.current, start: version };
     try {
       const sitesOf = await boundaryCalls.sitesOf(company.id);
-      // The year changed (or was read again) while the sites were fetched: the
-      // editor would open on one year's declaration and save into another's.
-      if (at.seq !== loadSeq.current) return;
+      // The year changed (or was read again) while the sites were fetched — the
+      // editor would open on one year's declaration and save into another's —
+      // or another Edit was clicked since: only the last one opens.
+      if (at.seq !== loadSeq.current || request !== editRequest.current) return;
       setSites(sitesOf);
       setInitial((at.start ? draftFromSnapshot(at.start.boundary, company.id) : null) ?? emptyDraft());
-      setEditing({ company, year: at.year, versionId: at.versionId, seq: at.seq, token: ++editingToken.current });
+      setEditing({ company, year: at.year, versionId: at.versionId ?? openedFor(at.seq), seq: at.seq, token: ++editingToken.current });
     } catch (e) {
       showError(e);
     }
@@ -398,13 +411,21 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
     const target = editing;
     if (!target || target.seq !== loadSeq.current) return;
     const current = () => target.seq === loadSeq.current;
+    // Settles the wait of another editor's save, whether the version opened or not.
+    let settle = () => {};
     setSaving(true);
     try {
       // Into the version the editor was opened on; the first saved declaration
       // opens one when the year had none, kept at once so a failed write is
       // retried into it.
-      const written = await boundaryCalls.declare(target.versionId, target.year, target.company.id, request, (opened) => {
+      if ((target.versionId ?? openedFor(target.seq)) === null && opening.current?.seq === target.seq) await opening.current.done;
+      if (!current()) return;
+      const versionId = target.versionId ?? openedFor(target.seq);
+      if (versionId === null) opening.current = { seq: target.seq, done: new Promise<void>((resolve) => (settle = resolve)) };
+      const written = await boundaryCalls.declare(versionId, target.year, target.company.id, request, (opened) => {
+        settle();
         if (!current()) return;
+        openedOnLoad.current = { seq: target.seq, id: opened.id };
         setDetail(opened);
         // This editor, or another opened on the same load meanwhile, writes into it.
         setEditing((e) => (e && e.seq === target.seq && e.versionId === null ? { ...e, versionId: opened.id } : e));
@@ -422,6 +443,7 @@ function BoundariesInYear({ nodes, onNext, footer }: StepProps) {
         await load().catch(showError);
       }
     } finally {
+      settle();
       setSaving(false);
     }
   }

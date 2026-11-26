@@ -110,6 +110,7 @@ import {
   assertNotExactDuplicate,
   assertSingleEntryPeriod,
   lockAuthorAccess,
+  lockCompanyInOrganisation,
   partyOf,
   reportingEntityOf,
   reportingNamesFor,
@@ -594,13 +595,18 @@ export class ActivityRecordsService {
   ): Promise<ActivityRecord & { location: { name: string } | null }> {
     // The caller's record scope (company, and a standard user's categories or
     // own records): a record outside it answers as one that does not exist.
-    const record = await this.prisma.activityRecord.findUnique({
+    const found = await this.prisma.activityRecord.findUnique({
       where: { id },
-      include: { location: { select: { name: true } } },
+      include: { location: { select: { name: true } }, subsidiary: { select: { organisationId: true } } },
     });
-    if (!record || !inRecordScope(user, record)) {
+    // …and of the caller's organisation as committed now: a record that moved
+    // with its company to another organisation since the request was
+    // authorised answers as unknown before any read about it (security review
+    // of the owner's fourth round). `withLockedRecord` asks again under the lock.
+    if (!found || !inRecordScope(user, found) || found.subsidiary?.organisationId !== user.organisationId) {
       throw new ResourceNotFoundError('record_not_found');
     }
+    const { subsidiary: _company, ...record } = found;
     return record;
   }
 
@@ -618,6 +624,7 @@ export class ActivityRecordsService {
    */
   private async withLockedRecord<T>(
     seen: ActivityRecord,
+    organisationId: string | null,
     fn: (
       tx: Prisma.TransactionClient,
       current: ActivityRecord & { location: { name: string } | null },
@@ -636,6 +643,14 @@ export class ActivityRecordsService {
           include: { location: { select: { name: true } } },
         });
         if (!current) throw new ResourceNotFoundError('record_not_found');
+        // The record's company, locked FOR KEY SHARE (a move to another
+        // organisation is a key update, so it waits for this write), must
+        // still be in the caller's organisation: a record that moved with its
+        // company answers as unknown to every lifecycle step (security review
+        // of the owner's fourth round; the create's rule, third review).
+        if (!(await lockCompanyInOrganisation(tx, current.subsidiaryId, organisationId))) {
+          throw new ResourceNotFoundError('record_not_found');
+        }
         if (!samePeriod(periodOf(seen), periodOf(current))) {
           throw new RecordChangedError();
         }
@@ -945,7 +960,10 @@ export class ActivityRecordsService {
     // record, whoever asks (inc26-group-tree, D6); after the tenant gate, so a
     // foreign id still answers as unknown. The database's TA019 holds the same
     // for every writer, under a row lock that closes the race with a tick.
-    await this.assertEntityOpen(dto.subsidiaryId);
+    // …and in the caller's organisation now: a company moved to another one
+    // since the request was authorised answers as unknown (owner's fourth
+    // review of WP8, P2) — asked again after the reads below.
+    await this.assertEntityOpen(dto.subsidiaryId, user.organisationId);
     // A standard user enters only in the categories ticked on its grant for
     // the company (INC-2.6 §1, §7.3) — after the role and scope checks.
     assertCategoryGranted(user, dto.subsidiaryId, dto.category);
@@ -964,60 +982,68 @@ export class ActivityRecordsService {
     assertActivityTypeNamed(dto.category, activityType);
     assertRecordParameters(dto.category, dto.parameters);
     assertElectricitySupplier(dto.category, dto.input);
-    // Period-lock gate (FR §4.2): no new records in a closed period. An early
-    // answer only — `create` asks again once it holds the period.
-    await this.assertPeriodNotLocked({
-      subsidiaryId: dto.subsidiaryId,
-      reportingYear: dto.reportingYear,
-      reportingPeriod: dto.reportingPeriod,
-      periodValue,
-    });
-    // The reporting entity and the period half of single entry (D2, D5), from
-    // the access the guard read — no lock and no write: an early answer,
-    // asked again inside `create` on the access as it is committed then.
+    // The reads below answer about the company — its period, its slot, its
+    // geography and baseline. Should it have moved to another organisation
+    // meanwhile, their answer would describe that organisation's data: the
+    // company is asked about again after them, and a move answers as unknown
+    // whatever they found (owner's fourth review of WP8, P2).
     const reportedBySubsidiaryId = reportingEntityOf(accessRowsOf(user), dto.subsidiaryId);
-    // An exact repeat answers as a duplicate first, as the bulk upload does.
-    await assertNotExactDuplicate(this.prisma, {
-      subsidiaryId: dto.subsidiaryId,
-      locationId: dto.locationId ?? null,
-      category: dto.category,
-      reportingYear: dto.reportingYear,
-      reportingPeriod: dto.reportingPeriod,
-      periodValue,
-      activityType,
-    });
-    await assertSingleEntryPeriod(this.prisma, partyOf(user.role, dto.subsidiaryId, reportedBySubsidiaryId), {
-      subsidiaryId: dto.subsidiaryId,
-      category: dto.category,
-      reportingYear: dto.reportingYear,
-      reportingPeriod: dto.reportingPeriod,
-      periodValue,
-    });
+    const { calculation, scope, verdict } = await this.readsInOrganisation(dto.subsidiaryId, user.organisationId, 'subsidiary_not_found', async () => {
+      // Period-lock gate (FR §4.2): no new records in a closed period. An early
+      // answer only — `create` asks again once it holds the period.
+      await this.assertPeriodNotLocked({
+        subsidiaryId: dto.subsidiaryId,
+        reportingYear: dto.reportingYear,
+        reportingPeriod: dto.reportingPeriod,
+        periodValue,
+      });
+      // An exact repeat answers as a duplicate first, as the bulk upload does;
+      // then the period half of single entry (D2, D5), from the access the
+      // guard read — no lock and no write: an early answer, asked again inside
+      // `create` on the access as it is committed then.
+      await assertNotExactDuplicate(this.prisma, {
+        subsidiaryId: dto.subsidiaryId,
+        locationId: dto.locationId ?? null,
+        category: dto.category,
+        reportingYear: dto.reportingYear,
+        reportingPeriod: dto.reportingPeriod,
+        periodValue,
+        activityType,
+      });
+      await assertSingleEntryPeriod(this.prisma, partyOf(user.role, dto.subsidiaryId, reportedBySubsidiaryId), {
+        subsidiaryId: dto.subsidiaryId,
+        category: dto.category,
+        reportingYear: dto.reportingYear,
+        reportingPeriod: dto.reportingPeriod,
+        periodValue,
+      });
 
-    const { calculation, scope } = await this.recordCalculation.computeSnapshot(
-      dto.subsidiaryId,
-      user.accessibleSubsidiaryIds,
-      dto.category,
-      dto.reportingYear,
-      dto.activityValue,
-      dto.activityUnit,
-      dto.locationId,
-      activityType,
-      { reportingPeriod: dto.reportingPeriod, parameters: dto.parameters ?? null },
-    );
+      const { calculation, scope } = await this.recordCalculation.computeSnapshot(
+        dto.subsidiaryId,
+        user.accessibleSubsidiaryIds,
+        dto.category,
+        dto.reportingYear,
+        dto.activityValue,
+        dto.activityUnit,
+        dto.locationId,
+        activityType,
+        { reportingPeriod: dto.reportingPeriod, parameters: dto.parameters ?? null },
+      );
 
-    const verdict = await this.recordCalculation.detectAnomalyFor(calculation, {
-      subsidiaryId: dto.subsidiaryId,
-      locationId: dto.locationId ?? null,
-      category: dto.category,
-      activityType,
-      reportingPeriod: dto.reportingPeriod,
-      reportingYear: dto.reportingYear,
-      periodValue,
-    }, {
-      activityValue: dto.activityValue,
-      activityUnit: dto.activityUnit,
-      parameters: dto.parameters ?? null,
+      const verdict = await this.recordCalculation.detectAnomalyFor(calculation, {
+        subsidiaryId: dto.subsidiaryId,
+        locationId: dto.locationId ?? null,
+        category: dto.category,
+        activityType,
+        reportingPeriod: dto.reportingPeriod,
+        reportingYear: dto.reportingYear,
+        periodValue,
+      }, {
+        activityValue: dto.activityValue,
+        activityUnit: dto.activityUnit,
+        parameters: dto.parameters ?? null,
+      });
+      return { calculation, scope, verdict };
     });
 
     return {
@@ -1060,11 +1086,13 @@ export class ActivityRecordsService {
         // point (and the check below sees it) or waits for this commit (and
         // then counts the new draft like any other record).
         await lockPeriodsShared(tx, [period]);
-        await this.assertPeriodNotLocked(period, tx);
         // The author's standing as it is committed now (C10), locked until this
-        // record commits: role, company and category judged again, and the
-        // party worked out from the same rows TA025 will read.
+        // record commits: role, company — still in the organisation — and
+        // category judged again, and the party worked out from the same rows
+        // TA025 will read. Before the period's read: a company moved to another
+        // organisation answers as unknown, not with that organisation's lock.
         const access = await lockAuthorAccess(tx, user, subsidiaryId, dto.category, 'create');
+        await this.assertPeriodNotLocked(period, tx);
         const reportingEntity = access ? reportingEntityOf(access, subsidiaryId) : subsidiaryId;
         await assertNotExactDuplicate(tx, {
           subsidiaryId, locationId, category: dto.category, reportingYear: dto.reportingYear,
@@ -1148,12 +1176,40 @@ export class ActivityRecordsService {
   }
 
   /** The record gate of design D6: `holdsRecords` on the company named. */
-  private async assertEntityOpen(subsidiaryId: string): Promise<void> {
+  private async assertEntityOpen(subsidiaryId: string, organisationId: string | null): Promise<void> {
     const node = await this.prisma.subsidiary.findUnique({
       where: { id: subsidiaryId },
-      select: { nodeType: true, control: true },
+      select: { nodeType: true, control: true, organisationId: true },
     });
-    if (node && !holdsRecords(node)) throw new EntityClosedToDataEntryError();
+    if (!node || node.organisationId !== organisationId) throw new ResourceNotFoundError('subsidiary_not_found');
+    if (!holdsRecords(node)) throw new EntityClosedToDataEntryError();
+  }
+
+  /**
+   * Runs `reads` about a company, then asks again whether the company is in
+   * the caller's organisation, and only then answers what the reads found —
+   * their value or their refusal. Should the company have moved to another
+   * organisation meanwhile, the reads described that organisation's data:
+   * the answer is `notFound`, whatever they found (owner's fourth review of
+   * WP8, P2). Each statement is its own READ COMMITTED snapshot, so the
+   * re-check sees every move a read could have seen.
+   */
+  private async readsInOrganisation<T>(
+    subsidiaryId: string,
+    organisationId: string | null,
+    notFound: 'subsidiary_not_found' | 'record_not_found',
+    reads: () => Promise<T>,
+  ): Promise<T> {
+    let outcome: { ok: true; value: T } | { ok: false; error: unknown };
+    try {
+      outcome = { ok: true, value: await reads() };
+    } catch (error) {
+      outcome = { ok: false, error };
+    }
+    const node = await this.prisma.subsidiary.findUnique({ where: { id: subsidiaryId }, select: { organisationId: true } });
+    if (!node || node.organisationId !== organisationId) throw new ResourceNotFoundError(notFound);
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
   }
 
   async update(
@@ -1216,52 +1272,58 @@ export class ActivityRecordsService {
     // Period-lock gate (FR §4.2): the record's current period must be open, and
     // it cannot be re-targeted INTO a locked period either. Early answers —
     // both are asked again under the lock below.
-    await this.assertPeriodNotLocked(periodOf(existing));
-    if (moves) await this.assertPeriodNotLocked(target);
+    // The reads below answer about the record's company — its periods, its
+    // geography and baseline: asked again whether it is in the caller's
+    // organisation after them (owner's fourth review of WP8, P2).
+    const { calculation, scope, verdict } = await this.readsInOrganisation(existing.subsidiaryId, user.organisationId, 'record_not_found', async () => {
+      await this.assertPeriodNotLocked(periodOf(existing));
+      if (moves) await this.assertPeriodNotLocked(target);
 
-    const { calculation, scope } = await this.recordCalculation.computeSnapshot(
-      existing.subsidiaryId,
-      user.accessibleSubsidiaryIds,
-      category,
-      reportingYear,
-      activityValue,
-      activityUnit,
-      locationId,
-      activityType,
-      { reportingPeriod, parameters },
-      // Enforce the category/unit map when the unit was chosen NOW **or when
-      // the category changed**. The second half was missing and it was a live
-      // path to a fabricated figure: a PATCH that sends only `{category}` left
-      // the stored unit unchecked against the new category, so a 250 m³ WATER
-      // reading re-filed as Electricity was normalised at the natural-gas
-      // calorific value (×11.36) and multiplied by the grid factor — a fully
-      // provenanced 2,840 kWh of electricity that no one ever measured. The
-      // leniency exists for records predating the map being edited without
-      // touching the unit; re-interpreting a stored unit under a different
-      // category is the opposite of that case.
-      dto.activityUnit !== undefined || category !== existing.category,
-    );
-    // A natural gas bill's inherited figure is kept only where it still means
-    // the same thing (ng-kwh-engine reviews): a new unit or category reads it
-    // at another scale or meaning (1,000 kWh as 1,000 MWh or as a volume), and
-    // a stored NET bill moved to another site or basis could be priced as gross.
-    // Asked after the scope, lock and calculation checks, so their answers keep
-    // their order; before any write. `== null`: the DTO lets an explicit null
-    // through, and it inherits the stored figure too.
-    if (dto.activityValue == null && inheritsQuantityElsewhere(existing, { category, activityUnit, locationId, parameters })) {
-      throw new ActivityValueReentryRequiredError();
-    }
+      const { calculation, scope } = await this.recordCalculation.computeSnapshot(
+        existing.subsidiaryId,
+        user.accessibleSubsidiaryIds,
+        category,
+        reportingYear,
+        activityValue,
+        activityUnit,
+        locationId,
+        activityType,
+        { reportingPeriod, parameters },
+        // Enforce the category/unit map when the unit was chosen NOW **or when
+        // the category changed**. The second half was missing and it was a live
+        // path to a fabricated figure: a PATCH that sends only `{category}` left
+        // the stored unit unchecked against the new category, so a 250 m³ WATER
+        // reading re-filed as Electricity was normalised at the natural-gas
+        // calorific value (×11.36) and multiplied by the grid factor — a fully
+        // provenanced 2,840 kWh of electricity that no one ever measured. The
+        // leniency exists for records predating the map being edited without
+        // touching the unit; re-interpreting a stored unit under a different
+        // category is the opposite of that case.
+        dto.activityUnit !== undefined || category !== existing.category,
+      );
+      // A natural gas bill's inherited figure is kept only where it still means
+      // the same thing (ng-kwh-engine reviews): a new unit or category reads it
+      // at another scale or meaning (1,000 kWh as 1,000 MWh or as a volume), and
+      // a stored NET bill moved to another site or basis could be priced as gross.
+      // Asked after the scope, lock and calculation checks, so their answers keep
+      // their order; before any write. `== null`: the DTO lets an explicit null
+      // through, and it inherits the stored figure too.
+      if (dto.activityValue == null && inheritsQuantityElsewhere(existing, { category, activityUnit, locationId, parameters })) {
+        throw new ActivityValueReentryRequiredError();
+      }
 
-    const verdict = await this.recordCalculation.detectAnomalyFor(calculation, {
-      subsidiaryId: existing.subsidiaryId,
-      locationId,
-      category,
-      activityType,
-      reportingPeriod,
-      reportingYear,
-      periodValue,
-      excludeId: id, // the record's own row must not seed its baseline
-    }, { activityValue, activityUnit, parameters });
+      const verdict = await this.recordCalculation.detectAnomalyFor(calculation, {
+        subsidiaryId: existing.subsidiaryId,
+        locationId,
+        category,
+        activityType,
+        reportingPeriod,
+        reportingYear,
+        periodValue,
+        excludeId: id, // the record's own row must not seed its baseline
+      }, { activityValue, activityUnit, parameters });
+      return { calculation, scope, verdict };
+    });
 
     const data: Prisma.ActivityRecordUncheckedUpdateInput = {
       reportingYear,
@@ -1316,6 +1378,7 @@ export class ActivityRecordsService {
     try {
       ({ row: updated, evidenceCount, removedFiles } = await this.withLockedRecord(
         existing,
+        user.organisationId,
         async (tx, current) => {
           // Everything above was computed from `existing` — the snapshot, the
           // verdict, the audit "before". If the row changed since, writing it
@@ -1323,16 +1386,16 @@ export class ActivityRecordsService {
           // stale edit landing on a record someone else had already
           // submitted). No partial re-check can save it; the caller reloads.
           if (changedSince(existing, current)) throw new RecordChangedError();
+          // The author's standing as it is committed now (C10; owner's reviews
+          // of WP8, P1): a role, company or category changed after the request
+          // was authorised is not written to — the same judgement a create
+          // makes, and before the period reads. Only the author edits.
+          await lockAuthorAccess(tx, user, current.subsidiaryId, category, 'edit');
           await this.assertPeriodNotLocked(periodOf(current), tx);
           if (moves) await this.assertPeriodNotLocked(target, tx);
           // An edit that moves a draft to another category or period meets
           // the period half of single entry (D5): the record's own party — by
           // its stored reporting entity and its author, who is the editor.
-          // The author's standing as it is committed now (C10; owner's reviews
-          // of WP8, P1): a role, company or category changed after the request
-          // was authorised is not written to — the same judgement a create makes.
-          // Only the author edits (assertCanEdit).
-          await lockAuthorAccess(tx, user, current.subsidiaryId, category, 'edit');
           if (moves || changesCategory) {
             await assertNotExactDuplicate(tx, {
               subsidiaryId: current.subsidiaryId, locationId, category, reportingYear, reportingPeriod, periodValue, activityType,
@@ -1439,7 +1502,7 @@ export class ActivityRecordsService {
     // from another record cannot leave it with no link and no owner to delete
     // it; and the file rows go in this transaction, so the one audit row that
     // names them commits with them. Only their blobs wait for the commit.
-    const deleted = await this.withLockedRecord(existing, async (tx, current) => {
+    const deleted = await this.withLockedRecord(existing, user.organisationId, async (tx, current) => {
       regate(existing, current, () => this.assertCanDelete(user, current));
       await this.assertPeriodNotLocked(periodOf(current), tx);
       const fileIds = await this.evidence.fileIdsFor(current.id, tx);
@@ -1484,7 +1547,7 @@ export class ActivityRecordsService {
       throw new SubmitRoleRefusedError();
     }
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
-    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
       regate(seen, record, () => {
         if (!SUBMITTABLE_STATUSES.has(record.status)) {
           throw new BadRequestException(
@@ -1604,7 +1667,7 @@ export class ActivityRecordsService {
         'Your role may not modify activity records',
       );
     }
-    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
       regate(seen, record, () => {
         if (!isRecallable(record.status)) {
           throw new RecordNotRecallableError(record.status);
@@ -1640,7 +1703,7 @@ export class ActivityRecordsService {
       );
     }
     const seen = await this.loadScoped(user, id);
-    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
       regate(seen, record, () => {
         if (record.status !== ActivityRecordStatus.submitted) {
           throw new BadRequestException(
@@ -1673,7 +1736,7 @@ export class ActivityRecordsService {
     const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
     const recomputed = await this.recordCalculation.recompute(user.accessibleSubsidiaryIds, seen);
-    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
       regate(seen, record, () => {
         if (
           record.status !== ActivityRecordStatus.submitted &&
@@ -1761,7 +1824,7 @@ export class ActivityRecordsService {
     if (!can(user.role, 'record.void')) {
       throw new ForbiddenException('Only a masterkey may void records');
     }
-    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
       regate(seen, record, () => {
         if (record.status !== ActivityRecordStatus.approved) {
           // Deliberately `approved` alone. A `locked` record sits in a closed
@@ -1804,7 +1867,7 @@ export class ActivityRecordsService {
     }
     const seen = await this.loadScoped(user, id);
     assertSubmissionNamed(seenSubmittedAt);
-    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+    const updated = await this.withLockedRecord(seen, user.organisationId, async (tx, record) => {
       regate(seen, record, () => {
         if (
           record.status !== ActivityRecordStatus.submitted &&

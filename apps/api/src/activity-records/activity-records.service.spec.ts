@@ -317,6 +317,8 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
   seq += 1;
   const now = new Date('2026-01-01T00:00:00.000Z');
   return {
+    // The record's company as `loadScoped` reads it: in the tests' organisation.
+    subsidiary: { organisationId: 'org-1' },
     id: `rec-${seq}`,
     subsidiaryId: 'sub-1',
     reportingYear: 2024,
@@ -1587,7 +1589,8 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
     expect(dto.locationName).toBe('Ankara Plant');
     expect(prisma.activityRecord.findUnique).toHaveBeenCalledWith({
       where: { id: 'rec-g' },
-      include: { location: { select: { name: true } } },
+      // The company's organisation too (security review of the owner's fourth round).
+      include: { location: { select: { name: true } }, subsidiary: { select: { organisationId: true } } },
     });
   });
 
@@ -1645,8 +1648,10 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     const rowLocks = prisma.tx.$queryRaw.mock.calls.map((c) => (c[0] as string[]).join('?'));
     expect(rowLocks[0]).toMatch(/"activity_records"[\s\S]*FOR UPDATE/);
     expect(prisma.tx.$queryRaw.mock.calls[0].slice(1)).toEqual([['rec-del']]);
-    expect(rowLocks[1]).toMatch(/"evidence"[\s\S]*FOR UPDATE/);
-    expect(prisma.tx.$queryRaw.mock.calls[1].slice(1)).toEqual([['ev-1', 'ev-2']]);
+    // Then the record's company, FOR KEY SHARE, in the caller's organisation.
+    expect(rowLocks[1]).toMatch(/FROM subsidiaries[\s\S]*FOR KEY SHARE/);
+    expect(rowLocks[2]).toMatch(/"evidence"[\s\S]*FOR UPDATE/);
+    expect(prisma.tx.$queryRaw.mock.calls[2].slice(1)).toEqual([['ev-1', 'ev-2']]);
     // Only the objects of rows that went, and only after the commit.
     expect(evidence.removeBlobs).toHaveBeenCalledWith(['sub-1/ev-2.pdf']);
     // Order is the whole point: the period, then the record's lock before the
@@ -1658,8 +1663,8 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
       fn.mock.invocationCallOrder[call];
     expect(order(prisma.tx.$executeRaw)).toBeLessThan(order(prisma.tx.$queryRaw));
     expect(order(prisma.tx.$queryRaw)).toBeLessThan(order(evidence.fileIdsFor));
-    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.tx.$queryRaw, 1));
-    expect(order(prisma.tx.$queryRaw, 1)).toBeLessThan(order(prisma.tx.activityRecord.delete));
+    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.tx.$queryRaw, 2));
+    expect(order(prisma.tx.$queryRaw, 2)).toBeLessThan(order(prisma.tx.activityRecord.delete));
     expect(order(prisma.tx.activityRecord.delete)).toBeLessThan(order(evidence.deleteUnlinkedRows));
     expect(order(evidence.deleteUnlinkedRows)).toBeLessThan(order(audit.record));
     expect(order(audit.record)).toBeLessThan(order(evidence.removeBlobs));
@@ -4893,9 +4898,10 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
     // imported row, plus the period's advisory lock.
     expect(prisma.periodLock.findFirst).toHaveBeenCalledTimes(2);
     expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
-    // Twice: the closed-node gate's type and control (inc26-group-tree, D6),
-    // and the calculation's geography.
-    expect(prisma.subsidiary.findUnique).toHaveBeenCalledTimes(2);
+    // Three times: the closed-node gate's type, control and organisation
+    // (inc26-group-tree, D6), the organisation again after the period and slot
+    // reads (owner's fourth review of WP8), and the calculation's geography.
+    expect(prisma.subsidiary.findUnique).toHaveBeenCalledTimes(3);
     expect(calc.compute).toHaveBeenCalledTimes(1);
     expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.activityRecord.create).toHaveBeenCalledTimes(1);
@@ -7068,8 +7074,8 @@ describe('ActivityRecordsService — a node closed to data entry (inc26-group-tr
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
     expect(prisma.tx.activityRecord.create).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
-    // The gate reads only the company's type and control.
-    expect(prisma.subsidiary.findUnique).toHaveBeenCalledWith({ where: { id: 'sub-1' }, select: { nodeType: true, control: true } });
+    // The gate reads only the company's type, control and organisation.
+    expect(prisma.subsidiary.findUnique).toHaveBeenCalledWith({ where: { id: 'sub-1' }, select: { nodeType: true, control: true, organisationId: true } });
   });
 
   it('lets an ordinary controlled company, and the holding, through', async () => {
@@ -7488,11 +7494,80 @@ describe("the owner's review of WP8 (2026-11-26)", () => {
     }
   });
 
-  it('P1 (third review): an edit of a draft whose company moved to another organisation is refused, nothing written', async () => {
+  it('P1 (third review): an edit of a draft whose company moved to another organisation under the lock is refused as unknown, nothing written', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(draft());
     routeRaw(prisma, { access: [...REPORTER_ACCESS], companyMoved: true });
-    await expect(service.update(centralReporter(), 'rec-d', { activityValue: 5 })).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    await expect(service.update(centralReporter(), 'rec-d', { activityValue: 5 })).rejects.toMatchObject({ response: { code: 'record_not_found' } });
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
+
+  it("P2 (fourth review): a company moved to another organisation since the request answers as unknown in the preview, whatever its period or slot holds", async () => {
+    // Moved before the request's first read: refused before any period or slot read.
+    {
+      const { prisma, service } = build();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1', organisationId: 'org-elsewhere' }));
+      await expect(service.previewCreate(masterkey(), CREATE_DTO)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
+    }
+    // Moved between the gate and the reads, into a period the new organisation locked: still unknown, not period_locked.
+    {
+      const { prisma, service } = build();
+      prisma.subsidiary.findUnique
+        .mockResolvedValueOnce(makeSubsidiary({ id: 'sub-1' }))
+        .mockResolvedValue(makeSubsidiary({ id: 'sub-1', organisationId: 'org-elsewhere' }));
+      prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-b' } as never);
+      await expect(service.previewCreate(masterkey(), CREATE_DTO)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    }
+    // …and with a duplicate in the new organisation: still unknown, not record_duplicate.
+    {
+      const { prisma, service } = build();
+      prisma.subsidiary.findUnique
+        .mockResolvedValueOnce(makeSubsidiary({ id: 'sub-1' }))
+        .mockResolvedValue(makeSubsidiary({ id: 'sub-1', organisationId: 'org-elsewhere' }));
+      routeRaw(prisma, { access: [...REPORTER_ACCESS], duplicate: true });
+      await expect(service.previewCreate(masterkey(), CREATE_DTO)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    }
+  });
+
+  it('a record whose company moved to another organisation answers as unknown at load, before any read about it (security review, round 5)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue({ ...draft(), subsidiary: { organisationId: 'org-elsewhere' } } as never);
+    prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-b' } as never);
+    for (const call of [() => service.get(centralReporter(), 'rec-d'), () => service.update(centralReporter(), 'rec-d', { activityValue: 5 }), () => service.remove(centralReporter(), 'rec-d')]) {
+      await expect(call()).rejects.toMatchObject({ response: { code: 'record_not_found' } });
+    }
+    expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a lifecycle step on a record whose company moved under the lock writes nothing (security review, round 5)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    prisma.tx.activityRecord.findUnique.mockResolvedValue(draft());
+    prisma.tx.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = strings.join('?');
+      if (sql.includes('FROM subsidiaries') && sql.includes('FOR KEY SHARE')) return [{ id: values[0], organisationId: 'org-elsewhere' }];
+      return [{ id: 'locked' }];
+    }) as never);
+    await expect(service.remove(centralReporter(), 'rec-d')).rejects.toMatchObject({ response: { code: 'record_not_found' } });
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
+  });
+
+  it("P2 (fourth review): an edit's early reads about a company that moved meanwhile answer as unknown, not with that organisation's lock", async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(draft());
+    prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-b' } as never);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1', organisationId: 'org-elsewhere' }));
+    await expect(service.update(centralReporter(), 'rec-d', { activityValue: 5 })).rejects.toMatchObject({ response: { code: 'record_not_found' } });
+  });
+
+  it("the create's transaction judges the company under its lock before the period's read (security review, round 5)", async () => {
+    const { prisma, service } = build();
+    routeRaw(prisma, { access: [...REPORTER_ACCESS], companyMoved: true });
+    // Open in the preview; the period the moved company's new organisation locks shows only inside the transaction.
+    prisma.periodLock.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ id: 'lock-b' } as never);
+    await expect(service.create(masterkey(), CREATE_DTO)).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
 });
+

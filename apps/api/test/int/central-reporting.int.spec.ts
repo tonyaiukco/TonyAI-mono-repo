@@ -1141,6 +1141,10 @@ describe("the owner's second review of WP8 (2026-11-26)", () => {
 });
 
 describe("the owner's third review of WP8 (2026-11-26)", () => {
+  // Held at the preview's first period read, so the move is caught by the
+  // preview's own re-check since the fourth review; the transaction's check
+  // under the company lock is pinned by the unit spec and by the measured lock
+  // (a move is a key update that waits for FOR KEY SHARE).
   it("P1: a masterkey's create whose company moved to another organisation while it waited writes nothing", async () => {
     const free = await company('Int-test moved while a masterkey writes');
     const foreign = await createTenant();
@@ -1156,6 +1160,54 @@ describe("the owner's third review of WP8 (2026-11-26)", () => {
       hold.release();
       await expect(create).rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
       expect(await owner.activityRecord.count({ where: { subsidiaryId: free } })).toBe(0);
+    } finally {
+      await foreign.cleanup();
+    }
+  });
+});
+
+describe("the owner's fourth review of WP8 (2026-11-26)", () => {
+  it("P2: a preview whose company moved to another organisation, which locked the period, answers as unknown — not with that organisation's lock", async () => {
+    const free = await company('Int-test moved while a preview reads');
+    const foreign = await createTenant();
+    try {
+      const masterkey: RequestUser = { ...tenant.users.masterkey, accessibleSubsidiaryIds: [...tenant.users.masterkey.accessibleSubsidiaryIds, free] };
+      const hold = holdBefore(runtime, 'PeriodLock', 'findFirst');
+      const preview = lifecycleServices(hold.client).records.previewCreate(masterkey, {
+        subsidiaryId: free, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'October',
+        category: 'Electricity', activityValue: 100, activityUnit: 'kWh',
+      });
+      await hold.reached();
+      await owner.subsidiary.update({ where: { id: free }, data: { organisationId: foreign.organisationId, parentId: foreign.subsidiaryId } });
+      await owner.periodLock.create({
+        data: { subsidiaryId: free, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'October', lockedBy: foreign.users.masterkey.id },
+      });
+      hold.release();
+      await expect(preview).rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+    } finally {
+      await owner.periodLock.deleteMany({ where: { subsidiaryId: free } });
+      await foreign.cleanup();
+    }
+  });
+});
+
+describe("the security review of the owner's fourth round (2026-11-26)", () => {
+  it('a company that holds a record cannot move to another organisation (TA018): the lifecycle steps check the organisation as defence in depth', async () => {
+    const free = await company('Int-test holding a record');
+    const foreign = await createTenant();
+    try {
+      const masterkey: RequestUser = { ...tenant.users.masterkey, accessibleSubsidiaryIds: [...tenant.users.masterkey.accessibleSubsidiaryIds, free] };
+      const records = lifecycleServices(runtime).records;
+      const draft = await records.create(masterkey, {
+        subsidiaryId: free, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'November',
+        category: 'Electricity', activityValue: 100, activityUnit: 'kWh',
+      });
+      const r = await refused(owner.subsidiary.update({ where: { id: free }, data: { organisationId: foreign.organisationId, parentId: foreign.subsidiaryId } }));
+      expect(r.state).toBe('TA018');
+      expect((await owner.subsidiary.findUniqueOrThrow({ where: { id: free } })).organisationId).toBe(tenant.organisationId);
+      // The record's lifecycle goes on in its own organisation.
+      await expect(records.update(masterkey, draft.id, { activityValue: 250 })).resolves.toMatchObject({ activityValue: 250 });
+      await records.remove(masterkey, draft.id);
     } finally {
       await foreign.cleanup();
     }

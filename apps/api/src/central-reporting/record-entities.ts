@@ -281,3 +281,19 @@ export async function reportingNamesFor(
   });
   return new Map(rows.map((s) => [s.id, s.tradingName || s.legalName]));
 }
+
+/**
+ * A record's company, locked `FOR KEY SHARE` — a move to another organisation
+ * is a key update of `subsidiaries (id, organisation_id)`, so it waits for the
+ * caller's write — and whether it is in `organisationId` (security review of
+ * the owner's fourth round of WP8): every lifecycle step on a record asks it
+ * under the record's row lock.
+ */
+export async function lockCompanyInOrganisation(tx: Db, subsidiaryId: string, organisationId: string | null): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ id: string; organisationId: string }[]>`
+    SELECT s.id::text AS id, s.organisation_id::text AS "organisationId"
+      FROM subsidiaries s
+     WHERE s.id = ${subsidiaryId}::uuid
+       FOR KEY SHARE`;
+  return rows.some((r) => r.id === subsidiaryId && r.organisationId === organisationId);
+}
