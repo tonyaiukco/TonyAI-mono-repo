@@ -147,6 +147,7 @@ export default function SubsidiariesPage() {
   const pricedGeos = usePricedGeographies();
 
   const [listVersion, setListVersion] = useState(0);
+  const [locationsRead, setLocationsRead] = useState(false);
   const [exclusionsVersion, setExclusionsVersion] = useState(0);
   async function refresh() {
     setLoading(true);
@@ -163,8 +164,15 @@ export default function SubsidiariesPage() {
       } else {
         showError(list.reason);
       }
-      if (locs.status === "fulfilled") setLocations(locs.value);
-      else if (list.status === "fulfilled") showError(locs.reason);
+      if (locs.status === "fulfilled") {
+        setLocations(locs.value);
+        setLocationsRead(true);
+      } else {
+        // Unknown, not zero: each row's facility count reads "—" (owner's
+        // seventh review of WP7, P3).
+        setLocationsRead(false);
+        if (list.status === "fulfilled") showError(locs.reason);
+      }
     } finally {
       setLoading(false);
     }
@@ -542,7 +550,7 @@ export default function SubsidiariesPage() {
                             aria-label={t("list.manageLocations")}
                           >
                             <MapPin className="h-3.5 w-3.5" />
-                            {formatNumber(locCount(s.id), locale)}
+                            {locationsRead ? formatNumber(locCount(s.id), locale) : "—"}
                           </Button>
                           <Button
                             variant="ghost"

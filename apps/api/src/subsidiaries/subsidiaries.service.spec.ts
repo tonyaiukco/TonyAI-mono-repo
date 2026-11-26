@@ -714,7 +714,7 @@ describe('SubsidiariesService', () => {
       countLocations(prisma, { total: 0 });
       await service.summary(user, 'sub-1');
       const scope = { OR: [{ subsidiaryId: 'sub-1', category: { in: ['Electricity'] } }, { subsidiaryId: { in: ['sub-1'] }, createdBy: user.id }] };
-      const recordCounts = prisma.activityRecord.count.mock.calls.map(([args]: [{ where: { AND?: unknown } }]) => args.where.AND);
+      const recordCounts = prisma.txClient.activityRecord.count.mock.calls.map(([args]: [{ where: { AND?: unknown } }]) => args.where.AND);
       expect(recordCounts.length).toBeGreaterThan(0);
       for (const and of recordCounts) expect(and).toEqual([scope]);
     });
@@ -853,15 +853,16 @@ describe('SubsidiariesService', () => {
 
       await service.summary(user, 'sub-1');
 
+      // Counted in the summary's own snapshot (owner's seventh review of WP7).
       for (const counter of [
-        prisma.location.count,
-        prisma.periodLock.count,
-        prisma.target.count,
-        prisma.subsidiaryDenominator.count,
+        prisma.txClient.location.count,
+        prisma.txClient.periodLock.count,
+        prisma.txClient.target.count,
+        prisma.txClient.subsidiaryDenominator.count,
       ]) {
         expect(counter).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-1' } });
       }
-      for (const call of prisma.activityRecord.count.mock.calls) {
+      for (const call of prisma.txClient.activityRecord.count.mock.calls) {
         expect(call[0].where).toMatchObject({ subsidiaryId: 'sub-1' });
       }
     });
@@ -877,7 +878,12 @@ describe('SubsidiariesService', () => {
       await service.summary(user, 'sub-1');
 
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // One read-only snapshot for the organisation check and the counts —
+      // REPEATABLE READ, no lock (owner's seventh review of WP7, P2).
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ isolationLevel: 'RepeatableRead' }),
+      );
     });
 
     it('reports the SAME sentences the 409 uses — they cannot diverge', async () => {

@@ -242,6 +242,9 @@ export function makeLocation(
     locationType: null,
     createdAt: now,
     updatedAt: now,
+    // The company's organisation, as the facility's scoped read includes it
+    // (owner's seventh review of WP7): the callers' 'org-1' by default.
+    subsidiary: { organisationId: 'org-1' },
     ...overrides,
   } as import('@tonyai/db').Location;
 }

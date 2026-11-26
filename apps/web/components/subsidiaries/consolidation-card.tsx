@@ -96,15 +96,16 @@ export function ConsolidationCard({
     setSaving(true);
     try {
       const saved = await api.setConsolidationApproach({ consolidationApproach: value as ConsolidationApproach });
-      // Any read started before the save is now older than what was saved: it
-      // must not turn the screen back (owner's sixth review of WP7, P2). Its
-      // answer is dropped; the exclusions it was reading are read again.
-      const readInFlight = reading;
+      // Any read started before the save — including one started while it was
+      // in flight — is older than what was saved: it must not turn the screen
+      // back (owner's sixth review of WP7, P2). Its answer is dropped and the
+      // card is read again, so the exclusions never stay "Loading…" (seventh
+      // review, P2).
       seq.current++;
       setOrganisation(saved);
       onApproach?.(saved.consolidationApproach);
       toast.success(t("consolidation.saved"));
-      if (readInFlight) void load();
+      void load();
     } catch (e) {
       showError(e);
     } finally {

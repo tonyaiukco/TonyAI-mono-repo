@@ -555,6 +555,21 @@ describe('SubsidiariesService — the group tree', () => {
         expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
       });
 
+      it("moves a sector group with its new parent's geography (owner's seventh review, P3)", async () => {
+        prisma.subsidiary.findUnique.mockResolvedValue(company({ nodeType: 'sector_group', geographyCode: 'TR' }));
+        tree(prisma, [ROOT, { id: 'sub-3', nodeType: 'sub_holding' }]);
+        prisma.txClient.subsidiary.findUnique.mockImplementation((async ({ where }: { where: { id: string } }) =>
+          where.id === 'sub-3'
+            ? makeSubsidiary({ id: 'sub-3', nodeType: 'sub_holding', geographyCode: 'UK' })
+            : company({ nodeType: 'sector_group', geographyCode: 'TR' })) as never);
+        prisma.txClient.$queryRaw
+          .mockResolvedValueOnce([{ id: 'locked' }])
+          .mockResolvedValueOnce([{ cycle: false }])
+          .mockResolvedValueOnce([{ records: false }]);
+        await service.update(masterkey(), 'sub-2', { parentId: 'sub-3' });
+        expect(prisma.txClient.subsidiary.update.mock.calls[0][0].data).toEqual({ parentId: 'sub-3', geographyCode: 'UK' });
+      });
+
       it("refuses a sector group's geography change — it is its parent's (owner's sixth review, P3)", async () => {
         prisma.subsidiary.findUnique.mockResolvedValue(company({ nodeType: 'sector_group', geographyCode: 'TR' }));
         await expect(service.update(masterkey(), 'sub-2', { geographyCode: 'UK' })).rejects.toMatchObject({
@@ -657,7 +672,7 @@ describe('SubsidiariesService — the group tree', () => {
       prisma.subsidiary.findUnique.mockResolvedValue(company());
       const reader = makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-2'] });
       await service.summary(reader, 'sub-2');
-      expect(prisma.subsidiary.count).toHaveBeenCalledWith({ where: { parentId: 'sub-2', id: { in: ['sub-2'] } } });
+      expect(prisma.txClient.subsidiary.count).toHaveBeenCalledWith({ where: { parentId: 'sub-2', id: { in: ['sub-2'] } } });
       await service.remove(masterkey(), 'sub-2').catch(() => undefined);
       expect(prisma.txClient.subsidiary.count).toHaveBeenCalledWith({ where: { parentId: 'sub-2' } });
     });
@@ -730,7 +745,8 @@ describe('SubsidiariesService — the group tree', () => {
       ]) {
         await expect(read()).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
       }
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
   });
 

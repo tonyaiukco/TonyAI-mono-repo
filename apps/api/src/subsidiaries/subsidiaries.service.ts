@@ -468,6 +468,13 @@ export class SubsidiariesService {
       const controlChanges = dto.control !== undefined && dto.control !== current.control;
       if (controlChanges) data.control = dto.control;
       if (moves) await this.assertMovable(tx, user, current, dto.parentId ?? null);
+      // A sector group takes its parent's geography (D10) — when it moves too,
+      // so it never keeps one its new parent does not have (owner's seventh
+      // review of WP7, P3). No figure reads it.
+      if (moves && current.nodeType === 'sector_group' && dto.parentId) {
+        const newParent = await tx.subsidiary.findUnique({ where: { id: dto.parentId }, select: { geographyCode: true } });
+        if (newParent) data.geographyCode = newParent.geographyCode;
+      }
       if (controlChanges && dto.control === 'associate') await this.assertMayBecomeAssociate(tx, current);
       let row: Subsidiary;
       try {
@@ -709,10 +716,19 @@ export class SubsidiariesService {
    * so a standard user's counts its ticked categories and own records only.
    */
   async summary(user: RequestUser, id: string): Promise<SubsidiarySummaryDTO> {
-    await this.loadScoped(user, id);
-    // `this.prisma` is directly assignable — the delegates a transaction client
-    // exposes are the ones used here. Verified: removing the cast typechecks.
-    const counts = await this.countDependents(this.prisma, id, recordScopeWhere(user), user.accessibleSubsidiaryIds);
+    if (!user.accessibleSubsidiaryIds.includes(id)) throw new ResourceNotFoundError('subsidiary_not_found');
+    // The company's organisation and every count in ONE snapshot (REPEATABLE
+    // READ, read only): a transfer between the check and the counts would
+    // otherwise answer another organisation's numbers (owner's seventh review
+    // of WP7, P2).
+    const counts = await this.prisma.$transaction(
+      async (tx) => {
+        const row = await tx.subsidiary.findUnique({ where: { id } });
+        if (!row || row.organisationId !== user.organisationId) throw new ResourceNotFoundError('subsidiary_not_found');
+        return this.countDependents(tx, id, recordScopeWhere(user), user.accessibleSubsidiaryIds);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15_000 },
+    );
     const refusal = SubsidiariesService.describeBlockers(counts);
     const {
       locationsHoldingForeignRecords: _alarm,

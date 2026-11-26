@@ -397,6 +397,8 @@ test("a deleted associate leaves the exclusions note at once, even when the list
     // Gone from the tree at once too (owner's sixth review, P2).
     await expect(page.getByTestId(`tree-row-${associate.id}`)).toHaveCount(0);
     await expect(page.getByTestId(`tree-row-${SUB.energy}`)).toBeVisible();
+    // Its facilities unread: a count it does not know is a dash, not 0 (owner's seventh review, P3).
+    await expect(page.getByTestId(`tree-row-${SUB.energy}`).getByRole('button', { name: enSubsidiaries.list.manageLocations })).toContainText('—');
     await expect(note).not.toContainText('E2E Tree Short-lived Associate');
     await expect(note).toContainText('Bosphorus Associates A.Ş.');
   } finally {

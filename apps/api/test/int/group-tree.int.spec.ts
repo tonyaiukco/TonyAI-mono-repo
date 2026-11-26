@@ -666,8 +666,13 @@ describe('the API over the database', () => {
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
       await expect(services(runtime).locations.update(user, site.id, { locationType: 'warehouse' }))
         .rejects.toMatchObject({ response: expect.objectContaining({ code: 'location_not_found' }) });
+      // Unknown at its first read since the seventh review: its company is in
+      // another organisation now.
       await expect(services(runtime).locations.remove(user, site.id))
-        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'location_not_found' }) });
+      await expect(services(runtime).locations.get(user, site.id))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'location_not_found' }) });
+      expect((await services(runtime).locations.list(user)).map((l) => l.id)).not.toContain(site.id);
       expect(await owner.location.findMany({ where: { subsidiaryId: company }, select: { id: true, locationType: true } }))
         .toEqual([{ id: site.id, locationType: null }]);
       // Nor read: A's roll-up and its exclusions note say nothing of it (owner's fifth review, P2).

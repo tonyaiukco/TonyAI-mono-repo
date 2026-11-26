@@ -107,6 +107,14 @@
     - **P3, an unread parent.** A company whose parent was not (yet) read shows a dash, never "the top".
     - **P3, the preview after a rollback.** It no longer promises that the generated report states what the preview could not read.
     - **Measured locally after the fixes (2026-11-26):** typecheck, lint (0 errors, the 3 earlier warnings), build; `pnpm test` shared-types 809, db 261, web 1,709, api 4,995; `test:int` 44 files, 1,431 tests; `db:seed` twice; `rls:probe` 126 checks, 0 failed; the `runtime-role` check; the migration-diff gate; the whole e2e suite on built servers, 319/319.
+  - **Owner's seventh review (`136307d5`, 2026-11-26), all six findings verified in the code and fixed:**
+    - **P2, facilities after a transfer.** The facility list and detail are read in the reader's own organisation.
+    - **P2, a refused facility delete.** The count it answers with is read only under a re-authorised write, so a caller whose grant was withdrawn meanwhile is answered 404, with no count.
+    - **P2, the company summary.** Its organisation check and every count are read in one REPEATABLE READ snapshot, so a transfer between them cannot answer another organisation's numbers.
+    - **P2, the approach after a save.** A save now always re-reads the card, so the exclusions never stay "Loading…" when a refresh started during the save.
+    - **P3, an unread facility count.** It shows a dash, never 0; the delete e2e case asserts it.
+    - **P3, a moved sector group.** It takes its new parent's geography (D10 applies to a move too).
+    - **Measured locally after the fixes (2026-11-26):** typecheck, lint (0 errors, the 3 earlier warnings), build; `pnpm test` shared-types 809, db 261, web 1,709, api 4,998; `test:int` 43 of 44 files in the full run, the 44th (`group-tree.int.spec.ts`, 25 tests) passing on its own after its transfer case was told the facility's own 404; `db:seed` twice; `rls:probe` 126 checks, 0 failed; the `runtime-role` check; the migration-diff gate; the whole e2e suite on built servers, 319/319.
   - **Hosted QA, for WP6 (task 9.2):** the per-role account counts were read and the owner's signed-in check was recorded; both are in WP6's entry.
   - **Next:** the owner reviews the pushed branch before any PR is opened; after the merge, read hosted QA back (one root per organisation with companies, one known main total unchanged, the revision suffix).
 - **UAT ROUND 4, WP6 `inc26-roles-approval-chain` (INC-2.6 §1, §1.1, §6; BUG-14): THE FOUR ROLES OF THE DOCUMENT, A COMPANY-SCOPED SUPER_ADMIN, A CATEGORY-SCOPED STANDARD USER AND A ROUTED APPROVAL CHAIN; MERGED AS [PR #364](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/364) (merge `b7edcb96`, 2026-11-25 17:18 UTC, QA `ci100-2`; branch `feat/inc26-roles-approval-chain`, after three owner reviews; Claude Code; Decisions 2026-11-25 (sixth) and (seventh); OpenSpec `inc26-roles-approval-chain`, local).**

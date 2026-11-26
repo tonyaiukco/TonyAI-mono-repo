@@ -60,7 +60,7 @@ describe('LocationsService', () => {
       await service.list(user);
 
       expect(prisma.location.findMany).toHaveBeenCalledWith({
-        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, subsidiary: { organisationId: 'org-1' } },
         orderBy: { createdAt: 'asc' },
       });
     });
@@ -83,7 +83,7 @@ describe('LocationsService', () => {
       const rows = await service.list(user, 'sub-2');
 
       expect(prisma.location.findMany).toHaveBeenCalledWith({
-        where: { subsidiaryId: 'sub-2' },
+        where: { subsidiaryId: 'sub-2', subsidiary: { organisationId: 'org-1' } },
         orderBy: { createdAt: 'asc' },
       });
       expect(rows[0]).toMatchObject({ subsidiaryId: 'sub-2', name: 'Plant A' });
@@ -311,6 +311,28 @@ describe('LocationsService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
+    it("answers a delete refused by a record filed meanwhile with no count once its grant is gone too (owner's seventh review, P2)", async () => {
+      const loc = makeLocation({ id: 'loc-r', subsidiaryId: 'sub-2' });
+      prisma.location.findUnique.mockResolvedValue(loc);
+      prisma.activityRecord.count.mockResolvedValue(0);
+      prisma.txClient.location.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('fk', { code: 'P2003', clientVersion: 'test' }),
+      );
+      // Granted while the delete ran; withdrawn by the time the refusal is answered.
+      const granted = {
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null },
+        subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-2' }],
+      };
+      prisma.txClient.profile.findUnique
+        .mockResolvedValueOnce(granted)
+        .mockResolvedValueOnce({ ...granted, subsidiaryAccess: [{ subsidiaryId: 'sub-1' }] });
+      prisma.activityRecord.count.mockResolvedValueOnce(0).mockResolvedValue(4);
+      const answer = (await service.remove(superAdmin, 'loc-r').catch((e: unknown) => e)) as { response?: { code?: string; params?: unknown } };
+      expect(answer.response?.code).toBe('subsidiary_not_found');
+      expect(answer.response?.params).toBeUndefined();
+      expect(JSON.stringify(answer.response)).not.toMatch(/activity record/);
+    });
+
     it('creates a location in a granted company, audited as itself in the same transaction', async () => {
       const created = makeLocation({ subsidiaryId: 'sub-2', name: 'Plant' });
       prisma.txClient.location.create.mockResolvedValue(created);
@@ -369,7 +391,7 @@ describe('LocationsService', () => {
     it('lists only its granted companies\' locations', async () => {
       await service.list(superAdmin);
       expect(prisma.location.findMany).toHaveBeenCalledWith({
-        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+        where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, subsidiary: { organisationId: 'org-1' } },
         orderBy: { createdAt: 'asc' },
       });
       prisma.location.findMany.mockClear();
@@ -678,5 +700,20 @@ describe('LocationsService', () => {
       );
       expect(prisma.txClient.location.delete).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("LocationsService — a facility whose company moved to another organisation since the request arrived (owner's seventh review of WP7, P2)", () => {
+  it('is unknown to its detail, and the list asks for the reader\'s organisation only', async () => {
+    const prisma = createPrismaMock();
+    const service = new LocationsService(
+      prisma as unknown as PrismaService,
+      { record: vi.fn(), recordSystem: vi.fn() } as never,
+      { coverage: vi.fn(async () => ({ entries: [] })) } as never,
+    );
+    prisma.location.findUnique.mockResolvedValue(makeLocation({ id: 'loc-x', subsidiaryId: 'sub-1', subsidiary: { organisationId: 'org-2' } } as never));
+    await expect(service.get(makeMasterkey(), 'loc-x')).rejects.toMatchObject({ response: { code: 'location_not_found' } });
+    await service.list(makeMasterkey());
+    expect(prisma.location.findMany.mock.calls[0][0].where.subsidiary).toEqual({ organisationId: 'org-1' });
   });
 });

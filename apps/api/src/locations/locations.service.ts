@@ -95,14 +95,21 @@ export class LocationsService {
    * is outside the caller's accessible set are treated as not found.
    */
   private async loadScoped(user: RequestUser, id: string): Promise<Location> {
-    const location = await this.prisma.location.findUnique({ where: { id } });
+    const location = await this.prisma.location.findUnique({
+      where: { id },
+      include: { subsidiary: { select: { organisationId: true } } },
+    });
     if (
       !location ||
-      !user.accessibleSubsidiaryIds.includes(location.subsidiaryId)
+      !user.accessibleSubsidiaryIds.includes(location.subsidiaryId) ||
+      // Its company moved to another organisation since the request arrived:
+      // unknown here (owner's seventh review of WP7, P2).
+      location.subsidiary?.organisationId !== user.organisationId
     ) {
       throw new ResourceNotFoundError('location_not_found');
     }
-    return location;
+    const { subsidiary: _company, ...row } = location;
+    return row;
   }
 
   async list(
@@ -120,8 +127,11 @@ export class LocationsService {
       subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
     }
 
+    // In the reader's own organisation too: ids taken when the request
+    // arrived could name a company an operator moved to another one since
+    // (owner's seventh review of WP7, P2).
     const rows = await this.prisma.location.findMany({
-      where: { subsidiaryId: subsidiaryFilter },
+      where: { subsidiaryId: subsidiaryFilter, subsidiary: { organisationId: user.organisationId ?? undefined } },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map((l) => this.toDTO(l));
@@ -219,6 +229,23 @@ export class LocationsService {
     return this.prisma.$transaction(async (tx) => {
       const writer = await this.lockWritableParent(tx, user, dto.subsidiaryId);
       return this.writeLocationForTrustedParent(tx, writer, parent, dto);
+    });
+  }
+
+  /**
+   * A count a refused delete answers with, read only once its caller is
+   * re-authorised (a fresh write transaction, the actor and company re-read):
+   * a caller whose grant was withdrawn after the delete's own check learns no
+   * count — the company answers as unknown (owner's seventh review of WP7, P2).
+   */
+  private async recountAuthorised(
+    user: RequestUser,
+    subsidiaryId: string,
+    count: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockWritableParent(tx, user, subsidiaryId);
+      await count(tx);
     });
   }
 
@@ -433,14 +460,14 @@ export class LocationsService {
       // (LP4-01), so the delete is refused rather than re-filing it at company
       // level. The same 409 as the check, with the count as it is now.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-        await this.assertNoRecords(id);
+        await this.recountAuthorised(user, existing.subsidiaryId, (tx) => this.assertNoRecords(id, tx));
       }
       // A boundary version declaring the site since the check: its guard
       // refuses the cascade (TA014, W9). The same 409 as the check — and a 409
       // still if that version is gone by the recount: the delete did not
       // happen either way (Codex's B9 review).
       if (boundaryGuardRefused(err)) {
-        await this.assertNotDeclared(id);
+        await this.recountAuthorised(user, existing.subsidiaryId, (tx) => this.assertNotDeclared(id, tx));
         throw new ConflictException(
           errorBody(
             'location_declared_during_delete',
