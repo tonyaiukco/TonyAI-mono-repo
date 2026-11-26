@@ -8,7 +8,10 @@ import { UnpackBudget, ZipArchive, unreadableWorkbook } from './zip-reader';
 
 /**
  * Reads the FIRST worksheet of an `.xlsx` and nothing else, with every cost
- * bounded by the bytes it agreed to unpack.
+ * bounded by the bytes it agreed to unpack. A fuel file (inc28-fuel-bulk D4)
+ * reads one sheet by name instead, under a budget of its own, inflated off the
+ * event loop (`WorksheetReadOptions`); every cell also says what it was stored
+ * as (`SheetCellKind`).
  *
  * Why not exceljs, which still writes the template (`template-workbook.ts`):
  * `workbook.xlsx.load` expands a declared range cell by cell while it loads —
@@ -79,11 +82,20 @@ export function dateOutOfRange(row: number, column: number): BadRequestException
   );
 }
 
+/**
+ * What the file stored the cell as (inc28-fuel-bulk D4): a fuel file reads a
+ * quantity by its cell type — a number cell as its number, a text cell in
+ * Turkish format — and a date by whether the cell holds a date. The template
+ * import reads `value` only.
+ */
+export type SheetCellKind = 'number' | 'date' | 'text' | 'boolean' | 'error';
+
 export interface SheetCell {
   /** 1-based: column A is 1. */
   column: number;
   /** The cell as the user sees it; never empty. See `cellValue`. */
   value: string;
+  kind: SheetCellKind;
 }
 
 export interface MergedRange {
@@ -102,12 +114,45 @@ export interface SheetVisitor {
   merge(range: MergedRange): void;
 }
 
+/**
+ * How a fuel file is read (inc28-fuel-bulk D4, D15). The template import passes
+ * none of these and reads as it always has.
+ */
+export interface WorksheetReadOptions {
+  /**
+   * The sheet to read, by its tab name (Excel's names are case-insensitive, so
+   * this compares them so too). Absent: the first sheet.
+   */
+  sheetName?: string;
+  /** The unpack budget for the whole read; `XLSX_MAX_UNPACKED_BYTES` when absent. */
+  maxUnpackedBytes?: number;
+  /** Inflate on zlib's thread pool rather than on the event loop (`ZipArchive.readAsync`). */
+  asyncInflate?: boolean;
+  /**
+   * The sheet's XML is parsed in slices of this many bytes, yielding to the
+   * event loop between them; a smaller slice is a shorter chunk of rows read
+   * without a yield. `SLICE_BYTES` when absent.
+   */
+  sliceBytes?: number;
+}
+
+export const SHEET_MISSING = (name: string) => `The workbook has no sheet named "${name}".`;
+
 export async function readFirstWorksheet(
   buffer: Buffer,
   visitor: SheetVisitor,
 ): Promise<void> {
+  await readWorksheet(buffer, visitor, {});
+}
+
+/** `readFirstWorksheet`, or a sheet by name, under the options a fuel file reads with. */
+export async function readWorksheet(
+  buffer: Buffer,
+  visitor: SheetVisitor,
+  options: WorksheetReadOptions,
+): Promise<void> {
   try {
-    await readWorkbookFile(buffer, visitor);
+    await readWorkbookFile(buffer, visitor, options);
   } catch (error) {
     // Refusals pass through, this reader's and the visitor's alike. Anything
     // else — saxes on malformed XML, above all — means the file is not a
@@ -124,10 +169,12 @@ function fail(): never {
 async function readWorkbookFile(
   buffer: Buffer,
   visitor: SheetVisitor,
+  options: WorksheetReadOptions,
 ): Promise<void> {
   const zip = ZipArchive.open(buffer);
-  const budget = new UnpackBudget(XLSX_MAX_UNPACKED_BYTES);
-  const read = (part: string): Buffer => zip.read(part, budget) ?? fail();
+  const budget = new UnpackBudget(options.maxUnpackedBytes ?? XLSX_MAX_UNPACKED_BYTES);
+  const read = async (part: string): Promise<Buffer> =>
+    (options.asyncInflate ? await zip.readAsync(part, budget) : zip.read(part, budget)) ?? fail();
   const found: {
     workbook?: string;
     sheet?: { type: string; target: string };
@@ -139,36 +186,48 @@ async function readWorkbookFile(
     if (type.endsWith('/officeDocument')) found.workbook ??= resolvePart('', target);
   });
   const workbookPart = found.workbook ?? fail();
-  const workbook = await readWorkbook(read(workbookPart));
+  const workbook = await readWorkbook(await read(workbookPart), options.sheetName);
   if (workbook.firstSheet === undefined) {
     throw new BadRequestException(errorBody('bulk_workbook_no_sheets', WORKBOOK_HAS_NO_SHEETS));
   }
-  const firstSheet = workbook.firstSheet ?? fail();
+  let wanted: string;
+  if (options.sheetName === undefined) {
+    wanted = workbook.firstSheet ?? fail();
+  } else {
+    if (workbook.namedSheet === undefined) throw sheetMissing(options.sheetName);
+    wanted = workbook.namedSheet ?? fail();
+  }
 
   await eachRelationship(read, workbookPart, ({ id, type, target }) => {
-    if (id === firstSheet) found.sheet ??= { type, target };
+    if (id === wanted) found.sheet ??= { type, target };
     else if (type.endsWith('/sharedStrings')) found.sharedStrings ??= target;
     else if (type.endsWith('/styles')) found.styles ??= target;
   });
   const sheet = found.sheet ?? fail();
   // A chart sheet sits in the same list; it has no cells to import.
   if (!sheet.type.endsWith('/worksheet')) {
+    if (options.sheetName !== undefined) throw sheetMissing(options.sheetName);
     throw new BadRequestException(errorBody('bulk_workbook_first_sheet_not_worksheet', FIRST_SHEET_NOT_A_WORKSHEET));
   }
 
   const sharedStrings =
     found.sharedStrings === undefined
       ? []
-      : await readSharedStrings(read(resolvePart(workbookPart, found.sharedStrings)));
+      : await readSharedStrings(await read(resolvePart(workbookPart, found.sharedStrings)));
   const dateStyles =
     found.styles === undefined
       ? []
-      : await readDateStyles(read(resolvePart(workbookPart, found.styles)));
+      : await readDateStyles(await read(resolvePart(workbookPart, found.styles)));
   await readSheet(
-    read(resolvePart(workbookPart, sheet.target)),
+    await read(resolvePart(workbookPart, sheet.target)),
     { sharedStrings, dateStyles, date1904: workbook.date1904 },
     visitor,
+    options.sliceBytes ?? SLICE_BYTES,
   );
+}
+
+function sheetMissing(name: string): BadRequestException {
+  return new BadRequestException(errorBody('fuel_file_sheet_missing', SHEET_MISSING(name)));
 }
 
 const SPREADSHEET_NAMESPACES = new Set([
@@ -213,7 +272,11 @@ const yieldToEventLoop = () =>
     setImmediate(resolve);
   });
 
-async function parseXml(part: Buffer, handlers: XmlHandlers): Promise<void> {
+async function parseXml(
+  part: Buffer,
+  handlers: XmlHandlers,
+  sliceBytes: number = SLICE_BYTES,
+): Promise<void> {
   // The same rule the CSV path applies to a whole file, applied to each XML
   // part — because `StringDecoder('utf8')` below is lossy in exactly the way
   // `Buffer#toString('utf8')` is, and saxes does not close the gap: it
@@ -280,10 +343,10 @@ async function parseXml(part: Buffer, handlers: XmlHandlers): Promise<void> {
 
   // A leading byte-order mark needs nothing here: saxes skips it.
   const decoder = new StringDecoder('utf8');
-  for (let offset = 0; offset < part.length; offset += SLICE_BYTES) {
+  for (let offset = 0; offset < part.length; offset += sliceBytes) {
     checkParserDeadline();
     if (offset > 0) await yieldToEventLoop();
-    parser.write(decoder.write(part.subarray(offset, offset + SLICE_BYTES)));
+    parser.write(decoder.write(part.subarray(offset, offset + sliceBytes)));
   }
   parser.write(decoder.end());
   parser.close();
@@ -301,13 +364,13 @@ interface Relationship {
  * want two or three entries out of it.
  */
 async function eachRelationship(
-  read: (part: string) => Buffer,
+  read: (part: string) => Promise<Buffer>,
   source: string,
   visit: (relationship: Relationship) => void,
 ): Promise<void> {
   const slash = source.lastIndexOf('/');
   const part = `${source.slice(0, slash + 1)}_rels/${source.slice(slash + 1)}.rels`;
-  await parseXml(read(part), {
+  await parseXml(await read(part), {
     open(tag) {
       if (tag.local !== 'Relationship' || tag.uri !== PACKAGE_RELATIONSHIPS) return;
       const id = plainAttribute(tag, 'Id');
@@ -338,13 +401,16 @@ function resolvePart(source: string, target: string): string {
  * The relationship id of the first sheet in the workbook's own order — the tab
  * order, hidden sheets included, which is what exceljs's `worksheets[0]` was.
  * `undefined` when the workbook lists no sheets, `null` when the first one
- * names no relationship.
+ * names no relationship. With a name, `namedSheet` is the first sheet of that
+ * name, compared without regard to case as Excel compares them.
  */
 async function readWorkbook(
   part: Buffer,
-): Promise<{ firstSheet?: string | null; date1904: boolean }> {
+  sheetName?: string,
+): Promise<{ firstSheet?: string | null; namedSheet?: string | null; date1904: boolean }> {
   const path: string[] = [];
-  const found: { firstSheet?: string | null; date1904: boolean } = {
+  const wanted = sheetName?.toLowerCase();
+  const found: { firstSheet?: string | null; namedSheet?: string | null; date1904: boolean } = {
     date1904: false,
   };
   await parseXml(part, {
@@ -357,6 +423,13 @@ async function readWorkbook(
         found.date1904 = value === '1' || value === 'true';
       } else if (name === 'sheet' && parent === 'sheets') {
         if (found.firstSheet === undefined) found.firstSheet = relationshipId(tag) ?? null;
+        if (
+          wanted !== undefined &&
+          found.namedSheet === undefined &&
+          plainAttribute(tag, 'name')?.toLowerCase() === wanted
+        ) {
+          found.namedSheet = relationshipId(tag) ?? null;
+        }
       }
     },
     close() {
@@ -641,6 +714,22 @@ const ISO_DATE =
  * behind it (what exceljs's streaming reader does by default) would import
  * "3/4" typed into a consumption column as 46,085 kWh.
  */
+/** What `cellValue` read the cell as; called only for a cell that read as text other than ''. */
+function cellKind(cell: OpenCell, context: SheetContext): SheetCellKind {
+  switch (cell.type) {
+    case 'b':
+      return 'boolean';
+    case 'e':
+      return 'error';
+    case 'd':
+      return 'date';
+    case 'n':
+      return context.dateStyles[cell.style] ? 'date' : 'number';
+    default:
+      return 'text';
+  }
+}
+
 function cellValue(cell: OpenCell, row: number, context: SheetContext): string {
   const text = cell.text.trim();
   switch (cell.type) {
@@ -684,6 +773,7 @@ async function readSheet(
   part: Buffer,
   context: SheetContext,
   visitor: SheetVisitor,
+  sliceBytes: number,
 ): Promise<void> {
   const path: string[] = [];
   const at = {
@@ -807,7 +897,9 @@ async function readSheet(
         case 'c':
           if (parent === 'row' && cell) {
             const value = cellValue(cell, at.row, context);
-            if (value !== '') cells.push({ column: cell.column, value });
+            if (value !== '') {
+              cells.push({ column: cell.column, value, kind: cellKind(cell, context) });
+            }
             at.lastColumn = cell.column;
             cell = null;
           }
@@ -832,6 +924,6 @@ async function readSheet(
       if (capture === 'text') cell.text = appendCellText(cell.text, chunk);
       else cell.pending = appendCellText(cell.pending, chunk);
     },
-  });
+  }, sliceBytes);
   if (!at.sheetDataClosed) fail();
 }

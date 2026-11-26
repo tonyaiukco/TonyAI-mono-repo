@@ -1,0 +1,139 @@
+import { BadRequestException } from '@nestjs/common';
+import type { FuelRowIssueDTO, FuelSource } from '@tonyai/shared-types';
+import { errorBody } from '../common/api-error';
+import { readWorksheet, type SheetCell } from '../bulk-upload/xlsx-reader';
+import type { FuelAdapter, FuelDraftRow } from './adapters/adapter';
+import { petrolOfisiAdapter } from './adapters/petrol-ofisi';
+import { shellAdapter } from './adapters/shell';
+import { tankerAdapter } from './adapters/tanker';
+import { FUEL_XLSX_MAX_UNPACKED_BYTES, FUEL_XLSX_SLICE_BYTES } from './limits';
+
+/**
+ * A fuel file read whole into draft rows (inc28-fuel-bulk D4, D5): the header
+ * row found, every data row read by its source's column map, refused rows and
+ * repeats of an earlier row reported by their file row. Nothing is stored here
+ * and nothing about accounts or companies is known yet.
+ */
+
+export const FUEL_ADAPTERS: Readonly<Record<FuelSource, FuelAdapter>> = Object.freeze({
+  shell: shellAdapter,
+  petrol_ofisi: petrolOfisiAdapter,
+  tanker: tankerAdapter,
+});
+
+/**
+ * How far down the header row is looked for: a provider's export may put a
+ * title and a blank row above it (the tanker file does); a header further
+ * down is not a header this map knows.
+ */
+export const FUEL_HEADER_SEARCH_ROWS = 20;
+
+export interface FuelFileReading {
+  /** Data rows below the header that hold a value. */
+  rowsRead: number;
+  rows: FuelDraftRow[];
+  refused: FuelRowIssueDTO[];
+  /** A row whose key appeared on an earlier row of the same file (D5). */
+  duplicates: FuelRowIssueDTO[];
+}
+
+function columnsMissing(columns: readonly string[]): BadRequestException {
+  const list = columns.join(', ');
+  return new BadRequestException(
+    errorBody('fuel_file_columns_missing', `The file lacks the columns this source needs: ${list}.`, {
+      columns: list,
+    }),
+  );
+}
+
+function columnsAmbiguous(columns: readonly string[]): BadRequestException {
+  const list = columns.join(', ');
+  return new BadRequestException(
+    errorBody('fuel_file_columns_ambiguous', `The file has more than one column headed ${list}.`, {
+      columns: list,
+    }),
+  );
+}
+
+function tooManyRows(rows: number, max: number): BadRequestException {
+  return new BadRequestException(
+    errorBody('fuel_file_too_many_rows', `The file has ${rows} rows; a fuel file may hold ${max}.`, { rows, max }),
+  );
+}
+
+/** Each required header's columns in one row; trimmed, exact. */
+function headerColumns(adapter: FuelAdapter, cells: readonly SheetCell[]): Map<string, number[]> {
+  const wanted = new Set(adapter.headers);
+  const found = new Map<string, number[]>();
+  for (const cell of cells) {
+    if (cell.kind !== 'text') continue;
+    const header = cell.value.trim();
+    if (!wanted.has(header)) continue;
+    found.set(header, [...(found.get(header) ?? []), cell.column]);
+  }
+  return found;
+}
+
+export async function readFuelFile(buffer: Buffer, source: FuelSource): Promise<FuelFileReading> {
+  const adapter = FUEL_ADAPTERS[source];
+  const reading: FuelFileReading = { rowsRead: 0, rows: [], refused: [], duplicates: [] };
+  const seen = new Set<string>();
+  /** The header row's column of each mapped header, once found. */
+  let columns: ReadonlyMap<string, number> | null = null;
+  /** The leading row that held most of the headers: what a refusal names as missing. */
+  let best: Map<string, number[]> = new Map();
+  let leadingRows = 0;
+
+  await readWorksheet(
+    buffer,
+    {
+      row(rowNumber, cells) {
+        if (columns === null) {
+          leadingRows += 1;
+          const found = headerColumns(adapter, cells);
+          if (found.size === adapter.headers.length) {
+            const twice = adapter.headers.filter((header) => (found.get(header)?.length ?? 0) > 1);
+            if (twice.length > 0) throw columnsAmbiguous(twice);
+            columns = new Map(adapter.headers.map((header) => [header, found.get(header)![0]!]));
+            return;
+          }
+          if (found.size > best.size) best = found;
+          if (leadingRows >= FUEL_HEADER_SEARCH_ROWS) {
+            throw columnsMissing(adapter.headers.filter((header) => !best.has(header)));
+          }
+          return;
+        }
+
+        reading.rowsRead += 1;
+        // Past the cap, rows are only counted, so the refusal names a count the user can check.
+        if (reading.rowsRead > adapter.maxRows) return;
+        const byColumn = new Map(cells.map((cell) => [cell.column, cell]));
+        const mapped = new Map<string, SheetCell>();
+        for (const [header, column] of columns) {
+          const cell = byColumn.get(column);
+          if (cell !== undefined) mapped.set(header, cell);
+        }
+        const result = adapter.read(mapped, rowNumber);
+        if ('refused' in result) {
+          reading.refused.push({ row: rowNumber, code: result.refused });
+        } else if (seen.has(result.row.dedupeDigest)) {
+          reading.duplicates.push({ row: rowNumber, code: 'fuel_duplicate' });
+        } else {
+          seen.add(result.row.dedupeDigest);
+          reading.rows.push(result.row);
+        }
+      },
+      merge() {},
+    },
+    {
+      ...(adapter.sheetName === undefined ? {} : { sheetName: adapter.sheetName }),
+      maxUnpackedBytes: FUEL_XLSX_MAX_UNPACKED_BYTES,
+      asyncInflate: true,
+      sliceBytes: FUEL_XLSX_SLICE_BYTES,
+    },
+  );
+
+  if (columns === null) throw columnsMissing(adapter.headers.filter((header) => !best.has(header)));
+  if (reading.rowsRead > adapter.maxRows) throw tooManyRows(reading.rowsRead, adapter.maxRows);
+  return reading;
+}

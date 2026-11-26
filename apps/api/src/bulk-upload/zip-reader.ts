@@ -1,4 +1,5 @@
-import { inflateRawSync } from 'node:zlib';
+import { inflateRaw, inflateRawSync } from 'node:zlib';
+import { promisify } from 'node:util';
 import { BadRequestException } from '@nestjs/common';
 import { errorBody } from '../common/api-error';
 
@@ -99,6 +100,18 @@ function findEndOfCentralDirectory(buffer: Buffer): number {
   throw unreadableWorkbook();
 }
 
+const inflateRawAsync = promisify(inflateRaw) as (
+  data: Buffer,
+  options: { maxOutputLength: number },
+) => Promise<Buffer>;
+
+function inflateRefusal(error: unknown, budget: UnpackBudget): BadRequestException {
+  if ((error as { code?: unknown }).code === 'ERR_BUFFER_TOO_LARGE') {
+    return unpackedTooLarge(budget.limitBytes);
+  }
+  return unreadableWorkbook();
+}
+
 export class ZipArchive {
   private constructor(
     private readonly buffer: Buffer,
@@ -161,6 +174,49 @@ export class ZipArchive {
 
   /** The unpacked bytes of a part, or `undefined` when the archive has none. */
   read(name: string, budget: UnpackBudget): Buffer | undefined {
+    const located = this.locate(name, budget);
+    if (located === undefined) return undefined;
+    if (located.stored) return this.spendStored(located.data, budget);
+    let unpacked: Buffer;
+    try {
+      unpacked = inflateRawSync(located.data, { maxOutputLength: Math.max(1, budget.remaining) });
+    } catch (error) {
+      throw inflateRefusal(error, budget);
+    }
+    budget.spend(unpacked.length);
+    return unpacked;
+  }
+
+  /**
+   * `read`, with the inflation on zlib's thread pool (inc28-fuel-bulk D4): a
+   * fuel file's sheet is tens of megabytes of XML, and inflating it
+   * synchronously would hold the event loop — every other request, the health
+   * probe included — for as long as it takes. The same ceiling holds.
+   */
+  async readAsync(name: string, budget: UnpackBudget): Promise<Buffer | undefined> {
+    const located = this.locate(name, budget);
+    if (located === undefined) return undefined;
+    if (located.stored) return this.spendStored(located.data, budget);
+    let unpacked: Buffer;
+    try {
+      unpacked = await inflateRawAsync(located.data, { maxOutputLength: Math.max(1, budget.remaining) });
+    } catch (error) {
+      throw inflateRefusal(error, budget);
+    }
+    budget.spend(unpacked.length);
+    return unpacked;
+  }
+
+  private spendStored(data: Buffer, budget: UnpackBudget): Buffer {
+    budget.spend(data.length);
+    return data;
+  }
+
+  /** A part's packed bytes, after every check that does not need them unpacked. */
+  private locate(
+    name: string,
+    budget: UnpackBudget,
+  ): { data: Buffer; stored: boolean } | undefined {
     const entry = this.entries.get(name.toLowerCase());
     if (!entry) return undefined;
     if (entry.flags & FLAG_ENCRYPTED) throw unreadableWorkbook();
@@ -192,27 +248,13 @@ export class ZipArchive {
     if (dataEnd > this.centralDirectoryOffset) throw unreadableWorkbook();
 
     // A declared size is the archive's claim about itself, so it may only ever
-    // refuse early. The limit that holds is the one zlib enforces below.
+    // refuse early. The limit that holds is the one zlib enforces.
     if (entry.declaredSize > budget.remaining) {
       throw unpackedTooLarge(budget.limitBytes);
     }
-    const data = this.buffer.subarray(dataStart, dataEnd);
-    if (entry.method === METHOD_STORED) {
-      budget.spend(data.length);
-      return data;
-    }
-    let unpacked: Buffer;
-    try {
-      unpacked = inflateRawSync(data, {
-        maxOutputLength: Math.max(1, budget.remaining),
-      });
-    } catch (error) {
-      if ((error as { code?: unknown }).code === 'ERR_BUFFER_TOO_LARGE') {
-        throw unpackedTooLarge(budget.limitBytes);
-      }
-      throw unreadableWorkbook();
-    }
-    budget.spend(unpacked.length);
-    return unpacked;
+    return {
+      data: this.buffer.subarray(dataStart, dataEnd),
+      stored: entry.method === METHOD_STORED,
+    };
   }
 }
