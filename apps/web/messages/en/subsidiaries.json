@@ -28,6 +28,7 @@
     "manageLocations": "Manage facilities",
     "manageLocks": "Manage period locks",
     "open": "Open subsidiary",
+    "view": "View subsidiary",
     "delete": "Delete subsidiary",
     "created": "Subsidiary created",
     "deleted": "Subsidiary deleted",
@@ -54,6 +55,7 @@
     "locationRequired": "Add at least one operational facility"
   },
   "fields": {
+    "geographyUnavailable": "The geographies the factor library prices could not be read, so none can be chosen. Reload the page to try again.",
     "legalNameRequired": "Legal name *",
     "legalName": "Legal name",
     "tradingName": "Trading name",
@@ -214,6 +216,8 @@
     "year": "Reporting year",
     "figuresLoading": "Loading figures…",
     "figuresFailed": "The figures could not be loaded. The tree is shown without them.",
+    "nonAuthoritativeMark": "Not authoritative: {count} record(s) behind this figure rest on placeholder (demo) or other non-authoritative factors.",
+    "nonAuthoritativeNote": "Figures marked with a warning rest, in part, on placeholder (demo) or other non-authoritative factors, and so does every roll-up above them. They are not authoritative.",
     "createdBy": "Created by",
     "carriedOver": "Not recorded (created before the group tree)",
     "parent": "Parent",

@@ -96,7 +96,7 @@ const TRIGGER_REFUSALS = {
   node_type_fixed: nodeTypeFixed,
   tree_cycle: treeCycle,
   node_move_blocked: nodeMoveBlocked,
-  control_change_blocked: () => controlChangeBlocked(['records', 'assignments', 'children']),
+  control_change_blocked: () => controlChangeBlocked(['records', 'assignments', 'children', 'boundaryDeclarations']),
   entity_closed_to_data_entry: entityClosedToDataEntry,
   subsidiary_not_assignable: subsidiaryNotAssignable,
   boundary_subsidiary_not_reportable: boundarySubsidiaryNotReportable,

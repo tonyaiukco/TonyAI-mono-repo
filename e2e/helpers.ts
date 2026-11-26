@@ -1127,9 +1127,12 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
   const e2e = { legalName: { startsWith: 'E2E Test Co' } };
   reportCleanup([
     await removeEvidenceObjects(request, files.map((f) => f.storage_path)),
-    // Records, then the subsidiaries, as the owner (LP4-01: a subsidiary that
-    // holds records is deleted by nobody until they are).
+    // Records, then the facilities, then the subsidiaries, as the owner
+    // (LP4-01: a subsidiary that holds records is deleted by nobody until they
+    // are; inc26-group-tree RD9, TA023: nor one with a facility, nor in the
+    // transaction that deleted its facilities — each step is its own).
     await deleteRecordsAsOwner({ subsidiary: e2e }),
+    await asOwner('locations', (prisma) => prisma.location.deleteMany({ where: { subsidiary: e2e } })),
     await asOwner('subsidiaries', (prisma) => prisma.subsidiary.deleteMany({ where: e2e })),
   ]);
 }

@@ -1,11 +1,12 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import type { SubsidiaryDTO, UserSummaryDTO } from '@tonyai/shared-types';
+import type { RollUpResponse, SubsidiaryDTO, UserSummaryDTO } from '@tonyai/shared-types';
 import enUsers from '../apps/web/messages/en/users.json';
 import enSubsidiaries from '../apps/web/messages/en/subsidiaries.json';
 import {
   ADMIN_EMAIL,
   API_BASE,
   APPROVER_EMAIL,
+  AUDITOR_EMAIL,
   E2E_PERIOD,
   E2E_YEAR,
   ENTRY_EMAIL,
@@ -310,5 +311,43 @@ test("a facility takes an optional type; in Turkish the tree names its types and
     await api(request, admin, 'patch', '/me/preferences', { language: 'en' });
     await api(request, admin, 'delete', `/inventory-boundaries/${opened.json.id}`);
     await deleteCompanyWithFacilities(request, admin, company.id);
+  }
+});
+
+test("the tree marks figures resting on non-authoritative factors, up to the root; a read-only reader opens an associate's page from the tree (owner review of WP7)", async ({ page, request }) => {
+  const admin = await getAccessToken(request, ADMIN_EMAIL);
+  const year = 2026; // the seed's figures rest on the placeholder library
+  const roll = (await api<RollUpResponse>(request, admin, 'get', `/emissions/roll-up?reportingYear=${year}`)).json;
+  const root = roll.rows.find((r) => r.parentId === null && r.nodeType === 'holding');
+  const energy = roll.rows.find((r) => r.subsidiaryId === SUB.energy);
+  // The anchor: the seed has such records, so the marks below are not vacuous.
+  expect(energy?.own?.nonAuthoritativeRecordCount ?? 0).toBeGreaterThan(0);
+  expect(root?.rollUp?.nonAuthoritativeRecordCount ?? 0).toBeGreaterThanOrEqual(energy?.own?.nonAuthoritativeRecordCount ?? 0);
+
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/subsidiaries');
+  await expect(page.getByTestId('tree-non-authoritative')).toContainText(enSubsidiaries.tree.nonAuthoritativeNote);
+  await expect(page.getByTestId(`non-authoritative-own-${SUB.energy}`)).toBeVisible();
+  await expect(page.getByTestId(`non-authoritative-rollup-${root!.subsidiaryId}`)).toBeVisible();
+  // A company with no such figure carries no mark.
+  for (const row of roll.rows) {
+    if (row.rollUp !== null && row.rollUp.nonAuthoritativeRecordCount === 0) {
+      await expect(page.getByTestId(`non-authoritative-rollup-${row.subsidiaryId}`)).toHaveCount(0);
+    }
+  }
+
+  // An auditor reads the associate's page — its basis and why it takes no data.
+  const context = await page.context().browser()!.newContext();
+  try {
+    const auditor = await context.newPage();
+    await login(auditor, AUDITOR_EMAIL);
+    await auditor.goto('/subsidiaries');
+    await auditor.getByTestId(`tree-row-${SUB.associate}`).getByRole('button', { name: enSubsidiaries.list.view }).click();
+    await expect(auditor).toHaveURL(new RegExp(`/subsidiaries/${SUB.associate}$`));
+    await expect(auditor.getByTestId('ghg-basis')).toHaveText(enSubsidiaries.tree.ghgBasisAssociate);
+    await expect(auditor.getByText(enSubsidiaries.tree.associateClosed)).toBeVisible();
+    await expect(auditor.getByRole('button', { name: enSubsidiaries.list.open })).toHaveCount(0);
+  } finally {
+    await context.close();
   }
 });

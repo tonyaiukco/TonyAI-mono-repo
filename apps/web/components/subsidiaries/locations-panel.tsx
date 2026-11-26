@@ -79,7 +79,7 @@ export function LocationsPanel({
   // A new location defaults to its parent subsidiary's geography (editable).
   const freshForm = () => ({
     ...emptyForm,
-    geographyCode: subsidiary?.geographyCode ?? '',
+    geographyCode: pricedGeographies.defaultFor(subsidiary?.geographyCode),
   });
 
   // Reset the form whenever the drawer targets another subsidiary.
@@ -88,6 +88,13 @@ export function LocationsPanel({
     setEditingId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subsidiary?.id]);
+
+  // Coverage read after the form was set: a new facility's default, once known.
+  useEffect(() => {
+    if (editingId || pricedGeographies.priced === null) return;
+    setForm((f) => (f.geographyCode === '' ? { ...f, geographyCode: pricedGeographies.defaultFor(subsidiary?.geographyCode) } : f));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pricedGeographies.priced]);
 
   function startEdit(loc: LocationDTO) {
     setEditingId(loc.id);
@@ -267,11 +274,10 @@ export function LocationsPanel({
                   {/* UK + Türkiye, plus this location's own value if it
                       is something else — hiding a code the record holds
                       would blank the trigger. */}
-                  {pricedGeographies(
-                    form.geographyCode,
-                    subsidiary?.geographyCode,
-                    locations.find((l) => l.id === editingId)?.geographyCode,
-                  ).map((g) => (
+                  {/* Priced geographies; an edited facility keeps the one
+                      it already holds, a new one never inherits an unpriced
+                      geography from its company (owner review of WP7, P2). */}
+                  {pricedGeographies.choices(editingId ? locations.find((l) => l.id === editingId)?.geographyCode : undefined, subsidiary?.geographyCode).map((g) => (
                     <SelectItem key={g} value={g}>
                       {geographyLabel(g, tGeography)}
                     </SelectItem>
@@ -281,6 +287,9 @@ export function LocationsPanel({
               <p className="text-xs text-muted-foreground">
                 {t('locations.geographyHint')}
               </p>
+              {pricedGeographies.failed && (
+                <p className="text-xs text-destructive">{t('fields.geographyUnavailable')}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>{t('locations.type')}</Label>

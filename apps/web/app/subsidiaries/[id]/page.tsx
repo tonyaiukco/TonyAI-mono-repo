@@ -338,10 +338,9 @@ export default function SubsidiaryDetailPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {pricedGeographies(
-                          form.geographyCode,
-                          subsidiary.geographyCode,
-                        ).map((code) => (
+                        {/* An existing company: priced geographies, and
+                            the one it already holds (D10). */}
+                        {pricedGeographies.choices(subsidiary.geographyCode).map((code) => (
                           <SelectItem key={code} value={code}>
                             {geographyLabel(code, tGeography)}
                           </SelectItem>

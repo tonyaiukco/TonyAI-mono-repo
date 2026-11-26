@@ -34,8 +34,12 @@ import { formatNumber } from "@/lib/i18n/number";
 export function ConsolidationCard({
   role,
   onApproach,
+  refreshKey = 0,
 }: {
   role: UserRole | undefined;
+  /** Bumped by the page whenever its company list is read again (a create, a
+   *  delete): the exclusions note follows the tree (owner review of WP7, P2). */
+  refreshKey?: number;
   /** The approach as loaded or saved — the tree's GHG basis reads it. */
   onApproach?: (approach: ConsolidationApproach) => void;
 }) {
@@ -68,7 +72,7 @@ export function ConsolidationCard({
 
   useEffect(() => {
     if (role !== undefined) void load();
-  }, [role, load]);
+  }, [role, load, refreshKey]);
 
   async function choose(value: string) {
     if (!organisation || value === organisation.consolidationApproach) return;

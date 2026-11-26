@@ -121,6 +121,12 @@ export interface ScopeFigures {
   scope1: number;
   scope2: number;
   total: number;
+  /** The Scope 1 and 2 records behind these figures that are not authoritative
+   *  now (a placeholder, fixture or withdrawn factor — `authoritativeNow`),
+   *  counted as the main total counts them and summed up the tree like the
+   *  tonnes, so a roll-up says so wherever one of its figures does (owner
+   *  review of WP7, P1). */
+  nonAuthoritativeRecordCount: number;
 }
 
 /** `GET /organisation`: the caller's own organisation (design D8). */
@@ -175,10 +181,15 @@ export interface RollUpResult {
   rollUp: ScopeFigures | null;
 }
 
-const ZERO: ScopeFigures = Object.freeze({ scope1: 0, scope2: 0, total: 0 });
+const ZERO: ScopeFigures = Object.freeze({ scope1: 0, scope2: 0, total: 0, nonAuthoritativeRecordCount: 0 });
 
 function add(a: ScopeFigures, b: ScopeFigures): ScopeFigures {
-  return { scope1: a.scope1 + b.scope1, scope2: a.scope2 + b.scope2, total: a.total + b.total };
+  return {
+    scope1: a.scope1 + b.scope1,
+    scope2: a.scope2 + b.scope2,
+    total: a.total + b.total,
+    nonAuthoritativeRecordCount: a.nonAuthoritativeRecordCount + b.nonAuthoritativeRecordCount,
+  };
 }
 
 /**

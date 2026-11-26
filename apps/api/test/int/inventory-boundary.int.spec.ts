@@ -644,13 +644,16 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
         }),
         `site, frozen ${frozen}`,
       ).toBe('TA014');
+      // A subsidiary with a site is refused first for holding a facility
+      // (inc26-group-tree, RD9, TA023); the company-only case below is where
+      // the declaration's own check (TA014) answers.
       expect(
         await refusedAsOwner(async (tx) => {
           await createBoundary(tx, a, { locationId: siteA, frozen });
           await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
         }),
         `subsidiary, frozen ${frozen}`,
-      ).toBe('TA014');
+      ).toBe('TA023');
       // Declared at company level alone — no site of it in the version, so
       // the subsidiary's own check, not a site's, is what refuses.
       expect(

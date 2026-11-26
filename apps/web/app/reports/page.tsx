@@ -131,7 +131,12 @@ function ReportsPageInner() {
   const [includeEvidence, setIncludeEvidence] = useState(false);
 
   // Live data
-  const [consolidation, setConsolidation] = useState<{ approach: ConsolidationApproach; associates: string[] } | null>(null);
+  // "loading" until read, "failed" when either read fails: the preview never
+  // names an approach, or leaves out associates, it did not read (owner review
+  // of WP7, P2). The PDF reads its own.
+  const [consolidation, setConsolidation] = useState<
+    { approach: ConsolidationApproach; associates: string[] } | "loading" | "failed"
+  >("loading");
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
   const [subsidiariesLoaded, setSubsidiariesLoaded] = useState(false);
   // The report's own figures, read in the same snapshot as `meta` (LP4-03 K2):
@@ -185,7 +190,7 @@ function ReportsPageInner() {
     // exclusions read answers a reader of no associate with an empty list.
     Promise.all([api.getOrganisation(), api.listBoundaryExclusions()])
       .then(([org, excluded]) => setConsolidation({ approach: org.consolidationApproach, associates: excluded.map((x) => x.legalName) }))
-      .catch(() => setConsolidation(null));
+      .catch(() => setConsolidation("failed"));
     api
       .listSubsidiaries()
       .then((list) => {
@@ -527,11 +532,17 @@ function ReportsPageInner() {
                             this reader may read (inc26-group-tree, D8). */}
                         {t.rich('methodology', {
                           strong: (chunks) => <strong>{chunks}</strong>,
-                          approach: t(`methodologyApproach.${consolidation?.approach ?? 'operational_control'}`),
+                          approach:
+                            consolidation === 'loading'
+                              ? t('methodologyApproachLoading')
+                              : consolidation === 'failed'
+                                ? t('methodologyApproachUnavailable')
+                                : t(`methodologyApproach.${consolidation.approach}`),
                         })}
-                        {consolidation && consolidation.associates.length > 0 && (
+                        {typeof consolidation === 'object' && consolidation.associates.length > 0 && (
                           <> {t('methodologyExclusions', { names: consolidation.associates.join(', ') })}</>
                         )}
+                        {consolidation === 'failed' && <> {t('methodologyExclusionsUnavailable')}</>}
                       </p>
                     )}
                   </CardContent>

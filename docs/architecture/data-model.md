@@ -40,11 +40,13 @@ Four `ENABLE ALWAYS` triggers hold the rules for every writer — the previous A
 
 | Trigger | Code | What it holds |
 | --- | --- | --- |
-| `subsidiaries_tree_shape` | `TA018` | Under an advisory lock per organisation, at READ COMMITTED: a company written with no parent goes under the root, or becomes the root when there is none (RD14); one `holding`, the only node with no parent; placement by type, never under an associate; a type never changes; no move under the node's own subtree, nor while the subtree holds a record (the subtree's rows locked first); `associate` only on a company or child company with no child, record or grant |
+| `subsidiaries_tree_shape` | `TA018` | Under an advisory lock per organisation, at READ COMMITTED: a company written with no parent goes under the root, or becomes the root when there is none (RD14); one `holding`, the only node with no parent; placement by type, never under an associate; a type never changes; no move under the node's own subtree, nor while the subtree holds a record (the subtree's rows locked first); `associate` only on a company or child company with no child, record or grant, and not declared in a year's current boundary — its newest version, or its newest frozen one, which is the newest again once an open version after it is deleted |
 | `activity_records_entity_open` | `TA019` | No record for a sector group or an associate; the company's row is read `FOR SHARE`, so a record and a concurrent associate tick cannot both commit |
 | `user_subsidiary_access_assignable` | `TA020` | No grant for a sector group or an associate, with the same row lock |
-| `locations_company_holds_records` | `TA021` | No facility under a sector group |
+| `locations_company_holds_records` | `TA021` | No facility under a sector group, and a facility stays with its company (its company never changes) |
 | `inventory_boundary_subsidiaries_reportable` | `TA022` | No boundary declaration for a sector group or an associate — a copy or any other writer; the company's row is read `FOR SHARE`, so a declaration and an associate tick (the API locks the node `FOR NO KEY UPDATE` before it counts) cannot both commit |
+| `subsidiaries_keep_facilities` | `TA023` | No company with a facility is deleted (RD9) by any writer, nor a company one of whose facilities was deleted earlier in the same transaction (the previous API image's sweep). A delete reached through a key's cascade (an organisation's offboarding) passes |
+| `locations_note_removal` | — | Notes, for the rest of the transaction, the company of each facility deleted on its own (`tonyai.facility_removed_from`, transaction-local), for `TA023` |
 
 Two CHECKs back them: `subsidiaries_root_check` (a node is the `holding` exactly when it has no parent) and `subsidiaries_share_percent_check` (0–100). All seven triggers and both CHECKs are pinned in `packages/db/scripts/runtime-role.mjs`. The runtime role may update `parent_id`, `control`, `share_percent` and `nace_code`, never `node_type` or `created_by_role`. An operator moving a company to another organisation now names its parent there too.
 

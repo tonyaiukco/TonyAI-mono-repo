@@ -53,6 +53,9 @@
     "financial_control": "finansal kontrol"
   },
   "methodologyExclusions": "Öz kaynak şirketi olarak Kapsam 1 ve 2 dışında tutulanlar (konsolide edilmez): {names}.",
+  "methodologyApproachLoading": "okunuyor…",
+  "methodologyApproachUnavailable": "burada okunamadı (oluşturulan rapor belirtir)",
+  "methodologyExclusionsUnavailable": "Kapsam 1 ve 2 dışında bırakılan öz kaynak şirketleri de burada okunamadı; oluşturulan rapor bunları listeler.",
   "generate": "Oluştur ve indir",
   "cannotGenerate": "Rolünüz rapor verilerini görebilir ancak rapor oluşturamaz veya dışa aktaramaz.",
   "downloadPdf": "PDF indir",

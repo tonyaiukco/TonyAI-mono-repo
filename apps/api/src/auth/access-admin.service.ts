@@ -844,7 +844,14 @@ interface AdminActor extends RequestUser {
   scope: ReadonlySet<string> | null;
 }
 
-async function lockAndReadActor(
+/**
+ * The organisation's administrative lock, then the actor as it stands now: its
+ * role (holding `capability`) and, for a scoped role, its companies. A write
+ * another module gates on a company grant re-checks it here, so a grant
+ * withdrawn while the request waited no longer lets it through (the boundary
+ * declarations; owner review of WP7, P2).
+ */
+export async function lockAndReadActor(
   tx: Prisma.TransactionClient,
   actor: RequestUser,
   organisationId: string,

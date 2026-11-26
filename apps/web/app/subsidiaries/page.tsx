@@ -42,7 +42,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Building2, CheckCircle2, ChevronDown, ChevronRight, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
@@ -51,7 +51,6 @@ import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer
 import {
   admitsChild,
   can,
-  geographyOptions,
   holdsRecords,
   MAX_LOCATIONS_PER_CREATE,
   mayBeAssociate,
@@ -69,6 +68,8 @@ import type {
 } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConsolidationCard } from "@/components/subsidiaries/consolidation-card";
+import { NonAuthoritativeWarning } from "@/components/non-authoritative-warning";
+import { usePricedGeographies } from "@/lib/use-priced-geographies";
 import { parseNaceCode, parseSharePercent, treeRows } from "@/lib/subsidiaries-view";
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
@@ -85,7 +86,8 @@ const emptyForm = {
   legalName: "",
   tradingName: "",
   location: "",
-  geographyCode: "TR",
+  // Set when the dialog opens, from what the library prices (owner review of WP7).
+  geographyCode: "",
   sector: "",
   reportingStatus: "pending" as SubsidiaryStatus,
   // The group tree (inc26-group-tree): where the node sits and what it is.
@@ -139,8 +141,10 @@ export default function SubsidiariesPage() {
   const [year, setYear] = useState(ROLL_UP_YEARS[0]);
   const [rollUp, setRollUp] = useState<Map<string, RollUpRow> | null>(null);
   const [rollUpState, setRollUpState] = useState<"loading" | "ready" | "failed">("loading");
-  const [priced, setPriced] = useState<string[] | null>(null);
+  // A picker offers only what the library prices (D10; owner review of WP7, P2).
+  const pricedGeos = usePricedGeographies();
 
+  const [listVersion, setListVersion] = useState(0);
   async function refresh() {
     setLoading(true);
     try {
@@ -150,6 +154,9 @@ export default function SubsidiariesPage() {
       ]);
       setSubsidiaries(list);
       setLocations(locs);
+      // Every reading of the list after the first: the exclusions note and
+      // the roll-up read again with it.
+      setListVersion((v) => v + 1);
     } catch (e) {
       showError(e);
     } finally {
@@ -163,12 +170,6 @@ export default function SubsidiariesPage() {
       .then(setUser)
       .catch(showError);
     void refresh();
-    // A picker offers only what the library prices (D10); the API refuses the
-    // rest with 422 either way, so a failed read falls back to the full list.
-    api
-      .factorCoverage()
-      .then((c) => setPriced([...new Set(c.entries.map((e) => e.geographyCode))]))
-      .catch(() => setPriced(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -188,11 +189,31 @@ export default function SubsidiariesPage() {
     return () => {
       live = false;
     };
-  }, [year]);
+  }, [year, listVersion]);
 
   const rows = useMemo(() => treeRows(subsidiaries, collapsed, locale), [subsidiaries, collapsed, locale]);
-  const figure = (f: ScopeFigures | null | undefined) =>
-    f ? formatNumber(f.total, locale, { maximumFractionDigits: 1 }) : "—";
+  // A figure that rests, in part, on a factor that is not authoritative now
+  // says so where it is shown, as the dashboard does (owner review of WP7, P1).
+  const figure = (f: ScopeFigures | null | undefined, testId: string) =>
+    f ? (
+      <span className="inline-flex items-center justify-end gap-1">
+        {f.nonAuthoritativeRecordCount > 0 && (
+          <AlertTriangle
+            className="h-3.5 w-3.5 text-amber-600"
+            data-testid={testId}
+            role="img"
+            aria-label={t("tree.nonAuthoritativeMark", { count: formatNumber(f.nonAuthoritativeRecordCount, locale) })}
+          >
+            <title>{t("tree.nonAuthoritativeMark", { count: formatNumber(f.nonAuthoritativeRecordCount, locale) })}</title>
+          </AlertTriangle>
+        )}
+        {formatNumber(f.total, locale, { maximumFractionDigits: 1 })}
+      </span>
+    ) : (
+      "—"
+    );
+  const anyNonAuthoritative =
+    rollUp !== null && [...rollUp.values()].some((r) => (r.rollUp?.nonAuthoritativeRecordCount ?? 0) > 0);
   function toggle(id: string) {
     const next = new Set(collapsed);
     if (next.has(id)) next.delete(id);
@@ -226,8 +247,9 @@ export default function SubsidiariesPage() {
     : formParent
       ? NODE_TYPES.filter((type) => admitsChild(formParent, type))
       : ["holding"];
-  const geographyChoices = (current: string) =>
-    priced ? geographyOptions(current).filter((g) => priced.includes(g) || g === current) : geographyOptions(current);
+  // A new company and its draft facilities: priced geographies only — a
+  // parent's geography when priced, never one the library does not price.
+  const geographyChoices = (preferred?: string | null) => pricedGeos.choices(undefined, preferred);
   const canManageLocations = can(user?.role, "location.write");
   const canLockPeriods = can(user?.role, "period_lock.write");
   const locSubsidiary = subsidiaries.find((s) => s.id === locSubsidiaryId) ?? null;
@@ -235,13 +257,21 @@ export default function SubsidiariesPage() {
   const locCount = (subsidiaryId: string) =>
     locations.filter((l) => l.subsidiaryId === subsidiaryId).length;
 
+  // Coverage read after the dialog opened: its default, once known.
+  useEffect(() => {
+    if (!addOpen || form.geographyCode !== "" || pricedGeos.priced === null) return;
+    const parent = subsidiaries.find((s) => s.id === form.parentId);
+    setForm((f) => (f.geographyCode === "" ? { ...f, geographyCode: pricedGeos.defaultFor(parent?.geographyCode) } : f));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addOpen, pricedGeos.priced]);
+
   function openAdd() {
     // Under the root by default (a masterkey), or the first company a
     // super_admin may parent a child company under.
     const root = parentOptions.find((s) => s.nodeType === "holding") ?? parentOptions[0];
     const parentId = root?.id ?? "";
     const nodeType: NodeType = !canManage ? "child_company" : root ? "company" : "holding";
-    setForm({ ...emptyForm, parentId, nodeType, geographyCode: root?.geographyCode ?? emptyForm.geographyCode });
+    setForm({ ...emptyForm, parentId, nodeType, geographyCode: pricedGeos.defaultFor(root?.geographyCode) });
     setDraftLocations([]);
     setDraftName("");
     setDraftGeo("");
@@ -380,7 +410,7 @@ export default function SubsidiariesPage() {
             <SummaryCard title={t("list.cards.geographies")} value={formatNumber(geographies, locale)} icon={<Globe className="h-4 w-4 text-primary" />} hint={t("list.cards.geographiesHint")} />
           </div>
 
-          <ConsolidationCard role={user?.role} />
+          <ConsolidationCard role={user?.role} refreshKey={listVersion} />
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-4">
@@ -458,10 +488,10 @@ export default function SubsidiariesPage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {rollUpState === "ready" && holdsRecords(s) ? figure(rollUp?.get(s.id)?.own) : rollUpState === "ready" ? "—" : ""}
+                          {rollUpState === "ready" && holdsRecords(s) ? figure(rollUp?.get(s.id)?.own, `non-authoritative-own-${s.id}`) : rollUpState === "ready" ? "—" : ""}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {rollUpState === "ready" ? figure(rollUp?.get(s.id)?.rollUp) : ""}
+                          {rollUpState === "ready" ? figure(rollUp?.get(s.id)?.rollUp, `non-authoritative-rollup-${s.id}`) : ""}
                         </TableCell>
                         <TableCell className="text-muted-foreground">{s.tradingName ?? "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{s.location ?? "—"}</TableCell>
@@ -494,20 +524,26 @@ export default function SubsidiariesPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
+                          {/* The register is a list; everything about one
+                              company lives on its own page — its contact
+                              details, dependent counts, GHG basis and why an
+                              associate takes no data — so every reader opens
+                              it (owner review of WP7, P2); only a writer edits
+                              there. */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => router.push(`/subsidiaries/${s.id}`)}
+                            aria-label={canManage ? t("list.open") : t("list.view")}
+                          >
+                            {canManage ? (
+                              <Pencil className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </Button>
                           {canManage && (
                             <>
-                              {/* The register is a list; everything about one
-                                  subsidiary now lives on its own page, which is
-                                  where contact details and the dependent counts
-                                  are. */}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => router.push(`/subsidiaries/${s.id}`)}
-                                aria-label={t("list.open")}
-                              >
-                                <Pencil className="h-4 w-4 text-muted-foreground" />
-                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -523,6 +559,11 @@ export default function SubsidiariesPage() {
                     ))}
                   </TableBody>
                 </Table>
+              )}
+              {rollUpState === "ready" && anyNonAuthoritative && (
+                <div className="pt-3">
+                  <NonAuthoritativeWarning testId="tree-non-authoritative">{t("tree.nonAuthoritativeNote")}</NonAuthoritativeWarning>
+                </div>
               )}
               {!loading && subsidiaries.length > 0 && rollUpState !== "ready" && (
                 <p className="pt-3 text-xs text-muted-foreground" role="status">
@@ -620,13 +661,16 @@ export default function SubsidiariesPage() {
                         already holds — otherwise editing the seeded EU
                         subsidiary would bind the Select to a value with no
                         matching item and render a blank trigger. */}
-                    {geographyChoices(form.geographyCode).map((g) => (
+                    {geographyChoices(subsidiaries.find((p) => p.id === form.parentId)?.geographyCode).map((g) => (
                       <SelectItem key={g} value={g}>
                         {geographyLabel(g, tGeography)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {pricedGeos.failed && (
+                  <p className="pt-1 text-xs text-destructive">{t("fields.geographyUnavailable")}</p>
+                )}
               </Field>
               <Field label={t("fields.status")}>
                 <Select
@@ -749,7 +793,7 @@ export default function SubsidiariesPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {geographyChoices(draftGeo || form.geographyCode).map((code) => (
+                  {geographyChoices(form.geographyCode).map((code) => (
                     <SelectItem key={code} value={code}>
                       {geographyLabel(code, tGeography)}
                     </SelectItem>

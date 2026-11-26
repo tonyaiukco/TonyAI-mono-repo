@@ -5,14 +5,47 @@ import { api } from "@/lib/api";
 import { geographyOptions } from "@/lib/types";
 
 /**
- * The geographies a picker offers (inc26-group-tree, D10): `geographyOptions`
- * narrowed to those the factor library can price (`GET /factors/coverage`),
- * always keeping the values the record already holds so a stored geography
- * never blanks its own control. The API refuses an unpriced one with 422
- * `geography_without_factors` either way, so a failed read offers the full list.
+ * A picker's geographies (inc26-group-tree, D10): `geographyOptions` narrowed
+ * to those the factor library can price (`GET /factors/coverage`). `stored` is
+ * the value an EXISTING record already holds — kept so a stored geography
+ * never blanks its own control. A new record has none: a parent's unpriced
+ * geography is not offered to it, and nothing is offered while coverage is
+ * unread or unreadable, since the API would refuse it with 422
+ * `geography_without_factors` (owner review of WP7, P2).
  */
-export function usePricedGeographies(): (...current: (string | null | undefined)[]) => string[] {
+export function pricedChoices(
+  priced: readonly string[] | null,
+  stored?: string | null,
+  /** A new record's parent's geography: offered when the library prices it,
+   *  even outside the selectable list (a facility of an EU company). */
+  preferred?: string | null,
+): string[] {
+  // The selectable geographies (UK and Türkiye), as far as the library prices them.
+  const offered = priced === null ? [] : geographyOptions().filter((g) => priced.includes(g));
+  if (preferred && priced?.includes(preferred) && !offered.includes(preferred)) offered.push(preferred);
+  if (stored && !offered.includes(stored)) offered.push(stored);
+  return offered;
+}
+
+/** A new record's geography: `preferred` (a parent's) when priced, else the
+ *  first priced selectable one, else none — never an unpriced value. */
+export function pricedDefault(priced: readonly string[] | null, preferred?: string | null): string {
+  const offered = pricedChoices(priced, null, preferred);
+  return preferred && offered.includes(preferred) ? preferred : (offered[0] ?? "");
+}
+
+export interface PricedGeographies {
+  /** The priced codes; `null` until read, and after a failed read. */
+  priced: readonly string[] | null;
+  /** The coverage read failed: nothing new can be offered. */
+  failed: boolean;
+  choices: (stored?: string | null, preferred?: string | null) => string[];
+  defaultFor: (preferred?: string | null) => string;
+}
+
+export function usePricedGeographies(): PricedGeographies {
   const [priced, setPriced] = useState<string[] | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
     api
@@ -20,15 +53,17 @@ export function usePricedGeographies(): (...current: (string | null | undefined)
       .then((c) => {
         if (live) setPriced([...new Set(c.entries.map((e) => e.geographyCode))]);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (live) setFailed(true);
+      });
     return () => {
       live = false;
     };
   }, []);
-  return (...current) => {
-    const options = geographyOptions(...current);
-    if (priced === null) return options;
-    const kept = new Set(current.filter((c): c is string => Boolean(c)));
-    return options.filter((g) => priced.includes(g) || kept.has(g));
+  return {
+    priced,
+    failed,
+    choices: (stored, preferred) => pricedChoices(priced, stored, preferred),
+    defaultFor: (preferred) => pricedDefault(priced, preferred),
   };
 }

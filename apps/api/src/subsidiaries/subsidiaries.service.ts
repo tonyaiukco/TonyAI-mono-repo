@@ -23,7 +23,7 @@ import type {
   SubsidiarySummaryDTO,
 } from '@tonyai/shared-types';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
-import { AccessAdminService } from '../auth/access-admin.service';
+import { AccessAdminService, lockTenantAdmin } from '../auth/access-admin.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import { assertPricedGeography } from '../common/priced-geography';
 import {
@@ -407,28 +407,33 @@ export class SubsidiariesService {
     ) {
       await assertPricedGeography(this.calculations, dto.geographyCode);
     }
-    const moves = dto.parentId !== undefined && dto.parentId !== existing.parentId;
-    if (moves) data.parentId = dto.parentId;
-    const controlChanges = dto.control !== undefined && dto.control !== existing.control;
-    if (controlChanges) data.control = dto.control;
-
     // In a transaction like create and delete. It was not, which left this
     // class half-atomic — a crash between the row write and the audit insert
     // lost the trail for an update while create and delete were safe.
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (moves || controlChanges) {
+      if (dto.parentId !== undefined || dto.control !== undefined) {
         // TA018's own lock order, taken before the row: the organisation's
-        // tree lock, then the node FOR NO KEY UPDATE. Updating the row first
-        // and meeting the tree lock in the trigger could deadlock against a
-        // move of an ancestor, which holds the tree lock and then locks its
-        // subtree. Locking the node before counting also serialises an
-        // associate tick against a record, a grant or a boundary declaration
-        // (each reads the row FOR SHARE; architect and security review, WP7).
+        // tree lock, then the node. Updating the row first and meeting the
+        // tree lock in the trigger could deadlock against a move of an
+        // ancestor, which holds the tree lock and then locks its subtree
+        // (architect and security review, WP7).
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('tonyai.subsidiary_tree'), hashtext(${existing.organisationId}))`;
-        await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR NO KEY UPDATE`;
       }
-      if (moves) await this.assertMovable(tx, user, existing, dto.parentId ?? null);
-      if (controlChanges && dto.control === 'associate') await this.assertMayBecomeAssociate(tx, existing);
+      // The node FOR NO KEY UPDATE, then read again: what changes, and the
+      // audit row's `before`, come from the row as locked, not from the read
+      // before the transaction — two moves of one company would otherwise
+      // both record its first parent (owner review of WP7, P2). The lock also
+      // serialises an associate tick against a record, a grant or a boundary
+      // declaration, each of which reads the row FOR SHARE.
+      await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR NO KEY UPDATE`;
+      const current = await tx.subsidiary.findUnique({ where: { id } });
+      if (!current) throw new ResourceNotFoundError('subsidiary_not_found');
+      const moves = dto.parentId !== undefined && dto.parentId !== current.parentId;
+      if (moves) data.parentId = dto.parentId;
+      const controlChanges = dto.control !== undefined && dto.control !== current.control;
+      if (controlChanges) data.control = dto.control;
+      if (moves) await this.assertMovable(tx, user, current, dto.parentId ?? null);
+      if (controlChanges && dto.control === 'associate') await this.assertMayBecomeAssociate(tx, current);
       let row: Subsidiary;
       try {
         row = await tx.subsidiary.update({ where: { id }, data });
@@ -441,7 +446,7 @@ export class SubsidiariesService {
           action: 'update',
           entity: 'subsidiary',
           entityId: id,
-          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+          diff: { before: this.toDTO(current), after: this.toDTO(row) },
         },
         tx,
       );
@@ -513,14 +518,25 @@ export class SubsidiariesService {
         select: { boundary: { select: { reportingYear: true, version: true } } },
       }),
     ]);
+    // A year's current boundary: its newest version, or its newest frozen
+    // one — which is the newest again once an open version after it is
+    // deleted (owner review of WP7, P1). TA018 holds the same rule.
     let declaredInNewest = false;
     for (const year of new Set(declarations.map((d) => d.boundary.reportingYear))) {
-      const newest = await tx.inventoryBoundary.findFirst({
-        where: { organisationId: node.organisationId, reportingYear: year },
-        orderBy: { version: 'desc' },
-        select: { version: true },
-      });
-      if (newest && declarations.some((d) => d.boundary.reportingYear === year && d.boundary.version === newest.version)) {
+      const [newest, newestFrozen] = await Promise.all([
+        tx.inventoryBoundary.findFirst({
+          where: { organisationId: node.organisationId, reportingYear: year },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        }),
+        tx.inventoryBoundary.findFirst({
+          where: { organisationId: node.organisationId, reportingYear: year, frozenAt: { not: null } },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        }),
+      ]);
+      const current = new Set([newest?.version, newestFrozen?.version].filter((v): v is number => v !== undefined));
+      if (declarations.some((d) => d.boundary.reportingYear === year && current.has(d.boundary.version))) {
         declaredInNewest = true;
         break;
       }
@@ -827,6 +843,12 @@ export class SubsidiariesService {
     // failed audit insert would leave a deletion with no trail at all.
     // Stated, not inherited — the same argument the create path makes.
     await this.prisma.$transaction(async (tx) => {
+      // The organisation's administrative lock first — a grant change holds
+      // it while it reads and removes grants — so the grants this delete
+      // removes are not also removed, and audited, by a concurrent access
+      // change (owner review of WP7, P2). Before the row lock: a grant change
+      // holding the admin lock inserts grants, which share-lock this row.
+      await lockTenantAdmin(tx, existing.organisationId);
       // Lock the parent row BEFORE counting. Inserting any child takes a
       // FOR KEY SHARE lock on the row it references, so FOR UPDATE here
       // serialises against a record/location/target/lock being created while
@@ -840,10 +862,13 @@ export class SubsidiariesService {
       // The guard refuses on anything left beneath the company — a child
       // node and a facility included (RD9) — so nothing cascades.
       await this.assertDeletable(tx, id);
-      // Its grants go with it (the key cascades); each removal is audited as
-      // a grant's removal is anywhere else (security review, WP7) — a child
-      // company a super_admin created carries one from the start.
-      const grants = await tx.userSubsidiaryAccess.findMany({ where: { subsidiaryId: id }, select: { userId: true } });
+      // Its grants go first, removed here rather than by the key's cascade,
+      // and each removal is audited as a grant's removal is anywhere else
+      // (security review, WP7) — only the rows this statement removed (owner
+      // review, P2). A child company a super_admin created carries one from
+      // the start.
+      const grants = await tx.$queryRaw<{ userId: string }[]>`
+        DELETE FROM user_subsidiary_access WHERE subsidiary_id = ${id}::uuid RETURNING user_id::text AS "userId"`;
       await tx.subsidiary.delete({ where: { id } });
       await this.audit.record(
         user,

@@ -1041,6 +1041,10 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'user_subsidiary_access', trigger: 'user_subsidiary_access_assignable', fn: 'user_subsidiary_access_assignable', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'locations', trigger: 'locations_company_holds_records', fn: 'locations_company_holds_records', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'inventory_boundary_subsidiaries', trigger: 'inventory_boundary_subsidiaries_reportable', fn: 'inventory_boundary_subsidiaries_reportable', type: ROW | BEFORE | ON.insert | ON.update },
+  // RD9 for every writer: no company with a facility is deleted (TA023), and
+  // a facility deleted in the same transaction counts (owner review of WP7).
+  { table: 'subsidiaries', trigger: 'subsidiaries_keep_facilities', fn: 'subsidiaries_keep_facilities', type: ROW | BEFORE | ON.delete },
+  { table: 'locations', trigger: 'locations_note_removal', fn: 'locations_note_removal', type: ROW | ON.delete },
 ]);
 
 /**

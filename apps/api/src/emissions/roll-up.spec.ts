@@ -6,11 +6,18 @@ import { makeMasterkey, makeStandardUser, makeSuperAdmin } from '../../test/help
 /** GET /emissions/roll-up (inc26-group-tree, task 5.3, INC-2.6 §5.2). DB-free. */
 
 const node = (id: string, parentId: string | null, nodeType: string, control = 'controlled') => ({ id, parentId, nodeType, control });
+const release = (id: string, status: string) => ({ id, publisher: 'p', title: 't', edition: 'e', ordinal: 1, status, sourceUrl: null, licence: null, publishedAt: null, gwpSet: null });
+/** A figure from a factor of the release given — authoritative unless said otherwise. */
+const snapshot = (tCo2e: number, factorRelease = release('auth', 'authoritative')) => ({
+  tCo2e, factorId: `f-${tCo2e}`, factorValue: 1, factorUnit: 'kgCO2e/kWh', methodology: 'm', source: 's', version: 'e',
+  geographyCode: 'TR', snapshotSchema: 2, activityType: 'grid_electricity', gas: 'CO2e', gasCoverage: 'all_ghg',
+  calorificBasis: 'not_applicable', scope2Method: 'location', dataYear: 2025, yearPolicy: 'exact', factorRelease, conversion: null,
+});
 const record = (subsidiaryId: string, scope: number, tCo2e: number, category = scope === 1 ? 'Natural Gas' : scope === 2 ? 'Electricity' : 'Business Travel') => ({
   subsidiaryId, scope, category, reportingYear: 2026, reportingPeriod: 'annual', periodValue: 'Annual',
-  calculation: { tCo2e, factorId: 'f-1' },
+  calculation: snapshot(tCo2e),
 });
-const t = (scope1: number, scope2 = 0) => ({ scope1, scope2, total: scope1 + scope2 });
+const t = (scope1: number, scope2 = 0, nonAuthoritativeRecordCount = 0) => ({ scope1, scope2, total: scope1 + scope2, nonAuthoritativeRecordCount });
 
 // The spec's example: holding H 5 t, company A under it 10 t, child company B under A 3 t
 // (and 4 t of Scope 3 that changes nothing); a sector group G holding company C 7 t; an
@@ -38,6 +45,27 @@ describe('EmissionsService.rollUp', () => {
   let w: ReturnType<typeof build>;
   beforeEach(() => {
     w = build();
+  });
+
+  it('carries the not-authoritative count up the tree, Scope 1 and 2 only, as the main total counts it (owner review of WP7, P1)', async () => {
+    w.prisma.subsidiary.findMany.mockResolvedValue(TREE);
+    w.prisma.activityRecord.findMany.mockResolvedValue([
+      record('H', 1, 5),
+      // A placeholder factor under the child company…
+      { ...record('B', 2, 3), calculation: snapshot(3, release('demo', 'placeholder')) },
+      // …a release withdrawn since, on the company…
+      { ...record('A', 2, 10), calculation: snapshot(10, release('gone', 'authoritative')) },
+      // …and a Scope 3 placeholder, outside these figures.
+      { ...record('B', 3, 4), calculation: snapshot(4, release('demo', 'placeholder')) },
+    ]);
+    w.prisma.factorRelease.findMany.mockResolvedValue([{ id: 'gone' }]);
+    const rows = new Map((await w.service.rollUp(makeMasterkey({ accessibleSubsidiaryIds: TREE.map((n) => n.id) }), { reportingYear: 2026 }))
+      .rows.map((r) => [r.subsidiaryId, r]));
+    expect(rows.get('B')?.own).toEqual(t(0, 3, 1));
+    expect(rows.get('A')?.own).toEqual(t(0, 10, 1));
+    expect(rows.get('A')?.rollUp).toEqual(t(0, 13, 2));
+    expect(rows.get('H')?.own).toEqual(t(5, 0, 0));
+    expect(rows.get('H')?.rollUp).toEqual(t(5, 13, 2));
   });
 
   /** The tree and the records a caller reads: what the database would answer within `ids`. */

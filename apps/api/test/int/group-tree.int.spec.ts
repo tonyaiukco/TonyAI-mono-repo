@@ -373,9 +373,10 @@ describe('the races, at READ COMMITTED on two connections (task 2.6)', () => {
     const b = await node({ nodeType: 'sub_holding', name: 'Int-test B' });
     const first = heldTransaction(runtime, (tx) => tx.subsidiary.update({ where: { id: a }, data: { parentId: b } }));
     await first.written;
+    const secondPid = await backendPid(other); // read while idle: `second` then holds the one pooled connection
     const second = other.subsidiary.update({ where: { id: b }, data: { parentId: a } });
     second.catch(() => undefined);
-    expect(await settledOrBlocked(second, await backendPid(other), owner)).toBe('blocked');
+    expect(await settledOrBlocked(second, secondPid, owner)).toBe('blocked');
     first.release();
     await first.committed;
     expect(await refused(second)).toMatchObject({ state: 'TA018', message: expect.stringMatching(/tree_cycle/) });
@@ -389,9 +390,10 @@ describe('the races, at READ COMMITTED on two connections (task 2.6)', () => {
     const c1 = await node({ nodeType: 'company', name: 'Int-test tick first' });
     const tick = heldTransaction(runtime, (tx) => tx.subsidiary.update({ where: { id: c1 }, data: { control: 'associate' } }));
     await tick.written;
+    const recordPid = await backendPid(other); // read while idle: `record` then holds the one pooled connection
     const record = other.activityRecord.create({ data: recordInput(tenant, { subsidiaryId: c1 }) });
     record.catch(() => undefined);
-    expect(await settledOrBlocked(record, await backendPid(other), owner)).toBe('blocked');
+    expect(await settledOrBlocked(record, recordPid, owner)).toBe('blocked');
     tick.release();
     await tick.committed;
     expect(await refused(record)).toMatchObject({ state: 'TA019' });
@@ -401,9 +403,10 @@ describe('the races, at READ COMMITTED on two connections (task 2.6)', () => {
     const c2 = await node({ nodeType: 'company', name: 'Int-test record first' });
     const insert = heldTransaction(runtime, (tx) => tx.activityRecord.create({ data: recordInput(tenant, { subsidiaryId: c2 }) }));
     await insert.written;
+    const tick2Pid = await backendPid(other); // read while idle: `tick2` then holds the one pooled connection
     const tick2 = other.subsidiary.update({ where: { id: c2 }, data: { control: 'associate' } });
     tick2.catch(() => undefined);
-    expect(await settledOrBlocked(tick2, await backendPid(other), owner)).toBe('blocked');
+    expect(await settledOrBlocked(tick2, tick2Pid, owner)).toBe('blocked');
     insert.release();
     await insert.committed;
     expect(await refused(tick2)).toMatchObject({ state: 'TA018', message: expect.stringMatching(/control_change_blocked/) });
@@ -417,9 +420,10 @@ describe('the races, at READ COMMITTED on two connections (task 2.6)', () => {
     const k1 = await node({ nodeType: 'child_company', parentId: p1 });
     const insert = heldTransaction(runtime, (tx) => tx.activityRecord.create({ data: recordInput(tenant, { subsidiaryId: k1 }) }));
     await insert.written;
+    const movePid = await backendPid(other); // read while idle: `move` then holds the one pooled connection
     const move = other.subsidiary.update({ where: { id: p1 }, data: { parentId: sector } });
     move.catch(() => undefined);
-    expect(await settledOrBlocked(move, await backendPid(other), owner)).toBe('blocked');
+    expect(await settledOrBlocked(move, movePid, owner)).toBe('blocked');
     insert.release();
     await insert.committed;
     expect(await refused(move)).toMatchObject({ state: 'TA018', message: expect.stringMatching(/node_move_blocked/) });
@@ -429,9 +433,10 @@ describe('the races, at READ COMMITTED on two connections (task 2.6)', () => {
     const k2 = await node({ nodeType: 'child_company', parentId: p2 });
     const moving = heldTransaction(runtime, (tx) => tx.subsidiary.update({ where: { id: p2 }, data: { parentId: sector } }));
     await moving.written;
+    const latePid = await backendPid(other); // read while idle: `late` then holds the one pooled connection
     const late = other.activityRecord.create({ data: recordInput(tenant, { subsidiaryId: k2 }) });
     late.catch(() => undefined);
-    expect(await settledOrBlocked(late, await backendPid(other), owner)).toBe('blocked');
+    expect(await settledOrBlocked(late, latePid, owner)).toBe('blocked');
     moving.release();
     await moving.committed;
     await expect(late).resolves.toMatchObject({ subsidiaryId: k2 });
@@ -472,9 +477,10 @@ describe('the API over the database', () => {
     }, { timeout: 20_000 });
     first.catch(() => undefined);
     await written.promise;
+    const movingPid = await backendPid(other); // read while idle: `moving` then holds the one pooled connection
     const moving = services(other).subsidiaries.update(masterkey(a, b), a, { parentId: b });
     moving.catch(() => undefined);
-    expect(await settledOrBlocked(moving, await backendPid(other), owner)).toBe('blocked');
+    expect(await settledOrBlocked(moving, movingPid, owner)).toBe('blocked');
     gate.resolve();
     await first;
     await expect(moving).rejects.toMatchObject({ response: expect.objectContaining({ code: 'tree_cycle' }) });
@@ -514,25 +520,84 @@ describe('the API over the database', () => {
     }
   });
 
-  it('a copy leaves a company ticked associate since out, and a confirm refuses one still declared (TA022, WP7 review)', async () => {
+  it("keeps a year's current boundary free of associates: the tick waits for a newer frozen version; a copy of an older one leaves it out (owner review of WP7, P1)", async () => {
     const company = await node({ nodeType: 'company', name: 'Int-test later associate' });
     const site = await owner.location.create({ data: { subsidiaryId: company, name: 'Int-test site', geographyCode: 'UK' } });
-    const open = await createBoundary(owner, { ...tenant, subsidiaryId: company }, { locationId: site.id, reportingYear: 2026, version: 32 });
-    const created: string[] = [];
+    const other = await node({ nodeType: 'company', name: 'Int-test other company' });
+    const otherSite = await owner.location.create({ data: { subsidiaryId: other, name: 'Int-test other site', geographyCode: 'UK' } });
+    const user = masterkey(company, other);
+    // V1 (frozen) declares the company; V2 (open, newest) leaves it out.
+    const v1 = await createBoundary(owner, { ...tenant, subsidiaryId: company }, { locationId: site.id, reportingYear: 2026, version: 32, frozen: true });
+    const v2 = await createBoundary(owner, { ...tenant, subsidiaryId: other }, { locationId: otherSite.id, reportingYear: 2026, version: 33 });
+    // Deleting V2 would make V1 current again, so the tick is refused — by the
+    // API and, for any writer, by TA018.
+    await expect(services(runtime).subsidiaries.update(user, company, { control: 'associate' }))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'control_change_blocked' }) });
+    for (const db of [runtime, owner]) {
+      expect(await refused(db.subsidiary.update({ where: { id: company }, data: { control: 'associate' } })))
+        .toMatchObject({ state: 'TA018', message: expect.stringMatching(/control_change_blocked/) });
+    }
+    // V2 frozen too: V1 is history, never current again, and the tick goes through.
+    await owner.inventoryBoundary.update({ where: { id: v2.boundaryId }, data: { frozenAt: new Date() } });
+    await expect(services(runtime).subsidiaries.update(user, company, { control: 'associate' })).resolves.toMatchObject({ control: 'associate' });
+    // A copy of V1 leaves the associate out, and its audit row names it.
+    const copy = await services(runtime).boundaries.create(user, { reportingYear: 2027, copyOf: v1.boundaryId });
+    expect(await owner.inventoryBoundarySubsidiary.count({ where: { boundaryId: copy.id } })).toBe(0);
+    const audit = await owner.auditLog.findFirstOrThrow({ where: { entity: 'inventory_boundary', entityId: copy.id, action: 'create' } });
+    expect(audit.diff).toMatchObject({ copyOf: v1.boundaryId, leftOutClosedSubsidiaries: [company] });
+    // V1 itself is unchanged.
+    expect(await owner.inventoryBoundarySubsidiary.count({ where: { boundaryId: v1.boundaryId, subsidiaryId: company } })).toBe(1);
+  });
+
+  it('a confirm refuses a version still declaring a company made an associate outside the rules (a replica-mode write)', async () => {
+    const company = await node({ nodeType: 'company', name: 'Int-test legacy associate' });
+    const site = await owner.location.create({ data: { subsidiaryId: company, name: 'Int-test site', geographyCode: 'UK' } });
+    const open = await createBoundary(owner, { ...tenant, subsidiaryId: company }, { locationId: site.id, reportingYear: 2028, version: 1 });
+    await owner.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL session_replication_role = replica`;
+      await tx.subsidiary.update({ where: { id: company }, data: { control: 'associate' } });
+    });
+    await expect(services(runtime).boundaries.confirm(masterkey(company), open.boundaryId))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'boundary_subsidiary_not_reportable' }) });
+    expect((await owner.inventoryBoundary.findUniqueOrThrow({ where: { id: open.boundaryId } })).frozenAt).toBeNull();
+  });
+
+  it('a company with a facility is deleted by no writer, nor right after its facilities in one transaction; a facility stays with its company (TA023, TA021; owner review of WP7, P1)', async () => {
+    const company = await node({ nodeType: 'company', name: 'Int-test company with a facility' });
+    const elsewhere = await node({ nodeType: 'company', name: 'Int-test elsewhere' });
+    const site = await owner.location.create({ data: { subsidiaryId: company, name: 'Int-test site', geographyCode: 'UK' } });
+    for (const db of [runtime, owner]) {
+      expect(await refused(db.subsidiary.delete({ where: { id: company } })))
+        .toMatchObject({ state: 'TA023', message: expect.stringMatching(/subsidiary_in_use/) });
+    }
+    // The previous API image's path: its facilities, then the company, in one transaction.
+    expect(await refused(runtime.$transaction(async (tx) => {
+      await tx.location.deleteMany({ where: { subsidiaryId: company } });
+      await tx.subsidiary.delete({ where: { id: company } });
+    }))).toMatchObject({ state: 'TA023' });
+    expect(await owner.location.count({ where: { id: site.id } })).toBe(1);
+    // Moved to another company, the facility would empty this one for a delete.
+    expect(await refused(runtime.location.update({ where: { id: site.id }, data: { subsidiaryId: elsewhere } })))
+      .toMatchObject({ state: 'TA021', message: expect.stringMatching(/stays with its company/) });
+    // The facility deleted on its own, the company in a later transaction: allowed.
+    await runtime.location.delete({ where: { id: site.id } });
+    await runtime.subsidiary.delete({ where: { id: company } });
+    expect(await owner.subsidiary.count({ where: { id: company } })).toBe(0);
+  });
+
+  it('an organisation offboarded with a company and its facility is removed whole (a cascade passes TA023)', async () => {
+    const foreign = await createTenant();
+    let cleaned = false;
     try {
-      // Ticked by the owner after it was declared: TA018 does not read declarations.
-      await owner.subsidiary.update({ where: { id: company }, data: { control: 'associate' } });
-      const user = masterkey(company);
-      await expect(services(runtime).boundaries.confirm(user, open.boundaryId))
-        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'boundary_subsidiary_not_reportable' }) });
-      expect((await owner.inventoryBoundary.findUniqueOrThrow({ where: { id: open.boundaryId } })).frozenAt).toBeNull();
-      const copy = await services(runtime).boundaries.create(user, { reportingYear: 2027, copyOf: open.boundaryId });
-      created.push(copy.id);
-      expect(await owner.inventoryBoundarySubsidiary.count({ where: { boundaryId: copy.id } })).toBe(0);
-      const audit = await owner.auditLog.findFirstOrThrow({ where: { entity: 'inventory_boundary', entityId: copy.id, action: 'create' } });
-      expect(audit.diff).toMatchObject({ copyOf: open.boundaryId, leftOutClosedSubsidiaries: [company] });
+      const company = await owner.subsidiary.create({
+        data: { organisationId: foreign.organisationId, legalName: 'Int-test offboarded company', geographyCode: 'UK' },
+      });
+      await owner.location.create({ data: { subsidiaryId: company.id, name: 'Int-test offboarded site', geographyCode: 'UK' } });
+      await foreign.cleanup();
+      cleaned = true;
+      expect(await owner.subsidiary.count({ where: { organisationId: foreign.organisationId } })).toBe(0);
     } finally {
-      await owner.inventoryBoundary.deleteMany({ where: { id: { in: [open.boundaryId, ...created] } } });
+      if (!cleaned) await foreign.cleanup();
     }
   });
 
@@ -546,9 +611,10 @@ describe('the API over the database', () => {
     const moving = services(hold.client).subsidiaries.update(user, a, { parentId: target });
     moving.catch(() => undefined);
     await hold.reached();
+    const tickingPid = await backendPid(other); // read while idle: `ticking` then holds the one pooled connection
     const ticking = services(other).subsidiaries.update(user, x, { control: 'associate' });
     ticking.catch(() => undefined);
-    expect(await settledOrBlocked(ticking, await backendPid(other), owner)).toBe('blocked');
+    expect(await settledOrBlocked(ticking, tickingPid, owner)).toBe('blocked');
     hold.release();
     await expect(moving).resolves.toMatchObject({ parentId: target });
     await expect(ticking).resolves.toMatchObject({ control: 'associate' });

@@ -964,13 +964,17 @@ function DataEntryPageInner() {
     (async () => {
       setSubsLoading(true);
       try {
-        const [list, locs] = await Promise.all([
+        const [all, locs] = await Promise.all([
           api.listSubsidiaries(),
           api.listLocations(),
         ]);
         // Only the nodes that hold records (inc26-group-tree): no associate,
         // no sector group.
-        setSubsidiaries(entryCompanies(list));
+        // A deep link, the default and a copy resolve from this list too, so a
+        // link to a closed node opens nothing selected — never the node behind
+        // an empty picker (owner review of WP7, P2).
+        const list = entryCompanies(all);
+        setSubsidiaries(list);
         setLocations(locs);
 
         // Deep link (tracking matrix → here). Validated against what this user

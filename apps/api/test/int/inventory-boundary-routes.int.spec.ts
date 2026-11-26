@@ -762,9 +762,10 @@ describe('concurrent writers (W8, E5; PR B (6))', () => {
       const hold = holdBefore(client2, 'InventoryBoundarySubsidiary', 'create');
       const write = serviceOn(hold.client).putSubsidiary(admin, id, S3, excludedAll());
       await hold.reached();
+      const deletingPid = await backendPid(deleter); // read while idle: `deleting` then holds the one pooled connection
       const deleting = deleter.subsidiary.delete({ where: { id: S3 } });
       deleting.catch(() => undefined);
-      expect(await settledOrBlocked(deleting, await backendPid(deleter), owner)).toBe('blocked');
+      expect(await settledOrBlocked(deleting, deletingPid, owner)).toBe('blocked');
       hold.release();
       // The write commits whole; the delete then runs against a declared company.
       await expect(write).resolves.toMatchObject({ id });

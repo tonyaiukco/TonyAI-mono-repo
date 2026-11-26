@@ -1032,9 +1032,16 @@ describe('SubsidiariesService', () => {
 
       await service.remove(user, 'sub-1');
 
-      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      // The row lock, then (after the counts) the grants' removal (WP7).
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
       const [fragments] = prisma.$queryRaw.mock.calls[0] as [string[]];
       expect(fragments.join('?')).toMatch(/FOR UPDATE/);
+      expect((prisma.$queryRaw.mock.calls[1] as [string[]])[0].join('?')).toMatch(/DELETE FROM user_subsidiary_access/);
+      // The organisation's admin lock comes before the row lock (owner review
+      // of WP7): a grant change holds it and share-locks this row.
+      expect((prisma.$executeRaw.mock.calls[0] as [string[]])[0].join('?')).toMatch(/pg_advisory_xact_lock/);
+      expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(prisma.$queryRaw.mock.invocationCallOrder[0]);
+      expect(prisma.$queryRaw.mock.invocationCallOrder[1]).toBeGreaterThan(prisma.txClient.activityRecord.count.mock.invocationCallOrder[0]);
       // Order is the invariant, not mere presence: a lock taken AFTER the
       // counts protects nothing at all.
       const order = (fn: { mock: { invocationCallOrder: number[] } }) =>

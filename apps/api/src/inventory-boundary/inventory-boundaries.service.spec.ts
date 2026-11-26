@@ -31,6 +31,12 @@ function mockDb() {
   });
   const tx = {
     $queryRaw: vi.fn().mockResolvedValue([{ id: ID }]),
+    // The declaration writer re-read under the admin lock (owner review of
+    // WP7): `$executeRaw` takes the lock, `profile.findUnique` reads the
+    // account as it stands — by default as authenticated, a super_admin
+    // holding SUB_ID.
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    profile: { findUnique: vi.fn() },
     inventoryBoundary: model(),
     inventoryBoundarySubsidiary: model(),
     inventoryBoundarySite: model(),
@@ -43,6 +49,13 @@ function mockDb() {
   };
   tx.inventoryBoundary.findUniqueOrThrow.mockResolvedValue(header());
   tx.inventoryBoundary.findFirst.mockResolvedValue(header());
+  const ROLES: Record<string, string> = {
+    'user-admin': 'masterkey', 'user-super-admin': 'super_admin', 'user-entry': 'standard_user', 'user-auditor': 'auditor',
+  };
+  tx.profile.findUnique.mockImplementation((async ({ where }: { where: { id: string } }) => ({
+    role: ROLES[where.id] ?? 'masterkey', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null },
+    subsidiaryAccess: ROLES[where.id] === 'super_admin' ? [{ subsidiaryId: SUB_ID }] : [],
+  })) as never);
   // A header lock reads back the header; a company read FOR SHARE
   // (`lockCompanies`, inc26-group-tree) answers through `subsidiary.findFirst`,
   // this spec's knob for "the company as stored" (organisation org-1, a
@@ -207,6 +220,34 @@ describe('InventoryBoundariesService', () => {
   });
 
   describe('closed nodes and frozen versions under the group tree (inc26-group-tree, WP7 reviews)', () => {
+    it('a super_admin whose grant was withdrawn, or who was demoted, while the write waited writes nothing (owner review, P2)', async () => {
+      const own = makeSuperAdmin({ accessibleSubsidiaryIds: [SUB_ID] });
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID });
+      db.tx.inventoryBoundarySubsidiary.findUnique.mockResolvedValue(null);
+      const now = (over: Record<string, unknown>) => db.tx.profile.findUnique.mockResolvedValue({
+        role: 'super_admin', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [], ...over,
+      });
+      now({ subsidiaryAccess: [] });
+      for (const write of [() => service.putSubsidiary(own, ID, SUB_ID, BODY), () => service.deleteSubsidiary(own, ID, SUB_ID)]) {
+        await expect(write()).rejects.toSatisfy((e) => errorCodeOf(e) === 'subsidiary_not_found');
+      }
+      now({ role: 'standard_user', subsidiaryAccess: [{ subsidiaryId: SUB_ID }] });
+      await expect(service.putSubsidiary(own, ID, SUB_ID, BODY)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(db.tx.inventoryBoundarySubsidiary.create).not.toHaveBeenCalled();
+      expect(db.tx.inventoryBoundarySubsidiary.delete).not.toHaveBeenCalled();
+      expect(db.tx.auditLog.create).not.toHaveBeenCalled();
+      // Refused before the version is even locked.
+      expect(db.tx.$queryRaw).not.toHaveBeenCalled();
+      // Still granted: the write goes through — re-read under the
+      // organisation's admin lock, before the version is locked.
+      now({ subsidiaryAccess: [{ subsidiaryId: SUB_ID }] });
+      await service.putSubsidiary(own, ID, SUB_ID, BODY);
+      expect(db.tx.inventoryBoundarySubsidiary.create).toHaveBeenCalled();
+      const last = db.tx.$executeRaw.mock.calls.length - 1;
+      expect((db.tx.$executeRaw.mock.calls[last] as unknown as string[][])[0].join('?')).toMatch(/pg_advisory_xact_lock/);
+      expect(db.tx.$executeRaw.mock.invocationCallOrder[last]).toBeLessThan(db.tx.$queryRaw.mock.invocationCallOrder[0]);
+    });
+
     it("another organisation's company, read FOR SHARE, answers as unknown", async () => {
       db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID, organisationId: 'org-2' });
       await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toSatisfy((e) => errorCodeOf(e) === 'subsidiary_not_found');

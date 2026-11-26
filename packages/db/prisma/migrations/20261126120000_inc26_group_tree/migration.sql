@@ -15,7 +15,7 @@
 --   2. the composite self-reference and its index;
 --   3. the carry-over, with one audit row per created or changed node (D3);
 --   4. the CHECKs;
---   5. the triggers TA018–TA022 (D2), created after the carry-over so it runs
+--   5. the triggers TA018–TA023 (D2), created after the carry-over so it runs
 --      as plain SQL;
 --   6. the runtime role's column grants.
 --
@@ -361,14 +361,28 @@ BEGIN
         ERRCODE = 'TA018',
         MESSAGE = format('node_placement_invalid: a %s is always controlled', NEW."node_type");
     END IF;
+    -- Nor while a year's current boundary declares it: the newest version,
+    -- or the newest frozen one, which becomes the newest again when an open
+    -- version after it is deleted (owner review of WP7, P1). A frozen version
+    -- is never rewritten; the tick waits for a newer one that leaves it out.
     IF TG_OP = 'UPDATE' AND (
       EXISTS (SELECT 1 FROM "public"."subsidiaries" c WHERE c."parent_id" = NEW."id")
       OR EXISTS (SELECT 1 FROM "public"."activity_records" r WHERE r."subsidiary_id" = NEW."id")
       OR EXISTS (SELECT 1 FROM "public"."user_subsidiary_access" a WHERE a."subsidiary_id" = NEW."id")
+      OR EXISTS (
+        SELECT 1
+          FROM "public"."inventory_boundary_subsidiaries" d
+          JOIN "public"."inventory_boundaries" b ON b."id" = d."boundary_id"
+         WHERE d."subsidiary_id" = NEW."id"
+           AND (b."version" = (SELECT max(n."version") FROM "public"."inventory_boundaries" n
+                                WHERE n."organisation_id" = b."organisation_id" AND n."reporting_year" = b."reporting_year")
+             OR b."version" = (SELECT max(f."version") FROM "public"."inventory_boundaries" f
+                                WHERE f."organisation_id" = b."organisation_id" AND f."reporting_year" = b."reporting_year"
+                                  AND f."frozen_at" IS NOT NULL)))
     ) THEN
       RAISE EXCEPTION USING
         ERRCODE = 'TA018',
-        MESSAGE = format('control_change_blocked: subsidiary %s has a child, a record or a grant', NEW."id");
+        MESSAGE = format('control_change_blocked: subsidiary %s has a child, a record, a grant or a declaration in a current boundary', NEW."id");
     END IF;
   END IF;
   RETURN NEW;
@@ -467,6 +481,13 @@ BEGIN
   IF TG_OP = 'UPDATE' AND NEW."subsidiary_id" IS NOT DISTINCT FROM OLD."subsidiary_id" THEN
     RETURN NEW;
   END IF;
+  -- A facility stays with its company (owner review of WP7, P1): moving it
+  -- away would empty a company for a delete the API refuses (RD9).
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA021',
+      MESSAGE = format('node_placement_invalid: facility %s stays with its company', NEW."id");
+  END IF;
   SELECT s."node_type"::text INTO node_type_v
     FROM "public"."subsidiaries" s
    WHERE s."id" = NEW."subsidiary_id";
@@ -483,6 +504,69 @@ CREATE TRIGGER "locations_company_holds_records"
   BEFORE INSERT OR UPDATE ON "locations"
   FOR EACH ROW EXECUTE FUNCTION "public"."locations_company_holds_records"();
 ALTER TABLE "locations" ENABLE ALWAYS TRIGGER "locations_company_holds_records";
+
+-- TA023: a company with a facility is not deleted (RD9), by any writer — the
+-- key from `locations` still cascades, so the API's refusal alone left a
+-- direct delete free to take the facilities with it (owner review of WP7,
+-- P1). The previous API image swept a company's facilities and then deleted
+-- it in one transaction: `locations_note_removal` notes each facility deleted
+-- in the transaction, and the company of one is refused too, so a rollback
+-- to that image cannot remove facilities either (its delete is refused). A
+-- delete reached through a key's cascade — an organisation's offboarding —
+-- is the cascade's, and passes.
+CREATE FUNCTION "public"."subsidiaries_keep_facilities"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN OLD;
+  END IF;
+  IF pg_catalog.pg_trigger_depth() > 1 THEN
+    RETURN OLD;
+  END IF;
+  IF EXISTS (SELECT 1 FROM "public"."locations" l WHERE l."subsidiary_id" = OLD."id")
+     OR pg_catalog.strpos(
+          COALESCE(pg_catalog.current_setting('tonyai.facility_removed_from', true), ''),
+          OLD."id"::text) > 0 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA023',
+      MESSAGE = format('subsidiary_in_use: subsidiary %s holds a facility, or had one deleted in this transaction; delete each facility on its own first', OLD."id");
+  END IF;
+  RETURN OLD;
+END
+$fn$;
+
+CREATE TRIGGER "subsidiaries_keep_facilities"
+  BEFORE DELETE ON "subsidiaries"
+  FOR EACH ROW EXECUTE FUNCTION "public"."subsidiaries_keep_facilities"();
+ALTER TABLE "subsidiaries" ENABLE ALWAYS TRIGGER "subsidiaries_keep_facilities";
+
+-- A facility deleted on its own names its company for the rest of the
+-- transaction (TA023's second half). A cascade's delete is not noted.
+CREATE FUNCTION "public"."locations_note_removal"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN OLD;
+  END IF;
+  IF pg_catalog.pg_trigger_depth() > 1 THEN
+    RETURN OLD;
+  END IF;
+  PERFORM pg_catalog.set_config(
+    'tonyai.facility_removed_from',
+    COALESCE(pg_catalog.current_setting('tonyai.facility_removed_from', true), '') || ',' || OLD."subsidiary_id"::text,
+    true);
+  RETURN OLD;
+END
+$fn$;
+
+CREATE TRIGGER "locations_note_removal"
+  AFTER DELETE ON "locations"
+  FOR EACH ROW EXECUTE FUNCTION "public"."locations_note_removal"();
+ALTER TABLE "locations" ENABLE ALWAYS TRIGGER "locations_note_removal";
 
 -- TA022: an associate or a sector group is outside the inventory boundary
 -- (D6): never declared in a version — a copy, a declaration or any other

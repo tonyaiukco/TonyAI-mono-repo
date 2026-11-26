@@ -663,8 +663,12 @@ export class EmissionsService {
     for (const r of rows) bySubsidiary.set(r.subsidiaryId, [...(bySubsidiary.get(r.subsidiaryId) ?? []), r]);
     const own = new Map<string, ScopeFigures>();
     for (const [subsidiaryId, group] of bySubsidiary) {
-      const { scope1, scope2, total } = summariseCounted(group, new Map(), withdrawn).totals;
-      own.set(subsidiaryId, { scope1, scope2, total });
+      const summary = summariseCounted(group, new Map(), withdrawn);
+      const { scope1, scope2, total } = summary.totals;
+      // Scope 1 and 2's share of the non-authoritative records, as the
+      // figures are Scope 1 and 2's (owner review of WP7, P1).
+      const nonAuthoritativeRecordCount = summary.nonAuthoritativeRecordCount - summary.scope3Records.nonAuthoritativeRecordCount;
+      own.set(subsidiaryId, { scope1, scope2, total, nonAuthoritativeRecordCount });
     }
     const readable = new Set(user.accessibleSubsidiaryIds);
     const shaped = nodes.map((n) => ({

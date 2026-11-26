@@ -164,17 +164,18 @@ describe('the database refuses a grant across organisations', () => {
   });
 
   it('deleting the subsidiary, or the profile, removes the grant', async () => {
+    // A company with no facility: one with a facility, or one whose facility
+    // went earlier in the transaction, is deleted by no writer (inc26-group-tree,
+    // RD9, TA023), so the tenant's own companies cannot show this.
     const afterSubsidiary = await withRollback(owner, async (tx) => {
-      await tx.activityRecord.deleteMany({ where: { subsidiaryId: a.subsidiaryId } });
-      // A subsidiary an open boundary version declares is not deleted (LP3-04
-      // W9): the version goes first, as its records do.
-      await tx.inventoryBoundary.delete({ where: { id: dataA.boundaryId } });
-      // The tenant's first subsidiary is its tree's root (inc26-group-tree): a
-      // node with a child is not deleted, so its children go first.
-      await tx.activityRecord.deleteMany({ where: { subsidiary: { parentId: a.subsidiaryId } } });
-      await tx.subsidiary.deleteMany({ where: { parentId: a.subsidiaryId } });
-      await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
-      return tx.userSubsidiaryAccess.count({ where: { userId: a.users.standardUser.id } });
+      const company = await tx.subsidiary.create({
+        data: { organisationId: a.organisationId, legalName: 'Int-test granted company', geographyCode: 'UK' },
+      });
+      await tx.userSubsidiaryAccess.create({
+        data: { userId: a.users.superAdmin.id, subsidiaryId: company.id, organisationId: a.organisationId },
+      });
+      await tx.subsidiary.delete({ where: { id: company.id } });
+      return tx.userSubsidiaryAccess.count({ where: { subsidiaryId: company.id } });
     });
     const afterProfile = await withRollback(owner, async (tx) => {
       await tx.profile.delete({ where: { id: a.users.standardUser.id } });

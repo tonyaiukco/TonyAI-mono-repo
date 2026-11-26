@@ -481,19 +481,34 @@ describe('SubsidiariesService — the group tree', () => {
         expect(prisma.txClient.activityRecord.count).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-2' } });
       });
 
-      it('refuses while the newest boundary version of a year declares it, not an older one', async () => {
+      it("refuses while a year's current boundary declares it — the newest version or the newest frozen one — not an older one", async () => {
         prisma.subsidiary.findUnique.mockResolvedValue(company());
         prisma.txClient.inventoryBoundarySubsidiary.findMany.mockResolvedValue([{ boundary: { reportingYear: 2026, version: 1 } }]);
-        prisma.txClient.inventoryBoundary.findFirst.mockResolvedValue({ version: 2 });
-        await service.update(masterkey(), 'sub-2', { control: 'associate' });
+        /** The year's newest version and its newest frozen one. */
+        const versions = (newest: number, newestFrozen: number | null) =>
+          prisma.txClient.inventoryBoundary.findFirst.mockImplementation((async ({ where }: { where: { frozenAt?: unknown } }) =>
+            where.frozenAt !== undefined ? (newestFrozen === null ? null : { version: newestFrozen }) : { version: newest }) as never);
+        const tick = () => service.update(masterkey(), 'sub-2', { control: 'associate' }).catch((err: unknown) => err as Error);
+
+        // V1 declares it, V3 (open) and V2 (frozen) do not: an older version.
+        versions(3, 2);
+        expect(await tick()).not.toBeInstanceOf(Error);
         expect(prisma.txClient.subsidiary.update).toHaveBeenCalledTimes(1);
 
-        prisma.txClient.subsidiary.update.mockClear();
-        prisma.txClient.inventoryBoundary.findFirst.mockResolvedValue({ version: 1 });
-        const e = (await service.update(masterkey(), 'sub-2', { control: 'associate' }).catch((err: unknown) => err)) as Error;
-        expect(e).toMatchObject({ response: { code: 'control_change_blocked' } });
-        expect(e.message).toMatch(/inventory boundary declarations/);
-        expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
+        for (const [newest, newestFrozen, what] of [
+          [1, null, 'the newest, open'],
+          [1, 1, 'the newest, frozen'],
+          // V2 open leaves it out, but V1 is the newest frozen: deleting V2
+          // would make V1 current again (owner review of WP7, P1).
+          [2, 1, 'the newest frozen, behind an open version'],
+        ] as const) {
+          prisma.txClient.subsidiary.update.mockClear();
+          versions(newest, newestFrozen);
+          const e = await tick();
+          expect(e, what).toMatchObject({ response: { code: 'control_change_blocked' } });
+          expect((e as Error).message, what).toMatch(/inventory boundary declarations/);
+          expect(prisma.txClient.subsidiary.update, what).not.toHaveBeenCalled();
+        }
       });
 
       it('refuses associate on a type that is always controlled as invalid', async () => {
@@ -576,6 +591,34 @@ describe('SubsidiariesService — the group tree', () => {
       for (const at of reads) expect(at).toBeGreaterThan(rowLock.invocationCallOrder[0]);
     });
 
+    it("decides and audits from the row as locked, not the read before the transaction (owner review, P2)", async () => {
+      // Read before: under the root. Moved under sub-b meanwhile, then locked.
+      prisma.subsidiary.findUnique.mockResolvedValue(company());
+      prisma.txClient.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-2', parentId: 'sub-b', nodeType: 'company', geographyCode: 'TR' }));
+      tree(prisma, [ROOT, { id: 'sub-b', nodeType: 'sub_holding' }, { id: 'sub-3', nodeType: 'sector_group' }]);
+      prisma.txClient.$queryRaw
+        .mockResolvedValueOnce([{ id: 'locked' }])
+        .mockResolvedValueOnce([{ cycle: false }])
+        .mockResolvedValueOnce([{ records: false }]);
+      prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-2', parentId: 'sub-3', nodeType: 'company', geographyCode: 'TR' }));
+      await service.update(masterkey(), 'sub-2', { parentId: 'sub-3' });
+      const row = audit.record.mock.calls.map((c) => c[1]).find((r) => r.entity === 'subsidiary');
+      expect(row.diff.before.parentId).toBe('sub-b');
+      expect(row.diff.after.parentId).toBe('sub-3');
+      // And the move the locked row already holds is no change at all.
+      prisma.txClient.subsidiary.update.mockClear();
+      prisma.txClient.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-2', parentId: 'sub-3', nodeType: 'company', geographyCode: 'TR' }));
+      await service.update(masterkey(), 'sub-2', { parentId: 'sub-3' });
+      expect(prisma.txClient.subsidiary.update.mock.calls[0][0].data).toEqual({});
+    });
+
+    it('answers a company deleted while the update waited for its lock as unknown', async () => {
+      prisma.subsidiary.findUnique.mockResolvedValue(company());
+      prisma.txClient.subsidiary.findUnique.mockResolvedValue(null);
+      await expect(service.update(masterkey(), 'sub-2', { legalName: 'x' })).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+      expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
+    });
+
     it('a rename takes no tree lock', async () => {
       prisma.subsidiary.findUnique.mockResolvedValue(company());
       prisma.txClient.subsidiary.update.mockResolvedValue(company());
@@ -594,9 +637,14 @@ describe('SubsidiariesService — the group tree', () => {
 
     it('a delete audits each grant its cascade removes', async () => {
       prisma.subsidiary.findUnique.mockResolvedValue(company());
-      prisma.txClient.userSubsidiaryAccess.findMany.mockResolvedValue([{ userId: 'u-b' }, { userId: 'u-a' }]);
+      // Only the grants this delete's own statement removed (owner review, P2).
+      prisma.txClient.$queryRaw.mockImplementation((async (sql: TemplateStringsArray, ...values: unknown[]) =>
+        sql.join('?').includes('DELETE FROM user_subsidiary_access')
+          ? (values[0] === 'sub-2' ? [{ userId: 'u-b' }, { userId: 'u-a' }] : [])
+          : [{ id: 'locked' }]) as never);
       await service.remove(masterkey(), 'sub-2');
-      expect(prisma.txClient.userSubsidiaryAccess.findMany).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-2' }, select: { userId: true } });
+      expect(prisma.txClient.$queryRaw.mock.calls.map((c) => (c[0] as unknown as string[]).join('?')).find((q) => q.includes('DELETE')))
+        .toMatch(/DELETE FROM user_subsidiary_access WHERE subsidiary_id = \?::uuid RETURNING/);
       const grantRows = audit.record.mock.calls.map((c) => c[1]).filter((r) => r.entity === 'subsidiary_access');
       expect(grantRows).toEqual([
         { action: 'delete', entity: 'subsidiary_access', entityId: 'u-a', diff: { subsidiaryId: 'sub-2', reason: 'company deleted' } },

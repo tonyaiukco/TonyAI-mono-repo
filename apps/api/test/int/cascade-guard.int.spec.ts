@@ -124,11 +124,13 @@ describe('LP4-01 — an organisation is the operator’s to delete', () => {
     expect(await owner.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(3); // the three records beforeAll files
   });
 
-  it('refuses the service role a subsidiary that holds a record — its key, not a cascade, answers (23503)', async () => {
+  it('refuses the service role a subsidiary that holds a record and a facility — never a cascade', async () => {
+    // Its facility answers first since the group tree (inc26-group-tree, RD9,
+    // TA023, a BEFORE trigger); the record's key (23503) stands behind it.
     const res = await serviceRest('DELETE', `subsidiaries?id=eq.${tenant.subsidiaryId}`);
     const body = (await res.json().catch(() => ({}))) as { code?: string };
     expect(res.ok).toBe(false);
-    expect(body.code).toBe('23503');
+    expect(body.code).toBe('TA023');
     expect(await owner.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(3);
   });
 
@@ -179,12 +181,14 @@ describe('LP4-01 — records stay where they were filed', () => {
     expect(moved).toBe(tenant.organisationId);
   });
 
-  it('refuses moving a site that holds a record to another subsidiary — the service role (23503) and the runtime role', async () => {
+  it('refuses moving a site that holds a record to another subsidiary — the service role and the runtime role', async () => {
+    // A facility never changes company since the group tree (inc26-group-tree,
+    // TA021, a BEFORE trigger); the record's key (23503) stands behind it.
     expect(await refusal(await serviceRest('PATCH', `locations?id=eq.${siteId}`, { subsidiary_id: foreign.subsidiaryId }))).toEqual({
-      ok: false, code: '23503',
+      ok: false, code: 'TA021',
     });
     const e = await failure(withRollback(runtime, (tx) => tx.location.update({ where: { id: siteId }, data: { subsidiaryId: foreign.subsidiaryId } })));
-    expect(['P2003', '23503']).toContain(codeOf(e));
+    expect(codeOf(e)).toBe('TA021');
     expect((await owner.location.findUniqueOrThrow({ where: { id: siteId } })).subsidiaryId).toBe(tenant.subsidiaryId);
   });
 

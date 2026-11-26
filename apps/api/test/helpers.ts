@@ -120,7 +120,10 @@ export function createPrismaMock() {
     // The subsidiary delete locks its row (`SELECT … FOR UPDATE`) before
     // counting children, so the guard cannot be raced by a concurrent insert.
     // A row lock reads back the row it locked, as Postgres answers one that exists.
-    $queryRaw: vi.fn().mockResolvedValue([{ id: 'locked' }]),
+    // A company's delete removes its grants with `DELETE … RETURNING` (WP7):
+    // none unless a spec says so.
+    $queryRaw: vi.fn(async (sql: TemplateStringsArray) =>
+      (Array.isArray(sql) && sql.join('?').includes('DELETE FROM user_subsidiary_access') ? [] : [{ id: 'locked' }])),
     // inc26-group-tree: a move or a control tick takes the organisation's tree
     // lock (`pg_advisory_xact_lock`) before it locks the node.
     $executeRaw: vi.fn().mockResolvedValue(1),
@@ -152,6 +155,12 @@ export function createPrismaMock() {
     client.inventoryBoundarySubsidiary.findMany.mockResolvedValue([]);
     client.userSubsidiaryAccess.findMany.mockResolvedValue([]);
     client.inventoryBoundary.findFirst.mockResolvedValue(null);
+    // A subsidiary update reads its row again inside the transaction, after
+    // locking it (owner review of WP7): the same row a spec stubs on the root
+    // client, unless the spec stubs the transaction's own read.
+    if (client === mock.txClient) {
+      client.subsidiary.findUnique.mockImplementation((args: unknown) => mock.subsidiary.findUnique(args));
+    }
     // Same reasoning one step further: an unstubbed `findMany` resolves to
     // `undefined`, and a service that iterates it dies with "not iterable" —
     // which reads as a broken test rather than the missing default it is.

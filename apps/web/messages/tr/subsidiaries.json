@@ -28,6 +28,7 @@
     "manageLocations": "Tesisleri yönet",
     "manageLocks": "Dönem kilitlerini yönet",
     "open": "Bağlı şirketi aç",
+    "view": "Bağlı şirketi görüntüle",
     "delete": "Bağlı şirketi sil",
     "created": "Bağlı şirket oluşturuldu",
     "deleted": "Bağlı şirket silindi",
@@ -54,6 +55,7 @@
     "locationRequired": "En az bir operasyonel tesis ekleyin"
   },
   "fields": {
+    "geographyUnavailable": "Faktör kütüphanesinin fiyatladığı coğrafyalar okunamadı; bu yüzden seçim yapılamıyor. Yeniden denemek için sayfayı yenileyin.",
     "legalNameRequired": "Ticari unvan *",
     "legalName": "Ticari unvan",
     "tradingName": "Kısa ad",
@@ -214,6 +216,8 @@
     "year": "Raporlama yılı",
     "figuresLoading": "Rakamlar yükleniyor…",
     "figuresFailed": "Rakamlar yüklenemedi. Ağaç rakamlar olmadan gösteriliyor.",
+    "nonAuthoritativeMark": "Yetkili değil: bu rakamın arkasındaki {count} kayıt yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanıyor.",
+    "nonAuthoritativeNote": "Uyarı işaretli rakamlar kısmen yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanıyor; üstlerindeki her toplam da öyle. Bunlar yetkili değildir.",
     "createdBy": "Oluşturan",
     "carriedOver": "Kaydedilmedi (grup ağacından önce oluşturuldu)",
     "parent": "Üst düğüm",

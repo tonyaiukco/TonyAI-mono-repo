@@ -13,6 +13,7 @@ import type {
 } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { lockAndReadActor } from '../auth/access-admin.service';
 import { ResourceNotFoundError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { boundarySubsidiaryNotReportable } from '../subsidiaries/tree-errors';
@@ -192,6 +193,7 @@ export class InventoryBoundariesService {
   ): Promise<InventoryBoundaryVersionDTO> {
     const organisationId = this.declarationWriterOrganisation(user, subsidiaryId);
     return this.write('put', id, async (tx) => {
+      await this.lockDeclarationWriter(tx, user, organisationId, subsidiaryId);
       const header = await this.lockOpen(tx, id, organisationId, user);
       // FOR SHARE: an associate tick locks the row FOR NO KEY UPDATE before it
       // counts this version's declarations, so the two are serialised.
@@ -230,6 +232,7 @@ export class InventoryBoundariesService {
   async deleteSubsidiary(user: RequestUser, id: string, subsidiaryId: string): Promise<InventoryBoundaryVersionDTO> {
     const organisationId = this.declarationWriterOrganisation(user, subsidiaryId);
     return this.write('delete_subsidiary', id, async (tx) => {
+      await this.lockDeclarationWriter(tx, user, organisationId, subsidiaryId);
       const header = await this.lockOpen(tx, id, organisationId, user);
       // Not declared — another organisation's subsidiary included — reads as none.
       const before = await readDeclaration(tx, header.id, subsidiaryId);
@@ -350,6 +353,19 @@ export class InventoryBoundariesService {
       throw new ResourceNotFoundError('subsidiary_not_found');
     }
     return user.organisationId;
+  }
+
+  /**
+   * The declaration writer as it stands now, under the organisation's
+   * administrative lock (the lock a grant change takes): a super_admin whose
+   * grant on the company was withdrawn, or who was demoted, while the request
+   * waited writes nothing — the company answers as unknown, as it would to a
+   * new request (owner review of WP7, P2; the same re-read as a child
+   * company's creation).
+   */
+  private async lockDeclarationWriter(tx: Tx, user: RequestUser, organisationId: string, subsidiaryId: string): Promise<void> {
+    const actor = await lockAndReadActor(tx, user, organisationId, 'boundary.write_granted');
+    if (actor.scope !== null && !actor.scope.has(subsidiaryId)) throw new ResourceNotFoundError('subsidiary_not_found');
   }
 
   /** The version's header, locked FOR UPDATE — or boundary_not_found. */
