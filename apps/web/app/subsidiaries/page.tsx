@@ -42,7 +42,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
@@ -56,6 +56,7 @@ import {
   mayBeAssociate,
   NODE_TYPES,
   SUBSIDIARY_STATUSES,
+  selectableReportingYears,
 } from "@/lib/types";
 import type {
   CreateSubsidiaryLocationInput,
@@ -99,7 +100,6 @@ const emptyForm = {
 };
 
 /** The reporting years the roll-up columns offer: this year and the four before. */
-const ROLL_UP_YEARS = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
 
 export default function SubsidiariesPage() {
   const tRoles = useTranslations("users");
@@ -138,7 +138,8 @@ export default function SubsidiariesPage() {
   // The tree (inc26-group-tree): collapsed branches, the roll-up of the chosen
   // year, and the geographies the factor library can price.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const [year, setYear] = useState(ROLL_UP_YEARS[0]);
+  // The years every reporting screen offers (owner review of WP7, P3).
+  const [year, setYear] = useState<number>(selectableReportingYears()[0]);
   const [rollUp, setRollUp] = useState<Map<string, RollUpRow> | null>(null);
   const [rollUpState, setRollUpState] = useState<"loading" | "ready" | "failed">("loading");
   // A picker offers only what the library prices (D10; owner review of WP7, P2).
@@ -197,6 +198,18 @@ export default function SubsidiariesPage() {
   const figure = (f: ScopeFigures | null | undefined, testId: string) =>
     f ? (
       <span className="inline-flex items-center justify-end gap-1">
+        {/* Records with no figure behind it: incomplete, and never a
+            measured zero (owner review of WP7, P2). */}
+        {f.uncalculatedRecordCount > 0 && (
+          <CircleDashed
+            className="h-3.5 w-3.5 text-muted-foreground"
+            data-testid={testId.replace("non-authoritative", "uncalculated")}
+            role="img"
+            aria-label={t("tree.uncalculatedMark", { count: formatNumber(f.uncalculatedRecordCount, locale) })}
+          >
+            <title>{t("tree.uncalculatedMark", { count: formatNumber(f.uncalculatedRecordCount, locale) })}</title>
+          </CircleDashed>
+        )}
         {f.nonAuthoritativeRecordCount > 0 && (
           <AlertTriangle
             className="h-3.5 w-3.5 text-amber-600"
@@ -214,6 +227,8 @@ export default function SubsidiariesPage() {
     );
   const anyNonAuthoritative =
     rollUp !== null && [...rollUp.values()].some((r) => (r.rollUp?.nonAuthoritativeRecordCount ?? 0) > 0);
+  const anyUncalculated =
+    rollUp !== null && [...rollUp.values()].some((r) => (r.rollUp?.uncalculatedRecordCount ?? 0) > 0);
   function toggle(id: string) {
     const next = new Set(collapsed);
     if (next.has(id)) next.delete(id);
@@ -294,10 +309,14 @@ export default function SubsidiariesPage() {
       toast.error(t("create.draftCap", { max: formatNumber(MAX_LOCATIONS_PER_CREATE, locale) }));
       return;
     }
-    setDraftLocations([
-      ...draftLocations,
-      { name, geographyCode: draftGeo || form.geographyCode },
-    ]);
+    // Never a facility with no geography — chosen, or the company's once known
+    // (owner review of WP7, P2).
+    const geographyCode = draftGeo || form.geographyCode;
+    if (!geographyCode) {
+      toast.error(t("create.draftGeographyRequired"));
+      return;
+    }
+    setDraftLocations([...draftLocations, { name, geographyCode }]);
     setDraftName("");
     setDraftGeo("");
   }
@@ -313,6 +332,10 @@ export default function SubsidiariesPage() {
     // API stays permissive, deliberately (see CreateSubsidiaryDto).
     if (form.nodeType !== "sector_group" && draftLocations.length === 0) {
       toast.error(t("create.locationRequired"));
+      return;
+    }
+    if (form.nodeType !== "sector_group" && !form.geographyCode) {
+      toast.error(t("fields.geographyRequired"));
       return;
     }
     if (parseSharePercent(form.sharePercent, locale as "en" | "tr") === "invalid") {
@@ -333,7 +356,8 @@ export default function SubsidiariesPage() {
         legalName: form.legalName.trim(),
         tradingName: form.tradingName || null,
         location: form.location || null,
-        geographyCode: form.geographyCode,
+        // A sector group's is its parent's, set by the API (D10).
+        ...(form.nodeType === "sector_group" ? {} : { geographyCode: form.geographyCode }),
         sector: form.sector || null,
         reportingStatus: form.reportingStatus,
         ...(form.parentId ? { parentId: form.parentId } : {}),
@@ -422,7 +446,7 @@ export default function SubsidiariesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ROLL_UP_YEARS.map((y) => (
+                    {selectableReportingYears(year).map((y) => (
                       <SelectItem key={y} value={String(y)}>
                         {y}
                       </SelectItem>
@@ -560,6 +584,11 @@ export default function SubsidiariesPage() {
                   </TableBody>
                 </Table>
               )}
+              {rollUpState === "ready" && anyUncalculated && (
+                <p className="pt-3 text-xs text-muted-foreground" data-testid="tree-uncalculated">
+                  {t("tree.uncalculatedNote")}
+                </p>
+              )}
               {rollUpState === "ready" && anyNonAuthoritative && (
                 <div className="pt-3">
                   <NonAuthoritativeWarning testId="tree-non-authoritative">{t("tree.nonAuthoritativeNote")}</NonAuthoritativeWarning>
@@ -649,6 +678,15 @@ export default function SubsidiariesPage() {
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label={t("fields.geography")}>
+                {form.nodeType === "sector_group" ? (
+                  // A sector group takes its parent's geography (D10): nothing
+                  // to choose, and nothing priced is needed (owner review of WP7, P2).
+                  <p className="pt-2 text-sm text-muted-foreground" data-testid="sector-group-geography">
+                    {t("fields.geographyFromParent", {
+                      geography: geographyLabel(subsidiaries.find((p) => p.id === form.parentId)?.geographyCode ?? "", tGeography),
+                    })}
+                  </p>
+                ) : (
                 <Select
                   value={form.geographyCode}
                   onValueChange={(v) => setForm({ ...form, geographyCode: v })}
@@ -668,7 +706,8 @@ export default function SubsidiariesPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                {pricedGeos.failed && (
+                )}
+                {pricedGeos.failed && form.nodeType !== "sector_group" && (
                   <p className="pt-1 text-xs text-destructive">{t("fields.geographyUnavailable")}</p>
                 )}
               </Field>

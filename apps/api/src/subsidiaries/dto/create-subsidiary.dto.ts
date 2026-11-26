@@ -15,6 +15,7 @@ import {
   Matches,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import {
   GEOGRAPHY_CODES,
@@ -58,9 +59,12 @@ export class CreateSubsidiaryDto {
   @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   location?: string;
 
+  /** Required for every node but a sector group, which takes its parent's
+   *  geography whatever is sent (D10; owner review of WP7, P2). */
+  @ValidateIf((o: CreateSubsidiaryDto) => o.nodeType !== 'sector_group' || o.geographyCode !== undefined)
   @IsString()
   @IsIn(GEOGRAPHY_CODES as readonly string[])
-  geographyCode!: string;
+  geographyCode?: string;
 
   @IsOptional()
   @IsString()

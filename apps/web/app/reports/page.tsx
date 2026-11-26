@@ -131,12 +131,6 @@ function ReportsPageInner() {
   const [includeEvidence, setIncludeEvidence] = useState(false);
 
   // Live data
-  // "loading" until read, "failed" when either read fails: the preview never
-  // names an approach, or leaves out associates, it did not read (owner review
-  // of WP7, P2). The PDF reads its own.
-  const [consolidation, setConsolidation] = useState<
-    { approach: ConsolidationApproach; associates: string[] } | "loading" | "failed"
-  >("loading");
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
   const [subsidiariesLoaded, setSubsidiariesLoaded] = useState(false);
   // The report's own figures, read in the same snapshot as `meta` (LP4-03 K2):
@@ -151,6 +145,15 @@ function ReportsPageInner() {
   const [previewFailed, setPreviewFailed] = useState(false);
   const [downloading, setDownloading] = useState<ReportExportType | null>(null);
   const loadSeq = useRef(0);
+
+  // The methodology text's approach and associates come with the preview's own
+  // read — the same snapshot as its figures, re-read with them — and say so
+  // when that read failed or is still running (owner reviews of WP7, P2).
+  const consolidation: { approach: ConsolidationApproach; associates: string[] } | "loading" | "failed" = meta
+    ? { approach: meta.consolidationApproach, associates: meta.excludedAssociates }
+    : previewFailed
+      ? "failed"
+      : "loading";
 
   const refresh = useCallback(async () => {
     const mine = ++loadSeq.current;
@@ -186,11 +189,6 @@ function ReportsPageInner() {
 
   useEffect(() => {
     api.me().then(setUser).catch(showError);
-    // The methodology text's approach and associates (inc26-group-tree): the
-    // exclusions read answers a reader of no associate with an empty list.
-    Promise.all([api.getOrganisation(), api.listBoundaryExclusions()])
-      .then(([org, excluded]) => setConsolidation({ approach: org.consolidationApproach, associates: excluded.map((x) => x.legalName) }))
-      .catch(() => setConsolidation("failed"));
     api
       .listSubsidiaries()
       .then((list) => {

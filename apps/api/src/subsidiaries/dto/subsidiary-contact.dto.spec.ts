@@ -343,6 +343,13 @@ describe('the group tree fields (inc26-group-tree)', () => {
     expect(createErrors({ naceCode: '' })).toHaveLength(0);
   });
 
+  it("requires a geography of every node but a sector group, which takes its parent's (owner review of WP7, P2)", () => {
+    expect(createErrors({ nodeType: 'sector_group', geographyCode: undefined })).toHaveLength(0);
+    expect(createErrors({ nodeType: 'company', geographyCode: undefined })).not.toHaveLength(0);
+    expect(createErrors({ geographyCode: undefined })).not.toHaveLength(0);
+    expect(createErrors({ nodeType: 'sector_group', geographyCode: 'XX' })).not.toHaveLength(0);
+  });
+
   it('refuses a null control on an update — absent leaves it, null was a 500 (WP7 review)', () => {
     expect(updateErrors({ control: null })).not.toHaveLength(0);
     expect(updateErrors({})).toHaveLength(0);

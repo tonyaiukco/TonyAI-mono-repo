@@ -383,6 +383,16 @@ describe('LocationsService', () => {
       expect(prisma.txClient.location.update).toHaveBeenCalled();
     });
 
+    it('judges the stored-geography exception against the row as locked: a stale edit cannot write an unpriced one back (owner review of WP7, P2)', async () => {
+      // Read as EU; changed to TR by another edit before this one locked it.
+      prisma.location.findUnique.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'EU' }));
+      prisma.txClient.location.findUnique.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'TR' }));
+      await expect(service.update(makeMasterkey(), 'loc-1', { name: 'Renamed', geographyCode: 'EU' })).rejects.toMatchObject({ status: 422 });
+      expect(prisma.txClient.location.update).not.toHaveBeenCalled();
+      // Locked FOR UPDATE before the read.
+      expect((prisma.txClient.$queryRaw.mock.calls[0][0] as unknown as string[]).join('?')).toMatch(/FROM locations WHERE id = \?::uuid FOR UPDATE/);
+    });
+
     it('refuses a change to an unpriced geography with 422, and writes nothing', async () => {
       const existing = makeLocation({ subsidiaryId: 'sub-1', geographyCode: 'TR' });
       prisma.location.findUnique.mockResolvedValue(existing);

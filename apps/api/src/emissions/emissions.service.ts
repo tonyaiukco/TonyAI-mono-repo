@@ -668,7 +668,10 @@ export class EmissionsService {
       // Scope 1 and 2's share of the non-authoritative records, as the
       // figures are Scope 1 and 2's (owner review of WP7, P1).
       const nonAuthoritativeRecordCount = summary.nonAuthoritativeRecordCount - summary.scope3Records.nonAuthoritativeRecordCount;
-      own.set(subsidiaryId, { scope1, scope2, total, nonAuthoritativeRecordCount });
+      // And its records with no figure, which a total of zero must not hide
+      // (owner review of WP7, P2).
+      const uncalculatedRecordCount = summary.uncalculatedRecordCount - summary.scope3Records.uncalculatedRecordCount;
+      own.set(subsidiaryId, { scope1, scope2, total, nonAuthoritativeRecordCount, uncalculatedRecordCount });
     }
     const readable = new Set(user.accessibleSubsidiaryIds);
     const shaped = nodes.map((n) => ({

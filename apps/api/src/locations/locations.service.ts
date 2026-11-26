@@ -226,7 +226,8 @@ export class LocationsService {
     dto: UpdateLocationDto,
   ): Promise<LocationDTO> {
     this.assertCanWrite(user);
-    const existing = await this.loadScoped(user, id);
+    // The tenant check; the row itself is read again, locked, below.
+    await this.loadScoped(user, id);
 
     const data: Prisma.LocationUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -236,14 +237,20 @@ export class LocationsService {
       data.authorizedPerson = dto.authorizedPerson;
     }
     if (dto.locationType !== undefined) data.locationType = dto.locationType;
-    // A stored geography stays valid until it is changed; a new one must be
-    // priced (D10).
-    if (dto.geographyCode !== undefined && dto.geographyCode !== existing.geographyCode) {
-      await assertPricedGeography(this.calculations, dto.geographyCode);
-    }
 
     // Same as create and delete now: mutation and audit in one transaction.
     const updated = await this.prisma.$transaction(async (tx) => {
+      // The row as it stands once locked: a stored geography stays valid
+      // until it is changed, and a new one must be priced (D10) — judged
+      // against THIS value, so an edit that read an older one cannot write
+      // back a geography the library no longer prices; the audit's `before`
+      // is this row too (owner review of WP7, P2).
+      await tx.$queryRaw`SELECT id FROM locations WHERE id = ${id}::uuid FOR UPDATE`;
+      const current = await tx.location.findUnique({ where: { id } });
+      if (!current) throw new ResourceNotFoundError('location_not_found');
+      if (dto.geographyCode !== undefined && dto.geographyCode !== current.geographyCode) {
+        await assertPricedGeography(this.calculations, dto.geographyCode);
+      }
       const row = await tx.location.update({ where: { id }, data });
       await this.audit.record(
         user,
@@ -251,7 +258,7 @@ export class LocationsService {
           action: 'update',
           entity: 'location',
           entityId: id,
-          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+          diff: { before: this.toDTO(current), after: this.toDTO(row) },
         },
         tx,
       );

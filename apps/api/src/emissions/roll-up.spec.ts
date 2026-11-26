@@ -17,7 +17,7 @@ const record = (subsidiaryId: string, scope: number, tCo2e: number, category = s
   subsidiaryId, scope, category, reportingYear: 2026, reportingPeriod: 'annual', periodValue: 'Annual',
   calculation: snapshot(tCo2e),
 });
-const t = (scope1: number, scope2 = 0, nonAuthoritativeRecordCount = 0) => ({ scope1, scope2, total: scope1 + scope2, nonAuthoritativeRecordCount });
+const t = (scope1: number, scope2 = 0, nonAuthoritativeRecordCount = 0, uncalculatedRecordCount = 0) => ({ scope1, scope2, total: scope1 + scope2, nonAuthoritativeRecordCount, uncalculatedRecordCount });
 
 // The spec's example: holding H 5 t, company A under it 10 t, child company B under A 3 t
 // (and 4 t of Scope 3 that changes nothing); a sector group G holding company C 7 t; an
@@ -123,10 +123,17 @@ describe('EmissionsService.rollUp', () => {
     expect(w.prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
 
-  it('counts a record with no figure as nothing, as the main total does', async () => {
-    w.prisma.subsidiary.findMany.mockResolvedValue([node('A', null, 'holding')]);
-    w.prisma.activityRecord.findMany.mockResolvedValue([record('A', 2, 10), { ...record('A', 2, 0), calculation: null }]);
-    const { rows } = await w.service.rollUp(makeMasterkey({ accessibleSubsidiaryIds: ['A'] }), { reportingYear: 2026 });
-    expect(rows[0].own).toEqual(t(0, 10));
+  it('adds nothing for a record with no figure, as the main total does — and counts it, up the tree, Scope 1 and 2 only (owner review of WP7, P2)', async () => {
+    w.prisma.subsidiary.findMany.mockResolvedValue([node('H', null, 'holding'), node('A', 'H', 'company')]);
+    const none = (subsidiaryId: string, scope: number) => ({
+      ...record(subsidiaryId, scope, 0),
+      calculation: { category: 'Electricity', scope, inputValue: 1, inputUnit: 'kWh', reasonCode: 'no_emission_factor', reason: 'r' },
+    });
+    w.prisma.activityRecord.findMany.mockResolvedValue([record('H', 2, 10), none('H', 2), none('A', 1), none('A', 1), none('A', 3)]);
+    const rows = new Map((await w.service.rollUp(makeMasterkey({ accessibleSubsidiaryIds: ['H', 'A'] }), { reportingYear: 2026 })).rows.map((r) => [r.subsidiaryId, r]));
+    // A's records all lack a figure: not a measured zero.
+    expect(rows.get('A')?.own).toEqual(t(0, 0, 0, 2));
+    expect(rows.get('H')?.own).toEqual(t(0, 10, 0, 1));
+    expect(rows.get('H')?.rollUp).toEqual(t(0, 10, 0, 3));
   });
 });

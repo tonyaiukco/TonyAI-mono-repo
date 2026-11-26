@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, HttpException } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { InventoryBoundaryVersionDTO } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { errorCodeOf, toErrorBody } from '../common/api-error';
@@ -246,6 +247,50 @@ describe('InventoryBoundariesService', () => {
       const last = db.tx.$executeRaw.mock.calls.length - 1;
       expect((db.tx.$executeRaw.mock.calls[last] as unknown as string[][])[0].join('?')).toMatch(/pg_advisory_xact_lock/);
       expect(db.tx.$executeRaw.mock.invocationCallOrder[last]).toBeLessThan(db.tx.$queryRaw.mock.invocationCallOrder[0]);
+    });
+
+    it('refuses deleting the newest version when the one before it declares a company now an associate; allows it otherwise (owner reviews)', async () => {
+      // The version before this one, and what it declares.
+      db.tx.inventoryBoundary.findFirst.mockImplementation((async ({ where }: { where: { version?: unknown } }) =>
+        where.version !== undefined ? { id: 'v-previous' } : header()) as never);
+      db.tx.inventoryBoundarySubsidiary.findMany.mockResolvedValue([{ subsidiaryId: SUB_ID }]);
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID, control: 'associate' });
+      await expect(service.remove(admin, ID)).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_subsidiary_not_reportable');
+      expect(db.tx.inventoryBoundary.delete).not.toHaveBeenCalled();
+      expect(db.tx.inventoryBoundary.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { organisationId: 'org-1', reportingYear: 2026, version: { lt: 1 } },
+      }));
+      // Still a company that holds records: the version goes.
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID, control: 'controlled' });
+      await service.remove(admin, ID);
+      expect(db.tx.inventoryBoundary.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it("answers with the writer's companies as re-read under the lock — a company withdrawn meanwhile is not in it (owner review, P1)", async () => {
+      const OTHER = '5b000000-0000-4000-8000-000000000009';
+      // Authenticated with both companies; B withdrawn while the write waited.
+      const own = makeSuperAdmin({ accessibleSubsidiaryIds: [SUB_ID, OTHER] });
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID });
+      db.tx.inventoryBoundarySubsidiary.findUnique.mockResolvedValue(null);
+      const declared = (subsidiaryId: string, legalName: string) => ({
+        boundaryId: ID, organisationId: 'org-1', subsidiaryId, firstMonth: 1, lastMonth: 12, subsidiaryName: null, geographyCode: null,
+        subsidiary: { legalName, tradingName: null, geographyCode: 'TR' },
+      });
+      db.tx.inventoryBoundarySubsidiary.findMany.mockResolvedValue([declared(SUB_ID, 'Alpha Ltd'), declared(OTHER, 'Withdrawn Co')]);
+      for (const write of [() => service.putSubsidiary(own, ID, SUB_ID, BODY), () => service.deleteSubsidiary(own, ID, SUB_ID)]) {
+        if (write === undefined) continue;
+        db.tx.inventoryBoundarySubsidiary.findUnique.mockResolvedValue(null);
+        const answer = (await write().catch((e: unknown) => e)) as InventoryBoundaryVersionDTO | Error;
+        if (answer instanceof Error) {
+          // The delete of an undeclared company answers as unknown; only the PUT answers a version.
+          expect(errorCodeOf(answer)).toBe('subsidiary_not_found');
+          continue;
+        }
+        expect(answer.view).toBe('granted_subsidiaries');
+        expect(answer.boundary.subsidiaryIds).toContain(SUB_ID);
+        expect(JSON.stringify(answer)).not.toContain(OTHER);
+        expect(JSON.stringify(answer)).not.toContain('Withdrawn Co');
+      }
     });
 
     it("another organisation's company, read FOR SHARE, answers as unknown", async () => {

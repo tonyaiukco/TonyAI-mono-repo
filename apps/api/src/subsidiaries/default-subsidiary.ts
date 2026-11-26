@@ -63,6 +63,10 @@ export async function createDefaultSubsidiary(
       nodeType: DEFAULT_SUBSIDIARY_SETTINGS.nodeType,
       control: DEFAULT_SUBSIDIARY_SETTINGS.control,
       parentId: null,
+      // Created for the organisation's first masterkey (registration, or the
+      // operator's provisioning): its tree card names that role, not "before
+      // the group tree" (owner review of WP7, P3).
+      createdByRole: 'masterkey',
     },
     select: { id: true },
   });

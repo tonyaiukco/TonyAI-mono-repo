@@ -268,6 +268,11 @@ export function buildReportHtml(data: ReportData): string {
 
   <h2>${v.html('coverageHeading')}</h2>
   ${coverageHtml(data, v)}
+  <p class="note" data-section="consolidation">${v.html('consolidationLine', { approach: v.text(`approach ${data.consolidationApproach}`) })}${
+    // Every live report names the approach and the associates it leaves out,
+    // whatever its options (inc26-group-tree, D8; owner review of WP7, P2).
+    data.excludedAssociates.length > 0 ? ` ${v.html('excludedAssociates', { names: data.excludedAssociates.join(', ') })}` : ''
+  }</p>
 
   <h2>${v.html('categoryHeading')}</h2>
   <table><thead><tr>${th('Category')}${th('Scope')}${th('tCO₂e', true)}${th('% of total', true)}${th('Records', true)}</tr></thead>

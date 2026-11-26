@@ -37,6 +37,7 @@
     "deleteConfirm": "Delete"
   },
   "create": {
+    "draftGeographyRequired": "Choose a geography for the facility first.",
     "title": "Add subsidiary",
     "legalNamePlaceholder": "TonyAI Energy A.Ş.",
     "locationPlaceholder": "Istanbul, Turkey",
@@ -55,6 +56,8 @@
     "locationRequired": "Add at least one operational facility"
   },
   "fields": {
+    "geographyFromParent": "Takes its parent's geography: {geography}.",
+    "geographyRequired": "Choose a geography first.",
     "geographyUnavailable": "The geographies the factor library prices could not be read, so none can be chosen. Reload the page to try again.",
     "legalNameRequired": "Legal name *",
     "legalName": "Legal name",
@@ -218,6 +221,8 @@
     "figuresFailed": "The figures could not be loaded. The tree is shown without them.",
     "nonAuthoritativeMark": "Not authoritative: {count} record(s) behind this figure rest on placeholder (demo) or other non-authoritative factors.",
     "nonAuthoritativeNote": "Figures marked with a warning rest, in part, on placeholder (demo) or other non-authoritative factors, and so does every roll-up above them. They are not authoritative.",
+    "uncalculatedMark": "Incomplete: {count} record(s) behind this figure have no figure — no factor could price them.",
+    "uncalculatedNote": "Figures marked as incomplete leave out records no factor could price, and so does every roll-up above them; a zero so marked is not a measured zero.",
     "createdBy": "Created by",
     "carriedOver": "Not recorded (created before the group tree)",
     "parent": "Parent",

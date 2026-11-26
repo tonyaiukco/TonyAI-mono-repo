@@ -71,13 +71,10 @@ export function subsidiaryNotAssignable(): ConflictException {
   );
 }
 
-export function boundarySubsidiaryNotReportable(): ConflictException {
-  return new ConflictException(
-    errorBody(
-      'boundary_subsidiary_not_reportable',
-      'An associate or a sector group is outside the inventory boundary and cannot be declared in it.',
-    ),
-  );
+export function boundarySubsidiaryNotReportable(
+  message = 'An associate or a sector group is outside the inventory boundary and cannot be declared in it.',
+): ConflictException {
+  return new ConflictException(errorBody('boundary_subsidiary_not_reportable', message));
 }
 
 export function geographyWithoutFactors(geography: string): UnprocessableEntityException {
@@ -99,7 +96,7 @@ const TRIGGER_REFUSALS = {
   control_change_blocked: () => controlChangeBlocked(['records', 'assignments', 'children', 'boundaryDeclarations']),
   entity_closed_to_data_entry: entityClosedToDataEntry,
   subsidiary_not_assignable: subsidiaryNotAssignable,
-  boundary_subsidiary_not_reportable: boundarySubsidiaryNotReportable,
+  boundary_subsidiary_not_reportable: () => boundarySubsidiaryNotReportable(),
 } as const;
 type TriggerRefusal = keyof typeof TRIGGER_REFUSALS;
 

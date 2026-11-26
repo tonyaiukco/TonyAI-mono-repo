@@ -8,9 +8,14 @@ Decisions 2026-10-24, K1–K13. A live report (the Reports preview, `GET
 /reports/{context/,}{meta,pdf,excel,csv}`) is **live and says so**; an issued
 report is retained and retrieved, never regenerated.
 
-**The consolidation approach in the methodology text (`inc26-group-tree`,
-D8).** A live PDF's methodology note states the organisation's stored
-approach — "Consolidation approach: operational control." or "financial
+**The consolidation approach in every live report (`inc26-group-tree`,
+D8).** Every live PDF states it beside its coverage, whatever its options, and
+every live workbook's Summary sheet has two rows for it ("Consolidation
+approach", and "Associates outside Scope 1 and 2" — their names, or "None");
+`GET /reports/meta` carries both (`consolidationApproach`,
+`excludedAssociates`), read in the preview's own snapshot, so a preview never
+pairs fresh figures with an earlier approach. A live PDF's methodology note
+also states the organisation's stored approach — "Consolidation approach: operational control." or "financial
 control." (TR "operasyonel kontrol" / "finansal kontrol") — in place of the
 fixed "Boundary: operational control." it carried before, and names the
 associates its reader may read as left outside Scope 1 and 2 (equity, not

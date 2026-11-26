@@ -1045,6 +1045,8 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   // a facility deleted in the same transaction counts (owner review of WP7).
   { table: 'subsidiaries', trigger: 'subsidiaries_keep_facilities', fn: 'subsidiaries_keep_facilities', type: ROW | BEFORE | ON.delete },
   { table: 'locations', trigger: 'locations_note_removal', fn: 'locations_note_removal', type: ROW | ON.delete },
+  // A delete never makes a boundary declaring a closed node current again (TA022).
+  { table: 'inventory_boundaries', trigger: 'inventory_boundaries_keep_current_reportable', fn: 'inventory_boundaries_keep_current_reportable', type: ROW | BEFORE | ON.delete },
 ]);
 
 /**

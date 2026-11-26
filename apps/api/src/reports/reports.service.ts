@@ -304,10 +304,13 @@ export class ReportsService {
         })
       : null;
     const organisationName = org?.tradingName || org?.legalName || 'TonyAI';
+    const consolidation = await this.consolidationOf(db, user, ids);
     const empty: ReportMeta = {
       status: 'contains_incomplete_data',
       recordLimit: this.limits.REPORT_RECORD_LIMIT,
       organisationName,
+      consolidationApproach: consolidation.approach,
+      excludedAssociates: consolidation.associates,
       totalCount: 0,
       committedCount: 0,
       incompleteCount: 0,
@@ -485,7 +488,8 @@ export class ReportsService {
       throw new QueryTooBroadError();
     }
     const nameById = await this.namesOf(db, ids);
-    const consolidation = await this.consolidationOf(db, user, ids);
+    // Read once, with the head, in this snapshot.
+    const consolidation = { approach: head.meta.consolidationApproach, associates: head.meta.excludedAssociates };
     // Scope 1 and 2 only (K4): Scope 3 is not covered, so its records are
     // disclosed (`readTail`) and never in the ledger, a total or a percentage.
     const scopes = inventoryScopeFilter(q.scope);
@@ -817,6 +821,13 @@ export class ReportsService {
       ...contextLabels(data.context, data.subsidiaryName, data.language),
       [v.text('excelStatus'), statusLabel(data.status, v)],
       [v.text('excelCoverage'), ...coverageSentences(data, v)],
+      // The approach and the associates left outside Scope 1 and 2, on every
+      // live workbook (inc26-group-tree, D8; owner review of WP7, P2).
+      [v.text('excelConsolidation'), v.text(`approach ${data.consolidationApproach}`)],
+      [
+        v.text('excelExcludedAssociates'),
+        data.excludedAssociates.length > 0 ? data.excludedAssociates.join(', ') : v.text('excelNone'),
+      ],
       // Stated here and not only on the Withdrawn Records sheet: a reader who
       // opens Summary and nothing else must still learn that figures left, and
       // in tonnes — materiality is not measured in rows.

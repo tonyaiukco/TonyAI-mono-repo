@@ -127,6 +127,10 @@ export function createPrismaMock() {
     // inc26-group-tree: a move or a control tick takes the organisation's tree
     // lock (`pg_advisory_xact_lock`) before it locks the node.
     $executeRaw: vi.fn().mockResolvedValue(1),
+    // A company's update and delete re-read their actor under the
+    // organisation's administrative lock (owner review of WP7): by default
+    // the masterkey as authenticated.
+    profile: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   };
   mock.txClient = createTxClient(mock);
@@ -154,12 +158,17 @@ export function createPrismaMock() {
     client.subsidiary.findFirst.mockResolvedValue(null);
     client.inventoryBoundarySubsidiary.findMany.mockResolvedValue([]);
     client.userSubsidiaryAccess.findMany.mockResolvedValue([]);
+    client.profile.findUnique.mockResolvedValue({
+      role: 'masterkey', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [],
+    });
     client.inventoryBoundary.findFirst.mockResolvedValue(null);
     // A subsidiary update reads its row again inside the transaction, after
     // locking it (owner review of WP7): the same row a spec stubs on the root
     // client, unless the spec stubs the transaction's own read.
     if (client === mock.txClient) {
       client.subsidiary.findUnique.mockImplementation((args: unknown) => mock.subsidiary.findUnique(args));
+      // …and a location update reads its row the same way (owner review of WP7).
+      client.location.findUnique.mockImplementation((args: unknown) => mock.location.findUnique(args));
     }
     // Same reasoning one step further: an unstubbed `findMany` resolves to
     // `undefined`, and a service that iterates it dies with "not iterable" —

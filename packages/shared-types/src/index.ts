@@ -1,5 +1,5 @@
 import type { CursorPageParams } from './bounded-access';
-import type { ControlKind, LocationType, NodeType } from './group-tree';
+import type { ConsolidationApproach, ControlKind, LocationType, NodeType } from './group-tree';
 
 export type DataStatus = 'complete' | 'incomplete' | 'missing';
 
@@ -1362,6 +1362,12 @@ export interface ReportMetaDTO {
   recordLimit?: number;
   status: ReportStatus;
   organisationName: string;
+  /** The organisation's consolidation approach and the associates the caller
+   *  may read, left outside Scope 1 and 2 (inc26-group-tree, D8) — read in the
+   *  same snapshot as everything else here, so a preview never pairs fresh
+   *  figures with an earlier approach (owner review of WP7, P2). */
+  consolidationApproach: ConsolidationApproach;
+  excludedAssociates: string[];
   totalCount: number;
   committedCount: number;
   incompleteCount: number; // draft + rejected
@@ -1918,7 +1924,9 @@ export interface CreateSubsidiaryInput {
   legalName: string;
   tradingName?: string | null;
   location?: string | null;
-  geographyCode: string;
+  /** Required, and priced, for every node but a sector group, which takes its
+   *  parent's (D10; owner review of WP7). */
+  geographyCode?: string;
   businessArea?: string | null;
   sector?: string | null;
   designatedPerson?: string | null;

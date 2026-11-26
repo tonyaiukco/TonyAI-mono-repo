@@ -920,6 +920,7 @@ describe('AccessAdminService.registerOrganisation — self-service registration'
       nodeType: 'holding',
       control: 'controlled',
       parentId: null,
+      createdByRole: 'masterkey',
     });
     expect(byModel.profile).toEqual({
       id: result.profileId,

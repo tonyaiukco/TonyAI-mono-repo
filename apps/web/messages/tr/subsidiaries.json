@@ -37,6 +37,7 @@
     "deleteConfirm": "Sil"
   },
   "create": {
+    "draftGeographyRequired": "Önce tesis için bir coğrafya seçin.",
     "title": "Bağlı şirket ekle",
     "legalNamePlaceholder": "TonyAI Enerji A.Ş.",
     "locationPlaceholder": "İstanbul, Türkiye",
@@ -55,6 +56,8 @@
     "locationRequired": "En az bir operasyonel tesis ekleyin"
   },
   "fields": {
+    "geographyFromParent": "Üst düğümün coğrafyasını alır: {geography}.",
+    "geographyRequired": "Önce bir coğrafya seçin.",
     "geographyUnavailable": "Faktör kütüphanesinin fiyatladığı coğrafyalar okunamadı; bu yüzden seçim yapılamıyor. Yeniden denemek için sayfayı yenileyin.",
     "legalNameRequired": "Ticari unvan *",
     "legalName": "Ticari unvan",
@@ -218,6 +221,8 @@
     "figuresFailed": "Rakamlar yüklenemedi. Ağaç rakamlar olmadan gösteriliyor.",
     "nonAuthoritativeMark": "Yetkili değil: bu rakamın arkasındaki {count} kayıt yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanıyor.",
     "nonAuthoritativeNote": "Uyarı işaretli rakamlar kısmen yer tutucu (demo) ya da yetkili olmayan başka faktörlere dayanıyor; üstlerindeki her toplam da öyle. Bunlar yetkili değildir.",
+    "uncalculatedMark": "Eksik: bu rakamın arkasındaki {count} kaydın rakamı yok — hiçbir faktör bunları fiyatlayamadı.",
+    "uncalculatedNote": "Eksik işaretli rakamlar, hiçbir faktörün fiyatlayamadığı kayıtları dışarıda bırakıyor; üstlerindeki her toplam da öyle. Böyle işaretli bir sıfır ölçülmüş bir sıfır değildir.",
     "createdBy": "Oluşturan",
     "carriedOver": "Kaydedilmedi (grup ağacından önce oluşturuldu)",
     "parent": "Üst düğüm",

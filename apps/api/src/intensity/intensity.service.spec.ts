@@ -46,6 +46,11 @@ function createPrismaMock() {
   };
   return {
     tx,
+    // The reporting set (inc26-group-tree): by default every id asked holds
+    // records; a case that has a closed node says so.
+    subsidiary: {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((id) => ({ id }))),
+    },
     subsidiaryDenominator: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
@@ -256,6 +261,17 @@ describe('IntensityService', () => {
     expect(await service.contextIntensity(admin, { year: 2027 })).toEqual({
       context: { year: 2027 }, data: { selectedSubsidiaryIds: ['sub-1', 'sub-2'], metrics: [] },
     });
+  });
+
+  it('leaves a sector group and an associate out of the selection the coverage ratio reads (owner review of WP7, P2)', async () => {
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }]);
+    const user = { ...admin, accessibleSubsidiaryIds: ['sub-1', 'sector', 'associate'] };
+    expect((await service.contextIntensity(user, { year: 2027 })).data.selectedSubsidiaryIds).toEqual(['sub-1']);
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['sub-1', 'sector', 'associate'] }, nodeType: { not: 'sector_group' }, control: 'controlled' },
+      select: { id: true },
+    });
+    expect(prisma.subsidiaryDenominator.findMany.mock.calls[0][0].where.subsidiaryId).toEqual({ in: ['sub-1'] });
   });
 
   it('restricts group intensity to revenue, including a single accessible subsidiary and the legacy route', async () => {

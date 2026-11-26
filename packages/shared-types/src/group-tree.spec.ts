@@ -98,7 +98,7 @@ describe('ghgBasis — derived, never chosen (§3)', () => {
   }
 });
 
-const t = (scope1: number, scope2 = 0, nonAuthoritativeRecordCount = 0): ScopeFigures => ({ scope1, scope2, total: scope1 + scope2, nonAuthoritativeRecordCount });
+const t = (scope1: number, scope2 = 0, nonAuthoritativeRecordCount = 0, uncalculatedRecordCount = 0): ScopeFigures => ({ scope1, scope2, total: scope1 + scope2, nonAuthoritativeRecordCount, uncalculatedRecordCount });
 const node = (id: string, parentId: string | null, nodeType: NodeType, control: 'controlled' | 'associate' = 'controlled'): RollUpNode =>
   ({ id, parentId, nodeType, control });
 
@@ -114,6 +114,11 @@ describe('rollUp — own plus the children (§5.2)', () => {
     );
     expect(r.get('H')?.rollUp).toEqual(t(3, 0, 2));
     expect(r.get('A')?.rollUp?.nonAuthoritativeRecordCount).toBe(2);
+    const u = rollUp(
+      [{ id: 'H', parentId: null, nodeType: 'holding', control: 'controlled' }, { id: 'A', parentId: 'H', nodeType: 'company', control: 'controlled' }],
+      new Map([['A', t(0, 0, 0, 3)]]),
+    );
+    expect(u.get('H')?.rollUp?.uncalculatedRecordCount).toBe(3);
   });
 
   it('reads the spec example: 5 / 10 / 3 → 18', () => {
@@ -126,7 +131,7 @@ describe('rollUp — own plus the children (§5.2)', () => {
 
   it('accepts own totals as a plain record too, and splits the scopes', () => {
     const r = rollUp([node('H', null, 'holding'), node('A', 'H', 'company')], { H: t(1, 2), A: t(3, 4) });
-    expect(r.get('H')?.rollUp).toEqual({ scope1: 4, scope2: 6, total: 10, nonAuthoritativeRecordCount: 0 });
+    expect(r.get('H')?.rollUp).toEqual({ scope1: 4, scope2: 6, total: 10, nonAuthoritativeRecordCount: 0, uncalculatedRecordCount: 0 });
   });
 
   it('gives a sector group no own figure and the sum of its children', () => {

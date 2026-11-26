@@ -127,6 +127,11 @@ export interface ScopeFigures {
    *  tonnes, so a roll-up says so wherever one of its figures does (owner
    *  review of WP7, P1). */
   nonAuthoritativeRecordCount: number;
+  /** The committed Scope 1 and 2 records with no figure (no factor could
+   *  price them), counted as the main total declares them and summed up the
+   *  tree: a figure they would have added to is incomplete, and a node whose
+   *  records all lack one is not a measured zero (owner review of WP7, P2). */
+  uncalculatedRecordCount: number;
 }
 
 /** `GET /organisation`: the caller's own organisation (design D8). */
@@ -181,7 +186,7 @@ export interface RollUpResult {
   rollUp: ScopeFigures | null;
 }
 
-const ZERO: ScopeFigures = Object.freeze({ scope1: 0, scope2: 0, total: 0, nonAuthoritativeRecordCount: 0 });
+const ZERO: ScopeFigures = Object.freeze({ scope1: 0, scope2: 0, total: 0, nonAuthoritativeRecordCount: 0, uncalculatedRecordCount: 0 });
 
 function add(a: ScopeFigures, b: ScopeFigures): ScopeFigures {
   return {
@@ -189,6 +194,7 @@ function add(a: ScopeFigures, b: ScopeFigures): ScopeFigures {
     scope2: a.scope2 + b.scope2,
     total: a.total + b.total,
     nonAuthoritativeRecordCount: a.nonAuthoritativeRecordCount + b.nonAuthoritativeRecordCount,
+    uncalculatedRecordCount: a.uncalculatedRecordCount + b.uncalculatedRecordCount,
   };
 }
 

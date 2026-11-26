@@ -247,8 +247,8 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // and truncate guard on `report_datasets`; PR D's issuance guard and
     // truncate guard on `report_issuances`. LP4-02 PR2 adds factor_parameters
     // (6 triggers: 4 BEFORE + 2 AFTER).
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2 + 7);
-    // inc26-group-tree's seven (TA018–TA023 and the facility-removal note), each on its own events.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 4 * 4 + 1 + 3 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2 + 8);
+    // inc26-group-tree's eight (TA018–TA023, the facility-removal note and the current-boundary delete guard), each on its own events.
     for (const [table, trigger] of [
       ['subsidiaries', 'subsidiaries_tree_shape'],
       ['activity_records', 'activity_records_entity_open'],

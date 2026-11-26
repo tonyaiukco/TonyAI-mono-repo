@@ -361,10 +361,10 @@ BEGIN
         ERRCODE = 'TA018',
         MESSAGE = format('node_placement_invalid: a %s is always controlled', NEW."node_type");
     END IF;
-    -- Nor while a year's current boundary declares it: the newest version,
-    -- or the newest frozen one, which becomes the newest again when an open
-    -- version after it is deleted (owner review of WP7, P1). A frozen version
-    -- is never rewritten; the tick waits for a newer one that leaves it out.
+    -- Nor while a year's current boundary — its newest version — declares it.
+    -- An older version that declares it can never become current again:
+    -- deleting the open version after it is refused then
+    -- (`inventory_boundaries_keep_current_reportable`; owner reviews of WP7).
     IF TG_OP = 'UPDATE' AND (
       EXISTS (SELECT 1 FROM "public"."subsidiaries" c WHERE c."parent_id" = NEW."id")
       OR EXISTS (SELECT 1 FROM "public"."activity_records" r WHERE r."subsidiary_id" = NEW."id")
@@ -374,11 +374,8 @@ BEGIN
           FROM "public"."inventory_boundary_subsidiaries" d
           JOIN "public"."inventory_boundaries" b ON b."id" = d."boundary_id"
          WHERE d."subsidiary_id" = NEW."id"
-           AND (b."version" = (SELECT max(n."version") FROM "public"."inventory_boundaries" n
-                                WHERE n."organisation_id" = b."organisation_id" AND n."reporting_year" = b."reporting_year")
-             OR b."version" = (SELECT max(f."version") FROM "public"."inventory_boundaries" f
-                                WHERE f."organisation_id" = b."organisation_id" AND f."reporting_year" = b."reporting_year"
-                                  AND f."frozen_at" IS NOT NULL)))
+           AND b."version" = (SELECT max(n."version") FROM "public"."inventory_boundaries" n
+                               WHERE n."organisation_id" = b."organisation_id" AND n."reporting_year" = b."reporting_year"))
     ) THEN
       RAISE EXCEPTION USING
         ERRCODE = 'TA018',
@@ -605,6 +602,65 @@ CREATE TRIGGER "inventory_boundary_subsidiaries_reportable"
   BEFORE INSERT OR UPDATE ON "inventory_boundary_subsidiaries"
   FOR EACH ROW EXECUTE FUNCTION "public"."inventory_boundary_subsidiaries_reportable"();
 ALTER TABLE "inventory_boundary_subsidiaries" ENABLE ALWAYS TRIGGER "inventory_boundary_subsidiaries_reportable";
+
+-- TA022's other half: a year's current boundary never comes to declare an
+-- associate or a sector group by a delete. Deleting the newest version makes
+-- the one before it current again; when that one declares a company ticked
+-- associate since (the tick looks at the newest version only), the delete is
+-- refused — the open version is edited or confirmed instead, and no frozen
+-- version is ever rewritten (owner reviews of WP7). The companies are read
+-- FOR SHARE, so a concurrent tick and the delete are serialised. An
+-- organisation's offboarding cascade passes.
+CREATE FUNCTION "public"."inventory_boundaries_keep_current_reportable"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $fn$
+DECLARE
+  previous_id uuid;
+  previous_version integer;
+  closed_id uuid;
+BEGIN
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN OLD;
+  END IF;
+  IF pg_catalog.pg_trigger_depth() > 1 THEN
+    RETURN OLD;
+  END IF;
+  IF EXISTS (SELECT 1 FROM "public"."inventory_boundaries" n
+              WHERE n."organisation_id" = OLD."organisation_id" AND n."reporting_year" = OLD."reporting_year"
+                AND n."version" > OLD."version") THEN
+    RETURN OLD;
+  END IF;
+  SELECT p."id", p."version" INTO previous_id, previous_version
+    FROM "public"."inventory_boundaries" p
+   WHERE p."organisation_id" = OLD."organisation_id" AND p."reporting_year" = OLD."reporting_year"
+     AND p."version" < OLD."version"
+   ORDER BY p."version" DESC
+   LIMIT 1;
+  IF previous_id IS NULL THEN
+    RETURN OLD;
+  END IF;
+  SELECT s."id" INTO closed_id
+    FROM "public"."subsidiaries" s
+    JOIN "public"."inventory_boundary_subsidiaries" d ON d."subsidiary_id" = s."id"
+   WHERE d."boundary_id" = previous_id
+     AND (s."node_type" = 'sector_group' OR s."control" = 'associate')
+   ORDER BY s."id"
+   LIMIT 1
+     FOR SHARE OF s;
+  IF closed_id IS NOT NULL THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA022',
+      MESSAGE = format('boundary_subsidiary_not_reportable: deleting version %s would make version %s current again, which declares subsidiary %s outside the inventory boundary', OLD."version", previous_version, closed_id);
+  END IF;
+  RETURN OLD;
+END
+$fn$;
+
+CREATE TRIGGER "inventory_boundaries_keep_current_reportable"
+  BEFORE DELETE ON "inventory_boundaries"
+  FOR EACH ROW EXECUTE FUNCTION "public"."inventory_boundaries_keep_current_reportable"();
+ALTER TABLE "inventory_boundaries" ENABLE ALWAYS TRIGGER "inventory_boundaries_keep_current_reportable";
 
 -- ---------------------------------------------------------------------------
 -- 6. Runtime grants (design D2; runtime-role.mjs RUNTIME_COLUMN_UPDATES)

@@ -2729,6 +2729,38 @@ describe('ReportsService — the methodology text states the stored approach (in
     expect((read![0] as { where: unknown }).where).toEqual({ id: { in: ['sub-1', 'sub-2'] }, control: 'associate' });
   });
 
+  it('names the approach and the associates on every live report — a PDF without its methodology notes, and the workbook summary (owner review of WP7, P2)', async () => {
+    approach('financial_control');
+    withAssociate('Bosphorus Associates');
+    const plain = { ...q, includeMethodologyNotes: false } as ReportQueryDto;
+    const html = buildReportHtml(await service.assemble(admin, plain));
+    expect(html).toContain('Consolidation approach: financial control.');
+    expect(html).toContain('Left outside Scope 1 and 2 as associates (equity, not consolidated): Bosphorus Associates.');
+    const summaryRows = async () => {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load((await service.generateExcel(admin, plain)) as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+      const rows: unknown[][] = [];
+      workbook.getWorksheet('Summary')!.eachRow((row) => rows.push(row.values as unknown[]));
+      return rows;
+    };
+    let rows = await summaryRows();
+    expect(rows).toContainEqual([undefined, 'Consolidation approach', 'financial control']);
+    expect(rows).toContainEqual([undefined, 'Associates outside Scope 1 and 2', 'Bosphorus Associates']);
+    prisma.subsidiary.findMany.mockImplementation((async (args?: { where?: { control?: string } }) =>
+      args?.where?.control === 'associate' ? [] : [{ id: 'sub-1', legalName: 'Energy Legal', tradingName: 'Energy' }]) as never);
+    rows = await summaryRows();
+    expect(rows).toContainEqual([undefined, 'Associates outside Scope 1 and 2', 'None']);
+  });
+
+  it("the preview's meta carries the approach and the associates, read with its figures (owner review of WP7, P2)", async () => {
+    approach('financial_control');
+    withAssociate('Bosphorus Associates');
+    expect(await service.meta(admin, 2024)).toMatchObject({
+      consolidationApproach: 'financial_control',
+      excludedAssociates: ['Bosphorus Associates'],
+    });
+  });
+
   it('names no associate where there is none', async () => {
     approach('operational_control');
     const html = buildReportHtml(await service.assemble(admin, q));

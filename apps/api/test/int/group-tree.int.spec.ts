@@ -520,7 +520,7 @@ describe('the API over the database', () => {
     }
   });
 
-  it("keeps a year's current boundary free of associates: the tick waits for a newer frozen version; a copy of an older one leaves it out (owner review of WP7, P1)", async () => {
+  it("keeps a year's current boundary free of associates: a tick past the newest version, a delete that would bring an older one back refused; a copy of it leaves the associate out (owner reviews of WP7)", async () => {
     const company = await node({ nodeType: 'company', name: 'Int-test later associate' });
     const site = await owner.location.create({ data: { subsidiaryId: company, name: 'Int-test site', geographyCode: 'UK' } });
     const other = await node({ nodeType: 'company', name: 'Int-test other company' });
@@ -529,17 +529,26 @@ describe('the API over the database', () => {
     // V1 (frozen) declares the company; V2 (open, newest) leaves it out.
     const v1 = await createBoundary(owner, { ...tenant, subsidiaryId: company }, { locationId: site.id, reportingYear: 2026, version: 32, frozen: true });
     const v2 = await createBoundary(owner, { ...tenant, subsidiaryId: other }, { locationId: otherSite.id, reportingYear: 2026, version: 33 });
-    // Deleting V2 would make V1 current again, so the tick is refused — by the
-    // API and, for any writer, by TA018.
-    await expect(services(runtime).subsidiaries.update(user, company, { control: 'associate' }))
+    // The newest version leaves it out: the tick goes through (the spec's scenario).
+    await expect(services(runtime).subsidiaries.update(user, company, { control: 'associate' })).resolves.toMatchObject({ control: 'associate' });
+    // Deleting V2 would make V1 — declaring an associate — current again: refused
+    // by the API and, for any writer, by the database (TA022).
+    await expect(services(runtime).boundaries.remove(user, v2.boundaryId))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'boundary_subsidiary_not_reportable' }) });
+    expect(await refused(owner.inventoryBoundary.delete({ where: { id: v2.boundaryId } })))
+      .toMatchObject({ state: 'TA022', message: expect.stringMatching(/boundary_subsidiary_not_reportable/) });
+    expect(await owner.inventoryBoundary.count({ where: { id: v2.boundaryId } })).toBe(1);
+    // A version declaring it as the newest: the tick is refused, by the API and TA018.
+    const third = await node({ nodeType: 'company', name: 'Int-test declared in the newest' });
+    const thirdSite = await owner.location.create({ data: { subsidiaryId: third, name: 'Int-test third site', geographyCode: 'UK' } });
+    await owner.inventoryBoundarySubsidiary.create({ data: { boundaryId: v2.boundaryId, organisationId: tenant.organisationId, subsidiaryId: third, firstMonth: 1, lastMonth: 12 } });
+    void thirdSite;
+    await expect(services(runtime).subsidiaries.update(masterkey(third), third, { control: 'associate' }))
       .rejects.toMatchObject({ response: expect.objectContaining({ code: 'control_change_blocked' }) });
     for (const db of [runtime, owner]) {
-      expect(await refused(db.subsidiary.update({ where: { id: company }, data: { control: 'associate' } })))
+      expect(await refused(db.subsidiary.update({ where: { id: third }, data: { control: 'associate' } })))
         .toMatchObject({ state: 'TA018', message: expect.stringMatching(/control_change_blocked/) });
     }
-    // V2 frozen too: V1 is history, never current again, and the tick goes through.
-    await owner.inventoryBoundary.update({ where: { id: v2.boundaryId }, data: { frozenAt: new Date() } });
-    await expect(services(runtime).subsidiaries.update(user, company, { control: 'associate' })).resolves.toMatchObject({ control: 'associate' });
     // A copy of V1 leaves the associate out, and its audit row names it.
     const copy = await services(runtime).boundaries.create(user, { reportingYear: 2027, copyOf: v1.boundaryId });
     expect(await owner.inventoryBoundarySubsidiary.count({ where: { boundaryId: copy.id } })).toBe(0);

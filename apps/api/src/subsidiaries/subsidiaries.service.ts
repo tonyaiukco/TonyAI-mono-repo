@@ -23,7 +23,7 @@ import type {
   SubsidiarySummaryDTO,
 } from '@tonyai/shared-types';
 import { errorBody, ResourceNotFoundError } from '../common/api-error';
-import { AccessAdminService, lockTenantAdmin } from '../auth/access-admin.service';
+import { AccessAdminService, lockAndReadActor } from '../auth/access-admin.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import { assertPricedGeography } from '../common/priced-geography';
 import {
@@ -242,10 +242,14 @@ export class SubsidiariesService {
       if ((dto.locations?.length ?? 0) > 0) {
         throw nodePlacementInvalid('A sector group holds no facility: add the facility to a company beneath it.');
       }
+      // Sent or not, its parent's (owner review of WP7, P2: a form whose
+      // coverage read failed sends none).
       geographyCode = placement.parentGeography ?? geographyCode;
-    } else {
+    } else if (geographyCode !== undefined) {
       await assertPricedGeography(this.calculations, geographyCode);
     }
+    // The DTO requires one for every other node; a sector group's parent has one.
+    if (geographyCode === undefined) throw new BadRequestException('geographyCode is required');
     // A super_admin's child company (D5): its scope re-read under the
     // administration lock before anything is written, and its grant written
     // below in this same transaction.
@@ -397,20 +401,15 @@ export class SubsidiariesService {
     }
     if (dto.sharePercent !== undefined) data.sharePercent = dto.sharePercent;
     if (dto.naceCode !== undefined) data.naceCode = dto.naceCode;
-    // A stored geography stays valid until it is changed (an existing company
-    // is renamed whatever the library prices); a new one must be priced. A
-    // sector group's is never priced, so never checked (D10).
-    if (
-      dto.geographyCode !== undefined &&
-      dto.geographyCode !== existing.geographyCode &&
-      existing.nodeType !== 'sector_group'
-    ) {
-      await assertPricedGeography(this.calculations, dto.geographyCode);
-    }
     // In a transaction like create and delete. It was not, which left this
     // class half-atomic — a crash between the row write and the audit insert
     // lost the trail for an update while create and delete were safe.
     const updated = await this.prisma.$transaction(async (tx) => {
+      // The actor as it stands, under the organisation's administrative lock:
+      // a masterkey disabled or demoted while this request waited changes
+      // nothing (owner review of WP7, P2). Taken first — the lock order every
+      // writer of the tree and the grants follows (admin, tree, row).
+      await lockAndReadActor(tx, user, existing.organisationId, 'company.write');
       if (dto.parentId !== undefined || dto.control !== undefined) {
         // TA018's own lock order, taken before the row: the organisation's
         // tree lock, then the node. Updating the row first and meeting the
@@ -428,6 +427,15 @@ export class SubsidiariesService {
       await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR NO KEY UPDATE`;
       const current = await tx.subsidiary.findUnique({ where: { id } });
       if (!current) throw new ResourceNotFoundError('subsidiary_not_found');
+      // A stored geography stays valid until it is changed (an existing
+      // company is renamed whatever the library prices); a new one must be
+      // priced; a sector group's is never priced, so never checked (D10).
+      // Judged against the row as locked, so an edit that read an older value
+      // cannot write back one the library no longer prices (owner review of
+      // WP7, P2).
+      if (dto.geographyCode !== undefined && dto.geographyCode !== current.geographyCode && current.nodeType !== 'sector_group') {
+        await assertPricedGeography(this.calculations, dto.geographyCode);
+      }
       const moves = dto.parentId !== undefined && dto.parentId !== current.parentId;
       if (moves) data.parentId = dto.parentId;
       const controlChanges = dto.control !== undefined && dto.control !== current.control;
@@ -518,25 +526,18 @@ export class SubsidiariesService {
         select: { boundary: { select: { reportingYear: true, version: true } } },
       }),
     ]);
-    // A year's current boundary: its newest version, or its newest frozen
-    // one — which is the newest again once an open version after it is
-    // deleted (owner review of WP7, P1). TA018 holds the same rule.
+    // A year's current boundary: its newest version (TA018 holds the same
+    // rule). An older version that declares it never becomes current again:
+    // deleting the open version after it is refused then (owner reviews of
+    // WP7; `InventoryBoundariesService.remove`, TA022).
     let declaredInNewest = false;
     for (const year of new Set(declarations.map((d) => d.boundary.reportingYear))) {
-      const [newest, newestFrozen] = await Promise.all([
-        tx.inventoryBoundary.findFirst({
-          where: { organisationId: node.organisationId, reportingYear: year },
-          orderBy: { version: 'desc' },
-          select: { version: true },
-        }),
-        tx.inventoryBoundary.findFirst({
-          where: { organisationId: node.organisationId, reportingYear: year, frozenAt: { not: null } },
-          orderBy: { version: 'desc' },
-          select: { version: true },
-        }),
-      ]);
-      const current = new Set([newest?.version, newestFrozen?.version].filter((v): v is number => v !== undefined));
-      if (declarations.some((d) => d.boundary.reportingYear === year && current.has(d.boundary.version))) {
+      const newest = await tx.inventoryBoundary.findFirst({
+        where: { organisationId: node.organisationId, reportingYear: year },
+        orderBy: { version: 'desc' },
+        select: { version: true },
+      });
+      if (newest && declarations.some((d) => d.boundary.reportingYear === year && d.boundary.version === newest.version)) {
         declaredInNewest = true;
         break;
       }
@@ -848,7 +849,9 @@ export class SubsidiariesService {
       // removes are not also removed, and audited, by a concurrent access
       // change (owner review of WP7, P2). Before the row lock: a grant change
       // holding the admin lock inserts grants, which share-lock this row.
-      await lockTenantAdmin(tx, existing.organisationId);
+      // …and the actor as it stands under it: a masterkey disabled or demoted
+      // while this request waited deletes nothing (owner review of WP7, P2).
+      await lockAndReadActor(tx, user, existing.organisationId, 'company.write');
       // Lock the parent row BEFORE counting. Inserting any child takes a
       // FOR KEY SHARE lock on the row it references, so FOR UPDATE here
       // serialises against a record/location/target/lock being created while
@@ -869,10 +872,12 @@ export class SubsidiariesService {
       // the start.
       const grants = await tx.$queryRaw<{ userId: string }[]>`
         DELETE FROM user_subsidiary_access WHERE subsidiary_id = ${id}::uuid RETURNING user_id::text AS "userId"`;
-      await tx.subsidiary.delete({ where: { id } });
+      // The audit's `before` is the row the delete removed — not the read
+      // before the transaction, which a move or rename may have overtaken.
+      const deleted = await tx.subsidiary.delete({ where: { id } });
       await this.audit.record(
         user,
-        { action: 'delete', entity: 'subsidiary', entityId: id, diff: { before: this.toDTO(existing) } },
+        { action: 'delete', entity: 'subsidiary', entityId: id, diff: { before: this.toDTO(deleted) } },
         tx,
       );
       for (const { userId } of [...grants].sort((a, b) => a.userId.localeCompare(b.userId))) {
