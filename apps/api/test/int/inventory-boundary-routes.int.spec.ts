@@ -617,19 +617,27 @@ describe('whose subsidiary and site a declaration may name', () => {
 });
 
 describe('concurrent writers (W8, E5; PR B (6))', () => {
-  it("two creates of one year's next version: one wins, the other is told conflict", async () => {
+  it("two creates of one year's next version: the second waits for the first, then is told a draft is open", async () => {
+    // Each create re-reads its masterkey under the organisation's administrative
+    // lock before anything else (owner's fourth review of WP7), so two creates
+    // no longer race to the version key: the second waits, then reads the
+    // first's open version.
     const clientA = connect(1);
     const clientB = connect(1);
     try {
       const hold = holdBefore(clientA, 'InventoryBoundary', 'create');
       const first = serviceOn(hold.client).create(admin, { reportingYear: 2026 });
       await hold.reached();
-      const second = await serviceOn(clientB).create(admin, { reportingYear: 2026 });
-      expect(second.version).toBe(1);
+      const secondPid = await backendPid(clientB); // read while idle: `second` then holds the one pooled connection
+      const second = serviceOn(clientB).create(admin, { reportingYear: 2026 });
+      second.catch(() => undefined);
+      expect(await settledOrBlocked(second, secondPid, owner)).toBe('blocked');
       hold.release();
-      expect(answered(await failure(first))).toBe('conflict');
+      const won = await first;
+      expect(won.version).toBe(1);
+      expect(answered(await failure(second))).toBe('boundary_draft_open');
       const versions = await owner.inventoryBoundary.findMany({ where: { organisationId: t.organisationId } });
-      expect(versions.map((v) => v.id)).toEqual([second.id]);
+      expect(versions.map((v) => v.id)).toEqual([won.id]);
       expect(await owner.auditLog.count({ where: { organisationId: t.organisationId, entity: 'inventory_boundary', action: 'create' } })).toBe(1);
     } finally {
       await Promise.all([clientA.$disconnect(), clientB.$disconnect()]);

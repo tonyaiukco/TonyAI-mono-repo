@@ -65,6 +65,10 @@ export function ConsolidationCard({
       setExclusions(excluded);
       onApproach?.(org.consolidationApproach);
     } catch (e) {
+      // Never the previous answer after a failed re-read: a deleted associate
+      // would stay named, or "none" would outlive a new one (owner's fourth
+      // review of WP7, P2). The note says it could not be read.
+      setExclusions(null);
       setFailed(true);
       showStableError(e);
     }

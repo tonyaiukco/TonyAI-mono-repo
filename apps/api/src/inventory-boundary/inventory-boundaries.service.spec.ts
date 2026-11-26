@@ -266,6 +266,28 @@ describe('InventoryBoundariesService', () => {
       expect(db.tx.inventoryBoundary.delete).toHaveBeenCalledTimes(1);
     });
 
+    it('a masterkey disabled or demoted while the request waited opens, confirms and deletes no version (owner\'s fourth review, P2)', async () => {
+      for (const over of [{ role: 'super_admin' }, { disabledAt: new Date() }]) {
+        db.tx.profile.findUnique.mockResolvedValue({
+          role: 'masterkey', organisationId: 'org-1', disabledAt: null, organisation: { offboardedAt: null }, subsidiaryAccess: [], ...over,
+        });
+        db.tx.$queryRaw.mockClear();
+        for (const write of [
+          () => service.create(admin, { reportingYear: 2026 }),
+          () => service.confirm(admin, ID),
+          () => service.remove(admin, ID),
+        ]) {
+          await expect(write()).rejects.toBeDefined();
+        }
+        // Refused under the admin lock, before any version was locked.
+        expect(db.tx.$queryRaw).not.toHaveBeenCalled();
+      }
+      expect(db.tx.inventoryBoundary.create).not.toHaveBeenCalled();
+      expect(db.tx.inventoryBoundary.update).not.toHaveBeenCalled();
+      expect(db.tx.inventoryBoundary.delete).not.toHaveBeenCalled();
+      expect(db.tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
     it('audits a declaration as the role that authorised it under the lock (owner\'s third review, P2)', async () => {
       // A masterkey made a super_admin of this company while the write waited.
       db.tx.profile.findUnique.mockResolvedValue({

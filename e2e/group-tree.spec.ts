@@ -358,3 +358,24 @@ test("the tree marks figures resting on non-authoritative factors, up to the roo
     await context.close();
   }
 });
+
+test("a link to a closed node selects nothing and applies nothing; the review queue offers no closed node (owner's fourth review of WP7)", async ({ page }) => {
+  await login(page, ADMIN_EMAIL);
+  await page.goto(`/data-entry?subsidiaryId=${SUB.associate}&category=Water&year=2026`);
+  await expect(page.getByText('That subsidiary is not available to you.')).toBeVisible();
+  const field = (label: string) => page.locator('div.space-y-2', { has: page.getByText(label, { exact: true }) }).getByRole('combobox');
+  // Never another company's form filled with the link's category.
+  await expect(field('Subsidiary')).not.toContainText(/TonyAI|Bosphorus/);
+  await expect(field('Category')).not.toContainText('Water');
+  // The positive anchor: a company that holds records is still offered.
+  await field('Subsidiary').click();
+  await expect(page.getByRole('option', { name: /^TonyAI Energy \(TR\)/ })).toBeVisible();
+  await expect(page.getByRole('option', { name: /Bosphorus|Utilities Group/ })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.goto('/review');
+  await page.getByRole('combobox').filter({ hasText: 'All subsidiaries' }).click();
+  await expect(page.getByRole('option', { name: /^TonyAI Energy/ }).first()).toBeVisible();
+  await expect(page.getByRole('option', { name: /Bosphorus|Utilities Group/ })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+});

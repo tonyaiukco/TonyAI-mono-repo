@@ -37,7 +37,10 @@ function build() {
     subsidiary: { findMany: vi.fn() },
     activityRecord: { findMany: vi.fn() },
     factorRelease: { findMany: vi.fn().mockResolvedValue([]) },
+    // One snapshot for the tree, its records and the releases (owner's fourth review).
+    $transaction: vi.fn(),
   };
+  prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));
   return { prisma, service: new EmissionsService(prisma as unknown as PrismaService) };
 }
 
@@ -97,6 +100,10 @@ describe('EmissionsService.rollUp', () => {
     expect(where.status).toEqual({ in: ['submitted', 'under_review', 'approved', 'locked'] });
     expect(where.AND).toHaveLength(1);
     expect(w.prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['A'] } });
+    // Scope 1 and 2 only, before the row budget; one REPEATABLE READ snapshot
+    // for the tree, the records and the releases (owner's fourth review, P2).
+    expect(where.scope).toEqual({ in: [1, 2] });
+    expect(w.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ isolationLevel: 'RepeatableRead' }));
   });
 
   it("a super_admin granted a parent only: the parent reads its own figure, and nothing refers to the child", async () => {

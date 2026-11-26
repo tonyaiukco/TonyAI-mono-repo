@@ -502,15 +502,17 @@ CREATE TRIGGER "locations_company_holds_records"
   FOR EACH ROW EXECUTE FUNCTION "public"."locations_company_holds_records"();
 ALTER TABLE "locations" ENABLE ALWAYS TRIGGER "locations_company_holds_records";
 
--- TA023: a company with a facility is not deleted (RD9), by any writer — the
--- key from `locations` still cascades, so the API's refusal alone left a
+-- TA023: a company that holds a facility is not deleted (RD9), by any writer —
+-- the key from `locations` still cascades, so the API's refusal alone left a
 -- direct delete free to take the facilities with it (owner review of WP7,
 -- P1). The previous API image swept a company's facilities and then deleted
 -- it in one transaction: `locations_note_removal` notes each facility deleted
 -- in the transaction, and the company of one is refused too, so a rollback
--- to that image cannot remove facilities either (its delete is refused). A
--- delete reached through a key's cascade — an organisation's offboarding —
--- is the cascade's, and passes.
+-- to that image cannot remove facilities either (its delete is refused). That
+-- second half is a safeguard, not a boundary: the note is a setting the
+-- writer's session controls, and deleting each facility on its own, then the
+-- company, is allowed anyway (owner's fourth review). A delete reached
+-- through a key's cascade — an organisation's offboarding — passes.
 CREATE FUNCTION "public"."subsidiaries_keep_facilities"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp

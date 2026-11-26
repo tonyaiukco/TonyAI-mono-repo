@@ -71,7 +71,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ConsolidationCard } from "@/components/subsidiaries/consolidation-card";
 import { NonAuthoritativeWarning } from "@/components/non-authoritative-warning";
 import { usePricedGeographies } from "@/lib/use-priced-geographies";
-import { parseNaceCode, parseSharePercent, treeRows } from "@/lib/subsidiaries-view";
+import { treeFigure, parseNaceCode, parseSharePercent, treeRows } from "@/lib/subsidiaries-view";
 import { useErrorToast } from "@/lib/i18n/hooks";
 import { formatNumber } from "@/lib/i18n/number";
 import { geographyLabel } from "@/lib/vocabulary";
@@ -220,7 +220,7 @@ export default function SubsidiariesPage() {
             <title>{t("tree.nonAuthoritativeMark", { count: formatNumber(f.nonAuthoritativeRecordCount, locale) })}</title>
           </AlertTriangle>
         )}
-        {formatNumber(f.total, locale, { maximumFractionDigits: 1 })}
+        {treeFigure(f.total, locale)}
       </span>
     ) : (
       "—"

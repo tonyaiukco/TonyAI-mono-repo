@@ -1007,7 +1007,12 @@ function DataEntryPageInner() {
         const wantedCategory = searchParams.get("category");
 
         if (wantedSub && !list.some((sub) => sub.id === wantedSub)) {
+          // A link to a company the user cannot enter data for (closed to it,
+          // or not theirs): nothing selected and nothing else of the link
+          // applied — never another company's form filled with the link's
+          // category, year and period (owner's fourth review of WP7, P2).
           toast.error(t("subsidiaryUnavailable"));
+          return;
         }
         const resolvedSub =
           wantedSub && list.some((sub) => sub.id === wantedSub)

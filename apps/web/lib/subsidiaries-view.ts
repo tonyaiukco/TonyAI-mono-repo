@@ -147,6 +147,18 @@ export function treeRows<T extends TreeNode>(
 }
 
 /**
+ * A tree cell's tCO₂e: one decimal from 1 up, three significant digits below
+ * it — so a positive figure is never shown as 0 (0.04 and 0.00024 stay what
+ * they are; owner's fourth review of WP7, P2) — and a zero as 0.
+ */
+export function treeFigure(value: number, locale: Locale): string {
+  if (!Number.isFinite(value) || value === 0) return formatNumber(0, locale);
+  return Math.abs(value) < 1
+    ? formatNumber(value, locale, { maximumSignificantDigits: 3 })
+    : formatNumber(value, locale, { maximumFractionDigits: 1 });
+}
+
+/**
  * The create and edit forms' optional share percent, read in the user's
  * convention: blank is "none" (`null`), anything else a number from 0 to 100
  * with two decimals at most — the API's bound — or `invalid`.

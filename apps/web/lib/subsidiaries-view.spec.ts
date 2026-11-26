@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
 import { copyFor, describeFor } from '@/lib/i18n/testing';
 import { SUBSIDIARY_BLOCKER_KINDS, type SubsidiaryBlockerCount } from '@/lib/types';
-import { treeRows, parseNaceCode, parseSharePercent, blockerLines, deletableNote, locationCountLine, subsidiaryError } from './subsidiaries-view';
+import { treeFigure, treeRows, parseNaceCode, parseSharePercent, blockerLines, deletableNote, locationCountLine, subsidiaryError } from './subsidiaries-view';
 
 const en = copyFor('subsidiaries');
 const tr = copyFor('subsidiaries', 'tr');
@@ -148,6 +148,16 @@ describe('the share percent and NACE fields (inc26-group-tree)', () => {
     expect(refused).toEqual([]);
     for (const ok of ['1.1', '2.01', '0.07']) expect(parseSharePercent(ok, 'en'), ok).toBe(Number(ok));
     expect(parseSharePercent('1,1', 'tr')).toBe(1.1);
+  });
+
+  it("never shows a positive tonnage as 0 — one decimal from 1 up, three significant digits below (owner's fourth review, P2)", () => {
+    expect(treeFigure(0.04, 'en')).toBe('0.04');
+    expect(treeFigure(0.00024, 'en')).toBe('0.00024');
+    expect(treeFigure(0.04, 'tr')).toBe('0,04');
+    expect(treeFigure(0.00024, 'tr')).toBe('0,00024');
+    expect(treeFigure(12.345, 'en')).toBe('12.3');
+    expect(treeFigure(12345.67, 'tr')).toBe('12.345,7');
+    expect(treeFigure(0, 'en')).toBe('0');
   });
 
   it('reads a NACE code, upper-cased, blank as none', () => {

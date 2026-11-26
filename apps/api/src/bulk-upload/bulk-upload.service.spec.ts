@@ -532,6 +532,21 @@ describe('BulkUploadService — the batch pre-flight', () => {
 describe('BulkUploadService — a row for a node closed to data entry (inc26-group-tree)', () => {
   const closed = () => new EntityClosedToDataEntryError();
 
+  it("refuses every row naming a closed company for that reason — a repeat of one is not duplicate_in_file (owner's fourth review, P2)", async () => {
+    for (const mode of [NOTHING, DRY]) {
+      const { prisma, records, service } = build();
+      // The caller's closed companies, read once per file.
+      prisma.subsidiary.findMany.mockImplementation((async (args?: { where?: { NOT?: unknown } }) =>
+        args?.where?.NOT !== undefined ? [{ id: SUB_1 }] : []) as never);
+      const report = await service.import(standardUser(), csvFile([row(), row()]), mode);
+      expect(report.errors).toEqual([
+        expect.objectContaining({ row: 2, column: null, code: 'entity_closed_to_data_entry', message: closed().message }),
+        expect.objectContaining({ row: 3, column: null, code: 'entity_closed_to_data_entry' }),
+      ]);
+      expect(records.create).not.toHaveBeenCalled();
+    }
+  });
+
   it('imports the other two rows and reports the associate row in the record API\'s words', async () => {
     const { records, service } = build();
     records.create

@@ -140,6 +140,7 @@ export class InventoryBoundariesService {
   async create(user: RequestUser, dto: CreateInventoryBoundaryRequest): Promise<InventoryBoundaryVersionDTO> {
     const organisationId = this.writerOrganisation(user);
     return this.write('create', dto.copyOf ?? null, async (tx) => {
+      const writer = await this.lockVersionWriter(tx, user, organisationId);
       let copy: VersionRows | null = null;
       if (dto.copyOf !== undefined) {
         if (!(await lockBoundaryHeader(tx, dto.copyOf, organisationId, 'share'))) {
@@ -164,7 +165,7 @@ export class InventoryBoundariesService {
       });
       if (copy !== null) await insertVersionRows(tx, copiedRows(copy, header.id, randomUUID));
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'create',
           entity: 'inventory_boundary',
@@ -178,7 +179,7 @@ export class InventoryBoundariesService {
         },
         tx,
       );
-      return this.versionIn(tx, header.id, organisationId, user);
+      return this.versionIn(tx, header.id, organisationId, writer);
     }, versionTaken);
   }
 
@@ -271,6 +272,7 @@ export class InventoryBoundariesService {
   async confirm(user: RequestUser, id: string): Promise<InventoryBoundaryVersionDTO> {
     const organisationId = this.writerOrganisation(user);
     return this.write('confirm', id, async (tx) => {
+      const writer = await this.lockVersionWriter(tx, user, organisationId);
       const header = await this.lockVersion(tx, id, organisationId);
       if (header.decision === 'confirmed') throw new BoundaryFrozenError();
       if (header.frozenAt !== null) throw new BoundaryConfirmRequiresCopyError();
@@ -296,7 +298,7 @@ export class InventoryBoundariesService {
         data: { decision: 'confirmed', decidedBy: user.id, decidedAt: now, frozenAt: now },
       });
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'confirm',
           entity: 'inventory_boundary',
@@ -310,7 +312,7 @@ export class InventoryBoundariesService {
         },
         tx,
       );
-      return this.versionIn(tx, header.id, organisationId, user);
+      return this.versionIn(tx, header.id, organisationId, writer);
     });
   }
 
@@ -318,7 +320,8 @@ export class InventoryBoundariesService {
   async remove(user: RequestUser, id: string): Promise<void> {
     const organisationId = this.writerOrganisation(user);
     await this.write('delete', id, async (tx) => {
-      const header = await this.lockOpen(tx, id, organisationId, user);
+      const writer = await this.lockVersionWriter(tx, user, organisationId);
+      const header = await this.lockOpen(tx, id, organisationId, writer);
       // Deleting the newest version makes the one before it current again: not
       // when that one declares a company ticked associate since — a tick
       // looks at the newest version only (owner reviews of WP7). Its
@@ -347,7 +350,7 @@ export class InventoryBoundariesService {
       });
       await tx.inventoryBoundary.delete({ where: { id: header.id } });
       await this.audit.record(
-        user,
+        writer,
         {
           action: 'delete',
           entity: 'inventory_boundary',
@@ -403,6 +406,18 @@ export class InventoryBoundariesService {
       role: actor.role,
       accessibleSubsidiaryIds: actor.scope === null ? user.accessibleSubsidiaryIds : [...actor.scope].sort(),
     };
+  }
+
+  /**
+   * A version's writer — its creation, confirmation or deletion — as it
+   * stands now, under the organisation's administrative lock and before the
+   * version is locked: a masterkey disabled or demoted while the request waited
+   * changes no version, and the answer and the audit row are the re-read
+   * role's (owner's fourth review of WP7, P2).
+   */
+  private async lockVersionWriter(tx: Tx, user: RequestUser, organisationId: string): Promise<RequestUser> {
+    const actor = await lockAndReadActor(tx, user, organisationId, 'boundary.write');
+    return { ...user, role: actor.role };
   }
 
   /** The version's header, locked FOR UPDATE — or boundary_not_found. */

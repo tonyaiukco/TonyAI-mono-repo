@@ -640,25 +640,37 @@ export class EmissionsService {
     const reportingYear = query.reportingYear;
     if (user.accessibleSubsidiaryIds.length === 0) return { reportingYear, rows: [] };
     const recordLimit = this.analyticsBudget(reportingYear);
-    const [nodes, rows] = await Promise.all([
-      this.prisma.subsidiary.findMany({
-        where: { id: { in: user.accessibleSubsidiaryIds } },
-        select: { id: true, parentId: true, nodeType: true, control: true },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      }),
-      this.prisma.activityRecord.findMany({
-        take: recordLimit + 1,
-        select: SUMMARY_RECORD_SELECT,
-        where: {
-          subsidiaryId: { in: user.accessibleSubsidiaryIds },
-          AND: [recordScopeWhere(user)],
-          reportingYear,
-          status: { in: COUNTED_STATUSES },
-        },
-      }),
-    ]);
-    if (rows.length > recordLimit) throw new QueryTooBroadError();
-    const withdrawn = await withdrawnReleaseIds(this.prisma, rows);
+    // The tree, its records and the releases' standing read in ONE snapshot
+    // (REPEATABLE READ, read only): a company moved between two separate reads
+    // could otherwise carry a record into a parent that never held it (owner's
+    // fourth review of WP7, P2). Scope 1 and 2 only, filtered before the row
+    // budget: the figures are Scope 1 and 2's, and Scope 3 rows must not spend
+    // the budget and refuse a year they add nothing to.
+    const { nodes, rows, withdrawn } = await this.prisma.$transaction(
+      async (tx) => {
+        const [nodes, rows] = await Promise.all([
+          tx.subsidiary.findMany({
+            where: { id: { in: user.accessibleSubsidiaryIds } },
+            select: { id: true, parentId: true, nodeType: true, control: true },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          }),
+          tx.activityRecord.findMany({
+            take: recordLimit + 1,
+            select: SUMMARY_RECORD_SELECT,
+            where: {
+              subsidiaryId: { in: user.accessibleSubsidiaryIds },
+              AND: [recordScopeWhere(user)],
+              reportingYear,
+              scope: { in: [1, 2] },
+              status: { in: COUNTED_STATUSES },
+            },
+          }),
+        ]);
+        if (rows.length > recordLimit) throw new QueryTooBroadError();
+        return { nodes, rows, withdrawn: await withdrawnReleaseIds(tx, rows) };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15_000 },
+    );
     const bySubsidiary = new Map<string, SummaryRecord[]>();
     for (const r of rows) bySubsidiary.set(r.subsidiaryId, [...(bySubsidiary.get(r.subsidiaryId) ?? []), r]);
     const own = new Map<string, ScopeFigures>();

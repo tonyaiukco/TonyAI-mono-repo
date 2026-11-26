@@ -417,14 +417,18 @@ export class SubsidiariesService {
       // a masterkey disabled or demoted while this request waited changes
       // nothing (owner review of WP7, P2). Taken first — the lock order every
       // writer of the tree and the grants follows (admin, tree, row).
-      await lockAndReadActor(tx, user, existing.organisationId, 'company.write');
+      // The actor's own organisation, not the one read before the transaction:
+      // an operator moving the company to another organisation meanwhile must
+      // not let this request write there (owner's fourth review of WP7, P2).
+      const organisationId = user.organisationId as string;
+      await lockAndReadActor(tx, user, organisationId, 'company.write');
       if (dto.parentId !== undefined || dto.control !== undefined) {
         // TA018's own lock order, taken before the row: the organisation's
         // tree lock, then the node. Updating the row first and meeting the
         // tree lock in the trigger could deadlock against a move of an
         // ancestor, which holds the tree lock and then locks its subtree
         // (architect and security review, WP7).
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('tonyai.subsidiary_tree'), hashtext(${existing.organisationId}))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('tonyai.subsidiary_tree'), hashtext(${organisationId}))`;
       }
       // The node FOR NO KEY UPDATE, then read again: what changes, and the
       // audit row's `before`, come from the row as locked, not from the read
@@ -432,9 +436,13 @@ export class SubsidiariesService {
       // both record its first parent (owner review of WP7, P2). The lock also
       // serialises an associate tick against a record, a grant or a boundary
       // declaration, each of which reads the row FOR SHARE.
-      await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR NO KEY UPDATE`;
-      const current = await tx.subsidiary.findUnique({ where: { id } });
-      if (!current) throw new ResourceNotFoundError('subsidiary_not_found');
+      // Locked in the actor's organisation: moved to another one meanwhile,
+      // or deleted, it answers as unknown, and the lock keeps it here until
+      // this transaction ends.
+      const [held] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM subsidiaries WHERE id = ${id}::uuid AND organisation_id = ${organisationId}::uuid FOR NO KEY UPDATE`;
+      const current = held ? await tx.subsidiary.findUnique({ where: { id } }) : null;
+      if (!current || current.organisationId !== organisationId) throw new ResourceNotFoundError('subsidiary_not_found');
       // A stored geography stays valid until it is changed (an existing
       // company is renamed whatever the library prices); a new one must be
       // priced; a sector group's is never priced, so never checked (D10).
@@ -847,7 +855,8 @@ export class SubsidiariesService {
 
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
-    const existing = await this.loadScoped(user, id);
+    // The tenant check; the row is locked, in the actor's organisation, below.
+    await this.loadScoped(user, id);
     // Delete + audit in one transaction: the row is gone afterwards, so a
     // failed audit insert would leave a deletion with no trail at all.
     // Stated, not inherited — the same argument the create path makes.
@@ -859,14 +868,16 @@ export class SubsidiariesService {
       // holding the admin lock inserts grants, which share-lock this row.
       // …and the actor as it stands under it: a masterkey disabled or demoted
       // while this request waited deletes nothing (owner review of WP7, P2).
-      await lockAndReadActor(tx, user, existing.organisationId, 'company.write');
+      // In the actor's own organisation (owner's fourth review of WP7, P2).
+      await lockAndReadActor(tx, user, user.organisationId as string, 'company.write');
       // Lock the parent row BEFORE counting. Inserting any child takes a
       // FOR KEY SHARE lock on the row it references, so FOR UPDATE here
       // serialises against a record/location/target/lock being created while
       // the counts run. Without it the guard is a time-of-check read, and the
       // loser is not an error — the FK cascades the newcomer away silently,
       // which is the exact loss this whole guard exists to prevent.
-      const [locked] = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR UPDATE`;
+      const [locked] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM subsidiaries WHERE id = ${id}::uuid AND organisation_id = ${user.organisationId as string}::uuid FOR UPDATE`;
       // Deleted by a concurrent request while this one waited for the lock:
       // the answer it would get now, not a 500 (pre-pilot defects).
       if (!locked) throw new ResourceNotFoundError('subsidiary_not_found');

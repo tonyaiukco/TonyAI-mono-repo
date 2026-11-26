@@ -648,6 +648,24 @@ describe('the API over the database', () => {
     }
   });
 
+  it("a company moved to another organisation meanwhile is unknown to its former organisation's update and delete (owner's fourth review, P2)", async () => {
+    const company = await node({ nodeType: 'company', name: 'Int-test transferred' });
+    // The masterkey's request read it in A; an operator moves it to B before the write.
+    const user = masterkey(company);
+    const foreign = await createTenant();
+    try {
+      await owner.subsidiary.update({ where: { id: company }, data: { organisationId: foreign.organisationId, parentId: foreign.subsidiaryId } });
+      await expect(services(runtime).subsidiaries.update(user, company, { legalName: 'Written from A' }))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+      await expect(services(runtime).subsidiaries.remove(user, company))
+        .rejects.toMatchObject({ response: expect.objectContaining({ code: 'subsidiary_not_found' }) });
+      expect(await owner.subsidiary.findUniqueOrThrow({ where: { id: company } }))
+        .toMatchObject({ organisationId: foreign.organisationId, legalName: 'Int-test transferred' });
+    } finally {
+      await foreign.cleanup();
+    }
+  });
+
   it('a tick waits for a move of its ancestor and both settle — no deadlock (WP7 review)', async () => {
     const a = await node({ nodeType: 'sub_holding', name: 'Int-test A' });
     const target = await node({ nodeType: 'sub_holding', name: 'Int-test target' });
