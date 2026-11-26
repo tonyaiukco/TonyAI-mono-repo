@@ -1,4 +1,4 @@
-import type { FuelLocalDate } from '@tonyai/shared-types';
+import { REPORTING_YEAR_MAX, REPORTING_YEAR_MIN, type FuelLocalDate } from '@tonyai/shared-types';
 import type { SheetCell } from '../../bulk-upload/xlsx-reader';
 
 /**
@@ -107,7 +107,7 @@ const TEXT_DATE = /^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)
 const ISO_FIELDS = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;
 
 function validDate(year: number, month: number, day: number): boolean {
-  if (year < 1900 || year > 9999 || month < 1 || month > 12 || day < 1) return false;
+  if (year < REPORTING_YEAR_MIN || year > REPORTING_YEAR_MAX || month < 1 || month > 12 || day < 1) return false;
   return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 

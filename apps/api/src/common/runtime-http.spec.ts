@@ -7,7 +7,7 @@ import { configureApp } from '../app-setup';
 import { JsonLogger } from '../observability/json-logger';
 import { RuntimeLimits } from './runtime-limits';
 import { connect } from 'node:net';
-import { IMPORT_MULTIPART_LIMITS, EVIDENCE_MULTIPART_LIMITS, SHARED_EVIDENCE_MULTIPART_LIMITS } from './multipart-limits';
+import { IMPORT_MULTIPART_LIMITS, EVIDENCE_MULTIPART_LIMITS, SHARED_EVIDENCE_MULTIPART_LIMITS, FUEL_MULTIPART_LIMITS } from './multipart-limits';
 import { RuntimeAuthGuard, RuntimeUploadWorkInterceptor } from './runtime-request';
 
 @Controller()
@@ -26,6 +26,9 @@ class HttpProbe {
   @Post('bulk-upload/activity-records')
   @UseInterceptors(FileInterceptor('file', { limits: IMPORT_MULTIPART_LIMITS }), RuntimeUploadWorkInterceptor)
   upload(@UploadedFile() file: Express.Multer.File) { return { bytes: file.buffer.length }; }
+  @Post('fuel-files/preview')
+  @UseInterceptors(FileInterceptor('file', { limits: FUEL_MULTIPART_LIMITS }), RuntimeUploadWorkInterceptor)
+  fuelPreview(@UploadedFile() file: Express.Multer.File) { return { bytes: file.buffer.length }; }
   @Post('activity-records/probe/evidence')
   @UseInterceptors(FileInterceptor('file', { limits: EVIDENCE_MULTIPART_LIMITS }), RuntimeUploadWorkInterceptor)
   evidence(@UploadedFile() file: Express.Multer.File) { return { bytes: file.buffer.length }; }
@@ -200,6 +203,8 @@ describe('transport and parser boundaries', () => {
     ['bulk-upload/activity-records', 2 * 1024 * 1024, 4, 16_384],
     ['activity-records/probe/evidence', 10 * 1024 * 1024, 4, 16_384],
     ['evidence', 10 * 1024 * 1024, 2, 65_536],
+    // inc28-fuel-bulk C18: a fuel file has its own cap, and a tanker file's declarations a field of their own size.
+    ['fuel-files/preview', 32 * 1024 * 1024, 4, 262_144],
   ])('uses inclusive real Multer ceilings on %s', async (path, bytes, fields, fieldBytes) => {
     const { url } = await boot({ RATE_IMPORT_PER_MINUTE: '30' });
     const upload = (size: number, count = 0, length = 1, files = 1) => {

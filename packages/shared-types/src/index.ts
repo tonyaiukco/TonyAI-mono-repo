@@ -6931,6 +6931,16 @@ export const AUDIT_ACTIONS = [
    *  (`entity: 'evidence'`, `diff.before.recordId`). Taking off the LAST link
    *  deletes the file, and that row is a `delete`. */
   'detach',
+  // inc28-fuel-bulk (WP9). A fuel file read without storing it (D3): the one
+  // row a preview leaves, `entity: 'import_batch'`, `entityId: null`.
+  'preview',
+  /** A masterkey made holder of an upload's unbatched fuel rows (C8, D8). */
+  'take_over',
+  /** Fuel rows or a fuel batch taken out of every sum and kept (C14), with a
+   *  reason. Not "withdraw": the screens use that word for a void. */
+  'retract',
+  /** An evidence file attached to every record of a fuel batch (D11). */
+  'attach',
   // LP4-01 — the user lifecycle. `entityId` is the profile throughout (except
   // `invite_refused`, whose entityId is null — no profile was made); an
   // invitation's row names its role, language and grants, never the address
